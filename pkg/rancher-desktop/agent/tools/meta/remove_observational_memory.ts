@@ -1,6 +1,6 @@
-import { BaseTool, ToolResponse } from '../base';
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { parseJson } from '../../services/JsonParseService';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * Remove Observational Memory Tool - Worker class for execution

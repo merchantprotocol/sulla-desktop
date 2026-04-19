@@ -1,4 +1,5 @@
 import { ref, computed, onMounted, watch } from 'vue';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
 export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark';

@@ -24,9 +24,7 @@ services:
     container_name: sulla_redis
     ports:
       - "30117:6379"
-    command: redis-server --appendonly yes --save 60 1
-    volumes:
-      - "sulla_redis_data:/data"
+    command: redis-server --save "" --appendonly no
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -36,4 +34,3 @@ services:
 
 volumes:
   sulla_postgres_data:
-  sulla_redis_data:

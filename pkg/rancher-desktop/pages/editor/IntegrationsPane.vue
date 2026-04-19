@@ -395,10 +395,11 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, reactive, onMounted } from 'vue';
-import { ipcRenderer } from 'electron';
 import os from 'os';
 import path from 'path';
+
+import { ipcRenderer } from 'electron';
+import { defineComponent, ref, reactive, onMounted } from 'vue';
 
 interface FileEntry {
   name:  string;

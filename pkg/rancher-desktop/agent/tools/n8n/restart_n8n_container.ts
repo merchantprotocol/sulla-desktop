@@ -1,7 +1,7 @@
+import { postgresClient } from '../../database/PostgresClient';
+import { createN8nService } from '../../services/N8nService';
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
-import { createN8nService } from '../../services/N8nService';
-import { postgresClient } from '../../database/PostgresClient';
 
 interface RestartInput {
   container?:      string;

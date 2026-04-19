@@ -42,7 +42,7 @@ const LOG_PREFIX = '[SULLA_TAB_PRELOAD]';
   try {
     ipcRenderer.send(IPC_CHANNEL, { type, data });
   } catch (err) {
-    console.error(`${LOG_PREFIX} __sullaBridgeEmit failed`, { type, err });
+    console.error(`${ LOG_PREFIX } __sullaBridgeEmit failed`, { type, err });
   }
 };
 
@@ -55,7 +55,7 @@ ipcRenderer.on('browser-tab-view:execute', (_event, code: string) => {
     // eslint-disable-next-line no-eval
     (0, eval)(code);
   } catch (err) {
-    console.error(`${LOG_PREFIX} execute failed`, { code: code.slice(0, 200), err });
+    console.error(`${ LOG_PREFIX } execute failed`, { code: code.slice(0, 200), err });
   }
 });
 
@@ -68,9 +68,9 @@ function injectGuestBridge(): void {
     const script = buildGuestBridgeScript();
     // eslint-disable-next-line no-eval
     (0, eval)(script);
-    console.log(`${LOG_PREFIX} guest bridge injected`, { url: location.href });
+    console.log(`${ LOG_PREFIX } guest bridge injected`, { url: location.href });
   } catch (err) {
-    console.error(`${LOG_PREFIX} guest bridge injection failed`, err);
+    console.error(`${ LOG_PREFIX } guest bridge injection failed`, err);
   }
 }
 

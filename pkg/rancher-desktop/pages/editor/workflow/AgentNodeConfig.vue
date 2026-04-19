@@ -309,8 +309,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { ipcRenderer } from 'electron';
+import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
+
 import type { AgentNodeConfig } from './types';
 
 export interface UpstreamNodeInfo {

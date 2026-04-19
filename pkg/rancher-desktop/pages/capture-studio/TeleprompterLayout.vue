@@ -1,12 +1,37 @@
 <template>
   <div class="teleprompter-layout">
     <!-- Close button -->
-    <button class="tp-close-btn" @click="$emit('close')" title="Close teleprompter">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    <button
+      class="tp-close-btn"
+      title="Close teleprompter"
+      @click="$emit('close')"
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      ><line
+        x1="18"
+        y1="6"
+        x2="6"
+        y2="18"
+      /><line
+        x1="6"
+        y1="6"
+        x2="18"
+        y2="18"
+      /></svg>
     </button>
 
     <div class="tp-immersive-text">
-      <div class="tp-preview-text" ref="tpPreviewText" :style="{ fontSize: tpFontSize + 'px' }">
+      <div
+        ref="tpPreviewText"
+        class="tp-preview-text"
+        :style="{ fontSize: tpFontSize + 'px' }"
+      >
         <span
           v-for="(word, i) in tpWords"
           :key="i"
@@ -28,77 +53,163 @@
         :class="{ active: tpHighlightColor === color }"
         :style="{ background: color }"
         @click="tpHighlightColor = color"
-      ></div>
+      />
 
-      <div class="tp-tb-divider"></div>
+      <div class="tp-tb-divider" />
 
       <span class="tp-tb-label">Size</span>
-      <button class="tp-tb-btn" @click="tpFontSize = Math.max(8, tpFontSize - 2)">-</button>
+      <button
+        class="tp-tb-btn"
+        @click="tpFontSize = Math.max(8, tpFontSize - 2)"
+      >
+        -
+      </button>
       <span class="tp-tb-val">{{ tpFontSize }}</span>
-      <button class="tp-tb-btn" @click="tpFontSize = Math.min(72, tpFontSize + 2)">+</button>
+      <button
+        class="tp-tb-btn"
+        @click="tpFontSize = Math.min(72, tpFontSize + 2)"
+      >
+        +
+      </button>
 
       <template v-if="!voiceTracking">
-        <div class="tp-tb-divider"></div>
+        <div class="tp-tb-divider" />
 
         <span class="tp-tb-label">Speed</span>
-        <input type="range" min="6" max="16" step="2" v-model.number="tpSpeed">
+        <input
+          v-model.number="tpSpeed"
+          type="range"
+          min="6"
+          max="16"
+          step="2"
+        >
         <span class="tp-tb-val">{{ tpSpeed }}</span>
       </template>
 
-      <div class="tp-tb-divider"></div>
+      <div class="tp-tb-divider" />
 
       <button
         class="tp-tb-btn"
         :class="{ active: voiceTracking }"
-        @click="toggleVoiceTracking"
         title="Voice tracking"
+        @click="toggleVoiceTracking"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        ><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /></svg>
       </button>
 
-      <div class="tp-tb-divider"></div>
+      <div class="tp-tb-divider" />
 
       <button
         class="tp-tb-btn"
         :class="{ active: prompterWindowOpen }"
-        @click="$emit('toggle-prompter')"
         title="Floating teleprompter window"
+        @click="$emit('toggle-prompter')"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        ><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line
+          x1="16"
+          y1="13"
+          x2="8"
+          y2="13"
+        /><line
+          x1="16"
+          y1="17"
+          x2="8"
+          y2="17"
+        /><polyline points="10 9 9 9 8 9" /></svg>
       </button>
 
-      <div class="tp-tb-divider"></div>
+      <div class="tp-tb-divider" />
 
-      <button class="tp-tb-edit-btn" @click="tpScriptOpen = !tpScriptOpen">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+      <button
+        class="tp-tb-edit-btn"
+        @click="tpScriptOpen = !tpScriptOpen"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        ><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
         Edit Script
       </button>
     </div>
 
     <!-- Script editor overlay -->
-    <div class="tp-script-overlay" :class="{ open: tpScriptOpen }">
+    <div
+      class="tp-script-overlay"
+      :class="{ open: tpScriptOpen }"
+    >
       <div class="tp-overlay-header">
         Edit Script
-        <button class="tp-overlay-close" @click="tpScriptOpen = false">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <button
+          class="tp-overlay-close"
+          @click="tpScriptOpen = false"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          ><line
+            x1="18"
+            y1="6"
+            x2="6"
+            y2="18"
+          /><line
+            x1="6"
+            y1="6"
+            x2="18"
+            y2="18"
+          /></svg>
         </button>
       </div>
       <div class="tp-overlay-body">
         <textarea
-          class="tp-textarea"
           v-model="tpScript"
-          @input="buildTpWords"
+          class="tp-textarea"
           placeholder="Type or paste your script..."
-        ></textarea>
+          @input="buildTpWords"
+        />
         <div class="tp-meta-row">
           <span>{{ tpWords.length }} word{{ tpWords.length !== 1 ? 's' : '' }}</span>
           <span>~{{ Math.ceil(tpWords.length / 150) }} min</span>
         </div>
-        <button class="tp-file-btn" @click="($refs.tpFileInput as HTMLInputElement).click()">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <button
+          class="tp-file-btn"
+          @click="($refs.tpFileInput as HTMLInputElement).click()"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line
+            x1="12"
+            y1="3"
+            x2="12"
+            y2="15"
+          /></svg>
           Load from file
         </button>
-        <input type="file" ref="tpFileInput" accept=".txt,.md" style="display:none" @change="loadTpFile">
+        <input
+          ref="tpFileInput"
+          type="file"
+          accept=".txt,.md"
+          style="display:none"
+          @change="loadTpFile"
+        >
       </div>
     </div>
   </div>
@@ -106,12 +217,13 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
+
 import { useTeleprompterTracking } from './composables/useTeleprompterTracking';
 
 const { ipcRenderer: ipc } = require('electron');
 
 const props = defineProps<{
-  currentLayout: string;
+  currentLayout:       string;
   prompterWindowOpen?: boolean;
 }>();
 
@@ -264,10 +376,10 @@ function onKeyDown(e: KeyboardEvent) {
     else startTpScroll();
   } else if (e.code === 'ArrowDown' || e.code === 'ArrowRight') {
     e.preventDefault();
-    if (tpCurrentIndex.value < tpWords.value.length - 1) { tpCurrentIndex.value++; renderTpState(); }
+    if (tpCurrentIndex.value < tpWords.value.length - 1) { tpCurrentIndex.value++; renderTpState() }
   } else if (e.code === 'ArrowUp' || e.code === 'ArrowLeft') {
     e.preventDefault();
-    if (tpCurrentIndex.value > 0) { tpCurrentIndex.value--; renderTpState(); }
+    if (tpCurrentIndex.value > 0) { tpCurrentIndex.value--; renderTpState() }
   }
 }
 

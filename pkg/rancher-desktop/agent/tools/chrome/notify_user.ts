@@ -1,4 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
+
 import { getChromeApi } from '@pkg/main/chromeApi';
 
 /**

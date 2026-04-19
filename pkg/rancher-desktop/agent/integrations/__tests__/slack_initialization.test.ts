@@ -1,5 +1,6 @@
 /** @jest-environment node */
 import { TextDecoder, TextEncoder } from 'node:util';
+
 import { beforeAll, afterAll, describe, expect, it } from '@jest/globals';
 
 const SLACK_ID = 'slack';

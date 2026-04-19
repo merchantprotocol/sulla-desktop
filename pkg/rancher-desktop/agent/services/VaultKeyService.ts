@@ -11,8 +11,8 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import * as path from 'path';
 import * as os from 'os';
+import * as path from 'path';
 
 const VAULT_PREFIX = '$VAULT$';
 const PBKDF2_ITERATIONS = 100_000;
@@ -33,7 +33,7 @@ export function getVaultKeyService(): VaultKeyService {
 }
 
 export class VaultKeyService {
-  private vmk: Buffer | null = null;
+  private vmk:      Buffer | null = null;
   private sullaDir: string;
 
   constructor() {
@@ -89,7 +89,7 @@ export class VaultKeyService {
     // The UI login screen is a separate gate — it doesn't depend on vault state.
     try {
       const safeStorage = this.getSafeStorage();
-      if (!safeStorage || !safeStorage.isEncryptionAvailable()) {
+      if (!safeStorage?.isEncryptionAvailable()) {
         console.log('[VaultKeyService] safeStorage unavailable — master password required');
         return false;
       }
@@ -162,7 +162,7 @@ export class VaultKeyService {
    */
   async changePassword(newPassword: string): Promise<{
     recoveryKey: string;
-    oldDecrypt: (encrypted: string) => string;
+    oldDecrypt:  (encrypted: string) => string;
   }> {
     if (!this.vmk) {
       throw new Error('[VaultKeyService] Vault must be unlocked to change password');
@@ -293,7 +293,6 @@ export class VaultKeyService {
         decipher.update(backupCiphertext),
         decipher.final(),
       ]);
-
 
       // Re-store in safeStorage
       this.storeVmkViaSafeStorage();
@@ -478,7 +477,6 @@ export class VaultKeyService {
   /** Get Electron safeStorage module, or null if unavailable */
   private getSafeStorage(): typeof import('electron').safeStorage | null {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const { safeStorage } = require('electron');
       return safeStorage;
     } catch {

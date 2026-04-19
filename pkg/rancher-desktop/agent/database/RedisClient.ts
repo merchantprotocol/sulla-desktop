@@ -10,7 +10,7 @@ export class RedisClient {
   private client: Redis;
   private connected = false;
   private connectionAttempts = 0;
-  private maxConnectionAttempts = 10;
+  private maxConnectionAttempts = 30;
   private connectionRetryDelay = 2000;
   private gaveUp = false;
   private gaveUpAt = 0;
@@ -47,7 +47,7 @@ export class RedisClient {
       maxRetriesPerRequest: 3,
       lazyConnect:          true, // Don't auto-connect on construction
       // Enable built-in readiness checking so ioredis knows when it's safe
-      enableReadyCheck: true,
+      enableReadyCheck:     true,
     });
 
     client.on('connect', () => {
@@ -268,7 +268,7 @@ export class RedisClient {
    * Wait until Redis is actually reachable from the host.
    * Called by ServiceLifecycleManager before any service that needs Redis.
    */
-  async waitForReady(maxAttempts = 30, intervalMs = 1000): Promise<void> {
+  async waitForReady(maxAttempts = 60, intervalMs = 2000): Promise<void> {
     for (let i = 1; i <= maxAttempts; i++) {
       try {
         if (this.client.status === 'end') {

@@ -13,8 +13,9 @@
 
 import { execFile } from 'child_process';
 import fs from 'fs';
-import path from 'path';
 import os from 'os';
+import path from 'path';
+
 import { log } from '../model/logger';
 import * as whisperModel from '../model/whisper';
 
@@ -24,21 +25,21 @@ export type TranscribeMode = 'conversation' | 'secretary';
 
 export interface TranscriptEvent {
   event_type: 'transcript_turn' | 'transcript_partial';
-  text: string;
-  speaker?: string;
-  channel?: number;
+  text:       string;
+  speaker?:   string;
+  channel?:   number;
 }
 
 type TranscriptCallback = (event: TranscriptEvent) => void;
 
 // ─── Configuration ──────────────────────────────────────────
 
-const SEGMENT_MS          = 2000;   // flush and transcribe every 2 seconds for responsive tracking
-const SAMPLE_RATE         = 16000;  // whisper expects 16kHz
-const BYTES_PER_SAMPLE    = 2;      // 16-bit signed LE
-const CHANNELS            = 1;      // mono
-const SILENCE_THRESHOLD   = 50;     // RMS below this is silence — skip transcription
-const MAX_BUFFER_BYTES    = SAMPLE_RATE * BYTES_PER_SAMPLE * 30; // 30s max before forced flush
+const SEGMENT_MS = 2000;   // flush and transcribe every 2 seconds for responsive tracking
+const SAMPLE_RATE = 16000;  // whisper expects 16kHz
+const BYTES_PER_SAMPLE = 2;      // 16-bit signed LE
+const CHANNELS = 1;      // mono
+const SILENCE_THRESHOLD = 50;     // RMS below this is silence — skip transcription
+const MAX_BUFFER_BYTES = SAMPLE_RATE * BYTES_PER_SAMPLE * 30; // 30s max before forced flush
 
 // ─── State ──────────────────────────────────────────────────
 
@@ -60,10 +61,10 @@ const tmpDir = path.join(os.tmpdir(), 'sulla-whisper');
 // ─── Public API ─────────────────────────────────────────────
 
 export function start(opts: {
-  mode: TranscribeMode;
+  mode:         TranscribeMode;
   onTranscript: TranscriptCallback;
-  language?: string;
-  model?: string;
+  language?:    string;
+  model?:       string;
 }): boolean {
   if (!whisperModel.isAvailable()) {
     log.error('WhisperTranscribe', 'Cannot start — whisper.cpp not installed');

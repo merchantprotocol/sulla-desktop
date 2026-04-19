@@ -11,8 +11,8 @@
  * Filters out internal loopback/mirror devices.
  */
 export async function listAudioDevices(): Promise<{
-  inputs: Array<{ deviceId: string; label: string }>;
-  outputs: Array<{ deviceId: string; label: string }>;
+  inputs:  { deviceId: string; label: string }[];
+  outputs: { deviceId: string; label: string }[];
 }> {
   // Trigger permission prompt so labels are populated
   let tempStream: MediaStream | null = null;
@@ -40,11 +40,11 @@ export async function listAudioDevices(): Promise<{
 
   const inputs = devices
     .filter(d => d.kind === 'audioinput' && d.deviceId && !isInternal(d.label))
-    .map(d => ({ deviceId: d.deviceId, label: d.label || `Input (${d.deviceId.slice(0, 8)})` }));
+    .map(d => ({ deviceId: d.deviceId, label: d.label || `Input (${ d.deviceId.slice(0, 8) })` }));
 
   const outputs = devices
     .filter(d => d.kind === 'audiooutput' && d.deviceId && !isInternal(d.label))
-    .map(d => ({ deviceId: d.deviceId, label: d.label || `Output (${d.deviceId.slice(0, 8)})` }));
+    .map(d => ({ deviceId: d.deviceId, label: d.label || `Output (${ d.deviceId.slice(0, 8) })` }));
 
   return { inputs, outputs };
 }

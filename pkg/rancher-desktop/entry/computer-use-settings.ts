@@ -10,7 +10,6 @@ import './agent-tailwind.css';
 
 import usePlugins from './plugins';
 import store from './store';
-
 import ComputerUseSettings from '../pages/ComputerUseSettings.vue';
 await initiateWindowContext();
 

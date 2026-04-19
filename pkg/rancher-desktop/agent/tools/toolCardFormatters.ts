@@ -8,13 +8,13 @@
 
 export interface ToolCardDisplay {
   /** Category label shown in header, e.g. "Bash", "GitHub", "Docker" */
-  label: string;
+  label:         string;
   /** Human-friendly one-line summary shown in collapsed view */
-  summary: string;
+  summary:       string;
   /** Optional formatted input line (like bash command) */
-  input?: string;
+  input?:        string;
   /** Optional formatted output line on completion */
-  output?: string;
+  output?:       string;
   /** Rendering hint for the output section */
   outputFormat?: 'text' | 'code' | 'url' | 'json';
 }
@@ -91,10 +91,10 @@ const formatters: Record<string, Formatter> = {
     const title = str(args.title);
     const label = title || url || str(args.assetId);
     switch (action) {
-    case 'open':     return { label: 'Browser', summary: `Opening ${ truncate(url || title, 60) }`, input: url || undefined };
+    case 'open': return { label: 'Browser', summary: `Opening ${ truncate(url || title, 60) }`, input: url || undefined };
     case 'navigate': return { label: 'Browser', summary: `Navigating to ${ truncate(url, 60) }`, input: url || undefined };
-    case 'close':    return { label: 'Browser', summary: `Closing tab${ label ? `: ${ truncate(label, 50) }` : '' }` };
-    default:         return { label: 'Browser', summary: `${ action || 'Managing' } tab${ label ? `: ${ truncate(label, 50) }` : '' }` };
+    case 'close': return { label: 'Browser', summary: `Closing tab${ label ? `: ${ truncate(label, 50) }` : '' }` };
+    default: return { label: 'Browser', summary: `${ action || 'Managing' } tab${ label ? `: ${ truncate(label, 50) }` : '' }` };
     }
   },
 
@@ -124,7 +124,7 @@ const formatters: Record<string, Formatter> = {
   },
 
   // ── Git ──────────────────────────────────────────────────────────────────
-  git_status()   { return { label: 'Git', summary: 'Checking status' }; },
+  git_status() { return { label: 'Git', summary: 'Checking status' } },
   git_commit(args) {
     return { label: 'Git', summary: `Committing: ${ truncate(str(args.message), 60) }` };
   },
@@ -168,7 +168,7 @@ const formatters: Record<string, Formatter> = {
   git_blame(args) {
     return { label: 'Git', summary: `Blaming lines ${ args.startLine ?? '?' }–${ args.endLine ?? '?' }` };
   },
-  git_conflicts() { return { label: 'Git', summary: 'Listing merge conflicts' }; },
+  git_conflicts() { return { label: 'Git', summary: 'Listing merge conflicts' } },
 
   // ── GitHub ───────────────────────────────────────────────────────────────
   github_create_pr(args) {
@@ -209,7 +209,7 @@ const formatters: Record<string, Formatter> = {
   github_add_remote(args) {
     return { label: 'Git', summary: `Adding remote ${ str(args.remoteName) }` };
   },
-  github_init() { return { label: 'Git', summary: 'Initializing repository' }; },
+  github_init() { return { label: 'Git', summary: 'Initializing repository' } },
 
   // ── Docker ───────────────────────────────────────────────────────────────
   docker_build(args) {
@@ -292,21 +292,21 @@ const formatters: Record<string, Formatter> = {
   },
 
   // ── Redis ────────────────────────────────────────────────────────────────
-  redis_get(args)     { return { label: 'Redis', summary: `Getting ${ str(args.key) }` }; },
-  redis_set(args)     { return { label: 'Redis', summary: `Setting ${ str(args.key) }` }; },
+  redis_get(args) { return { label: 'Redis', summary: `Getting ${ str(args.key) }` } },
+  redis_set(args) { return { label: 'Redis', summary: `Setting ${ str(args.key) }` } },
   redis_del(args) {
     const keys = Array.isArray(args.keys) ? args.keys : [];
     return { label: 'Redis', summary: `Deleting ${ keys.length } key${ keys.length === 1 ? '' : 's' }` };
   },
-  redis_hget(args)    { return { label: 'Redis', summary: `Getting ${ str(args.key) }.${ str(args.field) }` }; },
-  redis_hgetall(args) { return { label: 'Redis', summary: `Getting all fields of ${ str(args.key) }` }; },
-  redis_hset(args)    { return { label: 'Redis', summary: `Setting ${ str(args.key) }.${ str(args.field) }` }; },
-  redis_incr(args)    { return { label: 'Redis', summary: `Incrementing ${ str(args.key) }` }; },
-  redis_decr(args)    { return { label: 'Redis', summary: `Decrementing ${ str(args.key) }` }; },
-  redis_lpop(args)    { return { label: 'Redis', summary: `Popping from ${ str(args.key) }` }; },
-  redis_rpush(args)   { return { label: 'Redis', summary: `Appending to ${ str(args.key) }` }; },
-  redis_expire(args)  { return { label: 'Redis', summary: `Setting TTL on ${ str(args.key) }` }; },
-  redis_ttl(args)     { return { label: 'Redis', summary: `Checking TTL of ${ str(args.key) }` }; },
+  redis_hget(args) { return { label: 'Redis', summary: `Getting ${ str(args.key) }.${ str(args.field) }` } },
+  redis_hgetall(args) { return { label: 'Redis', summary: `Getting all fields of ${ str(args.key) }` } },
+  redis_hset(args) { return { label: 'Redis', summary: `Setting ${ str(args.key) }.${ str(args.field) }` } },
+  redis_incr(args) { return { label: 'Redis', summary: `Incrementing ${ str(args.key) }` } },
+  redis_decr(args) { return { label: 'Redis', summary: `Decrementing ${ str(args.key) }` } },
+  redis_lpop(args) { return { label: 'Redis', summary: `Popping from ${ str(args.key) }` } },
+  redis_rpush(args) { return { label: 'Redis', summary: `Appending to ${ str(args.key) }` } },
+  redis_expire(args) { return { label: 'Redis', summary: `Setting TTL on ${ str(args.key) }` } },
+  redis_ttl(args) { return { label: 'Redis', summary: `Checking TTL of ${ str(args.key) }` } },
 
   // ── Calendar ─────────────────────────────────────────────────────────────
   calendar_create(args) {
@@ -507,16 +507,16 @@ function execFormatter(args: Args, result?: unknown): Partial<ToolCardDisplay> {
 // ── Prefix-based fallback labels ───────────────────────────────────────────
 
 const PREFIX_LABELS: [string, string][] = [
-  ['fs_',      'Files'],
-  ['git',      'Git'],
-  ['github_',  'GitHub'],
-  ['docker_',  'Docker'],
+  ['fs_', 'Files'],
+  ['git', 'Git'],
+  ['github_', 'GitHub'],
+  ['docker_', 'Docker'],
   ['kubectl_', 'Kubernetes'],
-  ['pg_',      'Database'],
-  ['redis_',   'Redis'],
-  ['slack_',   'Slack'],
-  ['n8n_',     'Workflow'],
-  ['lima_',    'Lima'],
+  ['pg_', 'Database'],
+  ['redis_', 'Redis'],
+  ['slack_', 'Slack'],
+  ['n8n_', 'Workflow'],
+  ['lima_', 'Lima'],
   ['calendar_', 'Calendar'],
 ];
 
@@ -553,7 +553,7 @@ export function formatToolCard(
   // Generic fallback — humanize the tool name
   const humanName = toolName.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   return {
-    label:  fallbackLabel(toolName),
+    label:   fallbackLabel(toolName),
     summary: humanName,
   };
 }

@@ -988,9 +988,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 
 const { ipcRenderer } = window.require('electron');
 

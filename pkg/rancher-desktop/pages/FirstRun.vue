@@ -106,19 +106,18 @@
 
 <script setup lang="ts">
 import { ref, provide, computed } from 'vue';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { defaultSettings, Settings } from '@pkg/config/settings';
-import { useTheme } from '@pkg/composables/useTheme';
 
-import FirstRunResources from './FirstRunResources.vue';
-import FirstRunWelcome from './FirstRunWelcome.vue';
 import FirstRunRemoteModel from './FirstRunRemoteModel.vue';
+import FirstRunResources from './FirstRunResources.vue';
 import FirstRunWaiting from './FirstRunWaiting.vue';
-import { RecursivePartial } from '@pkg/utils/typeUtils';
-
+import FirstRunWelcome from './FirstRunWelcome.vue';
+import SimpleHeader from './agent/SimpleHeader.vue';
 import { StartupProgressController } from './agent/StartupProgressController';
 
-import SimpleHeader from './agent/SimpleHeader.vue';
+import { useTheme } from '@pkg/composables/useTheme';
+import { defaultSettings, Settings } from '@pkg/config/settings';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 const { isDark, toggleTheme } = useTheme();
 

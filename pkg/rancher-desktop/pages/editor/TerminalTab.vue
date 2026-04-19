@@ -10,6 +10,7 @@
 
 <script lang="ts">
 import { defineComponent } from 'vue';
+
 import XTermTerminal from './XTermTerminal.vue';
 
 export default defineComponent({

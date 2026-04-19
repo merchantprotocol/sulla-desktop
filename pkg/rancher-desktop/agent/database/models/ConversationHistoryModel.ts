@@ -235,7 +235,7 @@ export class ConversationHistoryModel {
   /**
    * Get recent conversations ordered by last_active_at, optionally filtered by type.
    */
-  static async getRecent(limit: number = 50, type?: ConversationHistoryType): Promise<ConversationHistoryRecord[]> {
+  static async getRecent(limit = 50, type?: ConversationHistoryType): Promise<ConversationHistoryRecord[]> {
     try {
       if (type) {
         return await postgresClient.query<ConversationHistoryRecord>(`

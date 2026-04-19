@@ -10,9 +10,10 @@
  * Active only in intake mode.
  */
 
-import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
-import type { Extractor, StreamContext } from './Extractor';
 import { INTAKE_MODE_PROMPT } from '../prompts/voiceModes';
+
+import type { Extractor, StreamContext } from './Extractor';
+import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
 // ─── Extractor ──────────────────────────────────────────────────
 

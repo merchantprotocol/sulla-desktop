@@ -266,9 +266,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
+import { computed, ref, watch, nextTick } from 'vue';
+
 import { getNodeDefinition } from './nodeRegistry';
+
 import type { WorkflowNodeData, NodeThinkingMessage } from './types';
 
 const props = defineProps<{

@@ -1,5 +1,4 @@
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type LLMServiceConfig } from './BaseLanguageModel';
-import { getOllamaService } from './OllamaService';
 import { getIntegrationService } from '../services/IntegrationService';
 
 /**
@@ -118,23 +117,7 @@ export class GoogleService extends BaseLanguageModel {
       }
     }
 
-    // Fallback to local LLM (llama.cpp) — only if user hasn't disabled it
-    const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-    const modelMode = await SullaSettingsModel.get('modelMode', 'local');
-    if (modelMode !== 'remote') {
-      const local = await getOllamaService();
-      await local.initialize();
-      if (local.isAvailable()) {
-        console.log(`[GoogleService] Falling back to local LLM (${ local.getModel() })`);
-        return local.chat(messages, { ...(options ?? {}), model: local.getModel() });
-      } else {
-        console.log(`[GoogleService] Local LLM fallback skipped — not available`);
-      }
-    } else {
-      console.log(`[GoogleService] Local LLM fallback skipped — disabled by user`);
-    }
-
-    throw lastError ?? new Error(`All retries failed for ${ this.model } and local LLM unavailable`);
+    throw lastError ?? new Error(`All retries failed for ${ this.model }`);
   }
 
   /**

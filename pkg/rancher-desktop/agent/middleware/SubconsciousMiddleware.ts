@@ -13,10 +13,11 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
-import type { BaseThreadState } from '../nodes/Graph';
-import { GraphRegistry } from '../services/GraphRegistry';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { GraphRegistry } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
+
+import type { BaseThreadState } from '../nodes/Graph';
 
 // ============================================================================
 // CONFIGURATION
@@ -33,7 +34,7 @@ export interface SubconsciousMiddlewareOptions {
   /** Whether observations should be managed (false for planning agents) */
   includeObservations: boolean;
   /** Optional recall variant — changes the recall prompt/tools for specific agents */
-  recallVariant?: 'default' | 'heartbeat';
+  recallVariant?:      'default' | 'heartbeat';
 }
 
 /**
@@ -58,7 +59,7 @@ export async function runSubconsciousMiddleware(
   // 2. Memory Recall — always (awaited: writes to state.metadata.recallContext)
   launched.push('memory-recall');
   const recallPromise = runMemoryRecall(state, options.recallVariant);
-  awaitedTasks.push(recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx; }));
+  awaitedTasks.push(recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx }));
 
   // 3. Observation Agent — fire-and-forget: it only does side-effect tool
   //    calls (add/remove observational memory, update identity files) and
@@ -80,7 +81,7 @@ export async function runSubconsciousMiddleware(
 
   if (failures.length > 0) {
     for (const f of failures) {
-      console.error('[SubconsciousMiddleware] Agent failed:', (f as PromiseRejectedResult).reason?.message || (f as PromiseRejectedResult).reason);
+      console.error('[SubconsciousMiddleware] Agent failed:', (f).reason?.message || (f).reason);
     }
   }
 
@@ -178,7 +179,7 @@ async function runObservationAgent(state: BaseThreadState): Promise<void> {
     const rawObservations = await SullaSettingsModel.get('observationalMemory', '[]');
     let memoryObj: any[];
     try {
-      memoryObj = parseJson(rawObservations) as any[];
+      memoryObj = parseJson(rawObservations)!;
       if (!Array.isArray(memoryObj)) memoryObj = [];
     } catch {
       memoryObj = [];
@@ -211,4 +212,3 @@ async function runObservationAgent(state: BaseThreadState): Promise<void> {
 // ============================================================================
 // HELPERS
 // ============================================================================
-

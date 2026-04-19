@@ -8,13 +8,9 @@ import Electron, { MessageBoxOptions } from 'electron';
 import _ from 'lodash';
 import semver from 'semver';
 
-import * as audioDriver from '@pkg/main/audio-driver/init';
-import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
-import { registerMoreMenuIpc } from '@pkg/main/moreMenuWindow';
-import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
-import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
-import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
+import { SullaSettingsModel } from './pkg/rancher-desktop/agent/database/models/SullaSettingsModel';
 
+import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { State } from '@pkg/backend/backend';
 import BackendHelper from '@pkg/backend/backendHelper';
 import K8sFactory from '@pkg/backend/factory';
@@ -23,6 +19,13 @@ import { ImageProcessor } from '@pkg/backend/images/imageProcessor';
 import * as K8s from '@pkg/backend/k8s';
 import { Steve } from '@pkg/backend/steve';
 import { FatalCommandLineOptionError, LockedFieldError, updateFromCommandLine } from '@pkg/config/commandLineOptions';
+import * as audioDriver from '@pkg/main/audio-driver/init';
+import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
+import { registerMoreMenuIpc } from '@pkg/main/moreMenuWindow';
+import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
+import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
+import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
+
 import { Help } from '@pkg/config/help';
 import * as settings from '@pkg/config/settings';
 import * as settingsImpl from '@pkg/config/settingsImpl';
@@ -50,7 +53,6 @@ import { submitErrorReport } from '@pkg/main/errorReporter';
 import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
 import { initChromeApiIpc } from '@pkg/main/chromeApi';
-import { SullaWebRequestFixer, SullaWebRequestLogEvent } from '@pkg/SullaWebRequestFixer';
 import { spawnFile } from '@pkg/utils/childProcess';
 import getCommandLineArgs from '@pkg/utils/commandLine';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
@@ -68,9 +70,7 @@ import getWSLVersion from '@pkg/utils/wslVersion';
 import * as window from '@pkg/window';
 import { closeDashboard, openDashboard } from '@pkg/window/dashboard';
 import { openPreferences, preferencesSetDirtyFlag } from '@pkg/window/preferences';
-
 import { FirstRunCoordinator } from '@pkg/main/FirstRunCoordinator';
-import { SullaSettingsModel } from './pkg/rancher-desktop/agent/database/models/SullaSettingsModel';
 
 // https://www.electronjs.org/docs/latest/breaking-changes#changed-gtk-4-is-default-when-running-gnome
 if (process.platform === 'linux') {
@@ -1217,8 +1217,8 @@ function writeSettings(arg: RecursivePartial<RecursiveReadonly<settings.Settings
 ipcMainProxy.handle('capture-studio:get-sources', async() => {
   try {
     const sources = await Electron.desktopCapturer.getSources({
-      types:          ['screen', 'window'],
-      thumbnailSize:  { width: 320, height: 180 },
+      types:            ['screen', 'window'],
+      thumbnailSize:    { width: 320, height: 180 },
       fetchWindowIcons: false,
     });
     return sources.map(s => ({

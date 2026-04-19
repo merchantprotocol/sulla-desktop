@@ -44,12 +44,14 @@
 </template>
 
 <script setup lang="ts">
-import AgentHeader from './agent/AgentHeader.vue';
 import { onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+
+import AgentHeader from './agent/AgentHeader.vue';
+
 import { getExtensionService, LocalExtensionMetadata } from '@pkg/agent';
-import { hexEncode } from '@pkg/utils/string-encode';
 import { useTheme } from '@pkg/composables/useTheme';
+import { hexEncode } from '@pkg/utils/string-encode';
 
 const { isDark, toggleTheme } = useTheme();
 const route = useRoute();

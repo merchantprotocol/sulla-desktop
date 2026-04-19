@@ -10,6 +10,7 @@
  */
 
 import path from 'path';
+
 import { BrowserWindow, ipcMain, screen, app } from 'electron';
 
 import Logging from '@pkg/utils/logging';
@@ -53,18 +54,18 @@ export function showHeartbeatNotification(title: string, message: string): void 
   const { width: screenW } = display.workAreaSize;
 
   win = new BrowserWindow({
-    width:       COLLAPSED_WIDTH,
-    height:      COLLAPSED_HEIGHT,
-    x:           workX + screenW - COLLAPSED_WIDTH - MARGIN,
-    y:           workY + MARGIN,
-    show:        false,
-    frame:       false,
-    transparent: true,
-    resizable:   false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    hasShadow:   true,
-    focusable:   true,
+    width:          COLLAPSED_WIDTH,
+    height:         COLLAPSED_HEIGHT,
+    x:              workX + screenW - COLLAPSED_WIDTH - MARGIN,
+    y:              workY + MARGIN,
+    show:           false,
+    frame:          false,
+    transparent:    true,
+    resizable:      false,
+    alwaysOnTop:    true,
+    skipTaskbar:    true,
+    hasShadow:      true,
+    focusable:      true,
     webPreferences: {
       contextIsolation: false,
       nodeIntegration:  true,

@@ -43,7 +43,7 @@ export type VoiceComponent = 'REC' | 'VAD' | 'STT' | 'PIPE' | 'TTS' | 'TIMING';
 // ─── Context ────────────────────────────────────────────────────
 
 let _threadId = '';
-let _channel  = 'sulla-desktop';
+let _channel = 'sulla-desktop';
 
 /**
  * Set the active thread context for voice logging.
@@ -52,7 +52,7 @@ let _channel  = 'sulla-desktop';
  */
 export function setVoiceLogContext(threadId: string, channel = 'sulla-desktop'): void {
   _threadId = threadId;
-  _channel  = channel;
+  _channel = channel;
 }
 
 // ─── Core Logger ────────────────────────────────────────────────

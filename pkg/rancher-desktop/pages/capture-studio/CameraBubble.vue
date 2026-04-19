@@ -1,13 +1,13 @@
 <template>
   <div
-    class="cam-container"
-    ref="camContainer"
     v-show="currentLayout === 'pip' && pipSource"
+    ref="camContainer"
+    class="cam-container"
     @mousedown="startDrag"
   >
     <div
       class="cam-bubble"
-      :class="{ recording: recording, hidden: cameraShape === 'hidden' }"
+      :class="{ recording, hidden: cameraShape === 'hidden' }"
       :style="{ borderRadius: bubbleRadius }"
       @dblclick="$emit('swap')"
       @contextmenu.prevent="$emit('show-camera-menu', $event)"
@@ -18,8 +18,18 @@
         muted
         playsinline
         :style="{ width: '100%', height: '100%', objectFit: 'cover', display: cameraStream ? 'block' : 'none' }"
-      ></video>
-      <svg v-if="!cameraStream" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      />
+      <svg
+        v-if="!cameraStream"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+      ><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle
+        cx="12"
+        cy="7"
+        r="4"
+      /></svg>
     </div>
     <div class="shape-picker">
       <button
@@ -29,7 +39,13 @@
         :class="{ active: cameraShape === shape.id }"
         @click.stop="$emit('update:cameraShape', shape.id)"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="shape.icon"></svg>
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          v-html="shape.icon"
+        />
       </button>
     </div>
   </div>
@@ -39,11 +55,11 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
 const props = defineProps<{
-  cameraStream: MediaStream | null;
-  recording: boolean;
-  cameraShape: string;
+  cameraStream:  MediaStream | null;
+  recording:     boolean;
+  cameraShape:   string;
   currentLayout: string;
-  pipSource: any;
+  pipSource:     any;
 }>();
 
 defineEmits<{
@@ -73,7 +89,7 @@ watch(() => props.cameraStream, (stream) => {
   console.log('[CameraBubble] cameraStream watcher fired:', stream ? 'stream' : 'null');
   nextTick(() => {
     const el = camVideoEl.value;
-    if (!el) { console.log('[CameraBubble] video el is null'); return; }
+    if (!el) { console.log('[CameraBubble] video el is null'); return }
     try {
       el.srcObject = stream || null;
       console.log('[CameraBubble] srcObject set');

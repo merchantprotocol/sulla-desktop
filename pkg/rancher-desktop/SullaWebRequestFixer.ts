@@ -1,5 +1,6 @@
-import { Session } from 'electron';
 import { EventEmitter } from 'events';
+
+import { Session } from 'electron';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
@@ -8,12 +9,12 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 // ---------------------------------------------------------------------------
 
 export interface WebRequestEventMap {
-  'beforeRequest':      [details: any];
-  'beforeSendHeaders':  [details: any];
-  'headersReceived':    [details: any];
-  'sendHeaders':        [details: any];
-  'completed':          [details: any];
-  'errorOccurred':      [details: any];
+  beforeRequest:     [details: any];
+  beforeSendHeaders: [details: any];
+  headersReceived:   [details: any];
+  sendHeaders:       [details: any];
+  completed:         [details: any];
+  errorOccurred:     [details: any];
 }
 
 export interface SullaWebRequestLogEvent {

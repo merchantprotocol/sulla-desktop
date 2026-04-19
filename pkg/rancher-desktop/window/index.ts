@@ -11,7 +11,6 @@ import { IpcRendererEvents } from '@pkg/typings/electron-ipc';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { CommandOrControl, Shortcuts } from '@pkg/utils/shortcuts';
-
 import { openPreferences } from '@pkg/window/preferences';
 
 const console = Logging[`window_${ process.type || 'unknown' }`];
@@ -137,13 +136,13 @@ export function openMain() {
     'main-agent',
     mainUrl,
     {
-      title:          'Sulla Agent',
-      x:              0,
-      y:              0,
-      width:          defaultWidth,
-      height:         defaultHeight,
-      resizable:      true,
-      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      title:           'Sulla Agent',
+      x:               0,
+      y:               0,
+      width:           defaultWidth,
+      height:          defaultHeight,
+      resizable:       true,
+      icon:            path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
       backgroundColor: '#0d1117',
       // macOS: hide native title bar, keep traffic lights overlaid on content
       ...(os.platform() === 'darwin'
@@ -540,13 +539,13 @@ export function openCaptureStudio() {
     'capture-studio',
     captureStudioUrl,
     {
-      title:          'Sulla Desktop - Capture Studio',
-      x:              0,
-      y:              0,
-      width:          defaultWidth,
-      height:         defaultHeight,
-      resizable:      true,
-      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      title:           'Sulla Desktop - Capture Studio',
+      x:               0,
+      y:               0,
+      width:           defaultWidth,
+      height:          defaultHeight,
+      resizable:       true,
+      icon:            path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
       backgroundColor: '#0d1117',
       // macOS: hide native title bar, keep traffic lights overlaid on content
       ...(os.platform() === 'darwin'

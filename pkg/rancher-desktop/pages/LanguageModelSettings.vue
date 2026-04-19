@@ -1,101 +1,27 @@
 <script lang="ts">
+
+import { IpcRendererEvent } from 'electron';
 import { defineComponent } from 'vue';
 
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { IpcRendererEvent } from 'electron';
-
 // Import soul prompt from TypeScript file
-import { soulPrompt } from '../agent/prompts/soul';
-import { heartbeatPrompt } from '../agent/prompts/heartbeat';
 import { SullaSettingsModel } from '../agent/database/models/SullaSettingsModel';
-import { REMOTE_PROVIDERS } from '../shared/remoteProviders';
 import { getSupportedProviders, fetchModelsForProvider, clearModelCache } from '../agent/languagemodels';
-import { LOCAL_MODELS } from '../shared/localModels';
-import type { LocalModelOption } from '../shared/localModels';
+import { heartbeatPrompt } from '../agent/prompts/heartbeat';
+import { soulPrompt } from '../agent/prompts/soul';
 import { useTheme } from '../composables/useTheme';
+import { REMOTE_PROVIDERS } from '../shared/remoteProviders';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 // Nav items for the Language Model Settings sidebar
 const navItems = [
   { id: 'overview', name: 'Overview' },
+  { id: 'profile', name: 'Profile' },
   { id: 'models', name: 'Models' },
-  { id: 'local-models', name: 'Local Models' },
+  { id: 'claude-code', name: 'Claude Code' },
   { id: 'soul', name: 'Soul' },
   { id: 'heartbeat', name: 'Heartbeat' },
 ];
-
-// llama.cpp models sorted by resource requirements (smallest to largest)
-const OLLAMA_MODELS = [
-  {
-    name: 'qwen2:0.5b', displayName: 'Qwen2 0.5B', size: '377MB', minMemoryGB: 1, minCPUs: 1, description: 'Alibaba\'s compact Qwen2 model, very lightweight',
-  },
-  {
-    name: 'qwen3:0.6b', displayName: 'Qwen3 ASR 0.6B', size: '400MB', minMemoryGB: 1, minCPUs: 1, description: 'Alibaba\'s Qwen3 ASR model, optimized for speech recognition tasks',
-  },
-  {
-    name: 'qwen2:1.5b', displayName: 'Qwen2 1.5B', size: '934MB', minMemoryGB: 2, minCPUs: 2, description: 'Alibaba\'s Qwen2 model, efficient for basic tasks',
-  },
-  {
-    name: 'phi3:mini', displayName: 'Phi-3 Mini', size: '2.2GB', minMemoryGB: 4, minCPUs: 2, description: 'Microsoft\'s efficient 3.8B model, great reasoning capabilities',
-  },
-  {
-    name: 'gemma:2b', displayName: 'Gemma 2B', size: '1.7GB', minMemoryGB: 4, minCPUs: 2, description: 'Google\'s lightweight model, good general performance',
-  },
-  {
-    name: 'llama3.2:1b', displayName: 'Llama 3.2 1B', size: '1.3GB', minMemoryGB: 4, minCPUs: 2, description: 'Meta\'s smallest Llama 3.2, efficient and capable',
-  },
-  {
-    name: 'llama3.2:3b', displayName: 'Llama 3.2 3B', size: '2.0GB', minMemoryGB: 4, minCPUs: 2, description: 'Meta\'s compact Llama 3.2, balanced performance',
-  },
-  {
-    name: 'mistral:7b', displayName: 'Mistral 7B', size: '4.1GB', minMemoryGB: 5, minCPUs: 2, description: 'Excellent 7B model, strong coding and reasoning',
-  },
-  {
-    name: 'qwen2:7b', displayName: 'Qwen2 7B', size: '4.4GB', minMemoryGB: 5, minCPUs: 2, description: 'Alibaba\'s Qwen2 7B model, strong performance',
-  },
-  {
-    name: 'llama3.1:8b', displayName: 'Llama 3.1 8B', size: '4.7GB', minMemoryGB: 6, minCPUs: 2, description: 'Meta\'s latest 8B model, excellent all-around performance',
-  },
-  {
-    name: 'huihui_ai/foundation-sec-8b-abliterated', displayName: 'Foundation-Sec 8B Abliterated', size: '5.0GB', minMemoryGB: 8, minCPUs: 2, description: 'Cisco\'s security-focused 8B — purpose-built for pentesting and vuln analysis, no refusals',
-  },
-  {
-    name: 'huihui_ai/qwen3-abliterated:8b', displayName: 'Qwen3 8B Abliterated', size: '5.0GB', minMemoryGB: 8, minCPUs: 2, description: 'Qwen3 8B abliterated — strong at code and reasoning, no refusals',
-  },
-  {
-    name: 'dolphin3', displayName: 'Dolphin 3.0 8B', size: '4.9GB', minMemoryGB: 8, minCPUs: 2, description: 'Eric Hartford\'s Dolphin 3.0 — uncensored Llama 3.1 8B, the OG unrestricted model',
-  },
-  {
-    name: 'gemma:7b', displayName: 'Gemma 7B', size: '5.0GB', minMemoryGB: 6, minCPUs: 2, description: 'Google\'s larger model, improved capabilities',
-  },
-  {
-    name: 'gemma4:e2b', displayName: 'Gemma 4 E2B', size: '3.1GB', minMemoryGB: 4, minCPUs: 2, description: 'Google\'s Gemma 4 E2B — multimodal (text+image+audio), ultralight',
-  },
-  {
-    name: 'gemma4', displayName: 'Gemma 4 E4B', size: '9.6GB', minMemoryGB: 12, minCPUs: 2, description: 'Google\'s Gemma 4 E4B — multimodal (text+image+audio), recommended default',
-  },
-  {
-    name: 'codellama:7b', displayName: 'Code Llama 7B', size: '3.8GB', minMemoryGB: 5, minCPUs: 2, description: 'Specialized for code generation and understanding',
-  },
-  {
-    name: 'llama3.1:70b', displayName: 'Llama 3.1 70B', size: '40GB', minMemoryGB: 48, minCPUs: 8, description: 'Meta\'s flagship model, state-of-the-art performance',
-  },
-  {
-    name: 'mixtral:8x7b', displayName: 'Mixtral 8x7B', size: '26GB', minMemoryGB: 32, minCPUs: 8, description: 'Mixture of experts, excellent quality and speed',
-  },
-  {
-    name: 'deepseek-coder:33b', displayName: 'DeepSeek Coder 33B', size: '19GB', minMemoryGB: 24, minCPUs: 6, description: 'Advanced coding model, excellent for development',
-  },
-  {
-    name: 'gemma4:26b', displayName: 'Gemma 4 26B-A4B', size: '18GB', minMemoryGB: 22, minCPUs: 4, description: 'Google\'s Gemma 4 MoE — only 3.8B params active, runs like a 4B at frontier quality',
-  },
-];
-
-interface InstalledModel {
-  name:        string;
-  size:        number;
-  modified_at: string;
-  digest:      string;
-}
 
 export default defineComponent({
   name: 'language-model-settings',
@@ -109,29 +35,15 @@ export default defineComponent({
 
   data() {
     return {
-      currentNav:       'overview' as string,
+      currentNav:            'overview' as string,
       navItems,
-      // Overview dashboard metrics
-      containerStats: {
-        cpuPercent:    0,
-        memoryUsage:   0,
-        memoryLimit:   0,
-        memoryPercent: 0,
-        status:        'unknown' as string,
-      },
-      statsInterval:         null as ReturnType<typeof setInterval> | null,
-      loadingStats:          false,
-      // Which tab is being viewed (local or remote)
-      viewingTab:            'local' as 'local' | 'remote',
+      // Which tab is being viewed
+      viewingTab:            'remote' as string,
       // Which mode is currently active (saved in settings)
-      activeMode:            'local' as 'local' | 'remote',
-      // Local model settings
-      activeModel:           'qwen2:0.5b', // The currently saved/active local model
-      pendingModel:          'qwen2:0.5b', // The model selected in dropdown
-      installedModels:       [] as InstalledModel[],
-      loadingModels:         false,
-      downloadingModel:      null as string | null,
-      downloadProgress:      0,
+      activeMode:            'remote' as string,
+      // Active model
+      activeModel:           '' as string,
+      pendingModel:          '' as string,
       // Remote model settings
       remoteProviders:       REMOTE_PROVIDERS,
       selectedProvider:      'grok',
@@ -144,12 +56,6 @@ export default defineComponent({
       modelLoadError:        '' as string,
       remoteRetryCount:      3, // Number of retries before falling back to local LLM
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
-      // Local llama.cpp settings
-      localTimeoutSeconds:   600, // Local llama.cpp timeout limit in seconds
-      localRetryCount:       2, // Number of retries for local llama.cpp
-      // Model status tracking
-      modelStatuses:         {} as Record<string, 'installed' | 'missing' | 'failed'>,
-      checkingModelStatuses: false,
       // Heartbeat settings
       heartbeatEnabled:      true,
       heartbeatDelayMinutes: 15,
@@ -166,36 +72,47 @@ export default defineComponent({
       heartbeatPromptDefault: heartbeatPrompt,
 
       // Primary / Secondary provider selection
-      primaryProvider:      'ollama' as string,
-      secondaryProvider:    'ollama' as string,
-      availableProviders:   [{ id: 'ollama', name: 'llama.cpp (Local)' }] as { id: string; name: string }[],
+      primaryProvider:      'grok' as string,
+      secondaryProvider:    'grok' as string,
+      availableProviders:   [] as { id: string; name: string }[],
 
       // Activation state
-      activating:           false,
-      activationError:      '' as string,
-      savingSettings:       false,
-      // Local llama-server state
-      localServerRunning:   false,
-      localServerEnabled:   true,
-      togglingLocalServer:  false,
-
+      activating:             false,
+      activationError:        '' as string,
+      savingSettings:         false,
       // Guard flag to prevent feedback loop between primaryProvider watcher and IPC handler
       _suppressProviderWatch: false,
 
-      // Local Models tab
-      localModels:              LOCAL_MODELS,
-      localModelDownloadStatus: {} as Record<string, boolean>,
-      localModelSelected:       '' as string,
-      localModelDownloading:      null as string | null,
-      localModelDownloadProgress: 0,
-      localModelError:            '' as string,
-      localContextSize:           0 as number,
-      loadingLocalModels:         false,
-      activatedLocalModel:        '' as string,
-      systemTotalMemoryGB:        0,
-      systemAvailableMemoryGB:    0,
-      systemAvailableDiskGB:      0,
+      // Claude Code auth
+      claudeAuthMode:      'none' as 'none' | 'api-key' | 'oauth',
+      claudeApiKey:        '',
+      claudeOAuthToken:    '',
+      claudeApiKeyVisible: false,
+      claudeSaving:        false,
+      claudeOAuthRunning:  false,
+      claudeOAuthStatus:   'Starting...',
+      claudeOAuthError:    '',
+      claudeOAuthUrl:      '',
+      claudeOAuthCode:     '',
 
+      // Mobile pairing (status mirror)
+      pairedMobileUserId:  '',
+      relayConnected:      false,
+      relayError:          '',
+      relaySaving:         false,
+
+      // Sulla Cloud auth
+      cloudStatus:    { signedIn: false, userId: '', phone: '' } as { signedIn: boolean; userId: string; phone: string; lastError?: string },
+      cloudMethod:    'email' as 'email' | 'phone' | 'apple',
+      cloudStep:      'phone' as 'phone' | 'verify',
+      cloudPhone:     '',
+      cloudCode:      '',
+      cloudEmail:     '',
+      cloudPassword:  '',
+      cloudName:      '',
+      emailMode:      'login' as 'login' | 'register',
+      cloudBusy:      false,
+      cloudError:     '',
     };
   },
 
@@ -221,29 +138,6 @@ export default defineComponent({
         this.heartbeatPrompt = String(val || '');
       },
     },
-    availableModels(): { name: string; displayName: string; size: string; description: string }[] {
-      return OLLAMA_MODELS;
-    },
-    pendingModelDescription(): string {
-      const model = OLLAMA_MODELS.find(m => m.name === this.pendingModel);
-      const desc = model?.description || '';
-      console.log('computed pendingModelDescription:', desc, 'pendingModel:', this.pendingModel);
-      return desc;
-    },
-    isPendingModelInstalled(): boolean {
-      const installed = this.installedModels.some(m => m.name === this.pendingModel);
-      console.log('computed isPendingModelInstalled:', installed, 'pendingModel:', this.pendingModel, 'installedModels:', this.installedModels.map(m => m.name));
-      return installed;
-    },
-    isPendingDifferentFromActive(): boolean {
-      return this.pendingModel !== this.activeModel;
-    },
-    formattedInstalledModels(): (InstalledModel & { formattedSize: string })[] {
-      return this.installedModels.map(model => ({
-        ...model,
-        formattedSize: this.formatBytes(model.size),
-      }));
-    },
     currentProvider(): typeof REMOTE_PROVIDERS[0] | undefined {
       return this.remoteProviders.find(p => p.id === this.selectedProvider);
     },
@@ -256,24 +150,6 @@ export default defineComponent({
 
       return model?.description || '';
     },
-    formattedMemoryUsage(): string {
-      return this.formatBytes(this.containerStats.memoryUsage);
-    },
-    formattedMemoryLimit(): string {
-      return this.formatBytes(this.containerStats.memoryLimit);
-    },
-    // Key model status getters
-    embeddingModelStatus(): 'installed' | 'missing' | 'failed' {
-      return this.modelStatuses['nomic-embed-text'] || 'missing';
-    },
-    defaultModelStatus(): 'installed' | 'missing' | 'failed' {
-      const status = this.modelStatuses[this.activeModel] || 'missing';
-      console.log('computed defaultModelStatus:', status, 'activeModel:', this.activeModel, 'modelStatuses:', this.modelStatuses);
-      return status;
-    },
-    hasDownloadedModels(): boolean {
-      return this.installedModels.length > 0;
-    },
   },
 
   async mounted() {
@@ -284,7 +160,17 @@ export default defineComponent({
       this.activationError = `Failed to save settings: ${ error?.message || 'Unknown error' }`;
     });
 
-    this.activeMode = await SullaSettingsModel.get('activeMode', 'local');
+    this.activeMode = await SullaSettingsModel.get('activeMode', 'remote');
+
+    // Load Claude Code credentials
+    await this.loadClaudeCredentials();
+
+    // Load desktop relay status and subscribe to changes
+    await this.loadDesktopRelayStatus();
+    ipcRenderer.on('desktop-relay:status-changed', this.handleRelayStatusChanged);
+
+    // Load Sulla Cloud auth status
+    await this.loadCloudStatus();
 
     // Listen for state changes from ModelProviderService (source of truth)
     ipcRenderer.on('model-provider:state-changed', this.handleProviderStateChanged);
@@ -311,31 +197,20 @@ export default defineComponent({
       this.pendingModel = mpsState.activeModelId;
 
       // Load the provider-specific config (API key, selected model, etc.)
-      if (mpsState.primaryProvider !== 'ollama') {
-        const config = await ipcRenderer.invoke('model-provider:get-provider-config', mpsState.primaryProvider);
-        this.selectedProvider = mpsState.primaryProvider;
-        this.selectedRemoteModel = mpsState.activeModelId;
-        this.apiKey = config.api_key || '';
-      } else {
-        // Load remote provider config separately for when user switches tabs
-        this.selectedProvider = await SullaSettingsModel.get('remoteProvider', 'grok');
-        this.selectedRemoteModel = await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning');
-        this.apiKey = await SullaSettingsModel.get('remoteApiKey', '');
-      }
+      const config = await ipcRenderer.invoke('model-provider:get-provider-config', mpsState.primaryProvider);
+      this.selectedProvider = mpsState.primaryProvider;
+      this.selectedRemoteModel = mpsState.activeModelId;
+      this.apiKey = config.api_key || '';
     } catch (err) {
       console.warn('[LM Settings] Failed to load from ModelProviderService, falling back:', err);
-      this.activeMode = (await SullaSettingsModel.get('modelMode', 'local')) as 'local' | 'remote';
-      const mode = typeof this.activeMode === 'string' ? this.activeMode.replace(/^"|"$/g, '') : this.activeMode;
-      this.activeMode = (mode === 'local' || mode === 'remote') ? mode : 'local';
-      this.viewingTab = this.activeMode;
+      this.activeMode = 'remote';
+      this.viewingTab = 'remote';
       this.selectedProvider = await SullaSettingsModel.get('remoteProvider', 'grok');
       this.selectedRemoteModel = await SullaSettingsModel.get('remoteModel', 'grok-4-1-fast-reasoning');
       this.apiKey = await SullaSettingsModel.get('remoteApiKey', '');
     }
     this.remoteRetryCount = await SullaSettingsModel.get('remoteRetryCount', 3);
     this.remoteTimeoutSeconds = Number(await SullaSettingsModel.get('remoteTimeoutSeconds', 60));
-    this.localTimeoutSeconds = await SullaSettingsModel.get('localTimeoutSeconds', 600);
-    this.localRetryCount = await SullaSettingsModel.get('localRetryCount', 2);
     this.heartbeatEnabled = await SullaSettingsModel.get('heartbeatEnabled', true);
 
     console.log('Loaded settings values:', {
@@ -344,63 +219,23 @@ export default defineComponent({
       selectedProvider:     this.selectedProvider,
       selectedRemoteModel:  this.selectedRemoteModel,
       remoteTimeoutSeconds: this.remoteTimeoutSeconds,
-      localTimeoutSeconds:  this.localTimeoutSeconds,
       remoteRetryCount:     this.remoteRetryCount,
-      localRetryCount:      this.localRetryCount,
     });
 
     // Build available providers list from ModelProviderService
     try {
       const providers = await ipcRenderer.invoke('model-provider:get-providers');
-      this.availableProviders = providers.map((p: { id: string; name: string }) => ({
-        id: p.id, name: p.id === 'ollama' ? 'llama.cpp (Local)' : p.name,
-      }));
+      this.availableProviders = providers
+        .map((p: { id: string; name: string; connected?: boolean }) => ({
+          id: p.id, name: p.connected === false ? `${ p.name } (not connected)` : p.name,
+        }));
     } catch (err) {
       console.warn('[LM Settings] Failed to load available providers:', err);
     }
 
-    await this.loadModels();
-
     // Load remote models if API key exists
     if (this.selectedProvider && this.apiKey.trim()) {
       await this.loadRemoteModels();
-    }
-
-    // Listen for download progress events from main process
-    ipcRenderer.on('local-model-download-progress', (
-      _event: unknown,
-      data: { modelKey: string; received: number; total: number; percent: number },
-    ) => {
-      if (data.modelKey === this.localModelDownloading) {
-        this.localModelDownloadProgress = data.percent;
-      }
-    });
-
-    // Load persisted local server enabled preference
-    try {
-      const savedEnabled = await SullaSettingsModel.get('localServerEnabled', '');
-      if (savedEnabled === 'true' || savedEnabled === 'false') {
-        this.localServerEnabled = savedEnabled === 'true';
-      } else {
-        // No saved preference — derive from current mode
-        this.localServerEnabled = this.activeMode !== 'remote';
-      }
-    } catch {
-      this.localServerEnabled = this.activeMode !== 'remote';
-    }
-    try {
-      const status = await ipcRenderer.invoke('llama-server:status');
-      this.localServerRunning = status?.running ?? false;
-    } catch {
-      this.localServerRunning = false;
-    }
-
-    // Load system resource info for fitness indicators
-    this.loadSystemResources();
-
-    // Load which local model is currently activated
-    if (this.activeModel && LOCAL_MODELS.some(m => m.name === this.activeModel)) {
-      this.activatedLocalModel = this.activeModel;
     }
 
     ipcRenderer.send('dialog/ready');
@@ -434,16 +269,14 @@ export default defineComponent({
         const config = await ipcRenderer.invoke('model-provider:get-provider-config', newProvider);
         const preferredModel = config.model || '';
 
-        // Tell the source of truth — it persists, broadcasts, and manages llama-server
+        // Tell the source of truth — it persists and broadcasts
         const newState = await ipcRenderer.invoke('model-provider:select-model', newProvider, preferredModel);
 
         this.activeMode = newState.modelMode;
         this.viewingTab = newState.modelMode;
         this.activeModel = newState.activeModelId;
-        if (newProvider !== 'ollama') {
-          this.selectedProvider = newProvider;
-          this.selectedRemoteModel = newState.activeModelId;
-        }
+        this.selectedProvider = newProvider;
+        this.selectedRemoteModel = newState.activeModelId;
       } catch (err) {
         console.error('[LM Settings] Failed to change primary provider via service:', err);
       }
@@ -455,7 +288,6 @@ export default defineComponent({
     ipcRenderer.removeAllListeners('settings-write-error');
     ipcRenderer.removeAllListeners('model-provider:state-changed');
     ipcRenderer.removeAllListeners('model-changed');
-    ipcRenderer.removeAllListeners('local-model-download-progress');
   },
 
   methods: {
@@ -533,71 +365,8 @@ export default defineComponent({
       console.log('navClicked called with navId:', navId, 'current viewingTab:', this.viewingTab);
       this.currentNav = navId;
       console.log('currentNav set to:', this.currentNav);
-      if (navId === 'overview') {
-        this.fetchContainerStats();
-      } else if (navId === 'models') {
-        this.loadModels();
-        this.fetchContainerStats();
-        this.checkModelStatuses();
+      if (navId === 'models') {
         console.log('After models nav, viewingTab:', this.viewingTab);
-      } else if (navId === 'local-models') {
-        this.loadLocalModelStatuses();
-      }
-    },
-
-    async fetchContainerStats() {
-      try {
-        // Query llama.cpp API for service status and running models
-        const [tagsRes, psRes] = await Promise.all([
-          this.silentFetch('http://127.0.0.1:30114/api/tags', { signal: AbortSignal.timeout(3000) }),
-          this.silentFetch('http://127.0.0.1:30114/api/ps', { signal: AbortSignal.timeout(3000) }),
-        ]);
-
-        if (!tagsRes?.ok) {
-          this.containerStats.status = 'offline';
-
-          return;
-        }
-
-        this.containerStats.status = 'running';
-
-        // Get running models info from /api/ps
-        if (psRes && psRes.ok) {
-          const psData = await psRes.json();
-          const runningModels = psData.models || [];
-
-          if (runningModels.length > 0) {
-            // Sum up memory usage from all running models
-            let totalSize = 0;
-            let totalVramSize = 0;
-
-            for (const model of runningModels) {
-              totalSize += model.size || 0;
-              totalVramSize += model.size_vram || 0;
-            }
-
-            // Use model size as memory indicator (actual VRAM/RAM used)
-            this.containerStats.memoryUsage = totalVramSize || totalSize;
-            // Estimate limit based on typical system (this is approximate)
-            this.containerStats.memoryLimit = 16 * 1024 * 1024 * 1024; // 16GB default
-            this.containerStats.memoryPercent = (this.containerStats.memoryUsage / this.containerStats.memoryLimit) * 100;
-
-            // Store running model count for display
-            (this.containerStats as Record<string, unknown>).runningModels = runningModels.length;
-            (this.containerStats as Record<string, unknown>).modelDetails = runningModels.map((m: { name: string; size: number }) => ({
-              name:  m.name,
-              size:  m.size,
-            }));
-          } else {
-            this.containerStats.memoryUsage = 0;
-            this.containerStats.memoryPercent = 0;
-            (this.containerStats as Record<string, unknown>).runningModels = 0;
-            (this.containerStats as Record<string, unknown>).modelDetails = [];
-          }
-        }
-      } catch (err) {
-        console.warn('[LM Settings] Failed to fetch llama.cpp stats:', err);
-        this.containerStats.status = 'error';
       }
     },
 
@@ -610,97 +379,6 @@ export default defineComponent({
       const i = Math.floor(Math.log(bytes) / Math.log(k));
 
       return `${ parseFloat((bytes / Math.pow(k, i)).toFixed(1)) } ${ sizes[i] }`;
-    },
-
-    // Models tab methods
-    async loadModels() {
-      this.loadingModels = true;
-      try {
-        const res = await this.silentFetch('http://127.0.0.1:30114/api/tags', {
-          signal: AbortSignal.timeout(5000),
-        });
-
-        if (res && res.ok) {
-          const data = await res.json();
-
-          this.installedModels = data.models || [];
-        }
-      } catch (err) {
-        console.error('Failed to load models:', err);
-      } finally {
-        this.loadingModels = false;
-      }
-    },
-
-    async downloadPendingModel() {
-      await this.pullModel(this.pendingModel);
-    },
-
-    async pullModel(modelName: string) {
-      this.downloadingModel = modelName;
-      this.downloadProgress = 0;
-
-      try {
-        const res = await fetch('http://127.0.0.1:30114/api/pull', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ name: modelName, stream: true }),
-        });
-
-        if (!res.ok || !res.body) {
-          console.error('Failed to download model:', res.status);
-
-          return;
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) {
-            break;
-          }
-
-          const text = decoder.decode(value, { stream: true });
-          const lines = text.split('\n').filter(line => line.trim());
-
-          for (const line of lines) {
-            try {
-              const data = JSON.parse(line);
-
-              if (data.total && data.completed) {
-                this.downloadProgress = Math.round((data.completed / data.total) * 100);
-              } else if (data.status === 'success') {
-                this.downloadProgress = 100;
-              }
-            } catch {
-              // Ignore parse errors for partial JSON
-            }
-          }
-        }
-
-        await this.loadModels();
-        // After successful download, activate the model
-        this.activateModel();
-      } catch (err) {
-        console.error('Error downloading model:', err);
-      } finally {
-        this.downloadingModel = null;
-        this.downloadProgress = 0;
-      }
-    },
-
-    async activateModel() {
-      // Save the pending model as the active model
-      this.activeModel = this.pendingModel;
-      try {
-        await SullaSettingsModel.set('sullaModel', this.pendingModel, 'string');
-        console.log(`[LM Settings] Model activated: ${ this.pendingModel }`);
-      } catch (err) {
-        console.error('Failed to save model setting:', err);
-      }
     },
 
     // Remote model methods
@@ -779,46 +457,6 @@ export default defineComponent({
       } catch (error) {
         this.modelLoadError = `Failed to refresh models: ${ error instanceof Error ? error.message : String(error) }`;
         console.error('[LM Settings] Model refresh failed:', error);
-      }
-    },
-
-    async activateLocalModel() {
-      this.activating = true;
-      this.activationError = '';
-
-      try {
-        // Check if llama.cpp is running
-        const ollamaRes = await this.silentFetch('http://127.0.0.1:30114/api/tags', {
-          signal: AbortSignal.timeout(5000),
-        });
-
-        if (!ollamaRes?.ok) {
-          this.activationError = 'Cannot connect to llama.cpp. Make sure the service is running.';
-
-          return;
-        }
-
-        // Check if selected model is installed
-        if (!this.isPendingModelInstalled) {
-          this.activationError = `Model "${ this.pendingModel }" is not installed. Please download it first.`;
-
-          return;
-        }
-
-        // Tell the source of truth — it persists, broadcasts, and manages llama-server
-        const newState = await ipcRenderer.invoke('model-provider:select-model', 'ollama', this.pendingModel);
-        // Save non-model settings (timeouts, retry counts, etc.)
-        await this.writeExperimentalSettings();
-
-        this.activeMode = newState.modelMode;
-        this.viewingTab = 'local';
-        this.activeModel = newState.activeModelId;
-        console.log(`[LM Settings] Local model activated: ${ newState.activeModelId }`);
-      } catch (err) {
-        this.activationError = 'Failed to connect to llama.cpp. Is the service running?';
-        console.error('Failed to activate local model:', err);
-      } finally {
-        this.activating = false;
       }
     },
 
@@ -938,7 +576,7 @@ export default defineComponent({
           model:    this.selectedRemoteModel,
         });
 
-        // Tell the source of truth — it persists, broadcasts, and manages llama-server
+        // Tell the source of truth — it persists and broadcasts
         const newState = await ipcRenderer.invoke('model-provider:select-model', this.selectedProvider, this.selectedRemoteModel);
         // Save non-model settings (timeouts, retry counts, etc.)
         await this.writeExperimentalSettings();
@@ -955,80 +593,242 @@ export default defineComponent({
       }
     },
 
-    async toggleLocalServer() {
-      this.togglingLocalServer = true;
-      this.activationError = '';
+    async startClaudeOAuth() {
+      this.claudeOAuthError = '';
+      this.claudeOAuthStatus = 'Starting claude setup-token in the VM...';
+      this.claudeOAuthUrl = '';
+      this.claudeOAuthCode = '';
+      this.claudeOAuthRunning = true;
+
+      const onProgress = (_event: unknown, text: string) => {
+        const trimmed = text.trim();
+        if (trimmed) this.claudeOAuthStatus = trimmed.split('\n').pop() || this.claudeOAuthStatus;
+      };
+      const onUrl = (_event: unknown, url: string) => {
+        this.claudeOAuthUrl = url;
+        this.claudeOAuthStatus = 'Sign in in your browser, then paste the code below.';
+      };
+      ipcRenderer.on('claude-oauth:progress', onProgress);
+      ipcRenderer.on('claude-oauth:url', onUrl);
+
       try {
-        if (this.localServerEnabled) {
-          // Disable — stop the server, then save preference
-          await ipcRenderer.invoke('llama-server:stop');
-          await SullaSettingsModel.set('localServerEnabled', 'false', 'string');
-          this.localServerEnabled = false;
-          this.localServerRunning = false;
-          console.log('[LM Settings] Local model server disabled');
+        const result = await ipcRenderer.invoke('claude-oauth:start');
+        if (result.token) {
+          this.claudeOAuthToken = result.token;
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', result.token, 'string');
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeApiKey', '', 'string');
+          this.claudeApiKey = '';
+          this.claudeOAuthStatus = 'Signed in';
+        } else if (result.error) {
+          this.claudeOAuthError = result.error;
+        }
+      } catch (err: any) {
+        this.claudeOAuthError = err?.message || 'OAuth flow failed';
+      } finally {
+        ipcRenderer.removeListener('claude-oauth:progress', onProgress);
+        ipcRenderer.removeListener('claude-oauth:url', onUrl);
+        this.claudeOAuthRunning = false;
+        this.claudeOAuthUrl = '';
+      }
+    },
+
+    async submitClaudeOAuthCode() {
+      const code = this.claudeOAuthCode.trim();
+      if (!code) return;
+      try {
+        // Send the code followed by newline to feed the CLI's stdin
+        await ipcRenderer.invoke('claude-oauth:send-input', code + '\r');
+        this.claudeOAuthCode = '';
+        this.claudeOAuthStatus = 'Code submitted, waiting for token...';
+      } catch (err) {
+        console.warn('Failed to submit OAuth code:', err);
+      }
+    },
+
+    async copyAuthUrl() {
+      const { clipboard } = require('electron');
+      if (this.claudeOAuthUrl) {
+        clipboard.writeText(this.claudeOAuthUrl);
+        this.claudeOAuthStatus = 'URL copied to clipboard. Paste it into your browser.';
+      }
+    },
+
+    async cancelClaudeOAuth() {
+      try {
+        await ipcRenderer.invoke('claude-oauth:cancel');
+      } catch { /* ignore */ }
+      this.claudeOAuthRunning = false;
+      this.claudeOAuthStatus = 'Starting...';
+      this.claudeOAuthUrl = '';
+      this.claudeOAuthCode = '';
+    },
+
+    async disconnectClaudeOAuth() {
+      this.claudeOAuthToken = '';
+      await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', '', 'string');
+    },
+
+    async saveClaudeCredentials() {
+      this.claudeSaving = true;
+      try {
+        if (this.claudeAuthMode === 'api-key' && this.claudeApiKey) {
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeApiKey', this.claudeApiKey, 'string');
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', '', 'string');
+        } else if (this.claudeAuthMode === 'oauth' && this.claudeOAuthToken) {
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', this.claudeOAuthToken.trim(), 'string');
+          await ipcRenderer.invoke('sulla-settings-set', 'claudeApiKey', '', 'string');
+        }
+        console.log('[LM Settings] Claude credentials saved');
+      } catch (err) {
+        console.error('Failed to save Claude credentials:', err);
+      } finally {
+        this.claudeSaving = false;
+      }
+    },
+
+    async savePairedUserId() {
+      this.relaySaving = true;
+      try {
+        const status = await ipcRenderer.invoke('desktop-relay:set-paired-user-id', this.pairedMobileUserId.trim());
+        this.relayConnected = status.connected;
+        this.relayError = status.lastError || '';
+      } catch (err: any) {
+        this.relayError = err?.message || 'Failed to save';
+      } finally {
+        this.relaySaving = false;
+      }
+    },
+
+    async loadCloudStatus() {
+      try {
+        this.cloudStatus = await ipcRenderer.invoke('sulla-cloud:get-status');
+      } catch { /* IPC not ready */ }
+    },
+
+    async cloudSendOtp() {
+      this.cloudBusy = true;
+      this.cloudError = '';
+      try {
+        const res = await ipcRenderer.invoke('sulla-cloud:send-otp', this.cloudPhone.trim());
+        if (!res.ok) {
+          this.cloudError = res.error || 'Failed to send code';
+          return;
+        }
+        this.cloudStep = 'verify';
+      } catch (err: any) {
+        this.cloudError = err?.message || 'Network error';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    setCloudMethod(m: 'email' | 'phone' | 'apple') {
+      this.cloudMethod = m;
+      this.cloudError = '';
+    },
+
+    async cloudEmailLogin() {
+      this.cloudBusy = true;
+      this.cloudError = '';
+      try {
+        const res = await ipcRenderer.invoke('sulla-cloud:email-login', this.cloudEmail.trim(), this.cloudPassword);
+        this.cloudStatus = res.status;
+        if (!res.ok) this.cloudError = res.error || 'Sign in failed';
+        else this.cloudPassword = '';
+      } catch (err: any) {
+        this.cloudError = err?.message || 'Network error';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    async cloudEmailRegister() {
+      this.cloudBusy = true;
+      this.cloudError = '';
+      try {
+        const res = await ipcRenderer.invoke('sulla-cloud:email-register', this.cloudEmail.trim(), this.cloudPassword, this.cloudName.trim() || undefined);
+        this.cloudStatus = res.status;
+        if (!res.ok) this.cloudError = res.error || 'Registration failed';
+        else {
+          this.cloudPassword = '';
+          this.cloudName = '';
+        }
+      } catch (err: any) {
+        this.cloudError = err?.message || 'Network error';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    async cloudVerifyOtp() {
+      this.cloudBusy = true;
+      this.cloudError = '';
+      try {
+        const res = await ipcRenderer.invoke('sulla-cloud:verify-otp', this.cloudPhone.trim(), this.cloudCode.trim());
+        this.cloudStatus = res.status;
+        if (!res.ok) {
+          this.cloudError = res.error || 'Incorrect code';
+          return;
+        }
+        this.cloudCode = '';
+        this.cloudStep = 'phone';
+      } catch (err: any) {
+        this.cloudError = err?.message || 'Network error';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    async cloudLogout() {
+      this.cloudBusy = true;
+      try {
+        this.cloudStatus = await ipcRenderer.invoke('sulla-cloud:logout');
+        this.cloudStep = 'phone';
+        this.cloudPhone = '';
+        this.cloudCode = '';
+      } finally {
+        this.cloudBusy = false;
+      }
+    },
+
+    async loadDesktopRelayStatus() {
+      try {
+        const status = await ipcRenderer.invoke('desktop-relay:get-status');
+        this.pairedMobileUserId = status.pairedUserId || '';
+        this.relayConnected = status.connected;
+        this.relayError = status.lastError || '';
+      } catch {
+        // IPC not ready
+      }
+    },
+
+    handleRelayStatusChanged(_event: unknown, status: { pairedUserId: string; connected: boolean; lastError?: string }) {
+      this.pairedMobileUserId = status.pairedUserId || '';
+      this.relayConnected = status.connected;
+      this.relayError = status.lastError || '';
+    },
+
+    async loadClaudeCredentials() {
+      try {
+        const apiKey = await ipcRenderer.invoke('sulla-settings-get', 'claudeApiKey', '');
+        const oauthToken = await ipcRenderer.invoke('sulla-settings-get', 'claudeOAuthToken', '');
+        this.claudeApiKey = apiKey || '';
+        this.claudeOAuthToken = oauthToken || '';
+        if (oauthToken) {
+          this.claudeAuthMode = 'oauth';
+        } else if (apiKey) {
+          this.claudeAuthMode = 'api-key';
         } else {
-          // Enable — start the server first, only persist on success
-          const result = await ipcRenderer.invoke('llama-server:start');
-
-          if (!result?.running) {
-            this.activationError = result?.error
-              ? `Local model server failed: ${ result.error }`
-              : 'Local model server failed to start.';
-
-            return;
-          }
-          await SullaSettingsModel.set('localServerEnabled', 'true', 'string');
-          this.localServerEnabled = true;
-          this.localServerRunning = true;
-          console.log('[LM Settings] Local model server enabled');
+          this.claudeAuthMode = 'none';
         }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-
-        console.error('[LM Settings] Failed to toggle local server:', msg);
-        this.activationError = `Failed to ${ this.localServerEnabled ? 'stop' : 'start' } local model server: ${ msg }`;
-      } finally {
-        this.togglingLocalServer = false;
+      } catch {
+        // Settings not available yet
       }
     },
 
-    async checkModelStatuses() {
-      this.checkingModelStatuses = true;
-      try {
-        // Server availability already checked in loadModels(), proceed with model checks
-
-        // Check status of key models by checking against installed models list
-        const keyModels = ['nomic-embed-text', this.activeModel].filter((model, index, arr) => arr.indexOf(model) === index);
-
-        for (const modelName of keyModels) {
-          try {
-            // Check if model is in the installed models list from /api/tags
-            const isInstalled = this.installedModels.some(model => model.name === modelName);
-            this.modelStatuses[modelName] = isInstalled ? 'installed' : 'missing';
-          } catch (error) {
-            // Silently handle errors - don't log or break the interface
-            this.modelStatuses[modelName] = 'failed';
-          }
-        }
-      } catch (error) {
-        // If the entire loop fails, silently continue
-      } finally {
-        this.checkingModelStatuses = false;
-      }
-    },
-
-    async redownloadModel(modelName: string) {
-      await this.pullModel(modelName);
-      // Re-check statuses after download
-      await this.checkModelStatuses();
-    },
-
-    async redownloadEmbeddingModel() {
-      await this.redownloadModel('nomic-embed-text');
-    },
-
-    async redownloadDefaultModel() {
-      await this.redownloadModel(this.activeModel);
+    openExternal(url: string) {
+      const { shell } = require('electron');
+      shell.openExternal(url);
     },
 
     async saveSettings() {
@@ -1058,8 +858,6 @@ export default defineComponent({
           primaryUserName:       String(this.primaryUserName || ''),
           remoteRetryCount:      Number(this.remoteRetryCount) || 3,
           remoteTimeoutSeconds:  Number(this.remoteTimeoutSeconds) || 60,
-          localTimeoutSeconds:   Number(this.localTimeoutSeconds) || 600,
-          localRetryCount:       Number(this.localRetryCount) || 2,
           heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
           heartbeatPrompt:       String(this.heartbeatPrompt || ''),
@@ -1071,8 +869,6 @@ export default defineComponent({
         const settingCasts: Record<string, string> = {
           remoteRetryCount:      'number',
           remoteTimeoutSeconds:  'number',
-          localTimeoutSeconds:   'number',
-          localRetryCount:       'number',
           heartbeatDelayMinutes: 'number',
           heartbeatEnabled:      'boolean',
         };
@@ -1084,145 +880,6 @@ export default defineComponent({
       } catch (err) {
         console.error('[LM Settings] Error in writeExperimentalSettings:', err);
         throw err;
-      }
-    },
-
-    async loadSystemResources() {
-      try {
-        const result: { totalMemoryGB: number; availableMemoryGB: number; availableDiskGB: number } =
-          await ipcRenderer.invoke('system-resources');
-
-        this.systemTotalMemoryGB = result.totalMemoryGB;
-        this.systemAvailableMemoryGB = result.availableMemoryGB;
-        this.systemAvailableDiskGB = result.availableDiskGB;
-      } catch (err) {
-        console.warn('[LM Settings] Failed to load system resources:', err);
-      }
-    },
-
-    resourceFitness(model: LocalModelOption): 'green' | 'yellow' | 'red' {
-      const totalMem = this.systemTotalMemoryGB;
-      const availDisk = this.systemAvailableDiskGB;
-
-      if (totalMem === 0) return 'green';
-
-      let sizeGB = 0;
-
-      if (model.size.endsWith('GB')) {
-        sizeGB = parseFloat(model.size);
-      } else if (model.size.endsWith('MB')) {
-        sizeGB = parseFloat(model.size) / 1024;
-      }
-
-      if (totalMem < model.minMemoryGB || (availDisk > 0 && availDisk < sizeGB)) {
-        return 'red';
-      }
-
-      const memHeadroom = totalMem - model.minMemoryGB;
-      const diskHeadroom = availDisk > 0 ? availDisk - sizeGB : 999;
-
-      if (memHeadroom < 4 || diskHeadroom < sizeGB) {
-        return 'yellow';
-      }
-
-      return 'green';
-    },
-
-    resourceFitnessLabel(model: LocalModelOption): string {
-      const fit = this.resourceFitness(model);
-
-      if (fit === 'green') return 'Resources OK';
-      if (fit === 'yellow') return 'Tight fit';
-
-      return 'Insufficient';
-    },
-
-    async loadLocalModelStatuses() {
-      this.loadingLocalModels = true;
-      this.localModelError = '';
-      try {
-        const status: Record<string, boolean> = await ipcRenderer.invoke('local-models-status');
-        this.localModelDownloadStatus = status;
-
-        // Use the current active model if it's a local GGUF model
-        if (this.activeModel && LOCAL_MODELS.some(m => m.name === this.activeModel)) {
-          this.localModelSelected = this.activeModel;
-          // Initialize context slider for the active model
-          await this.selectLocalModel(this.activeModel);
-        }
-      } catch (err) {
-        console.error('[LM Settings] Failed to load local model statuses:', err);
-        this.localModelError = 'Failed to load model statuses.';
-      } finally {
-        this.loadingLocalModels = false;
-      }
-    },
-
-    async selectLocalModel(modelName: string) {
-      this.localModelSelected = modelName;
-      this.localModelError = '';
-
-      // Calculate max achievable context for this model given available RAM
-      const model = this.localModels.find((m: LocalModelOption) => m.name === modelName);
-      if (model) {
-        const saved = await SullaSettingsModel.get('localContextSize', 0);
-        if (saved > 0) {
-          this.localContextSize = Math.min(Number(saved), this.maxContextForModel(model));
-        } else {
-          this.localContextSize = this.maxContextForModel(model);
-        }
-      }
-    },
-
-    maxContextForModel(model: LocalModelOption): number {
-      const totalRam = this.systemTotalMemoryGB * 1e9;
-      const osOverhead = 2 * 1024 * 1024 * 1024;
-      const available = totalRam - model.sizeBytes - osOverhead;
-      if (available <= 0) return 2048;
-      let ctx = Math.floor(available / model.kvBytesPerToken);
-      ctx = Math.floor(ctx / 1024) * 1024;
-      return Math.max(2048, Math.min(model.nativeCtx, ctx));
-    },
-
-    async downloadLocalModel(modelName: string) {
-      this.localModelDownloading = modelName;
-      this.localModelDownloadProgress = 0;
-      this.localModelError = '';
-      try {
-        await ipcRenderer.invoke('local-model-download', modelName);
-        this.localModelDownloadStatus[modelName] = true;
-        this.localModelDownloadProgress = 100;
-      } catch (err) {
-        console.error('[LM Settings] Failed to download local model:', err);
-        this.localModelError = `Failed to download ${ modelName }. Check your internet connection.`;
-      } finally {
-        this.localModelDownloading = null;
-        this.localModelDownloadProgress = 0;
-      }
-    },
-
-    async activateSelectedGgufModel() {
-      if (!this.localModelSelected) return;
-      this.localModelError = '';
-      try {
-        // Save the user's context size preference before activating
-        if (this.localContextSize > 0) {
-          await SullaSettingsModel.set('localContextSize', this.localContextSize, 'number');
-        }
-
-        // Tell the source of truth — it persists, broadcasts, and manages llama-server
-        const newState = await ipcRenderer.invoke('model-provider:select-model', 'ollama', this.localModelSelected);
-
-        this._suppressProviderWatch = true;
-        this.primaryProvider = newState.primaryProvider;
-        this.activeMode = newState.modelMode;
-        this.activeModel = newState.activeModelId;
-        this.activatedLocalModel = this.localModelSelected;
-
-        console.log(`[LM Settings] Local GGUF model activated: ${ this.localModelSelected } (ctx=${ this.localContextSize })`);
-      } catch (err) {
-        console.error('[LM Settings] Failed to activate local GGUF model:', err);
-        this.localModelError = 'Failed to activate model.';
       }
     },
 
@@ -1250,15 +907,15 @@ export default defineComponent({
     },
 
     // Legacy handler for backward compat
-    handleModelChanged(_event: IpcRendererEvent, data: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string }) {
+    handleModelChanged(_event: IpcRendererEvent, data: { model: string; type: string; provider?: string }) {
       this.activeModel = data.model;
       this.activeMode = data.type;
-      if (data.type === 'remote' && (data as any).provider) {
-        this.selectedProvider = (data as any).provider;
+      if (data.provider) {
+        this.selectedProvider = data.provider;
         this.selectedRemoteModel = data.model;
       }
       this.pendingModel = this.activeModel;
-      const newPrimary = data.type === 'local' ? 'ollama' : (data as any).provider || 'ollama';
+      const newPrimary = data.provider || this.primaryProvider;
       if (this.primaryProvider !== newPrimary) {
         this._suppressProviderWatch = true;
         this.primaryProvider = newPrimary;
@@ -1298,151 +955,237 @@ export default defineComponent({
           v-if="currentNav === 'overview'"
           class="tab-content"
         >
-          <h2>Local Model Server Status</h2>
+          <h2>Overview</h2>
           <p class="description">
-            Monitor the resource usage of your local llama.cpp server.
+            View the active AI configuration.
           </p>
-
-          <!-- Status Badge -->
-          <div class="status-section">
-            <span class="status-label">Status:</span>
-            <span
-              class="status-badge"
-              :class="{
-                'status-running': containerStats.status === 'running',
-                'status-stopped': containerStats.status === 'exited' || containerStats.status === 'stopped',
-                'status-error': containerStats.status === 'error' || containerStats.status === 'docker_unavailable',
-                'status-unknown': containerStats.status === 'unknown' || containerStats.status === 'not_found',
-              }"
-            >
-              {{ containerStats.status === 'docker_unavailable'
-                ? 'Docker Unavailable'
-                : containerStats.status === 'not_found'
-                  ? 'Container Not Found'
-                  : containerStats.status.charAt(0).toUpperCase() + containerStats.status.slice(1) }}
-            </span>
-          </div>
-
-          <!-- Metrics Cards -->
-          <div
-            v-if="containerStats.status === 'running'"
-            class="metrics-grid"
-          >
-            <!-- Running Models -->
-            <div class="metric-card">
-              <div class="metric-header">
-                <span class="metric-title">Running Models</span>
-              </div>
-              <div class="metric-value">
-                {{ (containerStats as any).runningModels || 0 }}
-              </div>
-              <div
-                v-if="(containerStats as any).modelDetails?.length"
-                class="metric-subtext"
-              >
-                {{ (containerStats as any).modelDetails.map((m: any) => m.name).join(', ') }}
-              </div>
-              <div
-                v-else
-                class="metric-subtext"
-              >
-                No models loaded
-              </div>
-            </div>
-
-            <!-- Model Memory Usage -->
-            <div class="metric-card">
-              <div class="metric-header">
-                <span class="metric-title">Model Memory</span>
-              </div>
-              <div class="metric-value">
-                {{ formattedMemoryUsage }}
-              </div>
-              <div class="metric-bar">
-                <div
-                  class="metric-bar-fill memory-bar"
-                  :style="{ width: Math.min(containerStats.memoryPercent, 100) + '%' }"
-                />
-              </div>
-              <div class="metric-subtext">
-                Memory used by loaded models
-              </div>
-            </div>
-          </div>
-
-          <!-- Not Running Message -->
-          <div
-            v-else
-            class="not-running-message mb-10"
-          >
-            <p v-if="containerStats.status === 'offline'">
-              llama.cpp server is offline. Make sure it's running on port 30114.
-            </p>
-            <p v-else-if="containerStats.status === 'error'">
-              Unable to connect to llama.cpp server.
-            </p>
-            <p v-else>
-              Checking llama.cpp status...
-            </p>
-          </div>
 
           <!-- Active Model Info -->
           <div class="active-model-section mb-10">
             <h3>Active Configuration</h3>
             <div class="config-item">
               <span class="config-label">Mode:</span>
-              <span class="config-value">{{ activeMode === 'local' ? 'Local (llama.cpp)' : 'Remote (API)' }}</span>
+              <span class="config-value">Remote (API)</span>
             </div>
-            <div
-              v-if="activeMode === 'local'"
-              class="config-item"
-            >
-              <span class="config-label">Model:</span>
-              <span class="config-value">{{ activeModel }}</span>
-            </div>
-            <div
-              v-else
-              class="config-item"
-            >
+            <div class="config-item">
               <span class="config-label">Provider:</span>
               <span class="config-value">{{ selectedProvider }} / {{ selectedRemoteModel }}</span>
             </div>
           </div>
+        </div>
 
-          <!-- Local Model Server Toggle -->
-          <div class="active-model-section mb-10">
-            <h3>Local Model Server</h3>
-            <p class="description">
-              The local llama-server runs a GGUF model on your Mac for offline inference.
-              Disable it to free CPU and memory when using remote providers only.
-            </p>
-            <div class="config-item">
-              <span class="config-label">Status:</span>
-              <span
-                class="status-badge"
-                :class="localServerRunning ? 'status-running' : 'status-stopped'"
-              >
-                {{ localServerRunning ? 'Running' : 'Stopped' }}
-              </span>
+        <!-- Profile Tab -->
+        <div
+          v-if="currentNav === 'profile'"
+          class="tab-content"
+        >
+          <h2>Sulla Cloud Account</h2>
+          <p class="description">
+            Sign in to the same account you use on Sulla Mobile. Once signed in,
+            your desktop and phone are automatically paired — messages sent from
+            your phone route to this desktop when you select "Desktop" in the
+            mobile chat.
+          </p>
+
+          <!-- Signed in state -->
+          <div
+            v-if="cloudStatus.signedIn"
+            class="setting-group"
+          >
+            <div class="claude-status">
+              <span class="claude-status-dot" />
+              <div>
+                <div class="setting-label">Signed in</div>
+                <div class="setting-description">
+                  {{ cloudStatus.phone || 'phone hidden' }}<br>
+                  <span style="opacity: 0.6; font-family: var(--font-mono); font-size: 11px;">
+                    {{ cloudStatus.userId }}
+                  </span>
+                </div>
+              </div>
             </div>
-            <div class="config-item toggle-row">
-              <label class="toggle-label" for="local-server-toggle">
-                Enable local model server
-              </label>
+            <button
+              class="btn role-secondary"
+              style="margin-top: 1rem;"
+              :disabled="cloudBusy"
+              @click="cloudLogout"
+            >
+              Sign out
+            </button>
+          </div>
+
+          <!-- Not signed in: method picker + current method UI -->
+          <div
+            v-else
+            class="setting-group"
+          >
+            <div class="claude-auth-buttons" style="margin-bottom: 1rem;">
               <button
-                class="toggle-btn"
-                :class="{ 'toggle-on': localServerEnabled, 'toggle-off': !localServerEnabled }"
-                :disabled="togglingLocalServer"
-                @click="toggleLocalServer"
+                class="btn"
+                :class="cloudMethod === 'email' ? 'role-primary' : 'role-secondary'"
+                @click="setCloudMethod('email')"
               >
-                <span class="toggle-knob" />
+                Email
+              </button>
+              <button
+                class="btn"
+                :class="cloudMethod === 'phone' ? 'role-primary' : 'role-secondary'"
+                @click="setCloudMethod('phone')"
+              >
+                Phone
+              </button>
+              <button
+                class="btn"
+                :class="cloudMethod === 'apple' ? 'role-primary' : 'role-secondary'"
+                @click="setCloudMethod('apple')"
+              >
+                Apple
               </button>
             </div>
-            <p
-              v-if="!localServerEnabled"
-              class="setting-description"
-            >
-              The server will stay off until you re-enable it. Sulla will use remote providers only.
+
+            <!-- EMAIL -->
+            <div v-if="cloudMethod === 'email'">
+              <h3 style="margin-bottom: 0.5rem;">
+                {{ emailMode === 'login' ? 'Sign in with email' : 'Create a new account' }}
+              </h3>
+              <p class="setting-description" style="margin-bottom: 1rem;">
+                {{ emailMode === 'login'
+                  ? 'Enter your Sulla Cloud email and password.'
+                  : 'Create a new Sulla Cloud account with an email and password.'
+                }}
+                <a
+                  href="#"
+                  style="margin-left: 0.25rem;"
+                  @click.prevent="emailMode = emailMode === 'login' ? 'register' : 'login'"
+                >{{ emailMode === 'login' ? 'Create an account instead' : 'Sign in instead' }}</a>
+              </p>
+
+              <label class="setting-label">Email</label>
+              <input
+                v-model="cloudEmail"
+                type="email"
+                class="input-field"
+                placeholder="you@example.com"
+                autocomplete="email"
+                style="margin-bottom: 0.75rem;"
+              >
+
+              <label class="setting-label">Password</label>
+              <input
+                v-model="cloudPassword"
+                type="password"
+                class="input-field"
+                :placeholder="emailMode === 'register' ? 'At least 8 characters' : '••••••••'"
+                :autocomplete="emailMode === 'register' ? 'new-password' : 'current-password'"
+                @keyup.enter="emailMode === 'login' ? cloudEmailLogin() : cloudEmailRegister()"
+              >
+
+              <div v-if="emailMode === 'register'" style="margin-top: 0.75rem;">
+                <label class="setting-label">Your name (optional)</label>
+                <input
+                  v-model="cloudName"
+                  type="text"
+                  class="input-field"
+                  placeholder="Jane Doe"
+                  autocomplete="name"
+                >
+              </div>
+
+              <button
+                class="btn role-primary"
+                style="margin-top: 1rem;"
+                :disabled="cloudBusy || !cloudEmail.trim() || !cloudPassword"
+                @click="emailMode === 'login' ? cloudEmailLogin() : cloudEmailRegister()"
+              >
+                {{ cloudBusy ? 'Working...' : (emailMode === 'login' ? 'Sign in' : 'Create account') }}
+              </button>
+            </div>
+
+            <!-- PHONE OTP -->
+            <div v-else-if="cloudMethod === 'phone'">
+              <div v-if="cloudStep === 'phone'">
+                <label class="setting-label">Phone number</label>
+                <div class="claude-input-row">
+                  <input
+                    v-model="cloudPhone"
+                    type="tel"
+                    class="input-field claude-input-field"
+                    placeholder="+15551234567"
+                    @keyup.enter="cloudSendOtp"
+                  >
+                  <button
+                    class="btn role-primary"
+                    :disabled="cloudBusy || !cloudPhone.trim()"
+                    @click="cloudSendOtp"
+                  >
+                    {{ cloudBusy ? 'Sending...' : 'Send code' }}
+                  </button>
+                </div>
+                <p class="setting-description">
+                  E.164 format (include country code, e.g. +1 for US).
+                </p>
+              </div>
+              <div v-else>
+                <label class="setting-label">Code sent to {{ cloudPhone }}</label>
+                <div class="claude-input-row">
+                  <input
+                    v-model="cloudCode"
+                    type="text"
+                    inputmode="numeric"
+                    class="input-field claude-input-field"
+                    placeholder="123456"
+                    maxlength="8"
+                    @keyup.enter="cloudVerifyOtp"
+                  >
+                  <button
+                    class="btn role-primary"
+                    :disabled="cloudBusy || !cloudCode.trim()"
+                    @click="cloudVerifyOtp"
+                  >
+                    {{ cloudBusy ? 'Verifying...' : 'Verify' }}
+                  </button>
+                </div>
+                <button
+                  class="btn role-secondary"
+                  style="margin-top: 0.5rem;"
+                  @click="cloudStep = 'phone'; cloudCode = ''"
+                >
+                  Use a different number
+                </button>
+              </div>
+            </div>
+
+            <!-- APPLE -->
+            <div v-else-if="cloudMethod === 'apple'">
+              <p class="setting-description">
+                Apple Sign-In requires a bit of Apple Developer Console setup for desktop
+                (a Services ID and a registered redirect URI). Coming soon —
+                for now, please sign in with email or phone. If you already have an
+                account created on iOS, use the same phone number.
+              </p>
+            </div>
+          </div>
+
+          <p
+            v-if="cloudError"
+            class="setting-description claude-oauth-error"
+          >
+            {{ cloudError }}
+          </p>
+
+          <!-- Relay status shown once signed in -->
+          <div
+            v-if="cloudStatus.signedIn"
+            class="setting-group"
+            style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-default, var(--header-border));"
+          >
+            <label class="setting-label">Mobile relay</label>
+            <p class="setting-description">
+              <span
+                class="claude-status-dot"
+                :style="{ background: relayConnected ? 'var(--status-success, #3fb950)' : 'var(--text-muted, #8b949e)' }"
+              />
+              {{ relayConnected ? 'Connected — ready for chats from mobile' : 'Not connected — will retry in the background' }}
             </p>
           </div>
         </div>
@@ -1493,181 +1236,20 @@ export default defineComponent({
           </div>
 
           <div
-            v-if="availableProviders.length <= 1"
+            v-if="availableProviders.length === 0"
             class="info-box"
           >
             <p>
-              Only llama.cpp (local) is available. To add remote providers, go to
-              <strong>Integrations</strong> and configure an AI provider (e.g. Grok, OpenAI, Anthropic).
+              Loading providers...
             </p>
           </div>
-        </div>
-
-        <!-- Local Models Tab -->
-        <div
-          v-if="currentNav === 'local-models'"
-          class="tab-content"
-        >
-          <h2>Local Models</h2>
-          <p class="description">
-            Select and manage locally downloaded GGUF models. The colored dot indicates resource fitness: green = plenty of resources, yellow = tight fit, red = insufficient.
-          </p>
-
-          <!-- System Resources Summary -->
-          <div
-            v-if="systemTotalMemoryGB > 0"
-            class="system-resources-bar"
-          >
-            <span>System: {{ systemTotalMemoryGB }}GB RAM total</span>
-            <span v-if="systemAvailableDiskGB > 0">
-              &middot; {{ systemAvailableDiskGB }}GB disk free
-            </span>
-          </div>
-
-          <div
-            v-if="localModelError"
-            class="activation-error"
-          >
-            {{ localModelError }}
-          </div>
-
-          <div
-            v-if="loadingLocalModels"
-            class="loading"
-          >
-            Loading model statuses...
-          </div>
-
           <div
             v-else
-            class="local-models-grid"
+            class="info-box"
           >
-            <div
-              v-for="model in localModels"
-              :key="model.name"
-              class="local-model-card"
-              :class="{
-                'is-downloaded': localModelDownloadStatus[model.name],
-                'is-not-downloaded': !localModelDownloadStatus[model.name],
-                'is-selected': localModelSelected === model.name,
-                'is-activated': activatedLocalModel === model.name,
-              }"
-              @click="selectLocalModel(model.name)"
-            >
-              <div class="local-model-header">
-                <span class="local-model-name">{{ model.displayName }}</span>
-                <div class="local-model-badges">
-                  <!-- Resource fitness indicator -->
-                  <span
-                    class="fitness-badge"
-                    :class="'fitness-' + resourceFitness(model)"
-                    :title="resourceFitnessLabel(model)"
-                  >
-                    {{ resourceFitnessLabel(model) }}
-                  </span>
-                  <!-- Activated badge -->
-                  <span
-                    v-if="activatedLocalModel === model.name"
-                    class="local-model-badge badge-activated"
-                  >
-                    Active
-                  </span>
-                  <!-- Download status badge -->
-                  <span
-                    v-else
-                    class="local-model-badge"
-                    :class="localModelDownloadStatus[model.name] ? 'badge-downloaded' : 'badge-not-downloaded'"
-                  >
-                    {{ localModelDownloadStatus[model.name] ? 'Downloaded' : 'Not Downloaded' }}
-                  </span>
-                </div>
-              </div>
-              <div class="local-model-meta">
-                <span>{{ model.size }}</span>
-                <span>{{ model.minMemoryGB }}GB RAM</span>
-                <span>{{ model.minCPUs }} CPUs</span>
-              </div>
-              <p class="local-model-desc">
-                {{ model.description }}
-              </p>
-
-              <!-- Download progress bar — always visible during download -->
-              <div
-                v-if="localModelDownloading === model.name"
-                class="local-model-download-progress"
-              >
-                <div class="download-status-text">
-                  Downloading {{ model.displayName }}... {{ localModelDownloadProgress }}%
-                </div>
-                <div class="progress-bar-lg">
-                  <div
-                    class="progress-fill-lg"
-                    :style="{ width: localModelDownloadProgress + '%' }"
-                  />
-                </div>
-              </div>
-
-              <!-- Download button — only when selected, not downloaded, and not currently downloading -->
-              <div
-                v-else-if="localModelSelected === model.name && !localModelDownloadStatus[model.name]"
-                class="local-model-actions"
-              >
-                <button
-                  class="btn role-primary"
-                  :disabled="!!localModelDownloading"
-                  @click.stop="downloadLocalModel(model.name)"
-                >
-                  Download Model
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Context Size Slider — visible when a model is selected and downloaded -->
-          <div
-            v-if="localModelSelected && localModelDownloadStatus[localModelSelected] && localContextSize > 0"
-            class="context-size-control"
-          >
-            <label class="form-label">Context Size</label>
-            <div class="context-slider-row">
-              <span class="context-value-min">2K</span>
-              <input
-                v-model.number="localContextSize"
-                type="range"
-                class="context-slider"
-                :min="2048"
-                :max="maxContextForModel(localModels.find(m => m.name === localModelSelected))"
-                step="1024"
-              >
-              <span class="context-value-max">{{ Math.round((maxContextForModel(localModels.find(m => m.name === localModelSelected)) || 0) / 1024) }}K</span>
-            </div>
-            <div class="context-readout">
-              {{ Math.round(localContextSize / 1024) }}K tokens
-              <span class="context-ram-estimate">
-                (~{{ Math.round(localContextSize * (localModels.find(m => m.name === localModelSelected)?.kvBytesPerToken || 0) / 1e6) }}MB KV cache)
-              </span>
-            </div>
-          </div>
-
-          <div
-            v-if="localModelSelected"
-            class="local-model-activate"
-          >
-            <button
-              class="btn activate-btn"
-              :class="activatedLocalModel === localModelSelected ? 'is-active' : 'role-primary'"
-              :disabled="!localModelDownloadStatus[localModelSelected] || !!localModelDownloading || activatedLocalModel === localModelSelected"
-              @click="activateSelectedGgufModel"
-            >
-              {{ activatedLocalModel === localModelSelected
-                ? (localModels.find(m => m.name === localModelSelected)?.displayName || localModelSelected) + ' is Active'
-                : 'Activate ' + (localModels.find(m => m.name === localModelSelected)?.displayName || localModelSelected) }}
-            </button>
-            <p
-              v-if="!localModelDownloadStatus[localModelSelected]"
-              class="setting-description"
-            >
-              Download this model first before activating.
+            <p>
+              Providers marked <em>(not connected)</em> require an API key. Open
+              <strong>Integrations</strong> to configure credentials for Grok, OpenAI, Anthropic, etc.
             </p>
           </div>
         </div>
@@ -1715,7 +1297,6 @@ export default defineComponent({
               Your name (optional) - helps personalize interactions
             </p>
           </div>
-
         </div>
 
         <!-- Heartbeat Tab -->
@@ -1786,7 +1367,156 @@ export default defineComponent({
               Select which provider to use for heartbeat processing. "Use Primary Provider" follows your primary provider setting from the Models tab.
             </p>
           </div>
+        </div>
 
+        <!-- Claude Code Tab -->
+        <div
+          v-if="currentNav === 'claude-code'"
+          class="tab-content"
+        >
+          <h2>Claude Code</h2>
+          <p class="description">
+            Claude Code runs inside the virtual machine with full access to your projects.
+            Connect your Anthropic account to enable it.
+          </p>
+
+          <!-- Auth Mode Selection -->
+          <div class="setting-group">
+            <label class="setting-label">Authentication Method</label>
+            <div class="claude-auth-buttons">
+              <button
+                class="btn"
+                :class="claudeAuthMode === 'api-key' ? 'role-primary' : 'role-secondary'"
+                @click="claudeAuthMode = 'api-key'"
+              >
+                API Key
+              </button>
+              <button
+                class="btn"
+                :class="claudeAuthMode === 'oauth' ? 'role-primary' : 'role-secondary'"
+                @click="claudeAuthMode = 'oauth'"
+              >
+                Claude Max (OAuth)
+              </button>
+            </div>
+            <p class="setting-description">
+              Use an API key for pay-per-token billing, or sign in with your Claude Max/Pro subscription.
+            </p>
+          </div>
+
+          <!-- API Key Input -->
+          <div
+            v-if="claudeAuthMode === 'api-key'"
+            class="setting-group"
+          >
+            <label class="setting-label">Anthropic API Key</label>
+            <div class="claude-input-row">
+              <input
+                v-model="claudeApiKey"
+                :type="claudeApiKeyVisible ? 'text' : 'password'"
+                class="input-field claude-input-field"
+                placeholder="sk-ant-..."
+              >
+              <button
+                class="btn role-secondary"
+                @click="claudeApiKeyVisible = !claudeApiKeyVisible"
+              >
+                {{ claudeApiKeyVisible ? 'Hide' : 'Show' }}
+              </button>
+            </div>
+            <p class="setting-description">
+              Get your API key from
+              <a
+                href="#"
+                @click.prevent="openExternal('https://console.anthropic.com/settings/keys')"
+              >console.anthropic.com</a>
+            </p>
+          </div>
+
+          <!-- OAuth Sign-In -->
+          <div
+            v-if="claudeAuthMode === 'oauth'"
+            class="setting-group"
+          >
+            <label class="setting-label">Claude Max / Pro Subscription</label>
+            <p class="setting-description claude-oauth-instructions">
+              Sign in with your Anthropic account to use your Claude Max or Pro subscription.
+              We'll open a browser window for you to authorize.
+            </p>
+            <button
+              v-if="!claudeOAuthToken && !claudeOAuthRunning"
+              class="btn role-primary"
+              @click="startClaudeOAuth"
+            >
+              Sign in with Claude
+            </button>
+            <div
+              v-if="claudeOAuthRunning"
+              class="claude-oauth-progress-container"
+            >
+              <p class="setting-description">
+                {{ claudeOAuthStatus }}
+              </p>
+              <button
+                class="btn role-secondary"
+                @click="cancelClaudeOAuth"
+              >
+                Cancel
+              </button>
+            </div>
+            <div
+              v-if="claudeOAuthToken && !claudeOAuthRunning"
+              class="claude-oauth-signed-in"
+            >
+              <span class="claude-status-dot" />
+              <span class="setting-description claude-status-text">Signed in</span>
+              <button
+                class="btn role-secondary"
+                @click="disconnectClaudeOAuth"
+              >
+                Sign out
+              </button>
+            </div>
+            <p
+              v-if="claudeOAuthError"
+              class="setting-description claude-oauth-error"
+            >
+              {{ claudeOAuthError }}
+            </p>
+          </div>
+
+          <!-- Save Button (API key only) -->
+          <div
+            v-if="claudeAuthMode === 'api-key'"
+            class="setting-group"
+          >
+            <button
+              class="btn role-primary"
+              :disabled="claudeSaving"
+              @click="saveClaudeCredentials"
+            >
+              {{ claudeSaving ? 'Saving...' : 'Save API Key' }}
+            </button>
+          </div>
+
+          <!-- Status -->
+          <div
+            v-if="claudeAuthMode !== 'none' && (claudeApiKey || claudeOAuthToken)"
+            class="setting-group"
+          >
+            <div class="claude-status">
+              <span class="claude-status-dot" />
+              <span class="setting-description claude-status-text">
+                Claude Code credentials configured. They will be injected into the VM on next boot.
+              </span>
+            </div>
+          </div>
+
+          <!-- Mobile Pairing is now handled automatically via Profile sign-in -->
+          <p class="description claude-pairing-heading">
+            To chat with this desktop from Sulla Mobile, sign in to your Sulla Cloud
+            account under the <strong>Profile</strong> tab. Pairing happens automatically.
+          </p>
         </div>
       </div>
     </div>
@@ -1975,6 +1705,81 @@ export default defineComponent({
   margin-bottom: 1rem;
   color: var(--text-error, var(--status-error, #ef4444));
   font-size: var(--fs-body);
+}
+
+.claude-auth-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.claude-input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.claude-input-field {
+  flex: 1;
+}
+
+.claude-oauth-instructions {
+  margin-bottom: 0.5rem;
+}
+
+.claude-oauth-textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  resize: vertical;
+  width: 100%;
+}
+
+.claude-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.claude-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-success, #3fb950);
+}
+
+.claude-status-text {
+  margin: 0;
+}
+
+.claude-oauth-progress-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.claude-oauth-paste-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.claude-oauth-signed-in {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.claude-oauth-error {
+  color: var(--status-error, #f85149);
+  margin-top: 0.5rem;
+}
+
+.claude-pairing-heading {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-default, var(--header-border));
 }
 
 .tab-content {

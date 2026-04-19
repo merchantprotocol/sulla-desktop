@@ -1,8 +1,9 @@
-import { BaseTool, ToolResponse } from '../base';
 import { registry } from '../../integrations';
 import { slackClient } from '../../integrations/slack/SlackClient';
-import type { SlackClient } from '../../integrations/slack/SlackClient';
 import { getIntegrationService } from '../../services/IntegrationService';
+import { BaseTool, ToolResponse } from '../base';
+
+import type { SlackClient } from '../../integrations/slack/SlackClient';
 
 const SLACK_ID = 'slack';
 const DEFAULT_RECOVERY_ATTEMPTS = 3;

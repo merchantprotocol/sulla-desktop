@@ -24,7 +24,7 @@ const NOISE_HIGH_RMS = 0.05;        // Noise floor RMS above this = "high"
 let noiseFloor = 0;
 let isSpeaking = false;
 let speechHoldCount = 0;
-let noiseLevel = "low";
+let noiseLevel = 'low';
 let initialized = false;
 let callback = null;
 
@@ -72,11 +72,11 @@ function process(rms) {
 
   // Classify noise level
   if (noiseFloor > NOISE_HIGH_RMS) {
-    noiseLevel = "high";
+    noiseLevel = 'high';
   } else if (noiseFloor > NOISE_MODERATE_RMS) {
-    noiseLevel = "moderate";
+    noiseLevel = 'moderate';
   } else {
-    noiseLevel = "low";
+    noiseLevel = 'low';
   }
 
   const result = { noiseFloor, isSpeaking, noiseLevel };
@@ -100,7 +100,7 @@ function reset() {
   noiseFloor = 0;
   isSpeaking = false;
   speechHoldCount = 0;
-  noiseLevel = "low";
+  noiseLevel = 'low';
   initialized = false;
 }
 

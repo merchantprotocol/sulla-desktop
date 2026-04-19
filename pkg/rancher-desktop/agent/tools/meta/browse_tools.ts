@@ -1,6 +1,6 @@
+import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
 import { toolRegistry } from '../registry';
-import { getIntegrationService } from '../../services/IntegrationService';
 
 /**
  * BrowseToolsWorker — read-only tool discovery.

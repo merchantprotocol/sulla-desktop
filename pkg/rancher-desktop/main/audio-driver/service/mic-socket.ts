@@ -51,10 +51,11 @@
  * ```
  */
 
-import net from 'net';
 import fs from 'fs';
-import path from 'path';
+import net from 'net';
 import os from 'os';
+import path from 'path';
+
 import { log } from '../model/logger';
 
 const TAG = 'MicSocket';
@@ -78,10 +79,10 @@ export function start(onChunk: (chunk: Buffer) => void): string | null {
   micChunkCount = 0;
 
   // Use a temp path for the socket
-  socketPath = path.join(os.tmpdir(), `audio-driver-mic-${process.pid}.sock`);
+  socketPath = path.join(os.tmpdir(), `audio-driver-mic-${ process.pid }.sock`);
 
   // Clean up stale socket file if it exists
-  try { fs.unlinkSync(socketPath); } catch {}
+  try { fs.unlinkSync(socketPath) } catch {}
 
   server = net.createServer((conn: net.Socket) => {
     log.info(TAG, 'Renderer connected');
@@ -160,7 +161,7 @@ export function stop(): void {
   }
 
   if (socketPath) {
-    try { fs.unlinkSync(socketPath); } catch {}
+    try { fs.unlinkSync(socketPath) } catch {}
     log.info(TAG, 'Stopped', { path: socketPath });
     socketPath = null;
   }

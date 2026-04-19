@@ -11,11 +11,13 @@
  * (e.g. for decision prompts, workflow completion summaries).
  */
 
+import * as fsSync from 'fs';
+import * as osUtil from 'os';
+import * as pathUtil from 'path';
+
 import { throwIfAborted } from '../services/AbortService';
-import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { getConversationLogger } from '../services/ConversationLogger';
-import { getTrainingDataLogger } from '../services/TrainingDataLogger';
-import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
+import { getWebSocketClientService } from '../services/WebSocketClientService';
 import {
   processNextStep,
   resolveDecision,
@@ -23,9 +25,8 @@ import {
   createPlaybookState,
   type PlaybookStepResult,
 } from '../workflow/WorkflowPlaybook';
-import * as fsSync from 'fs';
-import * as pathUtil from 'path';
-import * as osUtil from 'os';
+
+import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
 
 // ============================================================================
 // PLAYBOOK DEBUG LOGGER
@@ -140,27 +141,31 @@ export class PlaybookController<TState = any> {
     agentId:   string;
     startedAt: number;
   }>();
-  private pendingCompletions: Array<{
+
+  private pendingCompletions: {
     nodeId:    string;
     nodeLabel: string;
     output:    unknown;
     threadId?: string;
-  }> = [];
-  private pendingFailures: Array<{
+  }[] = [];
+
+  private pendingFailures: {
     nodeId:    string;
     nodeLabel: string;
     error:     string;
-  }> = [];
-  private pendingEscalations: Array<{
-    nodeId:    string;
-    nodeLabel: string;
-    agentId:   string;
-    prompt:    string;
-    config:    Record<string, unknown>;
-    question:  string;
-    threadId?: string;
+  }[] = [];
+
+  private pendingEscalations: {
+    nodeId:                 string;
+    nodeLabel:              string;
+    agentId:                string;
+    prompt:                 string;
+    config:                 Record<string, unknown>;
+    question:               string;
+    threadId?:              string;
     orchestratorAttempted?: boolean;
-  }> = [];
+  }[] = [];
+
   private isProcessingPlaybook = false;
   private _continuationQueued = false;
 
@@ -321,7 +326,7 @@ export class PlaybookController<TState = any> {
       const pendingSuccessCriteria = (pendingEntry as any)?.successCriteria || '';
       let finalOutput = completion.output;
 
-      const contractMatch = resultText.match(/<completion-contract>([\s\S]*?)<\/completion-contract>/);
+      const contractMatch = /<completion-contract>([\s\S]*?)<\/completion-contract>/.exec(resultText);
       const contractContent = contractMatch ? contractMatch[1].trim() : null;
 
       if (pendingSuccessCriteria.trim()) {
@@ -370,7 +375,7 @@ export class PlaybookController<TState = any> {
                 await WorkflowPendingCompletionModel.saveCompletion({ executionId: execId, nodeId: remaining.nodeId, nodeLabel: remaining.nodeLabel, output: remaining.output, threadId: remaining.threadId });
               }
               console.log(`[PlaybookController] Persisted ${ this.pendingCompletions.length } undrained completions before needsUserInput pause`);
-            } catch (e) { console.warn('[PlaybookController] Failed to persist undrained completions:', e); }
+            } catch (e) { console.warn('[PlaybookController] Failed to persist undrained completions:', e) }
           }
         }
 
@@ -548,255 +553,262 @@ export class PlaybookController<TState = any> {
     console.log(`[PlaybookController] Entering walker loop`);
     playbookLog('walker_loop_enter', {
       playbookStatus: meta.activeWorkflow?.status,
-      workflowSlug: meta.activeWorkflow?.definition?.id,
-      cycleComplete: (state as any).metadata.cycleComplete,
+      workflowSlug:   meta.activeWorkflow?.definition?.id,
+      cycleComplete:  (state as any).metadata.cycleComplete,
       waitingForUser: (state as any).metadata.waitingForUser,
     });
     const continueProcessing = true;
     try {
-    while (continueProcessing) {
-      const currentPlaybook: WorkflowPlaybookState = meta.activeWorkflow;
-      if (currentPlaybook?.status !== 'running') {
-        playbookLog('walker_loop_break', { reason: 'playbook_not_running', status: currentPlaybook?.status });
-        break;
-      }
+      while (continueProcessing) {
+        const currentPlaybook: WorkflowPlaybookState = meta.activeWorkflow;
+        if (currentPlaybook?.status !== 'running') {
+          playbookLog('walker_loop_break', { reason: 'playbook_not_running', status: currentPlaybook?.status });
+          break;
+        }
 
-      const step: PlaybookStepResult = processNextStep(currentPlaybook);
-      meta.activeWorkflow = step.updatedPlaybook;
+        const step: PlaybookStepResult = processNextStep(currentPlaybook);
+        meta.activeWorkflow = step.updatedPlaybook;
 
-      playbookLog('walker_step', {
-        action: step.action,
-        nodeId: (step as any).nodeId || 'n/a',
-        playbookStatus: step.updatedPlaybook?.status,
-        prompt: (step as any).prompt ? String((step as any).prompt).slice(0, 200) : undefined,
-      });
-      console.log(`[PlaybookController] Step action=${ step.action }, nodeId=${ (step as any).nodeId || 'n/a' }, playbookStatus=${ step.updatedPlaybook?.status }`);
-
-      switch (step.action) {
-      case 'prompt_orchestrator': {
-        const opNodeId = step.nodeId;
-        const opLabel = this.getPlaybookNodeLabel(currentPlaybook, opNodeId);
-
-        playbookLog('orchestrator_prompt_start', {
-          nodeId: opNodeId, label: opLabel,
-          promptLength: step.prompt?.length,
-          promptPreview: String(step.prompt).slice(0, 200),
-          cycleComplete: (state as any).metadata.cycleComplete,
-          waitingForUser: (state as any).metadata.waitingForUser,
-          iterations: (state as any).metadata.iterations,
-          messageCount: (state as any).messages?.length,
+        playbookLog('walker_step', {
+          action:         step.action,
+          nodeId:         (step as any).nodeId || 'n/a',
+          playbookStatus: step.updatedPlaybook?.status,
+          prompt:         (step as any).prompt ? String((step as any).prompt).slice(0, 200) : undefined,
         });
+        console.log(`[PlaybookController] Step action=${ step.action }, nodeId=${ (step as any).nodeId || 'n/a' }, playbookStatus=${ step.updatedPlaybook?.status }`);
 
-        this.emitEdgeActivations(state, currentPlaybook.definition, opNodeId, 'incoming');
-        this.emitPlaybookEvent(state, 'node_started', { nodeId: opNodeId, nodeLabel: opLabel, prompt: step.prompt });
+        switch (step.action) {
+        case 'prompt_orchestrator': {
+          const opNodeId = step.nodeId;
+          const opLabel = this.getPlaybookNodeLabel(currentPlaybook, opNodeId);
 
-        this.injectWorkflowMessage(state, step.prompt);
-        state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-
-        let opMsgs = (state as any).messages;
-        let opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
-        let opResult: string | any = opLastAssistant?.content ?? '';
-
-        playbookLog('orchestrator_prompt_raw_response', {
-          nodeId: opNodeId, label: opLabel,
-          resultType: typeof opResult,
-          isArray: Array.isArray(opResult),
-          contentBlocks: Array.isArray(opResult) ? opResult.map((b: any) => ({ type: b.type, textLen: b.type === 'text' ? b.text?.length : undefined })) : undefined,
-          stringLen: typeof opResult === 'string' ? opResult.length : undefined,
-          cycleComplete: (state as any).metadata.cycleComplete,
-          iterations: (state as any).metadata.iterations,
-          messageCount: (state as any).messages?.length,
-        });
-
-        const isToolUseOnly = Array.isArray(opResult)
-          && opResult.length > 0
-          && opResult.every((block: any) => block.type === 'tool_use');
-        const opText = Array.isArray(opResult)
-          ? opResult.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
-          : String(opResult).trim();
-
-        const abortState = await this.handleAbortIfSignalled(state, opText || String(opResult));
-        if (abortState) return abortState;
-
-        if (isToolUseOnly || opText.length < 10) {
-          playbookLog('orchestrator_prompt_retry', {
-            nodeId: opNodeId, label: opLabel,
-            reason: isToolUseOnly ? 'tool_use_only' : 'text_too_short',
-            textLength: opText.length,
-            textPreview: opText.slice(0, 100),
+          playbookLog('orchestrator_prompt_start', {
+            nodeId:         opNodeId,
+            label:          opLabel,
+            promptLength:   step.prompt?.length,
+            promptPreview:  String(step.prompt).slice(0, 200),
+            cycleComplete:  (state as any).metadata.cycleComplete,
+            waitingForUser: (state as any).metadata.waitingForUser,
+            iterations:     (state as any).metadata.iterations,
+            messageCount:   (state as any).messages?.length,
           });
-          console.warn(`[PlaybookController] Orchestrator prompt "${ opLabel }" exited without valid text output — re-prompting`);
-          this.injectWorkflowMessage(state,
-            `[Workflow: Missing Required Output — "${ opLabel }"]\n\n` +
+
+          this.emitEdgeActivations(state, currentPlaybook.definition, opNodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: opNodeId, nodeLabel: opLabel, prompt: step.prompt });
+
+          this.injectWorkflowMessage(state, step.prompt);
+          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+          let opMsgs = (state as any).messages;
+          let opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
+          let opResult: string | any = opLastAssistant?.content ?? '';
+
+          playbookLog('orchestrator_prompt_raw_response', {
+            nodeId:        opNodeId,
+            label:         opLabel,
+            resultType:    typeof opResult,
+            isArray:       Array.isArray(opResult),
+            contentBlocks: Array.isArray(opResult) ? opResult.map((b: any) => ({ type: b.type, textLen: b.type === 'text' ? b.text?.length : undefined })) : undefined,
+            stringLen:     typeof opResult === 'string' ? opResult.length : undefined,
+            cycleComplete: (state as any).metadata.cycleComplete,
+            iterations:    (state as any).metadata.iterations,
+            messageCount:  (state as any).messages?.length,
+          });
+
+          const isToolUseOnly = Array.isArray(opResult) &&
+          opResult.length > 0 &&
+          opResult.every((block: any) => block.type === 'tool_use');
+          const opText = Array.isArray(opResult)
+            ? opResult.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
+            : String(opResult).trim();
+
+          const abortState = await this.handleAbortIfSignalled(state, opText || String(opResult));
+          if (abortState) return abortState;
+
+          if (isToolUseOnly || opText.length < 10) {
+            playbookLog('orchestrator_prompt_retry', {
+              nodeId:      opNodeId,
+              label:       opLabel,
+              reason:      isToolUseOnly ? 'tool_use_only' : 'text_too_short',
+              textLength:  opText.length,
+              textPreview: opText.slice(0, 100),
+            });
+            console.warn(`[PlaybookController] Orchestrator prompt "${ opLabel }" exited without valid text output — re-prompting`);
+            this.injectWorkflowMessage(state,
+              `[Workflow: Missing Required Output — "${ opLabel }"]\n\n` +
             `You ended your turn without providing the text output that this workflow node requires. ` +
             `The downstream nodes cannot proceed without it.\n\n` +
             `Original instructions:\n${ step.prompt }\n\n` +
             `You MUST produce a substantive text response now. This is the output that will be ` +
             `passed to the next step in the workflow. Do not end your turn until you have provided it.`);
-          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
-          opMsgs = (state as any).messages;
-          opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
-          opResult = opLastAssistant?.content ?? '';
+            opMsgs = (state as any).messages;
+            opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
+            opResult = opLastAssistant?.content ?? '';
 
-          playbookLog('orchestrator_prompt_retry_result', {
-            nodeId: opNodeId, label: opLabel,
-            resultType: typeof opResult,
-            isArray: Array.isArray(opResult),
-            textLen: Array.isArray(opResult)
-              ? opResult.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('').length
-              : String(opResult).length,
-          });
-        }
-
-        playbookLog('orchestrator_prompt_complete', {
-          nodeId: opNodeId, label: opLabel,
-          outputType: typeof opResult,
-          outputLength: typeof opResult === 'string' ? opResult.length : JSON.stringify(opResult).length,
-          outputPreview: (typeof opResult === 'string' ? opResult : JSON.stringify(opResult)).slice(0, 300),
-        });
-
-        const opCompleted = completeSubAgent(meta.activeWorkflow, opNodeId, opResult);
-        meta.activeWorkflow = opCompleted.updatedPlaybook;
-
-        this.emitPlaybookEvent(state, 'node_completed', { nodeId: opNodeId, nodeLabel: opLabel, output: opResult });
-        this.emitEdgeActivations(state, currentPlaybook.definition, opNodeId, 'outgoing');
-        await this.saveCheckpoint(opCompleted.updatedPlaybook, opNodeId, opLabel, 'orchestrator-prompt', opResult);
-
-        if (opCompleted.action === 'workflow_completed') {
-          this.emitPlaybookEvent(state, 'workflow_completed', {});
-          state = await this.releaseWorkflow(state, opCompleted.updatedPlaybook, 'completed');
-          return state;
-        }
-        break;
-      }
-
-      case 'prompt_agent': {
-        playbookLog('prompt_agent_start', {
-          nodeId: step.updatedPlaybook.pendingDecision?.nodeId,
-          promptLength: step.prompt?.length,
-          promptPreview: String(step.prompt).slice(0, 200),
-        });
-        const decisionNodeId = step.updatedPlaybook.pendingDecision?.nodeId;
-        if (decisionNodeId) {
-          this.emitEdgeActivations(state, step.updatedPlaybook.definition, decisionNodeId, 'incoming');
-          this.emitPlaybookEvent(state, 'node_started', {
-            nodeId:    decisionNodeId,
-            nodeLabel: this.getPlaybookNodeLabel(step.updatedPlaybook, decisionNodeId),
-            prompt:    step.prompt,
-          });
-        }
-        this.injectWorkflowMessage(state, step.prompt);
-        state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-
-        const pendingPlaybook: WorkflowPlaybookState | undefined = meta.activeWorkflow;
-        if (pendingPlaybook?.pendingDecision) {
-          const msgs = (state as any).messages;
-          const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
-          if (lastAssistant?.content) {
-            const abortAgentState = await this.handleAbortIfSignalled(state, String(lastAssistant.content));
-            if (abortAgentState) return abortAgentState;
-
-            const resolvedNodeId = pendingPlaybook.pendingDecision?.nodeId;
-            const resolved = resolveDecision(pendingPlaybook, String(lastAssistant.content));
-            meta.activeWorkflow = resolved.updatedPlaybook;
-            if (resolvedNodeId) {
-              const rNodeLabel = this.getPlaybookNodeLabel(pendingPlaybook, resolvedNodeId);
-              const rNodeSubtype = this.getPlaybookNodeSubtype(pendingPlaybook, resolvedNodeId);
-              this.emitPlaybookEvent(state, 'node_completed', {
-                nodeId:    resolvedNodeId,
-                nodeLabel: rNodeLabel,
-                output:    lastAssistant.content,
-              });
-              this.emitEdgeActivations(state, pendingPlaybook.definition, resolvedNodeId, 'outgoing');
-              await this.saveCheckpoint(resolved.updatedPlaybook, resolvedNodeId, rNodeLabel, rNodeSubtype, lastAssistant.content);
-            }
-            if (resolved.action === 'workflow_completed' || resolved.action === 'workflow_failed') {
-              this.emitPlaybookEvent(state, resolved.action, {});
-              const outcome = resolved.action === 'workflow_completed' ? 'completed' : 'failed';
-              state = await this.releaseWorkflow(state, resolved.updatedPlaybook, outcome);
-              return state;
-            }
-            break;
+            playbookLog('orchestrator_prompt_retry_result', {
+              nodeId:     opNodeId,
+              label:      opLabel,
+              resultType: typeof opResult,
+              isArray:    Array.isArray(opResult),
+              textLen:    Array.isArray(opResult)
+                ? opResult.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('').length
+                : String(opResult).length,
+            });
           }
-        }
-        return state;
-      }
 
-      case 'spawn_sub_agent': {
-        const subNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-        const isIntegrationCall = step.agentId === '__integration_call__';
-        playbookLog('spawn_sub_agent', {
-          nodeId: step.nodeId, label: subNodeLabel,
-          agentId: step.agentId, isIntegrationCall,
-          promptLength: step.prompt?.length,
-          promptPreview: String(step.prompt).slice(0, 200),
-        });
+          playbookLog('orchestrator_prompt_complete', {
+            nodeId:        opNodeId,
+            label:         opLabel,
+            outputType:    typeof opResult,
+            outputLength:  typeof opResult === 'string' ? opResult.length : JSON.stringify(opResult).length,
+            outputPreview: (typeof opResult === 'string' ? opResult : JSON.stringify(opResult)).slice(0, 300),
+          });
 
-        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
-        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subNodeLabel, prompt: step.prompt });
+          const opCompleted = completeSubAgent(meta.activeWorkflow, opNodeId, opResult);
+          meta.activeWorkflow = opCompleted.updatedPlaybook;
 
-        if (isIntegrationCall) {
-          const preCallDesc = (step.config.preCallDescription as string) || '';
-          const toolInfo = `Integration: ${ step.config.integrationSlug || 'unknown' }\nEndpoint: ${ step.config.endpointName || 'unknown' }`;
-          const paramSummary = Object.entries((step.config.defaults as Record<string, string>) || {})
-            .map(([k, v]) => `  ${ k }: ${ v }`)
-            .join('\n');
+          this.emitPlaybookEvent(state, 'node_completed', { nodeId: opNodeId, nodeLabel: opLabel, output: opResult });
+          this.emitEdgeActivations(state, currentPlaybook.definition, opNodeId, 'outgoing');
+          await this.saveCheckpoint(opCompleted.updatedPlaybook, opNodeId, opLabel, 'orchestrator-prompt', opResult);
 
-          const validatePrompt = `[Workflow Tool Call: ${ subNodeLabel }]\n${ toolInfo }\n${ paramSummary ? `\nParameters:\n${ paramSummary }` : '' }\n${ preCallDesc ? `\nDescription: ${ preCallDesc }` : '' }\n\nValidate these parameters. The tool will execute after your review.`;
-          this.injectWorkflowMessage(state, validatePrompt);
-          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-
-          try {
-            const result = await this.executeSubAgent(state, step.nodeId, step.agentId, step.prompt, step.config);
-            const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-
-            this.injectWorkflowMessage(state, `[Tool Call Result: ${ subNodeLabel }]\n${ resultText }`, true);
-
-            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, result.output, result.threadId);
-            meta.activeWorkflow = completed.updatedPlaybook;
-
-            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: resultText });
-            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'integration-call', resultText);
-
-            if (completed.action === 'workflow_completed') {
-              this.emitPlaybookEvent(state, 'workflow_completed', {});
-              state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
-              return state;
-            }
-          } catch (err: any) {
-            console.error(`[PlaybookController] Tool call failed:`, err);
-            this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, error: err.message || String(err) });
-            const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
-            this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
-            state = await this.releaseWorkflow(state, failedPlaybook, 'failed', err.message || String(err));
+          if (opCompleted.action === 'workflow_completed') {
+            this.emitPlaybookEvent(state, 'workflow_completed', {});
+            state = await this.releaseWorkflow(state, opCompleted.updatedPlaybook, 'completed');
             return state;
           }
-        } else {
-          // Agent Node: orchestrator-mediated deployment
-          const agentName = (step.config.agentName as string) || step.agentId || 'default';
-          const additionalPrompt = (step.config.additionalPrompt as string) || '';
-          const completionContract = (step.config.completionContract as string) || '';
-          const successCriteria = (step.config.successCriteria as string) || '';
+          break;
+        }
 
-          // Phase 1: Ask orchestrator to formulate the sub-agent's message
-          let formationMsg = `[Workflow: Deploying Agent — ${ subNodeLabel }]\n` +
+        case 'prompt_agent': {
+          playbookLog('prompt_agent_start', {
+            nodeId:        step.updatedPlaybook.pendingDecision?.nodeId,
+            promptLength:  step.prompt?.length,
+            promptPreview: String(step.prompt).slice(0, 200),
+          });
+          const decisionNodeId = step.updatedPlaybook.pendingDecision?.nodeId;
+          if (decisionNodeId) {
+            this.emitEdgeActivations(state, step.updatedPlaybook.definition, decisionNodeId, 'incoming');
+            this.emitPlaybookEvent(state, 'node_started', {
+              nodeId:    decisionNodeId,
+              nodeLabel: this.getPlaybookNodeLabel(step.updatedPlaybook, decisionNodeId),
+              prompt:    step.prompt,
+            });
+          }
+          this.injectWorkflowMessage(state, step.prompt);
+          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+          const pendingPlaybook: WorkflowPlaybookState | undefined = meta.activeWorkflow;
+          if (pendingPlaybook?.pendingDecision) {
+            const msgs = (state as any).messages;
+            const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+            if (lastAssistant?.content) {
+              const abortAgentState = await this.handleAbortIfSignalled(state, String(lastAssistant.content));
+              if (abortAgentState) return abortAgentState;
+
+              const resolvedNodeId = pendingPlaybook.pendingDecision?.nodeId;
+              const resolved = resolveDecision(pendingPlaybook, String(lastAssistant.content));
+              meta.activeWorkflow = resolved.updatedPlaybook;
+              if (resolvedNodeId) {
+                const rNodeLabel = this.getPlaybookNodeLabel(pendingPlaybook, resolvedNodeId);
+                const rNodeSubtype = this.getPlaybookNodeSubtype(pendingPlaybook, resolvedNodeId);
+                this.emitPlaybookEvent(state, 'node_completed', {
+                  nodeId:    resolvedNodeId,
+                  nodeLabel: rNodeLabel,
+                  output:    lastAssistant.content,
+                });
+                this.emitEdgeActivations(state, pendingPlaybook.definition, resolvedNodeId, 'outgoing');
+                await this.saveCheckpoint(resolved.updatedPlaybook, resolvedNodeId, rNodeLabel, rNodeSubtype, lastAssistant.content);
+              }
+              if (resolved.action === 'workflow_completed' || resolved.action === 'workflow_failed') {
+                this.emitPlaybookEvent(state, resolved.action, {});
+                const outcome = resolved.action === 'workflow_completed' ? 'completed' : 'failed';
+                state = await this.releaseWorkflow(state, resolved.updatedPlaybook, outcome);
+                return state;
+              }
+              break;
+            }
+          }
+          return state;
+        }
+
+        case 'spawn_sub_agent': {
+          const subNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          const isIntegrationCall = step.agentId === '__integration_call__';
+          playbookLog('spawn_sub_agent', {
+            nodeId:        step.nodeId,
+            label:         subNodeLabel,
+            agentId:       step.agentId,
+            isIntegrationCall,
+            promptLength:  step.prompt?.length,
+            promptPreview: String(step.prompt).slice(0, 200),
+          });
+
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subNodeLabel, prompt: step.prompt });
+
+          if (isIntegrationCall) {
+            const preCallDesc = (step.config.preCallDescription as string) || '';
+            const toolInfo = `Integration: ${ step.config.integrationSlug || 'unknown' }\nEndpoint: ${ step.config.endpointName || 'unknown' }`;
+            const paramSummary = Object.entries((step.config.defaults as Record<string, string>) || {})
+              .map(([k, v]) => `  ${ k }: ${ v }`)
+              .join('\n');
+
+            const validatePrompt = `[Workflow Tool Call: ${ subNodeLabel }]\n${ toolInfo }\n${ paramSummary ? `\nParameters:\n${ paramSummary }` : '' }\n${ preCallDesc ? `\nDescription: ${ preCallDesc }` : '' }\n\nValidate these parameters. The tool will execute after your review.`;
+            this.injectWorkflowMessage(state, validatePrompt);
+            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+            try {
+              const result = await this.executeSubAgent(state, step.nodeId, step.agentId, step.prompt, step.config);
+              const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+
+              this.injectWorkflowMessage(state, `[Tool Call Result: ${ subNodeLabel }]\n${ resultText }`, true);
+
+              const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, result.output, result.threadId);
+              meta.activeWorkflow = completed.updatedPlaybook;
+
+              this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: resultText });
+              this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+              await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'integration-call', resultText);
+
+              if (completed.action === 'workflow_completed') {
+                this.emitPlaybookEvent(state, 'workflow_completed', {});
+                state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+                return state;
+              }
+            } catch (err: any) {
+              console.error(`[PlaybookController] Tool call failed:`, err);
+              this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, error: err.message || String(err) });
+              const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
+              this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
+              state = await this.releaseWorkflow(state, failedPlaybook, 'failed', err.message || String(err));
+              return state;
+            }
+          } else {
+          // Agent Node: orchestrator-mediated deployment
+            const agentName = (step.config.agentName as string) || step.agentId || 'default';
+            const additionalPrompt = (step.config.additionalPrompt as string) || '';
+            const completionContract = (step.config.completionContract as string) || '';
+            const successCriteria = (step.config.successCriteria as string) || '';
+
+            // Phase 1: Ask orchestrator to formulate the sub-agent's message
+            let formationMsg = `[Workflow: Deploying Agent — ${ subNodeLabel }]\n` +
             `Agent type: ${ agentName }\n\n`;
 
-          if (step.prompt.trim()) {
-            formationMsg += `Here are your instructions for deploying this sub-agent:\n${ step.prompt }\n\n`;
-          }
+            if (step.prompt.trim()) {
+              formationMsg += `Here are your instructions for deploying this sub-agent:\n${ step.prompt }\n\n`;
+            }
 
-          formationMsg += `Formulate the complete task message that will be sent to this sub-agent. Be specific about:\n` +
+            formationMsg += `Formulate the complete task message that will be sent to this sub-agent. Be specific about:\n` +
             `1. What the sub-agent needs to accomplish\n` +
             `2. What completion contract to follow — describe the exact format and content for its final deliverable\n\n`;
 
-          if (completionContract.trim()) {
-            formationMsg += `The workflow expects this completion structure:\n${ completionContract }\n\n`;
-          }
+            if (completionContract.trim()) {
+              formationMsg += `The workflow expects this completion structure:\n${ completionContract }\n\n`;
+            }
 
-          formationMsg += `The sub-agent's final response MUST be wrapped in <completion-contract> XML tags.\n` +
+            formationMsg += `The sub-agent's final response MUST be wrapped in <completion-contract> XML tags.\n` +
             `Include these requirements in your message to the sub-agent.\n\n` +
             `## Delegation\n` +
             `You may delegate work to multiple agents by wrapping each task in a <PROMPT> tag.\n` +
@@ -809,602 +821,604 @@ export class PlaybookController<TState = any> {
             `If you don't use <PROMPT> tags, your entire response is sent as a single task to the configured agent.\n\n` +
             `Respond with the message(s) to send to the sub-agent(s).`;
 
-          this.injectWorkflowMessage(state, formationMsg);
-          (state as any).metadata._muteWsChat = true;
-          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-          (state as any).metadata._muteWsChat = false;
+            this.injectWorkflowMessage(state, formationMsg);
+            (state as any).metadata._muteWsChat = true;
+            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+            (state as any).metadata._muteWsChat = false;
 
-          const lastMsg = (state as any).messages?.[(state as any).messages.length - 1];
-          const orchestratorResponse = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
+            const lastMsg = (state as any).messages?.[(state as any).messages.length - 1];
+            const orchestratorResponse = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
 
-          const abortFormState = await this.handleAbortIfSignalled(state, orchestratorResponse);
-          if (abortFormState) return abortFormState;
+            const abortFormState = await this.handleAbortIfSignalled(state, orchestratorResponse);
+            if (abortFormState) return abortFormState;
 
-          const parsedPrompts = parsePromptTags(orchestratorResponse);
-          const cleanedMessage = orchestratorResponse
-            .replace(/<PROMPT[^>]*>[\s\S]*?<\/PROMPT>/gi, '')
-            .replace(/SPAWN_COUNT:\s*\d+\s*/gi, '')
-            .trim();
+            const parsedPrompts = parsePromptTags(orchestratorResponse);
+            const cleanedMessage = orchestratorResponse
+              .replace(/<PROMPT[^>]*>[\s\S]*?<\/PROMPT>/gi, '')
+              .replace(/SPAWN_COUNT:\s*\d+\s*/gi, '')
+              .trim();
 
-          const contractWrapper = `\nIMPORTANT: When you have completed your task, you MUST wrap your final deliverable in <completion-contract> XML tags:\n` +
+            const contractWrapper = `\nIMPORTANT: When you have completed your task, you MUST wrap your final deliverable in <completion-contract> XML tags:\n` +
             `<completion-contract>\nYour final response here\n</completion-contract>`;
 
-          // Phase 2: Launch sub-agent(s)
-          if (parsedPrompts.length > 0) {
+            // Phase 2: Launch sub-agent(s)
+            if (parsedPrompts.length > 0) {
             // Batch delegation
-            const cappedPrompts = parsedPrompts.slice(0, 10);
-            console.log(`[PlaybookController] Orchestrator delegated ${ cappedPrompts.length } prompts for "${ subNodeLabel }"`);
-            this.emitPlaybookEvent(state, 'node_parallel_spawn', { nodeId: step.nodeId, nodeLabel: subNodeLabel, count: cappedPrompts.length });
+              const cappedPrompts = parsedPrompts.slice(0, 10);
+              console.log(`[PlaybookController] Orchestrator delegated ${ cappedPrompts.length } prompts for "${ subNodeLabel }"`);
+              this.emitPlaybookEvent(state, 'node_parallel_spawn', { nodeId: step.nodeId, nodeLabel: subNodeLabel, count: cappedPrompts.length });
 
-            const delegationSummary = cappedPrompts.map((pp, i) =>
-              `  ${ i + 1 }. [${ pp.label || `prompt-${ i }` }] (agent: ${ pp.agentId || agentName })`,
-            ).join('\n');
-            this.injectWorkflowMessage(state, `[Workflow: Agent Delegation — ${ subNodeLabel }]\nSpawning ${ cappedPrompts.length } agents in parallel:\n${ delegationSummary }\n\nAll agents are launching now.`);
-            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+              const delegationSummary = cappedPrompts.map((pp, i) =>
+                `  ${ i + 1 }. [${ pp.label || `prompt-${ i }` }] (agent: ${ pp.agentId || agentName })`,
+              ).join('\n');
+              this.injectWorkflowMessage(state, `[Workflow: Agent Delegation — ${ subNodeLabel }]\nSpawning ${ cappedPrompts.length } agents in parallel:\n${ delegationSummary }\n\nAll agents are launching now.`);
+              state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
-            const parallelPromises = cappedPrompts.map((pp, i) => {
-              const promptParts: string[] = [];
-              if (additionalPrompt.trim()) promptParts.push(additionalPrompt);
-              promptParts.push(pp.content);
-              promptParts.push(contractWrapper);
-              const fullPrompt = promptParts.join('\n\n');
-              const effectiveAgentId = pp.agentId || step.agentId;
-              const instanceId = `${ step.nodeId }-prompt-${ i }`;
+              const parallelPromises = cappedPrompts.map((pp, i) => {
+                const promptParts: string[] = [];
+                if (additionalPrompt.trim()) promptParts.push(additionalPrompt);
+                promptParts.push(pp.content);
+                promptParts.push(contractWrapper);
+                const fullPrompt = promptParts.join('\n\n');
+                const effectiveAgentId = pp.agentId || step.agentId;
+                const instanceId = `${ step.nodeId }-prompt-${ i }`;
 
-              return this.executeSubAgent(state, instanceId, effectiveAgentId, fullPrompt, step.config)
-                .then(result => ({ index: i, label: pp.label || `prompt-${ i }`, result, error: null as string | null }))
-                .catch((err: any) => ({ index: i, label: pp.label || `prompt-${ i }`, result: null as { output: unknown; threadId?: string; contractStatus: 'done' | 'blocked' | 'no_contract' } | null, error: err.message || String(err) }));
-            });
+                return this.executeSubAgent(state, instanceId, effectiveAgentId, fullPrompt, step.config)
+                  .then(result => ({ index: i, label: pp.label || `prompt-${ i }`, result, error: null as string | null }))
+                  .catch((err: any) => ({ index: i, label: pp.label || `prompt-${ i }`, result: null as { output: unknown; threadId?: string; contractStatus: 'done' | 'blocked' | 'no_contract' } | null, error: err.message || String(err) }));
+              });
 
-            const results = await Promise.allSettled(parallelPromises);
+              const results = await Promise.allSettled(parallelPromises);
 
-            const successes: { index: number; label: string; resultText: string; threadId?: string }[] = [];
-            const failures: { index: number; label: string; error: string }[] = [];
+              const successes: { index: number; label: string; resultText: string; threadId?: string }[] = [];
+              const failures: { index: number; label: string; error: string }[] = [];
 
-            for (const outcome of results) {
-              if (outcome.status === 'fulfilled') {
-                const { index, label, result, error } = outcome.value;
-                if (error || !result) {
-                  failures.push({ index, label, error: error || 'Unknown error' });
-                } else if (result.contractStatus === 'no_contract') {
-                  failures.push({ index, label, error: 'Sub-graph died without completion contract' });
-                } else if (result.contractStatus === 'blocked') {
-                  const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-                  failures.push({ index, label, error: `Blocked: ${ resultText.slice(0, 200) }` });
+              for (const outcome of results) {
+                if (outcome.status === 'fulfilled') {
+                  const { index, label, result, error } = outcome.value;
+                  if (error || !result) {
+                    failures.push({ index, label, error: error || 'Unknown error' });
+                  } else if (result.contractStatus === 'no_contract') {
+                    failures.push({ index, label, error: 'Sub-graph died without completion contract' });
+                  } else if (result.contractStatus === 'blocked') {
+                    const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+                    failures.push({ index, label, error: `Blocked: ${ resultText.slice(0, 200) }` });
+                  } else {
+                    const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+                    successes.push({ index, label, resultText, threadId: result.threadId });
+                  }
                 } else {
-                  const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-                  successes.push({ index, label, resultText, threadId: result.threadId });
+                  failures.push({ index: -1, label: 'unknown', error: outcome.reason?.message || String(outcome.reason) });
                 }
-              } else {
-                failures.push({ index: -1, label: 'unknown', error: outcome.reason?.message || String(outcome.reason) });
               }
-            }
 
-            console.log(`[PlaybookController] Delegation "${ subNodeLabel }": ${ successes.length }/${ cappedPrompts.length } succeeded, ${ failures.length } failed`);
+              console.log(`[PlaybookController] Delegation "${ subNodeLabel }": ${ successes.length }/${ cappedPrompts.length } succeeded, ${ failures.length } failed`);
 
-            if (successes.length === 0) {
-              const errSummary = failures.map(f => `${ f.label }: ${ f.error }`).join('; ');
-              this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, error: errSummary });
+              if (successes.length === 0) {
+                const errSummary = failures.map(f => `${ f.label }: ${ f.error }`).join('; ');
+                this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, error: errSummary });
 
-              const escalationMsg = `[Workflow Node Failed: ${ subNodeLabel }]\n` +
+                const escalationMsg = `[Workflow Node Failed: ${ subNodeLabel }]\n` +
                 `All ${ cappedPrompts.length } delegated agents failed.\n` +
                 `Errors: ${ errSummary }\n\n` +
                 `The workflow "${ currentPlaybook.definition?.name }" is paused. Ask the user what to do.`;
 
-              this.injectWorkflowMessage(state, escalationMsg);
-              state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-              return state;
-            }
+                this.injectWorkflowMessage(state, escalationMsg);
+                state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+                return state;
+              }
 
-            const batchOutput = {
-              strategy: 'delegation',
-              merged:   successes.map(s => ({
-                nodeId: `${ step.nodeId }-prompt-${ s.index }`,
-                label:  s.label,
-                result: s.resultText,
-              })),
-            };
+              const batchOutput = {
+                strategy: 'delegation',
+                merged:   successes.map(s => ({
+                  nodeId: `${ step.nodeId }-prompt-${ s.index }`,
+                  label:  s.label,
+                  result: s.resultText,
+                })),
+              };
 
-            const failureNote = failures.length > 0
-              ? `\n\n(${ failures.length }/${ cappedPrompts.length } agents failed: ${ failures.map(f => `${ f.label }: ${ f.error.slice(0, 100) }`).join('; ') })`
-              : '';
+              const failureNote = failures.length > 0
+                ? `\n\n(${ failures.length }/${ cappedPrompts.length } agents failed: ${ failures.map(f => `${ f.label }: ${ f.error.slice(0, 100) }`).join('; ') })`
+                : '';
 
-            // Phase 3: Orchestrator evaluates with success criteria (batch)
-            const batchSummaryText = successes.map(s => {
-              const handBack = parseHandBack(s.resultText);
-              return `[${ s.label }] ${ handBack.summary || s.resultText.slice(0, 500) }`;
-            }).join('\n\n');
+              // Phase 3: Orchestrator evaluates with success criteria (batch)
+              const batchSummaryText = successes.map(s => {
+                const handBack = parseHandBack(s.resultText);
+                return `[${ s.label }] ${ handBack.summary || s.resultText.slice(0, 500) }`;
+              }).join('\n\n');
 
-            let finalOutput: unknown = batchOutput;
-            if (successCriteria.trim()) {
-              const evalMsg = `[Sub-agents Complete: ${ subNodeLabel } — ${ successes.length }/${ cappedPrompts.length } agents]\n\n` +
+              const finalOutput: unknown = batchOutput;
+              if (successCriteria.trim()) {
+                const evalMsg = `[Sub-agents Complete: ${ subNodeLabel } — ${ successes.length }/${ cappedPrompts.length } agents]\n\n` +
                 `${ batchSummaryText }${ failureNote }\n\n` +
                 `Evaluate the results against the following success criteria:\n${ successCriteria }\n\n` +
                 `If the results meet all criteria, respond with APPROVED and a brief summary.\n` +
                 `If they fail any criteria, respond with NEEDS_REVISION and explain what fell short.`;
 
-              this.injectWorkflowMessage(state, evalMsg);
-              state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+                this.injectWorkflowMessage(state, evalMsg);
+                state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+              } else {
+                const resultMsg = `[Workflow Node Complete: ${ subNodeLabel } — ${ successes.length }/${ cappedPrompts.length } agents]\n${ batchSummaryText }${ failureNote }`;
+                this.injectWorkflowMessage(state, resultMsg, true);
+              }
+
+              const firstThread = successes[0]?.threadId;
+              const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, finalOutput, firstThread);
+              meta.activeWorkflow = completed.updatedPlaybook;
+
+              this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: JSON.stringify(finalOutput), instanceCount: cappedPrompts.length, succeeded: successes.length, failed: failures.length });
+              this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+              await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'agent', JSON.stringify(finalOutput));
+
+              if (completed.action === 'workflow_completed') {
+                this.emitPlaybookEvent(state, 'workflow_completed', {});
+                state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+                return state;
+              }
             } else {
-              const resultMsg = `[Workflow Node Complete: ${ subNodeLabel } — ${ successes.length }/${ cappedPrompts.length } agents]\n${ batchSummaryText }${ failureNote }`;
-              this.injectWorkflowMessage(state, resultMsg, true);
-            }
-
-            const firstThread = successes[0]?.threadId;
-            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, finalOutput, firstThread);
-            meta.activeWorkflow = completed.updatedPlaybook;
-
-            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subNodeLabel, output: JSON.stringify(finalOutput), instanceCount: cappedPrompts.length, succeeded: successes.length, failed: failures.length });
-            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subNodeLabel, 'agent', JSON.stringify(finalOutput));
-
-            if (completed.action === 'workflow_completed') {
-              this.emitPlaybookEvent(state, 'workflow_completed', {});
-              state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
-              return state;
-            }
-          } else {
             // Single agent: no <PROMPT> tags — existing non-blocking path
-            const subAgentPromptParts: string[] = [];
-            if (additionalPrompt.trim()) {
-              subAgentPromptParts.push(additionalPrompt);
-            }
-            subAgentPromptParts.push(cleanedMessage);
-            subAgentPromptParts.push(contractWrapper);
+              const subAgentPromptParts: string[] = [];
+              if (additionalPrompt.trim()) {
+                subAgentPromptParts.push(additionalPrompt);
+              }
+              subAgentPromptParts.push(cleanedMessage);
+              subAgentPromptParts.push(contractWrapper);
 
-            const subAgentPrompt = subAgentPromptParts.join('\n\n');
-            const maxRetries = 3;
-            const nodeId = step.nodeId;
-            const agentId = step.agentId;
+              const subAgentPrompt = subAgentPromptParts.join('\n\n');
+              const maxRetries = 3;
+              const nodeId = step.nodeId;
+              const agentId = step.agentId;
 
-            console.log(`[PlaybookController] Launching sub-agent "${ subNodeLabel }" (agent: ${ agentId }) non-blocking`);
+              console.log(`[PlaybookController] Launching sub-agent "${ subNodeLabel }" (agent: ${ agentId }) non-blocking`);
 
-            this.pendingSubAgents.set(nodeId, {
-              nodeId,
-              nodeLabel: subNodeLabel,
-              agentId,
-              startedAt: Date.now(),
-            });
+              this.pendingSubAgents.set(nodeId, {
+                nodeId,
+                nodeLabel: subNodeLabel,
+                agentId,
+                startedAt: Date.now(),
+              });
 
-            const pending = this.pendingSubAgents.get(nodeId)!;
-            (pending as any).successCriteria = successCriteria;
-            (pending as any).completionContract = completionContract;
+              const pending = this.pendingSubAgents.get(nodeId)!;
+              (pending as any).successCriteria = successCriteria;
+              (pending as any).completionContract = completionContract;
 
-            this.executeSubAgentWithRetry(state, nodeId, agentId, subAgentPrompt, step.config, subNodeLabel, maxRetries);
+              this.executeSubAgentWithRetry(state, nodeId, agentId, subAgentPrompt, step.config, subNodeLabel, maxRetries);
 
-            const narrateMsg = `[Workflow: Sub-agent "${ subNodeLabel }" launched]\n` +
+              const narrateMsg = `[Workflow: Sub-agent "${ subNodeLabel }" launched]\n` +
               `Agent type: ${ agentName }\n` +
               `Task: ${ cleanedMessage.slice(0, 300) }${ cleanedMessage.length > 300 ? '...' : '' }\n\n` +
               `The sub-agent is now running in the background. Tell the user what you just launched ` +
               `and what it will do. You can continue helping the user while it works.`;
 
-            this.injectWorkflowMessage(state, narrateMsg);
-            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+              this.injectWorkflowMessage(state, narrateMsg);
+              state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
+              return state;
+            }
+          }
+          break;
+        }
+
+        case 'spawn_parallel_agents': {
+          const parallelNodes = step.nodes;
+          const nodeLabels = parallelNodes.map(n => this.getPlaybookNodeLabel(currentPlaybook, n.nodeId));
+
+          for (let i = 0; i < parallelNodes.length; i++) {
+            const pn = parallelNodes[i];
+            this.emitEdgeActivations(state, currentPlaybook.definition, pn.nodeId, 'incoming');
+            this.emitPlaybookEvent(state, 'node_started', { nodeId: pn.nodeId, nodeLabel: nodeLabels[i], prompt: pn.prompt });
+          }
+
+          const batchSummary = parallelNodes.map((pn, i) => {
+            const isIntegrationCall = pn.agentId === '__integration_call__';
+            return `  ${ i + 1 }. [${ nodeLabels[i] }] (${ isIntegrationCall ? 'integration-call' : `agent: ${ pn.config.agentName || pn.agentId || 'default' }` })`;
+          }).join('\n');
+          this.injectWorkflowMessage(state, `[Workflow: Parallel Execution]\nThe following ${ parallelNodes.length } nodes will execute concurrently:\n${ batchSummary }\n\nAll branches are launching now.`);
+          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+          const parallelPromises = parallelNodes.map(async(pn, i) => {
+            const result = await this.executeSubAgent(state, pn.nodeId, pn.agentId, pn.prompt, pn.config);
+            return { nodeId: pn.nodeId, label: nodeLabels[i], result, config: pn.config, agentId: pn.agentId };
+          });
+
+          const settled = await Promise.allSettled(parallelPromises);
+
+          const successes: { nodeId: string; label: string; resultText: string; threadId?: string }[] = [];
+          const failures: { nodeId: string; label: string; error: string }[] = [];
+
+          for (const outcome of settled) {
+            if (outcome.status === 'fulfilled') {
+              const { nodeId: nId, label, result } = outcome.value;
+
+              if (result.contractStatus === 'no_contract') {
+                console.warn(`[PlaybookController] Parallel node "${ label }" returned without contract — graph died mid-execution`);
+                this.emitPlaybookEvent(state, 'node_failed', { nodeId: nId, nodeLabel: label, error: 'Sub-graph died without completion contract' });
+                failures.push({ nodeId: nId, label, error: 'Sub-graph died without completion contract' });
+                continue;
+              }
+
+              if (result.contractStatus === 'blocked') {
+                const blockText = typeof result.output === 'string' ? result.output : 'Unknown blocker';
+                const pnMatch = parallelNodes.find(p => p.nodeId === nId);
+                console.log(`[PlaybookController] Parallel node "${ label }" blocked — pushing to escalations`);
+                this.pendingEscalations.push({
+                  nodeId:    nId,
+                  nodeLabel: label,
+                  agentId:   pnMatch?.agentId || '',
+                  prompt:    pnMatch?.prompt || '',
+                  config:    pnMatch?.config || {},
+                  question:  blockText.slice(0, 500),
+                  threadId:  result.threadId,
+                });
+                continue;
+              }
+
+              const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
+
+              const completed = completeSubAgent(meta.activeWorkflow, nId, result.output, result.threadId);
+              meta.activeWorkflow = completed.updatedPlaybook;
+
+              this.emitPlaybookEvent(state, 'node_completed', { nodeId: nId, nodeLabel: label, output: resultText, threadId: result.threadId });
+              this.emitEdgeActivations(state, currentPlaybook.definition, nId, 'outgoing');
+              const nodeSubtype = this.getPlaybookNodeSubtype(currentPlaybook, nId);
+              await this.saveCheckpoint(completed.updatedPlaybook, nId, label, nodeSubtype, resultText);
+
+              successes.push({ nodeId: nId, label, resultText, threadId: result.threadId });
+            } else {
+              const pn = parallelNodes[settled.indexOf(outcome)];
+              const label = this.getPlaybookNodeLabel(currentPlaybook, pn.nodeId);
+              const errMsg = outcome.reason?.message || String(outcome.reason);
+
+              this.emitPlaybookEvent(state, 'node_failed', { nodeId: pn.nodeId, nodeLabel: label, error: errMsg });
+              failures.push({ nodeId: pn.nodeId, label, error: errMsg });
+            }
+          }
+
+          if (successes.length === 0 && failures.length > 0) {
+            const errSummary = failures.map(f => `${ f.label }: ${ f.error }`).join('; ');
+            const failedPlaybook = { ...meta.activeWorkflow, status: 'failed' as const, error: `All parallel branches failed: ${ errSummary }` };
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: failedPlaybook.error });
+            state = await this.releaseWorkflow(state, failedPlaybook, 'failed', failedPlaybook.error);
             return state;
           }
+
+          const resultsSummary = [
+            ...successes.map(s => `  [${ s.label }]: completed`),
+            ...failures.map(f => `  [${ f.label }]: FAILED — ${ f.error }`),
+          ].join('\n');
+          this.injectWorkflowMessage(state, `[Workflow: Parallel Execution Complete]\n${ successes.length }/${ parallelNodes.length } branches succeeded.\n${ resultsSummary }\n\nReview and continue.`, failures.length === 0);
+          if (failures.length > 0) {
+            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+          }
+
+          if (meta.activeWorkflow?.status === 'completed') {
+            this.emitPlaybookEvent(state, 'workflow_completed', {});
+            state = await this.releaseWorkflow(state, meta.activeWorkflow, 'completed');
+            return state;
+          }
+
+          break;
         }
-        break;
-      }
 
-      case 'spawn_parallel_agents': {
-        const parallelNodes = step.nodes;
-        const nodeLabels = parallelNodes.map(n => this.getPlaybookNodeLabel(currentPlaybook, n.nodeId));
+        case 'execute_tool_call': {
+          const toolNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: toolNodeLabel });
 
-        for (let i = 0; i < parallelNodes.length; i++) {
-          const pn = parallelNodes[i];
-          this.emitEdgeActivations(state, currentPlaybook.definition, pn.nodeId, 'incoming');
-          this.emitPlaybookEvent(state, 'node_started', { nodeId: pn.nodeId, nodeLabel: nodeLabels[i], prompt: pn.prompt });
-        }
+          try {
+            const { toolRegistry } = await import('../tools/registry');
+            const tool = await toolRegistry.getTool(step.toolName);
+            const toolResult = await tool.call(step.params);
 
-        const batchSummary = parallelNodes.map((pn, i) => {
-          const isIntegrationCall = pn.agentId === '__integration_call__';
-          return `  ${ i + 1 }. [${ nodeLabels[i] }] (${ isIntegrationCall ? 'integration-call' : `agent: ${ pn.config.agentName || pn.agentId || 'default' }` })`;
-        }).join('\n');
-        this.injectWorkflowMessage(state, `[Workflow: Parallel Execution]\nThe following ${ parallelNodes.length } nodes will execute concurrently:\n${ batchSummary }\n\nAll branches are launching now.`);
-        state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+            const resultText = toolResult.success
+              ? (toolResult.result || 'Tool completed successfully')
+              : `Tool error: ${ toolResult.error || 'Unknown error' }`;
 
-        const parallelPromises = parallelNodes.map(async(pn, i) => {
-          const result = await this.executeSubAgent(state, pn.nodeId, pn.agentId, pn.prompt, pn.config);
-          return { nodeId: pn.nodeId, label: nodeLabels[i], result, config: pn.config, agentId: pn.agentId };
-        });
-
-        const settled = await Promise.allSettled(parallelPromises);
-
-        const successes: { nodeId: string; label: string; resultText: string; threadId?: string }[] = [];
-        const failures: { nodeId: string; label: string; error: string }[] = [];
-
-        for (const outcome of settled) {
-          if (outcome.status === 'fulfilled') {
-            const { nodeId: nId, label, result } = outcome.value;
-
-            if (result.contractStatus === 'no_contract') {
-              console.warn(`[PlaybookController] Parallel node "${ label }" returned without contract — graph died mid-execution`);
-              this.emitPlaybookEvent(state, 'node_failed', { nodeId: nId, nodeLabel: label, error: 'Sub-graph died without completion contract' });
-              failures.push({ nodeId: nId, label, error: 'Sub-graph died without completion contract' });
-              continue;
-            }
-
-            if (result.contractStatus === 'blocked') {
-              const blockText = typeof result.output === 'string' ? result.output : 'Unknown blocker';
-              const pnMatch = parallelNodes.find(p => p.nodeId === nId);
-              console.log(`[PlaybookController] Parallel node "${ label }" blocked — pushing to escalations`);
-              this.pendingEscalations.push({
-                nodeId:    nId,
-                nodeLabel: label,
-                agentId:   pnMatch?.agentId || '',
-                prompt:    pnMatch?.prompt || '',
-                config:    pnMatch?.config || {},
-                question:  blockText.slice(0, 500),
-                threadId:  result.threadId,
-              });
-              continue;
-            }
-
-            const resultText = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-
-            const completed = completeSubAgent(meta.activeWorkflow, nId, result.output, result.threadId);
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, resultText, undefined);
             meta.activeWorkflow = completed.updatedPlaybook;
 
-            this.emitPlaybookEvent(state, 'node_completed', { nodeId: nId, nodeLabel: label, output: resultText, threadId: result.threadId });
-            this.emitEdgeActivations(state, currentPlaybook.definition, nId, 'outgoing');
-            const nodeSubtype = this.getPlaybookNodeSubtype(currentPlaybook, nId);
-            await this.saveCheckpoint(completed.updatedPlaybook, nId, label, nodeSubtype, resultText);
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: toolNodeLabel, output: resultText });
+            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, toolNodeLabel, 'tool-call', resultText);
 
-            successes.push({ nodeId: nId, label, resultText, threadId: result.threadId });
-          } else {
-            const pn = parallelNodes[settled.indexOf(outcome)];
-            const label = this.getPlaybookNodeLabel(currentPlaybook, pn.nodeId);
-            const errMsg = outcome.reason?.message || String(outcome.reason);
-
-            this.emitPlaybookEvent(state, 'node_failed', { nodeId: pn.nodeId, nodeLabel: label, error: errMsg });
-            failures.push({ nodeId: pn.nodeId, label, error: errMsg });
-          }
-        }
-
-        if (successes.length === 0 && failures.length > 0) {
-          const errSummary = failures.map(f => `${ f.label }: ${ f.error }`).join('; ');
-          const failedPlaybook = { ...meta.activeWorkflow, status: 'failed' as const, error: `All parallel branches failed: ${ errSummary }` };
-          this.emitPlaybookEvent(state, 'workflow_failed', { error: failedPlaybook.error });
-          state = await this.releaseWorkflow(state, failedPlaybook, 'failed', failedPlaybook.error);
-          return state;
-        }
-
-        const resultsSummary = [
-          ...successes.map(s => `  [${ s.label }]: completed`),
-          ...failures.map(f => `  [${ f.label }]: FAILED — ${ f.error }`),
-        ].join('\n');
-        this.injectWorkflowMessage(state, `[Workflow: Parallel Execution Complete]\n${ successes.length }/${ parallelNodes.length } branches succeeded.\n${ resultsSummary }\n\nReview and continue.`, failures.length === 0);
-        if (failures.length > 0) {
-          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-        }
-
-        if (meta.activeWorkflow?.status === 'completed') {
-          this.emitPlaybookEvent(state, 'workflow_completed', {});
-          state = await this.releaseWorkflow(state, meta.activeWorkflow, 'completed');
-          return state;
-        }
-
-        break;
-      }
-
-      case 'execute_tool_call': {
-        const toolNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
-        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: toolNodeLabel });
-
-        try {
-          const { toolRegistry } = await import('../tools/registry');
-          const tool = await toolRegistry.getTool(step.toolName);
-          const toolResult = await tool.call(step.params);
-
-          const resultText = toolResult.success
-            ? (toolResult.result || 'Tool completed successfully')
-            : `Tool error: ${ toolResult.error || 'Unknown error' }`;
-
-          const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, resultText, undefined);
-          meta.activeWorkflow = completed.updatedPlaybook;
-
-          this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: toolNodeLabel, output: resultText });
-          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-          await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, toolNodeLabel, 'tool-call', resultText);
-
-          const toolCallMsg = `[Workflow Tool Call: ${ toolNodeLabel }]\n` +
+            const toolCallMsg = `[Workflow Tool Call: ${ toolNodeLabel }]\n` +
             `Tool: ${ step.toolName }\n` +
             `Parameters: ${ JSON.stringify(step.params) }\n\n` +
             `Result:\n${ resultText }`;
-          this.injectWorkflowMessage(state, toolCallMsg, true);
-
-          if (completed.action === 'workflow_completed') {
-            this.emitPlaybookEvent(state, 'workflow_completed', {});
-            state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
-            return state;
-          }
-        } catch (err: any) {
-          console.error(`[PlaybookController] Native tool call failed:`, err);
-          const errMsg = err.message || String(err);
-
-          const errorResult = `Tool call failed: ${ errMsg }`;
-          const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, errorResult, undefined);
-          meta.activeWorkflow = completed.updatedPlaybook;
-
-          this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: toolNodeLabel, output: errorResult });
-          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-
-          const errorMsg = `[Workflow Tool Call Failed: ${ toolNodeLabel }]\n` +
-            `Tool: ${ step.toolName }\n` +
-            `Error: ${ errMsg }\n\n` +
-            `The workflow will continue — review the error and decide how to proceed.`;
-          this.injectWorkflowMessage(state, errorMsg);
-          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-        }
-
-        break;
-      }
-
-      case 'spawn_sub_workflow': {
-        const subWfLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-        playbookLog('spawn_sub_workflow', {
-          nodeId: step.nodeId, label: subWfLabel,
-          workflowId: step.workflowId, agentId: step.agentId,
-          payloadPreview: step.payload ? String(step.payload).slice(0, 200) : undefined,
-        });
-        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
-        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subWfLabel });
-
-        try {
-          const { getWorkflowRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
-          const subRegistry = getWorkflowRegistry();
-          const subDefinition = subRegistry.loadWorkflow(step.workflowId);
-
-          if (step.agentId) {
-            console.log(`[PlaybookController] Delegating sub-workflow "${ subWfLabel }" to agent "${ step.agentId }"`);
-
-            const { GraphRegistry } = await import('../services/GraphRegistry');
-            const threadId = `workflow-subwf-${ step.nodeId }-${ Date.now() }`;
-            const { graph: subGraph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(step.agentId, threadId) as {
-              graph: any;
-              state: any;
-            };
-
-            const subPlaybook = createPlaybookState(subDefinition, step.payload);
-            subState.metadata.activeWorkflow = subPlaybook;
-            subState.metadata.isSubAgent = true;
-
-            const parentChannel = (state as any).metadata?.wsChannel || 'workbench';
-            subState.metadata.workflowNodeId = step.nodeId;
-            subState.metadata.workflowParentChannel = parentChannel;
-
-            const basePrompt = `You are orchestrating the workflow "${ subDefinition.name }". ` +
-              `Process it step by step using your persona, tools, and judgment. ` +
-              `The workflow has been loaded into your active playbook.`;
-            const fullPrompt = step.orchestratorPrompt
-              ? `${ basePrompt }\n\nAdditional instructions from the parent workflow:\n${ step.orchestratorPrompt }`
-              : basePrompt;
-            subState.messages.push({ role: 'user', content: fullPrompt });
-
-            const finalSubState = await subGraph.execute(subState);
-
-            const subOutputs = Object.values(finalSubState.metadata?.activeWorkflow?.nodeOutputs ?? {}) as PlaybookNodeOutput[];
-            const lastOutput = subOutputs[subOutputs.length - 1];
-            const subResult = lastOutput?.result ?? null;
-
-            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, subResult, threadId);
-            meta.activeWorkflow = completed.updatedPlaybook;
-
-            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subWfLabel, output: subResult });
-            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subWfLabel, 'sub-workflow', subResult);
-
-            const resultText = typeof subResult === 'string' ? subResult : JSON.stringify(subResult);
-            this.injectWorkflowMessage(state, `[Sub-workflow Complete: ${ subWfLabel }]\nOrchestrated by agent "${ step.agentId }"\nResult: ${ (resultText || '').substring(0, 500) }${ (resultText || '').length > 500 ? '...' : '' }`);
+            this.injectWorkflowMessage(state, toolCallMsg, true);
 
             if (completed.action === 'workflow_completed') {
               this.emitPlaybookEvent(state, 'workflow_completed', {});
               state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
               return state;
             }
-          } else {
-            const parentPlaybook = meta.activeWorkflow;
-            if (!meta.workflowStack) meta.workflowStack = [];
-            meta.workflowStack.push({ playbook: parentPlaybook, nodeId: step.nodeId });
+          } catch (err: any) {
+            console.error(`[PlaybookController] Native tool call failed:`, err);
+            const errMsg = err.message || String(err);
 
-            const subPlaybook = createPlaybookState(subDefinition, step.payload);
-            meta.activeWorkflow = subPlaybook;
+            const errorResult = `Tool call failed: ${ errMsg }`;
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, errorResult, undefined);
+            meta.activeWorkflow = completed.updatedPlaybook;
+
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: toolNodeLabel, output: errorResult });
+            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+
+            const errorMsg = `[Workflow Tool Call Failed: ${ toolNodeLabel }]\n` +
+            `Tool: ${ step.toolName }\n` +
+            `Error: ${ errMsg }\n\n` +
+            `The workflow will continue — review the error and decide how to proceed.`;
+            this.injectWorkflowMessage(state, errorMsg);
+            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
           }
-          break;
-        } catch (err: any) {
-          console.error(`[PlaybookController] Sub-workflow failed to load:`, err);
-          this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subWfLabel, error: err.message || String(err) });
-          const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
-          this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
-          state = await this.releaseWorkflow(state, failedPlaybook, 'failed', err.message || String(err));
-          return state;
-        }
-      }
-
-      case 'transfer_workflow': {
-        const transferLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-        console.log(`[PlaybookController] Transfer to workflow "${ step.targetWorkflowId }" from node "${ step.nodeId }"`);
-
-        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
-        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: transferLabel });
-
-        try {
-          const { getWorkflowRegistry: getTransferRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
-          const transferRegistry = getTransferRegistry();
-          const targetDefinition = transferRegistry.loadWorkflow(step.targetWorkflowId);
-
-          this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: transferLabel, output: { transferred: step.targetWorkflowId } });
-          await this.saveCheckpoint(step.updatedPlaybook, step.nodeId, transferLabel, 'transfer', { transferred: step.targetWorkflowId });
-
-          const outgoingPlaybook = meta.activeWorkflow as WorkflowPlaybookState;
-          const nodeSummaries = Object.values(outgoingPlaybook.nodeOutputs ?? {}).map((output: PlaybookNodeOutput) => ({
-            nodeId:   output.nodeId,
-            label:    output.label,
-            subtype:  output.subtype,
-            category: output.category,
-            result:   typeof output.result === 'string' ? output.result : JSON.stringify(output.result),
-            threadId: output.threadId,
-          }));
-
-          meta.lastCompletedWorkflow = {
-            workflowId:    outgoingPlaybook.workflowId,
-            workflowName:  outgoingPlaybook.definition.name,
-            executionId:   outgoingPlaybook.executionId,
-            outcome:       'completed',
-            startedAt:     outgoingPlaybook.startedAt,
-            completedAt:   new Date().toISOString(),
-            nodeResults:   nodeSummaries,
-            transferredTo: step.targetWorkflowId,
-          };
-
-          meta.workflowStack = [];
-          this.emitPlaybookEvent(state, 'workflow_completed', {});
-
-          const targetPlaybook = createPlaybookState(targetDefinition, step.payload);
-          meta.activeWorkflow = targetPlaybook;
-
-          console.log(`[PlaybookController] Transferred to "${ targetDefinition.name }" (${ targetPlaybook.executionId })`);
-
-          this.injectWorkflowMessage(state, `[Workflow Transfer] The workflow "${ outgoingPlaybook.definition.name }" has handed off to "${ targetDefinition.name }". The new workflow is now active.`);
 
           break;
-        } catch (err: any) {
-          console.error(`[PlaybookController] Transfer failed:`, err);
-          this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: transferLabel, error: err.message || String(err) });
-          const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
-          this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
-          state = await this.releaseWorkflow(state, failedPlaybook, 'failed', err.message || String(err));
-          return state;
-        }
-      }
-
-      case 'node_completed': {
-        const mechLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
-        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: mechLabel });
-        this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: mechLabel, output: step.result });
-        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-        await this.saveCheckpoint(step.updatedPlaybook, step.nodeId, mechLabel, this.getPlaybookNodeSubtype(currentPlaybook, step.nodeId), step.result);
-        break;
-      }
-
-      case 'wait': {
-        const waitLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
-        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: waitLabel });
-
-        const abortService = meta.options?.abort;
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, step.durationMs);
-          if (abortService?.signal) {
-            const onAbort = () => { clearTimeout(timer); reject(new Error('AbortError')); };
-            if (abortService.signal.aborted) { clearTimeout(timer); reject(new Error('AbortError')); return; }
-            abortService.signal.addEventListener('abort', onAbort, { once: true });
-          }
-        });
-        throwIfAborted(abortService);
-
-        const waitNode = meta.activeWorkflow.definition.nodes.find((n: any) => n.id === step.nodeId);
-        if (waitNode) {
-          const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, `Waited ${ step.durationMs }ms`);
-          meta.activeWorkflow = completed.updatedPlaybook;
-        }
-        this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: waitLabel, output: `Waited ${ step.durationMs }ms` });
-        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-        await this.saveCheckpoint(meta.activeWorkflow, step.nodeId, waitLabel, 'wait', `Waited ${ step.durationMs }ms`);
-        break;
-      }
-
-      case 'await_user_input': {
-        const uiNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
-        console.log(`[PlaybookController] User input node "${ step.nodeId }" — waiting for user response`);
-
-        this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
-        this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: uiNodeLabel });
-        this.emitPlaybookEvent(state, 'node_waiting', { nodeId: step.nodeId, nodeLabel: uiNodeLabel, output: { promptText: step.promptText } });
-
-        this.injectWorkflowMessage(state, `[Workflow: User Input Required]\nThe workflow needs input from the user before it can continue.\n\nPrompt to present: ${ step.promptText }\n\nAsk the user this question now. Do NOT answer it yourself — wait for the user to respond.`);
-
-        state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-
-        return state;
-      }
-
-      case 'workflow_completed': {
-        playbookLog('workflow_completed', {
-          workflowId: step.updatedPlaybook?.definition?.id,
-          completedNodes: step.updatedPlaybook?.completedNodeIds,
-          nodeOutputKeys: Object.keys(step.updatedPlaybook?.nodeOutputs ?? {}),
-        });
-        const onlyTriggersCompleted = Object.values(step.updatedPlaybook.nodeOutputs ?? {})
-          .every((o: PlaybookNodeOutput) => o.category === 'trigger');
-        if (onlyTriggersCompleted) {
-          console.error(`[PlaybookController] BUG: Workflow completed with only triggers done. Frontier: [${ currentPlaybook.currentNodeIds }], completedIds: [${ currentPlaybook.completedNodeIds }]`);
         }
 
-        if (meta.workflowStack?.length > 0) {
-          const parent = meta.workflowStack.pop();
-          const subOutputs = Object.values(step.updatedPlaybook.nodeOutputs ?? {});
-          const lastOutput = subOutputs[subOutputs.length - 1];
-          const subResult = lastOutput?.result ?? null;
+        case 'spawn_sub_workflow': {
+          const subWfLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          playbookLog('spawn_sub_workflow', {
+            nodeId:         step.nodeId,
+            label:          subWfLabel,
+            workflowId:     step.workflowId,
+            agentId:        step.agentId,
+            payloadPreview: step.payload ? String(step.payload).slice(0, 200) : undefined,
+          });
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: subWfLabel });
 
-          this.emitPlaybookEvent(state, 'workflow_completed', {});
+          try {
+            const { getWorkflowRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
+            const subRegistry = getWorkflowRegistry();
+            const subDefinition = subRegistry.loadWorkflow(step.workflowId);
 
-          const completed = completeSubAgent(parent.playbook, parent.nodeId, subResult);
-          meta.activeWorkflow = completed.updatedPlaybook;
+            if (step.agentId) {
+              console.log(`[PlaybookController] Delegating sub-workflow "${ subWfLabel }" to agent "${ step.agentId }"`);
 
-          const parentNodeLabel = this.getPlaybookNodeLabel(parent.playbook, parent.nodeId);
-          this.emitPlaybookEvent(state, 'node_completed', { nodeId: parent.nodeId, nodeLabel: parentNodeLabel, output: subResult });
-          this.emitEdgeActivations(state, parent.playbook.definition, parent.nodeId, 'outgoing');
-          await this.saveCheckpoint(completed.updatedPlaybook, parent.nodeId, parentNodeLabel, 'sub-workflow', subResult);
+              const { GraphRegistry } = await import('../services/GraphRegistry');
+              const threadId = `workflow-subwf-${ step.nodeId }-${ Date.now() }`;
+              const { graph: subGraph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(step.agentId, threadId) as {
+                graph: any;
+                state: any;
+              };
 
-          if (completed.action === 'workflow_completed') {
-            this.emitPlaybookEvent(state, 'workflow_completed', {});
-            state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+              const subPlaybook = createPlaybookState(subDefinition, step.payload);
+              subState.metadata.activeWorkflow = subPlaybook;
+              subState.metadata.isSubAgent = true;
+
+              const parentChannel = (state as any).metadata?.wsChannel || 'workbench';
+              subState.metadata.workflowNodeId = step.nodeId;
+              subState.metadata.workflowParentChannel = parentChannel;
+
+              const basePrompt = `You are orchestrating the workflow "${ subDefinition.name }". ` +
+              `Process it step by step using your persona, tools, and judgment. ` +
+              `The workflow has been loaded into your active playbook.`;
+              const fullPrompt = step.orchestratorPrompt
+                ? `${ basePrompt }\n\nAdditional instructions from the parent workflow:\n${ step.orchestratorPrompt }`
+                : basePrompt;
+              subState.messages.push({ role: 'user', content: fullPrompt });
+
+              const finalSubState = await subGraph.execute(subState);
+
+              const subOutputs = Object.values(finalSubState.metadata?.activeWorkflow?.nodeOutputs ?? {}) as Array<{ result?: unknown }>;
+              const lastOutput = subOutputs[subOutputs.length - 1];
+              const subResult = lastOutput?.result ?? null;
+
+              const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, subResult, threadId);
+              meta.activeWorkflow = completed.updatedPlaybook;
+
+              this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: subWfLabel, output: subResult });
+              this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+              await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, subWfLabel, 'sub-workflow', subResult);
+
+              const resultText = typeof subResult === 'string' ? subResult : JSON.stringify(subResult);
+              this.injectWorkflowMessage(state, `[Sub-workflow Complete: ${ subWfLabel }]\nOrchestrated by agent "${ step.agentId }"\nResult: ${ (resultText || '').substring(0, 500) }${ (resultText || '').length > 500 ? '...' : '' }`);
+
+              if (completed.action === 'workflow_completed') {
+                this.emitPlaybookEvent(state, 'workflow_completed', {});
+                state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+                return state;
+              }
+            } else {
+              const parentPlaybook = meta.activeWorkflow;
+              if (!meta.workflowStack) meta.workflowStack = [];
+              meta.workflowStack.push({ playbook: parentPlaybook, nodeId: step.nodeId });
+
+              const subPlaybook = createPlaybookState(subDefinition, step.payload);
+              meta.activeWorkflow = subPlaybook;
+            }
+            break;
+          } catch (err: any) {
+            console.error(`[PlaybookController] Sub-workflow failed to load:`, err);
+            this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: subWfLabel, error: err.message || String(err) });
+            const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
+            state = await this.releaseWorkflow(state, failedPlaybook, 'failed', err.message || String(err));
             return state;
           }
+        }
+
+        case 'transfer_workflow': {
+          const transferLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          console.log(`[PlaybookController] Transfer to workflow "${ step.targetWorkflowId }" from node "${ step.nodeId }"`);
+
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: transferLabel });
+
+          try {
+            const { getWorkflowRegistry: getTransferRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
+            const transferRegistry = getTransferRegistry();
+            const targetDefinition = transferRegistry.loadWorkflow(step.targetWorkflowId);
+
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: transferLabel, output: { transferred: step.targetWorkflowId } });
+            await this.saveCheckpoint(step.updatedPlaybook, step.nodeId, transferLabel, 'transfer', { transferred: step.targetWorkflowId });
+
+            const outgoingPlaybook = meta.activeWorkflow as WorkflowPlaybookState;
+            const nodeSummaries = Object.values(outgoingPlaybook.nodeOutputs ?? {}).map((output: PlaybookNodeOutput) => ({
+              nodeId:   output.nodeId,
+              label:    output.label,
+              subtype:  output.subtype,
+              category: output.category,
+              result:   typeof output.result === 'string' ? output.result : JSON.stringify(output.result),
+              threadId: output.threadId,
+            }));
+
+            meta.lastCompletedWorkflow = {
+              workflowId:    outgoingPlaybook.workflowId,
+              workflowName:  outgoingPlaybook.definition.name,
+              executionId:   outgoingPlaybook.executionId,
+              outcome:       'completed',
+              startedAt:     outgoingPlaybook.startedAt,
+              completedAt:   new Date().toISOString(),
+              nodeResults:   nodeSummaries,
+              transferredTo: step.targetWorkflowId,
+            };
+
+            meta.workflowStack = [];
+            this.emitPlaybookEvent(state, 'workflow_completed', {});
+
+            const targetPlaybook = createPlaybookState(targetDefinition, step.payload);
+            meta.activeWorkflow = targetPlaybook;
+
+            console.log(`[PlaybookController] Transferred to "${ targetDefinition.name }" (${ targetPlaybook.executionId })`);
+
+            this.injectWorkflowMessage(state, `[Workflow Transfer] The workflow "${ outgoingPlaybook.definition.name }" has handed off to "${ targetDefinition.name }". The new workflow is now active.`);
+
+            break;
+          } catch (err: any) {
+            console.error(`[PlaybookController] Transfer failed:`, err);
+            this.emitPlaybookEvent(state, 'node_failed', { nodeId: step.nodeId, nodeLabel: transferLabel, error: err.message || String(err) });
+            const failedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: err.message || String(err) };
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: err.message || String(err) });
+            state = await this.releaseWorkflow(state, failedPlaybook, 'failed', err.message || String(err));
+            return state;
+          }
+        }
+
+        case 'node_completed': {
+          const mechLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: mechLabel });
+          this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: mechLabel, output: step.result });
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+          await this.saveCheckpoint(step.updatedPlaybook, step.nodeId, mechLabel, this.getPlaybookNodeSubtype(currentPlaybook, step.nodeId), step.result);
           break;
         }
 
-        this.emitPlaybookEvent(state, 'workflow_completed', {});
-        state = await this.releaseWorkflow(state, step.updatedPlaybook, 'completed');
-        return state;
-      }
+        case 'wait': {
+          const waitLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: waitLabel });
 
-      case 'workflow_failed': {
-        playbookLog('workflow_failed', {
-          workflowId: step.updatedPlaybook?.definition?.id,
-          error: step.error,
-        });
-        if (meta.workflowStack?.length > 0) {
-          const parent = meta.workflowStack.pop();
-          console.error(`[PlaybookController] Sub-workflow failed: ${ step.error }, propagating to parent node "${ parent.nodeId }"`);
-          this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
-          this.emitPlaybookEvent(state, 'node_failed', { nodeId: parent.nodeId, error: step.error });
+          const abortService = meta.options?.abort;
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, step.durationMs);
+            if (abortService?.signal) {
+              const onAbort = () => { clearTimeout(timer); reject(new Error('AbortError')) };
+              if (abortService.signal.aborted) { clearTimeout(timer); reject(new Error('AbortError')); return }
+              abortService.signal.addEventListener('abort', onAbort, { once: true });
+            }
+          });
+          throwIfAborted(abortService);
 
-          const failedParent = { ...parent.playbook, status: 'failed' as const, error: step.error };
-          meta.activeWorkflow = failedParent;
-          this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
-          state = await this.releaseWorkflow(state, failedParent, 'failed', step.error);
+          const waitNode = meta.activeWorkflow.definition.nodes.find((n: any) => n.id === step.nodeId);
+          if (waitNode) {
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, `Waited ${ step.durationMs }ms`);
+            meta.activeWorkflow = completed.updatedPlaybook;
+          }
+          this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: waitLabel, output: `Waited ${ step.durationMs }ms` });
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+          await this.saveCheckpoint(meta.activeWorkflow, step.nodeId, waitLabel, 'wait', `Waited ${ step.durationMs }ms`);
+          break;
+        }
+
+        case 'await_user_input': {
+          const uiNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          console.log(`[PlaybookController] User input node "${ step.nodeId }" — waiting for user response`);
+
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: uiNodeLabel });
+          this.emitPlaybookEvent(state, 'node_waiting', { nodeId: step.nodeId, nodeLabel: uiNodeLabel, output: { promptText: step.promptText } });
+
+          this.injectWorkflowMessage(state, `[Workflow: User Input Required]\nThe workflow needs input from the user before it can continue.\n\nPrompt to present: ${ step.promptText }\n\nAsk the user this question now. Do NOT answer it yourself — wait for the user to respond.`);
+
+          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
           return state;
         }
 
-        console.error(`[PlaybookController] Workflow failed: ${ step.error }`);
-        this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
-        state = await this.releaseWorkflow(state, step.updatedPlaybook, 'failed', step.error);
-        return state;
-      }
-      case 'waiting_for_sub_agents': {
-        const waitingLabels = step.blockedNodeIds.map(id => this.getPlaybookNodeLabel(currentPlaybook, id));
-        console.log(`[PlaybookController] Waiting for sub-agents: ${ waitingLabels.join(', ') } (missing upstream: ${ step.missingUpstream.join(', ') })`);
-        return state;
-      }
-      default:
-        console.warn(`[PlaybookController] Unhandled step action: ${ (step as any).action }`);
-        break;
-      }
+        case 'workflow_completed': {
+          playbookLog('workflow_completed', {
+            workflowId:     step.updatedPlaybook?.definition?.id,
+            completedNodes: step.updatedPlaybook?.completedNodeIds,
+            nodeOutputKeys: Object.keys(step.updatedPlaybook?.nodeOutputs ?? {}),
+          });
+          const onlyTriggersCompleted = Object.values(step.updatedPlaybook.nodeOutputs ?? {})
+            .every((o: PlaybookNodeOutput) => o.category === 'trigger');
+          if (onlyTriggersCompleted) {
+            console.error(`[PlaybookController] BUG: Workflow completed with only triggers done. Frontier: [${ currentPlaybook.currentNodeIds }], completedIds: [${ currentPlaybook.completedNodeIds }]`);
+          }
+
+          if (meta.workflowStack?.length > 0) {
+            const parent = meta.workflowStack.pop();
+            const subOutputs = Object.values(step.updatedPlaybook.nodeOutputs ?? {});
+            const lastOutput = subOutputs[subOutputs.length - 1];
+            const subResult = lastOutput?.result ?? null;
+
+            this.emitPlaybookEvent(state, 'workflow_completed', {});
+
+            const completed = completeSubAgent(parent.playbook, parent.nodeId, subResult);
+            meta.activeWorkflow = completed.updatedPlaybook;
+
+            const parentNodeLabel = this.getPlaybookNodeLabel(parent.playbook, parent.nodeId);
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: parent.nodeId, nodeLabel: parentNodeLabel, output: subResult });
+            this.emitEdgeActivations(state, parent.playbook.definition, parent.nodeId, 'outgoing');
+            await this.saveCheckpoint(completed.updatedPlaybook, parent.nodeId, parentNodeLabel, 'sub-workflow', subResult);
+
+            if (completed.action === 'workflow_completed') {
+              this.emitPlaybookEvent(state, 'workflow_completed', {});
+              state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+              return state;
+            }
+            break;
+          }
+
+          this.emitPlaybookEvent(state, 'workflow_completed', {});
+          state = await this.releaseWorkflow(state, step.updatedPlaybook, 'completed');
+          return state;
+        }
+
+        case 'workflow_failed': {
+          playbookLog('workflow_failed', {
+            workflowId: step.updatedPlaybook?.definition?.id,
+            error:      step.error,
+          });
+          if (meta.workflowStack?.length > 0) {
+            const parent = meta.workflowStack.pop();
+            console.error(`[PlaybookController] Sub-workflow failed: ${ step.error }, propagating to parent node "${ parent.nodeId }"`);
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
+            this.emitPlaybookEvent(state, 'node_failed', { nodeId: parent.nodeId, error: step.error });
+
+            const failedParent = { ...parent.playbook, status: 'failed' as const, error: step.error };
+            meta.activeWorkflow = failedParent;
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
+            state = await this.releaseWorkflow(state, failedParent, 'failed', step.error);
+            return state;
+          }
+
+          console.error(`[PlaybookController] Workflow failed: ${ step.error }`);
+          this.emitPlaybookEvent(state, 'workflow_failed', { error: step.error });
+          state = await this.releaseWorkflow(state, step.updatedPlaybook, 'failed', step.error);
+          return state;
+        }
+        case 'waiting_for_sub_agents': {
+          const waitingLabels = step.blockedNodeIds.map(id => this.getPlaybookNodeLabel(currentPlaybook, id));
+          console.log(`[PlaybookController] Waiting for sub-agents: ${ waitingLabels.join(', ') } (missing upstream: ${ step.missingUpstream.join(', ') })`);
+          return state;
+        }
+        default:
+          console.warn(`[PlaybookController] Unhandled step action: ${ (step as any).action }`);
+          break;
+        }
       }
     } catch (err: any) {
       console.error(`[PlaybookController] Walker crashed:`, err);
@@ -1621,9 +1635,6 @@ export class PlaybookController<TState = any> {
 
     subState.messages.push({ role: 'user', content: prompt });
 
-    const trainingLogger = getTrainingDataLogger();
-    trainingLogger.startSession(threadId, { agentId: agentConfigChannel });
-
     subState.metadata.isSubAgent = true;
 
     const parentChannel = (_state as any).metadata?.wsChannel || 'workbench';
@@ -1632,12 +1643,6 @@ export class PlaybookController<TState = any> {
 
     const finalState = await graph.execute(subState);
 
-    const parentConvId = (_state as any).metadata?.conversationId;
-    if (parentConvId && trainingLogger.hasSession(parentConvId)) {
-      const subNodeLabel = config.agentName as string || agentId || nodeId;
-      trainingLogger.embedSubAgentConversation(parentConvId, threadId, subNodeLabel);
-    }
-
     const agentMeta = (finalState.metadata)?.agent || {};
     const agentStatus = String(agentMeta.status || '').toLowerCase();
 
@@ -1645,7 +1650,7 @@ export class PlaybookController<TState = any> {
       const blockerReason = agentMeta.blocker_reason || 'Unknown blocker';
       const unblockReqs = agentMeta.unblock_requirements || '';
       return {
-        output: `[BLOCKED] ${ blockerReason }${ unblockReqs ? ` | Requirements: ${ unblockReqs }` : '' }`,
+        output:         `[BLOCKED] ${ blockerReason }${ unblockReqs ? ` | Requirements: ${ unblockReqs }` : '' }`,
         threadId,
         contractStatus: 'blocked',
       };

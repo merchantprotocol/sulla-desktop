@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from '../base';
 import { getExtensionService } from '../../services/ExtensionService';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * Install an extension from the marketplace catalog.

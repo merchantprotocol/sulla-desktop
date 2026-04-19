@@ -1,13 +1,26 @@
 <template>
-  <div v-if="visible" class="ctx-menu-backdrop" @click="$emit('close')" @contextmenu.prevent="$emit('close')"></div>
+  <div
+    v-if="visible"
+    class="ctx-menu-backdrop"
+    @click="$emit('close')"
+    @contextmenu.prevent="$emit('close')"
+  />
   <div
     v-if="visible"
     ref="menuEl"
     class="ctx-menu"
     :style="menuStyle"
   >
-    <div v-if="title" class="ctx-menu-header">{{ title }}</div>
-    <template v-for="item in items" :key="item.id">
+    <div
+      v-if="title"
+      class="ctx-menu-header"
+    >
+      {{ title }}
+    </div>
+    <template
+      v-for="item in items"
+      :key="item.id"
+    >
       <!-- Submenu parent -->
       <div
         v-if="item.children"
@@ -17,7 +30,13 @@
       >
         <button class="ctx-menu-item ctx-menu-has-sub">
           {{ item.label }}
-          <svg class="ctx-menu-arrow" viewBox="0 0 6 10" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1,1 5,5 1,9"/></svg>
+          <svg
+            class="ctx-menu-arrow"
+            viewBox="0 0 6 10"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+          ><polyline points="1,1 5,5 1,9" /></svg>
         </button>
 
         <!-- Flyout submenu -->
@@ -29,17 +48,30 @@
           @mouseenter="cancelCloseSub"
           @mouseleave="startCloseSub"
         >
-          <template v-for="child in item.children" :key="child.id">
-            <div v-if="child.divider" class="ctx-menu-divider"></div>
+          <template
+            v-for="child in item.children"
+            :key="child.id"
+          >
+            <div
+              v-if="child.divider"
+              class="ctx-menu-divider"
+            />
             <button
               v-else
               class="ctx-menu-item"
               :class="{ active: child.active }"
               @click="child.action(); $emit('close')"
             >
-              <img v-if="child.thumbnail" :src="child.thumbnail" class="ctx-menu-thumb" />
+              <img
+                v-if="child.thumbnail"
+                :src="child.thumbnail"
+                class="ctx-menu-thumb"
+              >
               {{ child.label }}
-              <span v-if="child.badge" class="ctx-menu-badge">{{ child.badge }}</span>
+              <span
+                v-if="child.badge"
+                class="ctx-menu-badge"
+              >{{ child.badge }}</span>
             </button>
           </template>
         </div>
@@ -52,14 +84,27 @@
         :class="{ active: item.active }"
         @click="item.action(); $emit('close')"
       >
-        <img v-if="item.thumbnail" :src="item.thumbnail" class="ctx-menu-thumb" />
+        <img
+          v-if="item.thumbnail"
+          :src="item.thumbnail"
+          class="ctx-menu-thumb"
+        >
         {{ item.label }}
-        <span v-if="item.badge" class="ctx-menu-badge">{{ item.badge }}</span>
+        <span
+          v-if="item.badge"
+          class="ctx-menu-badge"
+        >{{ item.badge }}</span>
       </button>
 
       <!-- Divider -->
-      <div v-else class="ctx-menu-divider">
-        <span v-if="item.label" class="ctx-menu-section">{{ item.label }}</span>
+      <div
+        v-else
+        class="ctx-menu-divider"
+      >
+        <span
+          v-if="item.label"
+          class="ctx-menu-section"
+        >{{ item.label }}</span>
       </div>
     </template>
   </div>
@@ -69,27 +114,25 @@
 import { ref, computed, watch, nextTick } from 'vue';
 
 export interface CtxMenuItem {
-  id: string;
-  label: string;
+  id:         string;
+  label:      string;
   thumbnail?: string;
-  active?: boolean;
-  divider?: boolean;
-  badge?: string;
-  children?: CtxMenuItem[];
-  action: () => void;
+  active?:    boolean;
+  divider?:   boolean;
+  badge?:     string;
+  children?:  CtxMenuItem[];
+  action:     () => void;
 }
 
 const props = defineProps<{
   visible: boolean;
-  x: number;
-  y: number;
-  title?: string;
-  items: CtxMenuItem[];
+  x:       number;
+  y:       number;
+  title?:  string;
+  items:   CtxMenuItem[];
 }>();
 
-defineEmits<{
-  (e: 'close'): void;
-}>();
+defineEmits<(e: 'close') => void>();
 
 const menuEl = ref<HTMLElement | null>(null);
 const subEl = ref<HTMLElement | null>(null);
@@ -115,11 +158,11 @@ const menuStyle = computed(() => {
   if (left < pad) left = pad;
   if (top < pad) top = pad;
 
-  return { left: `${left}px`, top: `${top}px` };
+  return { left: `${ left }px`, top: `${ top }px` };
 });
 
 // Measure root menu after it renders
-watch(() => props.visible, async (v) => {
+watch(() => props.visible, async(v) => {
   if (v) {
     await nextTick();
     await nextTick(); // double-tick to ensure DOM measured
@@ -137,7 +180,7 @@ let closeTimer: ReturnType<typeof setTimeout> | null = null;
 const subStyle = ref<Record<string, string>>({});
 
 function openSub(id: string, event: MouseEvent) {
-  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
   openSubId.value = id;
 
   nextTick(() => {
@@ -148,7 +191,7 @@ function openSub(id: string, event: MouseEvent) {
 }
 
 function positionSub(event: MouseEvent) {
-  const parent = (event.currentTarget as HTMLElement);
+  const parent = event.currentTarget as HTMLElement;
   const parentRect = parent.getBoundingClientRect();
   const rootRect = menuEl.value?.getBoundingClientRect();
   if (!rootRect) return;
@@ -175,24 +218,24 @@ function positionSub(event: MouseEvent) {
 
   subStyle.value = {
     position: 'fixed',
-    left: `${left}px`,
-    top: `${top}px`,
+    left:     `${ left }px`,
+    top:      `${ top }px`,
   };
 }
 
 function startCloseSub() {
-  closeTimer = setTimeout(() => { openSubId.value = null; }, 200);
+  closeTimer = setTimeout(() => { openSubId.value = null }, 200);
 }
 
 function cancelCloseSub() {
-  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+  if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
 }
 
 // Reset submenu when menu closes
 watch(() => props.visible, (v) => {
   if (!v) {
     openSubId.value = null;
-    if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+    if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
   }
 });
 </script>

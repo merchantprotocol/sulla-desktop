@@ -9,11 +9,11 @@
 
 export interface ProviderContribution {
   /** Stable text injected before the cache boundary */
-  stablePrefix?: string;
+  stablePrefix?:  string;
   /** Dynamic text injected after the cache boundary */
   dynamicSuffix?: string;
   /** Override specific section content by section ID */
-  overrides?: Record<string, string>;
+  overrides?:     Record<string, string>;
 }
 
 const contributions = new Map<string, ProviderContribution>();

@@ -1,63 +1,65 @@
-import { BaseTool, ToolResponse } from '../base';
 import fs from 'fs';
 import path from 'path';
+
 import yaml from 'yaml';
+
+import { BaseTool, ToolResponse } from '../base';
 
 // ── Valid subtypes and their required categories ──
 
 const SUBTYPE_CATEGORY_MAP: Record<string, string> = {
-  'calendar':          'trigger',
-  'chat-app':          'trigger',
-  'heartbeat':         'trigger',
-  'sulla-desktop':     'trigger',
-  'workbench':         'trigger',
-  'chat-completions':  'trigger',
-  'agent':             'agent',
-  'tool-call':         'agent',
-  'integration-call':  'agent',
+  calendar:              'trigger',
+  'chat-app':            'trigger',
+  heartbeat:             'trigger',
+  'sulla-desktop':       'trigger',
+  workbench:             'trigger',
+  'chat-completions':    'trigger',
+  agent:                 'agent',
+  'tool-call':           'agent',
+  'integration-call':    'agent',
   'orchestrator-prompt': 'agent',
-  'router':            'routing',
-  'condition':         'routing',
-  'wait':              'flow-control',
-  'loop':              'flow-control',
-  'parallel':          'flow-control',
-  'merge':             'flow-control',
-  'sub-workflow':      'flow-control',
-  'user-input':        'io',
-  'response':          'io',
-  'transfer':          'io',
+  router:                'routing',
+  condition:             'routing',
+  wait:                  'flow-control',
+  loop:                  'flow-control',
+  parallel:              'flow-control',
+  merge:                 'flow-control',
+  'sub-workflow':        'flow-control',
+  'user-input':          'io',
+  response:              'io',
+  transfer:              'io',
 };
 
 // ── Required config fields per subtype ──
 
 const REQUIRED_CONFIG_FIELDS: Record<string, string[]> = {
-  'calendar':          ['triggerType', 'triggerDescription'],
-  'chat-app':          ['triggerType', 'triggerDescription'],
-  'heartbeat':         ['triggerType', 'triggerDescription'],
-  'sulla-desktop':     ['triggerType', 'triggerDescription'],
-  'workbench':         ['triggerType', 'triggerDescription'],
-  'chat-completions':  ['triggerType', 'triggerDescription'],
-  'agent':             ['agentId', 'agentName', 'additionalPrompt', 'orchestratorInstructions', 'successCriteria', 'completionContract'],
-  'tool-call':         ['toolName', 'defaults'],
-  'integration-call':  ['integrationSlug', 'endpointName', 'accountId', 'defaults', 'preCallDescription'],
+  calendar:              ['triggerType', 'triggerDescription'],
+  'chat-app':            ['triggerType', 'triggerDescription'],
+  heartbeat:             ['triggerType', 'triggerDescription'],
+  'sulla-desktop':       ['triggerType', 'triggerDescription'],
+  workbench:             ['triggerType', 'triggerDescription'],
+  'chat-completions':    ['triggerType', 'triggerDescription'],
+  agent:                 ['agentId', 'agentName', 'additionalPrompt', 'orchestratorInstructions', 'successCriteria', 'completionContract'],
+  'tool-call':           ['toolName', 'defaults'],
+  'integration-call':    ['integrationSlug', 'endpointName', 'accountId', 'defaults', 'preCallDescription'],
   'orchestrator-prompt': ['prompt'],
-  'router':            ['classificationPrompt', 'routes'],
-  'condition':         ['rules', 'combinator'],
-  'wait':              ['delayAmount', 'delayUnit'],
-  'loop':              ['maxIterations', 'condition', 'conditionMode'],
-  'parallel':          [],
-  'merge':             ['strategy'],
-  'sub-workflow':      ['workflowId', 'awaitResponse'],
-  'user-input':        ['promptText'],
-  'response':          ['responseTemplate'],
-  'transfer':          ['targetWorkflowId'],
+  router:                ['classificationPrompt', 'routes'],
+  condition:             ['rules', 'combinator'],
+  wait:                  ['delayAmount', 'delayUnit'],
+  loop:                  ['maxIterations', 'condition', 'conditionMode'],
+  parallel:              [],
+  merge:                 ['strategy'],
+  'sub-workflow':        ['workflowId', 'awaitResponse'],
+  'user-input':          ['promptText'],
+  response:              ['responseTemplate'],
+  transfer:              ['targetWorkflowId'],
 };
 
 // ── Optional config fields per subtype (allowed but not required) ──
 
 const OPTIONAL_CONFIG_FIELDS: Record<string, string[]> = {
   'sub-workflow': ['agentId', 'orchestratorPrompt'],
-  'loop':         ['loopMode', 'orchestratorPrompt'],
+  loop:           ['loopMode', 'orchestratorPrompt'],
 };
 
 const VALID_TOP_LEVEL_KEYS = new Set([
@@ -88,7 +90,7 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
   // ── Top-level keys ──
   for (const key of Object.keys(def)) {
     if (!VALID_TOP_LEVEL_KEYS.has(key)) {
-      issues.push({ severity: 'error', path: `/${key}`, message: `Invalid top-level key "${key}". Only allowed: ${[...VALID_TOP_LEVEL_KEYS].join(', ')}` });
+      issues.push({ severity: 'error', path: `/${ key }`, message: `Invalid top-level key "${ key }". Only allowed: ${ [...VALID_TOP_LEVEL_KEYS].join(', ') }` });
     }
   }
 
@@ -112,7 +114,7 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
 
   for (let i = 0; i < def.nodes.length; i++) {
     const node = def.nodes[i];
-    const np = `/nodes[${i}]`;
+    const np = `/nodes[${ i }]`;
 
     if (!node || typeof node !== 'object') {
       issues.push({ severity: 'error', path: np, message: 'Node is not an object' });
@@ -122,36 +124,36 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
     // Extra keys
     for (const key of Object.keys(node)) {
       if (!VALID_NODE_KEYS.has(key)) {
-        issues.push({ severity: 'error', path: `${np}/${key}`, message: `Invalid node key "${key}". Only allowed: ${[...VALID_NODE_KEYS].join(', ')}` });
+        issues.push({ severity: 'error', path: `${ np }/${ key }`, message: `Invalid node key "${ key }". Only allowed: ${ [...VALID_NODE_KEYS].join(', ') }` });
       }
     }
 
     // id
     if (!node.id || typeof node.id !== 'string') {
-      issues.push({ severity: 'error', path: `${np}/id`, message: 'Missing or non-string node "id"' });
+      issues.push({ severity: 'error', path: `${ np }/id`, message: 'Missing or non-string node "id"' });
     } else {
       if (nodeIds.has(node.id)) {
-        issues.push({ severity: 'error', path: `${np}/id`, message: `Duplicate node id "${node.id}"` });
+        issues.push({ severity: 'error', path: `${ np }/id`, message: `Duplicate node id "${ node.id }"` });
       }
       nodeIds.add(node.id);
       if (!/^node-\d+$/.test(node.id)) {
-        issues.push({ severity: 'warning', path: `${np}/id`, message: `Node id "${node.id}" does not follow "node-{timestamp}" pattern` });
+        issues.push({ severity: 'warning', path: `${ np }/id`, message: `Node id "${ node.id }" does not follow "node-{timestamp}" pattern` });
       }
     }
 
     // type
     if (node.type !== 'workflow') {
-      issues.push({ severity: 'error', path: `${np}/type`, message: `Node type must be "workflow", got "${node.type}"` });
+      issues.push({ severity: 'error', path: `${ np }/type`, message: `Node type must be "workflow", got "${ node.type }"` });
     }
 
     // position
     if (!node.position || typeof node.position !== 'object' || typeof node.position.x !== 'number' || typeof node.position.y !== 'number') {
-      issues.push({ severity: 'error', path: `${np}/position`, message: 'Node must have "position" with numeric "x" and "y"' });
+      issues.push({ severity: 'error', path: `${ np }/position`, message: 'Node must have "position" with numeric "x" and "y"' });
     }
 
     // data
     if (!node.data || typeof node.data !== 'object') {
-      issues.push({ severity: 'error', path: `${np}/data`, message: 'Node must have a "data" object' });
+      issues.push({ severity: 'error', path: `${ np }/data`, message: 'Node must have a "data" object' });
       continue;
     }
 
@@ -159,14 +161,14 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
 
     // subtype
     if (!subtype || !SUBTYPE_CATEGORY_MAP[subtype]) {
-      issues.push({ severity: 'error', path: `${np}/data/subtype`, message: `Invalid subtype "${subtype}". Valid: ${Object.keys(SUBTYPE_CATEGORY_MAP).join(', ')}` });
+      issues.push({ severity: 'error', path: `${ np }/data/subtype`, message: `Invalid subtype "${ subtype }". Valid: ${ Object.keys(SUBTYPE_CATEGORY_MAP).join(', ') }` });
       continue;
     }
 
     // category match
     const expectedCategory = SUBTYPE_CATEGORY_MAP[subtype];
     if (category !== expectedCategory) {
-      issues.push({ severity: 'error', path: `${np}/data/category`, message: `Subtype "${subtype}" requires category "${expectedCategory}", got "${category}"` });
+      issues.push({ severity: 'error', path: `${ np }/data/category`, message: `Subtype "${ subtype }" requires category "${ expectedCategory }", got "${ category }"` });
     }
 
     if (expectedCategory === 'trigger') {
@@ -175,12 +177,12 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
 
     // label
     if (!label || typeof label !== 'string') {
-      issues.push({ severity: 'warning', path: `${np}/data/label`, message: 'Missing or empty node label' });
+      issues.push({ severity: 'warning', path: `${ np }/data/label`, message: 'Missing or empty node label' });
     }
 
     // config
     if (!config || typeof config !== 'object') {
-      issues.push({ severity: 'error', path: `${np}/data/config`, message: 'Node must have a "config" object' });
+      issues.push({ severity: 'error', path: `${ np }/data/config`, message: 'Node must have a "config" object' });
       continue;
     }
 
@@ -190,7 +192,7 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
 
     for (const field of requiredFields) {
       if (!(field in config)) {
-        issues.push({ severity: 'error', path: `${np}/data/config/${field}`, message: `Missing required config field "${field}" for subtype "${subtype}"` });
+        issues.push({ severity: 'error', path: `${ np }/data/config/${ field }`, message: `Missing required config field "${ field }" for subtype "${ subtype }"` });
       }
     }
 
@@ -199,7 +201,7 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
     const allowedFields = [...requiredFields, ...optionalFields];
     for (const key of configKeys) {
       if (!allowedFields.includes(key)) {
-        issues.push({ severity: 'error', path: `${np}/data/config/${key}`, message: `Unknown config field "${key}" for subtype "${subtype}". Allowed: ${allowedFields.join(', ') || '(none)'}` });
+        issues.push({ severity: 'error', path: `${ np }/data/config/${ key }`, message: `Unknown config field "${ key }" for subtype "${ subtype }". Allowed: ${ allowedFields.join(', ') || '(none)' }` });
       }
     }
 
@@ -208,7 +210,7 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
       const forbiddenAgentFields = ['systemPrompt', 'prompt', 'instructions', 'input', 'agentDescription', 'description', 'tools', 'async', 'output_var', 'depends_on', 'message'];
       for (const bad of forbiddenAgentFields) {
         if (bad in config) {
-          issues.push({ severity: 'error', path: `${np}/data/config/${bad}`, message: `Forbidden agent config field "${bad}". Agent nodes only accept: ${requiredFields.join(', ')}` });
+          issues.push({ severity: 'error', path: `${ np }/data/config/${ bad }`, message: `Forbidden agent config field "${ bad }". Agent nodes only accept: ${ requiredFields.join(', ') }` });
         }
       }
     }
@@ -223,7 +225,7 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
 
   for (let i = 0; i < edges.length; i++) {
     const edge = edges[i];
-    const ep = `/edges[${i}]`;
+    const ep = `/edges[${ i }]`;
 
     if (!edge || typeof edge !== 'object') {
       issues.push({ severity: 'error', path: ep, message: 'Edge is not an object' });
@@ -238,22 +240,22 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
     // Extra keys
     for (const key of Object.keys(edge)) {
       if (!VALID_EDGE_KEYS.has(key)) {
-        issues.push({ severity: 'warning', path: `${ep}/${key}`, message: `Unexpected edge key "${key}"` });
+        issues.push({ severity: 'warning', path: `${ ep }/${ key }`, message: `Unexpected edge key "${ key }"` });
       }
     }
 
     if (!edge.id || typeof edge.id !== 'string') {
-      issues.push({ severity: 'error', path: `${ep}/id`, message: 'Missing or non-string edge "id"' });
+      issues.push({ severity: 'error', path: `${ ep }/id`, message: 'Missing or non-string edge "id"' });
     }
     if (!edge.source || typeof edge.source !== 'string') {
-      issues.push({ severity: 'error', path: `${ep}/source`, message: 'Missing or non-string edge "source"' });
+      issues.push({ severity: 'error', path: `${ ep }/source`, message: 'Missing or non-string edge "source"' });
     } else if (!nodeIds.has(edge.source)) {
-      issues.push({ severity: 'error', path: `${ep}/source`, message: `Edge source "${edge.source}" does not match any node id` });
+      issues.push({ severity: 'error', path: `${ ep }/source`, message: `Edge source "${ edge.source }" does not match any node id` });
     }
     if (!edge.target || typeof edge.target !== 'string') {
-      issues.push({ severity: 'error', path: `${ep}/target`, message: 'Missing or non-string edge "target"' });
+      issues.push({ severity: 'error', path: `${ ep }/target`, message: 'Missing or non-string edge "target"' });
     } else if (!nodeIds.has(edge.target)) {
-      issues.push({ severity: 'error', path: `${ep}/target`, message: `Edge target "${edge.target}" does not match any node id` });
+      issues.push({ severity: 'error', path: `${ ep }/target`, message: `Edge target "${ edge.target }" does not match any node id` });
     }
   }
 
@@ -264,7 +266,7 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
     const cat = SUBTYPE_CATEGORY_MAP[node.data.subtype];
     if (cat === 'trigger') continue;
     if (!targetSet.has(node.id)) {
-      issues.push({ severity: 'warning', path: `/nodes[id=${node.id}]`, message: `Node "${node.data.label || node.id}" is not the target of any edge (unreachable)` });
+      issues.push({ severity: 'warning', path: `/nodes[id=${ node.id }]`, message: `Node "${ node.data.label || node.id }" is not the target of any edge (unreachable)` });
     }
   }
 
@@ -293,7 +295,7 @@ export class ValidateSullaWorkflowWorker extends BaseTool {
           : filePath;
 
         if (!fs.existsSync(resolvedPath)) {
-          throw new Error(`File not found: ${resolvedPath}`);
+          throw new Error(`File not found: ${ resolvedPath }`);
         }
         rawContent = fs.readFileSync(resolvedPath, 'utf-8');
       } else {
@@ -309,8 +311,8 @@ export class ValidateSullaWorkflowWorker extends BaseTool {
           responseString: JSON.stringify({
             valid:  false,
             source: resolvedPath || 'inline',
-            error:  `YAML parse error: ${(parseErr as Error).message}`,
-            issues: [{ severity: 'error', path: '/', message: `YAML parse error: ${(parseErr as Error).message}` }],
+            error:  `YAML parse error: ${ (parseErr as Error).message }`,
+            issues: [{ severity: 'error', path: '/', message: `YAML parse error: ${ (parseErr as Error).message }` }],
           }, null, 2),
         };
       }
@@ -336,7 +338,7 @@ export class ValidateSullaWorkflowWorker extends BaseTool {
     } catch (error) {
       return {
         successBoolean: false,
-        responseString: `Error validating Sulla workflow: ${(error as Error).message}`,
+        responseString: `Error validating Sulla workflow: ${ (error as Error).message }`,
       };
     }
   }

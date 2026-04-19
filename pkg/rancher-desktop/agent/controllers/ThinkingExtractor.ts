@@ -11,8 +11,8 @@
  * Always enabled in all modes.
  */
 
-import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 import type { Extractor, StreamContext, ChatMessageFn } from './Extractor';
+import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
 // ─── Extractor ──────────────────────────────────────────────────
 

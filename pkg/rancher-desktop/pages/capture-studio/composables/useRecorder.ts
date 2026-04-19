@@ -9,41 +9,43 @@
 
 import { ref, onUnmounted } from 'vue';
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import type { QualityPreset } from './useMediaSources';
+
 const { randomUUID } = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 interface StreamEntry {
-  id: string;
-  type: 'screen' | 'camera' | 'mic' | 'system-audio';
-  filename: string;
-  stream: MediaStream;
-  recorder: MediaRecorder;
-  writeStream: any; // fs.WriteStream
-  startOffset: number;
+  id:           string;
+  type:         'screen' | 'camera' | 'mic' | 'system-audio';
+  filename:     string;
+  stream:       MediaStream;
+  recorder:     MediaRecorder;
+  writeStream:  any; // fs.WriteStream
+  startOffset:  number;
   bytesWritten: number;
 }
 
 interface ExternalStreamEntry {
-  id: string;
-  type: string;
-  filename: string;
-  startOffset: number;
-  format: string;
+  id:              string;
+  type:            string;
+  filename:        string;
+  startOffset:     number;
+  format:          string;
   getBytesWritten: () => number;
 }
 
 export interface CaptureEvent {
-  type: 'click' | 'keystroke' | 'window-focus' | 'scroll';
-  time: number; // ms since session start
-  x?: number;
-  y?: number;
+  type:    'click' | 'keystroke' | 'window-focus' | 'scroll';
+  time:    number; // ms since session start
+  x?:      number;
+  y?:      number;
   button?: string;
-  key?: string;
-  label?: string;
-  app?: string;
-  title?: string;
+  key?:    string;
+  label?:  string;
+  app?:    string;
+  title?:  string;
   bounds?: { x: number; y: number; width: number; height: number };
 }
 
@@ -51,15 +53,13 @@ function getCapturesDir(): string {
   return path.join(os.homedir(), 'sulla', 'captures');
 }
 
-import type { QualityPreset } from './useMediaSources';
-
 /** Bitrate targets per quality preset (bits per second). */
 const VIDEO_BITRATES: Record<string, number> = {
   '480p':  1_500_000,   // 1.5 Mbps
   '720p':  3_000_000,   // 3 Mbps
   '1080p': 6_000_000,   // 6 Mbps
   '4k':    20_000_000,  // 20 Mbps
-  'auto':  8_000_000,   // 8 Mbps default
+  auto:    8_000_000,   // 8 Mbps default
 };
 
 function pickMimeType(kind: 'video' | 'audio'): string {
@@ -98,12 +98,12 @@ export function useRecorder() {
   /**
    * Start recording all provided streams to disk.
    */
-  function startSession(streams: Array<{
-    id: string;
-    type: 'screen' | 'camera' | 'mic' | 'system-audio';
-    stream: MediaStream;
+  function startSession(streams: {
+    id:       string;
+    type:     'screen' | 'camera' | 'mic' | 'system-audio';
+    stream:   MediaStream;
     quality?: QualityPreset;
-  }>): string {
+  }[]): string {
     if (isRecording.value) stopSession();
 
     error.value = null;
@@ -114,7 +114,7 @@ export function useRecorder() {
     try {
       fs.mkdirSync(sessionDir, { recursive: true });
     } catch (e: any) {
-      error.value = `Failed to create capture directory: ${e.message}`;
+      error.value = `Failed to create capture directory: ${ e.message }`;
       console.error('[useRecorder]', error.value);
       return '';
     }
@@ -125,26 +125,26 @@ export function useRecorder() {
 
     // Phase 1: Create all write streams, MediaRecorders, and wire handlers BEFORE starting any.
     // This ensures all .start() calls happen in the same tick with zero stagger.
-    const prepared: Array<{ entry: StreamEntry; recorder: MediaRecorder; ws: any }> = [];
+    const prepared: { entry: StreamEntry; recorder: MediaRecorder; ws: any }[] = [];
 
     for (const src of streams) {
       const hasVideo = src.stream.getVideoTracks().length > 0;
       const mimeType = pickMimeType(hasVideo ? 'video' : 'audio');
       const ext = 'webm';
-      const filename = `${src.type}${src.id ? `-${src.id}` : ''}.${ext}`;
+      const filename = `${ src.type }${ src.id ? `-${ src.id }` : '' }.${ ext }`;
       const filePath = path.join(sessionDir, filename);
 
       let ws: any;
       try {
         ws = fs.createWriteStream(filePath);
       } catch (e: any) {
-        console.error(`[useRecorder] Failed to create write stream for ${filename}:`, e.message);
+        console.error(`[useRecorder] Failed to create write stream for ${ filename }:`, e.message);
         continue;
       }
 
       ws.on('error', (e: any) => {
-        console.error(`[useRecorder] Write stream error for ${filename}:`, e.message);
-        error.value = `Disk write error: ${e.message}`;
+        console.error(`[useRecorder] Write stream error for ${ filename }:`, e.message);
+        error.value = `Disk write error: ${ e.message }`;
       });
 
       let recorder: MediaRecorder;
@@ -155,23 +155,23 @@ export function useRecorder() {
         }
         recorder = new MediaRecorder(src.stream, recorderOpts);
       } catch (e: any) {
-        console.error(`[useRecorder] Failed to create MediaRecorder for ${src.type}:`, e.message);
+        console.error(`[useRecorder] Failed to create MediaRecorder for ${ src.type }:`, e.message);
         ws.end();
         continue;
       }
 
       const entry: StreamEntry = {
-        id: src.id,
-        type: src.type,
+        id:           src.id,
+        type:         src.type,
         filename,
-        stream: src.stream,
+        stream:       src.stream,
         recorder,
-        writeStream: ws,
-        startOffset: 0,
+        writeStream:  ws,
+        startOffset:  0,
         bytesWritten: 0,
       };
 
-      recorder.ondataavailable = async (e: BlobEvent) => {
+      recorder.ondataavailable = async(e: BlobEvent) => {
         if (e.data.size > 0 && ws && !ws.destroyed) {
           try {
             const buffer = Buffer.from(await e.data.arrayBuffer());
@@ -181,14 +181,14 @@ export function useRecorder() {
             bytesWritten.value = entries.reduce((sum, en) => sum + en.bytesWritten, 0);
             diskDisplay.value = formatBytes(bytesWritten.value);
           } catch (err: any) {
-            console.error(`[useRecorder] Chunk write failed for ${filename}:`, err.message);
+            console.error(`[useRecorder] Chunk write failed for ${ filename }:`, err.message);
           }
         }
       };
 
       recorder.onerror = (e: any) => {
-        console.error(`[useRecorder] MediaRecorder error for ${src.type}:`, e.error?.message || e);
-        error.value = `Recording error on ${src.type}: ${e.error?.message || 'unknown'}`;
+        console.error(`[useRecorder] MediaRecorder error for ${ src.type }:`, e.error?.message || e);
+        error.value = `Recording error on ${ src.type }: ${ e.error?.message || 'unknown' }`;
       };
 
       prepared.push({ entry, recorder, ws });
@@ -202,7 +202,7 @@ export function useRecorder() {
         entry.startOffset = performance.now() - sessionStartTime;
         entries.push(entry);
       } catch (e: any) {
-        console.error(`[useRecorder] MediaRecorder.start() failed for ${entry.type}:`, e.message);
+        console.error(`[useRecorder] MediaRecorder.start() failed for ${ entry.type }:`, e.message);
         ws.end();
       }
     }
@@ -216,7 +216,7 @@ export function useRecorder() {
     elapsedSeconds.value = 0;
     externalEntries = [];
     captureEvents = [];
-    timerInterval = setInterval(() => { elapsedSeconds.value++; }, 1000);
+    timerInterval = setInterval(() => { elapsedSeconds.value++ }, 1000);
 
     return id;
   }
@@ -226,10 +226,10 @@ export function useRecorder() {
    * so it appears in the session manifest.
    */
   function registerExternalStream(entry: {
-    id: string;
-    type: string;
-    filename: string;
-    format: string;
+    id:              string;
+    type:            string;
+    filename:        string;
+    format:          string;
     getBytesWritten: () => number;
   }): void {
     externalEntries.push({
@@ -263,7 +263,7 @@ export function useRecorder() {
   async function stopSession(): Promise<string> {
     if (!isRecording.value) return '';
 
-    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null }
     isRecording.value = false;
 
     // Stop all recorders and wait for their final ondataavailable to fire
@@ -274,10 +274,10 @@ export function useRecorder() {
       }
 
       let resolved = false;
-      const safeResolve = () => { if (!resolved) { resolved = true; resolve(); } };
+      const safeResolve = () => { if (!resolved) { resolved = true; resolve() } };
 
       const origHandler = entry.recorder.ondataavailable;
-      entry.recorder.ondataavailable = async (e: BlobEvent) => {
+      entry.recorder.ondataavailable = async(e: BlobEvent) => {
         // Process the final chunk
         try {
           if (origHandler) await (origHandler as any)(e);
@@ -309,23 +309,23 @@ export function useRecorder() {
     // Write manifest (includes both MediaRecorder and external streams)
     const allStreams = [
       ...entries.map(e => ({
-        id: e.id,
-        type: e.type,
-        filename: e.filename,
-        format: 'webm',
+        id:          e.id,
+        type:        e.type,
+        filename:    e.filename,
+        format:      'webm',
         startOffset: Math.round(e.startOffset),
-        bytes: e.bytesWritten,
+        bytes:       e.bytesWritten,
       })),
       ...externalEntries.map(e => {
         let bytes = 0;
-        try { bytes = e.getBytesWritten(); } catch (err: any) {
+        try { bytes = e.getBytesWritten() } catch (err: any) {
           console.warn('[useRecorder] getBytesWritten failed for', e.id, err.message);
         }
         return {
-          id: e.id,
-          type: e.type,
-          filename: e.filename,
-          format: e.format,
+          id:          e.id,
+          type:        e.type,
+          filename:    e.filename,
+          format:      e.format,
           startOffset: Math.round(e.startOffset),
           bytes,
         };
@@ -337,10 +337,10 @@ export function useRecorder() {
     const manifest = {
       sessionId: sessionId.value,
       startedAt: new Date(Date.now() - elapsedSeconds.value * 1000).toISOString(),
-      duration: elapsedSeconds.value,
+      duration:  elapsedSeconds.value,
       totalBytes,
-      streams: allStreams,
-      events: captureEvents,
+      streams:   allStreams,
+      events:    captureEvents,
     };
 
     try {

@@ -2,12 +2,16 @@
 // Each category manifests.ts holds schemaDefs inline and uses dynamic import()
 // for lazy-loading workers. This keeps the webpack bundle small at startup.
 
-import { toolRegistry } from './registry';
-
+import { agentToolManifests } from './agents/manifests';
 import { applescriptToolManifests } from './applescript/manifests';
+import { bridgeToolManifests } from './bridge/manifests';
 import { calendarToolManifests } from './calendar/manifests';
+import { chromeToolManifests } from './chrome/manifests';
+import { computerUseToolManifests } from './computer-use/manifests';
 import { dockerToolManifests } from './docker/manifests';
+import { extensionsToolManifests } from './extensions/manifests';
 import { githubToolManifests } from './github/manifests';
+
 import { integrationsToolManifests } from './integrations/manifests';
 import { kubectlToolManifests } from './kubectl/manifests';
 import { limaToolManifests } from './lima/manifests';
@@ -17,13 +21,9 @@ import { pgToolManifests } from './pg/manifests';
 import { playwrightToolManifests } from './playwright/manifests';
 import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
+import { toolRegistry } from './registry';
 import { slackToolManifests } from './slack/manifests';
 import { workflowToolManifests } from './workflow/manifests';
-import { extensionsToolManifests } from './extensions/manifests';
-import { agentToolManifests } from './agents/manifests';
-import { bridgeToolManifests } from './bridge/manifests';
-import { computerUseToolManifests } from './computer-use/manifests';
-import { chromeToolManifests } from './chrome/manifests';
 
 toolRegistry.registerManifests([
   ...agentToolManifests,

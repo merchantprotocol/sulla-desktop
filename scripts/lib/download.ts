@@ -39,7 +39,7 @@ export type ArchiveDownloadOptions = DownloadOptions & {
  */
 async function fetchWithRetry(url: string, maxAttempts = 5) {
   const BASE_DELAY_MS = 2_000;
-  const MAX_DELAY_MS  = 120_000; // never wait more than 2 minutes
+  const MAX_DELAY_MS = 120_000; // never wait more than 2 minutes
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let response: Response | undefined;

@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from '../base';
 import { getExtensionService } from '../../services/ExtensionService';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * Uninstall an extension. By default preserves the data/ directory.

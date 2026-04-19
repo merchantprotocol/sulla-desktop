@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from '../base';
 import { redisClient } from '../../database/RedisClient';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * Redis Expire Tool - Worker class for execution

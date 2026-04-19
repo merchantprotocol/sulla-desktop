@@ -50,6 +50,7 @@ entry/index.ts dynamically determines the layout based on the current route's co
 
 <script setup lang="ts">
 import SimpleHeader from './agent/SimpleHeader.vue';
+
 import { useTheme } from '@pkg/composables/useTheme';
 import './assets/theme.css';
 

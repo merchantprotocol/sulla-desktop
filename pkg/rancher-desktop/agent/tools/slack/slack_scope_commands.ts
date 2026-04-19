@@ -1,5 +1,6 @@
-import { BaseTool, ToolResponse } from '../base';
 import { registry } from '../../integrations';
+import { BaseTool, ToolResponse } from '../base';
+
 import type { SlackClient } from '../../integrations/slack/SlackClient';
 
 interface ScopeConfig {

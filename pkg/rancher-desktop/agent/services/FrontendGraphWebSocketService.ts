@@ -1,11 +1,13 @@
-import type { Ref } from 'vue';
-import type { AgentGraphState } from '../nodes/Graph';
-import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { AbortService } from './AbortService';
 import { GraphRegistry, getAgentIdForTrigger, nextThreadId, nextMessageId } from './GraphRegistry';
+import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { saveThreadState } from '../nodes/ThreadStateStore';
+
 import { frontendGraphLogger as console } from '@pkg/agent/utils/agentLogger';
+
+import type { AgentGraphState } from '../nodes/Graph';
+import type { Ref } from 'vue';
 
 const DEFAULT_CHANNEL_ID = 'sulla-desktop';
 
@@ -109,7 +111,7 @@ export class FrontendGraphWebSocketService {
     });
 
     if (msg.type === 'stop_run') {
-      console.log(`[FrontendGraph:stop_run] received — activeAbort=${!!this.activeAbort}, channel=${this.channelId}`);
+      console.log(`[FrontendGraph:stop_run] received — activeAbort=${ !!this.activeAbort }, channel=${ this.channelId }`);
       if (this.activeAbort) {
         this.activeAbort.abort();
         console.log('[FrontendGraph:stop_run] abort() called successfully');

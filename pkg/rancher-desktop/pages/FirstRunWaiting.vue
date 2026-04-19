@@ -26,8 +26,10 @@
 
 <script setup lang="ts">
 import { defineProps, onMounted, onUnmounted, ref } from 'vue';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import { StartupProgressController } from './agent/StartupProgressController';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
   startupController: StartupProgressController;

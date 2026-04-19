@@ -9,15 +9,16 @@
  * for cursor position. Events are sent to the renderer via IPC.
  */
 
-import { ipcMain, BrowserWindow, screen } from 'electron';
 import { exec } from 'child_process';
+
+import { ipcMain, BrowserWindow, screen } from 'electron';
 
 let trackingActive = false;
 let focusPollInterval: ReturnType<typeof setInterval> | null = null;
 let clickPollInterval: ReturnType<typeof setInterval> | null = null;
 let lastFocusedApp = '';
 let lastFocusedTitle = '';
-let lastMouseButtons = 0;
+const lastMouseButtons = 0;
 
 /**
  * Get the currently focused window's app name, title, and bounds (macOS).
@@ -44,7 +45,7 @@ function getFocusedWindowInfo(): Promise<{ app: string; title: string; bounds: {
       end tell
     `;
 
-    exec(`osascript -e '${script.replace(/'/g, "'\\''")}'`, { timeout: 2000 }, (err, stdout) => {
+    exec(`osascript -e '${ script.replace(/'/g, "'\\''") }'`, { timeout: 2000 }, (err, stdout) => {
       if (err) {
         resolve({ app: '', title: '', bounds: { x: 0, y: 0, width: 0, height: 0 } });
         return;
@@ -76,7 +77,7 @@ function startTracking(): void {
   trackingActive = true;
 
   // Poll for window focus changes every 500ms
-  focusPollInterval = setInterval(async () => {
+  focusPollInterval = setInterval(async() => {
     if (!trackingActive) return;
     const info = await getFocusedWindowInfo();
     if (info.app && (info.app !== lastFocusedApp || info.title !== lastFocusedTitle)) {
@@ -91,7 +92,7 @@ function startTracking(): void {
   // screen.getCursorScreenPoint changes that indicate a click happened)
   let lastCursorX = 0;
   let lastCursorY = 0;
-  let stationaryCount = 0;
+  const stationaryCount = 0;
 
   clickPollInterval = setInterval(() => {
     if (!trackingActive) return;
@@ -111,8 +112,8 @@ function stopTracking(): void {
   if (!trackingActive) return;
   trackingActive = false;
 
-  if (focusPollInterval) { clearInterval(focusPollInterval); focusPollInterval = null; }
-  if (clickPollInterval) { clearInterval(clickPollInterval); clickPollInterval = null; }
+  if (focusPollInterval) { clearInterval(focusPollInterval); focusPollInterval = null }
+  if (clickPollInterval) { clearInterval(clickPollInterval); clickPollInterval = null }
 
   lastFocusedApp = '';
   lastFocusedTitle = '';

@@ -144,9 +144,9 @@ export interface StorageArea {
 // ---------------------------------------------------------------------------
 
 export interface ChromeWindow {
-  id:     string;
-  state:  'normal' | 'hidden';
-  tabs:   ChromeTab[];
+  id:    string;
+  state: 'normal' | 'hidden';
+  tabs:  ChromeTab[];
 }
 
 export interface WindowCreateProperties {
@@ -168,8 +168,8 @@ export interface AlarmCreateInfo {
 }
 
 export interface ChromeAlarm {
-  name:            string;
-  scheduledTime:   number;
+  name:             string;
+  scheduledTime:    number;
   periodInMinutes?: number;
 }
 
@@ -178,27 +178,27 @@ export interface ChromeAlarm {
 // ---------------------------------------------------------------------------
 
 export interface WebRequestFilter {
-  urls:  string[];
+  urls:   string[];
   types?: string[];
 }
 
 export interface WebRequestDetails {
-  requestId:    string;
-  url:          string;
-  method:       string;
-  frameId?:     number;
-  tabId?:       string;
-  type?:        string;
-  timeStamp:    number;
+  requestId: string;
+  url:       string;
+  method:    string;
+  frameId?:  number;
+  tabId?:    string;
+  type?:     string;
+  timeStamp: number;
 }
 
 export interface WebRequestHeadersDetails extends WebRequestDetails {
-  requestHeaders?: Array<{ name: string; value: string }>;
+  requestHeaders?: { name: string; value: string }[];
 }
 
 export interface WebRequestResponseDetails extends WebRequestDetails {
   statusCode:       number;
-  responseHeaders?: Array<{ name: string; value: string }>;
+  responseHeaders?: { name: string; value: string }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ export interface WebRequestResponseDetails extends WebRequestDetails {
 export interface ContextMenuCreateProperties {
   id?:       string;
   title:     string;
-  contexts?: Array<'page' | 'selection' | 'link' | 'image' | 'editable' | 'all'>;
+  contexts?: ('page' | 'selection' | 'link' | 'image' | 'editable' | 'all')[];
   parentId?: string;
   enabled?:  boolean;
 }
@@ -219,8 +219,8 @@ export interface ContextMenuUpdateProperties {
 }
 
 export interface ContextMenuClickInfo {
-  menuItemId:    string;
-  parentMenuId?: string;
+  menuItemId:     string;
+  parentMenuId?:  string;
   selectionText?: string;
   linkUrl?:       string;
   srcUrl?:        string;
@@ -314,10 +314,10 @@ export interface DownloadOptions {
 }
 
 export interface DownloadItem {
-  id:          string;
-  url:         string;
-  filename:    string;
-  state:       'in_progress' | 'complete' | 'interrupted';
+  id:            string;
+  url:           string;
+  filename:      string;
+  state:         'in_progress' | 'complete' | 'interrupted';
   bytesReceived: number;
   totalBytes:    number;
   startTime:     number;
@@ -334,17 +334,17 @@ export interface DownloadQuery {
 // ---------------------------------------------------------------------------
 
 export interface HistoryItem {
-  id:          string;
-  url:         string;
-  title:       string;
+  id:            string;
+  url:           string;
+  title:         string;
   lastVisitTime: number;
   visitCount:    number;
 }
 
 export interface HistoryQuery {
-  text:       string;
-  startTime?: number;
-  endTime?:   number;
+  text:        string;
+  startTime?:  number;
+  endTime?:    number;
   maxResults?: number;
 }
 
@@ -353,13 +353,13 @@ export interface HistoryQuery {
 // ---------------------------------------------------------------------------
 
 export interface SidePanelOptions {
-  path:    string;
+  path:     string;
   enabled?: boolean;
 }
 
 /** Payload sent from the renderer to the side panel chat via sendPrompt(). */
 export interface SidePanelPromptPayload {
-  prompt:       string;
+  prompt: string;
   /** Tab context — URL and title of the page the action was triggered from. */
   tab?: {
     url:   string;
@@ -368,7 +368,7 @@ export interface SidePanelPromptPayload {
   /** Selected text from the page (for "Ask Sulla", "Summarize", etc.). */
   selectionText?: string;
   /** Image attachments (e.g. screenshots) as base64-encoded data. */
-  attachments?: Array<{ mediaType: string; base64: string }>;
+  attachments?:   { mediaType: string; base64: string }[];
 }
 
 // ---------------------------------------------------------------------------
@@ -394,9 +394,9 @@ export interface ChromeApi {
     reload(tabId: string): Promise<void>;
     goBack(tabId: string): Promise<void>;
     goForward(tabId: string): Promise<void>;
-    onCreated:  ChromeEvent<[ChromeTab]>;
-    onRemoved:  ChromeEvent<[string]>;
-    onUpdated:  ChromeEvent<[string, TabChangeInfo, ChromeTab]>;
+    onCreated: ChromeEvent<[ChromeTab]>;
+    onRemoved: ChromeEvent<[string]>;
+    onUpdated: ChromeEvent<[string, TabChangeInfo, ChromeTab]>;
   };
 
   scripting: {
@@ -431,11 +431,11 @@ export interface ChromeApi {
   };
 
   webRequest: {
-    onBeforeRequest:      ChromeEvent<[WebRequestDetails]>;
-    onBeforeSendHeaders:  ChromeEvent<[WebRequestHeadersDetails]>;
-    onHeadersReceived:    ChromeEvent<[WebRequestResponseDetails]>;
-    onCompleted:          ChromeEvent<[WebRequestResponseDetails]>;
-    onErrorOccurred:      ChromeEvent<[WebRequestDetails & { error: string }]>;
+    onBeforeRequest:     ChromeEvent<[WebRequestDetails]>;
+    onBeforeSendHeaders: ChromeEvent<[WebRequestHeadersDetails]>;
+    onHeadersReceived:   ChromeEvent<[WebRequestResponseDetails]>;
+    onCompleted:         ChromeEvent<[WebRequestResponseDetails]>;
+    onErrorOccurred:     ChromeEvent<[WebRequestDetails & { error: string }]>;
   };
 
   contextMenus: {
@@ -486,8 +486,8 @@ export interface ChromeApi {
     cancel(downloadId: string): Promise<void>;
     pause(downloadId: string): Promise<void>;
     resume(downloadId: string): Promise<void>;
-    onCreated:  ChromeEvent<[DownloadItem]>;
-    onChanged:  ChromeEvent<[{ id: string; state?: { current: string } }]>;
+    onCreated: ChromeEvent<[DownloadItem]>;
+    onChanged: ChromeEvent<[{ id: string; state?: { current: string } }]>;
   };
 
   history: {

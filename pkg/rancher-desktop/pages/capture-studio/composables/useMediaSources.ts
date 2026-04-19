@@ -13,25 +13,25 @@ import { ref, onUnmounted, type Ref } from 'vue';
 const { ipcRenderer } = require('electron');
 
 export interface ScreenSource {
-  id: string;
-  name: string;
+  id:               string;
+  name:             string;
   thumbnailDataUrl: string;
 }
 
 export type QualityPreset = '480p' | '720p' | '1080p' | '4k' | 'auto';
 
 export interface QualityConfig {
-  label: string;
-  width: number;
-  height: number;
+  label:     string;
+  width:     number;
+  height:    number;
   frameRate: number;
 }
 
 export const QUALITY_PRESETS: Record<Exclude<QualityPreset, 'auto'>, QualityConfig> = {
-  '480p':  { label: '480p (SD)',      width: 854,  height: 480,  frameRate: 30 },
-  '720p':  { label: '720p (HD)',      width: 1280, height: 720,  frameRate: 30 },
+  '480p':  { label: '480p (SD)', width: 854, height: 480, frameRate: 30 },
+  '720p':  { label: '720p (HD)', width: 1280, height: 720, frameRate: 30 },
   '1080p': { label: '1080p (Full HD)', width: 1920, height: 1080, frameRate: 30 },
-  '4k':    { label: '4K (Ultra HD)',   width: 3840, height: 2160, frameRate: 30 },
+  '4k':    { label: '4K (Ultra HD)', width: 3840, height: 2160, frameRate: 30 },
 };
 
 export function useMediaSources() {
@@ -69,7 +69,7 @@ export function useMediaSources() {
         audio: false,
         video: {
           mandatory: {
-            chromeMediaSource: 'desktop',
+            chromeMediaSource:   'desktop',
             chromeMediaSourceId: sourceId,
           },
         },
@@ -214,8 +214,8 @@ export function useMediaSources() {
       // Remove resolution/framerate constraints — revert to device defaults
       try {
         await track.applyConstraints({
-          width: {},
-          height: {},
+          width:     {},
+          height:    {},
           frameRate: {},
         });
         console.log('[useMediaSources] Camera quality → auto (constraints cleared)');
@@ -227,11 +227,11 @@ export function useMediaSources() {
       const cfg = QUALITY_PRESETS[preset];
       try {
         await track.applyConstraints({
-          width: { ideal: cfg.width },
-          height: { ideal: cfg.height },
+          width:     { ideal: cfg.width },
+          height:    { ideal: cfg.height },
           frameRate: { ideal: cfg.frameRate },
         });
-        console.log(`[useMediaSources] Camera quality → ${preset} via applyConstraints`);
+        console.log(`[useMediaSources] Camera quality → ${ preset } via applyConstraints`);
         return;
       } catch (e: any) {
         console.warn('[useMediaSources] applyConstraints failed, re-acquiring:', e.message);
@@ -257,11 +257,11 @@ export function useMediaSources() {
   /**
    * List available video input devices (cameras).
    */
-  async function listVideoDevices(): Promise<Array<{ deviceId: string; label: string }>> {
+  async function listVideoDevices(): Promise<{ deviceId: string; label: string }[]> {
     const devices = await navigator.mediaDevices.enumerateDevices();
     return devices
       .filter(d => d.kind === 'videoinput' && d.deviceId)
-      .map(d => ({ deviceId: d.deviceId, label: d.label || `Camera (${d.deviceId.slice(0, 8)})` }));
+      .map(d => ({ deviceId: d.deviceId, label: d.label || `Camera (${ d.deviceId.slice(0, 8) })` }));
   }
 
   onUnmounted(() => {

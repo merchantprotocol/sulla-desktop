@@ -11,12 +11,15 @@
  */
 
 import { execFile, execSync, spawn } from 'child_process';
-import type { ChildProcess } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+
 import { log } from '../../model/logger';
+
 import paths from '@pkg/utils/paths';
+
+import type { ChildProcess } from 'child_process';
 
 // Native Swift scripts and create-mirror binary live in resources/darwin/audio-driver/
 // Same pattern as all other platform binaries (rdctl, sulla-daemon, etc.)
@@ -48,7 +51,7 @@ function runSwift(scriptPath: string, args: string[] = []): Promise<{ ok: boolea
     execFile('swift', [scriptPath, ...args], { timeout: 15000, env: CHILD_ENV }, (err, stdout, stderr) => {
       const cleanStderr = (stderr || '')
         .split('\n')
-        .filter((l) => !l.includes('warning:') && !l.match(/^\s*\d+\s*\|/) && !l.match(/^\s*`-/) && l.trim())
+        .filter((l) => !l.includes('warning:') && !(/^\s*\d+\s*\|/.exec(l)) && !(/^\s*`-/.exec(l)) && l.trim())
         .join('\n')
         .trim();
 
@@ -560,7 +563,7 @@ export const whisper = {
         const line = data.toString();
         // Parse curl progress bar: "  % Total    % Received % Xferd  ..."
         // or the simple progress bar like "###  45.2%"
-        const pctMatch = line.match(/([\d.]+)%/);
+        const pctMatch = /([\d.]+)%/.exec(line);
         if (pctMatch && onProgress) {
           const pct = parseFloat(pctMatch[1]);
           onProgress(Math.min(99, pct), `Downloading: ${ Math.round(pct) }%`);
@@ -570,7 +573,7 @@ export const whisper = {
       const timeout = setTimeout(() => {
         log.error('Platform', 'Model download timed out', { model });
         proc.kill();
-        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+        try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
         resolve(false);
       }, 600000); // 10 min timeout
 
@@ -589,7 +592,7 @@ export const whisper = {
           }
         } else {
           log.error('Platform', 'curl failed', { model, exitCode: code });
-          try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+          try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
           resolve(false);
         }
       });
@@ -597,7 +600,7 @@ export const whisper = {
       proc.on('error', (err) => {
         clearTimeout(timeout);
         log.error('Platform', 'Failed to spawn curl', { error: err.message });
-        try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+        try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
         resolve(false);
       });
     });

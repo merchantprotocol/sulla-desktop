@@ -1,7 +1,7 @@
 // HeartbeatService.ts
 
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { startCaffeinate, stopCaffeinate, scheduleWake } from '../../main/SleepPreventionService';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 // ── Event History Types ──
 
@@ -51,7 +51,7 @@ export function getHeartbeatService(): HeartbeatService {
 
 export class HeartbeatService {
   private initialized = false;
-  private schedulerId: ReturnType<typeof setInterval> | null = null;
+  private schedulerId:  ReturnType<typeof setInterval> | null = null;
   private alignTimerId: ReturnType<typeof setTimeout> | null = null;
   private isExecuting = false;
   private lastTriggerMs = 0; // simple in-memory last-run tracker

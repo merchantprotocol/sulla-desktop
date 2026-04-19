@@ -7,8 +7,8 @@
  * qmd is an ESM package with top-level await, so the worker uses dynamic import().
  */
 
-import * as path from 'path';
 import * as fs from 'fs';
+import * as path from 'path';
 import { Worker } from 'worker_threads';
 
 import Logging from '@pkg/utils/logging';

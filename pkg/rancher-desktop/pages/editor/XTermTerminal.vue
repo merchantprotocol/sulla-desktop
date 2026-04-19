@@ -6,9 +6,9 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
-import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
+import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import '@xterm/xterm/css/xterm.css';
 
 export default defineComponent({

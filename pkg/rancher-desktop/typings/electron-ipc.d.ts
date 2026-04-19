@@ -136,13 +136,13 @@ export interface IpcMainEvents {
 
   // #region Conversation History
   'conversation-history:record': (entry: {
-    id:        string;
-    type:      'chat' | 'browser' | 'workflow' | 'graph';
-    title?:    string;
-    url?:      string;
-    favicon?:  string;
-    tab_id?:   string;
-    status?:   'active' | 'closed' | 'archived' | 'deleted';
+    id:       string;
+    type:     'chat' | 'browser' | 'workflow' | 'graph';
+    title?:   string;
+    url?:     string;
+    favicon?: string;
+    tab_id?:  string;
+    status?:  'active' | 'closed' | 'archived' | 'deleted';
   }) => void;
   'conversation-history:close': (id: string) => void;
   'conversation-history:clear': (olderThan?: string, includeTrainingData?: boolean) => void;
@@ -154,17 +154,17 @@ export interface IpcMainEvents {
 
   // #region Tab context menu (popup window)
   'tab-context-menu:show': (payload: {
-    screenX:  number;
-    screenY:  number;
-    items:    string[];
-    tabData:  Record<string, unknown>;
+    screenX: number;
+    screenY: number;
+    items:   string[];
+    tabData: Record<string, unknown>;
   }) => void;
   'tab-context-menu:action':  (action: string) => void;
   'tab-context-menu:dismiss': () => void;
   // #endregion
 
   // #region More menu (popup window)
-  'more-menu:show': (payload: { screenX: number; screenY: number }) => void;
+  'more-menu:show':            (payload: { screenX: number; screenY: number }) => void;
   'more-menu:action':          (action: string, extra?: Record<string, unknown>) => void;
   'more-menu:dismiss':         () => void;
   'more-menu:request-history': () => void;
@@ -207,69 +207,98 @@ export interface IpcMainInvokeEvents {
   'app-quit':               () => void;
 
   // Browser tab views (WebContentsView-based)
-  'browser-tab-view:create':    (tabId: string, url: string, bounds: Electron.Rectangle) => void;
-  'browser-tab-view:destroy':   (tabId: string) => void;
-  'browser-tab-view:navigate':  (tabId: string, url: string) => void;
-  'browser-tab-view:go-back':   (tabId: string) => void;
-  'browser-tab-view:go-forward': (tabId: string) => void;
-  'browser-tab-view:reload':    (tabId: string) => void;
-  'browser-tab-view:stop':      (tabId: string) => void;
-  'browser-tab-view:set-bounds': (tabId: string, bounds: Electron.Rectangle) => void;
-  'browser-tab-view:show':      (tabId: string) => void;
-  'browser-tab-view:hide':      (tabId: string) => void;
-  'browser-tab-view:exec-js':   (tabId: string, code: string) => unknown;
-  'browser-tab:exec-in-frame': (code: string, targetUrl?: string) => unknown;
-  'browser-tab:send-input-event': (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;
+  'browser-tab-view:create':        (tabId: string, url: string, bounds: Electron.Rectangle) => void;
+  'browser-tab-view:destroy':       (tabId: string) => void;
+  'browser-tab-view:navigate':      (tabId: string, url: string) => void;
+  'browser-tab-view:go-back':       (tabId: string) => void;
+  'browser-tab-view:go-forward':    (tabId: string) => void;
+  'browser-tab-view:reload':        (tabId: string) => void;
+  'browser-tab-view:stop':          (tabId: string) => void;
+  'browser-tab-view:set-bounds':    (tabId: string, bounds: Electron.Rectangle) => void;
+  'browser-tab-view:show':          (tabId: string) => void;
+  'browser-tab-view:hide':          (tabId: string) => void;
+  'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
+  'browser-tab:exec-in-frame':      (code: string, targetUrl?: string) => unknown;
+  'browser-tab:send-input-event':   (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;
   'browser-tab:capture-screenshot': (options?: {
-    format?: 'jpeg' | 'png';
+    format?:  'jpeg' | 'png';
     quality?: number;
-    clip?: { x: number; y: number; width: number; height: number; scale?: number };
+    clip?:    { x: number; y: number; width: number; height: number; scale?: number };
   }) => { base64: string; mediaType: string } | null;
   'browser-tab:send-mouse-event': (mouseEvent: {
-    type: 'mousePressed' | 'mouseReleased' | 'mouseMoved';
-    x: number; y: number;
-    button?: 'left' | 'right' | 'middle' | 'none';
+    type:        'mousePressed' | 'mouseReleased' | 'mouseMoved';
+    x:           number;
+    y:           number;
+    button?:     'left' | 'right' | 'middle' | 'none';
     clickCount?: number;
   }) => boolean;
-  'sulla-settings-get':     (property: string, defaultValue?: any) => any;
-  'sulla-settings-set':     (property: string, value: any, cast?: string) => void;
-  'sulla-settings-delete':  (property: string) => void;
-  'sulla-settings:get':     (key: string) => any;
-  'sulla-settings:set':     (key: string, value: any, cast?: string) => any;
+  'sulla-settings-get':    (property: string, defaultValue?: any) => any;
+  'sulla-settings-set':    (property: string, value: any, cast?: string) => void;
+  'sulla-settings-delete': (property: string) => void;
+  'sulla-settings:get':    (key: string) => any;
+  'sulla-settings:set':    (key: string, value: any, cast?: string) => any;
+
+  /** Claude Code OAuth flow */
+  'claude-oauth:start':  () => { token?: string; error?: string };
+  'claude-oauth:cancel': () => void;
+
+  /** Sulla Cloud account auth (phone OTP / email / Apple) */
+  'sulla-cloud:get-status':      () => { signedIn: boolean; userId: string; phone: string; lastError?: string };
+  'sulla-cloud:send-otp':        (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
+  'sulla-cloud:verify-otp':      (phone: string, code: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
+  'sulla-cloud:email-login':     (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
+  'sulla-cloud:email-register':  (email: string, password: string, name?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
+  'sulla-cloud:apple-sign-in':   (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
+  'sulla-cloud:logout':          () => { signedIn: boolean; userId: string; phone: string; lastError?: string };
+
+  /** Desktop relay — pairing + status */
+  'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };
+  'desktop-relay:set-paired-user-id': (userId: string) => { pairedUserId: string; connected: boolean; lastError?: string };
+
+  /** Claude Code headless test — sends one prompt, captures stream-json events */
+  'claude-code:test':    (prompt: string, sessionId?: string) => {
+    ok:         boolean;
+    error?:     string;
+    sessionId?: string;
+    events:     number;
+    text:       string;
+    stderr:     string;
+    exitCode:   number | null;
+  };
 
   // #region Model Provider Service (source of truth)
-  'model-provider:get-state':            () => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
-  'model-provider:get-providers':        () => { id: string; name: string; connected: boolean }[];
-  'model-provider:get-models':           (providerId: string) => { id: string; name: string; description?: string }[];
-  'model-provider:select-model':         (providerId: string, modelId: string) => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
-  'model-provider:set-secondary':        (providerId: string) => void;
-  'model-provider:set-heartbeat':        (providerId: string) => void;
-  'model-provider:get-provider-config':  (providerId: string) => Record<string, string>;
+  'model-provider:get-state':              () => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
+  'model-provider:get-providers':          () => { id: string; name: string; connected: boolean }[];
+  'model-provider:get-models':             (providerId: string) => { id: string; name: string; description?: string }[];
+  'model-provider:select-model':           (providerId: string, modelId: string) => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
+  'model-provider:set-secondary':          (providerId: string) => void;
+  'model-provider:set-heartbeat':          (providerId: string) => void;
+  'model-provider:get-provider-config':    (providerId: string) => Record<string, string>;
   'model-provider:update-provider-config': (providerId: string, config: Record<string, string>) => void;
   // #endregion
-  'capture-studio:get-sources':      () => { id: string; name: string; thumbnailDataUrl: string }[];
-  'capture-studio:check-permissions': () => Record<string, string>;
-  'audio-transcribe':       (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: Array<{ text: string; speaker_id?: string; start?: number; end?: number }> };
-  'audio-speak':            (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
-  'integration-get-value':  (integrationId: string, property: string) => { value: string } | null;
-  'desktop-session-start':  (payload?: { callerName?: string }) => { sessionId: string | null; callId?: string; error?: string };
-  'desktop-session-end':    (sessionId: string) => { ok: boolean };
-  'gateway-listener-start':  () => { ok: boolean };
-  'gateway-listener-stop':   () => { ok: boolean };
-  'gateway-listener-status': () => { lobbyConnected: boolean; audioConnected: boolean; sessionId: string | null; callId: string | null; error: string | null };
-  'gateway-audio-start':     (payload?: { callerName?: string; channels?: Record<string, { label: string; source: string }> }) => { sessionId: string | null; callId: string | null; error: string | null };
-  'gateway-audio-stop':      () => { ok: boolean };
-  'gateway-audio-send':      (payload: { audio: ArrayBuffer; channel?: number }) => { ok: boolean };
-  'gateway-transcript-subscribe':   () => { ok: boolean };
-  'gateway-transcript-unsubscribe': () => { ok: boolean };
-  'audio-driver-connect':    () => { ok: boolean; alreadyConnected?: boolean; error?: string };
-  'audio-driver-disconnect': () => { ok: boolean; error?: string };
-  'audio-driver-status':     () => { connected: boolean; installed: boolean; socketExists: boolean };
+  'capture-studio:get-sources':            () => { id: string; name: string; thumbnailDataUrl: string }[];
+  'capture-studio:check-permissions':      () => Record<string, string>;
+  'audio-transcribe':                      (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: { text: string; speaker_id?: string; start?: number; end?: number }[] };
+  'audio-speak':                           (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
+  'integration-get-value':                 (integrationId: string, property: string) => { value: string } | null;
+  'desktop-session-start':                 (payload?: { callerName?: string }) => { sessionId: string | null; callId?: string; error?: string };
+  'desktop-session-end':                   (sessionId: string) => { ok: boolean };
+  'gateway-listener-start':                () => { ok: boolean };
+  'gateway-listener-stop':                 () => { ok: boolean };
+  'gateway-listener-status':               () => { lobbyConnected: boolean; audioConnected: boolean; sessionId: string | null; callId: string | null; error: string | null };
+  'gateway-audio-start':                   (payload?: { callerName?: string; channels?: Record<string, { label: string; source: string }> }) => { sessionId: string | null; callId: string | null; error: string | null };
+  'gateway-audio-stop':                    () => { ok: boolean };
+  'gateway-audio-send':                    (payload: { audio: ArrayBuffer; channel?: number }) => { ok: boolean };
+  'gateway-transcript-subscribe':          () => { ok: boolean };
+  'gateway-transcript-unsubscribe':        () => { ok: boolean };
+  'audio-driver-connect':                  () => { ok: boolean; alreadyConnected?: boolean; error?: string };
+  'audio-driver-disconnect':               () => { ok: boolean; error?: string };
+  'audio-driver-status':                   () => { connected: boolean; installed: boolean; socketExists: boolean };
   // #endregion
 
   // #region Computer Use
   'computer-use:request-permission': (appName: string) => { ok: boolean; status: 'granted' | 'denied' | 'error'; error?: string };
-  'computer-use:health-check': (appNames: string[]) => Record<string, { ok: boolean; status: string; error?: string }>;
+  'computer-use:health-check':       (appNames: string[]) => Record<string, { ok: boolean; status: string; error?: string }>;
   // #endregion
 
   // #region Filesystem
@@ -296,14 +325,14 @@ export interface IpcMainInvokeEvents {
   'tools-get-schema':              (toolName: string) => Record<string, any> | null;
 
   // Workflow CRUD
-  'workflow-list':   () => { id: string; name: string; updatedAt: string; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus }[];
-  'workflow-get':    (workflowId: string) => any;
-  'workflow-save':   (workflow: any) => boolean;
-  'workflow-delete': (workflowId: string) => boolean;
-  'workflow-move':   (workflowId: string, targetStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus) => { success: boolean; newStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus };
-  'workflow-watch-start':    () => boolean;
-  'workflow-watch-stop':     () => boolean;
-  'workflow-check-updated':  (workflowId: string, editorUpdatedAt: string) => { changed: boolean; diskUpdatedAt: string };
+  'workflow-list':          () => { id: string; name: string; updatedAt: string; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus }[];
+  'workflow-get':           (workflowId: string) => any;
+  'workflow-save':          (workflow: any) => boolean;
+  'workflow-delete':        (workflowId: string) => boolean;
+  'workflow-move':          (workflowId: string, targetStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus) => { success: boolean; newStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus };
+  'workflow-watch-start':   () => boolean;
+  'workflow-watch-stop':    () => boolean;
+  'workflow-check-updated': (workflowId: string, editorUpdatedAt: string) => { changed: boolean; diskUpdatedAt: string };
 
   // Workflow execution
   'workflow-execute':          (workflowId: string, triggerPayload: unknown) => { executionId: string };
@@ -339,34 +368,8 @@ export interface IpcMainInvokeEvents {
   'filesystem-upload':         (destDir: string, fileName: string, base64Data: string) => string;
   // #endregion
 
-  // #region Training
-  'training-install-status':           () => { installed: boolean; installing: boolean; error: string; modelKey: string; displayName: string; trainingRepo: string; requiredBytes: number; availableBytes: number };
-  'training-install':                  () => { logFilename: string };
-  'training-run':                      (modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => { logFilename: string; logPath: string };
-  'training-status':                   () => { running: boolean; logFilename: string };
-  'training-docs-config-exists':       () => boolean;
-  'training-history':                  () => { filename: string; size: number; createdAt: string; modifiedAt: string; model?: string; durationMs?: number; conversationsProcessed?: number; status: 'completed' | 'running' | 'failed' }[];
-  'training-log-read':                 (filename: string) => string;
-  'training-schedule-get':             () => { enabled: boolean; hour: number; minute: number };
-  'training-schedule-set':             (opts: { enabled: boolean; hour: number; minute: number }) => { ok: boolean };
-  'training-models-downloaded':        () => { key: string; displayName: string; trainingRepo: string }[];
-  'training-docs-config-load':         () => { folders: string[]; files: string[]; fileTypes: string[] };
-  'training-docs-list-dir':            (dirPath: string) => { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string }[];
-  'training-docs-config-save':         (folders: string[], files: string[], fileTypes: string[]) => { ok: boolean };
-  'training-content-tree':             (dirPath?: string) => { path: string; name: string; isDir: boolean; hasChildren: boolean; size: number; ext: string; category?: string }[];
-  'editor-footer-stats':               () => { availableBytes: number; unprocessedTrainingBytes: number };
-  'training-data-files':               () => { filename: string; path: string; size: number; modifiedAt: string; examples: number; source: 'sessions' | 'documents' | 'processed' }[];
-  'training-preprocess':               () => { conversations: number; filesProcessed: number; filesSkipped: number };
-  'training-prepare-docs':             (folders: string[], files: string[], options: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => { filesProcessed: number; pairsGenerated: number };
-  'training-queue-add':                (entries: { filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }[]) => { queued: number };
-  'training-queue-process-now':        () => { ok: boolean };
-  'training-queue-status':             () => { pending: number; processing: boolean };
-  'training-train-conversations-now':  () => { logFilename: string; logPath: string };
-  'training-scheduled-configs-list':   () => { id: string; name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; createdAt: string; files?: string[] }[];
-  'training-scheduled-configs-add':    (config: { name: string; source: 'conversations' | 'documents'; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => { id: string };
-  'training-scheduled-configs-remove': (id: string) => { ok: boolean };
-  'training-wizard-settings-save':     (wizard: 'create' | 'train', settings: Record<string, unknown>) => { ok: boolean };
-  'training-wizard-settings-load':     (wizard: 'create' | 'train') => Record<string, unknown>;
+  // #region Editor
+  'editor-footer-stats': () => { availableBytes: number; unprocessedTrainingBytes: number };
   // #endregion
 
   // #region QMD Search
@@ -381,13 +384,8 @@ export interface IpcMainInvokeEvents {
   }[];
   // #endregion
 
-  // #region Local Models
-  'system-resources':     () => { totalMemoryGB: number; availableMemoryGB: number; availableDiskGB: number };
-  'local-models-status':  () => Record<string, boolean>;
-  'local-model-download': (modelKey: string) => { ok: boolean };
-  'llama-server:status':  () => { running: boolean };
-  'llama-server:stop':    () => { running: boolean };
-  'llama-server:start':   () => { running: boolean; error?: string };
+  // #region System Resources
+  'system-resources': () => { totalMemoryGB: number; availableMemoryGB: number; availableDiskGB: number };
   // #endregion
 
   // #region main/imageEvents
@@ -427,16 +425,38 @@ export interface IpcMainInvokeEvents {
 
   // #region Conversation History
   'conversation-history:get-recent': (limit?: number, type?: 'chat' | 'browser' | 'workflow' | 'graph') => {
-    id: string; type: string; title?: string; url?: string; favicon?: string; status: string;
-    message_count: number; created_at: string; last_active_at: string; closed_at?: string;
+    id:             string;
+    type:           string;
+    title?:         string;
+    url?:           string;
+    favicon?:       string;
+    status:         string;
+    message_count:  number;
+    created_at:     string;
+    last_active_at: string;
+    closed_at?:     string;
   }[];
   'conversation-history:search': (query: string) => {
-    id: string; type: string; title?: string; url?: string; favicon?: string; status: string;
-    message_count: number; created_at: string; last_active_at: string;
+    id:             string;
+    type:           string;
+    title?:         string;
+    url?:           string;
+    favicon?:       string;
+    status:         string;
+    message_count:  number;
+    created_at:     string;
+    last_active_at: string;
   }[];
   'conversation-history:get-by-date-range': (from: string, to: string) => {
-    id: string; type: string; title?: string; url?: string; favicon?: string; status: string;
-    message_count: number; created_at: string; last_active_at: string;
+    id:             string;
+    type:           string;
+    title?:         string;
+    url?:           string;
+    favicon?:       string;
+    status:         string;
+    message_count:  number;
+    created_at:     string;
+    last_active_at: string;
   }[];
   'conversation-history:delete': (id: string, includeTrainingData?: boolean) => void;
   // #endregion
@@ -483,15 +503,18 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
-  'tab-context-menu:selected': (action: string, tabData: Record<string, unknown>) => void;
-  'more-menu:selected':        (action: string, extra: Record<string, unknown> | null) => void;
-  'more-menu:fetch-history':   () => void;
+  'claude-oauth:progress':          (text: string) => void;
+  'claude-oauth:url':               (url: string) => void;
+  'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
+  'tab-context-menu:selected':      (action: string, tabData: Record<string, unknown>) => void;
+  'more-menu:selected':             (action: string, extra: Record<string, unknown> | null) => void;
+  'more-menu:fetch-history':        () => void;
   'browser-context-menu:ai-action': (payload: {
-    tabId:   string;
-    action:  string;
-    text?:   string;
-    lang?:   string;
-    url?:    string;
+    tabId:  string;
+    action: string;
+    text?:  string;
+    lang?:  string;
+    url?:   string;
   }) => void;
   'browser-tab-view:state-update': (payload: {
     tabId:        string;
@@ -501,17 +524,16 @@ export interface IpcRendererEvents {
     canGoForward: boolean;
     isLoading:    boolean;
   }) => void;
-  'gateway-transcript': (event: { event_type: string; text?: string; speaker?: string; session_id?: string; is_final?: boolean }) => void;
+  'gateway-transcript':     (event: { event_type: string; text?: string; speaker?: string; session_id?: string; is_final?: boolean }) => void;
   'workflow-files-changed': () => void;
-  'ollama-model-status': (event: Electron.IpcRendererEvent, payload: { status: string; model?: string }) => void;
-  'backend-locked':      (action?: string) => void;
-  'backend-unlocked':    () => void;
+  'ollama-model-status':    (event: Electron.IpcRendererEvent, payload: { status: string; model?: string }) => void;
+  'backend-locked':         (action?: string) => void;
+  'backend-unlocked':       () => void;
   'settings-update': (
     settings: import('@pkg/config/settings').Settings
   ) => void;
   'settings-read':        (settings: import('@pkg/config/settings').Settings) => void;
   'settings-write-error': (error: any) => void;
-  'local-model-download-progress': (data: { modelKey: string; received: number; total: number; percent: number }) => void;
   'get-app-version':      (version: string) => void;
   'update-state':         (state: import('@pkg/main/update').UpdateState) => void;
   'always-debugging':     (status: boolean) => void;
@@ -625,9 +647,9 @@ export interface IpcRendererEvents {
   // #endregion
 
   // #region Conversation History
-  'conversation-history:navigate': (entry: { id: string; type: string; url?: string; title?: string; tab_id?: string }) => void;
-  'conversation-history:show-all': () => void;
+  'conversation-history:navigate':            (entry: { id: string; type: string; url?: string; title?: string; tab_id?: string }) => void;
+  'conversation-history:show-all':            () => void;
   'conversation-history:restore-last-closed': () => void;
-  'conversation-history:cleared': (olderThan?: string) => void;
+  'conversation-history:cleared':             (olderThan?: string) => void;
   // #endregion
 }

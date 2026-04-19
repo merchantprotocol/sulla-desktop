@@ -3,11 +3,12 @@
 
 import os from 'os';
 
+import { heartbeatPrompt } from '../agent/prompts/heartbeat';
+
 import { PathManagementStrategy } from '@pkg/integrations/pathManager';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 
 // Import heartbeat prompt from TypeScript file
-import { heartbeatPrompt } from '../agent/prompts/heartbeat';
 
 export const CURRENT_SETTINGS_VERSION = 17 as const;
 
@@ -142,8 +143,8 @@ export const defaultSettings = {
     botName:                   'Sulla',
     /** Human name (optional) */
     primaryUserName:           '',
-    /** Model mode: local (Ollama) or remote (API) */
-    modelMode:                 'local' as 'local' | 'remote',
+    /** Model mode: remote (API) */
+    modelMode:                 'remote' as 'local' | 'remote',
     /** Remote API provider (grok, openai, anthropic, google) */
     remoteProvider:            'grok',
     /** Remote model ID */
@@ -153,10 +154,6 @@ export const defaultSettings = {
     /** Number of retries before falling back to local LLM */
     remoteRetryCount:          3,
     remoteTimeoutSeconds:      60,
-    /** Local Ollama timeout in seconds */
-    localTimeoutSeconds:       600,
-    /** Local Ollama retry count */
-    localRetryCount:           2,
     /** Heartbeat settings */
     heartbeatEnabled:          false,
     heartbeatDelayMinutes:     15,

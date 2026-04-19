@@ -46,8 +46,9 @@
 </template>
 
 <script setup lang="ts">
-import type { WorkflowNodeCategory, WorkflowNodeSubtype } from './types';
 import { getNodesByCategory, CATEGORY_LABELS, CATEGORY_ORDER } from './nodeRegistry';
+
+import type { WorkflowNodeCategory, WorkflowNodeSubtype } from './types';
 
 defineProps<{
   isDark: boolean;

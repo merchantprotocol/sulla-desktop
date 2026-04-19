@@ -145,7 +145,7 @@
           class="node-field-input node-field-textarea"
           :class="{ dark: isDark }"
           :value="config.defaults[paramName] || ''"
-          :placeholder="spec.description || `JSON ${ spec.type }`"
+          :placeholder="spec.description || `JSON ${spec.type}`"
           rows="3"
           @input="onParamChange(paramName, ($event.target as HTMLTextAreaElement).value)"
         />
@@ -188,8 +188,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
 import { ipcRenderer } from 'electron';
+import { ref, computed, onMounted, watch } from 'vue';
+
 import type { ToolCallNodeConfig } from './types';
 
 export interface UpstreamNodeInfo {

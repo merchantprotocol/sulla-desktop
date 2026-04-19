@@ -290,8 +290,8 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, reactive, computed, onMounted, watch } from 'vue';
 import { ipcRenderer } from 'electron';
+import { defineComponent, ref, reactive, computed, onMounted, watch } from 'vue';
 
 interface IntegrationInfo {
   slug:      string;

@@ -5,8 +5,9 @@
  *
  * Migrated from prompts/voiceModes.ts. Gated on ctx.chatMode.
  */
-import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 import { VOICE_MODE_PROMPT, SECRETARY_MODE_PROMPT, INTAKE_MODE_PROMPT } from '../voiceModes';
+
+import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
 export function buildVoiceModeSection(ctx: PromptBuildContext): PromptSection | null {
   if (ctx.mode !== 'full') return null;

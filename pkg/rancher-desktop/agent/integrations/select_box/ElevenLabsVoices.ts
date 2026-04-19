@@ -37,14 +37,14 @@ export class ElevenLabsVoices extends SelectBoxProvider {
 
   private getStaticVoices(): SelectOption[] {
     return [
-      { value: 'Rachel',  label: 'Rachel',  description: 'premade' },
-      { value: 'Drew',    label: 'Drew',    description: 'premade' },
-      { value: 'Clyde',   label: 'Clyde',   description: 'premade' },
-      { value: 'Paul',    label: 'Paul',    description: 'premade' },
-      { value: 'Domi',    label: 'Domi',    description: 'premade' },
-      { value: 'Dave',    label: 'Dave',    description: 'premade' },
-      { value: 'Fin',     label: 'Fin',     description: 'premade' },
-      { value: 'Sarah',   label: 'Sarah',   description: 'premade' },
+      { value: 'Rachel', label: 'Rachel', description: 'premade' },
+      { value: 'Drew', label: 'Drew', description: 'premade' },
+      { value: 'Clyde', label: 'Clyde', description: 'premade' },
+      { value: 'Paul', label: 'Paul', description: 'premade' },
+      { value: 'Domi', label: 'Domi', description: 'premade' },
+      { value: 'Dave', label: 'Dave', description: 'premade' },
+      { value: 'Fin', label: 'Fin', description: 'premade' },
+      { value: 'Sarah', label: 'Sarah', description: 'premade' },
     ];
   }
 }

@@ -5,12 +5,17 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { initClaudeCodeTestEvents } from './claudeCodeTest';
+import { initClaudeOAuthEvents } from './claudeOAuth';
+import { initDesktopRelayEvents } from './desktopRelay';
+import { initSullaCloudAuthEvents } from './sullaCloudAuth';
+import { initConversationHistoryIpc } from './conversationHistoryIpc';
+import { initMessageBusIpc } from './messageBusIpc';
+import { initSullaDebugEvents } from './sullaDebugEvents';
+import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
+
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
-import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
-import { initSullaDebugEvents } from './sullaDebugEvents';
-import { initMessageBusIpc } from './messageBusIpc';
-import { initConversationHistoryIpc } from './conversationHistoryIpc';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -40,6 +45,10 @@ function assertInsideSullaHome(targetPath: string): string {
 export function initSullaEvents(): void {
   initMessageBusIpc();
   initConversationHistoryIpc();
+  initClaudeOAuthEvents();
+  initClaudeCodeTestEvents();
+  initDesktopRelayEvents();
+  initSullaCloudAuthEvents();
 
   // ─────────────────────────────────────────────────────────────
   // Settings handlers
@@ -529,44 +538,6 @@ export function initSullaEvents(): void {
     return target;
   });
 
-  ipcMainProxy.handle('training-run', async(_event: unknown, modelKey: string, sources: { documentProcessing: boolean; loraTraining: boolean; skills: boolean }) => {
-    const tc = await import('./trainingController');
-    return tc.runTraining(modelKey, sources);
-  });
-
-  ipcMainProxy.handle('training-status', async() => {
-    const tc = await import('./trainingController');
-    return tc.getTrainingStatus();
-  });
-
-  ipcMainProxy.handle('training-history', async() => {
-    const tc = await import('./trainingController');
-    return tc.getTrainingHistory();
-  });
-
-  ipcMainProxy.handle('training-log-read', async(_event: unknown, filename: string) => {
-    const tc = await import('./trainingController');
-    return tc.readTrainingLog(filename);
-  });
-
-  ipcMainProxy.handle('training-schedule-get', async() => {
-    const tc = await import('./trainingController');
-    return tc.getSchedule();
-  });
-
-  ipcMainProxy.handle('training-models-downloaded', async() => {
-    const tc = await import('./trainingController');
-    return tc.getDownloadedTrainingModels();
-  });
-
-  ipcMainProxy.handle('training-schedule-set', async(_event: unknown, opts: { enabled: boolean; hour: number; minute: number }) => {
-    const tc = await import('./trainingController');
-    return tc.setSchedule(opts);
-  });
-
-  // On startup, load the schedule and arm the timer + auto-preprocessing
-  import('./trainingController').then(tc => tc.initScheduleOnStartup()).catch(() => {});
-
   /**
    * Return system resource info for the renderer's fitness indicators.
    */
@@ -597,81 +568,6 @@ export function initSullaEvents(): void {
     }
 
     return { totalMemoryGB, availableMemoryGB: freeMemoryGB, availableDiskGB };
-  });
-
-  /**
-   * Check which LOCAL_MODELS keys have their GGUF file downloaded on disk.
-   * Returns a Record<modelKey, boolean>.
-   */
-  ipcMainProxy.handle('local-models-status', async() => {
-    const { GGUF_MODELS, getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
-    const svc = getLlamaCppService();
-    const { LOCAL_MODELS } = await import('@pkg/shared/localModels');
-    const status: Record<string, boolean> = {};
-
-    for (const model of LOCAL_MODELS) {
-      status[model.name] = svc.getModelPath(model.name) !== null;
-    }
-
-    return status;
-  });
-
-  /**
-   * Download a GGUF model by key. Returns { ok: true } on success.
-   * Sends 'local-model-download-progress' events to the renderer during download.
-   */
-  ipcMainProxy.handle('local-model-download', async(event: unknown, modelKey: string) => {
-    const { getLlamaCppService } = await import('@pkg/agent/services/LlamaCppService');
-    const svc = getLlamaCppService();
-
-    const sender = (event as { sender?: Electron.WebContents })?.sender;
-    let lastReportedPercent = -1;
-    const onProgress = (received: number, total: number) => {
-      const percent = Math.round((received / total) * 100);
-
-      if (percent !== lastReportedPercent && sender) {
-        lastReportedPercent = percent;
-        sender.send('local-model-download-progress', { modelKey, received, total, percent });
-      }
-    };
-
-    await svc.downloadModel(modelKey, onProgress);
-
-    return { ok: true };
-  });
-
-  // ── Document Processing Config ──────────────────────────────────────
-
-  ipcMainProxy.handle('training-docs-config-exists', async() => {
-    const tc = await import('./trainingController');
-    return tc.docsConfigExists();
-  });
-
-  ipcMainProxy.handle('training-docs-config-load', async() => {
-    const tc = await import('./trainingController');
-    return tc.docsConfigLoad();
-  });
-
-  ipcMainProxy.handle('training-docs-list-dir', async(_event: unknown, dirPath: string) => {
-    const tc = await import('./trainingController');
-    return tc.docsListDir(dirPath);
-  });
-
-  ipcMainProxy.handle('training-content-tree', async(_event: unknown, dirPath?: string) => {
-    const tc = await import('./trainingController');
-    return tc.contentTree(dirPath);
-  });
-
-  ipcMainProxy.handle('training-docs-config-save', async(_event: unknown, folders: string[], files: string[], fileTypes: string[]) => {
-    const tc = await import('./trainingController');
-    return tc.docsConfigSave(folders, files, fileTypes);
-  });
-
-  // ── Training Environment Installation ────────────────────────────
-
-  ipcMainProxy.handle('training-install-status', async() => {
-    const tc = await import('./trainingController');
-    return tc.getFullInstallStatus();
   });
 
   /**
@@ -716,79 +612,6 @@ export function initSullaEvents(): void {
     } catch { /* skip */ }
 
     return { availableBytes, unprocessedTrainingBytes };
-  });
-
-  ipcMainProxy.handle('training-data-files', async() => {
-    const tc = await import('./trainingController');
-    return tc.listTrainingDataFiles();
-  });
-
-  ipcMainProxy.handle('training-preprocess', async() => {
-    const tc = await import('./trainingController');
-    return tc.preprocessNow();
-  });
-
-  ipcMainProxy.handle('training-prepare-docs', async(_event: unknown, folders: string[], files: string[], options?: { prompt: string; modelId: string; modelProvider: string; outputFilename: string }) => {
-    const tc = await import('./trainingController');
-    return tc.prepareDocs(folders, files, options);
-  });
-
-  // ─── Training Queue IPC ───
-
-  ipcMainProxy.handle('training-queue-add', async(_event: unknown, entries: { filePath: string; prompt: string; modelId: string; modelProvider: string; outputFilename: string }[]) => {
-    const tc = await import('./trainingController');
-    return tc.addToQueue(entries);
-  });
-
-  ipcMainProxy.handle('training-queue-process-now', async() => {
-    const tc = await import('./trainingController');
-    return tc.processQueueNow();
-  });
-
-  ipcMainProxy.handle('training-queue-status', async() => {
-    const tc = await import('./trainingController');
-    return tc.getQueueStatus();
-  });
-
-  // ─── Train on Conversations Now ───
-
-  ipcMainProxy.handle('training-train-conversations-now', async() => {
-    const tc = await import('./trainingController');
-    return tc.trainConversationsNow();
-  });
-
-  // ─── Scheduled Training Configs ───
-
-  ipcMainProxy.handle('training-scheduled-configs-list', async() => {
-    const tc = await import('./trainingController');
-    return tc.listScheduledConfigs();
-  });
-
-  ipcMainProxy.handle('training-scheduled-configs-add', async(_event: unknown, config: { name: string; source: string; modelKey: string; prompt?: string; outputFilename?: string; files?: string[] }) => {
-    const tc = await import('./trainingController');
-    return tc.addScheduledConfig(config);
-  });
-
-  ipcMainProxy.handle('training-scheduled-configs-remove', async(_event: unknown, id: string) => {
-    const tc = await import('./trainingController');
-    return tc.removeScheduledConfig(id);
-  });
-
-  // ─── Wizard Settings Persistence ───
-
-  ipcMainProxy.handle('training-wizard-settings-save', async(_event: unknown, wizard: 'create' | 'train', settings: Record<string, unknown>) => {
-    const tc = await import('./trainingController');
-    return tc.saveWizardSettings(wizard, settings);
-  });
-
-  ipcMainProxy.handle('training-wizard-settings-load', async(_event: unknown, wizard: 'create' | 'train') => {
-    const tc = await import('./trainingController');
-    return tc.loadWizardSettings(wizard);
-  });
-
-  ipcMainProxy.handle('training-install', async() => {
-    const tc = await import('./trainingController');
-    return tc.installTrainingEnv();
   });
 
   // ─────────────────────────────────────────────────────────────
@@ -1094,14 +917,14 @@ export function initSullaEvents(): void {
         method:  'POST',
         headers: {
           'Content-Type':  'application/json',
-          'Authorization': `Bearer ${ apiKey }`,
+          Authorization:  `Bearer ${ apiKey }`,
         },
         body: JSON.stringify({ callerName: payload?.callerName || 'Sulla Secretary' }),
       });
 
       if (!response.ok) {
         const body = await response.text().catch(() => '');
-        console.error(`[Desktop] Gateway session start failed (${response.status}): ${body}`);
+        console.error(`[Desktop] Gateway session start failed (${ response.status }): ${ body }`);
 
         return { sessionId: null, error: `Gateway returned ${ response.status }: ${ body }` };
       }
@@ -1132,25 +955,25 @@ export function initSullaEvents(): void {
       const gatewayUrl = urlValue?.value?.trim();
       const apiKey = keyValue?.value?.trim();
       if (!gatewayUrl || !apiKey) {
-        console.warn(`[Desktop] Cannot end session ${sessionId} — gateway not configured`);
+        console.warn(`[Desktop] Cannot end session ${ sessionId } — gateway not configured`);
 
         return { ok: false, error: 'Gateway not configured' };
       }
 
       const resp = await fetch(`${ gatewayUrl.replace(/\/+$/, '') }/api/desktop/sessions/${ sessionId }`, {
         method:  'DELETE',
-        headers: { 'Authorization': `Bearer ${ apiKey }` },
+        headers: { Authorization: `Bearer ${ apiKey }` },
       });
 
       if (!resp.ok) {
-        console.warn(`[Desktop] Session DELETE returned ${resp.status} for ${sessionId}`);
+        console.warn(`[Desktop] Session DELETE returned ${ resp.status } for ${ sessionId }`);
       }
 
       console.log(`[Desktop] Gateway session ended: ${ sessionId }`);
 
       return { ok: true };
     } catch (err: any) {
-      console.error(`[Desktop] desktop-session-end failed for ${sessionId}:`, err.message);
+      console.error(`[Desktop] desktop-session-end failed for ${ sessionId }:`, err.message);
 
       return { ok: false, error: err.message };
     }
@@ -1244,7 +1067,7 @@ export function initSullaEvents(): void {
       // Rate-limit audio send error logging — don't spam on every chunk
       audioSendErrCount++;
       if (audioSendErrCount <= 3 || audioSendErrCount % 100 === 0) {
-        console.error(`[Sulla] gateway-audio-send failed (#${audioSendErrCount}): ${err.message}`);
+        console.error(`[Sulla] gateway-audio-send failed (#${ audioSendErrCount }): ${ err.message }`);
       }
 
       return { ok: false, error: err.message };
@@ -1341,10 +1164,10 @@ export function initSullaEvents(): void {
 
       await controller.subscribeTranscripts((event) => {
         try {
-          console.log(`[Sulla] Sending gateway-transcript IPC: ${(event as any).event_type}`);
+          console.log(`[Sulla] Sending gateway-transcript IPC: ${ (event as any).event_type }`);
           windowModule.send('gateway-transcript' as any, event);
         } catch (err: any) {
-          console.error(`[Sulla] gateway-transcript IPC send failed: ${err.message}`);
+          console.error(`[Sulla] gateway-transcript IPC send failed: ${ err.message }`);
         }
       });
 
@@ -1394,7 +1217,7 @@ export function initSullaEvents(): void {
       // Ensure the log file path is resolved with the correct channel prefix
       // so voice logs land in the same file as the graph conversation
       // (e.g., sulla-desktop_thread_123.log)
-      (logger as any).resolveFilePath(threadId, channel);
+      (logger).resolveFilePath(threadId, channel);
 
       logger.log(threadId, {
         ...eventData,
@@ -1548,6 +1371,3 @@ export function initSullaEvents(): void {
     }
   })();
 }
-
-// Nightly training schedule, auto-preprocessing, and related timers
-// have been moved to trainingController.ts

@@ -13,16 +13,16 @@ import type { ToolManifest } from '../registry';
  */
 export const computerUseToolManifests: ToolManifest[] = [
   {
-    name:        'computer',
-    description: 'Anthropic native computer use tool — visual screenshot-based interaction with coordinate clicking, typing, scrolling, and dragging. The model sees the page as a screenshot and interacts with pixel coordinates.',
-    category:    'computer-use',
-    schemaDef:   {},
-    operationTypes: ['execute'],
-    loader:         () => import('./computer_tool'),
-    isAnthropicNative: true,
+    name:                    'computer',
+    description:             'Anthropic native computer use tool — visual screenshot-based interaction with coordinate clicking, typing, scrolling, and dragging. The model sees the page as a screenshot and interacts with pixel coordinates.',
+    category:                'computer-use',
+    schemaDef:               {},
+    operationTypes:          ['execute'],
+    loader:                  () => import('./computer_tool'),
+    isAnthropicNative:       true,
     anthropicToolDefinition: {
-      type:             'computer_20250124',
-      name:             'computer',
+      type:              'computer_20250124',
+      name:              'computer',
       display_width_px:  1280,
       display_height_px: 800,
     },

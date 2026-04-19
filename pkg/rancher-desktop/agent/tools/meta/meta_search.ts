@@ -1,6 +1,7 @@
 import * as os from 'os';
 
 import { BaseTool, ToolResponse } from '../base';
+
 import { indexDirectory, search, type QmdSearchResult } from '@pkg/main/qmdService';
 
 /**

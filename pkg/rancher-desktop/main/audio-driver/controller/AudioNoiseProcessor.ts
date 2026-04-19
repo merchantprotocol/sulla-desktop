@@ -61,8 +61,11 @@ function computeHighPassCoeffs(fc: number, fs: number, Q: number) {
   const a2 = 1 - alpha;
 
   return {
-    b0: b0 / a0, b1: b1 / a0, b2: b2 / a0,
-    a1: a1 / a0, a2: a2 / a0,
+    b0: b0 / a0,
+    b1: b1 / a0,
+    b2: b2 / a0,
+    a1: a1 / a0,
+    a2: a2 / a0,
   };
 }
 
@@ -81,10 +84,10 @@ const RNNOISE_FRAME_SIZE = 480; // 10ms at 48kHz
 export class AudioNoiseProcessor {
   private static readonly TAG = 'AudioNoiseProcessor';
 
-  private _sampleRate: number;
-  private _fadeInSamples: number;
+  private _sampleRate:     number;
+  private _fadeInSamples:  number;
   private _fadeOutSamples: number;
-  private _holdDuration: number;
+  private _holdDuration:   number;
 
   // ── Layer 1: High-pass state ──────────────────────────────────
   private _hp: ReturnType<typeof computeHighPassCoeffs>;
@@ -92,13 +95,13 @@ export class AudioNoiseProcessor {
   private _hpY1 = 0; private _hpY2 = 0;
 
   // ── Layer 2: RNNoise state ────────────────────────────────────
-  private _rnnoiseModule: any = null;
-  private _rnnoiseState: number = 0; // pointer
-  private _rnnoiseFramePtr: number = 0; // WASM heap pointer for frame data
+  private _rnnoiseModule:     any = null;
+  private _rnnoiseState = 0; // pointer
+  private _rnnoiseFramePtr = 0; // WASM heap pointer for frame data
   private _rnnoiseReady = false;
   // FIFO buffers: input accumulates raw samples, output stores processed samples.
   // Output runs one frame behind input to ensure continuous processed audio.
-  private _rnnoiseInputFifo: number[] = [];
+  private _rnnoiseInputFifo:  number[] = [];
   private _rnnoiseOutputFifo: number[] = [];
 
   // ── Layer 3: Noise profile state ──────────────────────────────
@@ -213,8 +216,8 @@ export class AudioNoiseProcessor {
     const { b0, b1, b2, a1, a2 } = this._hp;
     for (let i = 0; i < samples.length; i++) {
       const x = samples[i];
-      const y = b0 * x + b1 * this._hpX1 + b2 * this._hpX2
-                - a1 * this._hpY1 - a2 * this._hpY2;
+      const y = b0 * x + b1 * this._hpX1 + b2 * this._hpX2 -
+                a1 * this._hpY1 - a2 * this._hpY2;
       this._hpX2 = this._hpX1; this._hpX1 = x;
       this._hpY2 = this._hpY1; this._hpY1 = y;
       samples[i] = y;
@@ -277,7 +280,7 @@ export class AudioNoiseProcessor {
     // Compute magnitude spectrum approximation
     const spectrum = new Float64Array(binCount);
     for (let k = 0; k < binCount; k++) {
-      let re = 0, im = 0;
+      let re = 0; let im = 0;
       const freq = k / FFT_SIZE;
       for (let n = 0; n < frameLen; n++) {
         const angle = 2 * Math.PI * freq * n;

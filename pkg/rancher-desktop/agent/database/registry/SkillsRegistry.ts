@@ -1,14 +1,15 @@
-import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import fs from 'node:fs';
+import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { redisClient } from '../RedisClient';
+
+import { grepSearchFilesDetailed } from '../../../utils/grepSearch';
 import {
   SkillService,
   type SkillSchema,
   type SkillSummarySchema,
 } from '../../services/SkillService';
-import { grepSearchFilesDetailed } from '../../../utils/grepSearch';
 import { resolveSullaSkillsDir, resolveSullaUserSkillsDir } from '../../utils/sullaPaths';
+import { redisClient } from '../RedisClient';
 
 export interface SkillRegistryInitOptions {
   filesystemSkillDirs?: string[];

@@ -306,7 +306,7 @@ export const nativeCrmSalesIntegrations: Record<string, Integration> = {
     installationGuide: {
       title:       'Connect Twenty CRM',
       description: 'Connect your self-hosted or cloud Twenty CRM instance to Sulla.',
-      steps: [
+      steps:       [
         {
           title:   'Get your API key',
           content: 'In Twenty, go to Settings → API & Webhooks and generate a new API key.',

@@ -57,68 +57,67 @@
  * | log.*                     | audio-driver:log                       | send            |
  */
 
-const { ipcRenderer } = require("electron");
+const { ipcRenderer } = require('electron');
 
-window.__GHOST_AGENT_URL__ = "https://app.dataripple.com";
+window.__GHOST_AGENT_URL__ = 'https://app.dataripple.com';
 
 window.audioDriver = {
-  getState: () => ipcRenderer.invoke("audio-driver:get-state"),
-  setDeviceNames: (mic, speaker) => ipcRenderer.invoke("audio-driver:set-device-names", mic, speaker),
-  setSystemOutput: (deviceName) => ipcRenderer.invoke("audio-driver:set-system-output", deviceName),
-  setSystemInput: (deviceName) => ipcRenderer.invoke("audio-driver:set-system-input", deviceName),
+  getState:        () => ipcRenderer.invoke('audio-driver:get-state'),
+  setDeviceNames:  (mic, speaker) => ipcRenderer.invoke('audio-driver:set-device-names', mic, speaker),
+  setSystemOutput: (deviceName) => ipcRenderer.invoke('audio-driver:set-system-output', deviceName),
+  setSystemInput:  (deviceName) => ipcRenderer.invoke('audio-driver:set-system-input', deviceName),
 
-  getAutoLaunch: () => ipcRenderer.invoke("audio-driver:get-auto-launch"),
-  setAutoLaunch: (enabled) => ipcRenderer.invoke("audio-driver:set-auto-launch", enabled),
+  getAutoLaunch: () => ipcRenderer.invoke('audio-driver:get-auto-launch'),
+  setAutoLaunch: (enabled) => ipcRenderer.invoke('audio-driver:set-auto-launch', enabled),
 
-  openTranscription: (callId) => ipcRenderer.invoke("audio-driver:open-transcription", callId),
-  minimizeTranscription: () => ipcRenderer.invoke("audio-driver:minimize-transcription"),
-  restoreTranscription: () => ipcRenderer.invoke("audio-driver:restore-transcription"),
-  endCallFromTranscription: () => ipcRenderer.send("audio-driver:end-call-from-transcription"),
-  showCallNotification: () => ipcRenderer.invoke("audio-driver:show-call-notification"),
-  updateCallState: (state) => ipcRenderer.send("audio-driver:update-call-state", state),
+  openTranscription:        (callId) => ipcRenderer.invoke('audio-driver:open-transcription', callId),
+  minimizeTranscription:    () => ipcRenderer.invoke('audio-driver:minimize-transcription'),
+  restoreTranscription:     () => ipcRenderer.invoke('audio-driver:restore-transcription'),
+  endCallFromTranscription: () => ipcRenderer.send('audio-driver:end-call-from-transcription'),
+  showCallNotification:     () => ipcRenderer.invoke('audio-driver:show-call-notification'),
+  updateCallState:          (state) => ipcRenderer.send('audio-driver:update-call-state', state),
 
   // Gateway streaming
-  gatewayStartSession: (callData) => ipcRenderer.invoke("audio-driver:gateway-start", callData),
-  gatewayStopSession: () => ipcRenderer.invoke("audio-driver:gateway-stop"),
-  getMicSocketPath: () => ipcRenderer.invoke("audio-driver:get-mic-socket-path"),
-  onGatewayTranscript: (callback) => ipcRenderer.on("gateway-transcript", (_e, data) => callback(data)),
-  onGatewayStatus: (callback) => ipcRenderer.on("gateway-status", (_e, status) => callback(status)),
+  gatewayStartSession: (callData) => ipcRenderer.invoke('audio-driver:gateway-start', callData),
+  gatewayStopSession:  () => ipcRenderer.invoke('audio-driver:gateway-stop'),
+  getMicSocketPath:    () => ipcRenderer.invoke('audio-driver:get-mic-socket-path'),
+  onGatewayTranscript: (callback) => ipcRenderer.on('gateway-transcript', (_e, data) => callback(data)),
+  onGatewayStatus:     (callback) => ipcRenderer.on('gateway-status', (_e, status) => callback(status)),
 
-  onCallAccepted: (callback) => ipcRenderer.on("audio-driver:call-accepted", () => callback()),
-  onCallDismissed: (callback) => ipcRenderer.on("audio-driver:call-dismissed", () => callback()),
-  onEndCall: (callback) => ipcRenderer.on("audio-driver:end-call", () => callback()),
+  onCallAccepted:  (callback) => ipcRenderer.on('audio-driver:call-accepted', () => callback()),
+  onCallDismissed: (callback) => ipcRenderer.on('audio-driver:call-dismissed', () => callback()),
+  onEndCall:       (callback) => ipcRenderer.on('audio-driver:end-call', () => callback()),
 
   // Auth — sulla-desktop handles this separately, but stub for compatibility
-  login: () => Promise.resolve({ ok: true, loggedIn: true }),
-  logout: () => Promise.resolve({ ok: true }),
-  getSession: () => ipcRenderer.invoke("audio-driver:get-session"),
+  login:         () => Promise.resolve({ ok: true, loggedIn: true }),
+  logout:        () => Promise.resolve({ ok: true }),
+  getSession:    () => ipcRenderer.invoke('audio-driver:get-session'),
   setActiveTeam: () => Promise.resolve({}),
 
-  speakerVolumeUp: () => ipcRenderer.invoke("audio-driver:speaker-volume-up"),
-  speakerVolumeDown: () => ipcRenderer.invoke("audio-driver:speaker-volume-down"),
-  speakerMuteToggle: () => ipcRenderer.invoke("audio-driver:speaker-mute-toggle"),
-  speakerVolumeGet: () => ipcRenderer.invoke("audio-driver:speaker-volume-get"),
+  speakerVolumeUp:   () => ipcRenderer.invoke('audio-driver:speaker-volume-up'),
+  speakerVolumeDown: () => ipcRenderer.invoke('audio-driver:speaker-volume-down'),
+  speakerMuteToggle: () => ipcRenderer.invoke('audio-driver:speaker-mute-toggle'),
+  speakerVolumeGet:  () => ipcRenderer.invoke('audio-driver:speaker-volume-get'),
 
   // Worker commands from MicrophoneDriverController / SpeakerDriverController (main process)
-  onStartMic: (callback) => ipcRenderer.on("audio-driver:renderer-start-mic", (_e, opts) => callback(opts)),
-  onStopMic: (callback) => ipcRenderer.on("audio-driver:renderer-stop-mic", () => callback()),
-  ackMicStarted: (deviceInfo) => ipcRenderer.send("audio-driver:mic-started", deviceInfo),
-  ackMicStopped: () => ipcRenderer.send("audio-driver:mic-stopped"),
-
+  onStartMic:    (callback) => ipcRenderer.on('audio-driver:renderer-start-mic', (_e, opts) => callback(opts)),
+  onStopMic:     (callback) => ipcRenderer.on('audio-driver:renderer-stop-mic', () => callback()),
+  ackMicStarted: (deviceInfo) => ipcRenderer.send('audio-driver:mic-started', deviceInfo),
+  ackMicStopped: () => ipcRenderer.send('audio-driver:mic-stopped'),
 
   // Broadcast mic VAD state to main process for relay to holder windows
-  broadcastMicVad: (data) => ipcRenderer.send("audio-driver:mic-vad-update", data),
+  broadcastMicVad: (data) => ipcRenderer.send('audio-driver:mic-vad-update', data),
 
   // Send raw PCM chunk (s16le, 16kHz, mono) to main process
-  sendMicPcm: (buffer) => ipcRenderer.send("audio-driver:mic-pcm", buffer),
+  sendMicPcm: (buffer) => ipcRenderer.send('audio-driver:mic-pcm', buffer),
 
   // Report mic errors (e.g. getUserMedia permission denied) to main process
-  reportMicError: (data) => ipcRenderer.send("audio-driver:mic-error", data),
+  reportMicError: (data) => ipcRenderer.send('audio-driver:mic-error', data),
 
   log: {
-    error: (tag, msg, data) => ipcRenderer.send("audio-driver:log", "error", tag, msg, data),
-    warn: (tag, msg, data) => ipcRenderer.send("audio-driver:log", "warn", tag, msg, data),
-    info: (tag, msg, data) => ipcRenderer.send("audio-driver:log", "info", tag, msg, data),
-    debug: (tag, msg, data) => ipcRenderer.send("audio-driver:log", "debug", tag, msg, data),
+    error: (tag, msg, data) => ipcRenderer.send('audio-driver:log', 'error', tag, msg, data),
+    warn:  (tag, msg, data) => ipcRenderer.send('audio-driver:log', 'warn', tag, msg, data),
+    info:  (tag, msg, data) => ipcRenderer.send('audio-driver:log', 'info', tag, msg, data),
+    debug: (tag, msg, data) => ipcRenderer.send('audio-driver:log', 'debug', tag, msg, data),
   },
 };

@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { createJob, completeJob, failJob } from './jobRegistry';
+
 import type { AgentJobResult } from './jobRegistry';
 
 const MAX_DEPTH = 3;
@@ -47,7 +48,7 @@ export class SpawnAgentWorker extends BaseTool {
     const async_: boolean = input.async !== false;       // default true
 
     // ── Depth guard ─────────────────────────────────────────────
-    const parentDepth: number = (this.state as any)?.metadata?.subAgentDepth ?? 0;
+    const parentDepth: number = (this.state)?.metadata?.subAgentDepth ?? 0;
 
     if (parentDepth >= MAX_DEPTH) {
       return {
@@ -58,11 +59,8 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Lazy imports (keep out of renderer bundle) ──────────────
     const { GraphRegistry } = await import('../../services/GraphRegistry');
-    const { getTrainingDataLogger } = await import('../../services/TrainingDataLogger');
 
-    const parentChannel = (this.state as any)?.metadata?.wsChannel || 'sulla-desktop';
-    const parentConvId = (this.state as any)?.metadata?.conversationId;
-    const trainingLogger = getTrainingDataLogger();
+    const parentChannel = (this.state)?.metadata?.wsChannel || 'sulla-desktop';
 
     // ── Single task executor ────────────────────────────────────
     const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
@@ -84,16 +82,8 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
 
-        // Training data: start session
-        trainingLogger.startSession(threadId, { agentId: agentConfigChannel });
-
         // Execute the sub-agent graph
         const finalState = await graph.execute(subState);
-
-        // Training data: embed into parent conversation
-        if (parentConvId && trainingLogger.hasSession(parentConvId)) {
-          trainingLogger.embedSubAgentConversation(parentConvId, threadId, label);
-        }
 
         // Check if blocked
         const agentMeta = finalState.metadata?.agent || {};

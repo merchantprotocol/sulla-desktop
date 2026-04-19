@@ -65,7 +65,7 @@ export class TextToSpeechService {
           headers: {
             'xi-api-key':   apiKey,
             'Content-Type': 'application/json',
-            'Accept':       'audio/mpeg',
+            Accept:         'audio/mpeg',
           },
           body: JSON.stringify({
             text,

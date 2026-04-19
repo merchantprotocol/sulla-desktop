@@ -7,7 +7,14 @@
         class="editor-back-btn"
         @click="$emit('back')"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-4 w-4">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          class="h-4 w-4"
+        >
           <path d="M15 18l-6-6 6-6" />
         </svg>
         Back to Vault
@@ -68,10 +75,21 @@
             :disabled="saving"
             @click="handleOAuthConnect"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              class="h-4 w-4"
+            >
               <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
               <polyline points="10 17 15 12 10 7" />
-              <line x1="15" y1="12" x2="3" y2="12" />
+              <line
+                x1="15"
+                y1="12"
+                x2="3"
+                y2="12"
+              />
             </svg>
             Sign in with {{ integration.name }}
           </button>
@@ -92,8 +110,21 @@
         <!-- Credentials card -->
         <div class="editor-card">
           <div class="editor-card-header">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="editor-card-header-icon">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="editor-card-header-icon"
+            >
+              <rect
+                x="3"
+                y="11"
+                width="18"
+                height="11"
+                rx="2"
+                ry="2"
+              />
               <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
             <h2 class="editor-card-title">
@@ -176,7 +207,13 @@
                 title="Refresh options"
                 @click="fetchSelectOptions(property)"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3.5 w-3.5">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  class="h-3.5 w-3.5"
+                >
                   <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                   <path d="M3 3v5h5" />
                 </svg>
@@ -203,8 +240,20 @@
                 title="Generate password"
                 @click="$emit('open-generator', property.key)"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-3.5 w-3.5">
-                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  class="h-3.5 w-3.5"
+                >
+                  <rect
+                    x="2"
+                    y="4"
+                    width="20"
+                    height="16"
+                    rx="2"
+                  />
                   <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M6 16h8" />
                 </svg>
               </button>
@@ -216,14 +265,24 @@
               >
                 <svg
                   v-if="!passwordVisible[property.key]"
-                  xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
                 >
                   <path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   <path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                 </svg>
                 <svg
                   v-else
-                  xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2"
                 >
                   <path d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
                 </svg>
@@ -271,7 +330,13 @@
         <!-- Extra URLs card -->
         <div class="editor-card">
           <div class="editor-card-header">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="editor-card-header-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="editor-card-header-icon"
+            >
               <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
               <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
             </svg>
@@ -300,7 +365,13 @@
                 title="Remove"
                 @click="extraUrls.splice(idx, 1)"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  class="h-4 w-4"
+                >
                   <path d="M18 6L6 18M6 6l12 12" />
                 </svg>
               </button>
@@ -318,7 +389,13 @@
         <!-- Custom Properties card -->
         <div class="editor-card">
           <div class="editor-card-header">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="editor-card-header-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="editor-card-header-icon"
+            >
               <path d="M12 3v18M3 12h18" />
             </svg>
             <h2 class="editor-card-title">
@@ -352,7 +429,13 @@
                 title="Remove"
                 @click="customProperties.splice(idx, 1)"
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  class="h-4 w-4"
+                >
                   <path d="M18 6L6 18M6 6l12 12" />
                 </svg>
               </button>
@@ -381,8 +464,19 @@
               fill="none"
               viewBox="0 0 24 24"
             >
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              />
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
             </svg>
             {{ saving ? 'Saving...' : (isEditing ? 'Save Changes' : 'Connect Account') }}
           </button>
@@ -426,8 +520,18 @@
           class="editor-guide"
         >
           <summary class="editor-guide-summary">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="h-4 w-4">
-              <circle cx="12" cy="12" r="10" />
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              class="h-4 w-4"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+              />
               <path d="M12 16v-4" />
               <path d="M12 8h.01" />
             </svg>
@@ -464,22 +568,23 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { getExtensionService } from '@pkg/agent/services/ExtensionService';
+
 import { integrations as baseCatalog } from '@pkg/agent/integrations/catalog';
 import type { Integration } from '@pkg/agent/integrations/types';
+import { getExtensionService } from '@pkg/agent/services/ExtensionService';
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 
 const props = defineProps<{
-  integrationId: string;
-  accountId?: string;
-  embedded?: boolean;
+  integrationId:    string;
+  accountId?:       string;
+  embedded?:        boolean;
   prefillPassword?: string;
 }>();
 
 const emit = defineEmits<{
-  back: [];
-  saved: [accountId: string];
-  deleted: [];
+  back:             [];
+  saved:            [accountId: string];
+  deleted:          [];
   'open-generator': [fieldKey: string];
 }>();
 
@@ -542,9 +647,12 @@ async function loadIntegration() {
           properties: [
             ...integration.value.properties,
             {
-              key: 'llm_access', title: 'AI Access Level',
-              hint: 'Controls what the AI agent can see and do with this credential',
-              type: 'select' as const, required: false, placeholder: 'autofill',
+              key:         'llm_access',
+              title:       'AI Access Level',
+              hint:        'Controls what the AI agent can see and do with this credential',
+              type:        'select' as const,
+              required:    false,
+              placeholder: 'autofill',
               selectBoxId: 'vault_llm_access',
             },
           ],
@@ -751,7 +859,7 @@ async function handleDelete() {
   saving.value = true;
   try {
     if (integration.value.authType === 'oauth' || integration.value.oauth) {
-      try { await integrationService.revokeOAuthTokens(props.integrationId, props.accountId); } catch { /* ok */ }
+      try { await integrationService.revokeOAuthTokens(props.integrationId, props.accountId) } catch { /* ok */ }
     }
     await integrationService.deleteAccount(props.integrationId, props.accountId);
     emit('deleted');

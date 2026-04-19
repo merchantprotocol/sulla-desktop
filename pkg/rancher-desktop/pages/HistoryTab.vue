@@ -121,8 +121,9 @@
                 @click="openEntry(entry)"
               >
                 <!-- Type icon -->
-                <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
-                     :class="entry.type === 'chat' ? 'bg-sky-500/10 text-sky-400' : entry.type === 'workflow' ? 'bg-purple-500/10 text-purple-400' : 'bg-emerald-500/10 text-emerald-400'"
+                <div
+                  class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
+                  :class="entry.type === 'chat' ? 'bg-sky-500/10 text-sky-400' : entry.type === 'workflow' ? 'bg-purple-500/10 text-purple-400' : 'bg-emerald-500/10 text-emerald-400'"
                 >
                   <!-- Chat icon -->
                   <svg
@@ -289,7 +290,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-
 import { useRouter } from 'vue-router';
 
 import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
@@ -326,9 +326,7 @@ const includeTrainingData = ref(false);
 
 let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
-const emit = defineEmits<{
-  (e: 'navigate-entry', entry: HistoryEntry): void;
-}>();
+const emit = defineEmits<(e: 'navigate-entry', entry: HistoryEntry) => void>();
 
 // ── Group entries by date ──
 

@@ -17,7 +17,7 @@ export interface SSEEvent {
  * @param body   The response body stream from a streaming fetch call
  * @param signal Optional AbortSignal to cancel reading mid-stream
  */
-export async function* readSSEEvents(
+export async function * readSSEEvents(
   body: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {

@@ -1,6 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
-import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 import { wrapWithBlockingWarning } from './detect_blocking';
+import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
  * Get Page Snapshot Tool - Returns the full page state: title, URL,

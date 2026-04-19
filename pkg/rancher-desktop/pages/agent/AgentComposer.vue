@@ -32,8 +32,19 @@
             aria-label="Remove attachment"
             @click="removeAttachment(idx)"
           >
-            <svg width="10" height="10" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M11.7816 4.03157C12.0724 3.74081 12.0724 3.25991 11.7816 2.96915C11.4909 2.67839 11.0099 2.67839 10.7192 2.96915L7.50005 6.18827L4.28091 2.96915C3.99015 2.67839 3.50925 2.67839 3.21849 2.96915C2.92773 3.25991 2.92773 3.74081 3.21849 4.03157L6.43761 7.25071L3.21849 10.4698C2.92773 10.7606 2.92773 11.2415 3.21849 11.5323C3.50925 11.823 3.99015 11.823 4.28091 11.5323L7.50005 8.31315L10.7192 11.5323C11.0099 11.823 11.4909 11.823 11.7816 11.5323C12.0724 11.2415 12.0724 10.7606 11.7816 10.4698L8.56248 7.25071L11.7816 4.03157Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" />
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 15 15"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M11.7816 4.03157C12.0724 3.74081 12.0724 3.25991 11.7816 2.96915C11.4909 2.67839 11.0099 2.67839 10.7192 2.96915L7.50005 6.18827L4.28091 2.96915C3.99015 2.67839 3.50925 2.67839 3.21849 2.96915C2.92773 3.25991 2.92773 3.74081 3.21849 4.03157L6.43761 7.25071L3.21849 10.4698C2.92773 10.7606 2.92773 11.2415 3.21849 11.5323C3.50925 11.823 3.99015 11.823 4.28091 11.5323L7.50005 8.31315L10.7192 11.5323C11.0099 11.823 11.4909 11.823 11.7816 11.5323C12.0724 11.2415 12.0724 10.7606 11.7816 10.4698L8.56248 7.25071L11.7816 4.03157Z"
+                fill="currentColor"
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+              />
             </svg>
           </button>
         </div>
@@ -49,7 +60,18 @@
           :disabled="showOverlay"
           @click="triggerFileInput"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
             <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
           </svg>
         </button>
@@ -101,7 +123,7 @@
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 class="shrink-0"
-aria-hidden="true"
+                aria-hidden="true"
               >
                 <path d="M12 8V4" />
                 <path d="M8 4h8" />
@@ -268,7 +290,7 @@ aria-hidden="true"
                     :key="i"
                     class="w-0.5 rounded-full transition-all duration-75"
                     :class="audioLevel >= i * 20 ? 'bg-red-500' : 'bg-red-500/20'"
-                    :style="{ height: `${ 4 + i * 2 }px` }"
+                    :style="{ height: `${4 + i * 2}px` }"
                   />
                 </div>
                 <span>{{ recordingDuration }}</span>
@@ -280,8 +302,22 @@ aria-hidden="true"
                 title="Stop recording (Ctrl+Shift+V)"
                 @click="emit('toggle-recording')"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <rect
+                    x="7"
+                    y="7"
+                    width="10"
+                    height="10"
+                    rx="2"
+                    fill="currentColor"
+                  />
                 </svg>
               </button>
             </div>
@@ -296,10 +332,34 @@ aria-hidden="true"
               :disabled="showOverlay"
               @click="emit('stop-tts')"
             >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <path d="M11 5L6 9H2v6h4l5 4V5z" fill="currentColor" />
-                <path class="sulla-wave sulla-wave-1" d="M15.54 8.46a5 5 0 0 1 0 7.07" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none" />
-                <path class="sulla-wave sulla-wave-2" d="M18.07 5.93a9 9 0 0 1 0 12.73" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none" />
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path
+                  d="M11 5L6 9H2v6h4l5 4V5z"
+                  fill="currentColor"
+                />
+                <path
+                  class="sulla-wave sulla-wave-1"
+                  d="M15.54 8.46a5 5 0 0 1 0 7.07"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  fill="none"
+                />
+                <path
+                  class="sulla-wave sulla-wave-2"
+                  d="M18.07 5.93a9 9 0 0 1 0 12.73"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  fill="none"
+                />
               </svg>
             </button>
 
@@ -373,22 +433,23 @@ aria-hidden="true"
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+
 import type { AgentModelSelectorController } from './AgentModelSelectorController';
 
 const props = withDefaults(defineProps<{
-  modelValue:        string;
-  loading:           boolean;
-  showOverlay:       boolean;
-  hasMessages:       boolean;
-  graphRunning:      boolean;
-  ttsPlaying?:       boolean;
-  isRecording?:      boolean;
-  audioLevel?:       number;
+  modelValue:         string;
+  loading:            boolean;
+  showOverlay:        boolean;
+  hasMessages:        boolean;
+  graphRunning:       boolean;
+  ttsPlaying?:        boolean;
+  isRecording?:       boolean;
+  audioLevel?:        number;
   recordingDuration?: string;
-  voiceConfigured?:  boolean;
-  modelSelector:     AgentModelSelectorController;
-  formClass?:        string;
-  panelClass?:       string;
+  voiceConfigured?:   boolean;
+  modelSelector:      AgentModelSelectorController;
+  formClass?:         string;
+  panelClass?:        string;
 }>(), {
   formClass:          'group/composer mx-auto w-full',
   panelClass:         '',

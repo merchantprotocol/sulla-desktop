@@ -5,10 +5,11 @@
 import fs from 'node:fs';
 
 import { ipcMain } from 'electron';
-import Logging from '@pkg/utils/logging';
+
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import type { RecordConversationInput, ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 import mainEvents from '@pkg/main/mainEvents';
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 

@@ -33,7 +33,7 @@
               <path d="M12 7v5l4 2" />
             </svg>
           </button>
-          
+
           <!-- Chat History Dropdown Popup -->
           <div
             v-if="showHistory"
@@ -55,8 +55,17 @@
                   stroke="currentColor"
                   stroke-width="2"
                 >
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  <circle
+                    cx="11"
+                    cy="11"
+                    r="8"
+                  />
+                  <line
+                    x1="21"
+                    y1="21"
+                    x2="16.65"
+                    y2="16.65"
+                  />
                 </svg>
                 <input
                   v-model="historySearchQuery"
@@ -65,10 +74,10 @@
                   :class="{ dark: isDark }"
                   placeholder="Search"
                   @click.stop
-                />
+                >
               </div>
             </div>
-            
+
             <!-- History List -->
             <div class="chat-history-list">
               <div
@@ -110,8 +119,18 @@
                     stroke="currentColor"
                     stroke-width="2"
                   >
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
+                    <line
+                      x1="18"
+                      y1="6"
+                      x2="6"
+                      y2="18"
+                    />
+                    <line
+                      x1="6"
+                      y1="6"
+                      x2="18"
+                      y2="18"
+                    />
                   </svg>
                 </button>
               </div>
@@ -352,7 +371,9 @@
           class="chat-queued-item"
           :class="{ dark: isDark }"
         >
-          <div class="chat-queued-content">{{ msg.content }}</div>
+          <div class="chat-queued-content">
+            {{ msg.content }}
+          </div>
           <div class="chat-queued-actions">
             <button
               v-if="idx > 0"
@@ -362,8 +383,19 @@
               title="Move up"
               @click="$emit('move-up', msg.id)"
             >
-              <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M7.14645 2.14645C7.34171 1.95118 7.65829 1.95118 7.85355 2.14645L11.8536 6.14645C12.0488 6.34171 12.0488 6.65829 11.8536 6.85355C11.6583 7.04882 11.3417 7.04882 11.1464 6.85355L8 3.70711L8 12.5C8 12.7761 7.77614 13 7.5 13C7.22386 13 7 12.7761 7 12.5L7 3.70711L3.85355 6.85355C3.65829 7.04882 3.34171 7.04882 3.14645 6.85355C2.95118 6.65829 2.95118 6.34171 3.14645 6.14645L7.14645 2.14645Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 15 15"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M7.14645 2.14645C7.34171 1.95118 7.65829 1.95118 7.85355 2.14645L11.8536 6.14645C12.0488 6.34171 12.0488 6.65829 11.8536 6.85355C11.6583 7.04882 11.3417 7.04882 11.1464 6.85355L8 3.70711L8 12.5C8 12.7761 7.77614 13 7.5 13C7.22386 13 7 12.7761 7 12.5L7 3.70711L3.85355 6.85355C3.65829 7.04882 3.34171 7.04882 3.14645 6.85355C2.95118 6.65829 2.95118 6.34171 3.14645 6.14645L7.14645 2.14645Z"
+                  fill="currentColor"
+                  fill-rule="evenodd"
+                  clip-rule="evenodd"
+                />
               </svg>
             </button>
             <button
@@ -374,8 +406,20 @@
               title="Move down"
               @click="$emit('move-down', msg.id)"
             >
-              <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform: rotate(180deg)">
-                <path d="M7.14645 2.14645C7.34171 1.95118 7.65829 1.95118 7.85355 2.14645L11.8536 6.14645C12.0488 6.34171 12.0488 6.65829 11.8536 6.85355C11.6583 7.04882 11.3417 7.04882 11.1464 6.85355L8 3.70711L8 12.5C8 12.7761 7.77614 13 7.5 13C7.22386 13 7 12.7761 7 12.5L7 3.70711L3.85355 6.85355C3.65829 7.04882 3.34171 7.04882 3.14645 6.85355C2.95118 6.65829 2.95118 6.34171 3.14645 6.14645L7.14645 2.14645Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 15 15"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                style="transform: rotate(180deg)"
+              >
+                <path
+                  d="M7.14645 2.14645C7.34171 1.95118 7.65829 1.95118 7.85355 2.14645L11.8536 6.14645C12.0488 6.34171 12.0488 6.65829 11.8536 6.85355C11.6583 7.04882 11.3417 7.04882 11.1464 6.85355L8 3.70711L8 12.5C8 12.7761 7.77614 13 7.5 13C7.22386 13 7 12.7761 7 12.5L7 3.70711L3.85355 6.85355C3.65829 7.04882 3.34171 7.04882 3.14645 6.85355C2.95118 6.65829 2.95118 6.34171 3.14645 6.14645L7.14645 2.14645Z"
+                  fill="currentColor"
+                  fill-rule="evenodd"
+                  clip-rule="evenodd"
+                />
               </svg>
             </button>
             <button
@@ -385,8 +429,19 @@
               title="Remove"
               @click="$emit('remove', msg.id)"
             >
-              <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M11.7816 4.03157C12.0724 3.74081 12.0724 3.25991 11.7816 2.96915C11.4909 2.67839 11.0099 2.67839 10.7192 2.96915L7.50005 6.18827L4.28091 2.96915C3.99015 2.67839 3.50925 2.67839 3.21849 2.96915C2.92773 3.25991 2.92773 3.74081 3.21849 4.03157L6.43761 7.25071L3.21849 10.4698C2.92773 10.7606 2.92773 11.2415 3.21849 11.5323C3.50925 11.823 3.99015 11.823 4.28091 11.5323L7.50005 8.31315L10.7192 11.5323C11.0099 11.823 11.4909 11.823 11.7816 11.5323C12.0724 11.2415 12.0724 10.7606 11.7816 10.4698L8.56248 7.25071L11.7816 4.03157Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 15 15"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M11.7816 4.03157C12.0724 3.74081 12.0724 3.25991 11.7816 2.96915C11.4909 2.67839 11.0099 2.67839 10.7192 2.96915L7.50005 6.18827L4.28091 2.96915C3.99015 2.67839 3.50925 2.67839 3.21849 2.96915C2.92773 3.25991 2.92773 3.74081 3.21849 4.03157L6.43761 7.25071L3.21849 10.4698C2.92773 10.7606 2.92773 11.2415 3.21849 11.5323C3.50925 11.823 3.99015 11.823 4.28091 11.5323L7.50005 8.31315L10.7192 11.5323C11.0099 11.823 11.4909 11.823 11.7816 11.5323C12.0724 11.2415 12.0724 10.7606 11.7816 10.4698L8.56248 7.25071L11.7816 4.03157Z"
+                  fill="currentColor"
+                  fill-rule="evenodd"
+                  clip-rule="evenodd"
+                />
               </svg>
             </button>
           </div>
@@ -436,8 +491,19 @@
           :class="{ dark: isDark }"
           @click="$emit('stop')"
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-            <rect x="3" y="3" width="10" height="10" rx="1"/>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+          >
+            <rect
+              x="3"
+              y="3"
+              width="10"
+              height="10"
+              rx="1"
+            />
           </svg>
         </button>
         <!-- Send button: always when there's text (allows queuing when busy) -->
@@ -447,8 +513,13 @@
           :class="{ dark: isDark }"
           @click="onSend"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M1.724 1.053a.5.5 0 0 1 .54-.068l12 6a.5.5 0 0 1 0 .894l-12 6A.5.5 0 0 1 1.5 13.5v-4.9l7-1.1-7-1.1V1.5a.5.5 0 0 1 .224-.447Z"/>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+          >
+            <path d="M1.724 1.053a.5.5 0 0 1 .54-.068l12 6a.5.5 0 0 1 0 .894l-12 6A.5.5 0 0 1 1.5 13.5v-4.9l7-1.1-7-1.1V1.5a.5.5 0 0 1 .224-.447Z" />
           </svg>
         </button>
       </div>
@@ -678,45 +749,47 @@
         >{{ tokenLabel }}</span>
       </div>
     </div>
-
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed, onMounted } from 'vue';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import type { ChatMessage } from '@pkg/agent';
-import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
-import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
-import type { QueuedMessage } from '../agent/ChatMessageQueue';
-import type { ChatHistoryItem } from './EditorChatTabsInterface';
-import WorkflowNodeCard from './workflow/WorkflowNodeCard.vue';
+import { ref, watch, nextTick, computed, onMounted } from 'vue';
+
 import SubAgentBubble from './workflow/SubAgentBubble.vue';
-import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import WorkflowNodeCard from './workflow/WorkflowNodeCard.vue';
+
+import type { ChatMessage } from '@pkg/agent';
+import type { AgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import ChatToolCard from '@pkg/components/ChatToolCard.vue';
+import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
+import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
+
+import type { ChatHistoryItem } from './EditorChatTabsInterface';
+import type { QueuedMessage } from '../agent/ChatMessageQueue';
 
 const props = defineProps<{
-  isDark:             boolean;
-  messages:           ChatMessage[];
-  query:              string;
-  loading:            boolean;
-  graphRunning:       boolean;
-  modelLoading?:      boolean;  // New: model initializing state
-  waitingForUser?:    boolean;
-  currentActivity?:   string;
-  modelSelector?:     AgentModelSelectorController;
-  agentRegistry?:     AgentPersonaRegistry;
-  totalTokensUsed?:   number;
-  hideAgentSelector?: boolean;
-  queuedMessages?:    QueuedMessage[];
-  hasQueuedMessages?: boolean;
+  isDark:              boolean;
+  messages:            ChatMessage[];
+  query:               string;
+  loading:             boolean;
+  graphRunning:        boolean;
+  modelLoading?:       boolean;  // New: model initializing state
+  waitingForUser?:     boolean;
+  currentActivity?:    string;
+  modelSelector?:      AgentModelSelectorController;
+  agentRegistry?:      AgentPersonaRegistry;
+  totalTokensUsed?:    number;
+  hideAgentSelector?:  boolean;
+  queuedMessages?:     QueuedMessage[];
+  hasQueuedMessages?:  boolean;
   queuedMessageCount?: number;
   // Tab system props
-  tabs?:              Array<{ id: string; label: string; messageCount: number; isActive: boolean }>;
-  activeTabId?:       string;
+  tabs?:               { id: string; label: string; messageCount: number; isActive: boolean }[];
+  activeTabId?:        string;
   // Chat history props
-  chatHistory?:       ChatHistoryItem[];
+  chatHistory?:        ChatHistoryItem[];
 }>();
 
 const showAgentMenu = ref(false);
@@ -742,23 +815,23 @@ function selectAgent(agentId: string) {
 }
 
 const emit = defineEmits<{
-  'update:query': [value: string];
-  send:           [];
-  stop:           [];
-  close:          [];
-  remove:         [messageId: string];
-  'clear-queue':  [];
-  'move-up':      [messageId: string];
-  'move-down':    [messageId: string];
+  'update:query':   [value: string];
+  send:             [];
+  stop:             [];
+  close:            [];
+  remove:           [messageId: string];
+  'clear-queue':    [];
+  'move-up':        [messageId: string];
+  'move-down':      [messageId: string];
   // Tab system events
-  'create-tab':   [];
-  'switch-tab':   [tabId: string];
-  'close-tab':    [tabId: string];
-  'rename-tab':   [tabId: string, newLabel: string];
+  'create-tab':     [];
+  'switch-tab':     [tabId: string];
+  'close-tab':      [tabId: string];
+  'rename-tab':     [tabId: string, newLabel: string];
   // Chat history events
-  'load-history': [historyId: string];
+  'load-history':   [historyId: string];
   'remove-history': [historyId: string];
-  'clear-history': [];
+  'clear-history':  [];
 }>();
 
 const tokenLabel = computed(() => {
@@ -782,10 +855,10 @@ let scrollTimeout: ReturnType<typeof setTimeout> | null = null;
 const SCROLL_THRESHOLD = 100; // pixels from bottom to trigger auto-scroll
 
 function attachScrollListeners(container: HTMLElement) {
-  const startScroll = () => { isUserScrolling = true; };
+  const startScroll = () => { isUserScrolling = true };
   const endScroll = () => {
     if (scrollTimeout) clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => { isUserScrolling = false; }, 150);
+    scrollTimeout = setTimeout(() => { isUserScrolling = false }, 150);
   };
   container.addEventListener('wheel', startScroll, { passive: true });
   container.addEventListener('wheel', endScroll, { passive: true });
@@ -846,44 +919,44 @@ function formatDate(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
   const isToday = date.toDateString() === now.toDateString();
-  
+
   if (isToday) {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
-  
+
   const isThisYear = date.getFullYear() === now.getFullYear();
   if (isThisYear) {
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
   }
-  
+
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function formatRelativeTime(timestamp: number): string {
   const now = Date.now();
   const diff = now - timestamp;
-  
+
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
-  
+
   if (minutes < 1) return 'now';
-  if (minutes < 60) return `${minutes}m`;
-  if (hours < 24) return `${hours}h`;
-  if (days < 30) return `${days}d`;
-  
-  return `${Math.floor(days / 30)}mo`;
+  if (minutes < 60) return `${ minutes }m`;
+  if (hours < 24) return `${ hours }h`;
+  if (days < 30) return `${ days }d`;
+
+  return `${ Math.floor(days / 30) }mo`;
 }
 
 // Filtered history based on search
 const filteredHistory = computed(() => {
   const history = props.chatHistory || [];
   if (!historySearchQuery.value.trim()) return history;
-  
+
   const query = historySearchQuery.value.toLowerCase();
-  return history.filter(item => 
+  return history.filter(item =>
     item.title.toLowerCase().includes(query) ||
-    item.preview.toLowerCase().includes(query)
+    item.preview.toLowerCase().includes(query),
   );
 });
 
@@ -901,7 +974,7 @@ watch(
     return (last?.kind === 'streaming' || last?.kind === 'thinking') ? last.content : null;
   },
   () => scrollToBottom(),
-  { flush: 'post' }
+  { flush: 'post' },
 );
 
 // Scroll to bottom on mount if there are existing messages (e.g., after page refresh)

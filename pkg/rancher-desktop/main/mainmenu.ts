@@ -1,15 +1,15 @@
 import Electron, { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions, shell } from 'electron';
 
+import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
+import type { ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 import { VMBackend } from '@pkg/backend/backend';
 import { State } from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
-import Logging from '@pkg/utils/logging';
 import setupUpdate from '@pkg/main/update';
+import Logging from '@pkg/utils/logging';
 import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openComputerUseSettings, openCaptureStudio, openMain, openEditor, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
-import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
-import type { ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
 
 const console = Logging.mainmenu;
 
@@ -380,8 +380,6 @@ function getEditMenu(isMac: boolean): MenuItem {
     ],
   });
 }
-
-
 
 function getHelpMenu(isMac: boolean): MenuItem {
   const helpMenuItems: MenuItemConstructorOptions[] = [

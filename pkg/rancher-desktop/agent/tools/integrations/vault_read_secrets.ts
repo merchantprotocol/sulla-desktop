@@ -1,6 +1,7 @@
-import { BaseTool, ToolResponse } from '../base';
-import { getIntegrationService } from '../../services/IntegrationService';
 import { integrations } from '../../integrations/catalog';
+import { getIntegrationService } from '../../services/IntegrationService';
+import { BaseTool, ToolResponse } from '../base';
+
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 
 /**

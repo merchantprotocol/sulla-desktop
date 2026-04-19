@@ -11,9 +11,11 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+
 import yaml from 'yaml';
 
 import { resolveSullaIntegrationsDir } from '../../utils/sullaPaths';
+
 import type { MCPToolDefinition } from './MCPClient';
 
 const LOG = '[MCPConfigGenerator]';
@@ -192,7 +194,7 @@ function buildEndpointYaml(tool: MCPToolDefinition): Record<string, any> {
     const bodyParams: Record<string, any> = {};
 
     for (const [name, schema] of Object.entries(tool.inputSchema.properties)) {
-      const s = schema as any;
+      const s = schema;
       const param: Record<string, any> = {
         type:     s.type || 'string',
         required: required.has(name),

@@ -32,13 +32,13 @@ export interface WorkflowPlaybookState {
   status:           WorkflowPlaybookStatus;
   /** When a router/condition node needs the agent to decide, this holds the pending prompt */
   pendingDecision?: {
-    nodeId:  string;
-    subtype: WorkflowNodeSubtype;
-    prompt:  string;
+    nodeId:      string;
+    subtype:     WorkflowNodeSubtype;
+    prompt:      string;
     /** For routers: the available routes */
-    routes?: { label: string; description: string; handleId: string }[];
+    routes?:     { label: string; description: string; handleId: string }[];
     /** For conditions: the rules being evaluated */
-    rules?:  { field: string; operator: string; value: string }[];
+    rules?:      { field: string; operator: string; value: string }[];
     /** How many times we've retried this decision (for router retry-on-mismatch) */
     retryCount?: number;
   };
@@ -62,13 +62,13 @@ export interface LoopIterationState {
     bodyOutputs: Record<string, PlaybookNodeOutput>;
   }[];
   /** Node IDs that form the loop body (cached after first discovery) */
-  bodyNodeIds:      string[];
+  bodyNodeIds:            string[];
   /** Node IDs at the start of the loop body */
-  bodyStartNodeIds: string[];
+  bodyStartNodeIds:       string[];
   /** For 'for-each' mode: the full list of items being iterated over */
-  items?:       { nodeId: string; label: string; result: unknown }[];
+  items?:                 { nodeId: string; label: string; result: unknown }[];
   /** For 'for-each' mode: the current item for this iteration */
-  currentItem?: { nodeId: string; label: string; result: unknown };
+  currentItem?:           { nodeId: string; label: string; result: unknown };
   /** For 'ask-orchestrator' mode: the iteration count decided by the orchestrator */
   resolvedMaxIterations?: number;
 }

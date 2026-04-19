@@ -1,8 +1,8 @@
 // N8nService - Service for interacting with n8n API
 // Provides methods to manage workflows, executions, credentials, and other n8n resources
 
-import { N8nCredentialsEntityModel } from '../database/models/N8nCredentialsEntityModel';
 import { postgresClient } from '../database/PostgresClient';
+import { N8nCredentialsEntityModel } from '../database/models/N8nCredentialsEntityModel';
 
 /**
  * N8n API Service

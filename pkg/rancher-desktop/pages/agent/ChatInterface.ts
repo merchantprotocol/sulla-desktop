@@ -1,10 +1,13 @@
 // ChatInterface.ts
 import { ref, computed, watch } from 'vue';
+
+import { ChatMessageQueue, createMessageQueue, type QueuedMessage } from './ChatMessageQueue';
+
 import { AgentPersonaService } from '@pkg/agent';
 import type { PersonaSidebarAsset } from '@pkg/agent';
 import { getAgentPersonaRegistry, AgentPersonaRegistry, type ChatMessage as RegistryChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
-import { ChatMessageQueue, createMessageQueue, type QueuedMessage } from './ChatMessageQueue';
+
 import type { PendingAttachment } from './AgentComposer.vue';
 
 export type ChatMessage = RegistryChatMessage;
@@ -13,13 +16,13 @@ const DEFAULT_CHANNEL = 'sulla-desktop';
 const MAX_PERSISTED_MESSAGES = 200;
 
 export class ChatInterface {
-  private readonly persona:  AgentPersonaService;
-  private readonly registry: AgentPersonaRegistry;
-  private readonly channelId: string;
+  private readonly persona:            AgentPersonaService;
+  private readonly registry:           AgentPersonaRegistry;
+  private readonly channelId:          string;
   /** Unique key for this tab's localStorage — scoped by tabId when provided */
-  private readonly storageScope: string;
+  private readonly storageScope:       string;
   private readonly messagesStorageKey: string;
-  private readonly messageQueue: ChatMessageQueue;
+  private readonly messageQueue:       ChatMessageQueue;
 
   readonly query = ref('');
   readonly transcriptEl = ref<HTMLElement | null>(null);
@@ -108,7 +111,7 @@ export class ChatInterface {
       if (Array.isArray(parsed) && parsed.length > 0 && this.persona.messages.length === 0) {
         // Mark any stale running tool cards as failed
         for (const m of parsed) {
-          if (m.toolCard && m.toolCard.status === 'running') {
+          if (m.toolCard?.status === 'running') {
             m.toolCard.status = 'failed';
             m.toolCard.error = 'Interrupted by page reload';
           }
@@ -150,7 +153,7 @@ export class ChatInterface {
 
   // Track if user has ever sent a message (persisted in localStorage)
   private readonly hasSentMessageKey: string;
-  private hasSentMessage: ReturnType<typeof ref<boolean>>;
+  private hasSentMessage:             ReturnType<typeof ref<boolean>>;
 
   readonly hasMessages = computed(() => {
     return this.hasSentMessage.value || this.messages.value.some(m => m.kind !== 'voice_interim');
@@ -181,12 +184,12 @@ export class ChatInterface {
   }
 
   stop(): void {
-    console.log(`[ChatInterface:stop] channelId=${this.channelId}, graphRunning was ${this.persona.graphRunning.value}`);
+    console.log(`[ChatInterface:stop] channelId=${ this.channelId }, graphRunning was ${ this.persona.graphRunning.value }`);
     this.persona.emitStopSignal(this.channelId);
     this.persona.graphRunning.value = false;
     // Clear the queue when stopping
     this.messageQueue.clear();
-    console.log(`[ChatInterface:stop] graphRunning now ${this.persona.graphRunning.value}, queue cleared`);
+    console.log(`[ChatInterface:stop] graphRunning now ${ this.persona.graphRunning.value }, queue cleared`);
   }
 
   continueRun(): void {
@@ -205,14 +208,14 @@ export class ChatInterface {
    * Send a message. If the graph is currently running, the message will be
    * queued and sent automatically when the current processing completes.
    */
-  async send(metadata?: Record<string, unknown>, attachments?: Array<{ mediaType: string; base64: string }>): Promise<void> {
+  async send(metadata?: Record<string, unknown>, attachments?: { mediaType: string; base64: string }[]): Promise<void> {
     if (!this.query.value.trim() && !attachments?.length) return;
 
     const text = this.query.value;
 
     // If graph is running OR model is still loading/initializing, queue the message
     if (this.persona.graphRunning.value || this.loading.value) {
-      console.log(`[ChatInterface:send] Busy (graphRunning=${this.persona.graphRunning.value}, loading=${this.loading.value}), queuing message: ${ text.slice(0, 50) }...`);
+      console.log(`[ChatInterface:send] Busy (graphRunning=${ this.persona.graphRunning.value }, loading=${ this.loading.value }), queuing message: ${ text.slice(0, 50) }...`);
       this.messageQueue.enqueue(text, attachments as PendingAttachment[], metadata);
       this.query.value = '';
       return;
@@ -228,7 +231,7 @@ export class ChatInterface {
   private async sendMessageInternal(
     text: string,
     metadata?: Record<string, unknown>,
-    attachments?: Array<{ mediaType: string; base64: string }>,
+    attachments?: { mediaType: string; base64: string }[],
   ): Promise<void> {
     this.query.value = '';
 

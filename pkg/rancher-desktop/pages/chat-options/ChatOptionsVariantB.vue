@@ -5,7 +5,9 @@
        editorial card grid for actions. -->
   <div class="vb-root">
     <!-- Section label -->
-    <div class="vb-section-label">Sulla AI Assistant</div>
+    <div class="vb-section-label">
+      Sulla AI Assistant
+    </div>
 
     <!-- Editorial headline -->
     <h1 class="vb-headline">
@@ -13,7 +15,9 @@
     </h1>
 
     <!-- Subtle tagline -->
-    <p class="vb-tagline">Ask anything. Browse, schedule, extend — or just chat.</p>
+    <p class="vb-tagline">
+      Ask anything. Browse, schedule, extend — or just chat.
+    </p>
 
     <!-- Composer -->
     <div class="vb-composer-wrap">
@@ -127,38 +131,38 @@
         <span class="vb-card-arrow">&rarr;</span>
       </button>
     </div>
-
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+
 import AgentComposer from '../agent/AgentComposer.vue';
 
 const props = defineProps<{
-  query: string;
-  loading: boolean;
-  graphRunning: boolean;
-  ttsPlaying?: boolean;
-  isRecording?: boolean;
-  audioLevel?: number;
-  recordingDuration?: string;
-  voiceConfigured?: boolean;
-  modelSelector: any;
-  isFirstChat?: boolean;
-  showGoalsOnboarding?: boolean;
+  query:                   string;
+  loading:                 boolean;
+  graphRunning:            boolean;
+  ttsPlaying?:             boolean;
+  isRecording?:            boolean;
+  audioLevel?:             number;
+  recordingDuration?:      string;
+  voiceConfigured?:        boolean;
+  modelSelector:           any;
+  isFirstChat?:            boolean;
+  showGoalsOnboarding?:    boolean;
   showBusinessOnboarding?: boolean;
 }>();
 
 const emit = defineEmits<{
-  'update:query': [value: string];
-  send: [];
-  stop: [];
-  'primary-action': [];
-  'toggle-recording': [];
-  'stop-tts': [];
-  pick: [mode: string];
-  'start-onboarding': [];
+  'update:query':              [value: string];
+  send:                        [];
+  stop:                        [];
+  'primary-action':            [];
+  'toggle-recording':          [];
+  'stop-tts':                  [];
+  pick:                        [mode: string];
+  'start-onboarding':          [];
   'start-business-onboarding': [];
 }>();
 

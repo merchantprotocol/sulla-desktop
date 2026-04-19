@@ -35,6 +35,7 @@ import { ContainerEngineClient, MobyClient, NerdctlClient } from './containerCli
 import * as K8s from './k8s';
 import ProgressTracker, { getProgressErrorDescription } from './progressTracker';
 
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import DEPENDENCY_VERSIONS from '@pkg/assets/dependencies.yaml';
 import DEFAULT_CONFIG from '@pkg/assets/lima-config.yaml';
 import NETWORKS_CONFIG from '@pkg/assets/networks-config.yaml';
@@ -46,12 +47,14 @@ import LOGROTATE_LIMA_GUESTAGENT_SCRIPT from '@pkg/assets/scripts/logrotate-lima
 import LOGROTATE_OPENRESTY_SCRIPT from '@pkg/assets/scripts/logrotate-openresty';
 import NERDCTL from '@pkg/assets/scripts/nerdctl';
 import NGINX_CONF from '@pkg/assets/scripts/nginx.conf';
-import * as settingsImpl from '@pkg/config/settingsImpl';
+import SULLA_DOCKER_COMPOSE from '@pkg/assets/sulla-docker-compose.yaml';
 import { ContainerEngine, MountType, VMType } from '@pkg/config/settings';
-import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
+import * as settingsImpl from '@pkg/config/settingsImpl';
 import { getServerCredentialsPath, ServerState } from '@pkg/main/credentialServer/httpCredentialHelperServer';
+import { readDeploymentProfiles } from '@pkg/main/deploymentProfiles';
 import mainEvents from '@pkg/main/mainEvents';
 import { exec as sudo } from '@pkg/sudo-prompt';
+import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
 import * as childProcess from '@pkg/utils/childProcess';
 import clone from '@pkg/utils/clone';
 import dockerDirManager from '@pkg/utils/dockerDirManager';
@@ -61,9 +64,6 @@ import { executable } from '@pkg/utils/resources';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { defined, RecursivePartial } from '@pkg/utils/typeUtils';
 import { openSudoPrompt } from '@pkg/window';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-import SULLA_DOCKER_COMPOSE from '@pkg/assets/sulla-docker-compose.yaml';
-import { instantiateSullaStart, markSullaDockerServicesStarted } from '@pkg/sulla';
 
 /* eslint @typescript-eslint/switch-exhaustiveness-check: "error" */
 
@@ -718,6 +718,16 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     config.provision.push({
       mode:   'system',
       script: pythonNodeScript,
+    });
+
+    // Install Claude Code CLI (idempotent — skips if already installed)
+    const claudeCodeScript = '#!/bin/sh\nset -o errexit\ncommand -v claude >/dev/null 2>&1 || npm install -g @anthropic-ai/claude-code';
+    config.provision = config.provision.filter((p: { script?: string }) => {
+      return !(p.script ?? '').includes('@anthropic-ai/claude-code');
+    });
+    config.provision.push({
+      mode:   'system',
+      script: claudeCodeScript,
     });
 
     this.updateConfigPortForwards(config);
@@ -1907,6 +1917,63 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   }
 
   /**
+   * Install Claude Code auth credentials into the VM.
+   *
+   * Supports two auth modes:
+   * 1. OAuth token (Claude Max/Pro subscribers) — stored as CLAUDE_CODE_OAUTH_TOKEN
+   * 2. API key (pay-per-token) — stored as ANTHROPIC_API_KEY
+   *
+   * Credentials are read from:
+   * - SullaSettingsModel ('claudeOAuthToken' or 'claudeApiKey')
+   * - Anthropic integration form values (api_key)
+   *
+   * Written to /etc/claude-env and sourced by the sulla-daemon.
+   */
+  protected async installClaudeCode() {
+    try {
+      const envLines: string[] = [];
+
+      // 1. Check for OAuth token (Max/Pro subscribers)
+      const oauthToken = await SullaSettingsModel.get('claudeOAuthToken', '');
+      if (oauthToken) {
+        envLines.push(`CLAUDE_CODE_OAUTH_TOKEN=${ oauthToken }`);
+      }
+
+      // 2. Check for API key (from Anthropic integration or direct setting)
+      let apiKey = await SullaSettingsModel.get('claudeApiKey', '');
+      if (!apiKey) {
+        try {
+          const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+          const integrationService = getIntegrationService();
+          const values = await integrationService.getFormValues('anthropic');
+          const keyVal = values.find((v: { property: string }) => v.property === 'api_key');
+          apiKey = keyVal?.value || '';
+        } catch {
+          // IntegrationService not ready
+        }
+      }
+      if (apiKey) {
+        envLines.push(`ANTHROPIC_API_KEY=${ apiKey }`);
+      }
+
+      if (envLines.length === 0) {
+        console.log('[Lima] No Claude credentials configured — skipping claude-env');
+        return;
+      }
+
+      await this.writeFile('/etc/claude-env', envLines.join('\n') + '\n', 0o600);
+
+      // Source the env in the user's profile so Claude Code picks it up
+      await this.execCommand({ root: false }, 'sh', '-c',
+        'grep -q claude-env ~/.profile 2>/dev/null || echo ". /etc/claude-env" >> ~/.profile');
+
+      console.log(`[Lima] Claude Code credentials installed (${ oauthToken ? 'OAuth' : 'API key' })`);
+    } catch (error) {
+      console.warn('[Lima] Failed to install Claude Code credentials:', error);
+    }
+  }
+
+  /**
    * Start the VM.  If the machine is already started, this does nothing.
    * Note that this does not start k3s.
    * @precondition The VM configuration is correct.
@@ -2153,6 +2220,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
           this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
           this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli()),
+          this.progressTracker.action('Configuring Claude Code', 50, this.installClaudeCode()),
         ];
         if (kubernetesVersion) {
           tasks.push(this.kubeBackend.install(config, kubernetesVersion, this.#adminAccess));
@@ -2383,11 +2451,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const sullaDataDir = path.join(paths.appHome, 'data');
 
     await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-postgres'), { recursive: true });
-    await fs.promises.mkdir(path.join(sullaDataDir, 'sulla-redis'), { recursive: true });
 
-    // Ensure data directories are writable by container users (postgres=UID 70, redis=UID 999)
+    // Ensure data directory is writable by container user (postgres=UID 70)
     await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);
-    await fs.promises.chmod(path.join(sullaDataDir, 'sulla-redis'), 0o777);
 
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
@@ -2403,7 +2469,6 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const sullaDataDir = path.join(paths.appHome, 'data');
     const migrations = [
       { src: '/var/lib/sulla/postgres', dest: path.join(sullaDataDir, 'sulla-postgres') },
-      { src: '/var/lib/sulla/redis', dest: path.join(sullaDataDir, 'sulla-redis') },
     ];
 
     for (const { src, dest } of migrations) {

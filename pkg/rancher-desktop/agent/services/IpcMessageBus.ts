@@ -3,6 +3,7 @@
 // through Electron IPC instead of an external Docker WebSocket hub.
 
 import { wsLogger as console } from '@pkg/agent/utils/agentLogger';
+
 import type { WebSocketMessage, WebSocketMessageHandler } from './WebSocketClientService';
 
 function generateUUID(): string {

@@ -27,9 +27,19 @@
         <!-- Account details card -->
         <div class="account-card">
           <div class="account-card-header">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="account-card-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="account-card-icon"
+            >
               <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
+              <circle
+                cx="12"
+                cy="7"
+                r="4"
+              />
             </svg>
             <h2 class="account-card-title">
               Profile
@@ -80,8 +90,20 @@
         <!-- Security card -->
         <div class="account-card">
           <div class="account-card-header">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="account-card-icon">
-              <rect x="3" y="11" width="18" height="11" rx="2" />
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="account-card-icon"
+            >
+              <rect
+                x="3"
+                y="11"
+                width="18"
+                height="11"
+                rx="2"
+              />
               <path d="M7 11V7a5 5 0 0110 0v4" />
             </svg>
             <h2 class="account-card-title">
@@ -157,7 +179,13 @@
         <!-- Vault stats card -->
         <div class="account-card">
           <div class="account-card-header">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="account-card-icon">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              class="account-card-icon"
+            >
               <path d="M12 20V10" />
               <path d="M18 20V4" />
               <path d="M6 20v-4" />
@@ -184,6 +212,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -250,7 +279,7 @@ async function saveProfile() {
     await SullaSettingsModel.set('sullaEmail', email.value, 'string');
     await SullaSettingsModel.set('sullaSubscribeToUpdates', subscribeToUpdates.value, 'boolean');
     saved.value = true;
-    setTimeout(() => { saved.value = false; }, 2000);
+    setTimeout(() => { saved.value = false }, 2000);
   } catch (err) {
     console.error('[MyAccount] Save failed:', err);
   } finally {

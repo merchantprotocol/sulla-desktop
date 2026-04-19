@@ -1,6 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
-import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 import { wrapWithBlockingWarning } from './detect_blocking';
+import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
  * Get Page Text Tool - Returns the full visible text content of a page

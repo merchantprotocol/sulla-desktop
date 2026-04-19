@@ -10,18 +10,18 @@ import { postgresClient } from '../PostgresClient';
  * status: 'pending' | 'drained'
  */
 interface WorkflowPendingCompletionAttributes {
-  id:             number;
-  execution_id:   string;
-  thread_id:      string | null;
-  node_id:        string;
-  node_label:     string;
-  kind:           'completion' | 'failure' | 'escalation';
-  status:         'pending' | 'drained';
-  output:         unknown;
-  error:          string | null;
-  escalation:     Record<string, unknown> | null;
-  created_at:     Date;
-  drained_at:     Date | null;
+  id:           number;
+  execution_id: string;
+  thread_id:    string | null;
+  node_id:      string;
+  node_label:   string;
+  kind:         'completion' | 'failure' | 'escalation';
+  status:       'pending' | 'drained';
+  output:       unknown;
+  error:        string | null;
+  escalation:   Record<string, unknown> | null;
+  created_at:   Date;
+  drained_at:   Date | null;
 }
 
 export class WorkflowPendingCompletionModel extends BaseModel<WorkflowPendingCompletionAttributes> {

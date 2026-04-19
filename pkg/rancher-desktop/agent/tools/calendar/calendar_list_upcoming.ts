@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from '../base';
 import { calendarClient, CalendarEventData } from '../../services/CalendarClient';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * Calendar List Upcoming Tool - Worker class for execution

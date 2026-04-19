@@ -7,15 +7,16 @@
  */
 
 import { EventEmitter } from 'events';
+
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.sulla;
 
 interface ServiceDefinition {
-  name: string;
-  dependencies: string[];
-  start: () => Promise<void>;
-  stop: () => Promise<void>;
+  name:              string;
+  dependencies:      string[];
+  start:             () => Promise<void>;
+  stop:              () => Promise<void>;
   /** If true, this service is NOT stopped during a 'restart' (e.g. Docker containers). */
   persistOnRestart?: boolean;
 }

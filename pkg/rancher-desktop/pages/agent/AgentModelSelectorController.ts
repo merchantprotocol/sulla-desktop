@@ -9,10 +9,11 @@
  */
 
 import { computed, ref } from 'vue';
-import type { ComputedRef, Ref } from 'vue';
 
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { integrations } from '@pkg/agent/integrations/catalog';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+import type { ComputedRef, Ref } from 'vue';
 
 export interface ModelOption {
   providerId:       string;
@@ -37,7 +38,7 @@ export class AgentModelSelectorController {
   readonly buttonRef = ref<HTMLElement | null>(null);
 
   /** Currently active primary provider id */
-  readonly activePrimaryProvider = ref<string>('ollama');
+  readonly activePrimaryProvider = ref<string>('grok');
   /** Currently active model id for the active provider */
   readonly activeModelId = ref<string>('');
 
@@ -55,7 +56,7 @@ export class AgentModelSelectorController {
     isRunning:   Ref<boolean>;
 
     modelName: Ref<string>;
-    modelMode: Ref<'local' | 'remote'>;
+    modelMode: Ref<'remote'>;
   }) {
     this.activeModelLabel = computed(() => {
       const provider = this.activePrimaryProvider.value;
@@ -199,11 +200,11 @@ export class AgentModelSelectorController {
     }
   }
 
-  private applyState(state: { primaryProvider: string; activeModelId: string; modelMode: 'local' | 'remote' }): void {
+  private applyState(state: { primaryProvider: string; activeModelId: string; modelMode?: string }): void {
     this.activePrimaryProvider.value = state.primaryProvider;
     this.activeModelId.value = state.activeModelId;
     this.deps.modelName.value = state.activeModelId;
-    this.deps.modelMode.value = state.modelMode;
+    this.deps.modelMode.value = 'remote';
   }
 
   private updateActiveFlags(providerId: string, modelId: string): void {
@@ -222,7 +223,7 @@ export class AgentModelSelectorController {
 
   private readonly handleStateChanged = (
     _event: Electron.IpcRendererEvent,
-    state: { primaryProvider: string; activeModelId: string; modelMode: 'local' | 'remote' },
+    state: { primaryProvider: string; activeModelId: string; modelMode?: string },
   ) => {
     this.applyState(state);
     this.updateActiveFlags(state.primaryProvider, state.activeModelId);
@@ -231,13 +232,12 @@ export class AgentModelSelectorController {
   /** Backward-compat listener for legacy model-changed events */
   private readonly handleLegacyModelChanged = (
     _event: Electron.IpcRendererEvent,
-    data: { model: string; type: 'local' } | { model: string; type: 'remote'; provider: string },
+    data: { model: string; type: string; provider?: string },
   ) => {
-    const providerId = data.type === 'local' ? 'ollama' : (data as any).provider || 'ollama';
+    const providerId = (data as any).provider || 'grok';
     this.applyState({
       primaryProvider: providerId,
       activeModelId:   data.model,
-      modelMode:       data.type === 'local' ? 'local' : 'remote',
     });
     this.updateActiveFlags(providerId, data.model);
   };

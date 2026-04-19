@@ -1,6 +1,7 @@
 // Agent System Types
 // Flow: SensoryInput → ContextDetector → ConversationThread → Response
 import { BaseThreadState } from './nodes/Graph';
+
 import type { ChatMessage } from './languagemodels/BaseLanguageModel';
 
 // ============================================================================

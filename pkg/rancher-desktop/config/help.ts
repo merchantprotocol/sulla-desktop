@@ -1,6 +1,5 @@
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-
 import { TransientSettings } from '@pkg/config/transientSettings';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type Paths = Record<string, string>;
 

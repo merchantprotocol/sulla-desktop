@@ -38,11 +38,11 @@ function process(isSpeaking) {
 
   let classification;
   if (ratio > ACTIVE_THRESHOLD) {
-    classification = "active-speech";
+    classification = 'active-speech';
   } else if (ratio > INTERMITTENT_THRESHOLD) {
-    classification = "intermittent";
+    classification = 'intermittent';
   } else {
-    classification = "mostly-silent";
+    classification = 'mostly-silent';
   }
 
   return { ratio, classification };
@@ -52,7 +52,7 @@ function process(isSpeaking) {
  * Get current state without processing.
  */
 function getState() {
-  if (buffer.length === 0) return { ratio: 0, classification: "mostly-silent" };
+  if (buffer.length === 0) return { ratio: 0, classification: 'mostly-silent' };
 
   let sum = 0;
   for (let i = 0; i < buffer.length; i++) sum += buffer[i];
@@ -60,11 +60,11 @@ function getState() {
 
   let classification;
   if (ratio > ACTIVE_THRESHOLD) {
-    classification = "active-speech";
+    classification = 'active-speech';
   } else if (ratio > INTERMITTENT_THRESHOLD) {
-    classification = "intermittent";
+    classification = 'intermittent';
   } else {
-    classification = "mostly-silent";
+    classification = 'mostly-silent';
   }
 
   return { ratio, classification };

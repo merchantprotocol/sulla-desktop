@@ -91,8 +91,8 @@ const chromeApi = {
   },
 
   notifications: {
-    create: (id: string, options: any) => ipcRenderer.invoke('chrome-api:notifications:create', id, options),
-    clear:  (id: string) => ipcRenderer.invoke('chrome-api:notifications:clear', id),
+    create:    (id: string, options: any) => ipcRenderer.invoke('chrome-api:notifications:create', id, options),
+    clear:     (id: string) => ipcRenderer.invoke('chrome-api:notifications:clear', id),
     onClicked: makeEventBridge('chrome-api:notifications:onClicked'),
     onClosed:  makeEventBridge('chrome-api:notifications:onClosed'),
   },
@@ -117,19 +117,19 @@ const chromeApi = {
   },
 
   action: {
-    setIcon:                (details: any) => ipcRenderer.invoke('chrome-api:action:setIcon', details),
-    setBadgeText:           (details: any) => ipcRenderer.invoke('chrome-api:action:setBadgeText', details),
+    setIcon:                 (details: any) => ipcRenderer.invoke('chrome-api:action:setIcon', details),
+    setBadgeText:            (details: any) => ipcRenderer.invoke('chrome-api:action:setBadgeText', details),
     setBadgeBackgroundColor: (details: any) => ipcRenderer.invoke('chrome-api:action:setBadgeBackgroundColor', details),
-    setTitle:               (details: any) => ipcRenderer.invoke('chrome-api:action:setTitle', details),
-    onClicked:              makeEventBridge('chrome-api:action:onClicked'),
+    setTitle:                (details: any) => ipcRenderer.invoke('chrome-api:action:setTitle', details),
+    onClicked:               makeEventBridge('chrome-api:action:onClicked'),
   },
 
   downloads: {
-    download: (options: any) => ipcRenderer.invoke('chrome-api:downloads:download', options),
-    search:   (query: any) => ipcRenderer.invoke('chrome-api:downloads:search', query),
-    cancel:   (id: string) => ipcRenderer.invoke('chrome-api:downloads:cancel', id),
-    pause:    (id: string) => ipcRenderer.invoke('chrome-api:downloads:pause', id),
-    resume:   (id: string) => ipcRenderer.invoke('chrome-api:downloads:resume', id),
+    download:  (options: any) => ipcRenderer.invoke('chrome-api:downloads:download', options),
+    search:    (query: any) => ipcRenderer.invoke('chrome-api:downloads:search', query),
+    cancel:    (id: string) => ipcRenderer.invoke('chrome-api:downloads:cancel', id),
+    pause:     (id: string) => ipcRenderer.invoke('chrome-api:downloads:pause', id),
+    resume:    (id: string) => ipcRenderer.invoke('chrome-api:downloads:resume', id),
     onCreated: makeEventBridge('chrome-api:downloads:onCreated'),
     onChanged: makeEventBridge('chrome-api:downloads:onChanged'),
   },

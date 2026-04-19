@@ -1,6 +1,7 @@
-import { BaseTool, ToolResponse } from '../base';
 import { Octokit } from '@octokit/rest';
+
 import { getIntegrationService } from '../../services/IntegrationService';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
  * GitHub List Branches Tool - Worker class for execution

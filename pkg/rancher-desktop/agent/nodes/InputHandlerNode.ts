@@ -18,9 +18,10 @@
 //   - Never mutates the latest user message or system messages
 //   - Always returns { type: 'next' } — routing lives in graph edges
 
-import type { BaseThreadState, NodeResult } from './Graph';
-import { type ChatMessage, getTextContent } from '../languagemodels/BaseLanguageModel';
 import { BaseNode, JSON_ONLY_RESPONSE_INSTRUCTIONS } from './BaseNode';
+import { type ChatMessage, getTextContent } from '../languagemodels/BaseLanguageModel';
+
+import type { BaseThreadState, NodeResult } from './Graph';
 
 // ============================================================================
 // CONFIGURATION

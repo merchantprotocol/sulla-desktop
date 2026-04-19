@@ -21,7 +21,14 @@
             class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
             @click="$emit('back-to-vault')"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" class="h-3.5 w-3.5">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              class="h-3.5 w-3.5"
+            >
               <path d="M15 18l-6-6 6-6" />
             </svg>
             Back to Vault
@@ -379,19 +386,21 @@
 </template>
 
 <script setup lang="ts">
-import AgentHeader from './agent/AgentHeader.vue';
-const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
-const emit = defineEmits<{ 'back-to-vault': []; 'create-account': [data: { integrationId: string }] }>();
-import type { Integration } from '@pkg/agent/integrations/types';
-import { popularIntegrations } from '@pkg/agent/integrations/popular';
-import { integrations as fullCatalog } from '@pkg/agent/integrations/catalog';
-import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { getExtensionService } from '@pkg/agent/services/ExtensionService';
-import { formatFuzzyTime } from '@pkg/utils/dateFormat';
-import { useTheme } from '@pkg/composables/useTheme';
-
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+
+import AgentHeader from './agent/AgentHeader.vue';
+
+import { integrations as fullCatalog } from '@pkg/agent/integrations/catalog';
+import { popularIntegrations } from '@pkg/agent/integrations/popular';
+import type { Integration } from '@pkg/agent/integrations/types';
+import { getExtensionService } from '@pkg/agent/services/ExtensionService';
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { useTheme } from '@pkg/composables/useTheme';
+import { formatFuzzyTime } from '@pkg/utils/dateFormat';
+
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+const emit = defineEmits<{ 'back-to-vault': []; 'create-account': [data: { integrationId: string }] }>();
 
 const router = useRouter();
 const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();

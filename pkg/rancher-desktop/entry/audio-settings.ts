@@ -10,7 +10,6 @@ import './agent-tailwind.css';
 
 import usePlugins from './plugins';
 import store from './store';
-
 import AudioSettings from '../pages/AudioSettings.vue';
 await initiateWindowContext();
 

@@ -1,5 +1,6 @@
-import type { Integration } from './types';
 import { nativeIntegrations } from './native';
+
+import type { Integration } from './types';
 export type { Integration } from './types';
 
 /** Always-available integrations (Slack, GitHub, ActivePieces, AI providers) */

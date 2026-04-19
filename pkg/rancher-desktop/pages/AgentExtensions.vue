@@ -570,13 +570,14 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, ref, reactive } from 'vue';
+
 import AgentHeader from './agent/AgentHeader.vue';
-const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import type { MarketplaceEntry, InstalledExtension } from '@pkg/agent/services/ExtensionService';
-
 import { useTheme } from '@pkg/composables/useTheme';
-import { computed, onMounted, ref, reactive } from 'vue';
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
 
 const { isDark, toggleTheme, currentTheme, setTheme, availableThemes, themeGroups } = useTheme();
 const extensionService = getExtensionService();

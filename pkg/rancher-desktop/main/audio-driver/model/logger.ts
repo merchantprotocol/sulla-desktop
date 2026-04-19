@@ -7,6 +7,7 @@
 
 import fs from 'fs';
 import path from 'path';
+
 import { app } from 'electron';
 
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
@@ -45,7 +46,7 @@ function rotate(filePath: string): void {
     const older = `${ filePath }.${ i }`;
     const newer = i === 1 ? filePath : `${ filePath }.${ i - 1 }`;
     try { if (i === MAX_BACKUPS) fs.unlinkSync(older); } catch { /* */ }
-    try { fs.renameSync(newer, older); } catch { /* */ }
+    try { fs.renameSync(newer, older) } catch { /* */ }
   }
 }
 
@@ -53,7 +54,7 @@ function formatLine(level: string, tag: string, message: string, data?: unknown)
   const ts = new Date().toISOString();
   let line = `${ ts } [${ level.toUpperCase() }] [${ tag }] ${ message }`;
   if (data !== undefined) {
-    try { line += ` ${ JSON.stringify(data) }`; } catch { /* */ }
+    try { line += ` ${ JSON.stringify(data) }` } catch { /* */ }
   }
   return `${ line }\n`;
 }
@@ -78,20 +79,20 @@ function writeLog(fileName: string, level: string, tag: string, message: string,
 }
 
 export interface Logger {
-  error: (tag: string, msg: string, data?: unknown) => void;
-  warn: (tag: string, msg: string, data?: unknown) => void;
-  info: (tag: string, msg: string, data?: unknown) => void;
-  debug: (tag: string, msg: string, data?: unknown) => void;
-  getLogDir: () => string;
+  error:      (tag: string, msg: string, data?: unknown) => void;
+  warn:       (tag: string, msg: string, data?: unknown) => void;
+  info:       (tag: string, msg: string, data?: unknown) => void;
+  debug:      (tag: string, msg: string, data?: unknown) => void;
+  getLogDir:  () => string;
   getLogPath: () => string;
 }
 
 export function createLogger(fileName: string): Logger {
   return {
-    error: (tag, msg, data) => writeLog(fileName, 'error', tag, msg, data),
-    warn:  (tag, msg, data) => writeLog(fileName, 'warn', tag, msg, data),
-    info:  (tag, msg, data) => writeLog(fileName, 'info', tag, msg, data),
-    debug: (tag, msg, data) => writeLog(fileName, 'debug', tag, msg, data),
+    error:      (tag, msg, data) => writeLog(fileName, 'error', tag, msg, data),
+    warn:       (tag, msg, data) => writeLog(fileName, 'warn', tag, msg, data),
+    info:       (tag, msg, data) => writeLog(fileName, 'info', tag, msg, data),
+    debug:      (tag, msg, data) => writeLog(fileName, 'debug', tag, msg, data),
     getLogDir,
     getLogPath: () => getLogPath(fileName),
   };

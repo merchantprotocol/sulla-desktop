@@ -1,5 +1,5 @@
-import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { type LLMServiceConfig, type ChatMessage } from './BaseLanguageModel';
+import { OpenAICompatibleService } from './OpenAICompatibleService';
 import { getIntegrationService } from '../services/IntegrationService';
 
 /**

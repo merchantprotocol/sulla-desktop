@@ -16,6 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
+
 import { app } from 'electron';
 
 /** Path to the JSON file where the enabled/disabled preference is persisted. */

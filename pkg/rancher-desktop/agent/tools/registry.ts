@@ -25,14 +25,14 @@ export interface ToolRegistration {
  * Used for registering tool metadata without importing heavy deps.
  */
 export interface ToolManifest {
-  name:            string;
-  description:     string;
-  category:        string;
-  schemaDef:       Record<string, any>;
-  operationTypes?: ToolOperation[];
-  loader:          () => Promise<any>;
+  name:                     string;
+  description:              string;
+  category:                 string;
+  schemaDef:                Record<string, any>;
+  operationTypes?:          ToolOperation[];
+  loader:                   () => Promise<any>;
   /** When true, this tool uses a provider-native format (e.g. Anthropic computer_20250124) */
-  isAnthropicNative?: boolean;
+  isAnthropicNative?:       boolean;
   /** Raw Anthropic tool definition — injected directly, not converted. */
   anthropicToolDefinition?: Record<string, any>;
 }

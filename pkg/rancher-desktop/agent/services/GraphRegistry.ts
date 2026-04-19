@@ -1,11 +1,12 @@
-import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { getCurrentModel, getCurrentMode } from '../languagemodels';
-import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
-import { toolRegistry } from '../tools/registry';
-import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
 import * as fs from 'fs';
 import * as path from 'path';
+
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { getCurrentModel } from '../languagemodels';
+import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
+import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
+import { toolRegistry } from '../tools/registry';
+import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
 
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
@@ -276,7 +277,6 @@ Return exactly 3 alternative approaches, ordered from simplest to most ambitious
 
 Be direct and actionable. No hedging. The agent needs concrete next steps, not analysis.`;
 
-
 const OBSERVATION_AGENT_PROMPT = `You are the observation process for an AI agent.
 
 CRITICAL: You are NOT the primary agent. You do NOT execute tasks, answer
@@ -476,24 +476,24 @@ export const GraphRegistry = {
    * Does not cache in registry (each invocation is ephemeral).
    */
   createSubconscious: async function(opts: {
-    systemPrompt: string;
-    tools: string[];
-    userMessage: string;
-    messages?: any[];
-    maxIterations?: number;
-    temperature?: number;
-    format?: 'json';
-    maxTokens?: number;
-    responseHandler?: (response: string, state: BaseThreadState) => void;
-    parentAbortSignal?: any;
-    agentLabel?: string;
+    systemPrompt:          string;
+    tools:                 string[];
+    userMessage:           string;
+    messages?:             any[];
+    maxIterations?:        number;
+    temperature?:          number;
+    format?:               'json';
+    maxTokens?:            number;
+    responseHandler?:      (response: string, state: BaseThreadState) => void;
+    parentAbortSignal?:    any;
+    agentLabel?:           string;
     parentConversationId?: string;
-    parentWsChannel?: string;
+    parentWsChannel?:      string;
   }): Promise<{
-    graph:    Graph<BaseThreadState>;
-    state:    BaseThreadState;
-    threadId: string;
-  }> {
+      graph:    Graph<BaseThreadState>;
+      state:    BaseThreadState;
+      threadId: string;
+    }> {
     const graph = createSubconsciousGraph();
     const state = await buildSubconsciousState(opts);
     return { graph, state, threadId: state.metadata.threadId };
@@ -531,7 +531,7 @@ export const GraphRegistry = {
       agentLabel:             'summarizer',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
-      parentAbortSignal: (parentState.metadata as any).options?.abort,
+      parentAbortSignal:    (parentState.metadata as any).options?.abort,
       responseHandler(response: string, state: BaseThreadState) {
         let actions: { deletions: Set<string>; summaries: Map<string, string> };
         try {
@@ -551,7 +551,7 @@ export const GraphRegistry = {
         for (let i = 0; i < originalMessages.length; i++) {
           const msgId = originalMessages[i].id;
           const cleanMsg = parentMessages[i] || originalMessages[i];
-          if (cleanMsg.role === 'system') { result.push({ ...cleanMsg, id: msgId }); continue; }
+          if (cleanMsg.role === 'system') { result.push({ ...cleanMsg, id: msgId }); continue }
           if (actions.deletions.has(msgId)) continue;
           if (actions.summaries.has(msgId)) {
             result.push({
@@ -766,8 +766,8 @@ export async function getDefaultAgentId(): Promise<string> {
 export async function getAgentIdForTrigger(triggerType: string): Promise<string> {
   const triggerMap: Record<string, string> = {
     'sulla-desktop': 'sulla-desktop',
-    'workbench': 'sulla-desktop',
-    'heartbeat': 'dreaming-protocol',
+    workbench:       'sulla-desktop',
+    heartbeat:       'dreaming-protocol',
   };
 
   const assigned = triggerMap[triggerType];
@@ -803,13 +803,8 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
   let llmLocal: boolean;
 
   if (heartbeatProvider === 'default' || heartbeatProvider === 'ollama') {
-    if (heartbeatProvider === 'default') {
-      llmModel = await getCurrentModel();
-      llmLocal = (await getCurrentMode()) === 'local';
-    } else {
-      llmModel = await SullaSettingsModel.get('sullaModel', '');
-      llmLocal = true;
-    }
+    llmModel = await getCurrentModel();
+    llmLocal = false;
   } else {
     llmLocal = false;
     try {
@@ -879,7 +874,7 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
 
   console.log(`[GraphRegistry] buildAgentState() — wsChannel="${ wsChannel }", threadId="${ id }"`);
 
-  const mode = await SullaSettingsModel.get('modelMode', 'local');
+  const mode = await SullaSettingsModel.get('modelMode', 'remote');
   const llmModel = mode === 'remote'
     ? await SullaSettingsModel.get('remoteModel', '')
     : await SullaSettingsModel.get('sullaModel', '');
@@ -998,26 +993,26 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
 }
 
 async function buildSubconsciousState(opts: {
-  systemPrompt: string;
-  tools: string[];
-  userMessage: string;
-  messages?: any[];
-  maxIterations?: number;
-  temperature?: number;
-  format?: 'json';
-  maxTokens?: number;
-  responseHandler?: (response: string, state: BaseThreadState) => void;
-  parentAbortSignal?: any;
+  systemPrompt:          string;
+  tools:                 string[];
+  userMessage:           string;
+  messages?:             any[];
+  maxIterations?:        number;
+  temperature?:          number;
+  format?:               'json';
+  maxTokens?:            number;
+  responseHandler?:      (response: string, state: BaseThreadState) => void;
+  parentAbortSignal?:    any;
   /** Label for logging — identifies which subconscious agent this is */
-  agentLabel?: string;
+  agentLabel?:           string;
   /** Parent conversation ID for log tracing */
   parentConversationId?: string;
   /** Parent's WebSocket channel — subconscious agents push thinking messages here */
-  parentWsChannel?: string;
+  parentWsChannel?:      string;
 }): Promise<BaseThreadState> {
   const threadId = `subconscious_${ Date.now() }_${ ++threadCounter }`;
 
-  const mode = await SullaSettingsModel.get('modelMode', 'local');
+  const mode = await SullaSettingsModel.get('modelMode', 'remote');
   const llmModel = mode === 'remote'
     ? await SullaSettingsModel.get('remoteModel', '')
     : await SullaSettingsModel.get('sullaModel', '');

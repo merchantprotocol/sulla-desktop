@@ -27,11 +27,11 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface TranscriptEntry {
-  id: string;
+  id:        string;
   timestamp: Date;
-  text: string;
-  type: 'transcript' | 'wake-command' | 'agent-response';
-  speaker?: string;
+  text:      string;
+  type:      'transcript' | 'wake-command' | 'agent-response';
+  speaker?:  string;
 }
 
 export interface InsightEntry {
@@ -40,33 +40,33 @@ export interface InsightEntry {
 }
 
 export interface AgentMessage {
-  id: string;
+  id:   string;
   time: string;
   text: string;
 }
 
 export interface SecretaryCallbacks {
-  addEntry: (text: string, type?: TranscriptEntry['type'], speaker?: string) => void;
-  updateLastEntry: (text: string) => void;
-  setWakeWordActive: (active: boolean) => void;
-  getWakeWordActive: () => boolean;
-  setAudioLevel: (level: number) => void;
+  addEntry:           (text: string, type?: TranscriptEntry['type'], speaker?: string) => void;
+  updateLastEntry:    (text: string) => void;
+  setWakeWordActive:  (active: boolean) => void;
+  getWakeWordActive:  () => boolean;
+  setAudioLevel:      (level: number) => void;
   setSessionDuration: (duration: string) => void;
-  setIsListening: (listening: boolean) => void;
-  getIsListening: () => boolean;
-  setIsAnalyzing: (analyzing: boolean) => void;
-  getIsMuted: () => boolean;
-  getTranscript: () => TranscriptEntry[];
-  addActionItem: (item: string) => void;
-  getActionItems: () => string[];
-  addDecision: (item: string) => void;
-  getDecisions: () => string[];
-  addInsight: (entry: InsightEntry) => void;
-  addAgentMessage: (msg: AgentMessage) => void;
-  scrollAnalysis: () => void;
-  playTTS: (text: string) => Promise<void>;
-  stopTTS: () => void;
-  sendToChat: (prompt: string, inputSource: string) => Promise<string | null>;
+  setIsListening:     (listening: boolean) => void;
+  getIsListening:     () => boolean;
+  setIsAnalyzing:     (analyzing: boolean) => void;
+  getIsMuted:         () => boolean;
+  getTranscript:      () => TranscriptEntry[];
+  addActionItem:      (item: string) => void;
+  getActionItems:     () => string[];
+  addDecision:        (item: string) => void;
+  getDecisions:       () => string[];
+  addInsight:         (entry: InsightEntry) => void;
+  addAgentMessage:    (msg: AgentMessage) => void;
+  scrollAnalysis:     () => void;
+  playTTS:            (text: string) => Promise<void>;
+  stopTTS:            () => void;
+  sendToChat:         (prompt: string, inputSource: string) => Promise<string | null>;
 }
 
 // ─── Constants ──────────────────────────────────────────────────
@@ -217,7 +217,7 @@ export class SecretaryModeController {
     const response = await this.cb.sendToChat(command, 'secretary-wake');
     if (response) {
       const agentMsg: AgentMessage = {
-        id:   `agent-${Date.now()}`,
+        id:   `agent-${ Date.now() }`,
         time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
         text: response,
       };
@@ -267,12 +267,12 @@ export class SecretaryModeController {
       const elapsed = Math.floor((Date.now() - this.sessionStartTime) / 1000);
       const mins = Math.floor(elapsed / 60);
       const secs = elapsed % 60;
-      this.cb.setSessionDuration(`${mins}:${secs.toString().padStart(2, '0')}`);
+      this.cb.setSessionDuration(`${ mins }:${ secs.toString().padStart(2, '0') }`);
     }, 1000);
   }
 
   private stopSessionTimer(): void {
-    if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null; }
+    if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null }
   }
 
   // ─── Turn-taking accumulator ───────────────────────────────────
@@ -297,7 +297,7 @@ export class SecretaryModeController {
       // Same speaker, no long pause — append to current entry
       const transcript = this.cb.getTranscript();
       const last = transcript[transcript.length - 1];
-      if (last && last.speaker === speaker && last.type === 'transcript') {
+      if (last?.speaker === speaker && last.type === 'transcript') {
         // Add paragraph break on moderate pauses (>2s), otherwise space
         const separator = pauseMs > 2000 ? '\n\n' : ' ';
         last.text += separator + text;
@@ -321,7 +321,7 @@ export class SecretaryModeController {
     // (channel 1) audio are transcribed. The speaker pipeline feeds
     // whisperTranscribe.feedSpeaker() from lifecycle.ts.
     const result = await ipcRenderer.invoke('audio-driver:transcribe-start', {
-      mode: 'secretary',
+      mode:     'secretary',
       language: this.sttLanguage,
     });
 
@@ -361,7 +361,7 @@ export class SecretaryModeController {
 
   stopAgentAudio(): void {
     for (const src of this.agentAudioSources) {
-      try { src.stop(); } catch { /* already stopped */ }
+      try { src.stop() } catch { /* already stopped */ }
     }
     this.agentAudioSources = [];
 
@@ -446,7 +446,7 @@ export class SecretaryModeController {
 
     this.cb.setIsAnalyzing(true);
 
-    const prompt = `Analysis #${analysisId}\n\nFull transcript so far:\n---\n${fullTranscript}\n---\n\nNew segment to analyze:\n---\n${newText}\n---`;
+    const prompt = `Analysis #${ analysisId }\n\nFull transcript so far:\n---\n${ fullTranscript }\n---\n\nNew segment to analyze:\n---\n${ newText }\n---`;
 
     try {
       const response = await this.cb.sendToChat(prompt, 'secretary-analysis');

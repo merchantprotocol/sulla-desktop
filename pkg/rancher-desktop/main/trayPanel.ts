@@ -6,6 +6,7 @@
  */
 
 import path from 'path';
+
 import { BrowserWindow, ipcMain, app } from 'electron';
 
 import mainEvents from '@pkg/main/mainEvents';
@@ -98,10 +99,10 @@ export function toggleTrayPanel(trayBounds: Electron.Rectangle): void {
  * Send a state update to the panel renderer.
  */
 export function sendPanelState(state: {
-  docker?: string;
-  k8s?: string;
+  docker?:     string;
+  k8s?:        string;
   k8sContext?: string;
-  extensions?: Array<{ id: string; label: string; url: string }>;
+  extensions?: { id: string; label: string; url: string }[];
 }): void {
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.webContents.send('tray-panel:state-update', state);
@@ -136,9 +137,9 @@ export function sendAudioSpeakerLevel(level: number): void {
  * Send available audio devices to the panel renderer.
  */
 export function sendAudioDevices(data: {
-  inputs: Array<{ deviceId: string; label: string }>;
-  outputs: Array<{ deviceId: string; label: string }>;
-  activeInput?: string;
+  inputs:        { deviceId: string; label: string }[];
+  outputs:       { deviceId: string; label: string }[];
+  activeInput?:  string;
   activeOutput?: string;
 }): void {
   if (panelWindow && !panelWindow.isDestroyed()) {
@@ -151,12 +152,12 @@ export function sendAudioDevices(data: {
  */
 export function sendAudioDetection(data: {
   statusDotClass: string;
-  statusText: string;
-  noisePct: number;
-  noiseLevel: string;
-  noiseLabel: string;
-  feedbackPct: number;
-  feedbackLabel: string;
+  statusText:     string;
+  noisePct:       number;
+  noiseLevel:     string;
+  noiseLabel:     string;
+  feedbackPct:    number;
+  feedbackLabel:  string;
 }): void {
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.webContents.send('tray-panel:audio-detection', data);
@@ -323,7 +324,7 @@ function registerPanelIpc(): void {
       const cfg = await mainEvents.invoke('settings-fetch');
 
       return {
-        autoStart:        cfg.application.autoStart,
+        autoStart:         cfg.application.autoStart,
         startInBackground: cfg.application.startInBackground,
       };
     } catch {

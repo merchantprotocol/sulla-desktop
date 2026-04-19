@@ -1,18 +1,43 @@
 <template>
-  <div class="track-panel" :class="{ open: tracksOpen }">
+  <div
+    class="track-panel"
+    :class="{ open: tracksOpen }"
+  >
     <div class="track-panel-header">
       Tracks
-      <div class="spacer"></div>
+      <div class="spacer" />
       <span class="disk-info">Disk: {{ diskDisplay }}</span>
     </div>
     <div class="track-lanes">
-      <div v-for="src in sources" :key="src.id" class="track-lane">
-        <div class="track-color" :class="colorMap[src.type] || 'custom'"></div>
-        <div class="track-icon" :style="{ color: src.on ? 'var(--text-muted)' : 'var(--text-dim)' }">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" v-html="iconMap[src.type] || iconMap.mic"></svg>
+      <div
+        v-for="src in sources"
+        :key="src.id"
+        class="track-lane"
+      >
+        <div
+          class="track-color"
+          :class="colorMap[src.type] || 'custom'"
+        />
+        <div
+          class="track-icon"
+          :style="{ color: src.on ? 'var(--text-muted)' : 'var(--text-dim)' }"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            v-html="iconMap[src.type] || iconMap.mic"
+          />
         </div>
-        <span class="track-name" :style="{ opacity: src.on ? 1 : 0.4 }">{{ src.name }}</span>
-        <div class="track-wave" :class="{ recording: recording }">
+        <span
+          class="track-name"
+          :style="{ opacity: src.on ? 1 : 0.4 }"
+        >{{ src.name }}</span>
+        <div
+          class="track-wave"
+          :class="{ recording }"
+        >
           <div class="bars">
             <div
               v-for="j in 100"
@@ -23,22 +48,42 @@
                 height: getTrackBarHeight(src, j - 1) + 'px',
                 opacity: recording ? barOpacity(j - 1) : 0.4,
               }"
-            ></div>
+            />
           </div>
-          <div v-if="recording" class="playhead"></div>
+          <div
+            v-if="recording"
+            class="playhead"
+          />
         </div>
         <span class="track-status">{{ src.on ? src.status : 'off' }}</span>
         <button
           class="track-mute"
           :class="{ muted: !src.on }"
           @click="$emit('toggle-src', src)"
-        >M</button>
+        >
+          M
+        </button>
         <button
           v-if="!src.builtin"
           class="track-remove"
           @click="$emit('remove-source', src.id)"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          ><line
+            x1="18"
+            y1="6"
+            x2="6"
+            y2="18"
+          /><line
+            x1="6"
+            y1="6"
+            x2="18"
+            y2="18"
+          /></svg>
         </button>
       </div>
     </div>
@@ -47,30 +92,30 @@
 
 <script setup lang="ts">
 interface Source {
-  id: string;
-  type: string;
-  name: string;
-  color: string;
-  status: string;
+  id:      string;
+  type:    string;
+  name:    string;
+  color:   string;
+  status:  string;
   builtin: boolean;
-  on: boolean;
+  on:      boolean;
   isVideo: boolean;
 }
 
 const props = defineProps<{
-  sources: Source[];
-  tracksOpen: boolean;
-  recording: boolean;
+  sources:      Source[];
+  tracksOpen:   boolean;
+  recording:    boolean;
   waveformData: Record<string, number[]>;
-  colorMap: Record<string, string>;
-  iconMap: Record<string, string>;
-  diskDisplay: string;
+  colorMap:     Record<string, string>;
+  iconMap:      Record<string, string>;
+  diskDisplay:  string;
 }>();
 
 const waveColorMap: Record<string, string> = {
   screen: '#58a6ff',
   camera: '#5096b3',
-  mic: '#3fb950',
+  mic:    '#3fb950',
   system: '#e3b341',
 };
 

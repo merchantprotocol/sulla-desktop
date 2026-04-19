@@ -84,6 +84,7 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue';
+
 import { useStartupProgress } from './useStartupProgress';
 
 const {

@@ -1,5 +1,5 @@
-import { BaseTool, ToolResponse } from '../base';
 import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
+import { BaseTool, ToolResponse } from '../base';
 import { extractReadableContent } from './readability-extract';
 
 /**
@@ -58,7 +58,7 @@ export class SynthesizeTabsWorker extends BaseTool {
           if (html && html.length > 200) {
             const extracted = await extractReadableContent({
               html,
-              url: asset.url,
+              url:         asset.url,
               extractMode: 'markdown',
             });
             if (extracted?.text && extracted.text.trim().length > 100) {

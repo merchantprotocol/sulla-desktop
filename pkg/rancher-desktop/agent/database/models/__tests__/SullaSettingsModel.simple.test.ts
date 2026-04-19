@@ -3,12 +3,14 @@
  * Testing actual SullaSettingsModel with real Redis and PostgreSQL
  */
 
-import { SullaSettingsModel } from '../SullaSettingsModel';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
+
 import Redis from 'ioredis';
 import { Pool } from 'pg';
+
+import { SullaSettingsModel } from '../SullaSettingsModel';
 
 // Integration test setup - will reveal real interface issues
 describe('SullaSettingsModel Integration Test', () => {

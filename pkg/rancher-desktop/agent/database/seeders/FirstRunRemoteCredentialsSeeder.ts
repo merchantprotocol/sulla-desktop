@@ -1,6 +1,6 @@
+import { integrations } from '../../integrations/catalog';
 import { IntegrationValueModel } from '../models/IntegrationValueModel';
 import { SullaSettingsModel } from '../models/SullaSettingsModel';
-import { integrations } from '../../integrations/catalog';
 
 /**
  * Migrates remote LLM provider credentials that were saved to SullaSettingsModel

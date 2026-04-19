@@ -13,27 +13,25 @@ import BackendHelper, { MANIFEST_CERT_MANAGER, MANIFEST_SPIN_OPERATOR } from '..
 import K3sHelper, { ExtraRequiresReasons, NoCachedK3sVersionsError, ShortVersion } from '../k3sHelper';
 import LimaBackend, { Action, MACHINE_NAME } from '../lima';
 
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import INSTALL_K3S_SCRIPT from '@pkg/assets/scripts/install-k3s';
 import LOGROTATE_K3S_SCRIPT from '@pkg/assets/scripts/logrotate-k3s';
 import SERVICE_CRI_DOCKERD_SCRIPT from '@pkg/assets/scripts/service-cri-dockerd.initd';
 import SERVICE_K3S_SCRIPT from '@pkg/assets/scripts/service-k3s.initd';
+import SULLA_DEPLOYMENTS from '@pkg/assets/sulla-deployments.yaml';
 import * as K8s from '@pkg/backend/k8s';
 import { KubeClient } from '@pkg/backend/kube/client';
 import { LockedFieldError } from '@pkg/config/commandLineOptions';
 import { ContainerEngine } from '@pkg/config/settings';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
+import { instantiateSullaStart } from '@pkg/sulla';
 import clone from '@pkg/utils/clone';
 import { SemanticVersionEntry } from '@pkg/utils/kubeVersions';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { RecursivePartial } from '@pkg/utils/typeUtils';
 import { showMessageBox } from '@pkg/window';
-import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
-
-import SULLA_DEPLOYMENTS from '@pkg/assets/sulla-deployments.yaml';
-
-import { instantiateSullaStart } from '@pkg/sulla';
 
 const console = Logging.kube;
 

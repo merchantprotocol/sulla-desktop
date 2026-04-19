@@ -1,4 +1,5 @@
 import { getIntegrationService } from '../../services/IntegrationService';
+
 import type {
   EndpointConfig,
   LoadedIntegration,
@@ -12,9 +13,9 @@ const LOG = '[ConfigApiClient]';
  * Preserves the structured error body so callers can inspect status, method, and details.
  */
 export class IntegrationApiError extends Error {
-  public readonly statusCode: number;
-  public readonly method: string;
-  public readonly path: string;
+  public readonly statusCode:    number;
+  public readonly method:        string;
+  public readonly path:          string;
   public readonly upstreamError: any;
 
   constructor(statusCode: number, method: string, path: string, upstreamError: any) {
@@ -372,7 +373,6 @@ export class ConfigApiClient {
 
     return { items, nextPageToken, prevPageToken, raw: data };
   }
-
 }
 
 // ── Utilities ───────────────────────────────────────────────────

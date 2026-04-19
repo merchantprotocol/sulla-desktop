@@ -19,9 +19,11 @@
  *   - `gateway-audio-send`      → send a chunk of audio data
  */
 
-import { getIntegrationService } from './IntegrationService';
-import Logging from '@pkg/utils/logging';
 import * as os from 'os';
+
+import { getIntegrationService } from './IntegrationService';
+
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
@@ -34,21 +36,21 @@ const WebSocket = __non_webpack_require__('ws');
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface GatewayListenerState {
-  lobbyConnected: boolean;
-  audioConnected: boolean;
-  sessionId: string | null;
-  callId: string | null;
-  error: string | null;
+  lobbyConnected:         boolean;
+  audioConnected:         boolean;
+  sessionId:              string | null;
+  callId:                 string | null;
+  error:                  string | null;
   lobbyReconnectAttempts: number;
-  audioReconnecting: boolean;
+  audioReconnecting:      boolean;
 }
 
 export interface GatewayEvent {
-  event_type: string;
-  sessionId?: string;
-  callId?: string;
-  state?: string;
-  timestamp?: string;
+  event_type:    string;
+  sessionId?:    string;
+  callId?:       string;
+  state?:        string;
+  timestamp?:    string;
   [key: string]: unknown;
 }
 
@@ -79,16 +81,16 @@ export function getGatewayListenerService(): GatewayListenerService {
 
 export class GatewayListenerService {
   // Lobby WebSocket
-  private lobbyWs: InstanceType<typeof WebSocket> | null = null;
+  private lobbyWs:             InstanceType<typeof WebSocket> | null = null;
   private lobbyReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private lobbyReconnectDelay = RECONNECT_DELAY_MS;
-  private lobbyPingTimer: ReturnType<typeof setTimeout> | null = null;
+  private lobbyPingTimer:      ReturnType<typeof setTimeout> | null = null;
   private lobbyIntentional = false;
 
   // Audio WebSocket
-  private audioWs: InstanceType<typeof WebSocket> | null = null;
-  private activeSessionId: string | null = null;
-  private activeCallId: string | null = null;
+  private audioWs:             InstanceType<typeof WebSocket> | null = null;
+  private activeSessionId:     string | null = null;
+  private activeCallId:        string | null = null;
   private audioReconnecting = false;
   private audioReconnectAttempts = 0;
   private audioReconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -101,7 +103,7 @@ export class GatewayListenerService {
   private lobbyReconnectAttempts = 0;
 
   // Event subscribers (main-process consumers)
-  private listeners: Set<EventCallback> = new Set();
+  private listeners = new Set<EventCallback>();
 
   // Last error for status reporting
   private lastError: string | null = null;
@@ -111,7 +113,7 @@ export class GatewayListenerService {
   /** Subscribe to gateway events. Returns unsubscribe function. */
   onEvent(cb: EventCallback): () => void {
     this.listeners.add(cb);
-    return () => { this.listeners.delete(cb); };
+    return () => { this.listeners.delete(cb) };
   }
 
   /** Connect the lobby listener WebSocket. */
@@ -123,7 +125,7 @@ export class GatewayListenerService {
 
     // Kill any existing connection (including zombies)
     if (this.lobbyWs) {
-      try { this.lobbyWs.terminate(); } catch (err) { console.warn('[GatewayListener] Lobby terminate error:', err); }
+      try { this.lobbyWs.terminate() } catch (err) { console.warn('[GatewayListener] Lobby terminate error:', err) }
       this.lobbyWs = null;
     }
 
@@ -145,7 +147,7 @@ export class GatewayListenerService {
     this.clearLobbyReconnect();
     this.clearPingTimer();
     if (this.lobbyWs) {
-      try { this.lobbyWs.terminate(); } catch (err) { console.warn('[GatewayListener] Lobby terminate error:', err); }
+      try { this.lobbyWs.terminate() } catch (err) { console.warn('[GatewayListener] Lobby terminate error:', err) }
       this.lobbyWs = null;
     }
   }
@@ -153,13 +155,13 @@ export class GatewayListenerService {
   /** Get current connection state. */
   getStatus(): GatewayListenerState {
     return {
-      lobbyConnected: this.lobbyWs?.readyState === WebSocket.OPEN,
-      audioConnected: this.audioWs?.readyState === WebSocket.OPEN,
-      sessionId: this.activeSessionId,
-      callId: this.activeCallId,
-      error: this.lastError,
+      lobbyConnected:         this.lobbyWs?.readyState === WebSocket.OPEN,
+      audioConnected:         this.audioWs?.readyState === WebSocket.OPEN,
+      sessionId:              this.activeSessionId,
+      callId:                 this.activeCallId,
+      error:                  this.lastError,
       lobbyReconnectAttempts: this.lobbyReconnectAttempts,
-      audioReconnecting: this.audioReconnecting,
+      audioReconnecting:      this.audioReconnecting,
     };
   }
 
@@ -173,13 +175,13 @@ export class GatewayListenerService {
 
     // Create session via REST API
     const baseUrl = config.url.replace(/\/+$/, '');
-    const sessionUrl = `${baseUrl}/api/desktop/sessions`;
-    console.log(`[GatewayListener] Creating audio session at ${sessionUrl}`);
+    const sessionUrl = `${ baseUrl }/api/desktop/sessions`;
+    console.log(`[GatewayListener] Creating audio session at ${ sessionUrl }`);
     const response = await this.gatewayFetch(sessionUrl, {
-      method: 'POST',
+      method:  'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.apiKey}`,
+        'Content-Type':  'application/json',
+        Authorization:  `Bearer ${ config.apiKey }`,
       },
       body: JSON.stringify({
         callerName: callerName || 'Sulla Desktop',
@@ -189,7 +191,7 @@ export class GatewayListenerService {
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new Error(`Gateway session creation failed (${response.status}): ${body}`);
+      throw new Error(`Gateway session creation failed (${ response.status }): ${ body }`);
     }
 
     const result = await response.json() as { sessionId: string; callId: string };
@@ -218,7 +220,7 @@ export class GatewayListenerService {
 
     const baseUrl = config.url.replace(/\/+$/, '');
     const wsUrl = this.httpToWs(baseUrl);
-    const audioUrl = `${wsUrl}/ws/audio/${sessionId}`;
+    const audioUrl = `${ wsUrl }/ws/audio/${ sessionId }`;
     const wsOptions = this.getWsOptions(config);
 
     this.audioWs = new WebSocket(audioUrl, wsOptions);
@@ -230,13 +232,13 @@ export class GatewayListenerService {
         clearTimeout(timeout);
         this.audioReconnecting = false;
         this.audioReconnectAttempts = 0;
-        console.log(`[GatewayListener] Audio stream connected for session ${sessionId}`);
+        console.log(`[GatewayListener] Audio stream connected for session ${ sessionId }`);
         resolve();
       });
 
       this.audioWs!.on('error', (err: Error) => {
         clearTimeout(timeout);
-        console.error(`[GatewayListener] Audio stream error: ${err.message}`);
+        console.error(`[GatewayListener] Audio stream error: ${ err.message }`);
         reject(err);
       });
     });
@@ -245,18 +247,18 @@ export class GatewayListenerService {
     // The connection-phase error handler above only covers the initial handshake;
     // this one covers errors after the socket is open (ECONNRESET, etc.).
     this.audioWs.on('error', (err: Error) => {
-      console.error(`[GatewayListener] Audio stream error (post-open): ${err.message}`);
-      this.lastError = `Audio error: ${err.message}`;
+      console.error(`[GatewayListener] Audio stream error (post-open): ${ err.message }`);
+      this.lastError = `Audio error: ${ err.message }`;
       // 'close' event will fire after this, triggering reconnect
     });
 
     this.audioWs.on('message', (raw: Buffer | string) => {
       const msg = typeof raw === 'string' ? raw : raw.toString('utf8');
-      console.log(`[GatewayListener] Audio WS message: ${msg.slice(0, 500)}`);
+      console.log(`[GatewayListener] Audio WS message: ${ msg.slice(0, 500) }`);
     });
 
     this.audioWs.on('close', (code: number) => {
-      console.log(`[GatewayListener] Audio stream closed for session ${this.activeSessionId} (code ${code})`);
+      console.log(`[GatewayListener] Audio stream closed for session ${ this.activeSessionId } (code ${ code })`);
       this.audioWs = null;
 
       // Reconnect if the close was unexpected and we still have an active session
@@ -281,14 +283,14 @@ export class GatewayListenerService {
 
     const baseUrl = config.url.replace(/\/+$/, '');
     const wsUrl = this.httpToWs(baseUrl);
-    const listenerUrl = `${wsUrl}/ws/listener/${sessionId}?apiKey=${encodeURIComponent(config.apiKey)}`;
+    const listenerUrl = `${ wsUrl }/ws/listener/${ sessionId }?apiKey=${ encodeURIComponent(config.apiKey) }`;
     const wsOptions = this.getWsOptions(config);
 
-    console.log(`[GatewayListener] Connecting session listener for ${sessionId}`);
+    console.log(`[GatewayListener] Connecting session listener for ${ sessionId }`);
     this.sessionListenerWs = new WebSocket(listenerUrl, wsOptions);
 
     this.sessionListenerWs.on('open', () => {
-      console.log(`[GatewayListener] Session listener connected for ${sessionId}`);
+      console.log(`[GatewayListener] Session listener connected for ${ sessionId }`);
       // Opt into reliable delivery on the session channel too
       if (this.sessionListenerWs?.readyState === WebSocket.OPEN) {
         this.sessionListenerWs.send(JSON.stringify({ event_type: 'capabilities', reliable_delivery: true }));
@@ -310,15 +312,15 @@ export class GatewayListenerService {
           return;
         }
 
-        console.log(`[GatewayListener] Session event: ${event.event_type} for ${sessionId} (listeners: ${this.listeners.size})`);
+        console.log(`[GatewayListener] Session event: ${ event.event_type } for ${ sessionId } (listeners: ${ this.listeners.size })`);
         this.emit(event);
       } catch {
-        console.warn(`[GatewayListener] Session listener non-JSON message: ${raw.slice(0, 200)}`);
+        console.warn(`[GatewayListener] Session listener non-JSON message: ${ raw.slice(0, 200) }`);
       }
     });
 
     this.sessionListenerWs.on('error', (err: Error) => {
-      console.error(`[GatewayListener] Session listener error: ${err.message}`);
+      console.error(`[GatewayListener] Session listener error: ${ err.message }`);
       // Null the ref so closeSessionListener() doesn't try to terminate an errored socket.
       // The 'close' event should fire after this and trigger reconnect, but if it doesn't
       // (some ws versions), we schedule reconnect defensively here too.
@@ -326,7 +328,7 @@ export class GatewayListenerService {
     });
 
     this.sessionListenerWs.on('close', (code: number) => {
-      console.log(`[GatewayListener] Session listener closed (code ${code})`);
+      console.log(`[GatewayListener] Session listener closed (code ${ code })`);
       this.sessionListenerWs = null;
 
       // Reconnect if the session is still active and we didn't close intentionally
@@ -338,7 +340,7 @@ export class GatewayListenerService {
               if (cfg) this.connectSessionListener(cfg);
               else console.warn('[GatewayListener] Session listener reconnect skipped — no config');
             }).catch((err) => {
-              console.error(`[GatewayListener] Session listener reconnect config error: ${err.message || err}`);
+              console.error(`[GatewayListener] Session listener reconnect config error: ${ err.message || err }`);
             });
           }
         }, 2000);
@@ -348,15 +350,15 @@ export class GatewayListenerService {
 
   private closeSessionListener(): void {
     if (this.sessionListenerWs) {
-      try { this.sessionListenerWs.terminate(); } catch (err) { console.warn('[GatewayListener] Session listener terminate error:', err); }
+      try { this.sessionListenerWs.terminate() } catch (err) { console.warn('[GatewayListener] Session listener terminate error:', err) }
       this.sessionListenerWs = null;
     }
   }
 
   private scheduleAudioReconnect(): void {
     if (this.audioReconnectAttempts >= AUDIO_MAX_RECONNECT_ATTEMPTS) {
-      const msg = `Audio reconnect failed after ${AUDIO_MAX_RECONNECT_ATTEMPTS} attempts`;
-      console.error(`[GatewayListener] ${msg}`);
+      const msg = `Audio reconnect failed after ${ AUDIO_MAX_RECONNECT_ATTEMPTS } attempts`;
+      console.error(`[GatewayListener] ${ msg }`);
       this.lastError = msg;
       this.audioReconnecting = false;
       return;
@@ -366,7 +368,7 @@ export class GatewayListenerService {
     this.audioReconnectAttempts++;
     const delay = AUDIO_RECONNECT_DELAY_MS * this.audioReconnectAttempts; // linear backoff
 
-    console.log(`[GatewayListener] Audio reconnect attempt ${this.audioReconnectAttempts}/${AUDIO_MAX_RECONNECT_ATTEMPTS} in ${delay}ms`);
+    console.log(`[GatewayListener] Audio reconnect attempt ${ this.audioReconnectAttempts }/${ AUDIO_MAX_RECONNECT_ATTEMPTS } in ${ delay }ms`);
 
     this.audioReconnectTimer = setTimeout(async() => {
       this.audioReconnectTimer = null;
@@ -375,7 +377,7 @@ export class GatewayListenerService {
         if (!config || !this.activeSessionId) return;
         await this.connectAudioWs(config);
       } catch (err: any) {
-        console.error(`[GatewayListener] Audio reconnect failed: ${err.message}`);
+        console.error(`[GatewayListener] Audio reconnect failed: ${ err.message }`);
         // The close handler on the new WS will trigger another scheduleAudioReconnect
         // only if connectAudioWs threw before the close handler was attached.
         // In that case, try again:
@@ -395,10 +397,10 @@ export class GatewayListenerService {
    */
   private audioChunkCount = 0;
 
-  sendAudio(data: Buffer | ArrayBuffer, channel: number = 0): void {
+  sendAudio(data: Buffer | ArrayBuffer, channel = 0): void {
     if (!this.audioWs || this.audioWs.readyState !== WebSocket.OPEN) {
       if (this.audioChunkCount === 0) {
-        console.warn(`[GatewayListener] sendAudio called but WebSocket not open (ws=${!!this.audioWs}, readyState=${this.audioWs?.readyState})`);
+        console.warn(`[GatewayListener] sendAudio called but WebSocket not open (ws=${ !!this.audioWs }, readyState=${ this.audioWs?.readyState })`);
       }
 
       return;
@@ -406,7 +408,7 @@ export class GatewayListenerService {
 
     // Skip if the outbound buffer is backed up — prevents memory runaway
     if (this.audioWs.bufferedAmount > AUDIO_BACKPRESSURE_THRESHOLD) {
-      console.warn(`[GatewayListener] Audio backpressure — skipping chunk (buffered: ${this.audioWs.bufferedAmount})`);
+      console.warn(`[GatewayListener] Audio backpressure — skipping chunk (buffered: ${ this.audioWs.bufferedAmount })`);
 
       return;
     }
@@ -430,12 +432,12 @@ export class GatewayListenerService {
 
     this.audioChunkCount++;
     if (this.audioChunkCount <= 3 || this.audioChunkCount % 100 === 0) {
-      console.log(`[GatewayListener] Sending audio chunk #${this.audioChunkCount} ch=${channel} (${buf.length} bytes)`);
+      console.log(`[GatewayListener] Sending audio chunk #${ this.audioChunkCount } ch=${ channel } (${ buf.length } bytes)`);
     }
     try {
       this.audioWs.send(buf);
     } catch (err: any) {
-      console.error(`[GatewayListener] Audio send failed (chunk #${this.audioChunkCount}): ${err.message}`);
+      console.error(`[GatewayListener] Audio send failed (chunk #${ this.audioChunkCount }): ${ err.message }`);
     }
   }
 
@@ -467,19 +469,19 @@ export class GatewayListenerService {
         const config = await this.getConfig();
         if (config) {
           const baseUrl = config.url.replace(/\/+$/, '');
-          const resp = await this.gatewayFetch(`${baseUrl}/api/desktop/sessions/${sessionId}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${config.apiKey}` },
+          const resp = await this.gatewayFetch(`${ baseUrl }/api/desktop/sessions/${ sessionId }`, {
+            method:  'DELETE',
+            headers: { Authorization: `Bearer ${ config.apiKey }` },
           });
           if (!resp.ok) {
-            console.warn(`[GatewayListener] Session DELETE failed (${resp.status}) for ${sessionId}`);
+            console.warn(`[GatewayListener] Session DELETE failed (${ resp.status }) for ${ sessionId }`);
           }
         }
       } catch (err: any) {
-        console.error(`[GatewayListener] Session DELETE error for ${sessionId}: ${err.message}`);
+        console.error(`[GatewayListener] Session DELETE error for ${ sessionId }: ${ err.message }`);
       }
 
-      console.log(`[GatewayListener] Session ended: ${sessionId}`);
+      console.log(`[GatewayListener] Session ended: ${ sessionId }`);
     }
   }
 
@@ -494,15 +496,15 @@ export class GatewayListenerService {
 
     const wsUrl = this.httpToWs(config.url.replace(/\/+$/, ''));
     const params = new URLSearchParams({
-      appName: 'SullaDesktop',
+      appName:    'SullaDesktop',
       appVersion: process.env.APP_VERSION || '1.0.0',
-      hostname: os.hostname(),
+      hostname:   os.hostname(),
     });
 
-    const url = `${wsUrl}/ws/listener?${params}`;
+    const url = `${ wsUrl }/ws/listener?${ params }`;
     const wsOptions = {
       ...this.getWsOptions(config),
-      headers: { 'Authorization': `Bearer ${config.apiKey}` },
+      headers: { Authorization: `Bearer ${ config.apiKey }` },
     };
 
     console.log('[GatewayListener] Connecting to lobby...');
@@ -541,19 +543,19 @@ export class GatewayListenerService {
         // Transcript events are delivered via the per-session listener WS, not the lobby.
         // Skip them here to prevent duplicate messages in the renderer.
         if (event.event_type === 'transcript_turn' || event.event_type === 'transcript_partial') {
-          console.log(`[GatewayListener] Lobby: ignoring ${event.event_type} (delivered via session listener)`);
+          console.log(`[GatewayListener] Lobby: ignoring ${ event.event_type } (delivered via session listener)`);
           return;
         }
 
-        console.log(`[GatewayListener] Lobby event: ${event.event_type} (listeners: ${this.listeners.size})`);
+        console.log(`[GatewayListener] Lobby event: ${ event.event_type } (listeners: ${ this.listeners.size })`);
         this.emit(event);
       } catch (err) {
-        console.warn(`[GatewayListener] Lobby non-JSON message: ${data.toString().slice(0, 200)}`);
+        console.warn(`[GatewayListener] Lobby non-JSON message: ${ data.toString().slice(0, 200) }`);
       }
     });
 
     this.lobbyWs.on('close', (code: number, reason: Buffer) => {
-      console.log(`[GatewayListener] Lobby closed: ${code} ${reason?.toString()}`);
+      console.log(`[GatewayListener] Lobby closed: ${ code } ${ reason?.toString() }`);
       this.lobbyWs = null;
       this.clearPingTimer();
 
@@ -574,13 +576,13 @@ export class GatewayListenerService {
     this.lobbyReconnectAttempts++;
 
     if (this.lobbyReconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-      const msg = `Lobby reconnect gave up after ${MAX_RECONNECT_ATTEMPTS} attempts`;
-      console.error(`[GatewayListener] ${msg}`);
+      const msg = `Lobby reconnect gave up after ${ MAX_RECONNECT_ATTEMPTS } attempts`;
+      console.error(`[GatewayListener] ${ msg }`);
       this.lastError = msg;
       return;
     }
 
-    console.log(`[GatewayListener] Reconnecting lobby in ${this.lobbyReconnectDelay}ms (attempt ${this.lobbyReconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+    console.log(`[GatewayListener] Reconnecting lobby in ${ this.lobbyReconnectDelay }ms (attempt ${ this.lobbyReconnectAttempts }/${ MAX_RECONNECT_ATTEMPTS })...`);
     this.lobbyReconnectTimer = setTimeout(async() => {
       this.lobbyReconnectTimer = null;
       try {
@@ -626,7 +628,7 @@ export class GatewayListenerService {
       try {
         this.lobbyWs.send(JSON.stringify(msg));
       } catch (err: any) {
-        console.error(`[GatewayListener] Lobby send failed: ${err.message}`);
+        console.error(`[GatewayListener] Lobby send failed: ${ err.message }`);
       }
     }
   }
@@ -685,14 +687,14 @@ export class GatewayListenerService {
     try {
       const { hostname } = new URL(url);
 
-      return hostname === 'localhost'
-        || hostname.endsWith('.localhost')
-        || hostname === '127.0.0.1'
-        || hostname.startsWith('127.')
-        || hostname === '0.0.0.0'
-        || hostname === '::1'
-        || hostname === '[::1]'
-        || hostname.endsWith('.local');
+      return hostname === 'localhost' ||
+        hostname.endsWith('.localhost') ||
+        hostname === '127.0.0.1' ||
+        hostname.startsWith('127.') ||
+        hostname === '0.0.0.0' ||
+        hostname === '::1' ||
+        hostname === '[::1]' ||
+        hostname.endsWith('.local');
     } catch {
       return false;
     }

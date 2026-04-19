@@ -46,7 +46,7 @@ ipcRenderer.on('tray-panel:auth-state', (_event, state) => {
 });
 
 // Login form submission
-document.getElementById('login-form').addEventListener('submit', async (e) => {
+document.getElementById('login-form').addEventListener('submit', async(e) => {
   e.preventDefault();
   const pwInput = document.getElementById('login-password');
   const errEl = document.getElementById('login-error');
@@ -95,7 +95,7 @@ sidebarBtns.forEach(btn => {
 
     // Show target panel
     panels.forEach(p => p.classList.remove('active'));
-    const panel = document.getElementById(`panel-${target}`);
+    const panel = document.getElementById(`panel-${ target }`);
     if (panel) panel.classList.add('active');
   });
 });
@@ -199,17 +199,17 @@ toggleBackground.addEventListener('change', () => {
 // ── State updates from main process ─────────────────────────────────────
 
 const STATE_MAP = {
-  STOPPED:  { cls: 'off',      label: 'Stopped' },
+  STOPPED:  { cls: 'off', label: 'Stopped' },
   STARTING: { cls: 'starting', label: 'Starting...' },
-  STARTED:  { cls: 'running',  label: 'Running' },
+  STARTED:  { cls: 'running', label: 'Running' },
   STOPPING: { cls: 'starting', label: 'Stopping...' },
-  ERROR:    { cls: 'error',    label: 'Error' },
-  DISABLED: { cls: 'off',      label: 'Disabled' },
+  ERROR:    { cls: 'error', label: 'Error' },
+  DISABLED: { cls: 'off', label: 'Disabled' },
 };
 
 function updateDot(dotEl, statusEl, state) {
   const mapped = STATE_MAP[state] || STATE_MAP.STOPPED;
-  dotEl.className = `dot ${mapped.cls}`;
+  dotEl.className = `dot ${ mapped.cls }`;
   statusEl.textContent = mapped.label;
 }
 
@@ -239,7 +239,7 @@ ipcRenderer.on('tray-panel:state-update', (_event, state) => {
   }
 
   if (state.k8sContext) {
-    document.getElementById('k8s-status').textContent += ` (${state.k8sContext})`;
+    document.getElementById('k8s-status').textContent += ` (${ state.k8sContext })`;
   }
 
   if (state.extensions) {
@@ -258,9 +258,9 @@ function renderExtensions(extensions) {
   }
 
   list.innerHTML = extensions.map(ext => `
-    <button class="ext-item" data-url="${ext.url}">
-      <span class="ext-icon">${ext.label.charAt(0).toUpperCase()}</span>
-      ${ext.label}
+    <button class="ext-item" data-url="${ ext.url }">
+      <span class="ext-icon">${ ext.label.charAt(0).toUpperCase() }</span>
+      ${ ext.label }
     </button>
   `).join('');
 

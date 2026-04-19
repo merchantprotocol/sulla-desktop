@@ -6,8 +6,9 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import * as monaco from 'monaco-editor';
+import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
+
 import { applyMonacoTheme } from './monacoThemeBridge';
 
 const EXT_LANGUAGE_MAP: Record<string, string> = {

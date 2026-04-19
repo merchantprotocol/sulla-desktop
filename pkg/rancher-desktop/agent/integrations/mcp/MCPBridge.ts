@@ -6,8 +6,6 @@
  */
 
 import { MCPClient } from './MCPClient';
-import type { MCPToolDefinition, MCPToolCallResult } from './MCPClient';
-import { getIntegrationService } from '../../services/IntegrationService';
 import {
   generateConfigs,
   removeConfigs,
@@ -15,19 +13,22 @@ import {
   type GenerateResult,
   type DiffResult,
 } from './MCPConfigGenerator';
+import { getIntegrationService } from '../../services/IntegrationService';
+
+import type { MCPToolDefinition, MCPToolCallResult } from './MCPClient';
 
 const LOG = '[MCPBridge]';
 const INTEGRATION_ID = 'mcp';
 
 export interface MCPEndpoint {
-  name:        string;
-  method:      string;
-  path:        string;
-  description: string;
-  auth:        string;
-  queryParams: { name: string; type: string; required: boolean; description: string }[];
+  name:         string;
+  method:       string;
+  path:         string;
+  description:  string;
+  auth:         string;
+  queryParams:  { name: string; type: string; required: boolean; description: string }[];
   /** Account ID that owns this tool (for routing) */
-  accountId:   string;
+  accountId:    string;
   /** Account label for display */
   accountLabel: string;
 }
@@ -291,9 +292,9 @@ export class MCPBridge {
     for (const [name, schema] of Object.entries(inputSchema.properties || {})) {
       params.push({
         name,
-        type:        (schema as any).type || 'string',
+        type:        (schema).type || 'string',
         required:    required.has(name),
-        description: (schema as any).description || '',
+        description: (schema).description || '',
       });
     }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, afterEach } from '@jest/globals';
 
-import { BrowseToolsWorker } from '../browse_tools';
 import { toolRegistry } from '../../registry';
+import { BrowseToolsWorker } from '../browse_tools';
 
 // Snapshot originals so we can restore after each test
 const originalGetCategories = toolRegistry.getCategories.bind(toolRegistry);

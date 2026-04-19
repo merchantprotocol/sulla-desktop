@@ -15,9 +15,10 @@
  *            VOICE:SPEAK:FLUSH, VOICE:SPEAK:EXTRACT_POST
  */
 
-import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
-import type { Extractor, StreamContext, DispatchFn, VoiceLogFn } from './Extractor';
 import { VOICE_MODE_PROMPT } from '../prompts/voiceModes';
+
+import type { Extractor, StreamContext, DispatchFn, VoiceLogFn } from './Extractor';
+import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
 // ─── Constants ──────────────────────────────────────────────────
 

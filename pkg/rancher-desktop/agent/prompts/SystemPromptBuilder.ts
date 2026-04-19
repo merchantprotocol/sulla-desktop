@@ -19,57 +19,57 @@ import type { ChatMode } from '../controllers/ChatController';
 
 export interface PromptSection {
   /** Unique section identifier (e.g. 'soul', 'safety', 'tooling') */
-  id: string;
+  id:             string;
   /** Rendered prompt text */
-  content: string;
+  content:        string;
   /** Sort order — lower = earlier in the prompt */
-  priority: number;
+  priority:       number;
   /** Whether this section is stable (cacheable) or dynamic (changes per turn) */
   cacheStability: 'stable' | 'dynamic';
 }
 
 export interface PromptBuildContext {
   /** Prompt mode: full (main agent), minimal (subagents), local (condensed for local LLMs), none (pass-through) */
-  mode: 'full' | 'minimal' | 'local' | 'none';
+  mode:                  'full' | 'minimal' | 'local' | 'none';
   /** Agent identifier (e.g. 'observer', 'code-researcher') */
-  agentId: string;
+  agentId:               string;
   /** Parsed agent config.yaml, if available */
-  agentConfig: AgentConfig | null;
+  agentConfig:           AgentConfig | null;
   /** LLM provider name */
-  provider: 'anthropic' | 'openai' | 'ollama' | 'google' | string;
+  provider:              'anthropic' | 'openai' | 'ollama' | 'google' | string;
   /** Current chat mode */
-  chatMode: ChatMode;
+  chatMode:              ChatMode;
   /** User trust level */
-  trustLevel: 'trusted' | 'verify' | 'untrusted';
+  trustLevel:            'trusted' | 'verify' | 'untrusted';
   /** Whether this is a sub-agent */
-  isSubAgent: boolean;
+  isSubAgent:            boolean;
   /** Whether this is the heartbeat (autonomous) agent */
-  isHeartbeat: boolean;
+  isHeartbeat:           boolean;
   /** WebSocket channel name */
-  wsChannel: string;
+  wsChannel:             string;
   /** Template variables for {{placeholder}} substitution */
-  templateVars: Record<string, string>;
+  templateVars:          Record<string, string>;
   /** Section overrides from agent .md files: section_id → file content */
   agentSectionOverrides: Map<string, string>;
   /** Sections to exclude entirely (from config.yaml exclude_sections) */
-  excludeSections: Set<string>;
+  excludeSections:       Set<string>;
   /** Base prompt passed by the caller (node-specific content) */
-  basePrompt: string;
+  basePrompt:            string;
 }
 
 export interface AgentConfig {
-  name?: string;
-  prompt?: string;
-  tools?: string[];
-  integrations?: string[];
-  excludeSoul?: boolean;
+  name?:             string;
+  prompt?:           string;
+  tools?:            string[];
+  integrations?:     string[];
+  excludeSoul?:      boolean;
   exclude_sections?: string[];
-  [key: string]: any;
+  [key: string]:     any;
 }
 
 export interface BuiltPrompt {
   /** Full prompt text (joined with \n\n for all providers) */
-  text: string;
+  text:             string;
   /** Anthropic cache-optimized content blocks */
   anthropicSystem?: AnthropicSystemBlock[];
   /** Which sections were included in the build */
@@ -77,8 +77,8 @@ export interface BuiltPrompt {
 }
 
 export interface AnthropicSystemBlock {
-  type: 'text';
-  text: string;
+  type:           'text';
+  text:           string;
   cache_control?: { type: 'ephemeral' };
 }
 
@@ -87,10 +87,10 @@ export type SectionFactory = (ctx: PromptBuildContext) => PromptSection | null |
 
 /** Registered section with its factory and metadata */
 interface RegisteredSection {
-  id: string;
+  id:      string;
   factory: SectionFactory;
   /** Which modes this section is enabled for */
-  modes: Set<string>;
+  modes:   Set<string>;
 }
 
 // ============================================================================

@@ -14,13 +14,14 @@
  * - chrome.runtime → EventEmitter-based message bus
  */
 
-import Electron, { WebContentsView, session } from 'electron';
 import { EventEmitter } from 'events';
 
-import { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
+import Electron, { WebContentsView, session } from 'electron';
+
 import type { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { hostBridgeProxy } from '@pkg/agent/scripts/injected/HostBridgeProxy';
 import Logging from '@pkg/utils/logging';
+import { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
 
 import type {
   ChromeApi,
@@ -171,32 +172,32 @@ export class ChromeApiService implements ChromeApi {
   private tabCounter = 0;
 
   // Events
-  private tabCreatedEvent  = new ChromeEventImpl<[ChromeTab]>();
-  private tabRemovedEvent  = new ChromeEventImpl<[string]>();
-  private tabUpdatedEvent  = new ChromeEventImpl<[string, TabChangeInfo, ChromeTab]>();
-  private alarmEvent       = new ChromeEventImpl<[ChromeAlarm]>();
-  private webReqBeforeRequest     = new ChromeEventImpl<[WebRequestDetails]>();
+  private tabCreatedEvent = new ChromeEventImpl<[ChromeTab]>();
+  private tabRemovedEvent = new ChromeEventImpl<[string]>();
+  private tabUpdatedEvent = new ChromeEventImpl<[string, TabChangeInfo, ChromeTab]>();
+  private alarmEvent = new ChromeEventImpl<[ChromeAlarm]>();
+  private webReqBeforeRequest = new ChromeEventImpl<[WebRequestDetails]>();
   private webReqBeforeSendHeaders = new ChromeEventImpl<[WebRequestHeadersDetails]>();
-  private webReqHeadersReceived   = new ChromeEventImpl<[WebRequestResponseDetails]>();
-  private webReqCompleted         = new ChromeEventImpl<[WebRequestResponseDetails]>();
-  private webReqErrorOccurred     = new ChromeEventImpl<[WebRequestDetails & { error: string }]>();
+  private webReqHeadersReceived = new ChromeEventImpl<[WebRequestResponseDetails]>();
+  private webReqCompleted = new ChromeEventImpl<[WebRequestResponseDetails]>();
+  private webReqErrorOccurred = new ChromeEventImpl<[WebRequestDetails & { error: string }]>();
   private contextMenuClickedEvent = new ChromeEventImpl<[ContextMenuClickInfo, ChromeTab | null]>();
   private notificationClickedEvent = new ChromeEventImpl<[string]>();
-  private notificationClosedEvent  = new ChromeEventImpl<[string, boolean]>();
+  private notificationClosedEvent = new ChromeEventImpl<[string, boolean]>();
   private webNavBeforeNavigate = new ChromeEventImpl<[WebNavigationDetails]>();
-  private webNavCommitted      = new ChromeEventImpl<[WebNavigationDetails]>();
-  private webNavCompleted      = new ChromeEventImpl<[WebNavigationDetails]>();
-  private webNavErrorOccurred  = new ChromeEventImpl<[WebNavigationErrorDetails]>();
-  private commandEvent         = new ChromeEventImpl<[string]>();
-  private ttsEvent             = new ChromeEventImpl<[{ type: 'start' | 'end' | 'error'; charIndex?: number }]>();
-  private actionClickedEvent   = new ChromeEventImpl<[ChromeTab]>();
+  private webNavCommitted = new ChromeEventImpl<[WebNavigationDetails]>();
+  private webNavCompleted = new ChromeEventImpl<[WebNavigationDetails]>();
+  private webNavErrorOccurred = new ChromeEventImpl<[WebNavigationErrorDetails]>();
+  private commandEvent = new ChromeEventImpl<[string]>();
+  private ttsEvent = new ChromeEventImpl<[{ type: 'start' | 'end' | 'error'; charIndex?: number }]>();
+  private actionClickedEvent = new ChromeEventImpl<[ChromeTab]>();
   private downloadCreatedEvent = new ChromeEventImpl<[DownloadItem]>();
   private downloadChangedEvent = new ChromeEventImpl<[{ id: string; state?: { current: string } }]>();
-  private historyVisitedEvent  = new ChromeEventImpl<[HistoryItem]>();
-  private runtimeMessageEvent  = new ChromeEventImpl<[RuntimeMessage, { id: string }, (response: unknown) => void]>();
+  private historyVisitedEvent = new ChromeEventImpl<[HistoryItem]>();
+  private runtimeMessageEvent = new ChromeEventImpl<[RuntimeMessage, { id: string }, (response: unknown) => void]>();
 
   // Alarm timers
-  private alarmTimers = new Map<string, { timer: ReturnType<typeof setTimeout> | ReturnType<typeof setInterval>; alarm: ChromeAlarm }>();
+  private alarmTimers = new Map<string, { timer: ReturnType<typeof setTimeout>; alarm: ChromeAlarm }>();
 
   // Context menu items
   private contextMenuItems = new Map<string, ContextMenuCreateProperties>();
@@ -220,7 +221,7 @@ export class ChromeApiService implements ChromeApi {
   // Side panel — per-tab views so each tab gets its own sidebar
   private sidePanelViews = new Map<string, WebContentsView>();
   private sidePanelActiveTabId: string | null = null;
-  private sidePanelOptions: SidePanelOptions = { path: '', enabled: false };
+  private sidePanelOptions:     SidePanelOptions = { path: '', enabled: false };
 
   // Action state
   private actionState = { icon: '', badgeText: '', badgeColor: '#000', title: '' };
@@ -732,13 +733,12 @@ export class ChromeApiService implements ChromeApi {
   // =========================================================================
 
   webRequest = {
-    onBeforeRequest:      this.webReqBeforeRequest     as ChromeEvent<[WebRequestDetails]>,
-    onBeforeSendHeaders:  this.webReqBeforeSendHeaders  as ChromeEvent<[WebRequestHeadersDetails]>,
-    onHeadersReceived:    this.webReqHeadersReceived    as ChromeEvent<[WebRequestResponseDetails]>,
-    onCompleted:          this.webReqCompleted           as ChromeEvent<[WebRequestResponseDetails]>,
-    onErrorOccurred:      this.webReqErrorOccurred       as ChromeEvent<[WebRequestDetails & { error: string }]>,
+    onBeforeRequest:      this.webReqBeforeRequest as ChromeEvent<[WebRequestDetails]>,
+    onBeforeSendHeaders:  this.webReqBeforeSendHeaders as ChromeEvent<[WebRequestHeadersDetails]>,
+    onHeadersReceived:    this.webReqHeadersReceived as ChromeEvent<[WebRequestResponseDetails]>,
+    onCompleted:          this.webReqCompleted as ChromeEvent<[WebRequestResponseDetails]>,
+    onErrorOccurred:      this.webReqErrorOccurred as ChromeEvent<[WebRequestDetails & { error: string }]>,
   };
-
 
   // =========================================================================
   // chrome.contextMenus
@@ -792,9 +792,9 @@ export class ChromeApiService implements ChromeApi {
   notifications = {
     create: async(notificationId: string, options: NotificationOptions): Promise<string> => {
       const notification = new Electron.Notification({
-        title: options.title,
-        body:  options.message,
-        icon:  options.iconUrl || undefined,
+        title:  options.title,
+        body:   options.message,
+        icon:   options.iconUrl || undefined,
         silent: options.silent,
       });
 
@@ -825,7 +825,7 @@ export class ChromeApiService implements ChromeApi {
     },
 
     onClicked: this.notificationClickedEvent as ChromeEvent<[string]>,
-    onClosed:  this.notificationClosedEvent  as ChromeEvent<[string, boolean]>,
+    onClosed:  this.notificationClosedEvent as ChromeEvent<[string, boolean]>,
   };
 
   // =========================================================================
@@ -834,9 +834,9 @@ export class ChromeApiService implements ChromeApi {
 
   webNavigation = {
     onBeforeNavigate: this.webNavBeforeNavigate as ChromeEvent<[WebNavigationDetails]>,
-    onCommitted:      this.webNavCommitted      as ChromeEvent<[WebNavigationDetails]>,
-    onCompleted:      this.webNavCompleted       as ChromeEvent<[WebNavigationDetails]>,
-    onErrorOccurred:  this.webNavErrorOccurred   as ChromeEvent<[WebNavigationErrorDetails]>,
+    onCommitted:      this.webNavCommitted as ChromeEvent<[WebNavigationDetails]>,
+    onCompleted:      this.webNavCompleted as ChromeEvent<[WebNavigationDetails]>,
+    onErrorOccurred:  this.webNavErrorOccurred as ChromeEvent<[WebNavigationErrorDetails]>,
   };
 
   /**
@@ -1224,7 +1224,7 @@ export class ChromeApiService implements ChromeApi {
     const mainWindow = require('@pkg/window').getWindow('main-agent');
 
     if (view && mainWindow) {
-      try { mainWindow.contentView.removeChildView(view); } catch { /* already detached */ }
+      try { mainWindow.contentView.removeChildView(view) } catch { /* already detached */ }
     }
     this.notifySidePanelState(false, 0);
     this.sidePanelActiveTabId = null;
@@ -1316,7 +1316,7 @@ export class ChromeApiService implements ChromeApi {
         const mainWindow = require('@pkg/window').getWindow('main-agent');
 
         if (mainWindow) {
-          try { mainWindow.contentView.removeChildView(view); } catch { /* already detached */ }
+          try { mainWindow.contentView.removeChildView(view) } catch { /* already detached */ }
         }
 
         (view.webContents as any).close?.();
@@ -1332,7 +1332,7 @@ export class ChromeApiService implements ChromeApi {
 
         for (const [, view] of this.sidePanelViews) {
           if (mainWindow) {
-            try { mainWindow.contentView.removeChildView(view); } catch { /* */ }
+            try { mainWindow.contentView.removeChildView(view) } catch { /* */ }
           }
           (view.webContents as any).close?.();
         }
@@ -1355,7 +1355,7 @@ export class ChromeApiService implements ChromeApi {
         const mainWindow = require('@pkg/window').getWindow('main-agent');
 
         if (currentView && mainWindow) {
-          try { mainWindow.contentView.removeChildView(currentView); } catch { /* */ }
+          try { mainWindow.contentView.removeChildView(currentView) } catch { /* */ }
         }
         this.sidePanelActiveTabId = null;
       }

@@ -1,10 +1,11 @@
 import { BaseNode } from './BaseNode';
+import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
+import { throwIfAborted } from '../services/AbortService';
+import { stripProtocolTags } from '../utils/stripProtocolTags';
+
 import type { NodeRunPolicy } from './BaseNode';
 import type { BaseThreadState, NodeResult } from './Graph';
-import { throwIfAborted } from '../services/AbortService';
 import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
-import { stripProtocolTags } from '../utils/stripProtocolTags';
-import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 
 // ============================================================================
 // AGENT PROMPT — Now section-based via SystemPromptBuilder.
@@ -64,7 +65,7 @@ export class AgentNode extends BaseNode {
     // Build system prompt via section-based builder.
     // All sections (soul, workspace, tooling, voice mode, completion wrappers,
     // channel awareness, etc.) are composed by SystemPromptBuilder.
-    let enrichedPrompt = await this.enrichPrompt('', state, {
+    const enrichedPrompt = await this.enrichPrompt('', state, {
       chatMode,
     });
 
@@ -110,26 +111,11 @@ export class AgentNode extends BaseNode {
         // First turn — no assistant message yet, insert one before the last user message
         const insertIdx = Math.max(0, state.messages.length - 1);
         state.messages.splice(insertIdx, 0, {
-          role:    'assistant',
-          content: recallBlock.trim(),
+          role:     'assistant',
+          content:  recallBlock.trim(),
           metadata: { source: 'recall', _synthetic: true },
         });
       }
-    }
-
-    // Training data: capture the full assembled system prompt (once per session)
-    const trainingConvId = (state.metadata as any).conversationId;
-    if (trainingConvId) {
-      try {
-        const { getTrainingDataLogger } = await import('../services/TrainingDataLogger');
-        const tl = getTrainingDataLogger();
-        if (tl.hasSession(trainingConvId)) {
-          const existing = tl.getSessionMessages(trainingConvId);
-          if (!existing?.some(m => m.role === 'system')) {
-            tl.logSystemPrompt(trainingConvId, enrichedPrompt);
-          }
-        }
-      } catch { /* best-effort */ }
     }
 
     // ----------------------------------------------------------------

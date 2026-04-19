@@ -44,11 +44,12 @@
  */
 
 import { globalShortcut, systemPreferences } from 'electron';
+
 import { log } from '../model/logger';
-import * as platform from '../platform';
 import * as loopback from '../model/loopback';
 import * as mirror from '../model/mirror';
 import * as speakerCapture from '../model/speaker-capture';
+import * as platform from '../platform';
 import * as speakerSocket from '../service/speaker-socket';
 
 let onSpeakerLevel: ((data: any) => void) | null = null;

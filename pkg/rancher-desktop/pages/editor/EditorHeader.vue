@@ -164,6 +164,8 @@
 </template>
 
 <script setup lang="ts">
+import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
+
 defineProps<{
   isDark:            boolean;
   toggleTheme:       () => void;
@@ -171,8 +173,6 @@ defineProps<{
   bottomPaneVisible: boolean;
   rightPaneVisible:  boolean;
 }>();
-
-import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 
 defineEmits<{
   'toggle-left-pane':   [];

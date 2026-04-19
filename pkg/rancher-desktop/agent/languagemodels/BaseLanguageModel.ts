@@ -92,7 +92,7 @@ export interface RemoteProviderConfig {
 }
 
 /**
- * Overall LLM configuration (legacy — used by OllamaService)
+ * Overall LLM configuration (legacy)
  */
 export interface LLMConfig {
   mode:                  'local' | 'remote';
@@ -128,7 +128,7 @@ export interface LLMConfig {
  * - Optionally override `normalizeResponse()` for exotic shapes
  *
  * @example
- * class OllamaService extends BaseLanguageModel {
+ * class MyService extends BaseLanguageModel {
  *   protected async sendRawRequest(messages: ChatMessage[], options: any) {
  *     return fetch(`${this.baseUrl}/api/chat`, this.buildFetchOptions({
  *       model: options.model,
@@ -153,10 +153,10 @@ export interface LLMConfig {
  * @see {@link LLMConfig} - Constructor config shapes
  */
 export abstract class BaseLanguageModel {
-  protected config:  LLMServiceConfig | LLMConfig | RemoteProviderConfig;
-  protected model:   string;
-  protected baseUrl: string;
-  protected apiKey?: string;
+  protected config:      LLMServiceConfig | LLMConfig | RemoteProviderConfig;
+  protected model:       string;
+  protected baseUrl:     string;
+  protected apiKey?:     string;
   protected providerId?: string;
   protected isInitialized = false;
   protected isHealthy = false;
@@ -835,7 +835,7 @@ export abstract class BaseLanguageModel {
 
 /**
  * ILLMService - Common interface for LLM services
- * Implemented by OllamaService (local) and RemoteModelService (API)
+ * Implemented by remote LLM provider services (e.g. OpenAI, Anthropic, Google)
  */
 export interface ILLMService {
   initialize(): Promise<boolean>;

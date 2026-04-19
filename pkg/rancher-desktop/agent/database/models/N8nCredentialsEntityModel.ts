@@ -1,6 +1,7 @@
+import * as crypto from 'crypto';
+
 import { BaseModel } from '../BaseModel';
 import { SullaSettingsModel } from './SullaSettingsModel';
-import * as crypto from 'crypto';
 
 /**
  * Maps integration slugs to their corresponding n8n credential type identifiers.

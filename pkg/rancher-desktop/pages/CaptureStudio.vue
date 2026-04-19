@@ -1,16 +1,44 @@
 <template>
   <div class="capture-studio-app">
-    <WindowDragLogo :size="20" force-dark class="capture-drag-logo" />
+    <WindowDragLogo
+      :size="20"
+      force-dark
+      class="capture-drag-logo"
+    />
     <!-- Loading screen -->
-    <div v-if="loading" class="loading-screen">
+    <div
+      v-if="loading"
+      class="loading-screen"
+    >
       <div class="loading-content">
-        <svg class="loading-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <circle cx="12" cy="12" r="10"/>
-          <circle cx="12" cy="12" r="3" fill="currentColor"/>
+        <svg
+          class="loading-icon"
+          width="48"
+          height="48"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="10"
+          />
+          <circle
+            cx="12"
+            cy="12"
+            r="3"
+            fill="currentColor"
+          />
         </svg>
         <h2>Capture Studio</h2>
-        <p class="loading-msg">{{ loadingMessage }}</p>
-        <div class="loading-bar"><div class="loading-bar-fill"></div></div>
+        <p class="loading-msg">
+          {{ loadingMessage }}
+        </p>
+        <div class="loading-bar">
+          <div class="loading-bar-fill" />
+        </div>
       </div>
     </div>
 
@@ -20,13 +48,13 @@
       :class="canvasClass"
     >
       <CaptureCanvas
-        :screenStream="primaryStream"
-        :cameraStream="pipStream"
-        :currentLayout="currentLayout"
-        :primarySource="primarySource"
-        :pipSource="pipSource"
-        :audioOnlySources="audioOnlySources"
         ref="captureCanvasRef"
+        :screen-stream="primaryStream"
+        :camera-stream="pipStream"
+        :current-layout="currentLayout"
+        :primary-source="primarySource"
+        :pip-source="pipSource"
+        :audio-only-sources="audioOnlySources"
         @show-screen-menu="showScreenContextMenu"
         @show-camera-menu="showCameraContextMenu"
         @show-audio-menu="showAudioContextMenu"
@@ -34,25 +62,25 @@
 
       <TeleprompterLayout
         ref="teleprompterRef"
-        :currentLayout="currentLayout"
-        :prompterWindowOpen="prompterEnabled"
+        :current-layout="currentLayout"
+        :prompter-window-open="prompterEnabled"
         @toggle-prompter="togglePrompter"
         @close="selectLayout('pip')"
       />
 
       <CameraBubble
-        :cameraStream="pipStream"
+        :camera-stream="pipStream"
         :recording="recording"
-        :cameraShape="cameraShape"
-        :currentLayout="currentLayout"
-        :pipSource="pipSource"
-        @update:cameraShape="cameraShape = $event"
+        :camera-shape="cameraShape"
+        :current-layout="currentLayout"
+        :pip-source="pipSource"
+        @update:camera-shape="cameraShape = $event"
         @swap="swapAssignments"
         @show-camera-menu="showCameraContextMenu"
       />
 
       <LayoutBar
-        :currentLayout="currentLayout"
+        :current-layout="currentLayout"
         :layouts="layouts"
         @select-layout="selectLayout"
       />
@@ -60,27 +88,41 @@
       <!-- Info badges -->
       <div class="info-badges">
         <div class="info-badge">
-          <div class="dot" :class="audioDriver.speakerRunning.value ? 'green' : 'off'"></div>
+          <div
+            class="dot"
+            :class="audioDriver.speakerRunning.value ? 'green' : 'off'"
+          />
           Audio driver
         </div>
-        <div v-if="recording" class="info-badge">
-          <div class="dot" style="background: var(--record-red); animation: blink 1s ease-in-out infinite;"></div>
+        <div
+          v-if="recording"
+          class="info-badge"
+        >
+          <div
+            class="dot"
+            style="background: var(--record-red); animation: blink 1s ease-in-out infinite;"
+          />
           REC {{ timerDisplay }}
         </div>
-        <div v-if="activeSourceCount > 0" class="info-badge">{{ activeSourceCount }} source{{ activeSourceCount !== 1 ? 's' : '' }}</div>
+        <div
+          v-if="activeSourceCount > 0"
+          class="info-badge"
+        >
+          {{ activeSourceCount }} source{{ activeSourceCount !== 1 ? 's' : '' }}
+        </div>
       </div>
 
       <FloatingControls
         :sources="sources"
-        :builtinSources="builtinSources"
-        :customSources="customSources"
+        :builtin-sources="builtinSources"
+        :custom-sources="customSources"
         :recording="recording"
-        :timerDisplay="timerDisplay"
-        :prompterEnabled="prompterEnabled"
-        :tracksOpen="tracksOpen"
-        :currentLayout="currentLayout"
+        :timer-display="timerDisplay"
+        :prompter-enabled="prompterEnabled"
+        :tracks-open="tracksOpen"
+        :current-layout="currentLayout"
         :assign="assign"
-        :iconMap="iconMap"
+        :icon-map="iconMap"
         @toggle-src="toggleSrc"
         @source-menu="showSourceContextMenu"
         @toggle-prompter="togglePrompter"
@@ -93,19 +135,19 @@
 
     <TrackPanel
       :sources="sources"
-      :tracksOpen="tracksOpen"
+      :tracks-open="tracksOpen"
       :recording="recording"
-      :waveformData="waveformData"
-      :colorMap="colorMap"
-      :iconMap="iconMap"
-      :diskDisplay="totalDiskDisplay"
+      :waveform-data="waveformData"
+      :color-map="colorMap"
+      :icon-map="iconMap"
+      :disk-display="totalDiskDisplay"
       @toggle-src="toggleSrc"
       @remove-source="removeSource"
     />
 
     <AddSourceDialog
       :visible="addPopupOpen"
-      :deviceOptions="deviceOptions"
+      :device-options="deviceOptions"
       @close="addPopupOpen = false"
       @add-source="confirmAdd"
     />
@@ -119,53 +161,167 @@
       @close="ctxMenu.visible = false"
     />
 
-
     <!-- Disk space warning -->
-    <div v-if="diskSpace.isLow.value && recording" class="info-badge" style="position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 50; background: rgba(227, 179, 65, 0.15); border-color: var(--warning); color: var(--warning);">
-      <div class="dot" style="background: var(--warning);"></div>
+    <div
+      v-if="diskSpace.isLow.value && recording"
+      class="info-badge"
+      style="position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 50; background: rgba(227, 179, 65, 0.15); border-color: var(--warning); color: var(--warning);"
+    >
+      <div
+        class="dot"
+        style="background: var(--warning);"
+      />
       Low disk space: {{ diskSpace.availableGB.value }} remaining
     </div>
 
     <!-- Status message toast -->
-    <div v-if="statusMessage" class="status-toast">{{ statusMessage }}</div>
+    <div
+      v-if="statusMessage"
+      class="status-toast"
+    >
+      {{ statusMessage }}
+    </div>
 
     <!-- Recording saved toast (top-right) -->
-    <div v-if="lastSessionDir && !recording && !playbackOpen" class="recording-toast">
+    <div
+      v-if="lastSessionDir && !recording && !playbackOpen"
+      class="recording-toast"
+    >
       <div class="recording-toast-content">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="var(--success)"
+          stroke-width="2"
+        ><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
         <div class="recording-toast-text">
           <span class="recording-toast-title">Recording saved</span>
           <span class="recording-toast-sub">{{ timerDisplay }} captured</span>
         </div>
-        <button class="playback-btn" @click="startInlinePlayback">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <button
+          class="playback-btn"
+          @click="startInlinePlayback"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          ><polygon points="5 3 19 12 5 21 5 3" /></svg>
           Play
         </button>
-        <button class="playback-btn" @click="openSessionFolder">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        <button
+          class="playback-btn"
+          @click="openSessionFolder"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          ><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg>
           Folder
         </button>
-        <button class="playback-btn dismiss" @click="lastSessionDir = ''">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <button
+          class="playback-btn dismiss"
+          @click="lastSessionDir = ''"
+        >
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          ><line
+            x1="18"
+            y1="6"
+            x2="6"
+            y2="18"
+          /><line
+            x1="6"
+            y1="6"
+            x2="18"
+            y2="18"
+          /></svg>
         </button>
       </div>
     </div>
 
     <!-- Tile-based playback overlay -->
-    <div v-if="playbackOpen" class="playback-overlay">
+    <div
+      v-if="playbackOpen"
+      class="playback-overlay"
+    >
       <div class="playback-header">
         <span class="playback-title">Session Playback</span>
         <div class="playback-header-actions">
-          <button class="playback-action-btn" @click="playAllStreams">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <button
+            class="playback-action-btn"
+            @click="playAllStreams"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            ><polygon points="5 3 19 12 5 21 5 3" /></svg>
             Play All
           </button>
-          <button class="playback-action-btn" @click="pauseAllStreams">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+          <button
+            class="playback-action-btn"
+            @click="pauseAllStreams"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            ><rect
+              x="6"
+              y="4"
+              width="4"
+              height="16"
+            /><rect
+              x="14"
+              y="4"
+              width="4"
+              height="16"
+            /></svg>
             Pause All
           </button>
-          <button class="playback-close-btn" @click="closePlayback">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <button
+            class="playback-close-btn"
+            @click="closePlayback"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            ><line
+              x1="18"
+              y1="6"
+              x2="6"
+              y2="18"
+            /><line
+              x1="6"
+              y1="6"
+              x2="18"
+              y2="18"
+            /></svg>
           </button>
         </div>
       </div>
@@ -177,7 +333,10 @@
           :class="'tile-' + stream.type"
         >
           <div class="tile-label">
-            <span class="tile-dot" :style="{ background: tileColor(stream.type) }"></span>
+            <span
+              class="tile-dot"
+              :style="{ background: tileColor(stream.type) }"
+            />
             <span>{{ tileName(stream) }}</span>
           </div>
           <div class="tile-media">
@@ -187,12 +346,49 @@
               :src="'file://' + stream.filePath"
               controls
               style="width: 100%; height: 100%; object-fit: contain; background: #000; border-radius: 6px;"
-            ></video>
-            <div v-else class="tile-audio-wrap">
+            />
+            <div
+              v-else
+              class="tile-audio-wrap"
+            >
               <div class="tile-audio-icon">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" :stroke="tileColor(stream.type)" stroke-width="1.5">
-                  <path v-if="stream.type === 'mic'" d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path v-if="stream.type === 'mic'" d="M19 10v2a7 7 0 0 1-14 0v-2"/><line v-if="stream.type === 'mic'" x1="12" y1="19" x2="12" y2="23"/><line v-if="stream.type === 'mic'" x1="8" y1="23" x2="16" y2="23"/>
-                  <path v-if="stream.type === 'system-audio'" d="M11 5L6 9H2v6h4l5 4V5z"/><path v-if="stream.type === 'system-audio'" d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path v-if="stream.type === 'system-audio'" d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                <svg
+                  width="32"
+                  height="32"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  :stroke="tileColor(stream.type)"
+                  stroke-width="1.5"
+                >
+                  <path
+                    v-if="stream.type === 'mic'"
+                    d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"
+                  /><path
+                    v-if="stream.type === 'mic'"
+                    d="M19 10v2a7 7 0 0 1-14 0v-2"
+                  /><line
+                    v-if="stream.type === 'mic'"
+                    x1="12"
+                    y1="19"
+                    x2="12"
+                    y2="23"
+                  /><line
+                    v-if="stream.type === 'mic'"
+                    x1="8"
+                    y1="23"
+                    x2="16"
+                    y2="23"
+                  />
+                  <path
+                    v-if="stream.type === 'system-audio'"
+                    d="M11 5L6 9H2v6h4l5 4V5z"
+                  /><path
+                    v-if="stream.type === 'system-audio'"
+                    d="M19.07 4.93a10 10 0 0 1 0 14.14"
+                  /><path
+                    v-if="stream.type === 'system-audio'"
+                    d="M15.54 8.46a5 5 0 0 1 0 7.07"
+                  />
                 </svg>
               </div>
               <audio
@@ -200,7 +396,7 @@
                 :src="'file://' + stream.filePath"
                 controls
                 style="width: 100%;"
-              ></audio>
+              />
             </div>
           </div>
         </div>
@@ -208,13 +404,24 @@
     </div>
 
     <!-- Flash overlay -->
-    <div class="flash-overlay" :class="{ flash: flashActive }"></div>
+    <div
+      class="flash-overlay"
+      :class="{ flash: flashActive }"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
-import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
+
+import AddSourceDialog from './capture-studio/AddSourceDialog.vue';
+import CameraBubble from './capture-studio/CameraBubble.vue';
+import CaptureCanvas from './capture-studio/CaptureCanvas.vue';
+import ContextMenu from './capture-studio/ContextMenu.vue';
+import FloatingControls from './capture-studio/FloatingControls.vue';
+import LayoutBar from './capture-studio/LayoutBar.vue';
+import TeleprompterLayout from './capture-studio/TeleprompterLayout.vue';
+import TrackPanel from './capture-studio/TrackPanel.vue';
 import { useAudioDriver } from './capture-studio/composables/useAudioDriver';
 import { listAudioDevices } from './capture-studio/composables/useMicCapture';
 import { useMediaSources, QUALITY_PRESETS, type QualityPreset } from './capture-studio/composables/useMediaSources';
@@ -226,14 +433,11 @@ import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCaptur
 import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
 import { useInputEventTracker } from './capture-studio/composables/useInputEventTracker';
 
-import ContextMenu from './capture-studio/ContextMenu.vue';
-import LayoutBar from './capture-studio/LayoutBar.vue';
-import CameraBubble from './capture-studio/CameraBubble.vue';
-import FloatingControls from './capture-studio/FloatingControls.vue';
-import TrackPanel from './capture-studio/TrackPanel.vue';
-import TeleprompterLayout from './capture-studio/TeleprompterLayout.vue';
-import AddSourceDialog from './capture-studio/AddSourceDialog.vue';
-import CaptureCanvas from './capture-studio/CaptureCanvas.vue';
+
+import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
+
+// ─── Context menu for source switching ───
+import type { CtxMenuItem } from './capture-studio/ContextMenu.vue';
 
 const { ipcRenderer } = require('electron');
 const { shell } = require('electron');
@@ -263,12 +467,12 @@ const addPopupOpen = ref(false);
 const statusMessage = ref('');
 const lastSessionDir = ref('');
 interface PlaybackStream {
-  id: string;
-  type: string;
+  id:       string;
+  type:     string;
   filename: string;
-  format: string;
+  format:   string;
   filePath: string;
-  isVideo: boolean;
+  isVideo:  boolean;
 }
 const playbackOpen = ref(false);
 const playbackStreams = ref<PlaybackStream[]>([]);
@@ -278,13 +482,13 @@ let sourceCounter = 0;
 const assign = reactive({ primary: 'screen', pip: 'cam' });
 
 interface Source {
-  id: string;
-  type: string;
-  name: string;
-  color: string;
-  status: string;
+  id:      string;
+  type:    string;
+  name:    string;
+  color:   string;
+  status:  string;
   builtin: boolean;
-  on: boolean;
+  on:      boolean;
   isVideo: boolean;
 }
 
@@ -301,11 +505,11 @@ const colorMap: Record<string, string> = { screen: 'screen', camera: 'cam', mic:
 
 // ── Mic quality mode ──
 const MIC_QUALITY_MODES = [
-  { id: 'raw',              label: 'Studio Quality — Raw (ASMR)' },
-  { id: 'noise-reduction',  label: 'Studio Quality — Voice' },
+  { id: 'raw', label: 'Studio Quality — Raw (ASMR)' },
+  { id: 'noise-reduction', label: 'Studio Quality — Voice' },
   { id: 'voice-compressed', label: 'Studio Quality — Voice + Compression' },
-  { id: 'streaming',        label: 'Compressed — Streaming' },
-  { id: 'streaming-voice',  label: 'Compressed — Voice' },
+  { id: 'streaming', label: 'Compressed — Streaming' },
+  { id: 'streaming-voice', label: 'Compressed — Voice' },
 ] as const;
 const micQualityMode = ref('raw');
 
@@ -315,14 +519,14 @@ const activeWindowTracking = ref(false);
 const iconMap: Record<string, string> = {
   screen: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
   camera: '<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
-  mic: '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/>',
+  mic:    '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/>',
   system: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>',
 };
 
 const deviceOptions: Record<string, string[]> = {
   screen: ['Entire Screen', 'Custom Region...', 'Screen 1 — Built-in Retina', 'Screen 2 — S27E590', 'VS Code', 'Chrome', 'Slack', 'Terminal'],
   camera: ['FaceTime HD Camera', 'Continuity Camera — iPhone', 'Logitech C920'],
-  mic: ['MacBook Microphone', 'AirPods Pro', 'Blue Yeti', 'Rode NT-USB'],
+  mic:    ['MacBook Microphone', 'AirPods Pro', 'Blue Yeti', 'Rode NT-USB'],
   system: ['System Audio (Audio Driver)'],
 };
 
@@ -418,7 +622,7 @@ async function togglePrompter() {
 
 /** Send everything — script, position, style — to the floating window. */
 function syncPrompterFull() {
-  const tp = teleprompterRef.value as any;
+  const tp = teleprompterRef.value;
   if (!tp) return;
 
   const rawWords = tp.tpWords?.value || tp.tpWords || [];
@@ -496,7 +700,7 @@ async function toggleSrc(src: Source) {
         await audioDriver.startSpeaker();
       }
     } catch (e: any) {
-      console.error(`[CaptureStudio] Failed to acquire ${src.type}:`, e.message || e);
+      console.error(`[CaptureStudio] Failed to acquire ${ src.type }:`, e.message || e);
       src.on = false; // revert toggle on failure
     }
   } else {
@@ -514,12 +718,12 @@ async function toggleSrc(src: Source) {
   autoAssign();
   updateStreamAssignments();
   console.log('[CaptureStudio] After autoAssign:', {
-    layout: currentLayout.value,
-    primary: assign.primary,
-    pip: assign.pip,
-    videoSources: videoSources.value.map(s => s.id),
-    screenStream: mediaSources.screenStream.value ? 'active' : 'null',
-    cameraStream: mediaSources.cameraStream.value ? 'active' : 'null',
+    layout:        currentLayout.value,
+    primary:       assign.primary,
+    pip:           assign.pip,
+    videoSources:  videoSources.value.map(s => s.id),
+    screenStream:  mediaSources.screenStream.value ? 'active' : 'null',
+    cameraStream:  mediaSources.cameraStream.value ? 'active' : 'null',
     primaryStream: primaryStream.value ? 'active' : 'null',
   });
 }
@@ -569,12 +773,12 @@ async function toggleRecord() {
     const spaceCheck = diskSpace.checkBeforeRecording();
     if (!spaceCheck.ok) {
       statusMessage.value = spaceCheck.message;
-      setTimeout(() => { statusMessage.value = ''; }, 5000);
+      setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
     }
 
     // Gather active streams for recording — check stream.active not just existence
-    const streams: Array<{ id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }> = [];
+    const streams: { id: string; type: 'screen' | 'camera' | 'mic' | 'system-audio'; stream: MediaStream }[] = [];
 
     // Mic recording is handled by useMicRecording via the controller's
     // mic-pcm-socket (PCM) or mic-socket (WebM). Not a MediaRecorder stream.
@@ -593,7 +797,7 @@ async function toggleRecord() {
 
     if (streams.length === 0 && !audioDriver.micRunning.value && !audioDriver.speakerRunning.value) {
       statusMessage.value = 'Enable at least one source to record';
-      setTimeout(() => { statusMessage.value = ''; }, 3000);
+      setTimeout(() => { statusMessage.value = '' }, 3000);
       return;
     }
 
@@ -603,13 +807,13 @@ async function toggleRecord() {
     } catch (e: any) {
       console.error('[CaptureStudio] Failed to start recording session:', e.message || e);
       statusMessage.value = 'Failed to start recording: ' + (e.message || 'unknown error');
-      setTimeout(() => { statusMessage.value = ''; }, 5000);
+      setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
     }
 
     if (!sessionId) {
       statusMessage.value = recorder.error.value || 'Failed to start recording';
-      setTimeout(() => { statusMessage.value = ''; }, 5000);
+      setTimeout(() => { statusMessage.value = '' }, 5000);
       return;
     }
 
@@ -632,12 +836,12 @@ async function toggleRecord() {
       const path = require('path');
       const isCompressed = micQualityMode.value === 'streaming' || micQualityMode.value === 'streaming-voice';
       const ext = isCompressed ? 'webm' : 'wav';
-      const micPath = path.join(recorder.getSessionDir(), `mic.${ext}`);
+      const micPath = path.join(recorder.getSessionDir(), `mic.${ ext }`);
       await micRecording.start(micPath, micQualityMode.value as MicQualityMode);
       recorder.registerExternalStream({
         id:              'mic',
         type:            'mic',
-        filename:        `mic.${ext}`,
+        filename:        `mic.${ ext }`,
         format:          ext,
         getBytesWritten: () => micRecording.bytesWritten.value,
       });
@@ -654,7 +858,7 @@ async function toggleRecord() {
       if (_stoppingFromCritical) return;
       _stoppingFromCritical = true;
       console.warn('[CaptureStudio] Critical disk space — stopping recording');
-      toggleRecord().finally(() => { _stoppingFromCritical = false; });
+      toggleRecord().finally(() => { _stoppingFromCritical = false });
     });
   } else {
     // Capture session dir BEFORE stopSession clears it
@@ -668,16 +872,16 @@ async function toggleRecord() {
     recording.value = false;
     diskSpace.stopMonitoring();
     statusMessage.value = 'Recording saved';
-    setTimeout(() => { statusMessage.value = ''; }, 5000);
+    setTimeout(() => { statusMessage.value = '' }, 5000);
   }
 }
 
 // ─── Screenshot ───
 // ─── Playback ───
 const TILE_COLORS: Record<string, string> = {
-  screen: '#58a6ff',
-  camera: '#5096b3',
-  mic: '#3fb950',
+  screen:         '#58a6ff',
+  camera:         '#5096b3',
+  mic:            '#3fb950',
   'system-audio': '#e3b341',
 };
 
@@ -687,9 +891,9 @@ function tileColor(type: string): string {
 
 function tileName(stream: PlaybackStream): string {
   const names: Record<string, string> = {
-    screen: 'Screen',
-    camera: 'Camera',
-    mic: 'Microphone',
+    screen:         'Screen',
+    camera:         'Camera',
+    mic:            'Microphone',
     'system-audio': 'System Audio',
   };
   return names[stream.type] || stream.id;
@@ -709,10 +913,10 @@ function startInlinePlayback() {
         const isVideo = f.startsWith('screen') || f.startsWith('camera');
         const type = f.startsWith('screen') ? 'screen' : f.startsWith('camera') ? 'camera' : f.startsWith('mic') ? 'mic' : 'system-audio';
         return {
-          id: f.replace(/\.\w+$/, ''),
+          id:       f.replace(/\.\w+$/, ''),
           type,
           filename: f,
-          format: f.endsWith('.wav') ? 'wav' : 'webm',
+          format:   f.endsWith('.wav') ? 'wav' : 'webm',
           filePath: path.join(lastSessionDir.value, f),
           isVideo,
         };
@@ -722,12 +926,12 @@ function startInlinePlayback() {
       playbackStreams.value = manifest.streams
         .filter((s: any) => s.bytes > 0)
         .map((s: any) => ({
-          id: s.id,
-          type: s.type,
+          id:       s.id,
+          type:     s.type,
           filename: s.filename,
-          format: s.format,
+          format:   s.format,
           filePath: path.join(lastSessionDir.value, s.filename),
-          isVideo: s.type === 'screen' || s.type === 'camera',
+          isVideo:  s.type === 'screen' || s.type === 'camera',
         }));
     }
 
@@ -770,7 +974,7 @@ function openSessionFolder() {
 
 function doScreenshot() {
   flashActive.value = true;
-  setTimeout(() => { flashActive.value = false; }, 120);
+  setTimeout(() => { flashActive.value = false }, 120);
 }
 
 // ─── Add source (from dialog) ───
@@ -781,12 +985,12 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
 
   const newSrc: Source = {
     id,
-    type: payload.type,
-    name: payload.label,
-    color: colorMap[payload.type] || 'custom',
-    status: payload.type === 'screen' ? '1080p' : payload.type === 'camera' ? '720p' : '-18 dB',
+    type:    payload.type,
+    name:    payload.label,
+    color:   colorMap[payload.type] || 'custom',
+    status:  payload.type === 'screen' ? '1080p' : payload.type === 'camera' ? '720p' : '-18 dB',
     builtin: false,
-    on: true,
+    on:      true,
     isVideo,
   };
   sources.push(newSrc);
@@ -808,7 +1012,7 @@ async function confirmAdd(payload: { type: string; deviceId: string; label: stri
 
   if (isVideo) {
     autoAssign();
-  updateStreamAssignments();
+    updateStreamAssignments();
     if (currentLayout.value === 'screenonly' || currentLayout.value === 'camonly') {
       currentLayout.value = 'pip';
     }
@@ -907,15 +1111,12 @@ function stopAudioMeter() {
   }
 }
 
-// ─── Context menu for source switching ───
-import type { CtxMenuItem } from './capture-studio/ContextMenu.vue';
-
 const ctxMenu = reactive({
   visible: false,
-  x: 0,
-  y: 0,
-  title: '',
-  items: [] as CtxMenuItem[],
+  x:       0,
+  y:       0,
+  title:   '',
+  items:   [] as CtxMenuItem[],
 });
 
 function buildQualityChildren(
@@ -924,7 +1125,7 @@ function buildQualityChildren(
   presets: readonly ('4k' | '1080p' | '720p' | '480p')[],
   autoLabel: string,
 ): CtxMenuItem[] {
-  const withReassign = async (p: string) => {
+  const withReassign = async(p: string) => {
     try {
       await setFn(p);
       // Only needed if the stream object was replaced (camera fallback re-acquire)
@@ -936,10 +1137,10 @@ function buildQualityChildren(
   return [
     { id: 'q-auto', label: autoLabel, active: currentPreset === 'auto', action: () => withReassign('auto') },
     ...presets.map(preset => ({
-      id: `q-${preset}`,
-      label: QUALITY_PRESETS[preset].label,
+      id:     `q-${ preset }`,
+      label:  QUALITY_PRESETS[preset].label,
       active: currentPreset === preset,
-      badge: `${QUALITY_PRESETS[preset].width}×${QUALITY_PRESETS[preset].height}`,
+      badge:  `${ QUALITY_PRESETS[preset].width }×${ QUALITY_PRESETS[preset].height }`,
       action: () => withReassign(preset),
     })),
   ];
@@ -950,11 +1151,11 @@ async function showScreenContextMenu(e: MouseEvent) {
     const screenSources = await mediaSources.listScreenSources();
 
     const sourceChildren: CtxMenuItem[] = screenSources.map(s => ({
-      id: s.id,
-      label: s.name,
+      id:        s.id,
+      label:     s.name,
       thumbnail: s.thumbnailDataUrl,
-      active: s.id === mediaSources.activeScreenSourceId.value,
-      action: async () => {
+      active:    s.id === mediaSources.activeScreenSourceId.value,
+      action:    async() => {
         try {
           await mediaSources.switchScreen(s.id);
           const src = sources.find(ss => ss.id === 'screen');
@@ -978,16 +1179,16 @@ async function showScreenContextMenu(e: MouseEvent) {
 
     const trackingChildren: CtxMenuItem[] = [
       {
-        id: 'track-off',
-        label: 'Full Screen (no tracking)',
+        id:     'track-off',
+        label:  'Full Screen (no tracking)',
         active: !activeWindowTracking.value,
-        action: () => { activeWindowTracking.value = false; },
+        action: () => { activeWindowTracking.value = false },
       },
       {
-        id: 'track-active',
-        label: 'Active Window (auto-zoom in editor)',
+        id:     'track-active',
+        label:  'Active Window (auto-zoom in editor)',
         active: activeWindowTracking.value,
-        action: () => { activeWindowTracking.value = true; },
+        action: () => { activeWindowTracking.value = true },
       },
     ];
 
@@ -1011,10 +1212,10 @@ async function showCameraContextMenu(e: MouseEvent) {
     const cameras = await mediaSources.listVideoDevices();
 
     const deviceChildren: CtxMenuItem[] = cameras.map(cam => ({
-      id: cam.deviceId,
-      label: cam.label,
+      id:     cam.deviceId,
+      label:  cam.label,
       active: cam.deviceId === mediaSources.activeCameraDeviceId.value,
-      action: async () => {
+      action: async() => {
         try {
           await mediaSources.switchCamera(cam.deviceId);
           updateStreamAssignments();
@@ -1053,10 +1254,10 @@ async function showAudioContextMenu(e: MouseEvent) {
     const micSrc = sources.find(s => s.id === 'mic');
 
     const deviceChildren: CtxMenuItem[] = inputs.map(d => ({
-      id: d.deviceId,
-      label: d.label,
+      id:     d.deviceId,
+      label:  d.label,
       active: false, // TODO: track active device name from controller state
-      action: async () => {
+      action: async() => {
         // Switch the mic device via the controller
         try {
           await audioDriver.setMicDevice(d.label);
@@ -1072,8 +1273,8 @@ async function showAudioContextMenu(e: MouseEvent) {
     }));
 
     const qualityChildren: CtxMenuItem[] = MIC_QUALITY_MODES.map(m => ({
-      id: `mq-${m.id}`,
-      label: m.label,
+      id:     `mq-${ m.id }`,
+      label:  m.label,
       active: micQualityMode.value === m.id,
       action: () => {
         micQualityMode.value = m.id;
@@ -1152,7 +1353,7 @@ function startWaveformLoop() {
       if (src.type === 'mic' || src.type === 'system') {
         if (level > 0.0001) {
           const db = Math.round(20 * Math.log10(Math.max(level, 0.0001)));
-          src.status = `${db} dB`;
+          src.status = `${ db } dB`;
         } else {
           src.status = '-∞ dB';
         }
@@ -1218,8 +1419,8 @@ function onKeyDown(e: KeyboardEvent) {
 
   // Escape: close any open popup/overlay
   if (e.key === 'Escape') {
-    if (addPopupOpen.value) { addPopupOpen.value = false; return; }
-    if (ctxMenu.visible) { ctxMenu.visible = false; return; }
+    if (addPopupOpen.value) { addPopupOpen.value = false; return }
+    if (ctxMenu.visible) { ctxMenu.visible = false; return }
   }
 
   // Cmd+Shift+R: toggle recording
@@ -1238,16 +1439,14 @@ function onKeyDown(e: KeyboardEvent) {
 
   // 1-5: switch layout (only when no input focused)
   if (!mod && !e.shiftKey && (e.target as HTMLElement).tagName !== 'INPUT' && (e.target as HTMLElement).tagName !== 'TEXTAREA') {
-    const layoutKeys: Record<string, string> = { '1': 'pip', '2': 'sidebyside', '3': 'screenonly', '4': 'camonly', '5': 'teleprompter' };
+    const layoutKeys: Record<string, string> = { 1: 'pip', 2: 'sidebyside', 3: 'screenonly', 4: 'camonly', 5: 'teleprompter' };
     if (layoutKeys[e.key]) {
       selectLayout(layoutKeys[e.key]);
-      return;
     }
   }
 }
 
-
-onMounted(async () => {
+onMounted(async() => {
   document.addEventListener('keydown', onKeyDown);
 
   // Hook teleprompter style/script updates to sync with floating window.
@@ -1320,10 +1519,10 @@ onMounted(async () => {
     if (settings.cameraQuality.value) mediaSources.cameraQuality.value = settings.cameraQuality.value as any;
   }, { immediate: true });
 
-  watch(currentLayout, v => { settings.layout.value = v; });
-  watch(cameraShape, v => { settings.cameraShape.value = v; });
-  watch(() => mediaSources.screenQuality.value, v => { settings.screenQuality.value = v; });
-  watch(() => mediaSources.cameraQuality.value, v => { settings.cameraQuality.value = v; });
+  watch(currentLayout, v => { settings.layout.value = v });
+  watch(cameraShape, v => { settings.cameraShape.value = v });
+  watch(() => mediaSources.screenQuality.value, v => { settings.screenQuality.value = v });
+  watch(() => mediaSources.cameraQuality.value, v => { settings.cameraQuality.value = v });
 
   // 4. Auto-enable mic
   loadingMessage.value = 'Enabling microphone...';
@@ -1374,8 +1573,8 @@ async function cleanupCaptureStudio() {
   mediaSources.releaseCamera();
 
   // Disconnect from controllers
-  try { await audioDriver.stopMic(); } catch { /* already stopped */ }
-  try { await audioDriver.stopSpeaker(); } catch { /* already stopped */ }
+  try { await audioDriver.stopMic() } catch { /* already stopped */ }
+  try { await audioDriver.stopSpeaker() } catch { /* already stopped */ }
 }
 
 ipcRenderer.on('app:before-quit', () => {

@@ -1,13 +1,14 @@
 // ChatMessageQueue.ts — Message queue for sequential processing with Windsurf-style UX
 import { ref, computed } from 'vue';
+
 import type { PendingAttachment } from '../pages/agent/AgentComposer.vue';
 
 export interface QueuedMessage {
-  id: string;
-  content: string;
+  id:          string;
+  content:     string;
   attachments: PendingAttachment[];
-  metadata?: Record<string, unknown>;
-  timestamp: number;
+  metadata?:   Record<string, unknown>;
+  timestamp:   number;
 }
 
 export class ChatMessageQueue {
@@ -24,7 +25,7 @@ export class ChatMessageQueue {
    */
   enqueue(content: string, attachments: PendingAttachment[] = [], metadata?: Record<string, unknown>): QueuedMessage {
     const message: QueuedMessage = {
-      id: `queued_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
+      id:        `queued_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
       content,
       attachments,
       metadata,

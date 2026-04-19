@@ -32,85 +32,85 @@ export class ComputerToolWorker extends BaseTool {
 
     try {
       switch (action) {
-        case 'screenshot': {
-          const screenshot = await bridge.captureScreenshot({ format: 'jpeg', quality: 80 });
-          if (!screenshot) {
-            return { successBoolean: false, responseString: `[${ assetId }] Screenshot failed` };
-          }
-          return {
-            successBoolean:      true,
-            responseString:      `[${ assetId }] Screenshot captured`,
-            screenshotBase64:    screenshot.base64,
-            screenshotMediaType: screenshot.mediaType,
-          } as any;
+      case 'screenshot': {
+        const screenshot = await bridge.captureScreenshot({ format: 'jpeg', quality: 80 });
+        if (!screenshot) {
+          return { successBoolean: false, responseString: `[${ assetId }] Screenshot failed` };
         }
+        return {
+          successBoolean:      true,
+          responseString:      `[${ assetId }] Screenshot captured`,
+          screenshotBase64:    screenshot.base64,
+          screenshotMediaType: screenshot.mediaType,
+        } as any;
+      }
 
-        case 'left_click':
-        case 'click': {
-          const [x, y] = input.coordinate || [0, 0];
-          await this.emitCursorEvent(assetId, x, y, 'click');
-          await bridge.clickAtCoordinate(x, y);
-          return await this.screenshotResult(bridge, assetId, `Clicked at (${ x }, ${ y })`);
-        }
+      case 'left_click':
+      case 'click': {
+        const [x, y] = input.coordinate || [0, 0];
+        await this.emitCursorEvent(assetId, x, y, 'click');
+        await bridge.clickAtCoordinate(x, y);
+        return await this.screenshotResult(bridge, assetId, `Clicked at (${ x }, ${ y })`);
+      }
 
-        case 'right_click': {
-          const [x, y] = input.coordinate || [0, 0];
-          await this.emitCursorEvent(assetId, x, y, 'click');
-          await bridge.clickAtCoordinate(x, y, { button: 'right' });
-          return await this.screenshotResult(bridge, assetId, `Right-clicked at (${ x }, ${ y })`);
-        }
+      case 'right_click': {
+        const [x, y] = input.coordinate || [0, 0];
+        await this.emitCursorEvent(assetId, x, y, 'click');
+        await bridge.clickAtCoordinate(x, y, { button: 'right' });
+        return await this.screenshotResult(bridge, assetId, `Right-clicked at (${ x }, ${ y })`);
+      }
 
-        case 'double_click': {
-          const [x, y] = input.coordinate || [0, 0];
-          await this.emitCursorEvent(assetId, x, y, 'click');
-          await bridge.clickAtCoordinate(x, y, { clickCount: 2 });
-          return await this.screenshotResult(bridge, assetId, `Double-clicked at (${ x }, ${ y })`);
-        }
+      case 'double_click': {
+        const [x, y] = input.coordinate || [0, 0];
+        await this.emitCursorEvent(assetId, x, y, 'click');
+        await bridge.clickAtCoordinate(x, y, { clickCount: 2 });
+        return await this.screenshotResult(bridge, assetId, `Double-clicked at (${ x }, ${ y })`);
+      }
 
-        case 'triple_click': {
-          const [x, y] = input.coordinate || [0, 0];
-          await this.emitCursorEvent(assetId, x, y, 'click');
-          await bridge.clickAtCoordinate(x, y, { clickCount: 3 });
-          return await this.screenshotResult(bridge, assetId, `Triple-clicked at (${ x }, ${ y })`);
-        }
+      case 'triple_click': {
+        const [x, y] = input.coordinate || [0, 0];
+        await this.emitCursorEvent(assetId, x, y, 'click');
+        await bridge.clickAtCoordinate(x, y, { clickCount: 3 });
+        return await this.screenshotResult(bridge, assetId, `Triple-clicked at (${ x }, ${ y })`);
+      }
 
-        case 'type': {
-          const text = input.text || '';
-          await bridge.typeText(text);
-          return await this.screenshotResult(bridge, assetId, `Typed "${ text.slice(0, 50) }${ text.length > 50 ? '...' : '' }"`);
-        }
+      case 'type': {
+        const text = input.text || '';
+        await bridge.typeText(text);
+        return await this.screenshotResult(bridge, assetId, `Typed "${ text.slice(0, 50) }${ text.length > 50 ? '...' : '' }"`);
+      }
 
-        case 'key': {
-          const key = input.text || '';
-          await bridge.pressKey(key);
-          return await this.screenshotResult(bridge, assetId, `Pressed key: ${ key }`);
-        }
+      case 'key': {
+        const key = input.text || '';
+        await bridge.pressKey(key);
+        return await this.screenshotResult(bridge, assetId, `Pressed key: ${ key }`);
+      }
 
-        case 'scroll': {
-          const [x, y] = input.coordinate || [0, 0];
-          const [deltaX, deltaY] = input.delta || [0, -300];
-          await this.emitCursorEvent(assetId, x, y, 'scroll');
-          await bridge.scrollAtCoordinate(x, y, deltaX, deltaY);
-          return await this.screenshotResult(bridge, assetId, `Scrolled at (${ x }, ${ y }) by (${ deltaX }, ${ deltaY })`);
-        }
+      case 'scroll': {
+        const [x, y] = input.coordinate || [0, 0];
+        const [deltaX, deltaY] = input.delta || [0, -300];
+        await this.emitCursorEvent(assetId, x, y, 'scroll');
+        await bridge.scrollAtCoordinate(x, y, deltaX, deltaY);
+        return await this.screenshotResult(bridge, assetId, `Scrolled at (${ x }, ${ y }) by (${ deltaX }, ${ deltaY })`);
+      }
 
-        case 'mouse_move': {
-          const [x, y] = input.coordinate || [0, 0];
-          await this.emitCursorEvent(assetId, x, y, 'move');
-          return { successBoolean: true, responseString: `[${ assetId }] Moved cursor to (${ x }, ${ y })` };
-        }
+      case 'mouse_move': {
+        const [x, y] = input.coordinate || [0, 0];
+        await this.emitCursorEvent(assetId, x, y, 'move');
+        return { successBoolean: true, responseString: `[${ assetId }] Moved cursor to (${ x }, ${ y })` };
+      }
 
-        case 'left_click_drag': {
-          const [startX, startY] = input.start_coordinate || [0, 0];
-          const [endX, endY] = input.coordinate || [0, 0];
-          await this.emitCursorEvent(assetId, startX, startY, 'drag');
-          await bridge.dragFromTo(startX, startY, endX, endY);
-          await this.emitCursorEvent(assetId, endX, endY, 'drag');
-          return await this.screenshotResult(bridge, assetId, `Dragged from (${ startX }, ${ startY }) to (${ endX }, ${ endY })`);
-        }
+      case 'left_click_drag': {
+        const [startX, startY] = input.start_coordinate || [0, 0];
+        const [endX, endY] = input.coordinate || [0, 0];
+        await this.emitCursorEvent(assetId, startX, startY, 'drag');
+        await bridge.dragFromTo(startX, startY, endX, endY);
+        await this.emitCursorEvent(assetId, endX, endY, 'drag');
+        return await this.screenshotResult(bridge, assetId, `Dragged from (${ startX }, ${ startY }) to (${ endX }, ${ endY })`);
+      }
 
-        default:
-          return { successBoolean: false, responseString: `Unknown action: ${ action }` };
+      default:
+        return { successBoolean: false, responseString: `Unknown action: ${ action }` };
       }
     } catch (err) {
       return {

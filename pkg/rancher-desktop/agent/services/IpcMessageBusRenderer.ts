@@ -2,6 +2,7 @@
 // Bridges messages between the renderer and main process via Electron IPC.
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import type { WebSocketMessage, WebSocketMessageHandler } from './WebSocketClientService';
 
 function generateUUID(): string {

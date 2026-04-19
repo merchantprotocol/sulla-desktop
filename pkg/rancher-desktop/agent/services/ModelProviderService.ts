@@ -12,10 +12,9 @@
  * Renderers are thin IPC clients — they never read/write provider settings directly.
  */
 
-import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from './IntegrationService';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { integrations } from '../integrations/catalog';
-import { LOCAL_MODELS } from '../../shared/localModels';
 
 // ── Public types ─────────────────────────────────────────────────
 
@@ -24,8 +23,7 @@ export interface ModelProviderState {
   secondaryProvider: string;
   heartbeatProvider: string;
   activeModelId:     string;
-  /** Derived: 'local' when primaryProvider === 'ollama', else 'remote' */
-  modelMode:         'local' | 'remote';
+  modelMode:         'remote';
 }
 
 export interface ProviderInfo {
@@ -49,11 +47,11 @@ type ChangeListener = (state: ModelProviderState) => void;
 
 class ModelProviderService {
   private state: ModelProviderState = {
-    primaryProvider:   'ollama',
-    secondaryProvider: 'ollama',
+    primaryProvider:   'grok',
+    secondaryProvider: 'grok',
     heartbeatProvider: 'default',
     activeModelId:     '',
-    modelMode:         'local',
+    modelMode:         'remote',
   };
 
   private initialized = false;
@@ -64,11 +62,17 @@ class ModelProviderService {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    // Load persisted state (requires DB to be ready — caller must ensure this)
-    await this.loadStateFromDB();
-
-    // Register IPC handlers
+    // Register IPC handlers FIRST so the UI can always query providers,
+    // even if DB-backed state loading fails.
     this.registerIpcHandlers();
+
+    // Load persisted state. If this throws, the service still responds to
+    // IPC with sensible defaults from the initial state object.
+    try {
+      await this.loadStateFromDB();
+    } catch (err) {
+      console.warn('[ModelProviderService] loadStateFromDB failed — using defaults:', err);
+    }
 
     this.initialized = true;
     console.log('[ModelProviderService] Initialized:', JSON.stringify(this.state));
@@ -92,8 +96,8 @@ class ModelProviderService {
     return this.state.activeModelId;
   }
 
-  getModelMode(): 'local' | 'remote' {
-    return this.state.modelMode;
+  getModelMode(): 'remote' {
+    return 'remote';
   }
 
   getSecondaryProvider(): string {
@@ -109,41 +113,40 @@ class ModelProviderService {
   async getAvailableProviders(): Promise<ProviderInfo[]> {
     const providers: ProviderInfo[] = [];
 
-    // Local models group
-    providers.push({ id: 'ollama', name: 'Local Models', connected: true });
-
-    // Remote providers from connected integrations
+    // All AI Infrastructure integrations — marked with connected state.
+    // UI decides whether to gate on connection or prompt the user to connect.
     const integrationService = getIntegrationService();
 
     for (const integration of Object.values(integrations)) {
       if (integration.category !== 'AI Infrastructure') continue;
       if (EXCLUDED_PROVIDER_IDS.includes(integration.id)) continue;
-      if (integration.id === 'ollama') continue; // already added as "Local Models"
 
       let connected = false;
-      try {
-        connected = await integrationService.isAnyAccountConnected(integration.id);
-      } catch { /* not ready */ }
-
-      if (connected) {
-        providers.push({ id: integration.id, name: integration.name, connected });
+      if (integration.id === 'claude-code') {
+        // Claude Code is "connected" if the user has either credential type stored
+        try {
+          const oauth = await SullaSettingsModel.get('claudeOAuthToken', '');
+          const apiKey = await SullaSettingsModel.get('claudeApiKey', '');
+          connected = !!(oauth || apiKey);
+        } catch { /* DB not ready */ }
+      } else {
+        try {
+          connected = await integrationService.isAnyAccountConnected(integration.id);
+        } catch { /* not ready */ }
       }
+
+      providers.push({ id: integration.id, name: integration.name, connected });
     }
 
     return providers;
   }
 
   async getModelsForProvider(providerId: string): Promise<ProviderModelInfo[]> {
-    // Local GGUF models
-    if (providerId === 'ollama') {
-      return LOCAL_MODELS.map(m => ({
-        id:          m.name,
-        name:        `${ m.displayName } (${ m.size })`,
-        description: m.description,
-      }));
+    // Claude Code picks its own model internally; return a single synthetic entry.
+    if (providerId === 'claude-code') {
+      return [{ id: 'claude-code', name: 'Claude Code (auto)', description: 'Claude-selected model, runs in sandboxed VM' }];
     }
 
-    // Remote provider — fetch via selectBoxId
     const integration = integrations[providerId];
     if (!integration) return [];
 
@@ -188,18 +191,13 @@ class ModelProviderService {
     // Update in-memory state
     this.state.primaryProvider = providerId;
     this.state.activeModelId = modelId;
-    this.state.modelMode = providerId === 'ollama' ? 'local' : 'remote';
+    this.state.modelMode = 'remote';
 
     // Persist to DB
     await this.persistState(providerId, modelId);
 
-    // Notify everyone immediately — don't block on llama-server
+    // Notify everyone
     await this.broadcastChange();
-
-    // Manage llama-server lifecycle in the background (fire-and-forget)
-    this.manageLlamaServer(oldMode, this.state.modelMode, modelId).catch((err) => {
-      console.error('[ModelProviderService] Background llama-server management failed:', err);
-    });
 
     return this.getState();
   }
@@ -242,10 +240,10 @@ class ModelProviderService {
   // ── Internal ───────────────────────────────────────────────────
 
   private async loadStateFromDB(): Promise<void> {
-    this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', 'ollama');
-    this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'ollama');
+    this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', 'grok');
+    this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'grok');
     this.state.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
-    this.state.modelMode = this.state.primaryProvider === 'ollama' ? 'local' : 'remote';
+    this.state.modelMode = 'remote';
 
     // Load active model from the provider's integration form values
     try {
@@ -254,12 +252,7 @@ class ModelProviderService {
       const modelVal = formValues.find(v => v.property === 'model');
       this.state.activeModelId = modelVal?.value || '';
     } catch {
-      // Fallback to legacy settings
-      if (this.state.primaryProvider === 'ollama') {
-        this.state.activeModelId = await SullaSettingsModel.get('sullaModel', '');
-      } else {
-        this.state.activeModelId = await SullaSettingsModel.get('remoteModel', '');
-      }
+      this.state.activeModelId = await SullaSettingsModel.get('remoteModel', '');
     }
   }
 
@@ -282,21 +275,14 @@ class ModelProviderService {
     }
 
     // Legacy settings sync
-    if (providerId === 'ollama') {
-      await SullaSettingsModel.set('sullaModel', modelId, 'string');
-    } else {
-      await SullaSettingsModel.set('remoteProvider', providerId, 'string');
-      await SullaSettingsModel.set('remoteModel', modelId, 'string');
-    }
+    await SullaSettingsModel.set('remoteProvider', providerId, 'string');
+    await SullaSettingsModel.set('remoteModel', modelId, 'string');
   }
 
   private async broadcastChange(): Promise<void> {
     const state = this.getState();
 
-    // Legacy payload for backward compat
-    const legacyPayload = state.modelMode === 'local'
-      ? { model: state.activeModelId, type: 'local' as const }
-      : { model: state.activeModelId, type: 'remote' as const, provider: state.primaryProvider };
+    const legacyPayload = { model: state.activeModelId, type: 'remote' as const, provider: state.primaryProvider };
 
     // Notify all BrowserWindows
     try {
@@ -318,45 +304,6 @@ class ModelProviderService {
       } catch (err) {
         console.error('[ModelProviderService] Listener error:', err);
       }
-    }
-  }
-
-  private async manageLlamaServer(
-    oldMode: 'local' | 'remote',
-    newMode: 'local' | 'remote',
-    modelId: string,
-  ): Promise<void> {
-    if (oldMode === newMode && newMode === 'remote') return;
-
-    // Respect the explicit localServerEnabled preference
-    const localServerEnabled = await SullaSettingsModel.get('localServerEnabled', '');
-    if (localServerEnabled === 'false') {
-      console.log('[ModelProviderService] localServerEnabled=false — skipping llama-server management');
-      return;
-    }
-
-    try {
-      const { getLlamaCppService, GGUF_MODELS } = await import('./LlamaCppService');
-      const llamaCpp = getLlamaCppService();
-
-      if (newMode === 'remote') {
-        console.log('[ModelProviderService] Switching to remote — stopping llama-server');
-        try { await llamaCpp.stopServer(); } catch { /* not running */ }
-      } else if (newMode === 'local') {
-        let modelKey = modelId || await SullaSettingsModel.get('sullaModel', 'qwen3.5-9b');
-        if (!(modelKey in GGUF_MODELS)) {
-          const mapped = modelKey.replace(/:/g, '-');
-          modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
-        }
-        // Always (re)start with the selected model — startServer handles
-        // stopping any currently running server automatically.
-        console.log(`[ModelProviderService] Starting llama-server with model ${ modelKey }`);
-        const modelPath = await llamaCpp.downloadModel(modelKey);
-        await llamaCpp.startServer(modelPath);
-        console.log(`[ModelProviderService] llama-server started at ${ llamaCpp.serverBaseUrl }`);
-      }
-    } catch (err) {
-      console.error('[ModelProviderService] Failed to manage llama-server:', err);
     }
   }
 

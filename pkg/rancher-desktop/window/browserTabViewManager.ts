@@ -3,10 +3,10 @@ import path from 'path';
 import Electron, { WebContentsView, session } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
-import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
-import paths from '@pkg/utils/paths';
 import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 import { getWindow, openUrlInApp } from '@pkg/window';
+import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 
 const console = Logging.sulla;
 
@@ -569,7 +569,7 @@ export class BrowserTabViewManager {
         try {
           const savedOrigin = new URL(urlValue.value).origin;
           if (savedOrigin !== origin) continue;
-        } catch { continue; }
+        } catch { continue }
 
         const savedUsername = await service.getIntegrationValue('website', 'username', acct.account_id);
         if (savedUsername?.value !== username) continue;
@@ -585,7 +585,11 @@ export class BrowserTabViewManager {
         // Username matches but password changed — show update toast
         const timer = setTimeout(() => this.clearPendingCredentials(tabId), 90_000);
         this.pendingCredentials.set(tabId, {
-          origin, username, password, timer, pageTitle,
+          origin,
+          username,
+          password,
+          timer,
+          pageTitle,
           existingAccountId: acct.account_id,
         });
         this.pushSaveToastToPage(tabId, true);
@@ -713,11 +717,11 @@ export class BrowserTabViewManager {
 
       mainWindow.webContents.send('browser-tab-view:state-update', {
         tabId,
-        url:        displayUrl,
-        title:      wc.getTitle(),
-        canGoBack:  wc.canGoBack(),
+        url:          displayUrl,
+        title:        wc.getTitle(),
+        canGoBack:    wc.canGoBack(),
         canGoForward: wc.canGoForward(),
-        isLoading:  wc.isLoading(),
+        isLoading:    wc.isLoading(),
       });
     };
 
@@ -735,18 +739,18 @@ export class BrowserTabViewManager {
 
       const ctx = {
         tabId,
-        x:                    params.x,
-        y:                    params.y,
-        selectionText:        params.selectionText || '',
-        linkURL:              params.linkURL || '',
-        srcURL:               params.srcURL || '',
-        mediaType:            params.mediaType || '',
-        isEditable:           params.isEditable,
-        misspelledWord:       params.misspelledWord || '',
+        x:                     params.x,
+        y:                     params.y,
+        selectionText:         params.selectionText || '',
+        linkURL:               params.linkURL || '',
+        srcURL:                params.srcURL || '',
+        mediaType:             params.mediaType || '',
+        isEditable:            params.isEditable,
+        misspelledWord:        params.misspelledWord || '',
         dictionarySuggestions: params.dictionarySuggestions || [],
-        canGoBack:            wc.canGoBack(),
-        canGoForward:         wc.canGoForward(),
-        pageURL:              wc.getURL(),
+        canGoBack:             wc.canGoBack(),
+        canGoForward:          wc.canGoForward(),
+        pageURL:               wc.getURL(),
       };
 
       const script = buildContextMenuInjection(ctx);
@@ -769,18 +773,18 @@ export class BrowserTabViewManager {
         'var m=document.querySelector("sulla-context-menu");if(m)m.remove();', true,
       ).catch(() => {}).then(() => {
         switch (action) {
-        case 'copy':              wc.copy(); break;
-        case 'cut':               wc.cut(); break;
-        case 'paste':             wc.paste(); break;
-        case 'select-all':        wc.selectAll(); break;
-        case 'undo':              wc.undo(); break;
-        case 'redo':              wc.redo(); break;
-        case 'go-back':           wc.goBack(); break;
-        case 'go-forward':        wc.goForward(); break;
-        case 'reload':            wc.reload(); break;
-        case 'copy-image':        wc.copyImageAt(data.x ?? 0, data.y ?? 0); break;
-        case 'inspect':           wc.inspectElement(data.x ?? 0, data.y ?? 0); break;
-        case 'replace-selection':  wc.replace(data.text ?? ''); break;
+        case 'copy': wc.copy(); break;
+        case 'cut': wc.cut(); break;
+        case 'paste': wc.paste(); break;
+        case 'select-all': wc.selectAll(); break;
+        case 'undo': wc.undo(); break;
+        case 'redo': wc.redo(); break;
+        case 'go-back': wc.goBack(); break;
+        case 'go-forward': wc.goForward(); break;
+        case 'reload': wc.reload(); break;
+        case 'copy-image': wc.copyImageAt(data.x ?? 0, data.y ?? 0); break;
+        case 'inspect': wc.inspectElement(data.x ?? 0, data.y ?? 0); break;
+        case 'replace-selection': wc.replace(data.text ?? ''); break;
         case 'add-to-dictionary': wc.session.addWordToSpellCheckerDictionary(data.word ?? ''); break;
 
         case 'copy-link':
@@ -980,25 +984,25 @@ export class BrowserTabViewManager {
 function buildErrorPage(url: string, errorCode: number, errorDescription: string): string {
   // Map common Chromium network error codes to user-friendly messages
   const messages: Record<number, { title: string; detail: string }> = {
-    [-2]:   { title: 'Network error',              detail: 'A network error occurred.' },
-    [-6]:   { title: 'File not found',             detail: 'The file could not be found.' },
-    [-7]:   { title: 'Too many redirects',         detail: 'The page redirected too many times.' },
-    [-15]:  { title: 'Connection reset',           detail: 'The connection was reset.' },
-    [-21]:  { title: 'Network changed',            detail: 'A network change was detected.' },
-    [-100]: { title: 'Connection closed',           detail: 'The connection was closed unexpectedly.' },
-    [-101]: { title: 'Connection reset',           detail: 'The connection was reset.' },
-    [-102]: { title: 'Connection refused',         detail: 'The server refused the connection.' },
-    [-103]: { title: 'Connection failed',          detail: 'Could not connect to the server.' },
-    [-104]: { title: 'Connection failed',          detail: 'Could not connect to the server.' },
-    [-105]: { title: 'Name not resolved',          detail: 'The server\'s DNS address could not be found.' },
-    [-106]: { title: 'Internet disconnected',      detail: 'You are not connected to the internet.' },
-    [-109]: { title: 'Address unreachable',        detail: 'The server address is unreachable.' },
-    [-110]: { title: 'SSL protocol error',         detail: 'An SSL protocol error occurred.' },
-    [-112]: { title: 'Connection timed out',       detail: 'The connection to the server timed out.' },
-    [-118]: { title: 'Connection timed out',       detail: 'The connection to the server timed out.' },
-    [-130]: { title: 'Proxy connection failed',    detail: 'Could not connect through the proxy server.' },
-    [-200]: { title: 'Certificate error',          detail: 'The server\'s certificate is not trusted.' },
-    [-201]: { title: 'Certificate date invalid',   detail: 'The server\'s certificate has expired or is not yet valid.' },
+    [-2]:   { title: 'Network error', detail: 'A network error occurred.' },
+    [-6]:   { title: 'File not found', detail: 'The file could not be found.' },
+    [-7]:   { title: 'Too many redirects', detail: 'The page redirected too many times.' },
+    [-15]:  { title: 'Connection reset', detail: 'The connection was reset.' },
+    [-21]:  { title: 'Network changed', detail: 'A network change was detected.' },
+    [-100]: { title: 'Connection closed', detail: 'The connection was closed unexpectedly.' },
+    [-101]: { title: 'Connection reset', detail: 'The connection was reset.' },
+    [-102]: { title: 'Connection refused', detail: 'The server refused the connection.' },
+    [-103]: { title: 'Connection failed', detail: 'Could not connect to the server.' },
+    [-104]: { title: 'Connection failed', detail: 'Could not connect to the server.' },
+    [-105]: { title: 'Name not resolved', detail: 'The server\'s DNS address could not be found.' },
+    [-106]: { title: 'Internet disconnected', detail: 'You are not connected to the internet.' },
+    [-109]: { title: 'Address unreachable', detail: 'The server address is unreachable.' },
+    [-110]: { title: 'SSL protocol error', detail: 'An SSL protocol error occurred.' },
+    [-112]: { title: 'Connection timed out', detail: 'The connection to the server timed out.' },
+    [-118]: { title: 'Connection timed out', detail: 'The connection to the server timed out.' },
+    [-130]: { title: 'Proxy connection failed', detail: 'Could not connect through the proxy server.' },
+    [-200]: { title: 'Certificate error', detail: 'The server\'s certificate is not trusted.' },
+    [-201]: { title: 'Certificate date invalid', detail: 'The server\'s certificate has expired or is not yet valid.' },
     [-202]: { title: 'Certificate authority invalid', detail: 'The server\'s certificate authority is not trusted.' },
   };
 

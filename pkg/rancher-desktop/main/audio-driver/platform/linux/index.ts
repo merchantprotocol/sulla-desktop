@@ -11,8 +11,14 @@
  */
 
 import { execSync, spawn } from 'child_process';
-import type { ChildProcess } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+
 import { log } from '../../model/logger';
+
+import type { ChildProcess } from 'child_process';
+
+// ─── Whisper.cpp (Local STT Engine) ───────────────────────────
 
 // ─── Meter smoothing (matches macOS Swift capture) ─────────
 const ATTACK = 0.3;
@@ -312,7 +318,7 @@ export const volume = {
       const info = execSync(`pactl get-sink-volume "${ deviceUID || '@DEFAULT_SINK@' }"`, {
         timeout: 3000, stdio: 'pipe',
       }).toString();
-      const match = info.match(/(\d+)%/);
+      const match = /(\d+)%/.exec(info);
       const pct = match ? parseInt(match[1], 10) : 0;
 
       const muteInfo = execSync(`pactl get-sink-mute "${ deviceUID || '@DEFAULT_SINK@' }"`, {
@@ -388,11 +394,6 @@ export const volume = {
   },
 };
 
-// ─── Whisper.cpp (Local STT Engine) ───────────────────────────
-
-import path from 'path';
-import fs from 'fs';
-
 const WHISPER_MODELS_DIR = path.join(
   process.env.HOME || '/tmp',
   '.sulla', 'cache', 'whisper', 'models',
@@ -413,7 +414,7 @@ export const whisper = {
         const vOut = execSync(`"${ binaryPath }" --version 2>&1 || true`, {
           timeout: 5000, stdio: 'pipe',
         }).toString().trim();
-        const match = vOut.match(/whisper[.\s-]*(cpp)?\s*v?([\d.]+)/i);
+        const match = /whisper[.\s-]*(cpp)?\s*v?([\d.]+)/i.exec(vOut);
         if (match) version = match[2];
       } catch { /* version check optional */ }
 
@@ -483,7 +484,7 @@ export const whisper = {
       return true;
     } catch (e: any) {
       log.error('Platform', 'Failed to download model', { model, error: e.message });
-      try { fs.unlinkSync(`${ modelFile }.tmp`); } catch { /* ignore */ }
+      try { fs.unlinkSync(`${ modelFile }.tmp`) } catch { /* ignore */ }
       return false;
     }
   },

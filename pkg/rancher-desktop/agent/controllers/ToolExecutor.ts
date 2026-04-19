@@ -12,15 +12,16 @@
  * BaseNode delegates to this via `processPendingToolCalls()` and `executeToolCalls()`.
  */
 
-import type { BaseThreadState } from '../nodes/Graph';
-import type { ToolResult } from '../types';
-import type { NodeRunContext } from '../nodes/BaseNode';
 import { throwIfAborted } from '../services/AbortService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
-import { toolRegistry } from '../tools/registry';
 import { BaseTool } from '../tools/base';
+import { toolRegistry } from '../tools/registry';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+
 import type { NormalizedResponse, ChatMessage } from '../languagemodels/BaseLanguageModel';
+import type { NodeRunContext } from '../nodes/BaseNode';
+import type { BaseThreadState } from '../nodes/Graph';
+import type { ToolResult } from '../types';
 
 // ============================================================================
 // Constants
@@ -294,9 +295,9 @@ export class ToolExecutor {
     allowedToolCategories?: string[];
     allowedToolNames?:      string[];
   }): {
-    allowedCategories: string[] | null;
-    allowedToolNames:  string[] | null;
-  } {
+      allowedCategories: string[] | null;
+      allowedToolNames:  string[] | null;
+    } {
     const allowedCategories = options.allowedToolCategories?.length
       ? [...new Set(options.allowedToolCategories)]
       : null;
@@ -453,7 +454,7 @@ export class ToolExecutor {
       if (typeof parsed === 'string') {
         const trimmed = parsed.trim();
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-          try { parsed = JSON.parse(trimmed); } catch { /* keep as string */ }
+          try { parsed = JSON.parse(trimmed) } catch { /* keep as string */ }
         }
       }
 
@@ -483,11 +484,11 @@ export class ToolExecutor {
 
     // Check if the tool result contains a screenshot (from visual tools)
     const toolResult = result.result as any;
-    const screenshotBase64 = toolResult?.screenshotBase64
-      || toolResult?.result?.screenshotBase64;
-    const screenshotMediaType = toolResult?.screenshotMediaType
-      || toolResult?.result?.screenshotMediaType
-      || 'image/jpeg';
+    const screenshotBase64 = toolResult?.screenshotBase64 ||
+      toolResult?.result?.screenshotBase64;
+    const screenshotMediaType = toolResult?.screenshotMediaType ||
+      toolResult?.result?.screenshotMediaType ||
+      'image/jpeg';
 
     // 1. Node run context (current LLM turn visibility) — text only
     if (this.ctx.currentNodeRunContext) {
@@ -555,66 +556,18 @@ export class ToolExecutor {
     }
 
     this.ctx.bumpStateVersion(state);
-
-    // Training data: capture tool result
-    try {
-      const trainingConvId = (state as any).metadata?.conversationId;
-      if (trainingConvId) {
-        const { getTrainingDataLogger } = require('../services/TrainingDataLogger');
-        const tl = getTrainingDataLogger();
-        if (tl.hasSession(trainingConvId)) {
-          tl.logToolResult(trainingConvId, toolCallId, resultContent);
-        }
-      }
-    } catch { /* best-effort */ }
   }
 
-  // --------------------------------------------------------------------------
-  // Training data
-  // --------------------------------------------------------------------------
-
+  /**
+   * Training data logging — removed (local training code removed).
+   * Kept as no-op stub because BaseNode.ts calls this method.
+   */
   logTrainingTurn(
-    state: BaseThreadState,
-    runCtx: NodeRunContext,
-    reply: NormalizedResponse,
+    _state: BaseThreadState,
+    _runCtx: NodeRunContext,
+    _reply: NormalizedResponse,
   ): void {
-    try {
-      const convId = (state as any).metadata?.conversationId;
-      if (!convId) return;
-
-      const { getTrainingDataLogger } = require('../services/TrainingDataLogger');
-      const tl = getTrainingDataLogger();
-      if (!tl.hasSession(convId)) return;
-
-      const lastUser = [...runCtx.messages].reverse().find((m: ChatMessage) =>
-        m.role === 'user' && !(m.metadata as any)?._conversationSummary,
-      );
-      if (lastUser?.content) {
-        const content = typeof lastUser.content === 'string'
-          ? lastUser.content
-          : JSON.stringify(lastUser.content);
-        tl.logUserMessage(convId, content);
-      }
-
-      const reasoning = reply.metadata.reasoning || undefined;
-      const toolCalls = reply.metadata.tool_calls || [];
-      const cleanedContent = stripProtocolTags(reply.content);
-
-      if (toolCalls.length > 0) {
-        tl.logToolCall(
-          convId,
-          toolCalls.map((tc: { id?: string; name: string; args: any }) => ({
-            id:   tc.id || `tc_${ Date.now() }_${ Math.random().toString(36).slice(2, 6) }`,
-            name: tc.name,
-            args: tc.args,
-          })),
-          cleanedContent || null,
-          { reasoning },
-        );
-      } else if (cleanedContent) {
-        tl.logAssistantMessage(convId, cleanedContent, { reasoning });
-      }
-    } catch { /* best-effort — never block conversation */ }
+    // no-op
   }
 
   // --------------------------------------------------------------------------

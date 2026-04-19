@@ -1,4 +1,7 @@
 // registry.ts (or wherever you centralize registrations)
+// NOTE: import order matters here — `@pkg/window` must be imported FIRST to
+// avoid a circular-dependency runtime error ("Cannot access 'a' before
+// initialization") in the renderer bundle. Do not let linters reorder these.
 import * as window from '@pkg/window';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIntegrationService } from './agent/services/IntegrationService';
@@ -15,7 +18,6 @@ import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
-import { getLlamaCppService } from '@pkg/agent/services/LlamaCppService';
 import * as path from 'path';
 import { app, webContents } from 'electron';
 import { execSync } from 'child_process';
@@ -29,7 +31,6 @@ const console = Logging.sulla;
 
 /** Track whether Sulla services were actually started during this session. */
 let sullaDockerServicesStarted = false;
-
 
 export function markSullaDockerServicesStarted(): void {
   sullaDockerServicesStarted = true;
@@ -183,94 +184,25 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { /* stateless singleton, no teardown */ },
   );
 
-  lifecycle.register('llama-cpp', ['model-provider'],
-    async() => {
-      const sendProgress = (current: number, max: number, description: string) => {
-        window.send('k8s-progress', { current, max, description });
-      };
-
-      sendProgress(0, 100, 'Installing llama.cpp...');
-      const llamaCppService = getLlamaCppService();
-
-      await llamaCppService.ensure();
-      console.log('[Background] LlamaCppService initialized - llama.cpp ready:', llamaCppService.isReady);
-
-      if (!llamaCppService.isReady) {
-        return;
-      }
-
-      sendProgress(20, 100, 'llama.cpp installed');
-
-      // Read from ModelProviderService — the single source of truth for model selection
-      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
-      const providerState = getModelProviderService().getState();
-
-      // Check the explicit localServerEnabled preference first, then fall back to modelMode
-      const localServerEnabled = await SullaSettingsModel.get('localServerEnabled', '');
-
-      if (localServerEnabled === 'false' || (localServerEnabled === '' && providerState.modelMode === 'remote')) {
-        console.log('[Background] Local model server disabled — skipping llama-server startup');
-        sendProgress(100, 100, 'Local server disabled');
-
-        return;
-      }
-
-      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-      let modelKey = providerState.activeModelId || 'qwen3.5-9b';
-
-      if (!(modelKey in GGUF_MODELS)) {
-        const mapped = modelKey.replace(/:/g, '-');
-
-        if (mapped in GGUF_MODELS) {
-          console.log(`[Background] Mapped legacy model key '${ modelKey }' -> '${ mapped }'`);
-          modelKey = mapped;
-        } else {
-          console.warn(`[Background] Unknown model key '${ modelKey }', falling back to qwen3.5-9b`);
-          modelKey = 'qwen3.5-9b';
-        }
-      }
-      console.log(`[Background] User selected model: ${ modelKey }`);
-
-      const entry = GGUF_MODELS[modelKey];
-
-      sendProgress(25, 100, `Downloading model ${ entry?.displayName ?? modelKey }...`);
-      const modelPath = await llamaCppService.downloadModel(modelKey, (received, total) => {
-        const pct = total > 0 ? Math.round((received / total) * 40) + 25 : -1;
-
-        sendProgress(pct, 100, `Downloading ${ entry?.displayName ?? modelKey }... ${ Math.round(received / 1e6) }MB / ${ Math.round(total / 1e6) }MB`);
-      });
-      console.log(`[Background] Model ready at: ${ modelPath }`);
-
-      sendProgress(70, 100, 'Starting local AI server...');
-      await llamaCppService.startServer(modelPath);
-      sendProgress(100, 100, 'Local AI server ready');
-      console.log(`[Background] llama-server running at ${ llamaCppService.serverBaseUrl }`);
-    },
-    async() => {
-      try { await getLlamaCppService().stopServer(); } catch { /* not started */ }
-    },
-    { persistOnRestart: true },
-  );
-
   // ── Connection readiness gates ─────────────────────────────────────────
 
   lifecycle.register('postgres', [],
-    async() => { await postgresClient.waitForReady(); },
-    async() => { await postgresClient.end(); },
+    async() => { await postgresClient.waitForReady() },
+    async() => { await postgresClient.end() },
     { persistOnRestart: true },
   );
 
   lifecycle.register('redis', [],
-    async() => { await redisClient.waitForReady(); },
-    async() => { await redisClient.close(); },
+    async() => { await redisClient.waitForReady() },
+    async() => { await redisClient.close() },
     { persistOnRestart: true },
   );
 
   // ── Database layer (depends on postgres connection) ────────────────────
 
   lifecycle.register('database-manager', ['postgres'],
-    async() => { await afterBackgroundLoaded(); },
-    async() => { await getDatabaseManager().stop(); },
+    async() => { await afterBackgroundLoaded() },
+    async() => { await getDatabaseManager().stop() },
   );
 
   // ── Application services (depend on database-manager) ──────────────────
@@ -302,7 +234,7 @@ export async function instantiateSullaStart(): Promise<void> {
       await getWorkflowSchedulerService().initialize();
       console.log('[Background] WorkflowSchedulerService initialized');
     },
-    async() => { getWorkflowSchedulerService().shutdown(); },
+    async() => { getWorkflowSchedulerService().shutdown() },
   );
 
   lifecycle.register('chat-server', ['database-manager'],
@@ -312,7 +244,21 @@ export async function instantiateSullaStart(): Promise<void> {
       await chatServer.start();
       console.log('[Background] Chat completions API server started');
     },
-    async() => { await getChatCompletionsServer().stop(); },
+    async() => { await getChatCompletionsServer().stop() },
+  );
+
+  lifecycle.register('cloudflare-relay', ['chat-server'],
+    async() => {
+      const { getCloudflareRelayService } = await import('@pkg/agent/services/CloudflareRelayService');
+
+      await getCloudflareRelayService().start();
+      console.log('[Background] Cloudflare relay service started');
+    },
+    async() => {
+      const { getCloudflareRelayService } = await import('@pkg/agent/services/CloudflareRelayService');
+
+      await getCloudflareRelayService().stop();
+    },
   );
 
   lifecycle.register('vault', ['database-manager'],
@@ -338,11 +284,9 @@ export async function instantiateSullaStart(): Promise<void> {
 
       // Invalidate LLM caches whenever the source of truth changes
       const { LLMRegistry } = await import('@pkg/agent/languagemodels');
-      const { resetOllamaService } = await import('@pkg/agent/languagemodels/OllamaService');
 
       svc.onChange(() => {
         LLMRegistry.invalidate();
-        resetOllamaService();
         console.log('[Background] LLM service caches invalidated via ModelProviderService');
       });
 
@@ -498,20 +442,21 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       }
 
       const keyCodeMap: Record<string, { code: string; keyCode: number; text?: string }> = {
-        Enter:      { code: 'Enter',      keyCode: 13, text: '\r' },
-        Escape:     { code: 'Escape',     keyCode: 27 },
-        Tab:        { code: 'Tab',        keyCode: 9 },
-        Space:      { code: 'Space',      keyCode: 32, text: ' ' },
-        Backspace:  { code: 'Backspace',  keyCode: 8 },
-        ArrowUp:    { code: 'ArrowUp',    keyCode: 38 },
-        ArrowDown:  { code: 'ArrowDown',  keyCode: 40 },
-        ArrowLeft:  { code: 'ArrowLeft',  keyCode: 37 },
+        Enter:      { code: 'Enter', keyCode: 13, text: '\r' },
+        Escape:     { code: 'Escape', keyCode: 27 },
+        Tab:        { code: 'Tab', keyCode: 9 },
+        Space:      { code: 'Space', keyCode: 32, text: ' ' },
+        Backspace:  { code: 'Backspace', keyCode: 8 },
+        ArrowUp:    { code: 'ArrowUp', keyCode: 38 },
+        ArrowDown:  { code: 'ArrowDown', keyCode: 40 },
+        ArrowLeft:  { code: 'ArrowLeft', keyCode: 37 },
         ArrowRight: { code: 'ArrowRight', keyCode: 39 },
       };
 
       const mapped = keyCodeMap[inputEvent.key] || { code: inputEvent.key, keyCode: 0 };
 
-      const cdpType = inputEvent.type === 'char' ? 'char'
+      const cdpType = inputEvent.type === 'char'
+        ? 'char'
         : inputEvent.type === 'keyUp' ? 'keyUp' : 'rawKeyDown';
 
       const params: Record<string, unknown> = {
@@ -536,9 +481,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   // ── Screenshot capture via CDP ───────────────────────────────────────────
   ipcMainProxy.handle('browser-tab:capture-screenshot', async(event: Electron.IpcMainInvokeEvent, options?: {
-    format?: 'jpeg' | 'png';
+    format?:  'jpeg' | 'png';
     quality?: number;
-    clip?: { x: number; y: number; width: number; height: number; scale?: number };
+    clip?:    { x: number; y: number; width: number; height: number; scale?: number };
   }, tabId?: string) => {
     let wc: Electron.WebContents;
 
@@ -559,8 +504,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       }
 
       const cdpParams: Record<string, unknown> = {
-        format:               options?.format ?? 'jpeg',
-        quality:              options?.quality ?? 80,
+        format:                options?.format ?? 'jpeg',
+        quality:               options?.quality ?? 80,
         captureBeyondViewport: false,
       };
 
@@ -588,10 +533,10 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
   // ── Mouse events via CDP ────────────────────────────────────────────────
   ipcMainProxy.handle('browser-tab:send-mouse-event', async(event: Electron.IpcMainInvokeEvent, mouseEvent: {
-    type: 'mousePressed' | 'mouseReleased' | 'mouseMoved';
-    x: number;
-    y: number;
-    button?: 'left' | 'right' | 'middle' | 'none';
+    type:        'mousePressed' | 'mouseReleased' | 'mouseMoved';
+    x:           number;
+    y:           number;
+    button?:     'left' | 'right' | 'middle' | 'none';
     clickCount?: number;
   }, tabId?: string) => {
     let wc: Electron.WebContents;
@@ -794,68 +739,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     };
   });
 
-  // ── Local llama-server control ─────────────────────────────────────────────
-
-  ipcMain.handle('llama-server:status', async() => {
-    return { running: getLlamaCppService().isServerRunning };
-  });
-
-  ipcMain.handle('llama-server:stop', async() => {
-    console.log('[Background] IPC llama-server:stop — stopping local server');
-    try {
-      await getLlamaCppService().stopServer();
-    } catch { /* not running */ }
-
-    return { running: false };
-  });
-
-  ipcMain.handle('llama-server:start', async() => {
-    console.log('[Background] IPC llama-server:start — starting local server');
-    try {
-      const sendProgress = (current: number, max: number, description: string) => {
-        window.send('k8s-progress', { current, max, description });
-      };
-
-      const llamaCpp = getLlamaCppService();
-
-      if (llamaCpp.isServerRunning) {
-        return { running: true };
-      }
-
-      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
-      const { GGUF_MODELS } = await import('@pkg/agent/services/LlamaCppService');
-      let modelKey = getModelProviderService().getState().activeModelId || 'qwen3.5-9b';
-
-      if (!(modelKey in GGUF_MODELS)) {
-        const mapped = modelKey.replace(/:/g, '-');
-
-        modelKey = (mapped in GGUF_MODELS) ? mapped : 'qwen3.5-9b';
-      }
-
-      const entry = GGUF_MODELS[modelKey];
-
-      sendProgress(10, 100, `Downloading model ${ entry?.displayName ?? modelKey }...`);
-      const modelPath = await llamaCpp.downloadModel(modelKey, (received, total) => {
-        const pct = total > 0 ? Math.round((received / total) * 60) + 10 : -1;
-
-        sendProgress(pct, 100, `Downloading ${ entry?.displayName ?? modelKey }... ${ Math.round(received / 1e6) }MB / ${ Math.round(total / 1e6) }MB`);
-      });
-
-      sendProgress(75, 100, 'Starting local AI server...');
-      await llamaCpp.startServer(modelPath);
-      sendProgress(100, 100, 'Local AI server ready');
-      console.log(`[Background] llama-server started at ${ llamaCpp.serverBaseUrl }`);
-
-      return { running: true };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-
-      console.error('[Background] llama-server:start failed:', message);
-
-      return { running: false, error: message };
-    }
-  });
-
   // ── Vault: export & import ─────────────────────────────────────────────────
   const { dialog } = await import('electron');
   const fsPromises = await import('fs/promises');
@@ -958,7 +841,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
       // ── Detect format and normalize to a common shape ──
       interface ImportEntry { label: string; url: string; username: string; password: string; notes: string; totp: string; folder: string }
-      let entries: ImportEntry[] = [];
+      const entries: ImportEntry[] = [];
       let format = 'unknown';
 
       // Try JSON first (Sulla native or Bitwarden JSON)
@@ -1203,7 +1086,7 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
 
       // Find the active tab to autofill — if tabId provided use it,
       // otherwise find the first visible browser tab with a matching origin
-      let targetTabId = data.tabId;
+      const targetTabId = data.tabId;
 
       if (!targetTabId) {
         // Try to find the tab from the main window's rendered browser tabs
@@ -1244,7 +1127,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
       return { success: false, error: err.message };
     }
   });
-
 }
 
 /**
@@ -1307,11 +1189,11 @@ export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
   if (mode === 'full') {
     if (postgresClient.isConnected()) {
       console.log('[sullaEnd] Postgres still connected after lifecycle — force-closing');
-      try { await postgresClient.end(); } catch { /* ignore */ }
+      try { await postgresClient.end() } catch { /* ignore */ }
     }
     if (redisClient.getClient()?.status !== 'end') {
       console.log('[sullaEnd] Redis client still alive after lifecycle — force-closing');
-      try { await redisClient.close(); } catch { /* ignore */ }
+      try { await redisClient.close() } catch { /* ignore */ }
     }
   }
 }

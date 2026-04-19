@@ -1,9 +1,12 @@
 import fs from 'fs';
 import path from 'path';
+
 import yaml from 'yaml';
-import paths from '@pkg/utils/paths';
-import { ExtensionMetadata } from '@pkg/main/extensions/types';
+
 import { Integration } from '../integrations/catalog';
+
+import { ExtensionMetadata } from '@pkg/main/extensions/types';
+import paths from '@pkg/utils/paths';
 
 const MARKETPLACE_URL = 'https://raw.githubusercontent.com/merchantprotocol/sulla-recipes/refs/heads/main/index.yaml';
 const CACHE_TTL_MS = 1 * 60 * 1000;

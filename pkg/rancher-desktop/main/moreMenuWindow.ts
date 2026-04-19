@@ -11,6 +11,7 @@
  */
 
 import path from 'path';
+
 import { BrowserWindow, ipcMain, app, screen } from 'electron';
 
 import Logging from '@pkg/utils/logging';
@@ -43,7 +44,7 @@ function _showAndFocus(): void {
   showGuard = true;
   win.show();        // show + focus in one step (avoids macOS blur race)
   win.focus();       // ensure focus even if show() didn't grant it
-  setTimeout(() => { showGuard = false; }, 200);
+  setTimeout(() => { showGuard = false }, 200);
 }
 
 function onShow(
