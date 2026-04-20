@@ -386,6 +386,11 @@ export abstract class BaseLanguageModel {
       tools?:          any;
       conversationId?: string;
       nodeName?:       string;
+      /** Calling graph state. Used by ClaudeCodeService to mint an MCP
+       *  session so the in-VM CLI can call back into native tools that
+       *  mutate state.metadata on this exact graph instance. Ignored by
+       *  other language-model implementations. */
+      state?:          any;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();

@@ -14,6 +14,13 @@ export type ChatMessage = RegistryChatMessage;
 
 const DEFAULT_CHANNEL = 'sulla-desktop';
 const MAX_PERSISTED_MESSAGES = 200;
+const MAX_PERSISTED_TOOL_CHARS = 20_000;
+
+function truncateForStorage(v: unknown): unknown {
+  const s = typeof v === 'string' ? v : JSON.stringify(v ?? null);
+  if (s.length <= MAX_PERSISTED_TOOL_CHARS) return v;
+  return `${ s.slice(0, MAX_PERSISTED_TOOL_CHARS) }\n\n[truncated ${ s.length - MAX_PERSISTED_TOOL_CHARS } chars]`;
+}
 
 export class ChatInterface {
   private readonly persona:            AgentPersonaService;
@@ -89,13 +96,25 @@ export class ChatInterface {
 
   private persistMessages(): void {
     try {
-      // Strip image dataUrls and truncate large HTML to avoid blowing localStorage limits
+      // Strip image dataUrls, truncate large HTML, and cap tool result/output
+      // so a single giant payload can't wipe out localStorage or, on restore,
+      // OOM the renderer rehydrating the reactive state.
       const toStore = this.persona.messages.slice(-MAX_PERSISTED_MESSAGES).map((m) => {
         if (m.image) {
           return { ...m, image: { ...m.image, dataUrl: '' } };
         }
         if (m.kind === 'html' && m.content.length > 50_000) {
           return { ...m, content: '[HTML content too large to persist]' };
+        }
+        if (m.toolCard && (m.toolCard.result !== undefined || m.toolCard.output !== undefined)) {
+          return {
+            ...m,
+            toolCard: {
+              ...m.toolCard,
+              result: m.toolCard.result !== undefined ? truncateForStorage(m.toolCard.result) : undefined,
+              output: m.toolCard.output !== undefined ? truncateForStorage(m.toolCard.output) as string : undefined,
+            },
+          };
         }
         return m;
       });

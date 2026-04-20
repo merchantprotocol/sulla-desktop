@@ -14,7 +14,7 @@ import type { ToolManifest } from '../registry';
 export const computerUseToolManifests: ToolManifest[] = [
   {
     name:                    'computer',
-    description:             'Anthropic native computer use tool — visual screenshot-based interaction with coordinate clicking, typing, scrolling, and dragging. The model sees the page as a screenshot and interacts with pixel coordinates.',
+    description:             'Visual computer use — screenshot-based interaction with coordinate clicking, typing, scrolling, and dragging. Actions return a compact screenshot reference { assetId, path, width, height, bytes } pointing to a JPEG on disk — never inline base64. To inspect the screenshot visually, use the Read tool on the returned path; that loads the image into vision context without bloating the agent response.',
     category:                'computer-use',
     schemaDef:               {},
     operationTypes:          ['execute'],

@@ -1,8 +1,14 @@
 import * as childProcess from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
 import { resolveLimactlPath, resolveLimaHome } from '../tools/util/CommandRunner';
+import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import Logging from '@pkg/utils/logging';
+
+import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
 const log = Logging.background;
 
@@ -84,6 +90,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     options: {
       signal?:         AbortSignal;
       conversationId?: string;
+      state?:          BaseThreadState | any;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
@@ -244,7 +251,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
   private async runClaude(
     messages: ChatMessage[],
     callbacks: Partial<StreamCallbacks>,
-    options: { signal?: AbortSignal; conversationId?: string },
+    options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
   ): Promise<{ text: string }> {
     // Prefer the integration vault (new path). Fall back to SullaSettingsModel
@@ -321,6 +328,25 @@ export class ClaudeCodeService extends BaseLanguageModel {
       }
     }
 
+    // Mint an MCP session bound to the calling graph state, if we have one
+    // AND the in-process MCP server is listening. Claude can then call
+    // native tools (execute_workflow etc.) back into this exact graph.
+    // Lifetime: revoke + delete config when the spawn promise settles.
+    let mcpSession: RegisteredSession | null = null;
+    let mcpConfigPath: string | null = null;
+    if (options.state) {
+      try {
+        const host = getMCPServerHost();
+        if (host.running) {
+          mcpSession = host.registerSession(options.state as BaseThreadState);
+          mcpConfigPath = this.writeMcpConfig(mcpSession);
+          log.log(`[ClaudeCodeService] MCP session minted — config=${ mcpConfigPath } url=${ mcpSession.url }`);
+        }
+      } catch (err) {
+        log.log(`[ClaudeCodeService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
+      }
+    }
+
     const claudeArgs = [
       'claude',
       '-p', shq(prompt),
@@ -335,6 +361,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (existingSession) {
       claudeArgs.push('--resume', shq(existingSession));
     }
+    if (mcpConfigPath) {
+      claudeArgs.push('--mcp-config', shq(mcpConfigPath));
+    }
 
     // `exec` replaces the inner sh with claude so there's no shell layer
     // between the SSH session and the CLI — gives the best chance of signal
@@ -342,10 +371,22 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const innerCmd = `${ envAssignments.join(' ') } exec ${ claudeArgs.join(' ') } < /dev/null`;
     const args = ['shell', '0', '--', 'sh', '-c', innerCmd];
 
-    return await new Promise((resolve, reject) => {
-      const proc = childProcess.spawn(limactlPath, args, {
-        env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
-      });
+    const cleanupMcp = () => {
+      if (mcpSession) {
+        try { mcpSession.revoke(); } catch { /* ignore */ }
+        mcpSession = null;
+      }
+      if (mcpConfigPath) {
+        try { fs.unlinkSync(mcpConfigPath); } catch { /* file may already be gone */ }
+        mcpConfigPath = null;
+      }
+    };
+
+    try {
+      return await new Promise((resolve, reject) => {
+        const proc = childProcess.spawn(limactlPath, args, {
+          env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
+        });
 
       let stdoutBuffer = '';
       let stderrBuffer = '';
@@ -570,6 +611,35 @@ export class ClaudeCodeService extends BaseLanguageModel {
         resolve({ text: textCollected });
       });
     });
+    } finally {
+      cleanupMcp();
+    }
+  }
+
+  /**
+   * Write a short-lived MCP config JSON that tells Claude Code how to reach
+   * the in-process MCP server. Placed under ~/.sulla/mcp-configs so it
+   * appears at the same path inside the Lima VM (Lima mounts the user's
+   * home directory). Perms 0600.
+   *
+   * The Authorization header carries the session id so tool handlers can
+   * resolve back to the calling graph's BaseThreadState.
+   */
+  private writeMcpConfig(session: RegisteredSession): string {
+    const dir = path.join(os.homedir(), '.sulla', 'mcp-configs');
+    fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `${ session.id }.json`);
+    const payload = {
+      mcpServers: {
+        'sulla-native': {
+          type:    'http',
+          url:     session.url,
+          headers: { Authorization: session.header },
+        },
+      },
+    };
+    fs.writeFileSync(filePath, JSON.stringify(payload), { mode: 0o600 });
+    return filePath;
   }
 }
 

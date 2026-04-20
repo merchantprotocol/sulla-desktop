@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { resolveBridge, isBridgeResolved } from '../playwright/resolve_bridge';
+import { saveScreenshot, type ScreenshotRef } from './screenshot_store';
 
 /**
  * Computer Use Tool - Anthropic's native computer_20250124 protocol.
@@ -15,9 +16,12 @@ import { resolveBridge, isBridgeResolved } from '../playwright/resolve_bridge';
  * - double_click: double-click at coordinates
  * - triple_click: triple-click at coordinates (select line)
  *
- * Every action (except screenshot and mouse_move) automatically
- * captures a screenshot after execution, which is returned as
- * an image content block in the tool result.
+ * Every action (except mouse_move) captures a screenshot. The image
+ * is persisted to ~/sulla/artifacts/screenshots/ and the tool result
+ * returns a compact reference { assetId, path, width, height, bytes }
+ * — never inline base64 — so bash-tool stdout, message state, and
+ * the chat UI stay tiny regardless of image size. Callers that need
+ * to see the image visually should Read the returned path.
  */
 export class ComputerToolWorker extends BaseTool {
   name = 'computer';
@@ -37,11 +41,11 @@ export class ComputerToolWorker extends BaseTool {
         if (!screenshot) {
           return { successBoolean: false, responseString: `[${ assetId }] Screenshot failed` };
         }
+        const ref = await saveScreenshot(screenshot.base64, screenshot.mediaType);
         return {
-          successBoolean:      true,
-          responseString:      `[${ assetId }] Screenshot captured`,
-          screenshotBase64:    screenshot.base64,
-          screenshotMediaType: screenshot.mediaType,
+          successBoolean: true,
+          responseString: `[${ assetId }] Screenshot captured — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Use Read on that path to load the image into vision context.`,
+          screenshot:     ref,
         } as any;
       }
 
@@ -120,7 +124,12 @@ export class ComputerToolWorker extends BaseTool {
     }
   }
 
-  /** Capture screenshot and return as tool response with image data. */
+  /**
+   * Capture a post-action screenshot, persist it to disk, and return a
+   * compact reference. The caller receives { assetId, path, width, height }
+   * — never inline base64 — so Bash-tool stdout, message state, and the
+   * chat UI stay tiny regardless of image size.
+   */
   private async screenshotResult(bridge: any, assetId: string, message: string): Promise<any> {
     // Brief wait for DOM updates after interaction
     await new Promise(r => setTimeout(r, 300));
@@ -132,8 +141,9 @@ export class ComputerToolWorker extends BaseTool {
     };
 
     if (screenshot) {
-      responseObj.screenshotBase64 = screenshot.base64;
-      responseObj.screenshotMediaType = screenshot.mediaType;
+      const ref: ScreenshotRef = await saveScreenshot(screenshot.base64, screenshot.mediaType);
+      responseObj.screenshot = ref;
+      responseObj.responseString = `[${ assetId }] ${ message } — screenshot at ${ ref.path } (${ ref.width }×${ ref.height }, ${ ref.bytes } bytes). Use Read on that path to inspect visually.`;
     }
 
     return responseObj;
