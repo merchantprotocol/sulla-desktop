@@ -60,23 +60,36 @@ ipcRenderer.on('browser-tab-view:execute', (_event, code: string) => {
 });
 
 /* ------------------------------------------------------------------ */
-/*  3. Inject the guest bridge at DOMContentLoaded                    */
+/*  3. Inject the guest bridge IMMEDIATELY at document-start          */
 /* ------------------------------------------------------------------ */
+//
+// Do NOT wait for DOMContentLoaded. The preload runs before any page
+// JavaScript, which means:
+//   • window, document, and document.documentElement are all defined
+//   • document.body may be null (but our top-level handlers only reference
+//     it inside function bodies that are called after the DOM is ready)
+//   • the guest bridge's event listeners must be attached *before* any
+//     page script runs, or we miss the early events
+//
+// On slow pages like Google Maps, DOMContentLoaded can fire 5-10s after
+// navigation because of blocking script parsing. Waiting for it meant
+// `window.__sulla` and `window.sullaBridge` were undefined during that
+// window — which is exactly when tools like `browser/snapshot` tried to
+// call them, timed out, and the agent retried (spawning yet more tabs).
+//
+// Eval synchronously here. All DOM mutations (appendChild to body, etc.)
+// inside the script are guarded behind function invocations or
+// DOMContentLoaded handlers they themselves register.
 
 function injectGuestBridge(): void {
   try {
     const script = buildGuestBridgeScript();
     // eslint-disable-next-line no-eval
     (0, eval)(script);
-    console.log(`${ LOG_PREFIX } guest bridge injected`, { url: location.href });
+    console.log(`${ LOG_PREFIX } guest bridge injected`, { url: location.href, readyState: document.readyState });
   } catch (err) {
     console.error(`${ LOG_PREFIX } guest bridge injection failed`, err);
   }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', injectGuestBridge, { once: true });
-} else {
-  // DOMContentLoaded already fired (shouldn't happen in a preload, but be safe)
-  injectGuestBridge();
-}
+injectGuestBridge();
