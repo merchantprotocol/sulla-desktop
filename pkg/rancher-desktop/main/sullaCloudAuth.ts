@@ -26,6 +26,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
 import { getDesktopRelayClient } from './desktopRelay';
+import { DevicesCloudApi } from './devicesCloudApi';
 import { runOAuthFlow } from './sullaOAuthService';
 
 const console = Logging.background;
@@ -95,6 +96,11 @@ async function saveSession(session: CloudSession): Promise<void> {
 
   // Clear any legacy settings left over from the safeStorage era.
   await clearLegacySettings();
+
+  // Register this desktop with the cloud so mobile's AI Assistant settings
+  // screen sees it as a pairing target, and start the heartbeat so it shows
+  // as online while this process runs.
+  void DevicesCloudApi.register().then(() => DevicesCloudApi.startHeartbeat());
 }
 
 async function loadSession(): Promise<CloudSession | null> {
@@ -348,6 +354,26 @@ export async function getCurrentAccessToken(): Promise<string> {
   return current;
 }
 
+/**
+ * Returns the active contractor id for the signed-in user, or an empty
+ * string if not signed in. One user may own multiple contractors; this
+ * reflects whichever they've selected in the UI. Used by the sync layer
+ * as a fallback when an inbound payload doesn't embed contractor_id.
+ */
+export async function getActiveContractorId(): Promise<string> {
+  const session = await loadSession();
+  return session?.activeContractorId ?? '';
+}
+
+/**
+ * Returns the signed-in user id (stable across contractor switches),
+ * or an empty string if not signed in.
+ */
+export async function getCurrentUserId(): Promise<string> {
+  const session = await loadSession();
+  return session?.userId ?? '';
+}
+
 // ── IPC handlers ───────────────────────────────────────────
 
 export function initSullaCloudAuthEvents(): void {
@@ -383,6 +409,14 @@ export function initSullaCloudAuthEvents(): void {
       await getDesktopRelayClient().setPairedUserId(session.userId);
     } catch (err) {
       console.warn('[SullaCloudAuth] Auto-pair failed:', err);
+    }
+    try {
+      // Start the offline-friendly sync loop so claude_messages sent from
+      // mobile while the WS relay is down still get processed on desktop.
+      const { SullaSync } = await import('./sync/SullaSyncService');
+      SullaSync.start();
+    } catch (err) {
+      console.warn('[SullaCloudAuth] Failed to start SullaSync:', err);
     }
     console.log(`[SullaCloudAuth] Signed in — user=${ session.userId }, active contractor=${ session.activeContractorId }`);
     return { ok: true, status: await buildStatus() };
@@ -513,6 +547,11 @@ export function initSullaCloudAuthEvents(): void {
     try {
       await getDesktopRelayClient().setPairedUserId('');
     } catch { /* ignore */ }
+    try {
+      const { SullaSync } = await import('./sync/SullaSyncService');
+      SullaSync.stop();
+    } catch { /* ignore — service may not have started */ }
+    DevicesCloudApi.stopHeartbeat();
     console.log('[SullaCloudAuth] Signed out');
     return buildStatus();
   });
@@ -523,6 +562,17 @@ export function initSullaCloudAuthEvents(): void {
       const session = await loadSession();
       if (session) {
         await getDesktopRelayClient().setPairedUserId(session.userId);
+        // Resume device registration + heartbeat so this desktop shows online
+        // for any mobile looking at the AI Assistant settings screen.
+        void DevicesCloudApi.register().then(() => DevicesCloudApi.startHeartbeat());
+        // Resume the offline-friendly sync loop so pulled claude_messages
+        // can be dispatched to Claude even without the WS relay.
+        try {
+          const { SullaSync } = await import('./sync/SullaSyncService');
+          SullaSync.start();
+        } catch (err) {
+          console.warn('[SullaCloudAuth] Failed to start SullaSync on restore:', err);
+        }
         console.log(`[SullaCloudAuth] Restored session: user=${ session.userId }`);
       }
     } catch (err) {

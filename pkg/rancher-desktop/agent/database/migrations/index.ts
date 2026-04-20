@@ -12,6 +12,9 @@ import { up as up_0016, down as down_0016 } from './0016_create_oauth_tokens_tab
 import { up as up_0017, down as down_0017 } from './0017_create_workflow_checkpoints_table';
 import { up as up_0018, down as down_0018 } from './0018_create_workflow_pending_completions_table';
 import { up as up_0019, down as down_0019 } from './0019_create_conversation_history_table';
+import { up as up_0020, down as down_0020 } from './0020_create_claude_conversations_table';
+import { up as up_0021, down as down_0021 } from './0021_create_claude_messages_table';
+import { up as up_0022, down as down_0022 } from './0022_create_sync_queue_table';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -27,4 +30,7 @@ export const migrationsRegistry = [
   { name: '0017_create_workflow_checkpoints_table', up: up_0017, down: down_0017 },
   { name: '0018_create_workflow_pending_completions_table', up: up_0018, down: down_0018 },
   { name: '0019_create_conversation_history_table', up: up_0019, down: down_0019 },
+  { name: '0020_create_claude_conversations_table', up: up_0020, down: down_0020 },
+  { name: '0021_create_claude_messages_table', up: up_0021, down: down_0021 },
+  { name: '0022_create_sync_queue_table', up: up_0022, down: down_0022 },
 ] as const;
