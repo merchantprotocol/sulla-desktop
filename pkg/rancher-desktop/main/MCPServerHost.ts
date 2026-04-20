@@ -37,6 +37,9 @@ import express, { type NextFunction, type Request, type Response } from 'express
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
+
+import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
@@ -308,6 +311,36 @@ export class MCPServerHost {
           hasActiveWorkflow: Boolean(session.state.metadata.activeWorkflow),
         };
         return { content: [{ type: 'text' as const, text: JSON.stringify(info, null, 2) }] };
+      },
+    );
+
+    // execute_workflow — the whole reason this bridge exists. Delegates to
+    // the same activateWorkflowOnState function that the in-process
+    // BaseTool version calls, so semantics stay identical. The mutation
+    // lands on session.state.metadata.activeWorkflow, which is the live
+    // state of the graph that spawned this Claude Code invocation — the
+    // orchestrator picks it up on the next cycle.
+    server.registerTool(
+      'execute_workflow',
+      {
+        description: [
+          'Activate a Sulla workflow playbook on the current chat session.',
+          'After this returns, the orchestrating agent takes over and drives the workflow to completion — do not send further assistant messages about the workflow; the playbook will emit its own updates.',
+          'Pass the workflow slug (filename without extension) shown in your system prompt as workflowId. Optionally pass a message to use as the trigger input; if omitted, the last user message in the conversation is used.',
+          'Set resume=true only when the user explicitly asks to continue a previously interrupted workflow run.',
+        ].join(' '),
+        inputSchema: {
+          workflowId: z.string().describe('Workflow slug from the system prompt, e.g. "daily-planning".'),
+          message:    z.string().optional().describe('Trigger message. Defaults to the last user message if omitted.'),
+          resume:     z.boolean().optional().describe('Resume from the most recent checkpoint for this workflow instead of starting fresh.'),
+        },
+      },
+      async ({ workflowId, message, resume }) => {
+        const result = await activateWorkflowOnState(session.state, { workflowId, message, resume });
+        return {
+          content: [{ type: 'text' as const, text: result.responseString }],
+          isError: !result.ok,
+        };
       },
     );
 
