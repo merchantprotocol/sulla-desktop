@@ -203,11 +203,15 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     });
   }
 
-  // ── Streaming: update in-place ──
+  // ── Streaming: update in-place, but respect segment boundaries ──
   if (kind === 'streaming' && role === 'assistant') {
+    // Only reuse a streaming bubble if it hasn't been marked complete
+    // (e.g. by a preceding streaming_complete event or a thinking event
+    // arriving mid-stream). Otherwise this token belongs to a new segment.
     let existingIdx = -1;
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
-      if (ctx.messages[i].kind === 'streaming' && ctx.messages[i].role === 'assistant') {
+      const m = ctx.messages[i];
+      if (m.kind === 'streaming' && m.role === 'assistant' && !(m as any)._completed) {
         existingIdx = i;
         break;
       }
@@ -215,7 +219,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     if (existingIdx !== -1) {
       ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent };
     } else {
-      // First streaming chunk — collapse any open thinking bubble
+      // First streaming chunk of a new segment — collapse any open thinking bubble
       for (let i = ctx.messages.length - 1; i >= 0; i--) {
         const m = ctx.messages[i];
         if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
@@ -231,6 +235,20 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         kind,
         content:   finalContent,
       });
+    }
+    return;
+  }
+
+  // ── Streaming complete: close current streaming bubble so the next
+  //    streaming token starts a fresh bubble. Fired when the model
+  //    transitions from text output to thinking/tool_use.              ──
+  if (kind === 'streaming_complete') {
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'streaming' && m.role === 'assistant' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
     }
     return;
   }

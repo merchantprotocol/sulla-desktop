@@ -1303,10 +1303,26 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // streams tool_use / thinking blocks). Surface these as thinking bubbles
     // so the user can see Claude is running tools and not just hanging.
     // De-dupe consecutive identical messages.
+    //
+    // When an activity arrives while we're mid-stream, flush whatever's in
+    // the text buffer, emit a 'streaming_complete' boundary so the UI closes
+    // that streaming bubble, and reset the buffer. The next onToken call
+    // will then start a fresh streaming bubble — so the UI shows
+    // think → message → think → message instead of merging everything.
     let lastActivity = '';
     const onActivity = (message: string): void => {
       if (!message || message === lastActivity) return;
       lastActivity = message;
+
+      if (!isVoiceMode && contentBuffer.trim()) {
+        const stripped = stripProtocolTags(contentBuffer);
+        if (stripped.trim()) {
+          this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+        }
+        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        contentBuffer = '';
+      }
+
       this.wsChatMessage(state, message, 'assistant', 'thinking');
     };
 
