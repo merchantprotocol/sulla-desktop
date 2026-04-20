@@ -14,6 +14,7 @@ import { SullaIntegrations } from './agent/integrations';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { redisClient } from '@pkg/agent/database/RedisClient';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
+import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 
 import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
@@ -256,6 +257,18 @@ export async function instantiateSullaStart(): Promise<void> {
       console.log('[Background] Chat completions API server started');
     },
     async() => { await getChatCompletionsServer().stop() },
+  );
+
+  // In-process MCP server that Claude Code (running in the Lima VM) can call
+  // back into. No external deps — pure main-process HTTP server. Must start
+  // before any graph execution that invokes Claude Code, which in practice
+  // means before the chat server accepts requests.
+  lifecycle.register('mcp-server-host', [],
+    async() => {
+      await getMCPServerHost().start();
+      console.log('[Background] MCP server host started');
+    },
+    async() => { await getMCPServerHost().stop() },
   );
 
   lifecycle.register('vault', ['database-manager'],
