@@ -18,11 +18,11 @@
   "build": {
     "artifactName": "Sulla-Desktop-${version}-${arch}.${ext}",
     "mac": {
-      "identity": null,
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
-      "entitlements": null,
-      "entitlementsInherit": null,
+      "entitlements": "./packaging/entitlements.mac.plist",
+      "entitlementsInherit": "./packaging/entitlements.mac.plist",
+      "notarize": true,
       "target": [
         "dmg",
         "zip"
