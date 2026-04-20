@@ -2176,14 +2176,6 @@
     "@standard-schema/spec" "1.1.0"
     uuid "^10.0.0"
 
-"@langchain/ollama@1.2.4":
-  version "1.2.4"
-  resolved "https://registry.yarnpkg.com/@langchain/ollama/-/ollama-1.2.4.tgz#dff5b8fa59cf4d52fa80c08ad3e15dfaf90ef416"
-  integrity sha512-Cn29iRvjhojuOP0BczEKtcu+8zyS+jiFu1OVpOFSuXAYQVxrk8UrGjwWpdVaD9yPBKTO6Qm4wL+c3jfadQcL+A==
-  dependencies:
-    ollama "^0.6.3"
-    uuid "^10.0.0"
-
 "@langchain/openai@1.2.9":
   version "1.2.9"
   resolved "https://registry.yarnpkg.com/@langchain/openai/-/openai-1.2.9.tgz#664441ceb322abe9225ec5cd9482fd0f76e26200"
@@ -11558,13 +11550,6 @@ octokit@5.0.5:
     "@octokit/types" "^16.0.0"
     "@octokit/webhooks" "^14.0.0"
 
-ollama@^0.6.3:
-  version "0.6.3"
-  resolved "https://registry.npmjs.org/ollama/-/ollama-0.6.3.tgz"
-  integrity sha512-KEWEhIqE5wtfzEIZbDCLH51VFZ6Z3ZSa6sIOg/E/tBV8S51flyqBOXi+bRxlOYKDf8i327zG9eSTb8IJxvm3Zg==
-  dependencies:
-    whatwg-fetch "^3.6.20"
-
 on-finished@^2.4.1, on-finished@~2.4.1:
   version "2.4.1"
   resolved "https://registry.npmjs.org/on-finished/-/on-finished-2.4.1.tgz"
@@ -15236,7 +15221,7 @@ whatwg-encoding@^3.1.1:
   dependencies:
     iconv-lite "0.6.3"
 
-whatwg-fetch@^3.6.2, whatwg-fetch@^3.6.20:
+whatwg-fetch@^3.6.2:
   version "3.6.20"
   resolved "https://registry.npmjs.org/whatwg-fetch/-/whatwg-fetch-3.6.20.tgz"
   integrity sha512-EqhiFU6daOA8kpjOWTL0olhVOF3i7OrFzSYiGsEMB8GcXS+RrzauAERX65xMeNWVqxA6HXH2m69Z9LaKKdisfg==
