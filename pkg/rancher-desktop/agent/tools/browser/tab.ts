@@ -51,9 +51,29 @@ export class BrowserTabWorker extends BaseTool {
       return { successBoolean: false, responseString: 'assetType must be browser or document.' };
     }
 
+    // When the caller doesn't supply an assetId, derive one deterministically
+    // from the URL so repeated upsert calls for the same page land on the
+    // SAME tab instead of spawning a new one each time. Without this guard
+    // an agent that calls `sulla browser/tab '{"action":"upsert","url":"…"}'`
+    // in a loop creates hundreds of WebContentsView renderers that get
+    // restored from localStorage on next launch, saturating the event loop
+    // and blacking out the main chat window.
+    const urlForId = typeof input.url === 'string' ? input.url.trim() : '';
+    const deriveIdFromUrl = (u: string) => {
+      try {
+        const parsed = new URL(u);
+        const host = parsed.hostname.replace(/^www\./, '').replace(/\./g, '-');
+        const path = parsed.pathname.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40);
+        return `${ assetType }_${ host }${ path ? `_${ path }` : '' }`;
+      } catch {
+        return `${ assetType }_${ Date.now() }`;
+      }
+    };
     const assetId = typeof input.assetId === 'string' && input.assetId.trim().length > 0
       ? input.assetId.trim()
-      : `${ assetType }_${ Date.now() }`;
+      : urlForId
+        ? deriveIdFromUrl(urlForId)
+        : `${ assetType }_${ Date.now() }`;
 
     const active = input.active !== false;
     const collapsed = input.collapsed !== false;

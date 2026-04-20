@@ -29,6 +29,13 @@ const STORAGE_KEY = 'sulla:browser-tabs';
 const HISTORY_KEY = 'sulla:closed-tabs';
 const ORDER_KEY = 'sulla:tab-order';
 const MAX_HISTORY = 25;
+// Cap the restored-tab count to stop a runaway agent from creating hundreds
+// of tabs, persisting them, and blacking out the main chat window on next
+// launch (each restored tab spawns a WebContentsView and loads its page —
+// hundreds of concurrent page loads saturate the event loop). Dedupe on
+// load too — if an upsert loop snuck past the backend dedupe, we still
+// collapse same-URL+same-mode entries here.
+const MAX_RESTORED_TABS = 20;
 
 function loadPersistedTabs(): BrowserTab[] {
   try {
@@ -36,8 +43,25 @@ function loadPersistedTabs(): BrowserTab[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
+    // Dedupe by (url + mode) so a runaway "open same URL 500 times" loop
+    // collapses to a single entry on restore.
+    const seen = new Set<string>();
+    const deduped: any[] = [];
+    for (const t of parsed) {
+      const key = `${ t?.mode || '' }|${ t?.url || '' }`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(t);
+    }
+    // Keep only the most recent MAX_RESTORED_TABS entries (from the end).
+    const capped = deduped.length > MAX_RESTORED_TABS
+      ? deduped.slice(deduped.length - MAX_RESTORED_TABS)
+      : deduped;
+    if (capped.length < parsed.length) {
+      console.warn(`[useBrowserTabs] Restored ${ capped.length } tab(s) after dedupe+cap (was ${ parsed.length } in storage)`);
+    }
     // Rehydrate: reset loading state
-    return parsed.map((t: any) => ({ ...t, loading: false }));
+    return capped.map((t: any) => ({ ...t, loading: false }));
   } catch {
     return [];
   }
@@ -45,8 +69,12 @@ function loadPersistedTabs(): BrowserTab[] {
 
 function persistTabs(tabList: BrowserTab[]): void {
   try {
-    // Strip large HTML content to avoid blowing localStorage limits
-    const toStore = tabList.map((t) => {
+    // Strip large HTML content + enforce the cap on write too, so a live
+    // runaway can't balloon localStorage between app launches.
+    const capped = tabList.length > MAX_RESTORED_TABS
+      ? tabList.slice(tabList.length - MAX_RESTORED_TABS)
+      : tabList;
+    const toStore = capped.map((t) => {
       if (t.content && t.content.length > 50_000) {
         return { ...t, content: undefined };
       }
