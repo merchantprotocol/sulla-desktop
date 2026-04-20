@@ -4,7 +4,7 @@ import path from 'node:path'; // used by enrichPrompt for active_projects_file
 import { ChatController, type ChatMode } from '../controllers/ChatController';
 import { ToolExecutor } from '../controllers/ToolExecutor';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { getPrimaryService, getSecondaryService } from '../languagemodels';
+import { getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { throwIfAborted } from '../services/AbortService';
 import { parseJson } from '../services/JsonParseService';
@@ -661,8 +661,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         ? 'verify'
         : 'trusted';
 
-    // Detect provider
-    const llm = await getPrimaryService();
+    // Detect provider — use the same routing logic as the LLM call itself
+    // so the system prompt's provider-conditional sections (e.g. Anthropic
+    // cache blocks vs OpenAI response format) match the model we'll invoke.
+    const isSubAgentForPrompt = !!(state.metadata as any).isSubAgent;
+    const llm = isSubAgentForPrompt
+      ? await getSubconsciousService()
+      : await getPrimaryService();
     const providerName = llm?.getProviderName?.() || 'anthropic';
 
     const mode = options.promptMode || 'full';
@@ -772,7 +777,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     systemPrompt: string,
     options: LLMCallOptions = {},
   ): Promise<NormalizedResponse | null> {
-    this.llm = await getPrimaryService();
+    // Subconscious agents (memory-recall, observation, unstuck-research) need
+    // a fast tool-emitting chat peer, not the autonomous Claude-Code-style
+    // primary. Route them to the dedicated subconscious provider (falls back
+    // to secondary, then primary).
+    const isSubAgent = !!(state.metadata as any).isSubAgent;
+    this.llm = isSubAgent
+      ? await getSubconsciousService()
+      : await getPrimaryService();
 
     const nodeRunContext = this.createNodeRunContext(state, {
       systemPrompt,

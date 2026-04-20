@@ -61,6 +61,7 @@ export default defineComponent({
       heartbeatDelayMinutes: 15,
       heartbeatPrompt:       '',
       heartbeatProvider:     'default' as string, // 'default' = use primary provider, or a specific provider id
+      subconsciousProvider:  'default' as string, // 'default' = use secondary/fallback provider, or a specific provider id
 
       // Soul prompt settings
       soulPrompt:      '',
@@ -246,6 +247,7 @@ export default defineComponent({
     this.soulPrompt = soulPrompt;
     this.heartbeatPrompt = heartbeatPrompt;
     this.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
+    this.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
@@ -943,6 +945,7 @@ export default defineComponent({
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
           heartbeatPrompt:       String(this.heartbeatPrompt || ''),
           heartbeatProvider:     String(this.heartbeatProvider || 'default'),
+          subconsciousProvider:  String(this.subconsciousProvider || 'default'),
           ...extra,
         };
 
@@ -1446,6 +1449,29 @@ export default defineComponent({
             </select>
             <p class="setting-description">
               Select which provider to use for heartbeat processing. "Use Primary Provider" follows your primary provider setting from the Models tab.
+            </p>
+          </div>
+
+          <!-- Subconscious Provider Setting -->
+          <div class="setting-group">
+            <label class="setting-label">Subconscious Provider</label>
+            <select
+              v-model="subconsciousProvider"
+              class="model-select"
+            >
+              <option value="default">
+                Use Fallback Provider
+              </option>
+              <option
+                v-for="provider in availableProviders"
+                :key="provider.id"
+                :value="provider.id"
+              >
+                {{ provider.name }}
+              </option>
+            </select>
+            <p class="setting-description">
+              Subconscious agents (memory recall, observation, unstuck research) run in the background and need a fast tool-emitting chat model. "Use Fallback Provider" uses your secondary provider. Avoid autonomous models like Claude Code here — they over-invest in quick recall tasks.
             </p>
           </div>
         </div>
