@@ -38,6 +38,29 @@ const DEFAULT_WS_CHANNEL = 'heartbeat';
 // slips through that pattern.
 const MAX_INLINE_SCREENSHOT_BYTES = 500_000;
 
+// Cap the serialized size of a tool result before we ship it over the WebSocket
+// to the renderer. Any tool that returns a huge payload (full DOM snapshot,
+// raw HTML, base64 blob, etc.) gets replaced with a compact truncation
+// placeholder. Protects the chat window's V8 heap, the WS pipe, and the
+// renderer-side reactive state regardless of which tool was invoked.
+const MAX_TOOL_RESULT_WIRE_BYTES = 50_000;
+
+function capWireResult(r: any): any {
+  if (r == null) return r;
+  try {
+    const serialized = typeof r === 'string' ? r : JSON.stringify(r);
+    if (serialized.length <= MAX_TOOL_RESULT_WIRE_BYTES) return r;
+    const preview = serialized.slice(0, MAX_TOOL_RESULT_WIRE_BYTES);
+    return {
+      _truncated:     true,
+      _originalBytes: serialized.length,
+      _preview:       `${ preview }\n\n[truncated ${ serialized.length - MAX_TOOL_RESULT_WIRE_BYTES } bytes — full payload was ${ serialized.length } bytes total]`,
+    };
+  } catch {
+    return r;
+  }
+}
+
 // ============================================================================
 // Context interface — everything the executor needs from the calling node
 // ============================================================================
@@ -411,6 +434,7 @@ export class ToolExecutor {
     result?: any,
   ): Promise<boolean> {
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
+    const cappedResult = capWireResult(result);
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'progress',
       data: {
@@ -418,7 +442,7 @@ export class ToolExecutor {
         toolRunId,
         success,
         error,
-        result,
+        result:    cappedResult,
         thread_id: state.metadata.threadId,
       },
       timestamp: Date.now(),
@@ -435,7 +459,7 @@ export class ToolExecutor {
           toolRunId,
           success,
           error,
-          result,
+          result:    cappedResult,
           thread_id: parentThreadId,
         },
         timestamp: Date.now(),
