@@ -29,9 +29,13 @@ mac:
   gatekeeperAssess: false
   icon: ./resources/icons/sulla-app-icon.png
   target: [ dmg, zip ]
-  identity: ~ # We sign in a separate step
+  # Sign + notarize inline when CSC_LINK / APPLE_ID env vars are set
+  # (provided by GitHub secrets in the Package workflow). If either is
+  # missing electron-builder leaves the build unsigned, matching the
+  # old "we sign in a separate step" behaviour for local dev.
   entitlements: ./packaging/entitlements.mac.plist
   entitlementsInherit: ./packaging/entitlements.mac.plist
+  notarize: true
   artifactName: Sulla-Desktop-${version}-mac.${ext}
   extendInfo:
     NSMicrophoneUsageDescription: "Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio."

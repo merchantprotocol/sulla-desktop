@@ -55,7 +55,17 @@ jobs:
     - uses: ./.github/actions/yarn-install
       timeout-minutes: 20
     - run: yarn build
+    # When signing secrets are set, electron-builder picks them up from
+    # these env vars and produces a Developer-ID-signed + notarized build
+    # on macOS. Missing secrets = unsigned build (no error thrown); the
+    # existing sign-mac / sign-win test-signing jobs handle CI verification.
     - run: yarn package
+      env:
+        CSC_LINK: ${{ secrets.CSC_LINK }}
+        CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        APPLE_ID: ${{ secrets.APPLE_ID }}
+        APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     - name: Build bats.tar.gz
       if: matrix.platform == 'linux'
       run: make -C bats bats.tar.gz
