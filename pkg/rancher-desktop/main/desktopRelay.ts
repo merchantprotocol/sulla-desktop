@@ -15,6 +15,7 @@
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
+import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -29,6 +30,13 @@ interface IncomingMessage {
   type:            string;
   messages?:       Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
   conversationId?: string;
+  /**
+   * When the mobile picks a specific desktop to route to (AI Assistant →
+   * Which Desktop), the chat payload carries that device's id. The relay
+   * broadcasts to every desktop in the room; desktops whose id doesn't
+   * match silently drop the message.
+   */
+  targetDeviceId?: string;
   role?:           Role;
   reason?:         string;
 }
@@ -189,6 +197,20 @@ class DesktopRelayClient {
     }
 
     if (msg.type === 'chat') {
+      // When mobile targets a specific desktop, only the matching device
+      // should handle the request. This is enforced client-side because the
+      // relay DO broadcasts to every desktop peer in the room.
+      if (msg.targetDeviceId) {
+        try {
+          const myId = await getDesktopDeviceId();
+          if (msg.targetDeviceId !== myId) {
+            console.log(`[DesktopRelay] Ignoring chat — addressed to ${ msg.targetDeviceId }, I am ${ myId }`);
+            return;
+          }
+        } catch (err) {
+          console.warn('[DesktopRelay] device_id lookup failed; handling chat anyway:', err);
+        }
+      }
       await this.handleChatRequest(msg);
       return;
     }
@@ -210,11 +232,20 @@ class DesktopRelayClient {
       // Stream each text delta to mobile as it arrives, then emit a final
       // `done` with the full content so clients that missed chunks still get
       // the whole reply.
+      // De-dupe consecutive activity messages so "Using Bash…" then
+      // "$ ls /etc" doesn't spam the mobile thinking bubble if the CLI
+      // emits them back-to-back.
+      let lastActivity = '';
       const result = await svc.chatStream(
         messages as any,
         {
           onToken: (delta: string) => {
             if (delta) this.send({ type: 'chunk', delta });
+          },
+          onActivity: (message: string) => {
+            if (!message || message === lastActivity) return;
+            lastActivity = message;
+            this.send({ type: 'activity', message });
           },
         },
         { conversationId },

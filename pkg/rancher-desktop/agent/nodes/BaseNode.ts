@@ -1299,7 +1299,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
     };
 
-    const reply = await this.llm!.chatStream(messages, { onToken }, options);
+    // Activity channel for providers that emit rich events (e.g. Claude Code
+    // streams tool_use / thinking blocks). Surface these as thinking bubbles
+    // so the user can see Claude is running tools and not just hanging.
+    // De-dupe consecutive identical messages.
+    let lastActivity = '';
+    const onActivity = (message: string): void => {
+      if (!message || message === lastActivity) return;
+      lastActivity = message;
+      this.wsChatMessage(state, message, 'assistant', 'thinking');
+    };
+
+    const reply = await this.llm!.chatStream(messages, { onToken, onActivity }, options);
 
     if (!reply) {
       return null;

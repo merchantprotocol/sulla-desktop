@@ -360,6 +360,49 @@ export class ClaudeCodeService extends BaseLanguageModel {
         else options.signal.addEventListener('abort', onAbort);
       }
 
+      /**
+       * Summarise a tool_use block into a short activity message like
+       * "Running Bash: ls /etc" or "Reading /etc/hosts". Keep it tight so
+       * the thinking bubble stays readable on mobile.
+       */
+      const activityForToolUse = (name: string, input: any): string => {
+        const pretty = (s: string) => s.length > 80 ? `${ s.slice(0, 77) }…` : s;
+        if (!input || typeof input !== 'object') return `Using ${ name }`;
+        switch (name) {
+        case 'Bash':
+          if (typeof input.command === 'string') return `$ ${ pretty(input.command) }`;
+          return 'Running a shell command';
+        case 'Read':
+          if (typeof input.file_path === 'string') return `Reading ${ pretty(input.file_path) }`;
+          return 'Reading a file';
+        case 'Edit':
+        case 'Write':
+          if (typeof input.file_path === 'string') return `${ name === 'Write' ? 'Writing' : 'Editing' } ${ pretty(input.file_path) }`;
+          return `${ name === 'Write' ? 'Writing' : 'Editing' } a file`;
+        case 'Glob':
+          if (typeof input.pattern === 'string') return `Searching for ${ pretty(input.pattern) }`;
+          return 'Searching files';
+        case 'Grep':
+          if (typeof input.pattern === 'string') return `Grepping ${ pretty(input.pattern) }`;
+          return 'Grepping';
+        case 'WebFetch':
+        case 'WebSearch':
+          if (typeof input.url === 'string') return `Fetching ${ pretty(input.url) }`;
+          if (typeof input.query === 'string') return `Searching web: ${ pretty(input.query) }`;
+          return `${ name } request`;
+        case 'Task':
+          if (typeof input.description === 'string') return `Task: ${ pretty(input.description) }`;
+          return 'Spawning sub-task';
+        default:
+          return `Using ${ name }`;
+        }
+      };
+
+      const emitActivity = (msg: string) => {
+        if (!msg) return;
+        try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
+      };
+
       const processLine = (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) return;
@@ -372,12 +415,51 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
         if (parsed.session_id) capturedSessionId = parsed.session_id;
 
-        // Text chunks → stream to caller
-        const delta = parsed?.event?.delta;
-        if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-          textCollected += delta.text;
-          try { callbacks.onToken?.(delta.text) } catch { /* ignore */ }
-          return;
+        // Stream-level events (wrapped in parsed.event) — text deltas,
+        // tool_use block starts, thinking starts.
+        const ev = parsed?.event;
+        if (ev) {
+          // Text chunks → stream to caller as content
+          if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
+            textCollected += ev.delta.text;
+            try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
+            return;
+          }
+
+          // Tool use block starting → emit a short activity message. Input
+          // isn't filled in yet here for partial streaming, so the message
+          // starts generic and content_block_stop below refines it.
+          if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
+            const name = ev.content_block.name ?? 'tool';
+            emitActivity(`Using ${ name }…`);
+            return;
+          }
+
+          // Tool use complete — input is fully populated now, emit the
+          // refined "Running Bash: ls" style message.
+          if (ev.type === 'content_block_stop' && ev.content_block?.type === 'tool_use') {
+            const name = ev.content_block.name ?? 'tool';
+            emitActivity(activityForToolUse(name, ev.content_block.input));
+            return;
+          }
+
+          // Thinking block starting → indicate reasoning phase.
+          if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') {
+            emitActivity('Thinking…');
+            return;
+          }
+        }
+
+        // Whole-message events (type='assistant') — pick up tool_use blocks
+        // in case the streaming path didn't emit them (some CLI versions
+        // batch the assistant message at content_block_stop time).
+        if (parsed.type === 'assistant' && parsed.message?.content) {
+          const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
+          for (const b of blocks) {
+            if (b?.type === 'tool_use' && b.name) {
+              emitActivity(activityForToolUse(b.name, b.input));
+            }
+          }
         }
 
         // Final result event — capture full text and record usage/cost.
