@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -76,6 +76,7 @@ export class ToolRegistry {
     integrations:       'Tools for checking integration status and retrieving integration credentials.',
     lima:               'Lima VM instance management.',
     n8n:                'n8n workflow automation — list, execute, create, and manage n8n workflows and their executions.',
+    notify:             'Send desktop notifications to alert the user when async work completes or needs attention.',
     vault:              'Credential vault — list saved credentials, check integration connection status, read secrets, and autofill login forms.',
     workflow:           'Workflow management — execute, validate, and manage Sulla workflow definitions.',
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',

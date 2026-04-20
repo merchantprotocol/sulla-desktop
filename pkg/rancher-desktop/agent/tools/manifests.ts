@@ -16,6 +16,7 @@ import { kubectlToolManifests } from './kubectl/manifests';
 import { limaToolManifests } from './lima/manifests';
 import { metaToolManifests } from './meta/manifests';
 import { n8nToolManifests } from './n8n/manifests';
+import { notifyToolManifests } from './notify/manifests';
 import { pgToolManifests } from './pg/manifests';
 import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
@@ -37,6 +38,7 @@ toolRegistry.registerManifests([
   ...limaToolManifests,
   ...metaToolManifests,
   ...n8nToolManifests,
+  ...notifyToolManifests,
   ...pgToolManifests,
   ...rdctlToolManifests,
   ...redisToolManifests,
