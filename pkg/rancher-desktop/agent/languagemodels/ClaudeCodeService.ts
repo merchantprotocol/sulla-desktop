@@ -154,7 +154,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
    * Serialize Sulla's curated conversation into a full transcript — used
    * only when seeding a fresh Claude session (no existing session id).
    * tool_use / tool_result blocks render inline so Claude can follow prior
-   * tool traces.
+   * tool traces. System-role messages are INTENTIONALLY excluded — they
+   * are the caller-built system prompt and go to --append-system-prompt
+   * instead, so Claude doesn't receive them twice.
    */
   private serializeFullTranscript(messages: ChatMessage[]): string {
     const blockToText = (b: any): string => {
@@ -184,18 +186,52 @@ export class ClaudeCodeService extends BaseLanguageModel {
       switch (role) {
       case 'assistant': return 'Assistant';
       case 'user':      return 'User';
-      case 'system':    return 'System';
       default:          return role;
       }
     };
 
     const lines: string[] = [];
     for (const m of messages) {
+      if (m.role === 'system') continue; // handled via --append-system-prompt
       const text = msgToText(m).trim();
       if (!text) continue;
       lines.push(`${ labelFor(m.role) }: ${ text }`);
     }
     return lines.join('\n\n');
+  }
+
+  /**
+   * Collect any system-role messages in the array and return their
+   * concatenated text content. BaseNode.createNodeRunContext appends the
+   * caller-built system prompt as the last message with role='system', so
+   * this extracts exactly what the caller intended Claude to see.
+   *
+   * When the messages array has no system message (e.g. direct chatStream
+   * callers like DesktopRelay bypass BaseNode), returns empty string and
+   * the caller should fall back to buildFullSystemPrompt.
+   */
+  private extractSystemPromptFromMessages(messages: ChatMessage[]): string {
+    const blockToText = (b: any): string => {
+      if (typeof b === 'string') return b;
+      if (!b || typeof b !== 'object') return '';
+      if (b.type === 'text' && typeof b.text === 'string') return b.text;
+      return '';
+    };
+
+    const msgToText = (m: ChatMessage): string => {
+      const c: any = m.content;
+      if (typeof c === 'string') return c;
+      if (Array.isArray(c)) return c.map(blockToText).filter(Boolean).join('\n');
+      return '';
+    };
+
+    const parts: string[] = [];
+    for (const m of messages) {
+      if (m.role !== 'system') continue;
+      const text = msgToText(m).trim();
+      if (text) parts.push(text);
+    }
+    return parts.join('\n\n');
   }
 
   /**
@@ -266,15 +302,23 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(oauthToken) }`);
     if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(apiKey) }`);
 
-    // Build the full Sulla system prompt fresh each turn so Claude sees the
-    // current identity, skills, extensions, integrations, and any durable
-    // observational memory. Failures here must not block the chat.
-    let appendSystemPrompt = '';
-    try {
-      const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
-      appendSystemPrompt = await buildFullSystemPrompt({ provider: 'anthropic' });
-    } catch (err) {
-      log.log(`[ClaudeCodeService] buildFullSystemPrompt failed, continuing without it: ${ (err as Error)?.message ?? err }`);
+    // Prefer the caller-built system prompt (BaseNode.createNodeRunContext
+    // adds it as a role='system' message). That way subagents (memory-recall,
+    // observation, unstuck-research) get their specialized prompt — not the
+    // generic primary-agent Sulla prompt — and we avoid the double-system-
+    // prompt trap that made Claude spin reconciling conflicting instructions.
+    //
+    // When the messages array has no system message (e.g. DesktopRelay
+    // directly calls chatStream with a bare user turn), fall back to
+    // buildFullSystemPrompt so Claude still gets the full Sulla context.
+    let appendSystemPrompt = this.extractSystemPromptFromMessages(messages);
+    if (!appendSystemPrompt.trim()) {
+      try {
+        const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
+        appendSystemPrompt = await buildFullSystemPrompt({ provider: 'anthropic' });
+      } catch (err) {
+        log.log(`[ClaudeCodeService] buildFullSystemPrompt fallback failed, continuing without it: ${ (err as Error)?.message ?? err }`);
+      }
     }
 
     const claudeArgs = [
