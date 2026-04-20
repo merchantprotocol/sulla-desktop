@@ -29,6 +29,15 @@ import type { ToolResult } from '../types';
 
 const DEFAULT_WS_CHANNEL = 'heartbeat';
 
+// Cap inline screenshot base64 at this size before we embed it as an image
+// content block in state.messages. Oversize images are dropped (we fall back
+// to text-only tool_result) because they blow up Redis state, JSONL logs,
+// and the renderer's WebSocket payload. Tools should persist screenshots to
+// disk via screenshot_store.saveScreenshot and return a compact reference
+// instead of inlining base64 — this cap is a safety net for any tool that
+// slips through that pattern.
+const MAX_INLINE_SCREENSHOT_BYTES = 500_000;
+
 // ============================================================================
 // Context interface — everything the executor needs from the calling node
 // ============================================================================
@@ -508,15 +517,21 @@ export class ToolExecutor {
       } as ChatMessage);
     }
 
-    // 2. Persist to state.messages as native tool_result (user role)
-    // When a screenshot is present, include it as an image content block
-    // so the LLM can see the page visually.
+    // 2. Persist to state.messages as native tool_result (user role).
+    // When a screenshot is present AND under the size cap, include it as an
+    // image content block so the LLM can see the page visually. Oversize
+    // screenshots fall back to text-only — the preferred path is for tools
+    // to saveScreenshot to disk and return a compact reference that the
+    // agent can Read on demand.
     let toolResultContent: string | any[];
-    if (screenshotBase64) {
+    if (screenshotBase64 && screenshotBase64.length <= MAX_INLINE_SCREENSHOT_BYTES) {
       toolResultContent = [
         { type: 'image', source: { type: 'base64', media_type: screenshotMediaType, data: screenshotBase64 } },
         { type: 'text', text: resultContent },
       ];
+    } else if (screenshotBase64) {
+      console.warn(`[ToolExecutor] Dropped inline screenshot (${ screenshotBase64.length } bytes > ${ MAX_INLINE_SCREENSHOT_BYTES } cap) for tool "${ action }" — tool should use screenshot_store.saveScreenshot and return a path reference`);
+      toolResultContent = `${ resultContent }\n\n[screenshot dropped: ${ screenshotBase64.length } bytes exceeds inline cap; tool should return a path reference instead]`;
     } else {
       toolResultContent = resultContent;
     }

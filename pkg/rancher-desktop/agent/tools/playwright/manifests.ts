@@ -203,7 +203,7 @@ export const playwrightToolManifests: ToolManifest[] = [
     category:    'playwright',
     schemaDef:   {
       code:        { type: 'string', description: 'JavaScript code to execute in the page. The return value is sent back.' },
-      screenshot:  { type: 'boolean', optional: true, description: 'Capture a screenshot after execution and include screenshotBase64 + screenshotMediaType in the response.' },
+      screenshot:  { type: 'boolean', optional: true, description: 'Capture a screenshot after execution. Returns a compact reference { assetId, path, width, height, bytes } under `screenshot` — the image is saved to disk, never inline base64. Use Read on the path to inspect visually.' },
       waitFor:     { type: 'string', optional: true, description: 'CSS selector to wait for after code execution (uses window.__sulla.waitFor if available).' },
       waitForIdle: { type: 'boolean', optional: true, description: 'Wait for the page to become idle after execution (uses window.__sulla.waitForIdle if available).' },
       timeout:     { type: 'number', optional: true, default: 30000, description: 'Maximum execution timeout in milliseconds (default 30000).' },

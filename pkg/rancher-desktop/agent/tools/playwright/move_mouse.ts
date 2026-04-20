@@ -1,4 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
+import { saveScreenshot } from '../computer-use/screenshot_store';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
@@ -47,8 +48,9 @@ export class MoveMouseWorker extends BaseTool {
         responseString: `[${ result.assetId }] Hovered at (${ x }, ${ y }) on ${ title } (${ url })`,
       };
       if (screenshot) {
-        responseObj.screenshotBase64 = screenshot.base64;
-        responseObj.screenshotMediaType = screenshot.mediaType;
+        const ref = await saveScreenshot(screenshot.base64, screenshot.mediaType);
+        responseObj.screenshot = ref;
+        responseObj.responseString += ` — screenshot at ${ ref.path } (${ ref.width }×${ ref.height }, ${ ref.bytes } bytes). Use Read on that path to inspect visually.`;
       }
       return responseObj;
     } catch (err) {
