@@ -42,6 +42,7 @@ import NETWORKS_CONFIG from '@pkg/assets/networks-config.yaml';
 import FLANNEL_CONFLIST from '@pkg/assets/scripts/10-flannel.conflist';
 import SERVICE_BUILDKITD_CONF from '@pkg/assets/scripts/buildkit.confd';
 import SERVICE_BUILDKITD_INIT from '@pkg/assets/scripts/buildkit.initd';
+import SULLA_THREAT_PROXY_INITD from '@pkg/assets/scripts/sulla-threat-proxy.initd';
 import DOCKER_CREDENTIAL_SCRIPT from '@pkg/assets/scripts/docker-credential-rancher-desktop';
 import LOGROTATE_LIMA_GUESTAGENT_SCRIPT from '@pkg/assets/scripts/logrotate-lima-guestagent';
 import LOGROTATE_OPENRESTY_SCRIPT from '@pkg/assets/scripts/logrotate-openresty';
@@ -720,8 +721,23 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       script: pythonNodeScript,
     });
 
-    // Install Claude Code CLI (idempotent — skips if already installed)
-    const claudeCodeScript = '#!/bin/sh\nset -o errexit\ncommand -v claude >/dev/null 2>&1 || npm install -g @anthropic-ai/claude-code';
+    // Install Claude Code CLI.
+    //
+    // Idempotent: skips if claude is already on PATH. Before running npm
+    // (which spawns Node), block until the kernel's CRNG is initialized —
+    // reading one byte from /dev/random achieves this on Linux. Without
+    // this wait, provision scripts that run at ~3s into boot hit Node's
+    // `PlatformInit` assertion when getrandom() returns EAGAIN on a not-
+    // yet-seeded CRNG, and the install silently fails leaving the VM
+    // without the claude CLI.
+    const claudeCodeScript = [
+      '#!/bin/sh',
+      'set -o errexit',
+      'command -v claude >/dev/null 2>&1 && exit 0',
+      '# Block until kernel CRNG is seeded (avoids Node PlatformInit abort)',
+      'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
+      'npm install -g @anthropic-ai/claude-code',
+    ].join('\n');
     config.provision = config.provision.filter((p: { script?: string }) => {
       return !(p.script ?? '').includes('@anthropic-ai/claude-code');
     });
@@ -1974,6 +1990,195 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   }
 
   /**
+   * Install the Sulla threat-scanning proxy (mitmproxy) inside the VM.
+   *
+   * Steps:
+   *   1. `apk add` mitmproxy so /usr/bin/mitmdump exists.
+   *   2. Sync Python addons + URLhaus blocklist from the host resources mount.
+   *   3. Write /etc/sulla-proxy.env from the user's settings in SullaSettingsModel.
+   *   4. Drop the OpenRC init script and enable the service.
+   *   5. Start the service, wait for mitmproxy's CA to be generated, and install
+   *      it into the VM trust store.
+   *   6. Append HTTPS_PROXY / HTTP_PROXY / NO_PROXY + CA bundle paths to
+   *      /etc/claude-env so Claude Code, npm, python, curl, etc. all tunnel
+   *      through the proxy on next shell spawn.
+   *
+   * Any failure is logged but non-fatal — the VM keeps booting without threat
+   * scanning rather than taking the whole app down.
+   */
+  protected async installThreatProxy() {
+    const log = (msg: string, extra: Record<string, unknown> = {}) => {
+      const suffix = Object.keys(extra).length ? ` ${ JSON.stringify(extra) }` : '';
+
+      console.log(`[threat-proxy] ${ msg }${ suffix }`);
+    };
+
+    try {
+      // 0. Quick opt-out: if the user disabled it in settings, skip the install entirely.
+      const enabled = await SullaSettingsModel.get('threatProxy.enabled', true);
+
+      if (!enabled) {
+        log('disabled in settings — skipping install');
+
+        return;
+      }
+
+      log('starting install');
+      const installStart = Date.now();
+
+      // 1. Ensure mitmproxy is installed. Idempotent — apk is a no-op if already present.
+      await this.execCommand({ root: true }, 'sh', '-c',
+        'apk info -e mitmproxy >/dev/null 2>&1 || apk add --no-cache mitmproxy');
+      log('mitmproxy package installed');
+
+      // 2. Create the layout + sync addons. Using mkdir + cat-based writeFile for the
+      //    init script, and lima copy for the Python addons. The resources mount is
+      //    read-only on 9p in some configs, so we copy into /opt rather than symlink.
+      await this.execCommand({ root: true }, 'sh', '-c',
+        'mkdir -p /opt/sulla-proxy/addons /opt/sulla-proxy/blocklist /opt/sulla-proxy/cache /opt/sulla-proxy/mitm && ' +
+        'chmod 755 /opt/sulla-proxy /opt/sulla-proxy/addons /opt/sulla-proxy/blocklist /opt/sulla-proxy/cache /opt/sulla-proxy/mitm');
+
+      const addonDir = path.join(paths.resources, 'threat-proxy', 'addons');
+      const addonFiles = ['common.py', 'url_filter.py', 'prompt_injection.py'];
+      const missingAddons: string[] = [];
+
+      for (const name of addonFiles) {
+        const src = path.join(addonDir, name);
+
+        try {
+          await fs.promises.access(src);
+        } catch {
+          missingAddons.push(name);
+          continue;
+        }
+        try {
+          await this.copyFileIn(src, `/opt/sulla-proxy/addons/${ name }`);
+          await this.execCommand({ root: true }, 'chmod', '644', `/opt/sulla-proxy/addons/${ name }`);
+        } catch (err) {
+          log('addon copy failed', { name, error: String(err) });
+        }
+      }
+      if (missingAddons.length) {
+        log('WARN: missing addon files — skipping install', { missingAddons });
+
+        return;
+      }
+      log('addons synced', { count: addonFiles.length });
+
+      // 3. Copy the URLhaus blocklist if the Electron side has fetched it.
+      const blocklistSrc = path.join(paths.altAppHome, 'threat-proxy', 'blocklist', 'urlhaus.txt');
+
+      try {
+        await fs.promises.access(blocklistSrc);
+        await this.copyFileIn(blocklistSrc, '/opt/sulla-proxy/blocklist/urlhaus.txt');
+        log('URLhaus blocklist synced');
+      } catch {
+        // Empty placeholder — url_filter.py will degrade to Safe Browsing / VT only.
+        await this.execCommand({ root: true }, 'sh', '-c',
+          'touch /opt/sulla-proxy/blocklist/urlhaus.txt');
+        log('URLhaus blocklist not present yet — created empty placeholder');
+      }
+
+      // 4. Write /etc/sulla-proxy.env. Non-secret knobs come from SullaSettingsModel,
+      //    API keys come out of the password vault via IntegrationService
+      //    (integrations 'google-safe-browsing' + 'virustotal'). Missing keys just
+      //    mean that tier of the pipeline is skipped — no error.
+      const { getSettings, getApiKeys, renderEnvFile } = await import('@pkg/main/threat-proxy');
+      const [settings, creds] = await Promise.all([getSettings(), getApiKeys()]);
+
+      await this.writeFile('/etc/sulla-proxy.env', renderEnvFile(settings, creds), 0o600);
+      log('env file written', {
+        block_mode:     settings.blockMode,
+        injection_mode: settings.injectionMode,
+        sb_enabled:     !!creds.safeBrowsingApiKey,
+        vt_enabled:     !!creds.virusTotalApiKey,
+      });
+
+      // 5. Install + enable + start the OpenRC service.
+      await this.writeFile('/etc/init.d/sulla-threat-proxy', SULLA_THREAT_PROXY_INITD, 0o755);
+      await this.execCommand({ root: true }, 'rc-update', 'add', 'sulla-threat-proxy', 'default');
+
+      // Restart rather than start — picks up changes to env / addons across app restarts.
+      try {
+        await this.execCommand({ root: true }, 'rc-service', 'sulla-threat-proxy', 'restart');
+      } catch {
+        await this.execCommand({ root: true }, 'rc-service', 'sulla-threat-proxy', 'start');
+      }
+      log('OpenRC service started');
+
+      // 6. Wait for mitmproxy to generate its CA (confdir/mitmproxy-ca-cert.pem).
+      //    First boot: mitmproxy creates this within ~1s of starting.
+      const caSrcInVm = '/opt/sulla-proxy/mitm/mitmproxy-ca-cert.pem';
+      const caTarget = '/usr/local/share/ca-certificates/sulla-threat-proxy.crt';
+      let caReady = false;
+
+      for (let i = 0; i < 25; i++) {
+        try {
+          await this.execCommand({ root: true, expectFailure: true }, 'test', '-f', caSrcInVm);
+          caReady = true;
+          break;
+        } catch {
+          await new Promise(r => setTimeout(r, 200));
+        }
+      }
+      if (!caReady) {
+        log('WARN: mitmproxy CA not generated within 5s — TLS interception will not be trusted');
+
+        return;
+      }
+
+      await this.execCommand({ root: true }, 'cp', caSrcInVm, caTarget);
+      await this.execCommand({ root: true }, 'update-ca-certificates');
+      log('CA cert installed into VM trust store', { path: caTarget });
+
+      // 7. Append proxy env vars to /etc/claude-env so every new shell inherits them.
+      //    Guarded block (idempotent across reruns) and conditional on the proxy
+      //    actually listening — so if mitmdump crashes or is disabled, shells
+      //    gracefully degrade to direct network rather than failing hard.
+      const proxyBlock = [
+        '# ---- sulla-threat-proxy (managed) ----',
+        '# CA bundle paths are always exported — no harm if they point to the system bundle.',
+        'export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt',
+        'export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt',
+        'export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt',
+        'export CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt',
+        '# Only wire HTTPS_PROXY when the proxy is actually reachable. Fail-open',
+        '# by design: we never want a crashed proxy to brick the VM\'s internet.',
+        'if nc -z 127.0.0.1 8888 2>/dev/null; then',
+        '  export HTTP_PROXY=http://127.0.0.1:8888',
+        '  export HTTPS_PROXY=http://127.0.0.1:8888',
+        '  export http_proxy=http://127.0.0.1:8888',
+        '  export https_proxy=http://127.0.0.1:8888',
+        '  export NO_PROXY=localhost,127.0.0.1,::1,host.lima.internal,host.docker.internal,host.rancher-desktop.internal',
+        '  export no_proxy=$NO_PROXY',
+        'fi',
+        '# ---- end sulla-threat-proxy ----',
+      ].join('\n');
+
+      await this.execCommand({ root: true }, 'sh', '-c',
+        'touch /etc/claude-env && ' +
+        'sed -i "/^# ---- sulla-threat-proxy (managed) ----/,/^# ---- end sulla-threat-proxy ----/d" /etc/claude-env && ' +
+        `printf '%s\\n' ${ this.shEscape(proxyBlock) } >> /etc/claude-env`);
+
+      // Also guard .profile so interactive ssh sessions source it.
+      await this.execCommand({ root: false }, 'sh', '-c',
+        'grep -q claude-env ~/.profile 2>/dev/null || echo ". /etc/claude-env" >> ~/.profile');
+
+      log('claude-env updated with HTTPS_PROXY + CA bundle paths', { elapsed_ms: Date.now() - installStart });
+    } catch (error) {
+      console.warn('[threat-proxy] install failed (non-fatal):', error);
+    }
+  }
+
+  /**
+   * Shell-quote a multi-line string so it survives `sh -c 'printf %s ...'`.
+   * Uses single-quote wrapping with `'\''` escapes for embedded singles.
+   */
+  protected shEscape(value: string): string {
+    return `'${ value.replace(/'/g, '\'\\\'\'') }'`;
+  }
+
+  /**
    * Start the VM.  If the machine is already started, this does nothing.
    * Note that this does not start k3s.
    * @precondition The VM configuration is correct.
@@ -2221,6 +2426,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
           this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli()),
           this.progressTracker.action('Configuring Claude Code', 50, this.installClaudeCode()),
+          this.progressTracker.action('Installing threat-scanning proxy', 50, this.installThreatProxy()),
         ];
         if (kubernetesVersion) {
           tasks.push(this.kubeBackend.install(config, kubernetesVersion, this.#adminAccess));

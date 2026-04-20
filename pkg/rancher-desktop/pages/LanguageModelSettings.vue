@@ -16,7 +16,6 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 // Nav items for the Language Model Settings sidebar
 const navItems = [
   { id: 'overview', name: 'Overview' },
-  { id: 'profile', name: 'Profile' },
   { id: 'models', name: 'Models' },
   { id: 'claude-code', name: 'Claude Code (deprecated)' },
   { id: 'soul', name: 'Soul' },
@@ -99,39 +98,6 @@ export default defineComponent({
       // Deprecated legacy-credentials panel — collapsed by default now that
       // the Integrations page is the primary path.
       showLegacyClaudeCreds: false,
-
-      // Usage panel (ClaudeCodeService writes per-turn usage to
-      // SullaSettingsModel.claudeCodeUsage as a rolling 24h array).
-      claudeUsage:        [] as Array<{
-        ts:                          string;
-        duration_ms?:                number;
-        input_tokens?:               number;
-        output_tokens?:              number;
-        cache_creation_input_tokens?: number;
-        cache_read_input_tokens?:    number;
-        cost_usd?:                   number;
-        model?:                      string;
-      }>,
-      claudeUsageLoading: true,
-
-      // Mobile pairing (status mirror)
-      pairedMobileUserId:  '',
-      relayConnected:      false,
-      relayError:          '',
-      relaySaving:         false,
-
-      // Sulla Cloud auth
-      cloudStatus:    { signedIn: false, userId: '', phone: '' } as { signedIn: boolean; userId: string; phone: string; lastError?: string },
-      cloudMethod:    'email' as 'email' | 'phone' | 'apple',
-      cloudStep:      'phone' as 'phone' | 'verify',
-      cloudPhone:     '',
-      cloudCode:      '',
-      cloudEmail:     '',
-      cloudPassword:  '',
-      cloudName:      '',
-      emailMode:      'login' as 'login' | 'register',
-      cloudBusy:      false,
-      cloudError:     '',
     };
   },
 
@@ -160,48 +126,6 @@ export default defineComponent({
     currentProvider(): typeof REMOTE_PROVIDERS[0] | undefined {
       return this.remoteProviders.find(p => p.id === this.selectedProvider);
     },
-    claudeUsageSummary(): {
-      totalTurns:            number;
-      totalInputTokens:      number;
-      totalOutputTokens:     number;
-      totalCacheReadTokens:  number;
-      totalCostUsd:          number;
-      lastTurnRelative:      string;
-    } {
-      const records = this.claudeUsage || [];
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-      let totalCacheReadTokens = 0;
-      let totalCostUsd = 0;
-      let latestTs = 0;
-
-      for (const r of records) {
-        if (typeof r.input_tokens === 'number') totalInputTokens += r.input_tokens;
-        if (typeof r.output_tokens === 'number') totalOutputTokens += r.output_tokens;
-        if (typeof r.cache_read_input_tokens === 'number') totalCacheReadTokens += r.cache_read_input_tokens;
-        if (typeof r.cost_usd === 'number') totalCostUsd += r.cost_usd;
-        const t = Date.parse(r.ts);
-        if (Number.isFinite(t) && t > latestTs) latestTs = t;
-      }
-
-      const relative = (ts: number) => {
-        if (!ts) return 'never';
-        const deltaMs = Date.now() - ts;
-        if (deltaMs < 60_000) return 'just now';
-        if (deltaMs < 3_600_000) return `${ Math.floor(deltaMs / 60_000) }m ago`;
-        if (deltaMs < 86_400_000) return `${ Math.floor(deltaMs / 3_600_000) }h ago`;
-        return `${ Math.floor(deltaMs / 86_400_000) }d ago`;
-      };
-
-      return {
-        totalTurns:           records.length,
-        totalInputTokens,
-        totalOutputTokens,
-        totalCacheReadTokens,
-        totalCostUsd,
-        lastTurnRelative:     relative(latestTs),
-      };
-    },
     currentProviderModels(): { id: string; name: string; description: string; pricing?: string }[] {
       // Use dynamic models if available, fallback to static ones
       return this.dynamicModels[this.selectedProvider] || this.currentProvider?.models || [];
@@ -225,16 +149,6 @@ export default defineComponent({
 
     // Load Claude Code credentials
     await this.loadClaudeCredentials();
-
-    // Load recent Claude Code usage for the deprecated-tab usage panel
-    this.loadClaudeUsage().catch(() => { /* ignore */ });
-
-    // Load desktop relay status and subscribe to changes
-    await this.loadDesktopRelayStatus();
-    ipcRenderer.on('desktop-relay:status-changed', this.handleRelayStatusChanged);
-
-    // Load Sulla Cloud auth status
-    await this.loadCloudStatus();
 
     // Listen for state changes from ModelProviderService (source of truth)
     ipcRenderer.on('model-provider:state-changed', this.handleProviderStateChanged);
@@ -751,127 +665,6 @@ export default defineComponent({
       }
     },
 
-    async savePairedUserId() {
-      this.relaySaving = true;
-      try {
-        const status = await ipcRenderer.invoke('desktop-relay:set-paired-user-id', this.pairedMobileUserId.trim());
-        this.relayConnected = status.connected;
-        this.relayError = status.lastError || '';
-      } catch (err: any) {
-        this.relayError = err?.message || 'Failed to save';
-      } finally {
-        this.relaySaving = false;
-      }
-    },
-
-    async loadCloudStatus() {
-      try {
-        this.cloudStatus = await ipcRenderer.invoke('sulla-cloud:get-status');
-      } catch { /* IPC not ready */ }
-    },
-
-    async cloudSendOtp() {
-      this.cloudBusy = true;
-      this.cloudError = '';
-      try {
-        const res = await ipcRenderer.invoke('sulla-cloud:send-otp', this.cloudPhone.trim());
-        if (!res.ok) {
-          this.cloudError = res.error || 'Failed to send code';
-          return;
-        }
-        this.cloudStep = 'verify';
-      } catch (err: any) {
-        this.cloudError = err?.message || 'Network error';
-      } finally {
-        this.cloudBusy = false;
-      }
-    },
-
-    setCloudMethod(m: 'email' | 'phone' | 'apple') {
-      this.cloudMethod = m;
-      this.cloudError = '';
-    },
-
-    async cloudEmailLogin() {
-      this.cloudBusy = true;
-      this.cloudError = '';
-      try {
-        const res = await ipcRenderer.invoke('sulla-cloud:email-login', this.cloudEmail.trim(), this.cloudPassword);
-        this.cloudStatus = res.status;
-        if (!res.ok) this.cloudError = res.error || 'Sign in failed';
-        else this.cloudPassword = '';
-      } catch (err: any) {
-        this.cloudError = err?.message || 'Network error';
-      } finally {
-        this.cloudBusy = false;
-      }
-    },
-
-    async cloudEmailRegister() {
-      this.cloudBusy = true;
-      this.cloudError = '';
-      try {
-        const res = await ipcRenderer.invoke('sulla-cloud:email-register', this.cloudEmail.trim(), this.cloudPassword, this.cloudName.trim() || undefined);
-        this.cloudStatus = res.status;
-        if (!res.ok) this.cloudError = res.error || 'Registration failed';
-        else {
-          this.cloudPassword = '';
-          this.cloudName = '';
-        }
-      } catch (err: any) {
-        this.cloudError = err?.message || 'Network error';
-      } finally {
-        this.cloudBusy = false;
-      }
-    },
-
-    async cloudVerifyOtp() {
-      this.cloudBusy = true;
-      this.cloudError = '';
-      try {
-        const res = await ipcRenderer.invoke('sulla-cloud:verify-otp', this.cloudPhone.trim(), this.cloudCode.trim());
-        this.cloudStatus = res.status;
-        if (!res.ok) {
-          this.cloudError = res.error || 'Incorrect code';
-          return;
-        }
-        this.cloudCode = '';
-        this.cloudStep = 'phone';
-      } catch (err: any) {
-        this.cloudError = err?.message || 'Network error';
-      } finally {
-        this.cloudBusy = false;
-      }
-    },
-
-    async cloudLogout() {
-      this.cloudBusy = true;
-      try {
-        this.cloudStatus = await ipcRenderer.invoke('sulla-cloud:logout');
-        this.cloudStep = 'phone';
-        this.cloudPhone = '';
-        this.cloudCode = '';
-      } finally {
-        this.cloudBusy = false;
-      }
-    },
-
-    async loadDesktopRelayStatus() {
-      try {
-        const status = await ipcRenderer.invoke('desktop-relay:get-status');
-        this.pairedMobileUserId = status.pairedUserId || '';
-        this.relayConnected = status.connected;
-        this.relayError = status.lastError || '';
-      } catch {
-        // IPC not ready
-      }
-    },
-
-    handleRelayStatusChanged(_event: unknown, status: { pairedUserId: string; connected: boolean; lastError?: string }) {
-      this.pairedMobileUserId = status.pairedUserId || '';
-      this.relayConnected = status.connected;
-      this.relayError = status.lastError || '';
-    },
 
     async loadClaudeCredentials() {
       try {
@@ -893,19 +686,6 @@ export default defineComponent({
         }
       } catch {
         // Settings not available yet
-      }
-    },
-
-    async loadClaudeUsage() {
-      this.claudeUsageLoading = true;
-      try {
-        const raw = await ipcRenderer.invoke('sulla-settings-get', 'claudeCodeUsage', '[]');
-        const parsed = JSON.parse(raw || '[]');
-        this.claudeUsage = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        this.claudeUsage = [];
-      } finally {
-        this.claudeUsageLoading = false;
       }
     },
 
@@ -1055,222 +835,6 @@ export default defineComponent({
               <span class="config-label">Provider:</span>
               <span class="config-value">{{ selectedProvider }} / {{ selectedRemoteModel }}</span>
             </div>
-          </div>
-        </div>
-
-        <!-- Profile Tab -->
-        <div
-          v-if="currentNav === 'profile'"
-          class="tab-content"
-        >
-          <h2>Sulla Cloud Account</h2>
-          <p class="description">
-            Sign in to the same account you use on Sulla Mobile. Once signed in,
-            your desktop and phone are automatically paired — messages sent from
-            your phone route to this desktop when you select "Desktop" in the
-            mobile chat.
-          </p>
-
-          <!-- Signed in state -->
-          <div
-            v-if="cloudStatus.signedIn"
-            class="setting-group"
-          >
-            <div class="claude-status">
-              <span class="claude-status-dot" />
-              <div>
-                <div class="setting-label">Signed in</div>
-                <div class="setting-description">
-                  {{ cloudStatus.phone || 'phone hidden' }}<br>
-                  <span style="opacity: 0.6; font-family: var(--font-mono); font-size: 11px;">
-                    {{ cloudStatus.userId }}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <button
-              class="btn role-secondary"
-              style="margin-top: 1rem;"
-              :disabled="cloudBusy"
-              @click="cloudLogout"
-            >
-              Sign out
-            </button>
-          </div>
-
-          <!-- Not signed in: method picker + current method UI -->
-          <div
-            v-else
-            class="setting-group"
-          >
-            <div class="claude-auth-buttons" style="margin-bottom: 1rem;">
-              <button
-                class="btn"
-                :class="cloudMethod === 'email' ? 'role-primary' : 'role-secondary'"
-                @click="setCloudMethod('email')"
-              >
-                Email
-              </button>
-              <button
-                class="btn"
-                :class="cloudMethod === 'phone' ? 'role-primary' : 'role-secondary'"
-                @click="setCloudMethod('phone')"
-              >
-                Phone
-              </button>
-              <button
-                class="btn"
-                :class="cloudMethod === 'apple' ? 'role-primary' : 'role-secondary'"
-                @click="setCloudMethod('apple')"
-              >
-                Apple
-              </button>
-            </div>
-
-            <!-- EMAIL -->
-            <div v-if="cloudMethod === 'email'">
-              <h3 style="margin-bottom: 0.5rem;">
-                {{ emailMode === 'login' ? 'Sign in with email' : 'Create a new account' }}
-              </h3>
-              <p class="setting-description" style="margin-bottom: 1rem;">
-                {{ emailMode === 'login'
-                  ? 'Enter your Sulla Cloud email and password.'
-                  : 'Create a new Sulla Cloud account with an email and password.'
-                }}
-                <a
-                  href="#"
-                  style="margin-left: 0.25rem;"
-                  @click.prevent="emailMode = emailMode === 'login' ? 'register' : 'login'"
-                >{{ emailMode === 'login' ? 'Create an account instead' : 'Sign in instead' }}</a>
-              </p>
-
-              <label class="setting-label">Email</label>
-              <input
-                v-model="cloudEmail"
-                type="email"
-                class="input-field"
-                placeholder="you@example.com"
-                autocomplete="email"
-                style="margin-bottom: 0.75rem;"
-              >
-
-              <label class="setting-label">Password</label>
-              <input
-                v-model="cloudPassword"
-                type="password"
-                class="input-field"
-                :placeholder="emailMode === 'register' ? 'At least 8 characters' : '••••••••'"
-                :autocomplete="emailMode === 'register' ? 'new-password' : 'current-password'"
-                @keyup.enter="emailMode === 'login' ? cloudEmailLogin() : cloudEmailRegister()"
-              >
-
-              <div v-if="emailMode === 'register'" style="margin-top: 0.75rem;">
-                <label class="setting-label">Your name (optional)</label>
-                <input
-                  v-model="cloudName"
-                  type="text"
-                  class="input-field"
-                  placeholder="Jane Doe"
-                  autocomplete="name"
-                >
-              </div>
-
-              <button
-                class="btn role-primary"
-                style="margin-top: 1rem;"
-                :disabled="cloudBusy || !cloudEmail.trim() || !cloudPassword"
-                @click="emailMode === 'login' ? cloudEmailLogin() : cloudEmailRegister()"
-              >
-                {{ cloudBusy ? 'Working...' : (emailMode === 'login' ? 'Sign in' : 'Create account') }}
-              </button>
-            </div>
-
-            <!-- PHONE OTP -->
-            <div v-else-if="cloudMethod === 'phone'">
-              <div v-if="cloudStep === 'phone'">
-                <label class="setting-label">Phone number</label>
-                <div class="claude-input-row">
-                  <input
-                    v-model="cloudPhone"
-                    type="tel"
-                    class="input-field claude-input-field"
-                    placeholder="+15551234567"
-                    @keyup.enter="cloudSendOtp"
-                  >
-                  <button
-                    class="btn role-primary"
-                    :disabled="cloudBusy || !cloudPhone.trim()"
-                    @click="cloudSendOtp"
-                  >
-                    {{ cloudBusy ? 'Sending...' : 'Send code' }}
-                  </button>
-                </div>
-                <p class="setting-description">
-                  E.164 format (include country code, e.g. +1 for US).
-                </p>
-              </div>
-              <div v-else>
-                <label class="setting-label">Code sent to {{ cloudPhone }}</label>
-                <div class="claude-input-row">
-                  <input
-                    v-model="cloudCode"
-                    type="text"
-                    inputmode="numeric"
-                    class="input-field claude-input-field"
-                    placeholder="123456"
-                    maxlength="8"
-                    @keyup.enter="cloudVerifyOtp"
-                  >
-                  <button
-                    class="btn role-primary"
-                    :disabled="cloudBusy || !cloudCode.trim()"
-                    @click="cloudVerifyOtp"
-                  >
-                    {{ cloudBusy ? 'Verifying...' : 'Verify' }}
-                  </button>
-                </div>
-                <button
-                  class="btn role-secondary"
-                  style="margin-top: 0.5rem;"
-                  @click="cloudStep = 'phone'; cloudCode = ''"
-                >
-                  Use a different number
-                </button>
-              </div>
-            </div>
-
-            <!-- APPLE -->
-            <div v-else-if="cloudMethod === 'apple'">
-              <p class="setting-description">
-                Apple Sign-In requires a bit of Apple Developer Console setup for desktop
-                (a Services ID and a registered redirect URI). Coming soon —
-                for now, please sign in with email or phone. If you already have an
-                account created on iOS, use the same phone number.
-              </p>
-            </div>
-          </div>
-
-          <p
-            v-if="cloudError"
-            class="setting-description claude-oauth-error"
-          >
-            {{ cloudError }}
-          </p>
-
-          <!-- Relay status shown once signed in -->
-          <div
-            v-if="cloudStatus.signedIn"
-            class="setting-group"
-            style="margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-default, var(--header-border));"
-          >
-            <label class="setting-label">Mobile relay</label>
-            <p class="setting-description">
-              <span
-                class="claude-status-dot"
-                :style="{ background: relayConnected ? 'var(--status-success, #3fb950)' : 'var(--text-muted, #8b949e)' }"
-              />
-              {{ relayConnected ? 'Connected — ready for chats from mobile' : 'Not connected — will retry in the background' }}
-            </p>
           </div>
         </div>
 
@@ -1495,81 +1059,6 @@ export default defineComponent({
             </p>
           </div>
 
-          <!-- Usage panel — reads SullaSettingsModel.claudeCodeUsage written by
-               ClaudeCodeService on every `result` event. -->
-          <div class="setting-group claude-usage">
-            <label class="setting-label">Recent usage (rolling 24h)</label>
-            <div
-              v-if="claudeUsageLoading"
-              class="setting-description"
-            >
-              Loading…
-            </div>
-            <div
-              v-else-if="claudeUsageSummary.totalTurns === 0"
-              class="setting-description"
-            >
-              No Claude Code usage recorded in the last 24 hours.
-            </div>
-            <div
-              v-else
-              class="claude-usage-grid"
-            >
-              <div class="claude-usage-cell">
-                <div class="claude-usage-label">
-                  Turns
-                </div>
-                <div class="claude-usage-value">
-                  {{ claudeUsageSummary.totalTurns.toLocaleString() }}
-                </div>
-              </div>
-              <div class="claude-usage-cell">
-                <div class="claude-usage-label">
-                  Input tokens
-                </div>
-                <div class="claude-usage-value">
-                  {{ claudeUsageSummary.totalInputTokens.toLocaleString() }}
-                </div>
-              </div>
-              <div class="claude-usage-cell">
-                <div class="claude-usage-label">
-                  Output tokens
-                </div>
-                <div class="claude-usage-value">
-                  {{ claudeUsageSummary.totalOutputTokens.toLocaleString() }}
-                </div>
-              </div>
-              <div class="claude-usage-cell">
-                <div class="claude-usage-label">
-                  Cache read
-                </div>
-                <div class="claude-usage-value">
-                  {{ claudeUsageSummary.totalCacheReadTokens.toLocaleString() }}
-                </div>
-              </div>
-              <div class="claude-usage-cell">
-                <div class="claude-usage-label">
-                  Est. cost
-                </div>
-                <div class="claude-usage-value">
-                  ${{ claudeUsageSummary.totalCostUsd.toFixed(4) }}
-                </div>
-              </div>
-              <div class="claude-usage-cell">
-                <div class="claude-usage-label">
-                  Last turn
-                </div>
-                <div class="claude-usage-value">
-                  {{ claudeUsageSummary.lastTurnRelative }}
-                </div>
-              </div>
-            </div>
-            <p class="setting-description">
-              Captured from Claude Code's stream-json result events. Max/Pro quota
-              limits are enforced server-side by Anthropic and aren't shown here.
-            </p>
-          </div>
-
           <!-- Legacy credentials — collapsed by default; only show if the user
                explicitly expands or legacy credentials already exist. -->
           <div class="setting-group claude-legacy">
@@ -1721,11 +1210,6 @@ export default defineComponent({
             </div>
           </div>
 
-          <!-- Mobile Pairing is now handled automatically via Profile sign-in -->
-          <p class="description claude-pairing-heading">
-            To chat with this desktop from Sulla Mobile, sign in to your Sulla Cloud
-            account under the <strong>Profile</strong> tab. Pairing happens automatically.
-          </p>
           </div>
         </div>
       </div>
@@ -1981,34 +1465,6 @@ export default defineComponent({
   margin-bottom: 1rem;
 }
 
-.claude-usage-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 0.75rem;
-  margin: 0.5rem 0;
-}
-
-.claude-usage-cell {
-  padding: 0.5rem 0.75rem;
-  background: var(--surface-subtle, rgba(255, 255, 255, 0.03));
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
-  border-radius: 0.35rem;
-}
-
-.claude-usage-label {
-  font-size: 0.75rem;
-  opacity: 0.7;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 0.2rem;
-}
-
-.claude-usage-value {
-  font-size: 1rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
 .claude-legacy .btn {
   font-size: 0.85rem;
 }
@@ -2053,12 +1509,6 @@ export default defineComponent({
 .claude-oauth-error {
   color: var(--status-error, #f85149);
   margin-top: 0.5rem;
-}
-
-.claude-pairing-heading {
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--border-default, var(--header-border));
 }
 
 .tab-content {

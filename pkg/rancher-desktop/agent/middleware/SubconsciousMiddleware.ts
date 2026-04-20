@@ -61,13 +61,14 @@ export async function runSubconsciousMiddleware(
   const recallPromise = runMemoryRecall(state, options.recallVariant);
   awaitedTasks.push(recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx }));
 
-  // 3. Observation Agent — awaited. It runs its side-effect tool calls
-  //    (add/remove observational memory, update identity files) BEFORE the
-  //    main LLM call so the user sees its narration pre-reply instead of
-  //    bleeding into the chat after the assistant has already answered.
+  // 3. Observation Agent — fire-and-forget: it only does side-effect tool
+  //    calls (add/remove observational memory, update identity files) and
+  //    never touches state.messages directly. No need to wait for it.
   if (options.includeObservations) {
-    launched.push('observation');
-    awaitedTasks.push(runObservationAgent(state));
+    launched.push('observation (fire-and-forget)');
+    runObservationAgent(state).catch((error) => {
+      console.error('[SubconsciousMiddleware] Observation Agent failed (fire-and-forget):', error instanceof Error ? error.message : error);
+    });
   }
 
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);

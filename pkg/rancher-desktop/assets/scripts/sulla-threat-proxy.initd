@@ -1,0 +1,71 @@
+#!/sbin/openrc-run
+# OpenRC init script for sulla-threat-proxy (mitmdump wrapper).
+# Installed into the Lima VM by LimaBackend.installThreatProxy().
+
+name="sulla-threat-proxy"
+description="Sulla Desktop threat scanning proxy (mitmproxy)"
+
+: ${SULLA_PROXY_LISTEN_HOST:=127.0.0.1}
+: ${SULLA_PROXY_LISTEN_PORT:=8888}
+: ${SULLA_PROXY_CONFDIR:=/opt/sulla-proxy/mitm}
+: ${SULLA_PROXY_ADDON_DIR:=/opt/sulla-proxy/addons}
+
+command="/usr/bin/mitmdump"
+command_args="\
+    --listen-host ${SULLA_PROXY_LISTEN_HOST} \
+    --listen-port ${SULLA_PROXY_LISTEN_PORT} \
+    --set confdir=${SULLA_PROXY_CONFDIR} \
+    --set block_global=false \
+    --set stream_large_bodies=16m \
+    -s ${SULLA_PROXY_ADDON_DIR}/url_filter.py \
+    -s ${SULLA_PROXY_ADDON_DIR}/prompt_injection.py"
+
+# Python needs to find common.py — it lives next to the addons.
+export PYTHONPATH="${SULLA_PROXY_ADDON_DIR}:${PYTHONPATH:-}"
+
+command_background="yes"
+pidfile="/run/sulla-threat-proxy.pid"
+output_log="/var/log/sulla-threat-proxy.stdout.log"
+error_log="/var/log/sulla-threat-proxy.stderr.log"
+
+# Run as root so mitmproxy can bind low ports and write to /opt + /var/log.
+# The proxy only listens on 127.0.0.1 inside the VM, so no external exposure.
+command_user="root:root"
+
+depend() {
+    need net
+    after logger firewall
+}
+
+start_pre() {
+    # Make sure the confdir + addon dir exist before mitmdump tries to use them.
+    mkdir -p "${SULLA_PROXY_CONFDIR}" "${SULLA_PROXY_ADDON_DIR}" /opt/sulla-proxy/cache /opt/sulla-proxy/blocklist
+    touch /var/log/sulla-threat-proxy.log /var/log/sulla-threat-proxy.stdout.log /var/log/sulla-threat-proxy.stderr.log
+    # Source env file if present — populates SULLA_PROXY_* and API keys.
+    if [ -f /etc/sulla-proxy.env ]; then
+        set -a
+        . /etc/sulla-proxy.env
+        set +a
+    fi
+    # Sanity check: mitmdump must be on PATH.
+    if [ ! -x "${command}" ]; then
+        eerror "mitmdump not found at ${command} — run 'apk add mitmproxy' in the VM"
+        return 1
+    fi
+    return 0
+}
+
+start_post() {
+    # Wait briefly for the proxy to actually start listening.
+    i=0
+    while [ $i -lt 20 ]; do
+        if nc -z "${SULLA_PROXY_LISTEN_HOST}" "${SULLA_PROXY_LISTEN_PORT}" 2>/dev/null; then
+            einfo "sulla-threat-proxy listening on ${SULLA_PROXY_LISTEN_HOST}:${SULLA_PROXY_LISTEN_PORT}"
+            return 0
+        fi
+        sleep 0.2
+        i=$((i+1))
+    done
+    ewarn "sulla-threat-proxy didn't bind ${SULLA_PROXY_LISTEN_HOST}:${SULLA_PROXY_LISTEN_PORT} within 4s"
+    return 0
+}

@@ -209,9 +209,13 @@ export class SubconsciousAgentNode extends BaseNode {
       updatedAt:     Date.now(),
     };
 
-    // Mark cycle complete when done
+    // Mark cycle complete when done — and close any open thinking bubble
+    // on the parent channel so the UI stops showing "Synthesizing" once
+    // this sub-agent is finished narrating. Without this, the bubble stays
+    // in the Synthesizing state until another sub-agent happens to close it.
     if (outcome.status === 'done') {
       state.metadata.cycleComplete = true;
+      await this.emitThinkingComplete(state);
     }
 
     // Append assistant message to thread (if not already stored by normalizedChat)
@@ -262,7 +266,18 @@ export class SubconsciousAgentNode extends BaseNode {
     } as BaseThreadState;
   }
 
+  /**
+   * The observation sub-agent is fire-and-forget — it runs async and its
+   * narration has no place in the user-facing chat. Suppress its emissions
+   * so fire-and-forget stays truly silent, while memory-recall and others
+   * continue to narrate as before.
+   */
+  private isSilentAgent(state: BaseThreadState): boolean {
+    return (state.metadata as any).agentLabel === 'observation';
+  }
+
   private async emitThinking(state: BaseThreadState, content: string): Promise<void> {
+    if (this.isSilentAgent(state)) return;
     const parentState = this.buildParentState(state);
     if (!parentState) return;
 
@@ -274,6 +289,7 @@ export class SubconsciousAgentNode extends BaseNode {
    * The next thinking text will start a fresh bubble.
    */
   private async emitThinkingComplete(state: BaseThreadState): Promise<void> {
+    if (this.isSilentAgent(state)) return;
     const parentState = this.buildParentState(state);
     if (!parentState) return;
 

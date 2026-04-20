@@ -20,6 +20,7 @@ import * as K8s from '@pkg/backend/k8s';
 import { Steve } from '@pkg/backend/steve';
 import { FatalCommandLineOptionError, LockedFieldError, updateFromCommandLine } from '@pkg/config/commandLineOptions';
 import * as audioDriver from '@pkg/main/audio-driver/init';
+import * as threatProxy from '@pkg/main/threat-proxy';
 import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
 import { registerMoreMenuIpc } from '@pkg/main/moreMenuWindow';
 import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
@@ -694,6 +695,16 @@ async function initUI() {
     console.error('[Audio Driver] Failed to initialize:', err);
   }
 
+  // Initialize threat-proxy subsystem (URL filtering + prompt-injection scanning
+  // via in-VM mitmproxy). Host side owns settings + URLhaus blocklist refresh;
+  // the actual proxy is installed into the Lima VM by LimaBackend.installThreatProxy().
+  try {
+    threatProxy.initialize();
+    console.log('[Threat Proxy] Initialized');
+  } catch (err) {
+    console.error('[Threat Proxy] Failed to initialize:', err);
+  }
+
   if (!cfg.application.startInBackground) {
     window.openMain();
   } else if (Electron.app.dock) {
@@ -990,6 +1001,15 @@ Electron.app.on('before-quit', async(event) => {
     console.log('[Shutdown] Audio driver shut down');
   } catch (err) {
     console.error('[Shutdown] Audio driver shutdown error:', err);
+  }
+
+  // Shut down threat-proxy host-side refresh timer. The in-VM mitmproxy service
+  // lives with the VM and is stopped by Lima's own shutdown path.
+  try {
+    await withTimeout('threatProxy.shutdown', 2_000, threatProxy.shutdown());
+    console.log('[Shutdown] Threat proxy shut down');
+  } catch (err) {
+    console.error('[Shutdown] Threat proxy shutdown error:', err);
   }
 
   sullaLog({ topic: 'shutdown', level: 'info', message: 'Calling sullaEnd()' });
