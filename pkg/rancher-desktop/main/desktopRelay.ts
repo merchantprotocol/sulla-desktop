@@ -13,16 +13,32 @@
  */
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 
 const RELAY_URL = 'wss://sulla-workers.jonathon-44b.workers.dev';
+// Local WebSocket channel that BackendGraphWebSocketService watches for
+// mobile-originated chats. Must match the constant in that file.
+const MOBILE_RELAY_CHANNEL = 'mobile-relay';
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS  = 30_000;
+// Heartbeat + watchdog tuned for Cloudflare Workers: the DO auto-responds to
+// "ping" with "pong" via setWebSocketAutoResponse without waking from
+// hibernation. A 20s ping interval + 45s silence watchdog keeps the pipe
+// warm through NAT/proxy idle timeouts and surfaces silently-dead sockets
+// (where TCP never FINs) well before Cloudflare's ~10min hibernation cutoff.
+const PING_INTERVAL_MS = 20_000;
+const STALE_SOCKET_MS  = 45_000;
+// If a freshly-opened socket doesn't fire `open` in this window, we assume
+// it's stuck and tear it down. Prevents a wedged connect from pinning the
+// client in "connecting" forever.
+const CONNECT_TIMEOUT_MS = 15_000;
 
 type Role = 'desktop' | 'mobile';
 
@@ -56,11 +72,24 @@ class DesktopRelayClient {
   private connected = false;
   private lastError = '';
   private statusListeners: Array<(s: Status) => void> = [];
-  // conversationId → AbortController for in-flight chat requests. Mobile can
-  // send a `{type:'cancel', conversationId}` frame to stop a run; we call
-  // .abort() on the matching controller which propagates through ClaudeCodeService
-  // to the limactl process and the in-VM claude CLI.
-  private inFlightAborts = new Map<string, AbortController>();
+  // Stop requests from mobile go out to the agent via stop_run on the
+  // mobile-relay channel (see handleMessage). No local in-process
+  // AbortController state is needed anymore — the agent owns aborts now.
+  // Subscription guard so we only hook the mobile-relay channel once.
+  private mobileChannelBridged = false;
+
+  // ── Liveness tracking ──────────────────────────────────────
+  // The DO auto-responds to application-level "ping" frames with "pong",
+  // without waking from hibernation. We send a ping on a timer and watch
+  // for any inbound message (pong, chat, anything) to prove the pipe is
+  // still alive. If the socket goes silent for STALE_SOCKET_MS we force a
+  // reconnect — the `close` event alone is unreliable when intermediaries
+  // drop the connection without sending a TCP FIN.
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  private lastInboundAt = 0;
+  // Guards against a stuck `new WebSocket()` that never resolves to `open`.
+  private connectTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   async start(): Promise<void> {
     const paired = (await SullaSettingsModel.get('pairedMobileUserId', '')) ?? '';
@@ -112,6 +141,7 @@ class DesktopRelayClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    this.teardownLiveness();
     if (this.ws) {
       try { this.ws.close(); } catch { /* ignore */ }
       this.ws = null;
@@ -119,6 +149,31 @@ class DesktopRelayClient {
     this.currentRoom = null;
     this.connected = false;
     this.broadcastStatus();
+  }
+
+  /** Stop all heartbeat/watchdog/connect timers. Idempotent. */
+  private teardownLiveness() {
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
+    if (this.watchdogTimer) { clearInterval(this.watchdogTimer); this.watchdogTimer = null; }
+    if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }
+  }
+
+  /**
+   * Tear down the current socket and schedule a reconnect. Called on error
+   * events, stale-socket watchdog trips, and connect-timeout expiry — every
+   * failure path funnels here so we can't leak sockets or timers.
+   */
+  private forceReconnect(reason: string) {
+    if (this.intentionallyClosed) return;
+    console.warn(`[DesktopRelay] Forcing reconnect — ${ reason }`);
+    this.teardownLiveness();
+    if (this.ws) {
+      try { this.ws.close(); } catch { /* already closed */ }
+      this.ws = null;
+    }
+    this.connected = false;
+    this.broadcastStatus();
+    this.scheduleReconnect();
   }
 
   private async openSocket() {
@@ -143,20 +198,49 @@ class DesktopRelayClient {
     const ws = new WebSocket(url);
     this.ws = ws;
 
+    // If the socket doesn't open in time, give up and reconnect. Without
+    // this a stuck TCP handshake can park us in "connecting" indefinitely.
+    this.connectTimeoutTimer = setTimeout(() => {
+      this.connectTimeoutTimer = null;
+      if (this.ws === ws && !this.connected) {
+        this.forceReconnect(`connect timeout after ${ CONNECT_TIMEOUT_MS }ms`);
+      }
+    }, CONNECT_TIMEOUT_MS);
+
     ws.addEventListener('open', () => {
+      if (this.connectTimeoutTimer) { clearTimeout(this.connectTimeoutTimer); this.connectTimeoutTimer = null; }
       this.connected = true;
       this.lastError = '';
       this.reconnectDelay = RECONNECT_BASE_MS;
+      this.lastInboundAt = Date.now();
       console.log(`[DesktopRelay] Connected — room=${ room }`);
       this.broadcastStatus();
+
+      // Start heartbeat: send a ping every PING_INTERVAL_MS. The DO
+      // auto-replies without waking, so this is cheap on the server.
+      this.pingTimer = setInterval(() => {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        try { this.ws.send(JSON.stringify({ type: 'ping' })); } catch { /* socket in bad state; watchdog will handle */ }
+      }, PING_INTERVAL_MS);
+
+      // Watchdog: any silent period >STALE_SOCKET_MS means the pipe is
+      // dead even if the browser hasn't fired `close` yet. Force-reconnect.
+      this.watchdogTimer = setInterval(() => {
+        const silentMs = Date.now() - this.lastInboundAt;
+        if (silentMs > STALE_SOCKET_MS) {
+          this.forceReconnect(`no inbound traffic for ${ silentMs }ms`);
+        }
+      }, Math.floor(STALE_SOCKET_MS / 3));
     });
 
     ws.addEventListener('message', (event) => {
+      this.lastInboundAt = Date.now();
       this.handleMessage(event.data as string);
     });
 
     ws.addEventListener('close', () => {
       this.connected = false;
+      this.teardownLiveness();
       console.log('[DesktopRelay] Socket closed');
       this.broadcastStatus();
       if (!this.intentionallyClosed) this.scheduleReconnect();
@@ -166,6 +250,10 @@ class DesktopRelayClient {
       this.lastError = e?.message || 'WebSocket error';
       console.warn('[DesktopRelay] Error:', this.lastError);
       this.broadcastStatus();
+      // Some runtimes don't fire `close` after `error`, especially on
+      // half-open sockets. Force the reconnect path so we never sit idle
+      // waiting for a `close` that may never arrive.
+      this.forceReconnect(`socket error: ${ this.lastError }`);
     });
   }
 
@@ -196,6 +284,12 @@ class DesktopRelayClient {
       return;
     }
 
+    if (msg.type === 'pong') {
+      // Keepalive reply from the DO's auto-response. Watchdog already
+      // reset lastInboundAt on the message event above; nothing else to do.
+      return;
+    }
+
     if (msg.type === 'error') {
       console.warn(`[DesktopRelay] Relay error: ${ msg.reason }`);
       return;
@@ -221,86 +315,200 @@ class DesktopRelayClient {
     }
 
     if (msg.type === 'cancel') {
-      // Mobile hit the stop button. Abort any in-flight chatStream for this
-      // conversation — propagates to ClaudeCodeService → limactl kill + VM pkill.
-      const key = msg.conversationId ?? this.currentRoom ?? '__default__';
-      const ctrl = this.inFlightAborts.get(key);
-      if (ctrl) {
-        console.log(`[DesktopRelay] Cancel received for conversationId=${ key }`);
-        try { ctrl.abort() } catch { /* already aborted */ }
-        this.inFlightAborts.delete(key);
-      } else {
-        console.log(`[DesktopRelay] Cancel received for conversationId=${ key } — no in-flight request`);
-      }
+      // Mobile hit the stop button. Publish stop_run on the mobile-relay
+      // channel — BackendGraphWebSocketService.handleChannelMessage handles
+      // stop_run by aborting the active agent run (which propagates through
+      // ClaudeCodeService → limactl kill + in-VM claude pkill).
+      const conversationId = msg.conversationId ?? this.currentRoom ?? '__default__';
+      console.log(`[DesktopRelay] Cancel received for conversationId=${ conversationId }`);
+      const wsService = getWebSocketClientService();
+      wsService.send(MOBILE_RELAY_CHANNEL, {
+        type:      'stop_run',
+        data:      { threadId: conversationId },
+        timestamp: Date.now(),
+      });
       return;
     }
 
     console.log(`[DesktopRelay] Unknown message type: ${ msg.type }`);
   }
 
+  /**
+   * Bridge a mobile chat request onto the local agent channel.
+   *
+   * Previously this method called ClaudeCodeService.chatStream directly,
+   * bypassing the entire AgentNode/BaseNode pipeline — which meant the
+   * `<AGENT_DONE>` / `<AGENT_CONTINUE>` protocol wrappers, tool execution,
+   * memory recall, and subconscious middleware all got skipped. Mobile saw
+   * raw XML-tagged responses and the desktop's full agent capabilities
+   * never applied to mobile-originated chats.
+   *
+   * The relay is now a pure bridge: it translates the mobile `chat` frame
+   * into a `user_message` on the local `mobile-relay` WebSocket channel
+   * and lets BackendGraphWebSocketService route it through the normal
+   * agent loop (same AgentNode, same strip, same tools). Responses
+   * emitted by the agent arrive as `assistant_message`/streaming frames
+   * on the same channel, which our subscription picks up and forwards
+   * back up to Cloudflare as `chunk`/`done` frames mobile already
+   * understands.
+   */
   private async handleChatRequest(msg: IncomingMessage) {
     const messages = msg.messages ?? [];
-    // Prefer the per-thread conversation id from mobile; fall back to the room
-    // (= user id) so older mobile clients still work, but sessions collide.
     const conversationId = msg.conversationId ?? this.currentRoom ?? undefined;
-    const abortKey = conversationId ?? '__default__';
     console.log(`[DesktopRelay] Chat request — ${ messages.length } messages, conversationId=${ conversationId ?? '(none)' }`);
 
-    // If a prior chat for this conversation is still running (user tapped
-    // send twice without stop), abort it so we don't fan out two parallel
-    // claude processes for the same thread.
-    const prior = this.inFlightAborts.get(abortKey);
-    if (prior) {
-      try { prior.abort() } catch { /* already aborted */ }
-      this.inFlightAborts.delete(abortKey);
+    // Extract the user prompt from the incoming frame. The agent maintains
+    // its own conversation state keyed by threadId; we only need the fresh
+    // user turn each request. If the mobile client sends a multi-message
+    // payload, pick the last user turn — older messages are already in the
+    // thread on the desktop side.
+    const lastUser = [...messages].reverse().find(m => m.role === 'user');
+    const content = (lastUser?.content ?? '').trim();
+    if (!content) {
+      console.warn('[DesktopRelay] Chat request had no user content; ignoring');
+      this.send({ type: 'error', reason: 'empty_user_message' });
+      return;
     }
 
-    const abortController = new AbortController();
-    this.inFlightAborts.set(abortKey, abortController);
+    this.ensureMobileChannelBridge();
 
-    try {
-      const { getClaudeCodeService } = await import('@pkg/agent/languagemodels/ClaudeCodeService');
-      const svc = getClaudeCodeService();
-
-      // Stream each text delta to mobile as it arrives, then emit a final
-      // `done` with the full content so clients that missed chunks still get
-      // the whole reply. De-dupe consecutive activity messages so "Using
-      // Bash…" then "$ ls /etc" doesn't spam the mobile thinking bubble.
-      let lastActivity = '';
-      const result = await svc.chatStream(
-        messages as any,
-        {
-          onToken: (delta: string) => {
-            if (delta) this.send({ type: 'chunk', delta });
-          },
-          onActivity: (message: string) => {
-            if (!message || message === lastActivity) return;
-            lastActivity = message;
-            this.send({ type: 'activity', message });
-          },
+    const wsService = getWebSocketClientService();
+    wsService.send(MOBILE_RELAY_CHANNEL, {
+      type: 'user_message',
+      data: {
+        content,
+        threadId: conversationId,
+        metadata: {
+          source:         'mobile-relay',
+          inputSource:    'keyboard',
+          conversationId,
         },
-        { conversationId, signal: abortController.signal },
-      );
+      },
+      timestamp: Date.now(),
+    });
+  }
 
-      const content = result?.content ?? '';
-      this.send({ type: 'done', content });
-    } catch (err: any) {
-      const message = err?.message || 'Claude Code failed';
-      // Treat AbortError as a clean cancel, not a chat failure.
-      if (abortController.signal.aborted || /abort/i.test(message)) {
-        console.log(`[DesktopRelay] Chat aborted for conversationId=${ conversationId ?? '(none)' }`);
-        this.send({ type: 'cancelled' });
-      } else {
-        console.warn('[DesktopRelay] Chat handler failed:', message);
-        this.send({ type: 'error', reason: message });
+  /**
+   * Install the one-time subscription to the mobile-relay channel. Messages
+   * the agent emits during execution (streaming tokens, activity, final
+   * assistant_message, graph completion) arrive here; we translate each
+   * into the frame shape mobile already understands and forward it up to
+   * Cloudflare.
+   *
+   * Idempotent — runs once on first use. The subscription lives for the
+   * lifetime of the relay client; no need to tear down on reconnect since
+   * it's local, not over the wire to Cloudflare.
+   *
+   * Protocol translation notes:
+   *
+   *   - `assistant_message kind=streaming` carries the AGENT's accumulated
+   *     buffer each tick, but mobile expects *incremental deltas* (it
+   *     concatenates them into its own streamBuffer). We compute the delta
+   *     by comparing the new buffer to what we last sent.
+   *
+   *   - `assistant_message kind=thinking` is activity indication (tool use,
+   *     reasoning) — forward as `activity`.
+   *
+   *   - `assistant_message kind=progress` (the default) is the agent's
+   *     authoritative text for one iteration of the loop. It duplicates
+   *     what streaming already sent, so we record it as the "final text
+   *     so far" but don't forward it as a chunk.
+   *
+   *   - `transfer_data content='graph_execution_complete'` is the real
+   *     end-of-run signal. THIS is when we emit `done` to mobile so it
+   *     closes the socket and resolves its pending promise. Emitting
+   *     `done` any earlier (e.g. on the first progress message) closes
+   *     the mobile socket mid-turn and everything after is lost.
+   */
+  private ensureMobileChannelBridge() {
+    if (this.mobileChannelBridged) return;
+    this.mobileChannelBridged = true;
+
+    const wsService = getWebSocketClientService();
+    wsService.connect(MOBILE_RELAY_CHANNEL);
+
+    // Per-thread state: the last-sent streaming buffer (for delta math)
+    // and the latest known "final text" (for when we emit done).
+    // Keyed by thread_id so two simultaneous mobile conversations don't
+    // corrupt each other's delta computation.
+    const streamedByThread = new Map<string, string>();
+    const finalTextByThread = new Map<string, string>();
+    let lastActivity = '';
+
+    wsService.onMessage(MOBILE_RELAY_CHANNEL, (msg: WebSocketMessage) => {
+      if (msg.type === 'assistant_message') {
+        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
+        const kind = typeof data.kind === 'string' ? data.kind : '';
+        const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
+        const raw = typeof data.content === 'string' ? data.content : '';
+        if (!raw) return;
+        // Defense-in-depth: agent already strips wrappers, but a final strip
+        // here guarantees nothing slips through if a new message kind is
+        // added that doesn't pass through the normal strip path.
+        const stripped = stripProtocolTags(raw);
+        if (!stripped) return;
+
+        if (kind === 'thinking') {
+          // Tool-use / reasoning indicator. De-dup consecutive duplicates.
+          if (stripped === lastActivity) return;
+          lastActivity = stripped;
+          this.send({ type: 'activity', message: stripped });
+          return;
+        }
+
+        if (kind === 'streaming') {
+          // Agent re-sends the accumulated buffer each tick. Mobile
+          // replaces its local streamBuffer on each chunk (see the
+          // `streamBuffer = delta` line in sulla-mobile/desktop-relay.ts),
+          // so we ship the full buffer in `delta` rather than computing
+          // incremental slices. Mobile gets the authoritative snapshot
+          // every tick and can render it without concatenation drift.
+          const prev = streamedByThread.get(threadId) ?? '';
+          if (stripped === prev) return; // no-op tick
+          streamedByThread.set(threadId, stripped);
+          this.send({ type: 'chunk', delta: stripped });
+          return;
+        }
+
+        if (kind === 'progress' || kind === '') {
+          // Agent's authoritative final text for this iteration. Record it
+          // so we can ship it via `done` at graph_execution_complete. Don't
+          // forward as chunk — it duplicates the streaming content mobile
+          // has already been building, and emitting a chunk here with the
+          // full text would double up the mobile's streamBuffer.
+          finalTextByThread.set(threadId, stripped);
+          return;
+        }
+
+        // Any other kind (e.g. thinking_complete) — intentionally ignored.
+        return;
       }
-    } finally {
-      // Only remove the controller if it's still ours — a later chat request
-      // or a cancel frame may have already replaced/removed it.
-      if (this.inFlightAborts.get(abortKey) === abortController) {
-        this.inFlightAborts.delete(abortKey);
+
+      if (msg.type === 'transfer_data') {
+        // Graph.execute emits { role: 'system', content: 'graph_execution_complete' }
+        // on the channel when the agent run is fully done. THIS is the only
+        // place we emit `done` to mobile — any earlier and the mobile socket
+        // closes mid-stream.
+        const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
+        const content = typeof data.content === 'string' ? data.content : '';
+        if (content !== 'graph_execution_complete') return;
+        const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
+        // Prefer the agent's authoritative final text; fall back to whatever
+        // we streamed if no progress message arrived (non-streaming-only run).
+        const finalText = finalTextByThread.get(threadId) ?? streamedByThread.get(threadId) ?? '';
+        streamedByThread.delete(threadId);
+        finalTextByThread.delete(threadId);
+        lastActivity = '';
+        this.send({ type: 'done', content: finalText });
+        return;
       }
-    }
+
+      if (msg.type === 'thread_created') {
+        // Agent created a new threadId for this conversation. Mobile uses
+        // its own conversationId scheme; we don't need to plumb this back.
+        return;
+      }
+    });
   }
 
   private send(payload: unknown) {

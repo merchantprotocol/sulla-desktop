@@ -556,27 +556,68 @@ export function initSullaCloudAuthEvents(): void {
     return buildStatus();
   });
 
-  // Auto-pair relay on startup if we have a signed-in session
+  // Auto-pair relay on startup if we have a signed-in session.
+  //
+  // This needs to be resilient to a DB that isn't ready yet. On a fresh app
+  // launch the Sulla Postgres container can take 30-60s to come up while
+  // Lima provisions the VM and docker compose brings up the service, so
+  // loadSession() — which reads from integration_values — throws
+  // ECONNREFUSED if we fire it too early. Previously the IIFE ran once,
+  // caught the error, and gave up. That left the relay permanently
+  // disconnected for the entire app session even though the user was
+  // signed in, which surfaced as mobile peer-offline errors until the
+  // user manually re-signed-in.
+  //
+  // Retry strategy: backoff 2s → 60s cap, up to ~10 minutes total. Only
+  // retries on transient connection errors (ECONNREFUSED, ETIMEDOUT, etc.
+  // plus generic network failures). Stops on the first successful
+  // loadSession() call — whether that returns a session (pair + start
+  // services) or null (no signed-in user — nothing to do).
   (async() => {
-    try {
-      const session = await loadSession();
-      if (session) {
-        await getDesktopRelayClient().setPairedUserId(session.userId);
-        // Resume device registration + heartbeat so this desktop shows online
-        // for any mobile looking at the AI Assistant settings screen.
-        void DevicesCloudApi.register().then(() => DevicesCloudApi.startHeartbeat());
-        // Resume the offline-friendly sync loop so pulled claude_messages
-        // can be dispatched to Claude even without the WS relay.
-        try {
-          const { SullaSync } = await import('./sync/SullaSyncService');
-          SullaSync.start();
-        } catch (err) {
-          console.warn('[SullaCloudAuth] Failed to start SullaSync on restore:', err);
+    const RETRY_BASE_MS  = 2_000;
+    const RETRY_MAX_MS   = 60_000;
+    const RETRY_GIVEUP_MS = 10 * 60_000;
+    const startedAt = Date.now();
+    let delay = RETRY_BASE_MS;
+
+    const isTransient = (err: any): boolean => {
+      const code = err?.code ?? err?.cause?.code;
+      if (code === 'ECONNREFUSED' || code === 'ETIMEDOUT' || code === 'ENOTFOUND' || code === 'ECONNRESET') return true;
+      const msg = String(err?.message || err || '').toLowerCase();
+      return /econnrefused|etimedout|enotfound|econnreset|connect.*failed|pool.*shutting down|database.*not ready/.test(msg);
+    };
+
+    while (true) {
+      try {
+        const session = await loadSession();
+        if (session) {
+          await getDesktopRelayClient().setPairedUserId(session.userId);
+          // Resume device registration + heartbeat so this desktop shows online
+          // for any mobile looking at the AI Assistant settings screen.
+          void DevicesCloudApi.register().then(() => DevicesCloudApi.startHeartbeat());
+          // Resume the offline-friendly sync loop so pulled claude_messages
+          // can be dispatched to Claude even without the WS relay.
+          try {
+            const { SullaSync } = await import('./sync/SullaSyncService');
+            SullaSync.start();
+          } catch (err) {
+            console.warn('[SullaCloudAuth] Failed to start SullaSync on restore:', err);
+          }
+          console.log(`[SullaCloudAuth] Restored session: user=${ session.userId }`);
+        } else {
+          console.log('[SullaCloudAuth] Startup restore: no signed-in session');
         }
-        console.log(`[SullaCloudAuth] Restored session: user=${ session.userId }`);
+        // Success (either a session was restored or none exists) — stop retrying.
+        return;
+      } catch (err) {
+        if (!isTransient(err) || (Date.now() - startedAt) >= RETRY_GIVEUP_MS) {
+          console.warn('[SullaCloudAuth] Startup restore failed (giving up):', err);
+          return;
+        }
+        console.log(`[SullaCloudAuth] Startup restore not ready yet (${ (err as Error)?.message || err }); retrying in ${ delay }ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay = Math.min(delay * 2, RETRY_MAX_MS);
       }
-    } catch (err) {
-      console.warn('[SullaCloudAuth] Startup restore failed:', err);
     }
   })();
 }

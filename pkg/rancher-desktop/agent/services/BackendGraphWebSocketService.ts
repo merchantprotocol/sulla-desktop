@@ -15,6 +15,14 @@ const SULLA_DESKTOP_CHANNEL_ID = 'sulla-desktop';
 const WORKBENCH_CHANNEL_ID = 'workbench';
 const HEARTBEAT_CHANNEL_ID = 'heartbeat';
 const CALENDAR_CHANNEL_ID = 'calendar_event';
+// Dedicated channel for chats routed from a paired mobile device via the
+// Cloudflare relay. Mobile messages arrive through `DesktopRelayClient`,
+// which publishes them here as plain `user_message` frames. The agent
+// loop picks them up the same way it picks up desktop UI messages —
+// same AgentNode/BaseNode pipeline, same XML strip, same tool execution.
+// Responses emitted by the agent land back on this channel; the relay
+// client subscribes and forwards them up to Cloudflare → mobile.
+const MOBILE_RELAY_CHANNEL_ID = 'mobile-relay';
 
 let backendGraphWebSocketServiceInstance: BackendGraphWebSocketService | null = null;
 
@@ -76,6 +84,16 @@ export class BackendGraphWebSocketService {
     });
     if (heartbeatUnsub) this.unsubscribes.push(heartbeatUnsub);
 
+    // Mobile relay channel — messages forwarded from a paired mobile device
+    // via DesktopRelayClient. Agent processing is identical to the desktop
+    // UI channel (same trigger type, same AgentNode pipeline) so the XML
+    // wrappers, tool execution, memory recall, etc. all apply uniformly.
+    this.wsService.connect(MOBILE_RELAY_CHANNEL_ID);
+    const mobileRelayUnsub = this.wsService.onMessage(MOBILE_RELAY_CHANNEL_ID, (msg) => {
+      this.handleChannelMessage(MOBILE_RELAY_CHANNEL_ID, 'sulla-desktop', msg);
+    });
+    if (mobileRelayUnsub) this.unsubscribes.push(mobileRelayUnsub);
+
     // Initialize calendar event channel
     this.wsService.connect(CALENDAR_CHANNEL_ID);
     const calendarUnsub = this.wsService.onMessage(CALENDAR_CHANNEL_ID, (msg) => {
@@ -87,6 +105,7 @@ export class BackendGraphWebSocketService {
     this.subscribedChannels.add(SULLA_DESKTOP_CHANNEL_ID);
     this.subscribedChannels.add(WORKBENCH_CHANNEL_ID);
     this.subscribedChannels.add(HEARTBEAT_CHANNEL_ID);
+    this.subscribedChannels.add(MOBILE_RELAY_CHANNEL_ID);
     this.subscribedChannels.add(CALENDAR_CHANNEL_ID);
 
     // Register agents in the active agents registry
@@ -96,6 +115,8 @@ export class BackendGraphWebSocketService {
       console.warn('[BackendGraphWS] Failed to register workbench agent:', err));
     this.registerAgent(HEARTBEAT_CHANNEL_ID, 'Heartbeat', 'Autonomous heartbeat agent').catch(err =>
       console.warn('[BackendGraphWS] Failed to register heartbeat agent:', err));
+    this.registerAgent(MOBILE_RELAY_CHANNEL_ID, 'Sulla (Mobile)', 'Chat routed from paired mobile device').catch(err =>
+      console.warn('[BackendGraphWS] Failed to register mobile-relay agent:', err));
 
     // Subscribe to any custom agent channels from ~/sulla/agents/
     this.subscribeToAgentChannels().catch(err =>
@@ -258,6 +279,19 @@ export class BackendGraphWebSocketService {
           data:      { threadId },
           timestamp: Date.now(),
         });
+      }
+
+      // Abort any prior run still in flight on this channel before starting
+      // a new one. Without this, rapid user sends (e.g. mobile PTT firing
+      // twice before the first reply lands) spawn two concurrent graph
+      // executions on the same state object and corrupt per-thread stream
+      // buffers downstream (the mobile-relay bridge keys its streamed-text
+      // and final-text maps by thread id, so two active runs on the same
+      // thread race through each other's state).
+      const prior = this.activeAborts.get(channelId);
+      if (prior) {
+        try { prior.abort(); } catch { /* already aborted */ }
+        this.activeAborts.delete(channelId);
       }
 
       // Create abort service for this run.
