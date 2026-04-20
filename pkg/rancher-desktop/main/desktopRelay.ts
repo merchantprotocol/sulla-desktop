@@ -56,6 +56,11 @@ class DesktopRelayClient {
   private connected = false;
   private lastError = '';
   private statusListeners: Array<(s: Status) => void> = [];
+  // conversationId → AbortController for in-flight chat requests. Mobile can
+  // send a `{type:'cancel', conversationId}` frame to stop a run; we call
+  // .abort() on the matching controller which propagates through ClaudeCodeService
+  // to the limactl process and the in-VM claude CLI.
+  private inFlightAborts = new Map<string, AbortController>();
 
   async start(): Promise<void> {
     const paired = (await SullaSettingsModel.get('pairedMobileUserId', '')) ?? '';
@@ -215,6 +220,21 @@ class DesktopRelayClient {
       return;
     }
 
+    if (msg.type === 'cancel') {
+      // Mobile hit the stop button. Abort any in-flight chatStream for this
+      // conversation — propagates to ClaudeCodeService → limactl kill + VM pkill.
+      const key = msg.conversationId ?? this.currentRoom ?? '__default__';
+      const ctrl = this.inFlightAborts.get(key);
+      if (ctrl) {
+        console.log(`[DesktopRelay] Cancel received for conversationId=${ key }`);
+        try { ctrl.abort() } catch { /* already aborted */ }
+        this.inFlightAborts.delete(key);
+      } else {
+        console.log(`[DesktopRelay] Cancel received for conversationId=${ key } — no in-flight request`);
+      }
+      return;
+    }
+
     console.log(`[DesktopRelay] Unknown message type: ${ msg.type }`);
   }
 
@@ -223,7 +243,20 @@ class DesktopRelayClient {
     // Prefer the per-thread conversation id from mobile; fall back to the room
     // (= user id) so older mobile clients still work, but sessions collide.
     const conversationId = msg.conversationId ?? this.currentRoom ?? undefined;
+    const abortKey = conversationId ?? '__default__';
     console.log(`[DesktopRelay] Chat request — ${ messages.length } messages, conversationId=${ conversationId ?? '(none)' }`);
+
+    // If a prior chat for this conversation is still running (user tapped
+    // send twice without stop), abort it so we don't fan out two parallel
+    // claude processes for the same thread.
+    const prior = this.inFlightAborts.get(abortKey);
+    if (prior) {
+      try { prior.abort() } catch { /* already aborted */ }
+      this.inFlightAborts.delete(abortKey);
+    }
+
+    const abortController = new AbortController();
+    this.inFlightAborts.set(abortKey, abortController);
 
     try {
       const { getClaudeCodeService } = await import('@pkg/agent/languagemodels/ClaudeCodeService');
@@ -231,10 +264,8 @@ class DesktopRelayClient {
 
       // Stream each text delta to mobile as it arrives, then emit a final
       // `done` with the full content so clients that missed chunks still get
-      // the whole reply.
-      // De-dupe consecutive activity messages so "Using Bash…" then
-      // "$ ls /etc" doesn't spam the mobile thinking bubble if the CLI
-      // emits them back-to-back.
+      // the whole reply. De-dupe consecutive activity messages so "Using
+      // Bash…" then "$ ls /etc" doesn't spam the mobile thinking bubble.
       let lastActivity = '';
       const result = await svc.chatStream(
         messages as any,
@@ -248,15 +279,27 @@ class DesktopRelayClient {
             this.send({ type: 'activity', message });
           },
         },
-        { conversationId },
+        { conversationId, signal: abortController.signal },
       );
 
       const content = result?.content ?? '';
       this.send({ type: 'done', content });
     } catch (err: any) {
       const message = err?.message || 'Claude Code failed';
-      console.warn('[DesktopRelay] Chat handler failed:', message);
-      this.send({ type: 'error', reason: message });
+      // Treat AbortError as a clean cancel, not a chat failure.
+      if (abortController.signal.aborted || /abort/i.test(message)) {
+        console.log(`[DesktopRelay] Chat aborted for conversationId=${ conversationId ?? '(none)' }`);
+        this.send({ type: 'cancelled' });
+      } else {
+        console.warn('[DesktopRelay] Chat handler failed:', message);
+        this.send({ type: 'error', reason: message });
+      }
+    } finally {
+      // Only remove the controller if it's still ours — a later chat request
+      // or a cancel frame may have already replaced/removed it.
+      if (this.inFlightAborts.get(abortKey) === abortController) {
+        this.inFlightAborts.delete(abortKey);
+      }
     }
   }
 

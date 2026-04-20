@@ -336,7 +336,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
       claudeArgs.push('--resume', shq(existingSession));
     }
 
-    const innerCmd = `${ envAssignments.join(' ') } ${ claudeArgs.join(' ') } < /dev/null`;
+    // `exec` replaces the inner sh with claude so there's no shell layer
+    // between the SSH session and the CLI — gives the best chance of signal
+    // propagation when we kill limactl on the host side.
+    const innerCmd = `${ envAssignments.join(' ') } exec ${ claudeArgs.join(' ') } < /dev/null`;
     const args = ['shell', '0', '--', 'sh', '-c', innerCmd];
 
     return await new Promise((resolve, reject) => {
@@ -353,7 +356,31 @@ export class ClaudeCodeService extends BaseLanguageModel {
       let sessionInUse = false;
 
       const onAbort = () => {
+        // 1) Kill the host-side limactl process. This closes the SSH-style
+        //    session to the VM. With `exec` in the inner shell (see above),
+        //    the remote claude usually receives SIGHUP and dies.
         try { proc.kill('SIGTERM') } catch { /* already dead */ }
+
+        // 2) Belt-and-suspenders: explicitly kill any lingering claude
+        //    process inside the VM. Without a TTY, SSH signal propagation
+        //    isn't guaranteed — fire a follow-up pkill so an orphaned
+        //    claude doesn't keep burning tokens after the user hits stop.
+        //    Safe because the VM only ever runs claude via this service
+        //    (user-level claude lives on the host, not in the VM).
+        try {
+          const killProc = childProcess.spawn(
+            limactlPath,
+            ['shell', '0', '--', 'pkill', '-TERM', '-f', 'claude -p'],
+            {
+              env:      { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
+              stdio:    'ignore',
+              detached: true,
+            },
+          );
+          killProc.unref();
+        } catch (err) {
+          log.log(`[ClaudeCodeService] Remote pkill failed: ${ (err as Error)?.message ?? err }`);
+        }
       };
       if (options.signal) {
         if (options.signal.aborted) onAbort();
