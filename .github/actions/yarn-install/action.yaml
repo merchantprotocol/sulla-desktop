@@ -50,13 +50,30 @@ runs:
 
   # --ignore-scripts above skipped electron's own install script, so the
   # electron binary (and chrome-sandbox, node_modules/electron/dist/*)
-  # was never downloaded. Re-run it explicitly. This is also the step
-  # that historically hung silently — running it standalone makes any
-  # hang attributable and surfaces @electron/get's debug output.
-  - run: node node_modules/electron/install.js
+  # was never downloaded. Re-run it explicitly with retries — GitHub
+  # Releases drops the connection mid-download ("socket hang up") on
+  # the macOS and Windows runners roughly one run in three. The 40MB/s
+  # Linux runners almost never see it. Three attempts with a 30s back-
+  # off clears it without masking a real outage.
+  - name: Download electron binary
     shell: bash
     env:
       DEBUG: 'electron*,@electron*'
+    run: |
+      for attempt in 1 2 3; do
+        echo "::group::electron install attempt ${attempt}"
+        if node node_modules/electron/install.js; then
+          echo "::endgroup::"
+          exit 0
+        fi
+        echo "::endgroup::"
+        if [ "${attempt}" -lt 3 ]; then
+          echo "Attempt ${attempt} failed, retrying in 30s..."
+          sleep 30
+        fi
+      done
+      echo "All 3 attempts failed" >&2
+      exit 1
 
   # Our postinstall.ts downloads external deps (Lima, Trivy, Moby spec,
   # etc.) and then calls electron-builder install-app-deps to rebuild
