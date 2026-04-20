@@ -41,12 +41,11 @@ runs:
 
   # --verbose surfaces per-module build output so a stuck native-module
   # compile ("[5/5] Building fresh packages…") doesn't silently consume
-  # the job's 30-minute default timeout with zero log output.
-  # timeout-minutes caps the step so a hang fails fast instead of
-  # eating the whole runner.
+  # the job's 30-minute default timeout with zero log output. The step
+  # timeout itself lives on the caller's `- uses:` line in package.yaml
+  # because composite actions reject the `timeout-minutes` key.
   - run: yarn install --immutable --ignore-platform --verbose
     shell: bash
-    timeout-minutes: 20
 
   - name: Fix electron sandbox
     if: runner.os == 'Linux'
