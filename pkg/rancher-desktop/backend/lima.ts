@@ -723,20 +723,46 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     // Install Claude Code CLI.
     //
-    // Idempotent: skips if claude is already on PATH. Before running npm
-    // (which spawns Node), block until the kernel's CRNG is initialized —
-    // reading one byte from /dev/random achieves this on Linux. Without
-    // this wait, provision scripts that run at ~3s into boot hit Node's
-    // `PlatformInit` assertion when getrandom() returns EAGAIN on a not-
-    // yet-seeded CRNG, and the install silently fails leaving the VM
-    // without the claude CLI.
+    // Two hard problems this script has to survive:
+    //
+    // 1. /usr/local is tmpfs in this Alpine Lima VM — it's wiped on every
+    //    reboot. A plain `npm install -g ...` puts the binary in a place
+    //    that vanishes, so every boot the CLI disappears until re-install,
+    //    and the app logs `sh: exec: line 0: claude: not found`. We pin the
+    //    install to /mnt/data/npm-global (on the persistent data volume)
+    //    and re-symlink into /usr/local/bin on every boot. The install
+    //    itself then becomes a one-time cost instead of a per-boot cost.
+    //
+    // 2. The `npm install` step invokes Node, and Node's early-boot
+    //    PlatformInit aborts when the kernel CRNG isn't seeded yet. That
+    //    assertion killed script 00000010 on every fresh boot. We don't
+    //    hit it after the persistent install already exists because the
+    //    fast path exits before ever calling Node — and on the first boot
+    //    we block briefly on /dev/random to let the CRNG seed before npm
+    //    runs.
+    //
+    // Net effect: a freshly-provisioned VM installs claude once to
+    // /mnt/data/npm-global; every subsequent reboot just recreates the
+    // /usr/local/bin symlink (cheap, doesn't touch Node) even if the
+    // provision script previously died mid-install.
     const claudeCodeScript = [
       '#!/bin/sh',
       'set -o errexit',
-      'command -v claude >/dev/null 2>&1 && exit 0',
-      '# Block until kernel CRNG is seeded (avoids Node PlatformInit abort)',
+      'PREFIX=/mnt/data/npm-global',
+      'LINK=/usr/local/bin/claude',
+      '# Fast path: persistent install already exists — just recreate the',
+      '# symlink that tmpfs wiped on reboot. No Node invocation, no CRNG',
+      '# race, can\'t fail due to script 00000010 crashing.',
+      'if [ -x "$PREFIX/bin/claude" ]; then',
+      '  ln -sf "$PREFIX/bin/claude" "$LINK"',
+      '  exit 0',
+      'fi',
+      '# First boot (or after a persistent-prefix wipe): real install.',
+      'mkdir -p "$PREFIX"',
+      '# Block until kernel CRNG is seeded (avoids Node PlatformInit abort).',
       'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
-      'npm install -g @anthropic-ai/claude-code',
+      'npm install --prefix "$PREFIX" -g @anthropic-ai/claude-code',
+      'ln -sf "$PREFIX/bin/claude" "$LINK"',
     ].join('\n');
     config.provision = config.provision.filter((p: { script?: string }) => {
       return !(p.script ?? '').includes('@anthropic-ai/claude-code');
