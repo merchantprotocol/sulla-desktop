@@ -42,9 +42,12 @@ mac:
     NSCameraUsageDescription: "Sulla Desktop uses your camera for the capture studio face-cam overlay."
     NSScreenCaptureUsageDescription: "Sulla Desktop needs screen recording access for the capture studio to record your screen."
     NSAppleEventsUsageDescription: "Sulla uses automation to interact with apps on your Mac — like managing your calendar, creating reminders, or controlling music playback. You choose which apps to enable."
-  extraFiles:
-    - build/signing-config-mac.yaml
-    - { from: dist/electron-builder.yaml, to: electron-builder.yml }
+  # extraFiles dropped the mac-only signing-config + electron-builder.yml
+  # copies that the legacy "sign in a separate step" flow needed.
+  # Placing loose non-executable files directly in Contents/ causes
+  # codesign to abort with "code object is not signed at all / In
+  # subcomponent: Contents/electron-builder.yml". Inline signing doesn't
+  # need those files, so they're gone from the app bundle entirely.
 win:
   icon: ./pkg/rancher-desktop/pages/agent/sulla-icon.ico
   target: [ zip ]
