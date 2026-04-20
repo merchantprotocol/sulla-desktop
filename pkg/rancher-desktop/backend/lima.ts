@@ -1947,7 +1947,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
         await this.execCommand({ root: true }, 'chmod', '755', `/usr/local/bin/${ name }`);
       }
 
-      await this.writeFile('/etc/sulla-env', `SULLA_API_TOKEN=${ sullaApiToken }\n`, 0o644);
+      await this.writeFile('/etc/sulla-env', `SULLA_API_TOKEN=${ sullaApiToken }\nSULLA_HOST=host.lima.internal\n`, 0o644);
 
       // Kill any existing daemon, then start fresh in the background
       await this.execCommand({ root: false }, 'sh', '-c', 'pkill -f sulla-daemon || true');
