@@ -19,6 +19,7 @@ import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import Logging from '@pkg/utils/logging';
 
 import { syncHandlers, type SyncItem } from './syncHandlers';
+import { mirrorMessageToClaudeMessages } from './syncMirror';
 import { clearOps, getPendingOps } from './syncQueue';
 import { getLastSeq, setLastSeq } from './syncMeta';
 
@@ -50,6 +51,7 @@ class SullaSyncServiceImpl {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private pushDebounce: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private loggerListener: ((payload: { conversationId: string; event: any }) => void) | null = null;
 
   isRunning(): boolean {
     return this.running;
@@ -64,6 +66,7 @@ class SullaSyncServiceImpl {
     if (this.running) return;
     this.running = true;
     log.log('[SullaSync] Starting sync loop');
+    this.attachLoggerMirror();
     this.fullSync().catch((err) => {
       log.warn('[SullaSync] Initial sync failed:', err);
     });
@@ -79,6 +82,7 @@ class SullaSyncServiceImpl {
     if (!this.running) return;
     this.running = false;
     log.log('[SullaSync] Stopping sync loop');
+    this.detachLoggerMirror();
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
@@ -87,6 +91,42 @@ class SullaSyncServiceImpl {
       clearTimeout(this.pushDebounce);
       this.pushDebounce = null;
     }
+  }
+
+  /**
+   * Subscribe to SullaLogger's `event` emitter so every desktop-originated
+   * user/assistant turn on a primary chat thread gets mirrored into the
+   * claude_messages / claude_conversations tables. The mirror itself filters
+   * out subagent / workflow / streaming chatter — this just forwards.
+   */
+  private attachLoggerMirror(): void {
+    if (this.loggerListener) return;
+    this.loggerListener = ({ conversationId, event }) => {
+      if (!event || event.type !== 'message') return;
+      const role = String(event.role ?? '');
+      const content = String(event.content ?? '');
+      const ts = String(event.ts ?? new Date().toISOString());
+      mirrorMessageToClaudeMessages({ conversationId, role, content, ts }).catch((err) => {
+        log.warn('[SullaSync] mirror failed:', err);
+      });
+    };
+    try {
+      // Lazy-require to avoid a circular dependency at module load time.
+      const { getSullaLogger } = require('@pkg/agent/services/SullaLogger') as typeof import('@pkg/agent/services/SullaLogger');
+      getSullaLogger().on('event', this.loggerListener);
+    } catch (err) {
+      log.warn('[SullaSync] attachLoggerMirror failed:', err);
+      this.loggerListener = null;
+    }
+  }
+
+  private detachLoggerMirror(): void {
+    if (!this.loggerListener) return;
+    try {
+      const { getSullaLogger } = require('@pkg/agent/services/SullaLogger') as typeof import('@pkg/agent/services/SullaLogger');
+      getSullaLogger().off('event', this.loggerListener);
+    } catch { /* ignore */ }
+    this.loggerListener = null;
   }
 
   /**
