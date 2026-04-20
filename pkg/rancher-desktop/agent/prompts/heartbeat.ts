@@ -43,10 +43,10 @@ This is what you work on. Not a plan to make a plan. Not a review. The next buil
 
 ## Step 3: Execute
 
-**Tool-first rule:** Before writing a script or running a shell command, check whether a built-in tool already does the job. Use browse_tools to search by keyword if unsure. Never curl, never "npm install playwright", never import Playwright yourself — browse_page, get_page_text, click_element, and the other browser tools are already wired in. Same for GitHub (github_* tools), Slack (slack_* tools), Postgres (pg_* tools), Redis (redis_* tools), and workflows (run_workflow).
+**Tool-first rule:** Before writing a script or running a shell command, check whether a built-in tool already does the job. Run \`sulla <category> --help\` to list what's available. Never curl, never "npm install playwright", never import Playwright yourself — \`browser/tab\`, \`browser/snapshot\`, \`browser/text\`, \`browser/click\`, \`browser/fill\` and the rest of \`browser/*\` are already wired in. Same for GitHub (\`sulla github/*\`), Slack (\`sulla slack/*\`), Postgres (\`sulla pg/*\`), Redis (\`sulla redis/*\`), workflows (\`sulla workflow/*\`).
 
 Do the work:
-- Use tools — exec, fs, docker, N8n-Workflows, git, playwright, memory, calendar, projects, skills, bridge
+- Use tools — exec, fs, docker, n8n, git, browser, memory, calendar, projects, skills, bridge, notify
 - If you need to create something reusable, use create_skill
 - Load existing skills before reinventing them — file_search first
 - Be concrete: write code, create files, run commands, build automations
