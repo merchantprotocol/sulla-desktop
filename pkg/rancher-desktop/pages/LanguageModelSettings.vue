@@ -18,7 +18,7 @@ const navItems = [
   { id: 'overview', name: 'Overview' },
   { id: 'profile', name: 'Profile' },
   { id: 'models', name: 'Models' },
-  { id: 'claude-code', name: 'Claude Code' },
+  { id: 'claude-code', name: 'Claude Code (deprecated)' },
   { id: 'soul', name: 'Soul' },
   { id: 'heartbeat', name: 'Heartbeat' },
 ];
@@ -95,6 +95,24 @@ export default defineComponent({
       claudeOAuthUrl:      '',
       claudeOAuthCode:     '',
 
+      // Deprecated legacy-credentials panel — collapsed by default now that
+      // the Integrations page is the primary path.
+      showLegacyClaudeCreds: false,
+
+      // Usage panel (ClaudeCodeService writes per-turn usage to
+      // SullaSettingsModel.claudeCodeUsage as a rolling 24h array).
+      claudeUsage:        [] as Array<{
+        ts:                          string;
+        duration_ms?:                number;
+        input_tokens?:               number;
+        output_tokens?:              number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?:    number;
+        cost_usd?:                   number;
+        model?:                      string;
+      }>,
+      claudeUsageLoading: true,
+
       // Mobile pairing (status mirror)
       pairedMobileUserId:  '',
       relayConnected:      false,
@@ -141,6 +159,48 @@ export default defineComponent({
     currentProvider(): typeof REMOTE_PROVIDERS[0] | undefined {
       return this.remoteProviders.find(p => p.id === this.selectedProvider);
     },
+    claudeUsageSummary(): {
+      totalTurns:            number;
+      totalInputTokens:      number;
+      totalOutputTokens:     number;
+      totalCacheReadTokens:  number;
+      totalCostUsd:          number;
+      lastTurnRelative:      string;
+    } {
+      const records = this.claudeUsage || [];
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      let totalCacheReadTokens = 0;
+      let totalCostUsd = 0;
+      let latestTs = 0;
+
+      for (const r of records) {
+        if (typeof r.input_tokens === 'number') totalInputTokens += r.input_tokens;
+        if (typeof r.output_tokens === 'number') totalOutputTokens += r.output_tokens;
+        if (typeof r.cache_read_input_tokens === 'number') totalCacheReadTokens += r.cache_read_input_tokens;
+        if (typeof r.cost_usd === 'number') totalCostUsd += r.cost_usd;
+        const t = Date.parse(r.ts);
+        if (Number.isFinite(t) && t > latestTs) latestTs = t;
+      }
+
+      const relative = (ts: number) => {
+        if (!ts) return 'never';
+        const deltaMs = Date.now() - ts;
+        if (deltaMs < 60_000) return 'just now';
+        if (deltaMs < 3_600_000) return `${ Math.floor(deltaMs / 60_000) }m ago`;
+        if (deltaMs < 86_400_000) return `${ Math.floor(deltaMs / 3_600_000) }h ago`;
+        return `${ Math.floor(deltaMs / 86_400_000) }d ago`;
+      };
+
+      return {
+        totalTurns:           records.length,
+        totalInputTokens,
+        totalOutputTokens,
+        totalCacheReadTokens,
+        totalCostUsd,
+        lastTurnRelative:     relative(latestTs),
+      };
+    },
     currentProviderModels(): { id: string; name: string; description: string; pricing?: string }[] {
       // Use dynamic models if available, fallback to static ones
       return this.dynamicModels[this.selectedProvider] || this.currentProvider?.models || [];
@@ -164,6 +224,9 @@ export default defineComponent({
 
     // Load Claude Code credentials
     await this.loadClaudeCredentials();
+
+    // Load recent Claude Code usage for the deprecated-tab usage panel
+    this.loadClaudeUsage().catch(() => { /* ignore */ });
 
     // Load desktop relay status and subscribe to changes
     await this.loadDesktopRelayStatus();
@@ -821,8 +884,26 @@ export default defineComponent({
         } else {
           this.claudeAuthMode = 'none';
         }
+        // If legacy creds are present, expand the legacy panel automatically
+        // so the user can see they're still active.
+        if (this.claudeApiKey || this.claudeOAuthToken) {
+          this.showLegacyClaudeCreds = true;
+        }
       } catch {
         // Settings not available yet
+      }
+    },
+
+    async loadClaudeUsage() {
+      this.claudeUsageLoading = true;
+      try {
+        const raw = await ipcRenderer.invoke('sulla-settings-get', 'claudeCodeUsage', '[]');
+        const parsed = JSON.parse(raw || '[]');
+        this.claudeUsage = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        this.claudeUsage = [];
+      } finally {
+        this.claudeUsageLoading = false;
       }
     },
 
@@ -1374,11 +1455,113 @@ export default defineComponent({
           v-if="currentNav === 'claude-code'"
           class="tab-content"
         >
-          <h2>Claude Code</h2>
-          <p class="description">
-            Claude Code runs inside the virtual machine with full access to your projects.
-            Connect your Anthropic account to enable it.
-          </p>
+          <h2>Claude Code <span class="claude-deprecated-badge">Deprecated</span></h2>
+          <div class="claude-deprecation-banner">
+            <p>
+              <strong>Claude Code sign-in has moved to Integrations.</strong>
+              Connect via <em>Integrations → Claude Code</em>. Credentials now live in
+              the encrypted vault and propagate through the Integration service, so
+              the same account works everywhere without writing to SullaSettingsModel.
+            </p>
+            <p>
+              This tab stays available while we validate the new path. It will be
+              removed once the Integrations flow is confirmed stable.
+            </p>
+          </div>
+
+          <!-- Usage panel — reads SullaSettingsModel.claudeCodeUsage written by
+               ClaudeCodeService on every `result` event. -->
+          <div class="setting-group claude-usage">
+            <label class="setting-label">Recent usage (rolling 24h)</label>
+            <div
+              v-if="claudeUsageLoading"
+              class="setting-description"
+            >
+              Loading…
+            </div>
+            <div
+              v-else-if="claudeUsageSummary.totalTurns === 0"
+              class="setting-description"
+            >
+              No Claude Code usage recorded in the last 24 hours.
+            </div>
+            <div
+              v-else
+              class="claude-usage-grid"
+            >
+              <div class="claude-usage-cell">
+                <div class="claude-usage-label">
+                  Turns
+                </div>
+                <div class="claude-usage-value">
+                  {{ claudeUsageSummary.totalTurns.toLocaleString() }}
+                </div>
+              </div>
+              <div class="claude-usage-cell">
+                <div class="claude-usage-label">
+                  Input tokens
+                </div>
+                <div class="claude-usage-value">
+                  {{ claudeUsageSummary.totalInputTokens.toLocaleString() }}
+                </div>
+              </div>
+              <div class="claude-usage-cell">
+                <div class="claude-usage-label">
+                  Output tokens
+                </div>
+                <div class="claude-usage-value">
+                  {{ claudeUsageSummary.totalOutputTokens.toLocaleString() }}
+                </div>
+              </div>
+              <div class="claude-usage-cell">
+                <div class="claude-usage-label">
+                  Cache read
+                </div>
+                <div class="claude-usage-value">
+                  {{ claudeUsageSummary.totalCacheReadTokens.toLocaleString() }}
+                </div>
+              </div>
+              <div class="claude-usage-cell">
+                <div class="claude-usage-label">
+                  Est. cost
+                </div>
+                <div class="claude-usage-value">
+                  ${{ claudeUsageSummary.totalCostUsd.toFixed(4) }}
+                </div>
+              </div>
+              <div class="claude-usage-cell">
+                <div class="claude-usage-label">
+                  Last turn
+                </div>
+                <div class="claude-usage-value">
+                  {{ claudeUsageSummary.lastTurnRelative }}
+                </div>
+              </div>
+            </div>
+            <p class="setting-description">
+              Captured from Claude Code's stream-json result events. Max/Pro quota
+              limits are enforced server-side by Anthropic and aren't shown here.
+            </p>
+          </div>
+
+          <!-- Legacy credentials — collapsed by default; only show if the user
+               explicitly expands or legacy credentials already exist. -->
+          <div class="setting-group claude-legacy">
+            <button
+              type="button"
+              class="btn role-secondary"
+              @click="showLegacyClaudeCreds = !showLegacyClaudeCreds"
+            >
+              {{ showLegacyClaudeCreds ? 'Hide legacy credentials' : 'Show legacy credentials (deprecated)' }}
+            </button>
+          </div>
+
+          <div v-if="showLegacyClaudeCreds">
+            <p class="description claude-legacy-warning">
+              These fields still write to <code>SullaSettingsModel</code>. They continue
+              to work as a fallback, but new connections should go through
+              <em>Integrations → Claude Code</em>.
+            </p>
 
           <!-- Auth Mode Selection -->
           <div class="setting-group">
@@ -1517,6 +1700,7 @@ export default defineComponent({
             To chat with this desktop from Sulla Mobile, sign in to your Sulla Cloud
             account under the <strong>Profile</strong> tab. Pairing happens automatically.
           </p>
+          </div>
         </div>
       </div>
     </div>
@@ -1732,6 +1916,75 @@ export default defineComponent({
   font-size: 12px;
   resize: vertical;
   width: 100%;
+}
+
+.claude-deprecated-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--status-warning, #d29922);
+  background: rgba(210, 153, 34, 0.12);
+  border: 1px solid rgba(210, 153, 34, 0.3);
+  border-radius: 0.25rem;
+  vertical-align: middle;
+}
+
+.claude-deprecation-banner {
+  padding: 0.75rem 1rem;
+  margin: 0.5rem 0 1rem;
+  color: var(--text-primary, inherit);
+  background: rgba(210, 153, 34, 0.08);
+  border: 1px solid rgba(210, 153, 34, 0.25);
+  border-radius: 0.4rem;
+}
+
+.claude-deprecation-banner p {
+  margin: 0 0 0.5rem;
+}
+.claude-deprecation-banner p:last-child {
+  margin-bottom: 0;
+}
+
+.claude-legacy-warning {
+  font-size: 0.85rem;
+  opacity: 0.75;
+  margin-bottom: 1rem;
+}
+
+.claude-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+  margin: 0.5rem 0;
+}
+
+.claude-usage-cell {
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-subtle, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: 0.35rem;
+}
+
+.claude-usage-label {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
+}
+
+.claude-usage-value {
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.claude-legacy .btn {
+  font-size: 0.85rem;
 }
 
 .claude-status {

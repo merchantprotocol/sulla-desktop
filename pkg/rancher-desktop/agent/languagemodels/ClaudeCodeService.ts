@@ -12,22 +12,29 @@ const log = Logging.background;
  *
  * Unlike Anthropic/Grok/OpenAI peers, Claude Code already owns its own agent
  * loop, tool execution, and context management inside the CLI process. From
- * Sulla's perspective it behaves as a "one-shot completion" peer: we hand it
- * the full serialized conversation (plus the Sulla system prompt via
- * --append-system-prompt), and Claude returns a final text answer.
+ * Sulla's perspective it behaves as a "one-shot completion" peer: the final
+ * text answer is what Sulla consumes; any tool work Claude does happens
+ * internally (through the `sulla` CLI + its built-in Bash/Read/Edit).
  *
- * State of the world:
- *   - Sulla's subconscious middleware already trims / curates state.messages
- *     to fit the active model's context window before they reach us, so we
- *     just serialize whatever we get and trust it.
- *   - OAuth token refresh is handled by the Claude Code CLI itself; we only
- *     pass CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) and stay out of it.
- *   - We do NOT use --resume. Sulla is the source of truth for conversation
- *     state; duplicating it into Claude-side session state causes drift when
- *     the subconscious middleware mutates messages (compaction, tool-result
- *     rewriting, etc.). Every spawn is a clean slate + full transcript.
+ * Token strategy — hybrid (first-turn seed + --resume thereafter):
+ *   - First turn for a conversation (no cached session id): serialize the
+ *     full curated state.messages[] as a transcript so Claude catches up to
+ *     wherever Sulla is. The subconscious middleware has already trimmed
+ *     this to fit context, so we trust it.
+ *   - Subsequent turns: look up the cached session id for this
+ *     conversationId and pass --resume <sessionId>. We send ONLY the latest
+ *     user message as -p; Claude's own session (and Anthropic's prompt
+ *     cache) keeps the prior context warm at ~1/10th the cost.
+ *   - Session-lock collisions (another spawn holds the same session): drop
+ *     the cached id and retry once with a fresh session (full history).
+ *
+ * OAuth token refresh is the CLI's job. We only pass CLAUDE_CODE_OAUTH_TOKEN
+ * (or ANTHROPIC_API_KEY) and stay out of its auth lifecycle.
  */
 export class ClaudeCodeService extends BaseLanguageModel {
+  // conversationId → Claude session_id captured from a prior spawn.
+  private sessions = new Map<string, string>();
+
   override getContextWindow(): number {
     return 200_000;
   }
@@ -41,8 +48,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   protected async healthCheck(): Promise<boolean> {
-    // Claude Code CLI manages its own auth lifecycle; credentials presence is
-    // deferred until spawn time where we produce a user-facing error.
+    // Credentials presence is deferred until spawn time (see runClaude).
     return true;
   }
 
@@ -50,17 +56,12 @@ export class ClaudeCodeService extends BaseLanguageModel {
     super({ id: 'claude-code', model: 'claude-code', baseUrl: 'local-vm' });
   }
 
-  /**
-   * Non-streaming chat — buffers the whole response and returns it.
-   */
+  /** Non-streaming chat — buffers the whole response and returns it. */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
     const { text } = await this.runClaude(messages, {}, options);
     return { text };
   }
 
-  /**
-   * Normalize the raw stdout into Sulla's NormalizedResponse format.
-   */
   protected normalizeResponse(raw: any): NormalizedResponse {
     const text: string = raw?.text ?? '';
     return {
@@ -76,10 +77,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     };
   }
 
-  /**
-   * Streaming path — spawns claude, forwards text_delta chunks to onToken,
-   * and returns a NormalizedResponse when done.
-   */
+  /** Streaming path — forwards text_delta chunks to onToken. */
   override async chatStream(
     messages: ChatMessage[],
     callbacks: StreamCallbacks,
@@ -113,13 +111,53 @@ export class ClaudeCodeService extends BaseLanguageModel {
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * Serialize Sulla's curated conversation into a single prompt string for
-   * `claude -p`. The array is already trimmed by the subconscious middleware,
-   * so we faithfully render every message — including tool_use / tool_result
-   * blocks — in chronological order.
+   * Extract the last user message. Walks backward to find the newest
+   * user-role content, flattening string + content-block shapes. When a
+   * --resume session exists, this is all we send — Claude already has
+   * everything earlier in its session state.
    */
-  private serializeMessages(messages: ChatMessage[]): string {
-    const extractFromBlock = (b: any): string => {
+  private extractLatestUserMessage(messages: ChatMessage[]): string {
+    const blockToText = (b: any): string => {
+      if (typeof b === 'string') return b;
+      if (!b || typeof b !== 'object') return '';
+      if (b.type === 'text' && typeof b.text === 'string') return b.text;
+      if (b.type === 'tool_result') {
+        if (typeof b.content === 'string') return b.content;
+        if (Array.isArray(b.content)) return b.content.map(blockToText).filter(Boolean).join('\n');
+      }
+      return '';
+    };
+
+    const msgToText = (m: ChatMessage): string => {
+      const c: any = m.content;
+      if (typeof c === 'string') return c;
+      if (Array.isArray(c)) return c.map(blockToText).filter(Boolean).join('\n');
+      return '';
+    };
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        const text = msgToText(messages[i]).trim();
+        if (text) return text;
+      }
+    }
+    // Fallback — pick any extractable text so a tool_result-dominated turn
+    // still has something to send.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const text = msgToText(messages[i]).trim();
+      if (text) return text;
+    }
+    return '';
+  }
+
+  /**
+   * Serialize Sulla's curated conversation into a full transcript — used
+   * only when seeding a fresh Claude session (no existing session id).
+   * tool_use / tool_result blocks render inline so Claude can follow prior
+   * tool traces.
+   */
+  private serializeFullTranscript(messages: ChatMessage[]): string {
+    const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
       if (b.type === 'text' && typeof b.text === 'string') return b.text;
@@ -130,15 +168,15 @@ export class ClaudeCodeService extends BaseLanguageModel {
       }
       if (b.type === 'tool_result') {
         if (typeof b.content === 'string') return `[tool_result] ${ b.content }`;
-        if (Array.isArray(b.content)) return `[tool_result] ${ b.content.map(extractFromBlock).filter(Boolean).join('\n') }`;
+        if (Array.isArray(b.content)) return `[tool_result] ${ b.content.map(blockToText).filter(Boolean).join('\n') }`;
       }
       return '';
     };
 
-    const extractFromMessage = (m: ChatMessage): string => {
+    const msgToText = (m: ChatMessage): string => {
       const c: any = m.content;
       if (typeof c === 'string') return c;
-      if (Array.isArray(c)) return c.map(extractFromBlock).filter(Boolean).join('\n');
+      if (Array.isArray(c)) return c.map(blockToText).filter(Boolean).join('\n');
       return '';
     };
 
@@ -153,7 +191,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
     const lines: string[] = [];
     for (const m of messages) {
-      const text = extractFromMessage(m).trim();
+      const text = msgToText(m).trim();
       if (!text) continue;
       lines.push(`${ labelFor(m.role) }: ${ text }`);
     }
@@ -163,18 +201,16 @@ export class ClaudeCodeService extends BaseLanguageModel {
   /**
    * Spawn claude -p in the VM, stream text_delta chunks to the callback,
    * return the final text.
+   *
+   * @param retryWithoutSession — internal flag for the session-lock retry
+   *   path; do not pass from callers.
    */
   private async runClaude(
     messages: ChatMessage[],
     callbacks: Partial<StreamCallbacks>,
     options: { signal?: AbortSignal; conversationId?: string },
+    retryWithoutSession = false,
   ): Promise<{ text: string }> {
-    const promptForClaude = this.serializeMessages(messages);
-    if (!promptForClaude.trim()) {
-      const roles = messages.map(m => m.role).join(',');
-      throw new Error(`Claude Code got no serializable messages (count=${ messages.length } roles=${ roles })`);
-    }
-
     // Prefer the integration vault (new path). Fall back to SullaSettingsModel
     // so users configured via Language Model Settings keep working during the
     // transition.
@@ -202,14 +238,28 @@ export class ClaudeCodeService extends BaseLanguageModel {
     }
 
     const convId = options.conversationId ?? '__default__';
-    log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ promptForClaude.length } conversationId=${ convId } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
+    const existingSession = retryWithoutSession ? undefined : this.sessions.get(convId);
+
+    // Prompt strategy:
+    //   - existingSession → send only the latest user message (Claude has the
+    //     rest via --resume + prompt cache)
+    //   - no session    → seed Claude with the full curated transcript
+    const prompt = existingSession
+      ? this.extractLatestUserMessage(messages)
+      : this.serializeFullTranscript(messages);
+
+    if (!prompt.trim()) {
+      const roles = messages.map(m => m.role).join(',');
+      throw new Error(`Claude Code got no extractable prompt from ${ messages.length } messages (roles=${ roles })`);
+    }
+
+    log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
 
     const limactlPath = resolveLimactlPath({});
     const limaHome = resolveLimaHome({});
 
-    // POSIX single-quote escape — wraps in single quotes and escapes any
-    // embedded single quotes as `'\''`. Single-quoted strings are literal in
-    // sh, so no backtick/$VAR/! expansion can fire against untrusted text.
+    // POSIX single-quote escape. Single-quoted strings are literal in sh, so
+    // no backtick/$VAR/! expansion can fire against untrusted text.
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const envAssignments: string[] = [];
@@ -229,7 +279,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
     const claudeArgs = [
       'claude',
-      '-p', shq(promptForClaude),
+      '-p', shq(prompt),
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
@@ -237,6 +287,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
     ];
     if (appendSystemPrompt.trim()) {
       claudeArgs.push('--append-system-prompt', shq(appendSystemPrompt));
+    }
+    if (existingSession) {
+      claudeArgs.push('--resume', shq(existingSession));
     }
 
     const innerCmd = `${ envAssignments.join(' ') } ${ claudeArgs.join(' ') } < /dev/null`;
@@ -250,8 +303,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
       let stdoutBuffer = '';
       let stderrBuffer = '';
       let textCollected = '';
+      let capturedSessionId: string | undefined = existingSession;
       let errored = false;
       let errorMessage = '';
+      let sessionInUse = false;
 
       const onAbort = () => {
         try { proc.kill('SIGTERM') } catch { /* already dead */ }
@@ -271,6 +326,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
           return;
         }
 
+        if (parsed.session_id) capturedSessionId = parsed.session_id;
+
         // Text chunks → stream to caller
         const delta = parsed?.event?.delta;
         if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
@@ -279,9 +336,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
           return;
         }
 
-        // Final result event — capture full text (handles cases where text_delta
-        // events were missed, e.g. non-streaming fallback or auth failure) and
-        // record usage/cost for the settings UI.
+        // Final result event — capture full text and record usage/cost.
         if (parsed.type === 'result') {
           if (parsed.is_error) {
             errored = true;
@@ -310,6 +365,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
         const text = chunk.toString('utf-8');
         stderrBuffer += text;
         const trimmed = text.trim();
+        // Detect the session-collision signal so we can retry without it.
+        if (/Session ID .* is already in use/i.test(stderrBuffer)) {
+          sessionInUse = true;
+        }
         if (trimmed && !trimmed.includes('no stdin data received')) {
           console.log(`[ClaudeCodeService][stderr] ${ trimmed.slice(0, 200) }`);
         }
@@ -323,6 +382,22 @@ export class ClaudeCodeService extends BaseLanguageModel {
       proc.on('close', (code) => {
         options.signal?.removeEventListener('abort', onAbort);
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+
+        // Session lock collision — drop the cached id and retry once with a
+        // fresh session so the user doesn't see a dead-end error.
+        if (sessionInUse && !retryWithoutSession) {
+          log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying without --resume for conversationId=${ convId }`);
+          this.sessions.delete(convId);
+          this.runClaude(messages, callbacks, options, true).then(
+            r => resolve(r),
+            reject,
+          );
+          return;
+        }
+
+        if (capturedSessionId) {
+          this.sessions.set(convId, capturedSessionId);
+        }
 
         if (errored) {
           const msg = errorMessage || textCollected || `claude exited with code ${ code }`;
@@ -338,7 +413,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
           return;
         }
 
-        log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars`);
+        log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
         resolve({ text: textCollected });
       });
     });
@@ -395,14 +470,12 @@ async function recordUsage(result: any): Promise<void> {
 
     records.push(entry);
 
-    // Trim: drop anything older than the retention window.
     const cutoff = Date.now() - USAGE_RETENTION_MS;
     records = records.filter(r => {
       const t = Date.parse(r.ts);
       return Number.isFinite(t) && t >= cutoff;
     });
 
-    // Cap: keep the most recent N so a blocked cleanup can't balloon the row.
     if (records.length > USAGE_MAX_ENTRIES) {
       records = records.slice(-USAGE_MAX_ENTRIES);
     }
