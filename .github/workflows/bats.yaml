@@ -39,8 +39,6 @@ on:
         description: Run with experimental settings (WSL)
         default: false
         type: boolean
-  schedule:
-  - cron: '0 8 * * 1-5' # 8AM UTC weekdays as a baseline
 
 permissions:
   contents: read

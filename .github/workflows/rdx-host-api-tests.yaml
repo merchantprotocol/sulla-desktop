@@ -3,9 +3,6 @@
 
 name: RDX Host APIs Testing image
 on:
-  push:
-    branches: [ main ]
-    paths: [ 'bats/tests/extensions/testdata/**' ]
   workflow_dispatch: {}
 permissions:
   packages: write

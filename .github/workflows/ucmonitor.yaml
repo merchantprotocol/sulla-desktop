@@ -1,7 +1,5 @@
 name: Check for unreleased changes
 on:
-  schedule:
-    - cron: '48 8 * * *'
   workflow_dispatch: {}
 
 permissions:

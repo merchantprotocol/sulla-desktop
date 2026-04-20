@@ -1,9 +1,9 @@
 name: e2e tests on Mac M1
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
-  schedule:
-  - cron: '15 8 * * 1-5'
 
 jobs:
 

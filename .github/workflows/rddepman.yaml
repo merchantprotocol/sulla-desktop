@@ -1,7 +1,5 @@
 name: Update external dependencies
 on:
-  schedule:
-    - cron: '23 8 * * *'
   workflow_dispatch: {}
 
 permissions:

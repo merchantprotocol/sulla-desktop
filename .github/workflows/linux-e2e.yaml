@@ -1,11 +1,9 @@
 name: e2e tests on Linux
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
-  push:
-    branches-ignore:
-    - 'dependabot/**'
-  pull_request: {}
 
 jobs:
   check-paths:

@@ -1,11 +1,9 @@
 name: e2e tests on Windows
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
-  push:
-    branches-ignore:
-    - 'dependabot/**'
-  pull_request: {}
 
 defaults:
   run:

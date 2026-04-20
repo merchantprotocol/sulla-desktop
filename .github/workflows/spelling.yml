@@ -59,18 +59,7 @@ name: Check Spelling
 # on.pull_request(_target).edited is only needed for with.check_commit_messages: title | description
 
 on:
-  push:
-    branches:
-    - "**"
-    tags-ignore:
-    - "**"
-  pull_request:
-    branches:
-    - "**"
-    types:
-    - 'opened'
-    - 'reopened'
-    - 'synchronize'
+  workflow_dispatch:
 
 permissions: {}
 

@@ -1,7 +1,5 @@
 name: Update k3s-versions.json
 on:
-  schedule:
-  - cron: '43 8 * * *'
   workflow_dispatch: {}
 
 permissions:

@@ -1,7 +1,5 @@
 name: Check for new releases of docker/cli
 on:
-  schedule:
-    - cron: '55 8 * * *'
   workflow_dispatch: {}
 
 jobs:

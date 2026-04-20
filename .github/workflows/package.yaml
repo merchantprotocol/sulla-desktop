@@ -1,15 +1,8 @@
 name: Package
 
 on:
-  pull_request:
-    paths-ignore:
-    - '.github/actions/spelling/**'
-    - 'docs/**'
-    - '**.md'
-  push:
-    branches:
-    - main
-    - release-*
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       sign:

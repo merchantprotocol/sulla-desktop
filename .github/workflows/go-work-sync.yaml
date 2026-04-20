@@ -4,12 +4,7 @@
 
 name: Sync go.work
 on:
-  pull_request_target:
-    types: [ opened, reopened, synchronize ]
-    paths:
-    - '**/go.mod'
-    - '**/go.sum'
-    - 'go.work'
+  workflow_dispatch:
 permissions:
   contents: write
 concurrency:
