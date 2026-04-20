@@ -270,6 +270,16 @@ export default {
   },
 
   get arch(): NodeJS.Architecture {
+    // CLI override: `--arch=x64` or `--arch=arm64` forces the target arch
+    // regardless of the host CPU. Lets us cross-build Intel DMGs from an
+    // Apple Silicon box (the release builds prior to this flag accidentally
+    // shipped arm64 binaries under the x86_64 filename because they were
+    // all cut from the host's native arch).
+    for (const arg of process.argv.slice(2)) {
+      if (arg === '--arch=x64' || arg === '--x64') return 'x64';
+      if (arg === '--arch=arm64' || arg === '--arm64') return 'arm64';
+    }
+    // Legacy: M1=1 env var forces arm64, kept for existing CI scripts.
     return process.env.M1 ? 'arm64' : process.arch;
   },
 

@@ -6,13 +6,19 @@
 # MCP call:      sulla <account_id>/mcp/<tool> '<json>'
 # Bare tool:     sulla <tool_name> '<json>'
 
-# Load API token from environment file if not already set
-if [ -z "$SULLA_API_TOKEN" ] && [ -f /etc/sulla-env ]; then
+# Load defaults from environment file; existing env vars win.
+if [ -f /etc/sulla-env ]; then
+  [ -z "$SULLA_API_TOKEN" ] || _existing_token="$SULLA_API_TOKEN"
+  [ -z "$SULLA_HOST" ]      || _existing_host="$SULLA_HOST"
   . /etc/sulla-env
-  export SULLA_API_TOKEN
+  [ -n "$_existing_token" ] && SULLA_API_TOKEN="$_existing_token"
+  [ -n "$_existing_host" ]  && SULLA_HOST="$_existing_host"
+  unset _existing_token _existing_host
+  export SULLA_API_TOKEN SULLA_HOST
 fi
 
 SOCKET="/tmp/sulla-tools.sock"
+SULLA_HOST="${SULLA_HOST:-host.docker.internal}"
 FIRST="$1"
 BODY="$2"
 
@@ -115,9 +121,9 @@ if [ "$METHOD" = "GET" ]; then
     fi
   else
     if [ -n "$SULLA_API_TOKEN" ]; then
-      exec curl -s -H "Authorization: Bearer $SULLA_API_TOKEN" "http://host.docker.internal:3000${URL}"
+      exec curl -s -H "Authorization: Bearer $SULLA_API_TOKEN" "http://${SULLA_HOST}:3000${URL}"
     else
-      exec curl -s "http://host.docker.internal:3000${URL}"
+      exec curl -s "http://${SULLA_HOST}:3000${URL}"
     fi
   fi
 else
@@ -134,12 +140,12 @@ else
     fi
   else
     if [ -n "$SULLA_API_TOKEN" ]; then
-      exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
+      exec curl -s -X POST "http://${SULLA_HOST}:3000${URL}" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $SULLA_API_TOKEN" \
         -d "$BODY"
     else
-      exec curl -s -X POST "http://host.docker.internal:3000${URL}" \
+      exec curl -s -X POST "http://${SULLA_HOST}:3000${URL}" \
         -H "Content-Type: application/json" \
         -d "$BODY"
     fi
