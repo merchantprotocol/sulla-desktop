@@ -14,6 +14,12 @@ export interface BrowserTab {
   assetId?: string;
   /** Raw HTML content for document-mode tabs (rendered in Shadow DOM) */
   content?: string;
+  /**
+   * Last time something touched this tab (create, updateTab, URL/title/content
+   * change from backend). Used for idle-close of agent tabs. Only populated
+   * on tabs created after this field was added.
+   */
+  lastAccessedAt?: number;
 }
 
 export interface ClosedTab {
@@ -97,6 +103,12 @@ function persistTabs(tabList: BrowserTab[]): void {
 // gets. User-opened tabs (no assetId) are never evicted by this.
 const MAX_AGENT_TABS = 10;
 
+// Idle-close timeout for agent-origin tabs. Tabs that haven't been touched
+// (created, updated, navigated) in this long get auto-closed. User tabs are
+// never touched by this timer. Check runs every CHECK_INTERVAL_MS.
+const AGENT_TAB_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const AGENT_TAB_CHECK_INTERVAL_MS = 60 * 1000;    // 1 minute
+
 const restoredTabs = loadPersistedTabs();
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
@@ -120,6 +132,34 @@ watch(tabs, (current) => {
 watch(tabs, (current) => {
   persistTabs([...current]);
 }, { deep: true });
+
+// Idle-sweep: close agent-origin tabs that haven't been touched in
+// AGENT_TAB_IDLE_TIMEOUT_MS. Runs once per check interval. User tabs (no
+// assetId) are never closed by this — only the user controls those.
+setInterval(() => {
+  const now = Date.now();
+  const cutoff = now - AGENT_TAB_IDLE_TIMEOUT_MS;
+  // Walk from the end so splice indexes stay valid.
+  const closed: string[] = [];
+  for (let i = tabs.length - 1; i >= 0; i--) {
+    const tab = tabs[i];
+    if (!tab.assetId) continue;
+    const last = tab.lastAccessedAt ?? 0;
+    // Tabs created before this field existed — give them a full idle period
+    // starting now instead of immediately eligible for close.
+    if (last === 0) {
+      tab.lastAccessedAt = now;
+      continue;
+    }
+    if (last < cutoff) {
+      closed.push(tab.id);
+      tabs.splice(i, 1);
+    }
+  }
+  if (closed.length > 0) {
+    console.log(`[useBrowserTabs] Idle-swept ${ closed.length } agent tab(s) (>${ AGENT_TAB_IDLE_TIMEOUT_MS / 60_000 } min idle)`);
+  }
+}, AGENT_TAB_CHECK_INTERVAL_MS).unref?.();
 
 // ── Closed-tab history ──
 
@@ -225,12 +265,13 @@ export function useBrowserTabs() {
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
-      id:      generateId(),
+      id:             generateId(),
       url,
-      title:   MODE_TITLES[mode] || 'New Tab',
-      favicon: '',
-      loading: false,
+      title:          MODE_TITLES[mode] || 'New Tab',
+      favicon:        '',
+      loading:        false,
       mode,
+      lastAccessedAt: Date.now(),
     };
 
     tabs.push(tab);
@@ -317,6 +358,7 @@ export function useBrowserTabs() {
 
     if (tab) {
       Object.assign(tab, updates);
+      tab.lastAccessedAt = Date.now();
 
       // Re-record when URL or title changes (navigation event)
       if (updates.url || updates.title) {
