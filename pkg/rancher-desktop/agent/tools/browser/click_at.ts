@@ -1,5 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
-import { saveScreenshot } from '../computer-use/screenshot_store';
+import { saveScreenshot } from './screenshot_store';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 const CURSOR_JS = (x: number, y: number) => `

@@ -5,9 +5,8 @@
 import { agentToolManifests } from './agents/manifests';
 import { applescriptToolManifests } from './applescript/manifests';
 import { bridgeToolManifests } from './bridge/manifests';
+import { browserToolManifests } from './browser/manifests';
 import { calendarToolManifests } from './calendar/manifests';
-import { chromeToolManifests } from './chrome/manifests';
-import { computerUseToolManifests } from './computer-use/manifests';
 import { dockerToolManifests } from './docker/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
 import { githubToolManifests } from './github/manifests';
@@ -18,7 +17,6 @@ import { limaToolManifests } from './lima/manifests';
 import { metaToolManifests } from './meta/manifests';
 import { n8nToolManifests } from './n8n/manifests';
 import { pgToolManifests } from './pg/manifests';
-import { playwrightToolManifests } from './playwright/manifests';
 import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { toolRegistry } from './registry';
@@ -29,8 +27,7 @@ toolRegistry.registerManifests([
   ...agentToolManifests,
   ...applescriptToolManifests,
   ...bridgeToolManifests,
-  ...chromeToolManifests,
-  ...computerUseToolManifests,
+  ...browserToolManifests,
   ...calendarToolManifests,
   ...dockerToolManifests,
   ...extensionsToolManifests,
@@ -41,7 +38,6 @@ toolRegistry.registerManifests([
   ...metaToolManifests,
   ...n8nToolManifests,
   ...pgToolManifests,
-  ...playwrightToolManifests,
   ...rdctlToolManifests,
   ...redisToolManifests,
   ...slackToolManifests,

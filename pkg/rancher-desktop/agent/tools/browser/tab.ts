@@ -148,14 +148,10 @@ export class BrowserTabWorker extends BaseTool {
       parts.push('');
       parts.push('---');
       parts.push('**How to interact with this page:**');
-      parts.push('Use `exec_in_page` via the Tools API for multi-step workflows. Every page has `window.__sulla` helpers.');
-      parts.push('');
-      parts.push('Example — click a link, wait for page, extract text in ONE call:');
-      parts.push('```');
-      parts.push(`curl -s -X POST http://host.docker.internal:3000/v1/tools/internal/playwright/exec_in_page/call -H "Content-Type: application/json" -d '{"code":"return await __sulla.steps([() => __sulla.click(\\"a[href]\\"), () => __sulla.waitFor(\\"h1\\"), () => __sulla.text(\\"body\\").substring(0,2000)])", "assetId":"${ assetId }", "screenshot":true}'`);
-      parts.push('```');
-      parts.push('');
-      parts.push('Key tools: `exec_in_page` (run JS + __sulla helpers), `take_screenshot` (visual with grid), `click_at` (pixel coordinates), `click_element` (by handle). Load `web-research-playwright` skill for full reference.');
+      parts.push('Handle-based (preferred): `browser/click` with @btn-/@link- handles, `browser/fill` with @field- handles.');
+      parts.push('Pixel-based: `browser/screenshot` to identify coords, then `browser/click_at` / `browser/type_at`.');
+      parts.push('Escape hatch: `browser/exec` runs arbitrary JS with `window.__sulla` helpers (`__sulla.steps`, `__sulla.waitFor`, `__sulla.text`).');
+      parts.push('Load the `web-research-playwright` skill for the full helper reference.');
 
       return { successBoolean: true, responseString: parts.join('\n') };
     } catch (err) {

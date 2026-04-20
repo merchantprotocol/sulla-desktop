@@ -364,8 +364,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     console.error('[Background] Failed to start terminal WebSocket server:', error);
   }
 
-  // Sweep old computer-use screenshots. Non-blocking, best-effort.
-  void import('@pkg/agent/tools/computer-use/screenshot_store')
+  // Sweep old browser screenshots. Non-blocking, best-effort.
+  void import('@pkg/agent/tools/browser/screenshot_store')
     .then(m => m.pruneOldScreenshots())
     .catch(err => console.warn('[Background] Screenshot prune failed:', err));
 

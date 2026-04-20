@@ -23,7 +23,7 @@ FIRST="$1"
 BODY="$2"
 
 # Known internal tool categories
-TOOL_CATEGORIES="meta|docker|github|playwright|chrome|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|computer-use"
+TOOL_CATEGORIES="meta|docker|github|browser|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|applescript"
 
 # ── Help & discovery ─────────────────────────────────────────────
 # sulla --help | sulla -h | sulla help | sulla (no args)
@@ -42,17 +42,17 @@ Flags:
 
 Categories:
   meta              Tools for browsing available tools, installing skills, and meta management
+  agents            Sub-agent spawning and job management
+  applescript       Execute AppleScript to control macOS apps (Calendar, Mail, Finder, etc.)
   bridge            Bidirectional communication bridge between heartbeat and frontend
+  browser           Open/close tabs, read page content, click + fill forms, screenshot, exec JS, cookies, history, notifications
   calendar          Calendar event management
-  chrome            Browser extension-style APIs — history, notifications, storage, cookies
-  computer-use      Visual computer use — screenshot-based interaction
   docker            Docker container management
   extensions        Extension marketplace — browse, install, uninstall Docker Compose stacks
   github            GitHub repository management
   kubectl           Kubernetes cluster management
   lima              Lima VM instance management
   pg                PostgreSQL database queries
-  playwright        Browser automation suite — DOM tools, visual tools, exec_in_page
   rdctl             Sulla Desktop / rdctl management commands
   redis             Redis key/value store operations
   slack             Slack messaging and reactions
