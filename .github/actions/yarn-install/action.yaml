@@ -39,15 +39,24 @@ runs:
     run: echo "M1=1" >> "${GITHUB_ENV}"
     shell: bash
 
-  # YARN_CHILD_CONCURRENCY=1 serialises the [5/5] native-build phase so
-  # a silent hang names the offending package right before going quiet
-  # (previous parallel runs hid which module was stuck). The step
-  # timeout lives on the caller's `- uses:` line in package.yaml
-  # because composite actions reject the `timeout-minutes` key.
-  - run: yarn install --immutable --ignore-platform
+  # Skip lifecycle scripts during the dependency install itself — the
+  # "[5/5] Building fresh packages" phase has been hanging silently on
+  # mac/win for ~18 minutes without ever naming the offending package.
+  # Native modules get rebuilt in the next step by electron-builder's
+  # install-app-deps (invoked from scripts/postinstall.ts) which emits
+  # per-package progress and honours our overall step timeout.
+  - run: yarn install --immutable --ignore-platform --ignore-scripts
+    shell: bash
+
+  # Our postinstall.ts downloads external deps (Lima, Trivy, Moby spec,
+  # etc.) and then calls electron-builder install-app-deps to rebuild
+  # native modules (node-pty, better-sqlite3) against Electron's ABI.
+  # Running it as its own step isolates failures and makes them visible.
+  - run: node scripts/ts-wrapper.js scripts/postinstall.ts
     shell: bash
     env:
-      YARN_CHILD_CONCURRENCY: '1'
+      npm_config_loglevel: verbose
+      DEBUG: 'electron*,@electron*'
 
   - name: Fix electron sandbox
     if: runner.os == 'Linux'
