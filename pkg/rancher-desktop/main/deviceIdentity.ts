@@ -6,14 +6,23 @@
  * Parallel to sulla-mobile's DeviceIdentity so both clients register the
  * same way with /devices/register. The cloud then shows every paired
  * device (desktop + every mobile) in the AI Assistant settings screen.
+ *
+ * Persistence: the device_id lives in ~/.sulla/device-id, outside Electron's
+ * userData directory. This survives app reinstalls and upgrades (mobile uses
+ * SecureStore for the same reason — without this, a reinstall mints a fresh
+ * UUID and the server sees a duplicate desktop in the devices list).
  */
 
 import os from 'os';
+import fs from 'fs';
+import path from 'path';
 import crypto from 'crypto';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getProductionVersion } from '@pkg/utils/version';
 
-const SETTING_KEY = 'sullaCloudDeviceId';
+const LEGACY_SETTING_KEY = 'sullaCloudDeviceId';
+const SULLA_DIR = path.join(os.homedir(), '.sulla');
+const DEVICE_ID_PATH = path.join(SULLA_DIR, 'device-id');
 
 export interface DesktopDeviceMetadata {
   deviceId: string;
@@ -27,7 +36,6 @@ export interface DesktopDeviceMetadata {
 }
 
 function generateDeviceId(): string {
-  // Prefer crypto.randomUUID when available (Node 14.17+).
   try {
     if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   } catch {}
@@ -45,9 +53,6 @@ function normalizePlatform(): DesktopDeviceMetadata['platform'] {
 }
 
 function macProductName(): string | null {
-  // os.type() returns e.g. 'Darwin' — not useful. Best-effort model name:
-  // fall back to "Mac" / "PC" labels; richer model detection would require
-  // shelling out to system_profiler, which isn't worth the complexity here.
   const platform = normalizePlatform();
   if (platform === 'macos') return 'Mac';
   if (platform === 'windows') return 'PC';
@@ -62,11 +67,54 @@ function osVersionLabel(): string {
   return `${os.type()} ${release}`;
 }
 
+function readDeviceIdFromFile(): string | null {
+  try {
+    if (!fs.existsSync(DEVICE_ID_PATH)) return null;
+    const raw = fs.readFileSync(DEVICE_ID_PATH, 'utf-8').trim();
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDeviceIdToFile(id: string): void {
+  try {
+    fs.mkdirSync(SULLA_DIR, { recursive: true });
+    // 0o600 — readable only by the owning user. The UUID isn't secret but
+    // there's no reason for other users on a shared machine to see it.
+    fs.writeFileSync(DEVICE_ID_PATH, id, { mode: 0o600 });
+  } catch (err) {
+    console.warn('[deviceIdentity] Failed to persist device-id to ~/.sulla:', err);
+  }
+}
+
+async function readLegacyDeviceId(): Promise<string | null> {
+  try {
+    const existing = (await SullaSettingsModel.get(LEGACY_SETTING_KEY, '')) as string;
+    return existing || null;
+  } catch {
+    return null;
+  }
+}
+
 async function getOrCreateDeviceId(): Promise<string> {
-  const existing = (await SullaSettingsModel.get(SETTING_KEY, '')) as string;
-  if (existing) return existing;
+  // Preferred: the reinstall-safe file in ~/.sulla.
+  const fromFile = readDeviceIdFromFile();
+  if (fromFile) return fromFile;
+
+  // Legacy: previous installs stored the id in SullaSettings (inside the
+  // Electron userData dir). Migrate it out so the id survives future
+  // reinstalls. If migration succeeds we keep writing there too, which is
+  // harmless but lets older code paths keep working during rollout.
+  const legacy = await readLegacyDeviceId();
+  if (legacy) {
+    writeDeviceIdToFile(legacy);
+    return legacy;
+  }
+
   const fresh = generateDeviceId();
-  await SullaSettingsModel.set(SETTING_KEY, fresh, 'string');
+  writeDeviceIdToFile(fresh);
+  try { await SullaSettingsModel.set(LEGACY_SETTING_KEY, fresh, 'string'); } catch {}
   return fresh;
 }
 

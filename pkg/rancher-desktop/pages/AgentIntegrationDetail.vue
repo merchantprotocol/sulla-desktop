@@ -630,6 +630,72 @@
                   </a>
                 </div>
               </div> -->
+
+              <!-- Claude Code usage panel — only rendered for the claude-code
+                   integration, and only when recent turns have been recorded. -->
+              <div
+                v-if="integration.id === 'claude-code' && !claudeUsageLoading && claudeUsageSummary.totalTurns > 0"
+                class="mt-6 rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-slate-800"
+              >
+                <h2 class="mb-1 text-xl font-semibold text-slate-900 dark:text-white">
+                  Recent usage
+                </h2>
+                <p class="mb-4 text-sm text-slate-600 dark:text-slate-400">
+                  Rolling 24-hour window, captured from Claude Code's stream-json
+                  result events. Max/Pro quota limits are enforced server-side by
+                  Anthropic and aren't shown here.
+                </p>
+                <div class="grid grid-cols-2 gap-4 md:grid-cols-3">
+                  <div class="rounded-lg bg-slate-50 p-3 dark:bg-slate-700/50">
+                    <div class="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Turns
+                    </div>
+                    <div class="text-lg font-semibold text-slate-900 dark:text-white">
+                      {{ claudeUsageSummary.totalTurns.toLocaleString() }}
+                    </div>
+                  </div>
+                  <div class="rounded-lg bg-slate-50 p-3 dark:bg-slate-700/50">
+                    <div class="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Input tokens
+                    </div>
+                    <div class="text-lg font-semibold text-slate-900 dark:text-white">
+                      {{ claudeUsageSummary.totalInputTokens.toLocaleString() }}
+                    </div>
+                  </div>
+                  <div class="rounded-lg bg-slate-50 p-3 dark:bg-slate-700/50">
+                    <div class="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Output tokens
+                    </div>
+                    <div class="text-lg font-semibold text-slate-900 dark:text-white">
+                      {{ claudeUsageSummary.totalOutputTokens.toLocaleString() }}
+                    </div>
+                  </div>
+                  <div class="rounded-lg bg-slate-50 p-3 dark:bg-slate-700/50">
+                    <div class="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Cache read
+                    </div>
+                    <div class="text-lg font-semibold text-slate-900 dark:text-white">
+                      {{ claudeUsageSummary.totalCacheReadTokens.toLocaleString() }}
+                    </div>
+                  </div>
+                  <div class="rounded-lg bg-slate-50 p-3 dark:bg-slate-700/50">
+                    <div class="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Est. cost
+                    </div>
+                    <div class="text-lg font-semibold text-slate-900 dark:text-white">
+                      ${{ claudeUsageSummary.totalCostUsd.toFixed(4) }}
+                    </div>
+                  </div>
+                  <div class="rounded-lg bg-slate-50 p-3 dark:bg-slate-700/50">
+                    <div class="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                      Last turn
+                    </div>
+                    <div class="text-lg font-semibold text-slate-900 dark:text-white">
+                      {{ claudeUsageSummary.lastTurnRelative }}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- Sidebar -->
@@ -922,6 +988,75 @@ const oauthSuccess = ref('');
 
 /** Only accounts that are connected */
 const connectedAccounts = computed(() => accounts.value.filter(a => a.connected));
+
+// ── Claude Code usage hook ────────────────────────────────────────────
+//
+// ClaudeCodeService writes per-turn usage to SullaSettingsModel.claudeCodeUsage
+// as a rolling 24h array. We don't duplicate it into integration_values — we
+// just tap into the existing setting and render a summary when the user
+// opens the claude-code integration page. When the array is empty (or for
+// any non-claude-code integration) the panel stays hidden.
+interface ClaudeUsageRecord {
+  ts:                          string;
+  duration_ms?:                number;
+  input_tokens?:               number;
+  output_tokens?:              number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?:    number;
+  cost_usd?:                   number;
+  model?:                      string;
+}
+const claudeUsage = ref<ClaudeUsageRecord[]>([]);
+const claudeUsageLoading = ref(false);
+
+const claudeUsageSummary = computed(() => {
+  const records = claudeUsage.value;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalCacheReadTokens = 0;
+  let totalCostUsd = 0;
+  let latestTs = 0;
+
+  for (const r of records) {
+    if (typeof r.input_tokens === 'number') totalInputTokens += r.input_tokens;
+    if (typeof r.output_tokens === 'number') totalOutputTokens += r.output_tokens;
+    if (typeof r.cache_read_input_tokens === 'number') totalCacheReadTokens += r.cache_read_input_tokens;
+    if (typeof r.cost_usd === 'number') totalCostUsd += r.cost_usd;
+    const t = Date.parse(r.ts);
+    if (Number.isFinite(t) && t > latestTs) latestTs = t;
+  }
+
+  const relative = (ts: number) => {
+    if (!ts) return 'never';
+    const deltaMs = Date.now() - ts;
+    if (deltaMs < 60_000) return 'just now';
+    if (deltaMs < 3_600_000) return `${ Math.floor(deltaMs / 60_000) }m ago`;
+    if (deltaMs < 86_400_000) return `${ Math.floor(deltaMs / 3_600_000) }h ago`;
+    return `${ Math.floor(deltaMs / 86_400_000) }d ago`;
+  };
+
+  return {
+    totalTurns:           records.length,
+    totalInputTokens,
+    totalOutputTokens,
+    totalCacheReadTokens,
+    totalCostUsd,
+    lastTurnRelative:     relative(latestTs),
+  };
+});
+
+async function loadClaudeUsage() {
+  claudeUsageLoading.value = true;
+  try {
+    const raw = await ipcRenderer.invoke('sulla-settings-get', 'claudeCodeUsage', '[]');
+    const parsed = JSON.parse(typeof raw === 'string' ? raw : '[]');
+    claudeUsage.value = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    claudeUsage.value = [];
+  } finally {
+    claudeUsageLoading.value = false;
+  }
+}
 
 /** Label for the account currently being edited */
 const editingAccountLabel = computed(() => {
@@ -1372,6 +1507,12 @@ onMounted(async() => {
     fetchAllSelectOptions();
   } catch (error) {
     console.error('Failed to initialize form:', error);
+  }
+
+  // Fire the claude-code usage hook. Silent on non-claude integrations and
+  // on empty usage — the template hides the panel in both cases.
+  if (integration.value?.id === 'claude-code') {
+    loadClaudeUsage().catch(() => { /* ignore */ });
   }
 });
 </script>
