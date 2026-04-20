@@ -39,8 +39,14 @@ runs:
     run: echo "M1=1" >> "${GITHUB_ENV}"
     shell: bash
 
-  - run: yarn install --immutable --ignore-platform
+  # --verbose surfaces per-module build output so a stuck native-module
+  # compile ("[5/5] Building fresh packages…") doesn't silently consume
+  # the job's 30-minute default timeout with zero log output.
+  # timeout-minutes caps the step so a hang fails fast instead of
+  # eating the whole runner.
+  - run: yarn install --immutable --ignore-platform --verbose
     shell: bash
+    timeout-minutes: 20
 
   - name: Fix electron sandbox
     if: runner.os == 'Linux'
