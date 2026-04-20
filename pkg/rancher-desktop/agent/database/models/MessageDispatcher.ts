@@ -20,6 +20,25 @@ import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import type { ChatMessage, AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import type { Ref } from 'vue';
 
+// ─── Display caps ───────────────────────────────────────────────
+// Renderer-side caps that stop a single tool result or a runaway
+// thinking bubble from blowing out the chat window's V8 heap,
+// localStorage quota, or DOM. Agent context is unaffected — these
+// caps apply only to what we store in reactive state for display.
+
+const MAX_TOOL_RESULT_CHARS = 20_000;
+const MAX_THINKING_CHARS    = 10_000;
+
+function capForDisplay(v: unknown, max = MAX_TOOL_RESULT_CHARS): unknown {
+  const s = typeof v === 'string' ? v : JSON.stringify(v ?? null);
+  if (s.length <= max) return v;
+  return `${ s.slice(0, max) }\n\n[truncated ${ s.length - max } chars]`;
+}
+
+function capText(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(s.length - max);
+}
+
 // ─── Types ──────────────────────────────────────────────────────
 
 export type SpeakListener = (text: string, threadId: string, pipelineSequence: number | null) => void;
@@ -240,7 +259,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     }
     if (existingIdx !== -1) {
       const existing = ctx.messages[existingIdx];
-      ctx.messages[existingIdx] = { ...existing, content: existing.content + '\n\n' + finalContent };
+      ctx.messages[existingIdx] = { ...existing, content: capText(existing.content + '\n\n' + finalContent, MAX_THINKING_CHARS) };
     } else {
       ctx.messages.push({
         id:        `${ Date.now() }_ws_thinking`,
@@ -458,7 +477,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       }
       if (existingIdx !== -1) {
         const existing = ctx.messages[existingIdx];
-        ctx.messages[existingIdx] = { ...existing, content: existing.content + '\n\n' + thinkingText };
+        ctx.messages[existingIdx] = { ...existing, content: capText(existing.content + '\n\n' + thinkingText, MAX_THINKING_CHARS) };
       } else {
         ctx.messages.push({
           id:        `${ Date.now() }_ws_thinking`,
@@ -505,7 +524,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
     const success = data?.success === true;
     const error = typeof data?.error === 'string' ? data.error : null;
-    const result = data?.result;
+    const result = capForDisplay(data?.result);
 
     if (toolRunId) {
       const messageId = ctx.toolRunIdToMessageId.get(toolRunId);
@@ -521,7 +540,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
             result,
             error,
           );
-          if (resultDisplay.output) message.toolCard.output = resultDisplay.output;
+          if (resultDisplay.output) message.toolCard.output = capForDisplay(resultDisplay.output) as string;
           if (resultDisplay.outputFormat) message.toolCard.outputFormat = resultDisplay.outputFormat;
         }
         ctx.toolRunIdToMessageId.delete(toolRunId);

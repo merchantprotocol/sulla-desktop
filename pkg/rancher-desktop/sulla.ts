@@ -364,6 +364,11 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     console.error('[Background] Failed to start terminal WebSocket server:', error);
   }
 
+  // Sweep old computer-use screenshots. Non-blocking, best-effort.
+  void import('@pkg/agent/tools/computer-use/screenshot_store')
+    .then(m => m.pruneOldScreenshots())
+    .catch(err => console.warn('[Background] Screenshot prune failed:', err));
+
   // Register ModelProviderService IPC handlers before any window loads.
   // Lifecycle-gated state loading happens later, but the UI needs to query
   // state immediately — and instantiateSullaStart() only runs after Lima boots,
