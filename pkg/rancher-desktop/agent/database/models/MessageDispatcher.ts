@@ -308,17 +308,52 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
-  // ── Non-streaming: remove prior streaming bubble ──
+  // ── Non-streaming assistant message: reconcile with any streaming segments ──
   if (role === 'assistant') {
-    let streamIdx = -1;
+    // Collect recent assistant streaming bubbles (our segmented view of this
+    // turn). Walk back until we hit a user message or non-assistant kind.
+    const recentStreamIndexes: number[] = [];
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
-      if (ctx.messages[i].kind === 'streaming' && ctx.messages[i].role === 'assistant') {
-        streamIdx = i;
-        break;
-      }
+      const m = ctx.messages[i];
+      if (m.role !== 'assistant') break;
+      if (m.kind === 'streaming') recentStreamIndexes.push(i);
     }
-    if (streamIdx !== -1) {
-      ctx.messages.splice(streamIdx, 1);
+
+    if (recentStreamIndexes.length > 0) {
+      // Concatenate what the user has already seen from the streaming
+      // segments (oldest-first). If the incoming full content is already
+      // represented by those segments — which is the normal case when
+      // AgentNode.execute dumps reply.content after a streaming turn — drop
+      // the incoming message to avoid showing it twice. Otherwise remove the
+      // segments and let the non-streaming message replace them.
+      const streamedConcat = recentStreamIndexes
+        .slice()
+        .reverse()
+        .map(i => ctx.messages[i].content || '')
+        .join('');
+      const incoming = finalContent.trim();
+      const streamed = streamedConcat.trim();
+      const alreadyShown = streamed.length > 0 && (
+        streamed === incoming ||
+        (streamed.length >= Math.max(1, incoming.length * 0.6) && incoming.startsWith(streamed))
+      );
+      if (alreadyShown) {
+        // Keep the existing segment bubbles, close any open thinking bubble,
+        // and swallow the duplicate dump.
+        for (let i = ctx.messages.length - 1; i >= 0; i--) {
+          const m = ctx.messages[i];
+          if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+            (ctx.messages[i] as any)._completed = true;
+            break;
+          }
+        }
+        return;
+      }
+      // Content doesn't match segments — remove ALL of them (not just the
+      // last) so the non-streaming message replaces the whole turn.
+      for (const idx of recentStreamIndexes) {
+        ctx.messages.splice(idx, 1);
+      }
     }
 
     // Mark any open thinking bubble as completed
