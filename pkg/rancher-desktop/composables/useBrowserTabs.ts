@@ -91,10 +91,32 @@ function persistTabs(tabList: BrowserTab[]): void {
   } catch { /* best-effort */ }
 }
 
+// Hard cap on concurrent agent-origin tabs (those with assetId). When an
+// agent opens many distinct URLs in one session we keep the 10 most-recent
+// and evict the oldest so RAM stays bounded regardless of how busy the agent
+// gets. User-opened tabs (no assetId) are never evicted by this.
+const MAX_AGENT_TABS = 10;
+
 const restoredTabs = loadPersistedTabs();
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
-// Persist tab state on every change
+// Enforce the agent-tab cap whenever the array changes. Oldest first (array
+// order = creation order since createTab always .push's).
+watch(tabs, (current) => {
+  const agentIndexes: number[] = [];
+  for (let i = 0; i < current.length; i++) {
+    if (current[i].assetId) agentIndexes.push(i);
+  }
+  const overflow = agentIndexes.length - MAX_AGENT_TABS;
+  if (overflow > 0) {
+    // Slice once, splice once (reversed) so indexes stay valid while removing.
+    const toRemove = agentIndexes.slice(0, overflow).reverse();
+    for (const idx of toRemove) current.splice(idx, 1);
+    console.warn(`[useBrowserTabs] Evicted ${ overflow } agent tab(s) over cap (${ MAX_AGENT_TABS })`);
+  }
+}, { deep: true });
+
+// Persist tab state on every change (user-origin tabs only — see persistTabs)
 watch(tabs, (current) => {
   persistTabs([...current]);
 }, { deep: true });
