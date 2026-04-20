@@ -21,6 +21,7 @@ import fs from 'fs';
 import http from 'http';
 import https from 'https';
 import path from 'path';
+import readline from 'readline';
 import { URL } from 'url';
 
 import { ipcMain } from 'electron';
@@ -74,6 +75,11 @@ const DEFAULT_SETTINGS: ThreatProxySettings = {
 /** Host-side cache of the URLhaus blocklist. Refreshed into the VM-mounted resources dir. */
 const URLHAUS_SRC = 'https://urlhaus.abuse.ch/downloads/hostfile/';
 const URLHAUS_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
+// Hard cap so a pathological server or redirect loop can't blow the Electron
+// main-process heap. URLhaus's hostfile is normally <50MB; anything over this
+// is almost certainly wrong. If we hit it we abort the download and keep the
+// prior file, failing open rather than OOM'ing the app.
+const URLHAUS_MAX_BYTES = 200 * 1024 * 1024; // 200MB
 
 /** Where the VM-facing blocklist lives on the host; paths.altAppHome is writable + mounted into the VM. */
 function getBlocklistHostPath(): string {
@@ -222,10 +228,11 @@ export async function refreshBlocklist(force = false): Promise<{ ok: boolean; ho
   await fs.promises.mkdir(path.dirname(target), { recursive: true });
 
   try {
-    const body = await fetchText(URLHAUS_SRC);
+    // Stream directly to a tmp file, then atomically rename. Never holds the
+    // full body in the main-process heap. Capped at URLHAUS_MAX_BYTES so a
+    // misbehaving mirror can't balloon memory on app boot.
     const tmpPath = `${ target }.tmp`;
-
-    await fs.promises.writeFile(tmpPath, body, { mode: 0o644 });
+    await downloadToFile(URLHAUS_SRC, tmpPath, URLHAUS_MAX_BYTES);
     await fs.promises.rename(tmpPath, target);
 
     const hostCount = await countNonCommentLines(target);
@@ -243,39 +250,81 @@ export async function refreshBlocklist(force = false): Promise<{ ok: boolean; ho
   }
 }
 
+/**
+ * Count non-comment lines by streaming the file a line at a time instead of
+ * reading it whole. A URLhaus hostfile can be tens of MB; the previous
+ * readFile implementation held the entire body in memory just to run split
+ * and filter.
+ */
 async function countNonCommentLines(p: string): Promise<number> {
   try {
-    const body = await fs.promises.readFile(p, 'utf-8');
-
-    return body.split(/\r?\n/).filter(line => line.trim() && !line.trim().startsWith('#')).length;
+    const stream = fs.createReadStream(p, { encoding: 'utf-8' });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    let count = 0;
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) count++;
+    }
+    return count;
   } catch {
     return 0;
   }
 }
 
-function fetchText(targetUrl: string): Promise<string> {
+/**
+ * Stream an HTTP(S) download directly to disk with a hard byte cap. Never
+ * buffers the full body in the Electron main-process heap — a critical
+ * property when the URLhaus hostfile can be tens of MB and this runs on
+ * app boot. Follows one hop of HTTP redirect (URLhaus occasionally 30x's).
+ */
+function downloadToFile(targetUrl: string, destPath: string, maxBytes: number, redirectsLeft = 2): Promise<void> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(targetUrl);
     const client = parsed.protocol === 'http:' ? http : https;
     const req = client.get(targetUrl, { timeout: 20_000 }, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        // One hop of redirect is enough; URLhaus occasionally redirects.
-        fetchText(new URL(res.headers.location, targetUrl).toString()).then(resolve, reject);
+        if (redirectsLeft <= 0) {
+          res.resume();
+          reject(new Error(`too many redirects fetching ${ targetUrl }`));
+          return;
+        }
+        const next = new URL(res.headers.location, targetUrl).toString();
         res.resume();
-
+        downloadToFile(next, destPath, maxBytes, redirectsLeft - 1).then(resolve, reject);
         return;
       }
       if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${ res.statusCode } from ${ targetUrl }`));
         res.resume();
-
+        reject(new Error(`HTTP ${ res.statusCode } from ${ targetUrl }`));
         return;
       }
-      const chunks: Buffer[] = [];
 
-      res.on('data', (c: Buffer) => chunks.push(c));
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-      res.on('error', reject);
+      const fileStream = fs.createWriteStream(destPath, { mode: 0o644 });
+      let bytesWritten = 0;
+      let aborted = false;
+
+      const abortWith = (err: Error) => {
+        if (aborted) return;
+        aborted = true;
+        // Tear down both ends so no trickle of late data can reawaken handlers.
+        res.destroy();
+        fileStream.destroy();
+        fs.promises.unlink(destPath).catch(() => { /* already gone */ });
+        reject(err);
+      };
+
+      res.on('data', (chunk: Buffer) => {
+        bytesWritten += chunk.length;
+        if (bytesWritten > maxBytes) {
+          abortWith(new Error(`response exceeded ${ maxBytes } byte cap fetching ${ targetUrl }`));
+        }
+      });
+      res.on('error', abortWith);
+      fileStream.on('error', abortWith);
+      fileStream.on('finish', () => {
+        if (!aborted) resolve();
+      });
+      res.pipe(fileStream);
     });
 
     req.on('error', reject);
