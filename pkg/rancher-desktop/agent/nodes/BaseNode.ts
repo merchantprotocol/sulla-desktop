@@ -1310,7 +1310,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this.wsChatMessage(state, message, 'assistant', 'thinking');
     };
 
-    const reply = await this.llm!.chatStream(messages, { onToken, onActivity }, options);
+    const reply = await this.llm!.chatStream(messages, { onToken, onActivity }, { ...options, state });
 
     if (!reply) {
       return null;
