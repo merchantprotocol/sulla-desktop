@@ -147,6 +147,23 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   }
 
   const content = data?.content !== undefined ? String(data.content) : '';
+
+  // Segment-boundary sentinels: kind carries the meaning, content is empty
+  // by design. Must be handled BEFORE the empty-content drop or the signal
+  // gets swallowed and the streaming/thinking bubbles never close.
+  const kindRaw = typeof data?.kind === 'string' ? data.kind : undefined;
+  if (kindRaw === 'streaming_complete' || kindRaw === 'thinking_complete') {
+    const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === target && m.role === 'assistant' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
+    }
+    return;
+  }
+
   if (!content.trim()) {
     console.warn(`⚠️ [MessageDispatcher] EMPTY CONTENT assistant message dropped`, {
       msgType: msg.type, channel: agentId, threadId: msgThreadId,
