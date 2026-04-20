@@ -1,6 +1,25 @@
 import type { Integration } from '../types';
 
 export const nativeSecurityIntegrations: Record<string, Integration> = {
+  apple_signin: {
+    id:                'apple_signin',
+    sort:              0,
+    paid:              false,
+    beta:              false,
+    comingSoon:        false,
+    connected:         false,
+    name:              'Sign in with Apple',
+    description:       'Sign in to Sulla Cloud with your Apple ID — the same account used by the Sulla Mobile app. Opens a secure browser window to Apple, then stores your session locally in this vault.',
+    category:          'Security',
+    icon:              'apple.svg',
+    version:           '1.0.0',
+    lastUpdated:       '2026-04-19',
+    developer:         'Sulla',
+    authType:          'oauth',
+    oauthProviderId:   'apple',
+    sullaManagedOAuth: true,
+    formGuide:         'No configuration required — click "Sign in with Apple" to start. Sulla manages the OAuth app registration on your behalf.',
+  },
   website: {
     id:          'website',
     sort:        1,

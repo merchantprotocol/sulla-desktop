@@ -573,6 +573,7 @@ import { integrations as baseCatalog } from '@pkg/agent/integrations/catalog';
 import type { Integration } from '@pkg/agent/integrations/types';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{
   integrationId:    string;
@@ -828,6 +829,29 @@ async function handleOAuthConnect() {
   if (!integration.value) return;
   oauthError.value = '';
   saving.value = true;
+
+  // Claude Code uses a PTY-driven CLI flow, not HTTP OAuth. Route to its
+  // dedicated IPC handler; claudeOAuth.ts persists the token to the vault.
+  if (integration.value.id === 'claude-code') {
+    try {
+      const result = await ipcRenderer.invoke('claude-oauth:start');
+      if (result?.error) {
+        oauthError.value = result.error;
+        return;
+      }
+      if (!result?.token) {
+        oauthError.value = 'OAuth flow completed without a token.';
+        return;
+      }
+      emit('saved', 'oauth');
+    } catch (err: any) {
+      oauthError.value = err?.message || 'OAuth failed. Please try again.';
+    } finally {
+      saving.value = false;
+    }
+    return;
+  }
+
   try {
     const targetAccountId = 'oauth';
     let clientId = '';

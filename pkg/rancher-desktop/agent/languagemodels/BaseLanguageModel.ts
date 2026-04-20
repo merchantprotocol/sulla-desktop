@@ -48,6 +48,16 @@ export interface ChatMessage {
 export interface StreamCallbacks {
   /** Called for each text token/delta as it arrives from the LLM. */
   onToken: (token: string) => void;
+  /**
+   * Called for non-text status events from the underlying provider —
+   * e.g. "Running Bash…", "Thinking…", "Reading /etc/hosts". Lets the UI
+   * render a live "what the model is doing" indicator alongside the
+   * streaming text.
+   *
+   * Providers that don't emit rich events (OpenAI-compatible chat, etc.)
+   * simply never call this. Callers that don't care can omit it.
+   */
+  onActivity?: (message: string) => void;
 }
 
 /**

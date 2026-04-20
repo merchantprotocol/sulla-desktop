@@ -138,6 +138,38 @@ class LLMRegistryImpl {
     return this.getServiceByProvider(heartbeatProvider);
   }
 
+  /**
+   * Subconscious-aware service. Subconscious agents (memory-recall,
+   * observation, unstuck-research) run in the background and need a fast
+   * chat-completion peer that emits tool_use blocks — NOT an autonomous
+   * agent like Claude Code which would over-invest in each recall task.
+   *
+   * Resolution order:
+   *   1. Explicit subconsciousProvider setting (if not 'default')
+   *   2. Secondary provider (the existing fallback)
+   *   3. Primary provider (last resort)
+   */
+  async getSubconsciousLLM(): Promise<BaseLanguageModel> {
+    const mps = tryGetModelProviderService();
+    const subconsciousProvider = mps
+      ? mps.getSubconsciousProvider()
+      : await SullaSettingsModel.get('subconsciousProvider', 'default');
+
+    if (subconsciousProvider && subconsciousProvider !== 'default') {
+      return this.getServiceByProvider(subconsciousProvider);
+    }
+
+    const secondaryProvider = mps
+      ? mps.getSecondaryProvider()
+      : await SullaSettingsModel.get('secondaryProvider', 'grok');
+
+    if (secondaryProvider) {
+      return this.getServiceByProvider(secondaryProvider);
+    }
+
+    return this.getPrimaryService();
+  }
+
   async getRemoteModel(): Promise<string> {
     const svc = await this.getRemoteService();
     return svc.getModel();
@@ -309,6 +341,7 @@ export const getCurrentModel = async() => await LLMRegistry.getCurrentModel();
 export const getPrimaryService = async() => await LLMRegistry.getPrimaryService();
 export const getSecondaryService = async() => await LLMRegistry.getSecondaryService();
 export const getHeartbeatService = async() => await LLMRegistry.getHeartbeatLLM();
+export const getSubconsciousService = async() => await LLMRegistry.getSubconsciousLLM();
 
 // Dynamic model discovery exports
 export const fetchModelsForProvider = async(providerId: string, apiKey?: string) =>

@@ -243,13 +243,14 @@ export interface IpcMainInvokeEvents {
   'claude-oauth:cancel': () => void;
 
   /** Sulla Cloud account auth (phone OTP / email / Apple) */
-  'sulla-cloud:get-status':      () => { signedIn: boolean; userId: string; phone: string; lastError?: string };
-  'sulla-cloud:send-otp':        (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:verify-otp':      (phone: string, code: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:email-login':     (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:email-register':  (email: string, password: string, name?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:apple-sign-in':   (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; phone: string; lastError?: string } };
-  'sulla-cloud:logout':          () => { signedIn: boolean; userId: string; phone: string; lastError?: string };
+  'sulla-cloud:get-status':      () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
+  'sulla-cloud:send-otp':        (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:verify-otp':      (phone: string, code: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-login':     (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-register':  (email: string, password: string, name?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:apple-sign-in':   (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:apple-sign-in-browser': () => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:logout':          () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
 
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };
@@ -267,12 +268,13 @@ export interface IpcMainInvokeEvents {
   };
 
   // #region Model Provider Service (source of truth)
-  'model-provider:get-state':              () => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
+  'model-provider:get-state':              () => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; subconsciousProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
   'model-provider:get-providers':          () => { id: string; name: string; connected: boolean }[];
   'model-provider:get-models':             (providerId: string) => { id: string; name: string; description?: string }[];
-  'model-provider:select-model':           (providerId: string, modelId: string) => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
+  'model-provider:select-model':           (providerId: string, modelId: string) => { primaryProvider: string; secondaryProvider: string; heartbeatProvider: string; subconsciousProvider: string; activeModelId: string; modelMode: 'local' | 'remote' };
   'model-provider:set-secondary':          (providerId: string) => void;
   'model-provider:set-heartbeat':          (providerId: string) => void;
+  'model-provider:set-subconscious':       (providerId: string) => void;
   'model-provider:get-provider-config':    (providerId: string) => Record<string, string>;
   'model-provider:update-provider-config': (providerId: string, config: Record<string, string>) => void;
   // #endregion

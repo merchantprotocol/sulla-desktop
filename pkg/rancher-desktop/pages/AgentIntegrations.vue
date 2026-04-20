@@ -10,7 +10,7 @@
         :toggle-theme="toggleTheme"
       />
 
-      <div class="flex w-full flex-col">
+      <div class="flex w-full flex-col flex-1 min-h-0">
         <!-- Back to Vault button (only when embedded in vault flow) -->
         <div
           v-if="embedded"

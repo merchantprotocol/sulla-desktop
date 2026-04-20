@@ -338,6 +338,25 @@
                   >
                     {{ oauthError }}
                   </p>
+                  <div
+                    v-if="oauthSuccess"
+                    class="flex items-center gap-2 rounded-md bg-green-50 px-3 py-2 text-xs text-green-700 dark:bg-green-900/20 dark:text-green-300"
+                  >
+                    <svg
+                      class="h-4 w-4 flex-shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                    {{ oauthSuccess }}
+                  </div>
                 </div>
 
                 <!-- Divider when both OAuth and credentials are available -->
@@ -841,6 +860,7 @@ import type { IntegrationAccount } from '@pkg/agent/services/IntegrationService'
 import YouTubePlayer from '@pkg/components/YouTubePlayer.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 import { formatFuzzyTime } from '@pkg/utils/dateFormat';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const pageProps = defineProps<{
   /** When provided, use this instead of route.params.id */
@@ -898,6 +918,7 @@ const isEditingAccount = ref(false);
 const editingAccountId = ref<string | null>(null);
 const newAccountLabel = ref('');
 const oauthError = ref('');
+const oauthSuccess = ref('');
 
 /** Only accounts that are connected */
 const connectedAccounts = computed(() => accounts.value.filter(a => a.connected));
@@ -1133,9 +1154,63 @@ const handleOAuthConnect = async() => {
 
   errors.value = {};
   oauthError.value = '';
+  oauthSuccess.value = '';
 
   // OAuth connections use a fixed account id — no label needed
   const targetAccountId = 'oauth';
+
+  // Claude Code uses a PTY-driven CLI flow (`claude setup-token`) that can't
+  // reuse the standard HTTP OAuth pipeline. Route to its dedicated IPC handler.
+  if (integration.value.id === 'claude-code') {
+    isLoading.value = true;
+    try {
+      const result = await ipcRenderer.invoke('claude-oauth:start');
+      if (result?.error) {
+        oauthError.value = result.error;
+        return;
+      }
+      if (!result?.token) {
+        oauthError.value = 'OAuth flow completed without a token.';
+        return;
+      }
+      // claudeOAuth.ts persisted the token + connection status to the vault
+      // already. Just refresh the UI.
+      await refreshAccounts();
+      integration.value.connected = await integrationService.isAnyAccountConnected(integration.value.id);
+      mergedIntegrations.value[integration.value.id].connected = integration.value.connected;
+      oauthSuccess.value = 'Successfully signed in — Claude Code is ready to use.';
+    } catch (error: any) {
+      console.error('Claude OAuth connection failed:', error);
+      oauthError.value = error?.message || 'OAuth authorization failed. Please try again.';
+    } finally {
+      isLoading.value = false;
+    }
+    return;
+  }
+
+  // Sulla-managed OAuth (Apple Sign In, future Google sign-in, etc.) runs
+  // through sulla-workers using Sulla's shared OAuth app credentials —
+  // no user-supplied client_id/client_secret. The main-process IPC handler
+  // persists the result to the vault + pairs the desktop relay room.
+  if (integration.value.sullaManagedOAuth && integration.value.id === 'apple_signin') {
+    isLoading.value = true;
+    try {
+      const result = await ipcRenderer.invoke('sulla-cloud:apple-sign-in-browser');
+      if (!result?.ok) {
+        oauthError.value = result?.error || 'Apple sign-in failed.';
+        return;
+      }
+      await refreshAccounts();
+      integration.value.connected = await integrationService.isAnyAccountConnected(integration.value.id);
+      mergedIntegrations.value[integration.value.id].connected = integration.value.connected;
+    } catch (error: any) {
+      console.error('Apple sign-in failed:', error);
+      oauthError.value = error?.message || 'Apple sign-in failed. Please try again.';
+    } finally {
+      isLoading.value = false;
+    }
+    return;
+  }
 
   // Only check for client_id/client_secret when the integration is
   // authType 'oauth' (OAuth-only with user-supplied credentials like Google).

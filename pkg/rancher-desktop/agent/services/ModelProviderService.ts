@@ -19,11 +19,19 @@ import { integrations } from '../integrations/catalog';
 // ── Public types ─────────────────────────────────────────────────
 
 export interface ModelProviderState {
-  primaryProvider:   string;
-  secondaryProvider: string;
-  heartbeatProvider: string;
-  activeModelId:     string;
-  modelMode:         'remote';
+  primaryProvider:     string;
+  secondaryProvider:   string;
+  heartbeatProvider:   string;
+  /**
+   * Provider used by subconscious agents (memory-recall, observation,
+   * unstuck-research). Defaults to 'default', which means "fall back to the
+   * secondary provider". This keeps Claude Code — which runs its own
+   * autonomous tool loop and is ill-suited for quick recall tasks — off
+   * the subconscious path unless the user explicitly opts in.
+   */
+  subconsciousProvider: string;
+  activeModelId:       string;
+  modelMode:           'remote';
 }
 
 export interface ProviderInfo {
@@ -47,11 +55,12 @@ type ChangeListener = (state: ModelProviderState) => void;
 
 class ModelProviderService {
   private state: ModelProviderState = {
-    primaryProvider:   'grok',
-    secondaryProvider: 'grok',
-    heartbeatProvider: 'default',
-    activeModelId:     '',
-    modelMode:         'remote',
+    primaryProvider:      'grok',
+    secondaryProvider:    'grok',
+    heartbeatProvider:    'default',
+    subconsciousProvider: 'default',
+    activeModelId:        '',
+    modelMode:            'remote',
   };
 
   private initialized = false;
@@ -106,6 +115,10 @@ class ModelProviderService {
 
   getHeartbeatProvider(): string {
     return this.state.heartbeatProvider;
+  }
+
+  getSubconsciousProvider(): string {
+    return this.state.subconsciousProvider;
   }
 
   // ── Queries (async — may hit IntegrationService / DB) ──────────
@@ -214,6 +227,12 @@ class ModelProviderService {
     await this.broadcastChange();
   }
 
+  async setSubconsciousProvider(providerId: string): Promise<void> {
+    this.state.subconsciousProvider = providerId;
+    await SullaSettingsModel.set('subconsciousProvider', providerId, 'string');
+    await this.broadcastChange();
+  }
+
   async updateProviderConfig(providerId: string, config: Record<string, string>): Promise<void> {
     const integrationService = getIntegrationService();
     const accountId = await integrationService.getActiveAccountId(providerId);
@@ -243,6 +262,7 @@ class ModelProviderService {
     this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', 'grok');
     this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'grok');
     this.state.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
+    this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.state.modelMode = 'remote';
 
     // Load active model from the provider's integration form values
@@ -332,6 +352,10 @@ class ModelProviderService {
 
     ipcMain.handle('model-provider:set-heartbeat', async(_event: unknown, providerId: string) => {
       return this.setHeartbeatProvider(providerId);
+    });
+
+    ipcMain.handle('model-provider:set-subconscious', async(_event: unknown, providerId: string) => {
+      return this.setSubconsciousProvider(providerId);
     });
 
     ipcMain.handle('model-provider:get-provider-config', async(_event: unknown, providerId: string) => {

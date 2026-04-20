@@ -18,6 +18,10 @@ let integrationListenerSubscribed = false;
  * Hot-reload: tear down existing client and re-initialize with new tokens
  */
 async function reloadIntegration(integrationId: string, reason: string): Promise<void> {
+  if (!registry.hasFactory(integrationId)) {
+    // Credentials-only vault id — nothing to rebuild.
+    return;
+  }
   try {
     await registry.invalidate(integrationId);
     const client = await registry.get(integrationId);
@@ -32,9 +36,18 @@ async function reloadIntegration(integrationId: string, reason: string): Promise
 }
 
 /**
- * Initialize: user clicked Connect — init if not already connected
+ * Initialize: user clicked Connect — init if not already connected.
+ *
+ * Some integration ids are credential-only vaults (e.g. `sulla-cloud`,
+ * `claude-code` credential storage) with no live client factory. The connect
+ * event still fires so the UI knows the account is set up, but trying to
+ * instantiate a factory throws. Silently skip those — no factory, no init.
  */
 async function initializeIntegration(integrationId: string): Promise<void> {
+  if (!registry.hasFactory(integrationId)) {
+    console.log(`[Integrations] ${ integrationId } has no factory — credentials-only, skipping init`);
+    return;
+  }
   try {
     // Invalidate first so the factory re-reads fresh credentials from DB
     await registry.invalidate(integrationId);

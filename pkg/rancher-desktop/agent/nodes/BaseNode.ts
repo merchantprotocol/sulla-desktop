@@ -4,7 +4,7 @@ import path from 'node:path'; // used by enrichPrompt for active_projects_file
 import { ChatController, type ChatMode } from '../controllers/ChatController';
 import { ToolExecutor } from '../controllers/ToolExecutor';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { getPrimaryService, getSecondaryService } from '../languagemodels';
+import { getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { throwIfAborted } from '../services/AbortService';
 import { parseJson } from '../services/JsonParseService';
@@ -113,7 +113,7 @@ async function getSoulPrompt(): Promise<string> {
  * @param allowedIntegrations - slugs from config.yaml integrations field.
  *   Empty array = no integrations. ["*"] = all integrations.
  */
-async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<string> {
+export async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<string> {
   if (!allowedIntegrations || allowedIntegrations.length === 0) {
     return '';
   }
@@ -208,7 +208,7 @@ async function buildIntegrationsIndex(allowedIntegrations?: string[]): Promise<s
  * Build the template variable map used to substitute {{...}} placeholders
  * in agent prompt files and the environment prompt.
  */
-async function getTemplateVariables(): Promise<Record<string, string>> {
+export async function getTemplateVariables(): Promise<Record<string, string>> {
   const botName = await SullaSettingsModel.get('botName', 'Sulla');
   const primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
   const projectsDir = resolveSullaProjectsDir();
@@ -340,7 +340,7 @@ const agentPromptLoadCache = new Map<string, { result: AgentPromptLoadResult; lo
  * Files whose basename (minus .md) matches a registered section ID become overrides.
  * All other .md files are concatenated as generic prompt content.
  */
-async function loadAgentPromptData(agentId: string): Promise<AgentPromptLoadResult | null> {
+export async function loadAgentPromptData(agentId: string): Promise<AgentPromptLoadResult | null> {
   if (!agentId) return null;
 
   // Check cache
@@ -661,8 +661,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         ? 'verify'
         : 'trusted';
 
-    // Detect provider
-    const llm = await getPrimaryService();
+    // Detect provider — use the same routing logic as the LLM call itself
+    // so the system prompt's provider-conditional sections (e.g. Anthropic
+    // cache blocks vs OpenAI response format) match the model we'll invoke.
+    const isSubAgentForPrompt = !!(state.metadata as any).isSubAgent;
+    const llm = isSubAgentForPrompt
+      ? await getSubconsciousService()
+      : await getPrimaryService();
     const providerName = llm?.getProviderName?.() || 'anthropic';
 
     const mode = options.promptMode || 'full';
@@ -772,7 +777,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     systemPrompt: string,
     options: LLMCallOptions = {},
   ): Promise<NormalizedResponse | null> {
-    this.llm = await getPrimaryService();
+    // Subconscious agents (memory-recall, observation, unstuck-research) need
+    // a fast tool-emitting chat peer, not the autonomous Claude-Code-style
+    // primary. Route them to the dedicated subconscious provider (falls back
+    // to secondary, then primary).
+    const isSubAgent = !!(state.metadata as any).isSubAgent;
+    this.llm = isSubAgent
+      ? await getSubconsciousService()
+      : await getPrimaryService();
 
     const nodeRunContext = this.createNodeRunContext(state, {
       systemPrompt,
@@ -1030,14 +1042,27 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     } catch (err) {
       if ((err as any)?.name === 'AbortError') throw err;
 
-      console.warn(`[${ this.name }:BaseNode] Primary LLM failed:`, err instanceof Error ? err.message : String(err));
+      const primaryName = this.llm.getProviderName?.() || 'primary';
+      const primaryId = this.llm.getModel?.() || '';
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[${ this.name }:BaseNode] Primary LLM failed (${ primaryName }):`, errMsg);
+
+      // Never silently swap models out from under the user — when they pick a
+      // specific provider they want to know it failed, not get an answer from
+      // a different model pretending to be the same assistant. Fallback only
+      // runs when the primary is a generic/unselected provider.
+      const explicitPrimary = primaryId === 'claude-code' || primaryName === 'Claude Code';
+      if (explicitPrimary) {
+        throw new Error(`${ primaryName } failed: ${ errMsg }`);
+      }
 
       // Fallback to secondary provider — only if it's healthy
       try {
         const secondary = await getSecondaryService();
         await secondary.initialize();
         if (secondary.isAvailable()) {
-          console.log(`[${ this.name }:BaseNode] Falling back to secondary provider (${ secondary.getModel() })`);
+          const secondaryName = secondary.getProviderName?.() || secondary.getModel();
+          console.warn(`[${ this.name }:BaseNode] Falling back to secondary provider (${ secondaryName }) — primary ${ primaryName } failed`);
           const chatMessages = messages.filter(msg =>
             ['system', 'user', 'assistant'].includes(msg.role),
           );
@@ -1050,6 +1075,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             nodeName,
           });
           if (reply) {
+            // Annotate the reply so downstream UI can badge it as a fallback.
+            (reply.metadata as any).fallback_used = true;
+            (reply.metadata as any).fallback_from = primaryName;
+            (reply.metadata as any).fallback_to = secondaryName;
             this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
             return reply;
           }
@@ -1062,8 +1091,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
 
       // Propagate the error so the chat UI can display it to the user
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`[${ this.name }] LLM provider failed: ${ message }`);
+      throw new Error(`[${ this.name }] LLM provider failed: ${ errMsg }`);
     } finally {
       this.currentNodeRunContext = previousRunContext;
       (state.metadata as any).__toolAccessPolicy = previousToolAccessPolicy;
@@ -1271,7 +1299,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
     };
 
-    const reply = await this.llm!.chatStream(messages, { onToken }, options);
+    // Activity channel for providers that emit rich events (e.g. Claude Code
+    // streams tool_use / thinking blocks). Surface these as thinking bubbles
+    // so the user can see Claude is running tools and not just hanging.
+    // De-dupe consecutive identical messages.
+    let lastActivity = '';
+    const onActivity = (message: string): void => {
+      if (!message || message === lastActivity) return;
+      lastActivity = message;
+      this.wsChatMessage(state, message, 'assistant', 'thinking');
+    };
+
+    const reply = await this.llm!.chatStream(messages, { onToken, onActivity }, options);
 
     if (!reply) {
       return null;

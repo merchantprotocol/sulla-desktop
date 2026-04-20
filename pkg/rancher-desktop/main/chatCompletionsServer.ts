@@ -407,14 +407,6 @@ export class ChatCompletionsServer {
   }
 
   /**
-   * Public wrapper for external services (e.g. CloudflareRelayService) that
-   * want to invoke the same chat pipeline without going over HTTP.
-   */
-  public async processChat(messages: any[], agentId?: string, threadId?: string): Promise<string> {
-    return this.processUserInputDirect(messages, agentId ?? WS_CHANNEL, threadId);
-  }
-
-  /**
    * Process user input directly, without any UI interaction.
    * The agentId is used as the wsChannel so the graph loads that agent's prompts.
    */

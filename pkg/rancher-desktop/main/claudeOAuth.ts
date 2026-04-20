@@ -18,9 +18,14 @@ import * as path from 'path';
 import { BrowserWindow } from 'electron';
 import * as pty from 'node-pty';
 
+import { withSuppressedConnectionStatus } from '@pkg/agent/integrations/integrationFlags';
+import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { resolveLimactlPath, resolveLimaHome } from '@pkg/agent/tools/util/CommandRunner';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
+
+const CLAUDE_INTEGRATION_ID = 'claude-code';
+const CLAUDE_OAUTH_ACCOUNT_ID = 'oauth';
 
 const console = Logging.background;
 
@@ -138,6 +143,51 @@ async function injectTokenIntoVM(token: string): Promise<void> {
 }
 
 /**
+ * Persist the captured OAuth token into the integration vault so the
+ * Integrations page reflects the connection and ClaudeCodeService can
+ * pick it up on its next request.
+ *
+ * Clears any api_key stored under the same account (the two are mutually
+ * exclusive — OAuth supersedes a manually-pasted key).
+ */
+async function persistTokenToVault(token: string): Promise<void> {
+  try {
+    const svc = getIntegrationService();
+    // Wrap connection-status write in the suppression flag so the Integrations
+    // listener in agent/integrations/index.ts doesn't try to spin up a runtime
+    // client for claude-code (there is no IntegrationRegistry factory for it —
+    // credentials are consumed directly by ClaudeCodeService).
+    await withSuppressedConnectionStatus(async() => {
+      await svc.setMultipleValues([
+        {
+          integration_id: CLAUDE_INTEGRATION_ID,
+          account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
+          property:       'oauth_token',
+          value:          token,
+        },
+        {
+          integration_id: CLAUDE_INTEGRATION_ID,
+          account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
+          property:       'api_key',
+          value:          '',
+        },
+        {
+          integration_id: CLAUDE_INTEGRATION_ID,
+          account_id:     CLAUDE_OAUTH_ACCOUNT_ID,
+          property:       'account_label',
+          value:          'Claude Code OAuth',
+        },
+      ]);
+      await svc.setConnectionStatus(CLAUDE_INTEGRATION_ID, true, CLAUDE_OAUTH_ACCOUNT_ID);
+      await svc.setActiveAccount(CLAUDE_INTEGRATION_ID, CLAUDE_OAUTH_ACCOUNT_ID);
+    });
+    console.log('[ClaudeOAuth] Token persisted to integration vault');
+  } catch (err) {
+    console.warn('[ClaudeOAuth] Failed to persist token to integration vault:', err);
+  }
+}
+
+/**
  * Open the OAuth URL in an Electron BrowserWindow and intercept the
  * callback to extract the authorization code and state.
  */
@@ -236,6 +286,9 @@ export function initClaudeOAuthEvents(): void {
         if (result.token) {
           injectTokenIntoVM(result.token).catch((err) => {
             console.warn('[ClaudeOAuth] Failed to inject token into VM:', err);
+          });
+          persistTokenToVault(result.token).catch((err) => {
+            console.warn('[ClaudeOAuth] Failed to persist token to vault:', err);
           });
         }
         resolve(result);
