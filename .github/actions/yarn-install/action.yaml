@@ -48,6 +48,16 @@ runs:
   - run: yarn install --immutable --ignore-platform --ignore-scripts
     shell: bash
 
+  # --ignore-scripts above skipped electron's own install script, so the
+  # electron binary (and chrome-sandbox, node_modules/electron/dist/*)
+  # was never downloaded. Re-run it explicitly. This is also the step
+  # that historically hung silently — running it standalone makes any
+  # hang attributable and surfaces @electron/get's debug output.
+  - run: node node_modules/electron/install.js
+    shell: bash
+    env:
+      DEBUG: 'electron*,@electron*'
+
   # Our postinstall.ts downloads external deps (Lima, Trivy, Moby spec,
   # etc.) and then calls electron-builder install-app-deps to rebuild
   # native modules (node-pty, better-sqlite3) against Electron's ABI.
