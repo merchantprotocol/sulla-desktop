@@ -184,6 +184,17 @@ export async function instantiateSullaStart(): Promise<void> {
     async() => { /* stateless singleton, no teardown */ },
   );
 
+  // Register model-provider IPC handlers early so the UI can query state
+  // even if Postgres/Redis never come up. State loading still gated on DB below.
+  lifecycle.register('model-provider-ipc', [],
+    async() => {
+      const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+      getModelProviderService().registerIpc();
+      console.log('[Background] ModelProviderService IPC handlers registered');
+    },
+    async() => { /* no teardown */ },
+  );
+
   // ── Connection readiness gates ─────────────────────────────────────────
 
   lifecycle.register('postgres', [],
@@ -338,6 +349,18 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     console.log('[Background] Terminal WebSocket server started on ws://127.0.0.1:6108');
   } catch (error) {
     console.error('[Background] Failed to start terminal WebSocket server:', error);
+  }
+
+  // Register ModelProviderService IPC handlers before any window loads.
+  // Lifecycle-gated state loading happens later, but the UI needs to query
+  // state immediately — and instantiateSullaStart() only runs after Lima boots,
+  // which may be blocked on container readiness.
+  try {
+    const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
+    getModelProviderService().registerIpc();
+    console.log('[Background] ModelProviderService IPC handlers registered (early)');
+  } catch (error) {
+    console.error('[Background] Failed to register ModelProviderService IPC:', error);
   }
 
   // Cache it in settings on first request

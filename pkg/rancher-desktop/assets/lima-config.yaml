@@ -136,9 +136,14 @@ provision:
     find /tmp -depth -mtime +3 -delete &
 
     # --- Shared mounts ---
+    # Guard each entry with `mountpoint -q` because the base image may not
+    # make all of these distinct mounts. Historically (pre-2021-09) /etc was
+    # a bind mount in this Alpine ISO; it isn't currently. With `set -e` an
+    # unguarded `mount --make-shared /etc` would fail with "Invalid argument"
+    # and abort the rest of this consolidated script.
     t0=$(T)
     for dir in / /etc /tmp /var/lib; do
-      mount --make-shared "${dir}"
+      mountpoint -q "${dir}" && mount --make-shared "${dir}"
     done
     echo "[boot-perf] shared-mounts: ${t0}s -> $(T)s" >> "$LOG"
 
@@ -147,7 +152,8 @@ provision:
     rc-update add crond default 2>/dev/null || true
     rc-service crond start
 
-    # --- Docker group ---
+    # --- Docker group --- (also duplicated in a dedicated provisioning block
+    # below so it still runs if this consolidated script aborts early.)
     usermod --append --groups docker "{{.User}}"
 
     # --- mkcert (cached) ---
@@ -186,11 +192,117 @@ provision:
     mount --make-shared /sys/fs/cgroup
 
     echo "[boot-perf] consolidated-script done at uptime $(T)s" >> "$LOG"
+- # Persist /var/lib/docker on the data volume.
+  #
+  # Without this, docker's data root sits on the VM's tmpfs root (RAM-backed,
+  # ~6GB ceiling). Two bad consequences:
+  #   1. Non-trivial image pulls fail mid-download with "no space left on
+  #      device" because extraction fills RAM quickly.
+  #   2. Every VM reboot wipes tmpfs, so every image (postgres, redis, all
+  #      extensions) has to be re-pulled from scratch on each startup.
+  #
+  # Bind-mounting /mnt/data/var/lib/docker (on the 98GB ext4 data-volume)
+  # over /var/lib/docker fixes both: docker gets the full persistent disk
+  # AND images/containers survive across reboots.
+  #
+  # Runs as a provision.system script, which completes during cloud-init
+  # before Rancher Desktop issues `rc-service docker start` from the host,
+  # so the bind mount is in place when the daemon initializes.
+  #
+  # Idempotent: on boots where the mount already exists, exits early.
+  # First boot: seeds /mnt/data/var/lib/docker with whatever was pre-created
+  # in the tmpfs /var/lib/docker (usually empty).
+  mode: system
+  script: |
+    #!/bin/sh
+    LOG=/var/log/boot-perf.log
+    PERSIST=/mnt/data/var/lib/docker
+    LIVE=/var/lib/docker
+    t0=$(cut -d' ' -f1 /proc/uptime)
+
+    if mountpoint -q "$LIVE"; then
+      echo "[boot-perf] docker-persist: already mounted, skipping" >> "$LOG"
+      exit 0
+    fi
+
+    mkdir -p "$(dirname "$PERSIST")"
+    if [ ! -d "$PERSIST" ]; then
+      mkdir -p "$PERSIST"
+      chmod 710 "$PERSIST"
+      # Seed persistent dir from any pre-existing tmpfs contents so we don't
+      # lose state on the boot that introduces this mount. `cp -a` preserves
+      # ownership/perms; failure is non-fatal — worst case docker starts clean.
+      if [ -d "$LIVE" ] && [ -n "$(ls -A "$LIVE" 2>/dev/null)" ]; then
+        cp -a "$LIVE/." "$PERSIST/" 2>/dev/null || true
+      fi
+    fi
+
+    mkdir -p "$LIVE"
+    if mount --bind "$PERSIST" "$LIVE"; then
+      echo "[boot-perf] docker-persist: bound ${PERSIST} -> ${LIVE} in $(cut -d' ' -f1 /proc/uptime)s (from ${t0}s)" >> "$LOG"
+    else
+      echo "[boot-perf] docker-persist: bind mount FAILED — docker will use tmpfs (may fill RAM)" >> "$LOG"
+    fi
+- # Ensure the Lima SSH user is in the docker group so that SSH-forwarded
+  # connections to /var/run/docker.sock (→ ~/.rd/docker.sock on the host) can
+  # actually read the socket. Runs as its own script (no set -e) so it is
+  # isolated from any failure in the consolidated setup block above. Idempotent
+  # and runs on every boot. Uses Lima's {{.User}} template — no hardcoded name.
+  mode: system
+  script: |
+    #!/bin/sh
+    LOG=/var/log/boot-perf.log
+    USER_NAME="{{.User}}"
+    # Wait briefly for the docker group to exist. Docker is installed by other
+    # provisioning steps; on a slow first boot the group may not be present yet.
+    for i in 1 2 3 4 5; do
+      getent group docker >/dev/null 2>&1 && break
+      sleep 1
+    done
+    if getent group docker >/dev/null 2>&1 && id "$USER_NAME" >/dev/null 2>&1; then
+      if ! id -nG "$USER_NAME" | tr ' ' '\n' | grep -qx docker; then
+        usermod --append --groups docker "$USER_NAME" \
+          && echo "[boot-perf] docker-group: added $USER_NAME" >> "$LOG" \
+          || echo "[boot-perf] docker-group: usermod failed for $USER_NAME" >> "$LOG"
+      fi
+    else
+      echo "[boot-perf] docker-group: docker group or user $USER_NAME missing" >> "$LOG"
+    fi
 - # we run trivy as root now; remove any cached databases installed into the user directory by previous version
   # trivy.db is 600M and trivy-java.db is 1.1G
   mode: user
   script: |
     rm -rf "${HOME}/.cache/trivy"
+- # Sulla Threat Proxy — DNS baseline (Quad9 threat-blocking resolver).
+  # Quad9 (9.9.9.9) blocks known malicious domains at the DNS layer.
+  # This is a zero-cost first-line defense that runs before any traffic hits
+  # the in-VM mitmproxy. See pkg/rancher-desktop/main/threat-proxy/ for the
+  # rest of the stack (URLhaus, Safe Browsing, VirusTotal, prompt-injection scan).
+  mode: system
+  script: |
+    #!/bin/sh
+    LOG=/var/log/sulla-threat-proxy.log
+    mkdir -p "$(dirname "$LOG")"
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [dns-pivot] installing Quad9 resolver" >> "$LOG"
+    # Write resolv.conf directly. Quad9 primary + secondary, then Cloudflare 1.1.1.2
+    # (malware-blocking "for Families" variant) as fallback.
+    cat > /etc/resolv.conf <<'EOF'
+    # Managed by Sulla Desktop — threat-blocking resolvers
+    nameserver 9.9.9.9
+    nameserver 149.112.112.112
+    nameserver 1.1.1.2
+    options timeout:2 attempts:2
+    EOF
+    # Prevent DHCP/udhcpc from clobbering our resolvers on lease renewal.
+    # chattr +i is a no-op on tmpfs/overlay; we guard it so the script never fails.
+    chattr +i /etc/resolv.conf 2>/dev/null || true
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [dns-pivot] resolv.conf pinned: $(cat /etc/resolv.conf | tr '\n' ';')" >> "$LOG"
+    # Smoke test — resolve a benign domain to confirm DNS actually works.
+    if nslookup example.com 9.9.9.9 >/dev/null 2>&1; then
+      echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [dns-pivot] Quad9 reachable" >> "$LOG"
+    else
+      echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [dns-pivot] WARN: Quad9 resolution failed" >> "$LOG"
+    fi
 - # Final boot timing — captures end-of-provisioning state
   mode: system
   script: |

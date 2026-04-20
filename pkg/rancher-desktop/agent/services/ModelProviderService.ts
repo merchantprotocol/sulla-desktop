@@ -64,16 +64,28 @@ class ModelProviderService {
   };
 
   private initialized = false;
+  private ipcRegistered = false;
   private changeListeners: ChangeListener[] = [];
 
   // ── Lifecycle ──────────────────────────────────────────────────
 
+  /**
+   * Register IPC handlers. Safe to call before the database is ready —
+   * handlers respond from in-memory defaults and catch DB errors internally.
+   * Idempotent; safe to call multiple times.
+   */
+  registerIpc(): void {
+    if (this.ipcRegistered) return;
+    this.registerIpcHandlers();
+    this.ipcRegistered = true;
+  }
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    // Register IPC handlers FIRST so the UI can always query providers,
-    // even if DB-backed state loading fails.
-    this.registerIpcHandlers();
+    // Ensure IPC handlers are registered. This is idempotent — if they were
+    // already registered early (before DB was ready), this is a no-op.
+    this.registerIpc();
 
     // Load persisted state. If this throws, the service still responds to
     // IPC with sensible defaults from the initial state object.
