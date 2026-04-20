@@ -69,11 +69,18 @@ function loadPersistedTabs(): BrowserTab[] {
 
 function persistTabs(tabList: BrowserTab[]): void {
   try {
+    // Agent-origin tabs (created by the `browser/tab` tool — they carry an
+    // `assetId`) are ephemeral. They should not survive app restart: the
+    // agent can always reopen what it needs on the next run, and persisting
+    // them is exactly how we end up restoring hundreds of WebContentsViews
+    // and blacking out the main chat window. Only user-initiated tabs
+    // (no assetId) persist.
+    const userTabs = tabList.filter(t => !t.assetId);
     // Strip large HTML content + enforce the cap on write too, so a live
     // runaway can't balloon localStorage between app launches.
-    const capped = tabList.length > MAX_RESTORED_TABS
-      ? tabList.slice(tabList.length - MAX_RESTORED_TABS)
-      : tabList;
+    const capped = userTabs.length > MAX_RESTORED_TABS
+      ? userTabs.slice(userTabs.length - MAX_RESTORED_TABS)
+      : userTabs;
     const toStore = capped.map((t) => {
       if (t.content && t.content.length > 50_000) {
         return { ...t, content: undefined };
