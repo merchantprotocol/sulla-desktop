@@ -118,6 +118,14 @@
             >
               {{ routine.status === 'archive' ? 'Unarchive' : 'Archive' }}
             </button>
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitem"
+              @click="emitAction('export')"
+            >
+              Export…
+            </button>
             <div class="menu-sep" />
             <button
               type="button"
@@ -158,6 +166,7 @@ const emit = defineEmits<{
   (e: 'duplicate'): void;
   (e: 'archive'): void;
   (e: 'delete'): void;
+  (e: 'export'): void;
 }>();
 
 // ── Actions kebab menu ──
@@ -189,7 +198,7 @@ function onDocClick() {
   closeMenu();
 }
 
-function emitAction(action: 'duplicate' | 'archive' | 'delete') {
+function emitAction(action: 'duplicate' | 'archive' | 'delete' | 'export') {
   closeMenu();
   emit(action);
 }
@@ -509,4 +518,49 @@ const timingLabel = computed(() => {
   border-color: rgba(196, 212, 230, 0.75);
 }
 .btn.ghost { background: transparent; }
+
+.kebab-wrap {
+  position: relative;
+  display: inline-block;
+}
+.btn.kebab {
+  padding: 4px 10px;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.kebab-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 140px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: rgba(20, 30, 54, 0.96);
+  border: 1px solid rgba(168, 192, 220, 0.3);
+  border-radius: 4px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+  z-index: 20;
+  backdrop-filter: blur(6px);
+}
+.kebab-menu li {
+  padding: 7px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--steel-100);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.kebab-menu li:hover:not(.disabled) {
+  background: rgba(74, 111, 165, 0.22);
+  color: white;
+}
+.kebab-menu li.disabled {
+  color: var(--steel-500);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
 </style>

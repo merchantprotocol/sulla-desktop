@@ -161,6 +161,7 @@
               @duplicate="onDuplicate(r.id)"
               @archive="onToggleArchive(r.id)"
               @delete="onDelete(r)"
+              @export="onExport(r.id)"
             />
           </ActSection>
 
@@ -182,6 +183,7 @@
               @duplicate="onDuplicate(r.id)"
               @archive="onToggleArchive(r.id)"
               @delete="onDelete(r)"
+              @export="onExport(r.id)"
             />
           </ActSection>
 
@@ -203,6 +205,7 @@
               @duplicate="onDuplicate(r.id)"
               @archive="onToggleArchive(r.id)"
               @delete="onDelete(r)"
+              @export="onExport(r.id)"
             />
           </ActSection>
 
@@ -361,6 +364,7 @@ import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
 import TemplateStrip from '@pkg/components/routines/TemplateStrip.vue';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { useStartupProgress } from './agent/useStartupProgress';
 
@@ -520,6 +524,20 @@ async function onDelete(routine: { id: string; name: string }) {
 async function onRestoreRoutine(id: string) {
   await routinesController.toggleArchive(id);
   emit('restore-routine', id);
+}
+
+async function onExport(id: string) {
+  // Fires the native save dialog in the main process; surfaces any
+  // failure through the routines controller's existing error channel
+  // so the view layer stays consistent with other IPC failure paths.
+  try {
+    await ipcRenderer.invoke('routines-export', id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // error is a readonly ref on the controller; mirror via console.
+    console.error('[Routines] Export failed:', err);
+    window.alert(`Export failed: ${ msg }`);
+  }
 }
 </script>
 
