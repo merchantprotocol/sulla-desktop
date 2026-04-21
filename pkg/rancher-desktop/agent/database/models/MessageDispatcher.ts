@@ -67,7 +67,6 @@ export interface DispatchContext {
     threadId?: string,
     nodeId?: string,
   ): void;
-  applyAssetLifecycleUpdate(data: any, type: string): boolean;
   removeAsset(assetId: string): void;
 }
 
@@ -420,24 +419,9 @@ function handleSpeakDispatch(ctx: DispatchContext, agentId: string, msgThreadId:
   }
 }
 
-// ─── Handler: asset lifecycle ───────────────────────────────────
-
-function handleRegisterOrActivateAsset(ctx: DispatchContext, _agentId: string, _threadId: string, msg: WebSocketMessage): void {
-  const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-  if (ctx.applyAssetLifecycleUpdate(data, 'register_or_activate_asset')) return;
-  console.error('[MessageDispatcher] register_or_activate_asset payload not handled', { data });
-}
-
-function handleDeactivateAsset(ctx: DispatchContext, _agentId: string, _threadId: string, msg: WebSocketMessage): void {
-  const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-  const assetId = String(data?.assetId || '').trim();
-  if (assetId) {
-    ctx.removeAsset(assetId);
-    console.log(`[MessageDispatcher] deactivate_asset: removed ${ assetId }`);
-  } else {
-    console.error('[MessageDispatcher] deactivate_asset: missing assetId', { data });
-  }
-}
+// Asset lifecycle handlers (register_or_activate_asset, deactivate_asset)
+// were removed. Tabs are now owned by main-process TabRegistry; the agent
+// tool opens/closes them directly without WS round-trips.
 
 // ─── Handler: progress / plan_update ────────────────────────────
 
@@ -1015,8 +999,8 @@ export function createMessageDispatcher(): MessageDispatcher {
   dispatcher.register('speak_dispatch', handleSpeakDispatch);
 
   // Assets
-  dispatcher.register('register_or_activate_asset', handleRegisterOrActivateAsset);
-  dispatcher.register('deactivate_asset', handleDeactivateAsset);
+  // register_or_activate_asset / deactivate_asset handlers removed —
+  // see TabRegistry.
 
   // Progress / tools
   dispatcher.register('progress', handleProgress);

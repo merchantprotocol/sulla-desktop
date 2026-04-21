@@ -81,7 +81,6 @@ export class AgentPersonaService {
 
   readonly messages:     ChatMessage[] = reactive([]);
   private readonly toolRunIdToMessageId = new Map<string, string>();
-  readonly activeAssets: PersonaSidebarAsset[] = reactive([]);
 
   /**
    * Direct speak event listeners — allows VoicePipeline to receive speak events
@@ -152,160 +151,12 @@ export class AgentPersonaService {
     this.connectAndListen();
   }
 
-  registerIframeAsset(input: {
-    id:         string;
-    title:      string;
-    url:        string;
-    active?:    boolean;
-    skillSlug?: string;
-    collapsed?: boolean;
-    refKey?:    string;
-  }): void {
-    const url = String(input.url || '').trim();
-
-    if (!url) {
-      console.error('[AgentPersonaModel] registerIframeAsset called with empty url', input);
-      return;
-    }
-
-    console.log('[AgentPersonaModel] registerIframeAsset', {
-      id:        input.id,
-      url,
-      skillSlug: input.skillSlug || '',
-    });
-
-    this.upsertAsset({
-      id:        input.id,
-      type:      'browser',
-      title:     input.title,
-      active:    input.active ?? true,
-      skillSlug: input.skillSlug,
-      collapsed: input.collapsed ?? true,
-      updatedAt: Date.now(),
-      url,
-      refKey:    input.refKey,
-    });
-  }
-
-  private applyAssetLifecycleUpdate(data: any, phase: string): boolean {
-    const asset = (data?.asset && typeof data.asset === 'object') ? data.asset : null;
-    if (!asset) {
-      return false;
-    }
-
-    if (asset?.type === 'browser') {
-      const rawSlug = asset.skillSlug ?? asset.selected_skill_slug ?? data?.selected_skill_slug;
-      const skillSlug = typeof rawSlug === 'string' ? rawSlug.trim().toLowerCase() : '';
-      const requestedId = String(asset.id || `iframe_${ Date.now() }`);
-      const requestedUrl = String(asset.url || '');
-
-      console.log('[AgentPersonaModel] websocket asset lifecycle iframe', {
-        phase,
-        requestedId,
-        requestedUrl,
-        skillSlug,
-        active:    asset.active !== false,
-        collapsed: asset.collapsed !== false,
-      });
-
-      this.registerIframeAsset({
-        id:        requestedId,
-        title:     String(asset.title || 'Website'),
-        url:       requestedUrl,
-        active:    asset.active !== false,
-        skillSlug: skillSlug || undefined,
-        collapsed: asset.collapsed !== false,
-        refKey:    typeof asset.refKey === 'string' ? asset.refKey : undefined,
-      });
-
-      return true;
-    }
-
-    if (asset?.type === 'document') {
-      const documentId = String(asset.id || `doc_${ Date.now() }`);
-      const content = String(asset.content || '');
-      const existingDocument = this.activeAssets.find((item) => item.id === documentId && item.type === 'document');
-
-      if (existingDocument) {
-        this.updateDocumentAssetContent(documentId, content);
-      } else {
-        this.registerDocumentAsset({
-          id:        documentId,
-          title:     String(asset.title || 'Document'),
-          content,
-          active:    asset.active !== false,
-          collapsed: asset.collapsed !== false,
-          refKey:    typeof asset.refKey === 'string' ? asset.refKey : undefined,
-        });
-      }
-
-      return true;
-    }
-
-    return false;
-  }
-
-  registerDocumentAsset(input: {
-    id:         string;
-    title:      string;
-    content:    string;
-    active?:    boolean;
-    collapsed?: boolean;
-    refKey?:    string;
-  }): void {
-    this.upsertAsset({
-      id:        input.id,
-      type:      'document',
-      title:     input.title,
-      active:    input.active ?? input.content.trim().length > 0,
-      collapsed: input.collapsed ?? true,
-      updatedAt: Date.now(),
-      content:   input.content,
-      refKey:    input.refKey,
-    });
-  }
-
-  updateDocumentAssetContent(assetId: string, content: string): void {
-    const asset = this.activeAssets.find((item) => item.id === assetId && item.type === 'document');
-    if (!asset) {
-      return;
-    }
-    asset.content = content;
-    asset.active = content.trim().length > 0;
-    asset.updatedAt = Date.now();
-  }
-
-  setAssetCollapsed(assetId: string, collapsed: boolean): void {
-    const asset = this.activeAssets.find((item) => item.id === assetId);
-    if (!asset) {
-      return;
-    }
-
-    if (!collapsed) {
-      this.activeAssets.forEach((item) => {
-        item.collapsed = item.id !== assetId;
-      });
-    } else {
-      asset.collapsed = true;
-    }
-    asset.updatedAt = Date.now();
-  }
-
-  removeAsset(assetId: string): void {
-    const index = this.activeAssets.findIndex((item) => item.id === assetId);
-    if (index >= 0) {
-      this.activeAssets.splice(index, 1);
-    }
-  }
-
-  private upsertAsset(asset: PersonaSidebarAsset): void {
-    const existing = this.activeAssets.find((item) => item.id === asset.id);
-    if (existing) {
-      Object.assign(existing, asset, { updatedAt: Date.now() });
-      return;
-    }
-    this.activeAssets.push(asset);
-  }
+  // Browser/document asset tracking was removed. Tabs are now owned by the
+  // main-process TabRegistry; the renderer mirrors them via `tabs:change` IPC
+  // in useBrowserTabs. setAssetCollapsed / removeAsset remain as no-ops so
+  // existing callers don't throw during the transition.
+  setAssetCollapsed(_assetId: string, _collapsed: boolean): void {}
+  removeAsset(_assetId: string): void {}
 
   private connectAndListen() {
     const id = this.state.agentId;
@@ -653,11 +504,10 @@ export class AgentPersonaService {
       registry:                  this.registry,
       toolRunIdToMessageId:      this.toolRunIdToMessageId,
       speakListeners:            this.speakListeners,
-      setThreadId:               (id: string) => this.setThreadId(id),
-      getThreadId:               () => this.getThreadId(),
-      handleTokenInfo:           (...args) => this.handleTokenInfo(...args),
-      applyAssetLifecycleUpdate: (data: any, type: string) => this.applyAssetLifecycleUpdate(data, type),
-      removeAsset:               (id: string) => this.removeAsset(id),
+      setThreadId:     (id: string) => this.setThreadId(id),
+      getThreadId:     () => this.getThreadId(),
+      handleTokenInfo: (...args) => this.handleTokenInfo(...args),
+      removeAsset:     (id: string) => this.removeAsset(id),
     };
   }
 

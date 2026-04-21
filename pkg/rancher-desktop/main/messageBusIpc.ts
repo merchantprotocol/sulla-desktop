@@ -6,6 +6,7 @@ import { BrowserWindow, ipcMain, webContents } from 'electron';
 
 import { IpcMessageBus } from '@pkg/agent/services/IpcMessageBus';
 import Logging from '@pkg/utils/logging';
+import { safeSend } from '@pkg/utils/safeSend';
 
 const console = Logging.background;
 
@@ -25,13 +26,7 @@ function broadcastToRenderers(channelId: string, message: unknown, excludeWebCon
     if (wcId === excludeWebContentsId) continue;
     const channels = subscriptions.get(wcId);
     if (channels?.has(channelId)) {
-      try {
-        if (!wc.isDestroyed()) {
-          wc.send('message-bus:message', channelId, message);
-        }
-      } catch {
-        // webContents was destroyed between check and send
-      }
+      safeSend(wc, 'message-bus:message', channelId, message);
     }
   }
 }

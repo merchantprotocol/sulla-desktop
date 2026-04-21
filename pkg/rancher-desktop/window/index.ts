@@ -101,6 +101,38 @@ export function createWindow(name: string, url: string, options: Electron.Browse
   window.webContents.on('did-fail-load', (event, errorCode, errorDescription, url) => {
     console.log(`Failed to load ${ url }: ${ errorCode } (${ errorDescription })`, event);
   });
+
+  // Renderer crashed (OOM, uncaught exception, killed). Without this handler,
+  // the window stays blank and any timer/observer still holding a reference
+  // to webContents spams "Render frame was disposed" errors. Auto-reload so
+  // the user gets a usable window back instead of having to quit and relaunch.
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[createWindow] renderer gone for "${ name }": reason=${ details.reason } exitCode=${ details.exitCode }`);
+    if (details.reason === 'clean-exit' || details.reason === 'killed') {
+      // Clean exits are expected during app quit; killed can be user action.
+      return;
+    }
+    // Attempt auto-reload once. The window shell stays; we just replace the
+    // renderer. loadURL is a no-op if the window is already being destroyed.
+    try {
+      if (!window?.isDestroyed()) {
+        console.log(`[createWindow] auto-reloading "${ name }" after renderer crash`);
+        window?.webContents.reload();
+      }
+    } catch (err) {
+      console.error(`[createWindow] auto-reload of "${ name }" failed:`, err);
+    }
+  });
+
+  // Renderer is alive but wedged (tight loop, sync XHR, etc.). Log for
+  // diagnostics. Don't auto-kill — the user may have slow work running.
+  window.webContents.on('unresponsive', () => {
+    console.warn(`[createWindow] renderer unresponsive for "${ name }"`);
+  });
+  window.webContents.on('responsive', () => {
+    console.log(`[createWindow] renderer responsive again for "${ name }"`);
+  });
+
   console.debug('createWindow() name:', name, ' url:', url);
   window.loadURL(url);
   windowMapping[name] = window.id;

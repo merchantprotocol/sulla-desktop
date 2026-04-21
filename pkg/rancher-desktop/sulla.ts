@@ -615,12 +615,19 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   const { BrowserTabViewManager } = await import('@pkg/window/browserTabViewManager');
   const tabViewManager = BrowserTabViewManager.getInstance();
 
-  ipcMainProxy.handle('browser-tab-view:create', async(_event: Electron.IpcMainInvokeEvent, tabId: string, url: string, bounds: Electron.Rectangle) => {
-    tabViewManager.createView(tabId, url, bounds);
+  const { tabRegistry } = await import('@pkg/main/browserTabs/TabRegistry');
+
+  // Renderer asks main to ensure a WebContentsView exists for `tabId` pointing
+  // at `url`. Idempotent: if it already exists, navigate it to the new URL.
+  // View bounds are set separately via 'browser-tab-view:set-bounds' once the
+  // UI knows where to render. This is the single entry point into the
+  // TabRegistry from the UI; agent tools call tabRegistry.open() directly.
+  ipcMainProxy.handle('browser-tab-view:create', async(_event: Electron.IpcMainInvokeEvent, tabId: string, url: string, _bounds: Electron.Rectangle) => {
+    tabRegistry.open({ assetId: tabId, url, origin: 'user' });
   });
 
   ipcMainProxy.handle('browser-tab-view:destroy', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
-    tabViewManager.destroyView(tabId);
+    tabRegistry.close(tabId);
   });
 
   ipcMainProxy.handle('browser-tab-view:navigate', async(_event: Electron.IpcMainInvokeEvent, tabId: string, url: string) => {

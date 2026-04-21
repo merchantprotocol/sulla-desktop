@@ -259,11 +259,6 @@ import SecretaryMode from './SecretaryMode.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 
-import {
-  WebviewHostBridge,
-  setActiveHostBridge,
-  hostBridgeRegistry,
-} from '@pkg/agent/scripts/injected';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
@@ -507,103 +502,9 @@ function onSidePanelStateChanged(_event: unknown, state: { open: boolean; width:
   nextTick(() => sendBounds());
 }
 
-// Bridge registration — lets agent tools see this tab as open
-let hostBridge: WebviewHostBridge | null = null;
-
-/** Asset ID used by the bridge registry and agent tools */
-const bridgeId = () => {
-  const bt = getTab(props.tabId);
-  return bt?.assetId || `browser-tab-${ props.tabId }`;
-};
-
-/**
- * Create a WebviewLike adapter that routes executeJavaScript through IPC
- * to the main process BrowserTabViewManager instead of an iframe.
- *
- * Supports both 'dom-ready' and 'ipc-message' events so the
- * WebviewHostBridge state machine can transition properly when using
- * WebContentsView-based tabs (where guest IPC goes through the main
- * process rather than directly to the renderer via sendToHost).
- */
-function createViewBridgeAdapter() {
-  const domReadyListeners: ((event: unknown) => void)[] = [];
-  const ipcMessageListeners: ((event: unknown) => void)[] = [];
-
-  return {
-    get src() { return addressBarUrl.value },
-    getURL() { return addressBarUrl.value },
-    async executeJavaScript(code: string): Promise<unknown> {
-      try {
-        return await ipcRenderer.invoke('browser-tab-view:exec-js', props.tabId, code);
-      } catch (err) {
-        console.warn('[BrowserTab] executeJavaScript via IPC failed:', err);
-        return undefined;
-      }
-    },
-    addEventListener(event: string, listener: (event: unknown) => void) {
-      if (event === 'dom-ready') domReadyListeners.push(listener);
-      if (event === 'ipc-message') ipcMessageListeners.push(listener);
-    },
-    removeEventListener(event: string, listener: (event: unknown) => void) {
-      if (event === 'dom-ready') {
-        const idx = domReadyListeners.indexOf(listener);
-        if (idx >= 0) domReadyListeners.splice(idx, 1);
-      }
-      if (event === 'ipc-message') {
-        const idx = ipcMessageListeners.indexOf(listener);
-        if (idx >= 0) ipcMessageListeners.splice(idx, 1);
-      }
-    },
-    emitDomReady() {
-      for (const fn of domReadyListeners) {
-        try { fn({}) } catch { /* no-op */ }
-      }
-    },
-    emitIpcMessage(channel: string, ...args: unknown[]) {
-      const event = { channel, args };
-      for (const fn of ipcMessageListeners) {
-        try { fn(event) } catch { /* no-op */ }
-      }
-    },
-  };
-}
-
-let bridgeAdapter: ReturnType<typeof createViewBridgeAdapter> | null = null;
-
-/** IPC listener refs for cleanup */
-let onBridgeEvent: ((_event: unknown, msg: { tabId: string; type: string; data: unknown }) => void) | null = null;
-let onDomReady: ((_event: unknown, msg: { tabId: string }) => void) | null = null;
-
-function setupBridge() {
-  bridgeAdapter = createViewBridgeAdapter();
-  hostBridge = new WebviewHostBridge({ injectDelayMs: 100 });
-  hostBridge.attach(bridgeAdapter);
-  setActiveHostBridge(hostBridge);
-
-  const id = bridgeId();
-  hostBridgeRegistry.registerBridge(id, hostBridge, {
-    title: getTab(props.tabId)?.title || 'Browser Tab',
-    url:   addressBarUrl.value,
-  });
-  hostBridgeRegistry.setActiveBridge(id);
-
-  // Listen for bridge events forwarded from the main process.
-  // These are sulla:injected, sulla:routeChanged, etc. from the guest
-  // preload, routed through the main process because WebContentsView
-  // IPC doesn't go directly to the renderer like webview sendToHost.
-  onBridgeEvent = (_event: unknown, msg: { tabId: string; type: string; data: unknown }) => {
-    if (msg.tabId !== props.tabId || !bridgeAdapter) return;
-    bridgeAdapter.emitIpcMessage('sulla:guest:bridge', { type: msg.type, data: msg.data });
-  };
-  ipcRenderer.on('browser-tab-view:bridge-event' as any, onBridgeEvent);
-
-  // Listen for dom-ready forwarded from the main process.
-  onDomReady = (_event: unknown, msg: { tabId: string }) => {
-    if (msg.tabId !== props.tabId || !bridgeAdapter) return;
-    bridgeAdapter.emitDomReady();
-  };
-  ipcRenderer.on('browser-tab-view:dom-ready' as any, onDomReady);
-}
+// Bridge setup removed: agent tools now talk to the tab's WebContents
+// directly via main-process TabRegistry + GuestBridge. This component is
+// now pure chrome (address bar + WebContentsView host).
 
 const viewContainerRef = ref<HTMLDivElement | null>(null);
 const addressInput = ref<HTMLInputElement | null>(null);
@@ -698,10 +599,12 @@ function ensureView(url: string) {
       }
       : { x: 0, y: 0, width: 800, height: 600 };
 
+    // Ensure the view exists in the main-process TabRegistry (idempotent —
+    // if it already exists, this navigates to `url`). Then apply the
+    // chrome-derived bounds. Splitting creation from positioning means the
+    // agent can open a tab before the UI knows where to render it.
     ipcRenderer.invoke('browser-tab-view:create', props.tabId, url, bounds);
-
-    // Register with bridge so agent tools can see this tab
-    setupBridge();
+    ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, bounds);
 
     if (props.isVisible) {
       ipcRenderer.invoke('browser-tab-view:show', props.tabId);
@@ -791,7 +694,6 @@ function onStateUpdate(_event: unknown, state: { tabId: string; url: string; tit
   loading.value = state.isLoading;
   if (state.title) {
     updateTab(props.tabId, { title: state.title, url: state.url });
-    hostBridgeRegistry.updateMeta(bridgeId(), { title: state.title, url: state.url });
   }
 }
 
@@ -816,10 +718,6 @@ watch([() => props.isVisible, showOverlay], ([visible]) => {
   if (shouldShowView()) {
     ipcRenderer.invoke('browser-tab-view:show', props.tabId);
     nextTick(() => sendBounds());
-    if (hostBridge) {
-      hostBridgeRegistry.setActiveBridge(bridgeId());
-      setActiveHostBridge(hostBridge);
-    }
     // Show this tab's side panel (if it has one) when tab becomes visible
     ipcRenderer.invoke('chrome-api:sidePanel:switchTab' as any, props.tabId);
   } else if (viewCreated) {
@@ -858,22 +756,11 @@ onUnmounted(() => {
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.removeListener('browser-context-menu:ai-action' as any, onContextMenuAIAction);
   ipcRenderer.removeListener('side-panel:state-changed' as any, onSidePanelStateChanged);
-  if (onBridgeEvent) ipcRenderer.removeListener('browser-tab-view:bridge-event' as any, onBridgeEvent);
-  if (onDomReady) ipcRenderer.removeListener('browser-tab-view:dom-ready' as any, onDomReady);
-  onBridgeEvent = null;
-  onDomReady = null;
 
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
   }
-
-  // Unregister from bridge registry
-  hostBridgeRegistry.unregisterBridge(bridgeId());
-  hostBridge?.detach();
-  hostBridge = null;
-  bridgeAdapter = null;
-  setActiveHostBridge(null);
 
   if (viewCreated) {
     ipcRenderer.invoke('browser-tab-view:destroy', props.tabId);

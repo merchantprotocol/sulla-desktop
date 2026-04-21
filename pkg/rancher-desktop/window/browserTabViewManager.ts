@@ -4,7 +4,9 @@ import Electron, { WebContentsView, session } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import Logging from '@pkg/utils/logging';
+import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import paths from '@pkg/utils/paths';
+import { safeSend } from '@pkg/utils/safeSend';
 import { getWindow, openUrlInApp } from '@pkg/window';
 import { buildContextMenuInjection } from '@pkg/window/browserContextMenu';
 
@@ -121,9 +123,16 @@ export class BrowserTabViewManager {
   // ---------------------------------------------------------------------------
 
   createView(tabId: string, url: string, bounds: Electron.Rectangle): void {
-    if (this.views.has(tabId)) {
-      console.warn(`[BrowserTabView] View already exists for tabId=${ tabId }, destroying first`);
-      this.destroyView(tabId);
+    // Idempotent: if the view already exists, just navigate (if URL changed)
+    // and update bounds. Previously this destroyed and recreated, which
+    // nuked in-flight bridge calls when the agent and UI raced on creation.
+    const existing = this.views.get(tabId);
+    if (existing) {
+      if (existing.webContents.getURL() !== url) {
+        existing.webContents.loadURL(url).catch(() => {});
+      }
+      existing.setBounds(bounds);
+      return;
     }
 
     const mainWindow = getWindow('main-agent');
@@ -148,6 +157,14 @@ export class BrowserTabViewManager {
     // Do NOT add to window yet — the view stays hidden until showView() is
     // called.  This prevents new tabs from overlaying the current screen.
     this.views.set(tabId, view);
+
+    // Forward guest console output to main log so we can see errors from the
+    // preload / guest bridge script. Without this, guest-side exceptions are
+    // invisible (the guest webContents isn't a window with its own log).
+    view.webContents.on('console-message', (event) => {
+      const { level, message, lineNumber, sourceId } = event;
+      console.log(`[BrowserTabView:${ tabId }] [${ level }] ${ message } (${ sourceId }:${ lineNumber })`);
+    });
 
     // Wire up event listeners that forward state to the renderer
     this.attachListeners(tabId, view, mainWindow);
@@ -430,7 +447,7 @@ export class BrowserTabViewManager {
       }
 
       if (matches.length > 0 && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('vault:autofill-offer', {
+        safeSend(mainWindow.webContents, 'vault:autofill-offer', {
           tabId,
           origin,
           accounts: matches,
@@ -704,10 +721,6 @@ export class BrowserTabViewManager {
     });
 
     const sendState = () => {
-      if (mainWindow.isDestroyed()) {
-        return;
-      }
-
       // If we're showing an error page (data: URL), report the original
       // failed URL so the address bar stays readable and retryable.
       const currentUrl = wc.getURL();
@@ -715,7 +728,19 @@ export class BrowserTabViewManager {
         ? this.failedUrls.get(tabId)!
         : currentUrl;
 
-      mainWindow.webContents.send('browser-tab-view:state-update', {
+      // Update the main-process registry — it fans out to subscribers via
+      // its own onChange event. Eliminates the direct renderer IPC path
+      // and the associated "Render frame was disposed" races.
+      tabRegistry.updateMeta(tabId, {
+        url:       displayUrl,
+        title:     wc.getTitle(),
+        isLoading: wc.isLoading(),
+      });
+
+      // Still send the full navigation state to the main window for the
+      // address bar chrome (handles back/forward state which is not in
+      // the registry shape).
+      safeSend(mainWindow.webContents, 'browser-tab-view:state-update', {
         tabId,
         url:          displayUrl,
         title:        wc.getTitle(),
@@ -815,9 +840,7 @@ export class BrowserTabViewManager {
         case 'ai-translate':
         case 'ai-explain-page':
         case 'ai-screenshot':
-          if (!mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('browser-context-menu:ai-action', { tabId, action, ...data });
-          }
+          safeSend(mainWindow.webContents, 'browser-context-menu:ai-action', { tabId, action, ...data });
           break;
 
         default:
@@ -870,27 +893,11 @@ export class BrowserTabViewManager {
       }
     });
 
-    // ── Bridge events: forward sulla:* events to renderer for WebviewHostBridge ──
-    // The guest preload sends events via ipcRenderer.send('browser-tab-view:bridge-event').
-    // Forward bridge lifecycle events (sulla:injected, sulla:routeChanged,
-    // sulla:click, sulla:dialog, sulla:pageContent, sulla:contentAdded) to the renderer
-    // so the WebviewHostBridge state machine can transition properly.
-    wc.ipc.on('browser-tab-view:bridge-event', (_event: Electron.IpcMainEvent, msg: { type: string; data: any }) => {
-      if (!msg?.type?.startsWith('sulla:')) return;
-      // Skip vault and context-menu events — they're handled by dedicated handlers below.
-      if (msg.type.startsWith('sulla:vault:') || msg.type === 'context-menu-action') return;
-
-      if (!mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('browser-tab-view:bridge-event', { tabId, ...msg });
-      }
-    });
-
-    // Forward dom-ready to the renderer so the bridge adapter can notify WebviewHostBridge.
-    wc.on('dom-ready', () => {
-      if (!mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('browser-tab-view:dom-ready', { tabId });
-      }
-    });
+    // Previously we forwarded sulla:injected / sulla:routeChanged / sulla:click
+    // / sulla:pageContent / sulla:contentAdded / sulla:dialog to the renderer
+    // for the WebviewHostBridge state machine. That machine is gone; no
+    // consumer left. Vault and context-menu events still have dedicated
+    // wc.ipc.on handlers below — those stay.
 
     // ── Vault: handle bridge events from guest pages ──
     // Route vault-related events from the guest bridge to the renderer.

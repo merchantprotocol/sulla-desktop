@@ -19,7 +19,7 @@ import { EventEmitter } from 'events';
 import Electron, { WebContentsView, session } from 'electron';
 
 import type { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
-import { hostBridgeProxy } from '@pkg/agent/scripts/injected/HostBridgeProxy';
+import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import Logging from '@pkg/utils/logging';
 import { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
 
@@ -334,7 +334,7 @@ export class ChromeApiService implements ChromeApi {
     },
 
     query: async(queryInfo: TabQueryInfo): Promise<ChromeTab[]> => {
-      const assets = await hostBridgeProxy.getAllAssetInfo();
+      const assets = tabRegistry.list().map(t => ({ assetId: t.assetId, title: t.title, url: t.url, isInjected: !t.isLoading }));
       const hiddenIds = [...this.hiddenViews.keys()];
       const allTabIds = [
         ...assets.map((a) => a.assetId),
@@ -1488,7 +1488,7 @@ export class ChromeApiService implements ChromeApi {
     const wc = this.tabViewManager.getWebContents(tabId);
 
     if (wc) {
-      const activeAssetId = await hostBridgeProxy.getActiveAssetId();
+      const activeAssetId = tabRegistry.getActiveAssetId();
 
       return {
         id:     tabId,
@@ -1501,11 +1501,11 @@ export class ChromeApiService implements ChromeApi {
     }
 
     // Try to get info from the bridge registry (for non-WebContentsView tabs)
-    const assets = await hostBridgeProxy.getAllAssetInfo();
+    const assets = tabRegistry.list().map(t => ({ assetId: t.assetId, title: t.title, url: t.url, isInjected: !t.isLoading }));
     const asset = assets.find((a) => a.assetId === tabId);
 
     if (asset) {
-      const activeAssetId = await hostBridgeProxy.getActiveAssetId();
+      const activeAssetId = tabRegistry.getActiveAssetId();
 
       return {
         id:     tabId,

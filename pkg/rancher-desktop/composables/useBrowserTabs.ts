@@ -112,54 +112,92 @@ const AGENT_TAB_CHECK_INTERVAL_MS = 60 * 1000;    // 1 minute
 const restoredTabs = loadPersistedTabs();
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
-// Enforce the agent-tab cap whenever the array changes. Oldest first (array
-// order = creation order since createTab always .push's).
-watch(tabs, (current) => {
+// Enforce the agent-tab cap. Called synchronously from the write paths that
+// can push the count over the limit (createTab + updateTab with a new
+// assetId). Previously this ran as a `watch(tabs, deep: true)`, but because
+// it mutates the same array it watches, any other deep write on tabs
+// (e.g. lastAccessedAt updates from state-update IPC) re-triggered the
+// watcher and a feedback loop could spin the renderer. Inline is
+// deterministic and non-reactive — no self-triggering possible.
+function enforceAgentTabCap(): void {
   const agentIndexes: number[] = [];
-  for (let i = 0; i < current.length; i++) {
-    if (current[i].assetId) agentIndexes.push(i);
+  for (let i = 0; i < tabs.length; i++) {
+    if (tabs[i].assetId) agentIndexes.push(i);
   }
   const overflow = agentIndexes.length - MAX_AGENT_TABS;
-  if (overflow > 0) {
-    // Slice once, splice once (reversed) so indexes stay valid while removing.
-    const toRemove = agentIndexes.slice(0, overflow).reverse();
-    for (const idx of toRemove) current.splice(idx, 1);
-    console.warn(`[useBrowserTabs] Evicted ${ overflow } agent tab(s) over cap (${ MAX_AGENT_TABS })`);
-  }
-}, { deep: true });
+  if (overflow <= 0) return;
+  // Splice in reverse so earlier indexes stay valid as we remove.
+  const toRemove = agentIndexes.slice(0, overflow).reverse();
+  for (const idx of toRemove) tabs.splice(idx, 1);
+  console.warn(`[useBrowserTabs] Evicted ${ overflow } agent tab(s) over cap (${ MAX_AGENT_TABS })`);
+}
+
+// Run once on startup in case persisted state had >MAX_AGENT_TABS agent tabs.
+enforceAgentTabCap();
 
 // Persist tab state on every change (user-origin tabs only — see persistTabs)
 watch(tabs, (current) => {
   persistTabs([...current]);
 }, { deep: true });
 
-// Idle-sweep: close agent-origin tabs that haven't been touched in
-// AGENT_TAB_IDLE_TIMEOUT_MS. Runs once per check interval. User tabs (no
-// assetId) are never closed by this — only the user controls those.
-setInterval(() => {
-  const now = Date.now();
-  const cutoff = now - AGENT_TAB_IDLE_TIMEOUT_MS;
-  // Walk from the end so splice indexes stay valid.
-  const closed: string[] = [];
+// ── Main-process tab mirror ─────────────────────────────────────────
+// Main owns the list of agent-opened tabs (TabRegistry). When it changes,
+// ensure each one has a matching local tab so the UI can render chrome for
+// it. User-opened tabs continue to live entirely in this composable.
+//
+// We do NOT push local changes back up — main is the authority for
+// agent tabs. This one-way flow replaces the previous bidirectional
+// activeAssets ↔ tabs sync that deadlocked the renderer.
+interface MainTabRecord {
+  assetId: string;
+  title:   string;
+  url:     string;
+  origin:  'user' | 'agent';
+}
+
+function mirrorMainTabs(mainTabs: MainTabRecord[]): void {
+  const mainByAsset = new Map(mainTabs.filter(t => t.origin === 'agent').map(t => [t.assetId, t]));
+
+  // Remove local agent tabs that no longer exist in main.
   for (let i = tabs.length - 1; i >= 0; i--) {
     const tab = tabs[i];
-    if (!tab.assetId) continue;
-    const last = tab.lastAccessedAt ?? 0;
-    // Tabs created before this field existed — give them a full idle period
-    // starting now instead of immediately eligible for close.
-    if (last === 0) {
-      tab.lastAccessedAt = now;
-      continue;
-    }
-    if (last < cutoff) {
-      closed.push(tab.id);
+    if (tab.assetId && !mainByAsset.has(tab.assetId)) {
       tabs.splice(i, 1);
     }
   }
-  if (closed.length > 0) {
-    console.log(`[useBrowserTabs] Idle-swept ${ closed.length } agent tab(s) (>${ AGENT_TAB_IDLE_TIMEOUT_MS / 60_000 } min idle)`);
+
+  // Add / update local tabs for each main agent tab.
+  for (const mt of mainByAsset.values()) {
+    const existing = tabs.find(t => t.assetId === mt.assetId);
+    if (existing) {
+      existing.title = mt.title;
+      existing.url = mt.url;
+    } else {
+      tabs.push({
+        id:             mt.assetId,
+        url:            mt.url,
+        title:          mt.title,
+        favicon:        '',
+        loading:        false,
+        mode:           'browser',
+        assetId:        mt.assetId,
+        lastAccessedAt: Date.now(),
+      });
+    }
   }
-}, AGENT_TAB_CHECK_INTERVAL_MS).unref?.();
+}
+
+try {
+  (ipcRenderer as any).invoke('tabs:list').then((initial: MainTabRecord[]) => {
+    if (Array.isArray(initial)) mirrorMainTabs(initial);
+  }).catch(() => {});
+
+  (ipcRenderer as any).on('tabs:change', (_e: unknown, mainTabs: MainTabRecord[]) => {
+    mirrorMainTabs(mainTabs);
+  });
+} catch {
+  // Non-Electron context (tests) — skip.
+}
 
 // ── Closed-tab history ──
 
@@ -357,6 +395,10 @@ export function useBrowserTabs() {
     const tab = tabs.find(t => t.id === id);
 
     if (tab) {
+      // Track whether this update turns a user tab into an agent tab, so we
+      // only run the cap check when it's meaningful.
+      const becameAgentTab = !tab.assetId && !!updates.assetId;
+
       Object.assign(tab, updates);
       tab.lastAccessedAt = Date.now();
 
@@ -364,6 +406,8 @@ export function useBrowserTabs() {
       if (updates.url || updates.title) {
         recordTabToHistory(tab);
       }
+
+      if (becameAgentTab) enforceAgentTabCap();
     }
   }
 

@@ -1,38 +1,28 @@
-import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
+import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
+
 import { BaseTool, ToolResponse } from '../base';
 
-/**
- * List Tabs Tool — lists all open browser tabs with their assetId, URL, title, and status.
- */
 export class ListTabsWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(_input: any): Promise<ToolResponse> {
-    const allAssets = await hostBridgeProxy.getAllAssetInfo();
-    const activeId = await hostBridgeProxy.getActiveAssetId();
+    const all = tabRegistry.list();
+    const activeId = tabRegistry.getActiveAssetId();
 
-    if (allAssets.length === 0) {
-      return {
-        successBoolean: true,
-        responseString: 'No browser tabs open.',
-      };
+    if (all.length === 0) {
+      return { successBoolean: true, responseString: 'No browser tabs open.' };
     }
 
-    const lines: string[] = [];
-    lines.push(`${ allAssets.length } tab(s) open:\n`);
-
-    for (const asset of allAssets) {
-      const status = asset.isInjected ? 'ready' : 'loading';
-      const active = asset.assetId === activeId ? ' (active)' : '';
-      lines.push(`- **${ asset.assetId }**${ active } [${ status }]`);
-      lines.push(`  Title: ${ asset.title || '(untitled)' }`);
-      lines.push(`  URL: ${ asset.url || '(none)' }`);
+    const lines: string[] = [`${ all.length } tab(s) open:\n`];
+    for (const tab of all) {
+      const status = tab.isLoading ? 'loading' : 'ready';
+      const active = tab.assetId === activeId ? ' (active)' : '';
+      lines.push(`- **${ tab.assetId }**${ active } [${ status }]`);
+      lines.push(`  Title: ${ tab.title || '(untitled)' }`);
+      lines.push(`  URL: ${ tab.url || '(none)' }`);
     }
 
-    return {
-      successBoolean: true,
-      responseString: lines.join('\n'),
-    };
+    return { successBoolean: true, responseString: lines.join('\n') };
   }
 }

@@ -1,4 +1,5 @@
-import { hostBridgeProxy } from '../../scripts/injected/HostBridgeProxy';
+import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
+
 import { BaseTool, ToolResponse } from '../base';
 import { extractReadableContent } from './readability-extract';
 
@@ -24,31 +25,23 @@ export class SynthesizeTabsWorker extends BaseTool {
     const maxCharsPerTab = typeof input.max_chars === 'number' ? input.max_chars : 4000;
 
     try {
-      // Get all open assets
-      const allAssets = await hostBridgeProxy.getAllAssetInfo();
-      if (allAssets.length === 0) {
-        return {
-          successBoolean: false,
-          responseString: 'No browser tabs open.',
-        };
+      const allTabs = tabRegistry.list();
+      if (allTabs.length === 0) {
+        return { successBoolean: false, responseString: 'No browser tabs open.' };
       }
 
-      // Resolve which assets to synthesize
-      const targetAssets = requestedIds.length > 0
-        ? allAssets.filter(a => requestedIds.includes(a.assetId))
-        : allAssets.filter(a => a.isInjected);
+      const targetTabs = requestedIds.length > 0
+        ? allTabs.filter(t => requestedIds.includes(t.assetId))
+        : allTabs.filter(t => !t.isLoading);
 
-      if (targetAssets.length === 0) {
-        const available = allAssets.map(a => `  - ${ a.assetId } "${ a.title }" (${ a.url })`).join('\n');
-        return {
-          successBoolean: false,
-          responseString: `No matching tabs found. Available:\n${ available }`,
-        };
+      if (targetTabs.length === 0) {
+        const available = allTabs.map(t => `  - ${ t.assetId } "${ t.title }" (${ t.url })`).join('\n');
+        return { successBoolean: false, responseString: `No matching tabs found. Available:\n${ available }` };
       }
 
-      // Extract content from each tab in parallel
-      const results = await Promise.all(targetAssets.map(async(asset) => {
-        const bridge = hostBridgeProxy.resolve(asset.assetId);
+      const results = await Promise.all(targetTabs.map(async(asset) => {
+        const bridge = tabRegistry.bridge(asset.assetId);
+        if (!bridge) return { assetId: asset.assetId, title: asset.title, url: asset.url, content: '' };
         let content = '';
         let title = asset.title;
 

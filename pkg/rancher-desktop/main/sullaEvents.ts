@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { initTabsIpc } from './browserTabs/tabsIpc';
 import { initClaudeCodeTestEvents } from './claudeCodeTest';
 import { initClaudeOAuthEvents } from './claudeOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
@@ -44,6 +45,7 @@ function assertInsideSullaHome(targetPath: string): string {
  */
 export function initSullaEvents(): void {
   initMessageBusIpc();
+  initTabsIpc();
   initConversationHistoryIpc();
   initClaudeOAuthEvents();
   initClaudeCodeTestEvents();
