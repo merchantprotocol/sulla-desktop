@@ -17,6 +17,23 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import type { WorkflowDefinition, WorkflowStatus } from '@pkg/pages/editor/workflow/types';
 import Logging from '@pkg/utils/logging';
 
+/**
+ * Dynamically import the Postgres-backed WorkflowModel.
+ * Kept as a dynamic import so the main process doesn't eagerly pull in the DB layer
+ * at startup — matches the pattern used for WorkflowSchedulerService.
+ */
+async function importWorkflowModel() {
+  const mod = await import('@pkg/agent/database/models/WorkflowModel');
+
+  return mod.WorkflowModel;
+}
+
+async function importWorkflowHistoryModel() {
+  const mod = await import('@pkg/agent/database/models/WorkflowHistoryModel');
+
+  return mod.WorkflowHistoryModel;
+}
+
 const console = Logging.background;
 
 /**
@@ -216,6 +233,18 @@ export function initSullaWorkflowEvents(): void {
 
     console.log(`[Sulla] Workflow saved: ${ path.basename(newFilePath) } (id: ${ workflow.id })`);
 
+    // Phase 1 of DB cutover: dual-write to Postgres alongside the YAML file.
+    // YAML remains the source of truth for the runtime (WorkflowRegistry scans disk).
+    // DB failures are logged-and-swallowed so they can never block a user's save.
+    try {
+      const WorkflowModel = await importWorkflowModel();
+      const status = (existing?.status ?? 'draft') as WorkflowStatus;
+
+      await WorkflowModel.upsertFromDefinition(workflow, { status });
+    } catch (err) {
+      console.warn('[Sulla] DB dual-write for workflow-save failed (YAML write succeeded):', err);
+    }
+
     // Refresh workflow schedules in case a schedule trigger was added/changed
     refreshWorkflowSchedules();
 
@@ -231,6 +260,14 @@ export function initSullaWorkflowEvents(): void {
       console.log(`[Sulla] Workflow deleted: ${ path.basename(found.filePath) } (id: ${ workflowId })`);
     } else {
       console.log(`[Sulla] Workflow not found for deletion: ${ workflowId }`);
+    }
+
+    try {
+      const WorkflowModel = await importWorkflowModel();
+
+      await WorkflowModel.deleteById(workflowId);
+    } catch (err) {
+      console.warn('[Sulla] DB dual-write for workflow-delete failed:', err);
     }
 
     refreshWorkflowSchedules();
@@ -258,10 +295,78 @@ export function initSullaWorkflowEvents(): void {
 
     console.log(`[Sulla] Workflow moved: ${ path.basename(found.filePath) } (${ found.status } -> ${ targetStatus })`);
 
+    try {
+      const WorkflowModel = await importWorkflowModel();
+
+      await WorkflowModel.updateStatus(workflowId, targetStatus);
+    } catch (err) {
+      console.warn('[Sulla] DB dual-write for workflow-move failed:', err);
+    }
+
     // Refresh schedules when workflows move to/from production
     refreshWorkflowSchedules();
 
     return { success: true, newStatus: targetStatus };
+  });
+
+  // ── DB-backed read handlers (Phase 1 verification path) ──
+  // These read from Postgres directly, bypassing the filesystem. Used to verify
+  // the dual-write from workflow-save lands correctly. YAML handlers above remain
+  // the primary read path until Phase 2 cuts reads over to the DB.
+
+  ipcMainProxy.handle('workflow-db-list', async() => {
+    try {
+      const WorkflowModel = await importWorkflowModel();
+
+      return await WorkflowModel.listAll();
+    } catch (err) {
+      console.warn('[Sulla] workflow-db-list failed:', err);
+
+      return [];
+    }
+  });
+
+  ipcMainProxy.handle('workflow-db-get', async(_event: unknown, workflowId: string) => {
+    try {
+      const WorkflowModel = await importWorkflowModel();
+      const model = await WorkflowModel.findById(workflowId);
+
+      if (!model) return null;
+
+      const definition = model.attributes.definition as Record<string, unknown>;
+
+      return {
+        ...definition,
+        _status: model.attributes.status,
+      };
+    } catch (err) {
+      console.warn('[Sulla] workflow-db-get failed:', err);
+
+      return null;
+    }
+  });
+
+  ipcMainProxy.handle('workflow-history-get', async(_event: unknown, workflowId: string, limit?: number) => {
+    try {
+      const WorkflowHistoryModel = await importWorkflowHistoryModel();
+      const rows = await WorkflowHistoryModel.findByWorkflow(workflowId, limit ?? 50);
+
+      return rows.map(r => ({
+        id:                r.attributes.id!,
+        workflowId:        r.attributes.workflow_id!,
+        changedBy:         r.attributes.changed_by ?? null,
+        changeReason:      r.attributes.change_reason ?? null,
+        createdAt:         r.attributes.created_at instanceof Date
+          ? r.attributes.created_at.toISOString()
+          : String(r.attributes.created_at ?? ''),
+        definitionBefore:  r.attributes.definition_before ?? null,
+        definitionAfter:   r.attributes.definition_after ?? null,
+      }));
+    } catch (err) {
+      console.warn('[Sulla] workflow-history-get failed:', err);
+
+      return [];
+    }
   });
 
   // ── Registry dispatch handler ──

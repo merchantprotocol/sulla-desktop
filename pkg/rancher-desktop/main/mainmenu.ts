@@ -317,6 +317,12 @@ function getFileMenu(): MenuItem {
         enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'extensions' }),
       },
+      {
+        label:       'Open Routines',
+        accelerator: 'CmdOrCtrl+6',
+        enabled:     userLoggedIn,
+        click:       () => sendAgentCommand('open-tab', { mode: 'routines' }),
+      },
       { type: 'separator' },
       {
         label:       'Open Agent Workbench',
@@ -812,6 +818,10 @@ function getWindowsApplicationMenu(): MenuItem[] {
         {
           label: 'Open Extensions',
           click: () => sendAgentCommand('open-tab', { mode: 'extensions' }),
+        },
+        {
+          label: 'Open Routines',
+          click: () => sendAgentCommand('open-tab', { mode: 'routines' }),
         },
         { type: 'separator' },
         {

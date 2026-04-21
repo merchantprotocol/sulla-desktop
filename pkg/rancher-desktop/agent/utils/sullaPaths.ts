@@ -13,6 +13,7 @@ const SULLA_WORKSPACES_DIR_ENV = 'SULLA_WORKSPACES_DIR';
 const SULLA_AGENTS_DIR_ENV = 'SULLA_AGENTS_DIR';
 const SULLA_CONVERSATIONS_DIR_ENV = 'SULLA_CONVERSATIONS_DIR';
 const SULLA_WORKFLOWS_DIR_ENV = 'SULLA_WORKFLOWS_DIR';
+const SULLA_ROUTINES_DIR_ENV = 'SULLA_ROUTINES_DIR';
 const SULLA_INTEGRATIONS_DIR_ENV = 'SULLA_INTEGRATIONS_DIR';
 const SULLA_RESOURCES_DIR_ENV = 'SULLA_RESOURCES_DIR';
 const SULLA_CODEBASE_DIR_ENV = 'SULLA_CODEBASE_DIR';
@@ -90,6 +91,20 @@ export function resolveSullaWorkflowsProductionDir(): string {
 
 export function resolveSullaWorkflowsArchiveDir(): string {
   return path.join(resolveSullaWorkflowsDir(), 'archive');
+}
+
+/**
+ * Routine templates live at the top level of the Sulla home — each one
+ * is its own git repo and contains a `routine.yaml` manifest. This is
+ * the registry that backs the "My Templates" tab in the Routines UI.
+ */
+export function resolveSullaRoutinesDir(): string {
+  const envPath = String(process.env[SULLA_ROUTINES_DIR_ENV] || '').trim();
+  if (envPath) {
+    return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
+  }
+
+  return path.join(resolveSullaHomeDir(), 'routines');
 }
 
 export function resolveSullaIntegrationsDir(): string {

@@ -1,5 +1,6 @@
 import { createRouter, createWebHashHistory, RouteRecordRaw } from 'vue-router';
 
+import AgentRoutines from '../pages/AgentRoutines.vue';
 import Containers from '../pages/Containers.vue';
 import DenyRoot from '../pages/DenyRoot.vue';
 import Diagnostics from '../pages/Diagnostics.vue';
@@ -9,6 +10,7 @@ import Images from '../pages/Images.vue';
 import KubernetesError from '../pages/KubernetesError.vue';
 import PortForwarding from '../pages/PortForwarding.vue';
 import Preferences from '../pages/Preferences.vue';
+import RoutinesHome from '../pages/RoutinesHome.vue';
 import Snapshots from '../pages/Snapshots.vue';
 import SudoPrompt from '../pages/SudoPrompt.vue';
 import Troubleshooting from '../pages/Troubleshooting.vue';
@@ -90,6 +92,12 @@ export default createRouter({
     },
     {
       path: '/SnapshotsDialog', component: SnapshotsDialog, name: 'SnapshotsDialog',
+    },
+    {
+      path: '/routines', component: RoutinesHome, name: 'routines',
+    },
+    {
+      path: '/routines/:id', component: AgentRoutines, name: 'routines-edit', props: true,
     },
   ],
 });

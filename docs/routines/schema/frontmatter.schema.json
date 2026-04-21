@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sulla.desktop/schemas/routine-frontmatter.schema.json",
+  "title": "Sulla Routine ROUTINE.md Frontmatter",
+  "description": "Schema for the YAML frontmatter block at the top of ROUTINE.md. Kept intentionally thin — all structured metadata lives in routine.yaml. Frontmatter is a back-pointer so the LLM can identify which routine and version it is reading when ROUTINE.md is loaded into context independently.",
+  "type": "object",
+  "required": ["routine", "version"],
+  "additionalProperties": false,
+
+  "properties": {
+    "routine": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+      "description": "The routine slug. MUST equal the `slug` field in routine.yaml."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$",
+      "description": "The routine version. MUST equal the `version` field in routine.yaml."
+    },
+    "title": {
+      "type": "string",
+      "description": "Optional display title. Purely cosmetic, falls back to routine.yaml `name`."
+    }
+  }
+}

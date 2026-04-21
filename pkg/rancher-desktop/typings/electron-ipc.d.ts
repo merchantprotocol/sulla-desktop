@@ -336,6 +336,16 @@ export interface IpcMainInvokeEvents {
   'workflow-watch-stop':    () => boolean;
   'workflow-check-updated': (workflowId: string, editorUpdatedAt: string) => { changed: boolean; diskUpdatedAt: string };
 
+  // DB-backed workflow reads (Phase 1 verification path for the Postgres cutover)
+  'workflow-db-list':     () => { id: string; name: string; description: string | null; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus; updatedAt: string; nodeCount: number }[];
+  'workflow-db-get':      (workflowId: string) => any;
+  'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
+
+  // Routine template registry (scanned from ~/sulla/routines/<slug>/routine.yaml)
+  'routines-template-list':        () => { slug: string; name: string; description: string; version: string; section: string; category: string; runtime: string | null; tags: string[]; inputCount: number; outputCount: number; permissions: string }[];
+  'routines-template-instantiate': (slug: string) => { id: string; name: string };
+  'routines-create-blank':         () => { id: string; name: string };
+
   // Workflow execution
   'workflow-execute':          (workflowId: string, triggerPayload: unknown) => { executionId: string };
   'workflow-execution-status': (executionId: string) => { executionId: string; status: string; startedAt?: string; completedAt?: string; error?: string } | null;

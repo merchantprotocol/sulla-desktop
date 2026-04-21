@@ -238,6 +238,32 @@
         />
       </div>
     </template>
+
+    <!-- Routines: playbill landing page, switches to canvas when a routine is opened -->
+    <template v-else-if="tabMode === 'routines'">
+      <div class="flex-1 min-h-0 overflow-hidden relative">
+        <RoutinesHome
+          v-if="!activeRoutineId"
+          @open-workflow="onOpenRoutine"
+          @use-template="onUseTemplate"
+          @new-blank="onNewBlankRoutine"
+        />
+        <template v-else>
+          <AgentRoutines
+            :key="activeRoutineId"
+            :workflow-id="activeRoutineId"
+            @back-to-home="activeRoutineId = null"
+          />
+          <button
+            type="button"
+            class="routines-back-btn"
+            @click="activeRoutineId = null"
+          >
+            ← All routines
+          </button>
+        </template>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -250,11 +276,13 @@ import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
 import AgentExtensions from './AgentExtensions.vue';
 import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
+import AgentRoutines from './AgentRoutines.vue';
 import BrowserTabChat from './BrowserTabChat.vue';
 import HistoryTab from './HistoryTab.vue';
 import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
 import PasswordGenerator from './PasswordGenerator.vue';
+import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
@@ -277,6 +305,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   vault:        'Password Manager',
   account:      'My Account',
   history:      'History',
+  routines:     'Routines',
 };
 
 const props = defineProps<{
@@ -298,6 +327,39 @@ function onSetMode(mode: BrowserTabMode) {
     addressBarUrl.value = url;
     loading.value = true;
     ensureView(url);
+  }
+}
+
+// ── Routines sub-navigation state ──
+// When a routine or template is selected, switch from the playbill
+// landing view (RoutinesHome) to the canvas editor (AgentRoutines).
+// `null` means show the landing view.
+const activeRoutineId = ref<string | null>(null);
+
+function onOpenRoutine(id: string) {
+  activeRoutineId.value = id;
+}
+
+async function onUseTemplate(slug: string) {
+  // Clone the template into the workflows table, then open the new
+  // routine in the canvas editor. The IPC call does all the heavy
+  // lifting (manifest read + workflow wrapping + DB upsert); here we
+  // just translate the returned id into a navigation.
+  try {
+    const result = await ipcRenderer.invoke('routines-template-instantiate', slug);
+    activeRoutineId.value = result.id;
+  } catch (err) {
+    console.error(`[BrowserTab] Failed to instantiate template "${ slug }":`, err);
+    // Leave the user on the template list so they can try again.
+  }
+}
+
+async function onNewBlankRoutine() {
+  try {
+    const result = await ipcRenderer.invoke('routines-create-blank');
+    activeRoutineId.value = result.id;
+  } catch (err) {
+    console.error('[BrowserTab] Failed to create blank routine:', err);
   }
 }
 
@@ -882,5 +944,32 @@ onUnmounted(() => {
 
 .overflow-auto::-webkit-scrollbar-corner {
   background: var(--bg-surface);
+}
+
+.routines-back-btn {
+  position: absolute;
+  top: 18px;
+  left: 58px;
+  // Below the NodeDrawer (z-index 10) so the library can slide over
+  // the back button when opened. Above the canvas chrome (brackets at
+  // z-index 4) so it remains visible the rest of the time.
+  z-index: 5;
+  padding: 6px 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #c4d4e6;
+  background: rgba(20, 30, 54, 0.82);
+  border: 1px solid rgba(140, 172, 201, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.routines-back-btn:hover {
+  color: white;
+  background: rgba(74, 111, 165, 0.35);
+  border-color: rgba(196, 212, 230, 0.65);
 }
 </style>
