@@ -49,6 +49,15 @@
             My Templates
             <span class="tab-num">{{ templatesController.templates.value.length }}</span>
           </button>
+          <button
+            type="button"
+            class="tab"
+            :class="{ on: activeTab === 'archive' }"
+            @click="activeTab = 'archive'"
+          >
+            Archive
+            <span class="tab-num">{{ routinesController.archived.value.length }}</span>
+          </button>
         </nav>
       </div>
 
@@ -173,7 +182,7 @@
       </template>
 
       <!-- ═══════ MY TEMPLATES TAB ═══════ -->
-      <template v-else>
+      <template v-else-if="activeTab === 'templates'">
         <div class="template-search">
           <svg
             width="14"
@@ -234,6 +243,49 @@
           </div>
         </template>
       </template>
+
+      <!-- ═══════ ARCHIVE TAB ═══════ -->
+      <template v-else-if="activeTab === 'archive'">
+        <EmptyState
+          v-if="routinesController.archived.value.length === 0"
+          kicker="The vault is empty"
+          title="Nothing archived."
+          message="No archived routines. When you archive one from My Routines, it lands here."
+        >
+          <button
+            type="button"
+            class="btn primary"
+            @click="activeTab = 'routines'"
+          >
+            ← Back to My Routines
+          </button>
+        </EmptyState>
+
+        <template v-else>
+          <ActSection
+            act-num="Vault"
+            title="Archived routines"
+            :count-label="archivedCountLabel"
+          >
+            <RoutineStrip
+              v-for="r in routinesController.archived.value"
+              :key="r.id"
+              :routine="r"
+              primary-label="Restore"
+              secondary-label="Open"
+              @primary="onRestoreRoutine(r.id)"
+              @secondary="onOpenRoutine(r.id)"
+              @open="onOpenRoutine(r.id)"
+            />
+          </ActSection>
+
+          <div class="closer">
+            <div class="closer-sub">
+              Archived routines stay in the database — restore any of them and they return to My Routines.
+            </div>
+          </div>
+        </template>
+      </template>
         </div>
 
         <!-- ribbon footer — sits in normal flow at the end of the canvas
@@ -270,12 +322,13 @@ import TemplateStrip from '@pkg/components/routines/TemplateStrip.vue';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
 
-type Tab = 'routines' | 'templates';
+type Tab = 'routines' | 'templates' | 'archive';
 
 const emit = defineEmits<{
   (e: 'open-workflow', id: string): void
   (e: 'use-template', slug: string): void
   (e: 'new-blank'): void
+  (e: 'restore-routine', id: string): void
 }>();
 
 const activeTab = ref<Tab>('routines');
@@ -297,9 +350,15 @@ onMounted(async() => {
 // terse and lets the eslint style rules stay strict.
 
 // Hero kicker shifts with the active tab. Playbill-adjacent phrasing,
-// but contextual so the two tabs feel like different places.
-const heroKicker = computed(() =>
-  activeTab.value === 'routines' ? 'The Cast' : 'The Library');
+// but contextual so the three tabs feel like different places.
+const heroKicker = computed(() => {
+  switch (activeTab.value) {
+  case 'routines':  return 'The Cast';
+  case 'templates': return 'The Library';
+  case 'archive':   return 'The Vault';
+  default:          return 'The Cast';
+  }
+});
 
 const heroDek = computed(() => {
   const count = routinesController.routines.value.length;
@@ -311,6 +370,9 @@ const heroDek = computed(() => {
     const reclaimed = routinesController.stats.value.reclaimed;
 
     return `${ count } routine${ plural }. ${ reclaimed } of human-equivalent work reclaimed this week. Each one a small constellation of agents, rehearsed until they run without you.`;
+  }
+  if (activeTab.value === 'archive') {
+    return 'Archived routines preserved from the active set. Restore them any time.';
   }
   const tplCount = templatesController.templates.value.length;
 
@@ -325,14 +387,25 @@ const runningCountLabel = computed(() => {
 
 const scheduledCountLabel = computed(() => `${ routinesController.scheduled.value.length } upcoming`);
 
+const archivedCountLabel = computed(() => {
+  const n = routinesController.archived.value.length;
+
+  return `${ n } routine${ n === 1 ? '' : 's' } archived`;
+});
+
 const templatesCountLabel = computed(() => `${ templatesController.filtered.value.length } available`);
 
 const noMatchesTitle = computed(() => `Nothing found for "${ templatesController.search.value }"`);
 
 const ribbonStatusLabel = computed(() => {
-  return activeTab.value === 'routines'
-    ? `${ routinesController.routines.value.length } in database`
-    : `${ templatesController.templates.value.length } on disk`;
+  switch (activeTab.value) {
+  case 'routines':
+    return `${ routinesController.routines.value.length } in database`;
+  case 'archive':
+    return `${ routinesController.archived.value.length } archived`;
+  default:
+    return `${ templatesController.templates.value.length } on disk`;
+  }
 });
 
 const todayStr = new Date().toISOString().slice(0, 10);
@@ -345,6 +418,12 @@ function onUseTemplate(slug: string) {
 }
 function onNewBlank() {
   emit('new-blank');
+}
+function onRestoreRoutine(id: string) {
+  // Parent (BrowserTab / AgentRoutines) owns the DB mutation; we just
+  // surface the intent. Kebab-menu wiring for toggleArchive in the
+  // strip will hang off the same hook once the kebab ships.
+  emit('restore-routine', id);
 }
 </script>
 
