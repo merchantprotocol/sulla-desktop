@@ -101,13 +101,20 @@ export const defaultSettings = {
   virtualMachine: {
     memoryInGB: 2,
     numberCPUs: 2,
-    /** can only be set to VMType.VZ on macOS Ventura and later */
-    type:       process.platform === 'darwin' && parseInt(os.release(), 10) >= 23 ? VMType.VZ : VMType.QEMU,
+    /**
+     * Prefer Apple's Virtualization.framework (`vz`) whenever the host
+     * supports it — no external QEMU binary required, faster startup, and
+     * Intel hosts running macOS 13+ can run x86_64 guests natively via
+     * HVF. macOS 13 Ventura is Darwin 22, so the threshold is `>= 22`.
+     * Older macOS falls back to QEMU (which requires the user to have
+     * qemu-system-* installed via brew/macports on Intel).
+     */
+    type:       process.platform === 'darwin' && parseInt(os.release(), 10) >= 22 ? VMType.VZ : VMType.QEMU,
     /** can only be used when type is VMType.VZ, and only on aarch64 */
     useRosetta: false,
     mount:      {
       // Mount type defaults to virtiofs when using VZ.
-      type: process.platform === 'darwin' && parseInt(os.release(), 10) >= 23 ? MountType.VIRTIOFS : MountType.REVERSE_SSHFS,
+      type: process.platform === 'darwin' && parseInt(os.release(), 10) >= 22 ? MountType.VIRTIOFS : MountType.REVERSE_SSHFS,
     },
   },
   WSL:        { integrations: {} as Record<string, boolean> },
