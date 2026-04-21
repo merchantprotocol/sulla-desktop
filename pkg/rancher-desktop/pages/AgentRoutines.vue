@@ -165,6 +165,7 @@
 
     <div
       v-if="mode === 'run'"
+      ref="streamRef"
       class="stream"
     >
       <div
@@ -405,14 +406,14 @@
       />
       <div
         class="cm-item"
-        @click="closeNodeCtx"
+        @click="onNodeCtxRunFromHere"
       >
         <span class="ico">▶</span>
         <span class="lbl">Run from here</span>
       </div>
       <div
         class="cm-item"
-        @click="closeNodeCtx"
+        @click="onNodeCtxInspectOutput"
       >
         <span class="ico">◎</span>
         <span class="lbl">Inspect output</span>
@@ -503,6 +504,33 @@ interface StreamLine {
 }
 const liveEvents = ref<StreamLine[]>([]);
 
+// ── Stream auto-scroll ──
+// The stream is append-only, so new lines fall below the visible area
+// as the list grows. We stick-to-bottom by default but respect the user
+// when they've scrolled up to read older lines — detected by measuring
+// the gap between scrollTop+clientHeight and scrollHeight. If that gap
+// is within STICK_THRESHOLD_PX, the next new line snaps us back; if
+// they're scrolled further up, we hold position until they scroll back
+// into the stickiness zone on a later line.
+const streamRef = ref<HTMLElement | null>(null);
+const STICK_THRESHOLD_PX = 40;
+
+watch(() => liveEvents.value.length, () => {
+  const el = streamRef.value;
+  if (!el) return;
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+  if (distanceFromBottom < STICK_THRESHOLD_PX) {
+    nextTick(() => {
+      // Re-read inside nextTick — the new line is in the DOM now, so
+      // scrollHeight reflects its height and we can snap to the true
+      // bottom rather than the pre-render bottom.
+      const node = streamRef.value;
+      if (!node) return;
+      node.scrollTop = node.scrollHeight;
+    }).catch(() => { /* scroll is cosmetic — swallow */ });
+  }
+});
+
 // Safety timeout: clears `isRunBusy` if no completion event ever lands
 // (e.g. the agent graph faulted in a way that skipped the final emit).
 // Reset on every node event to extend the window as long as work is
@@ -545,6 +573,10 @@ async function onRunClick() {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     runError.value = msg;
+    // Surface the failure in the live stream so the user sees it without
+    // digging into devtools. `runError` is still kept so other UI can
+    // pick it up later; this just makes sure the error is visible now.
+    pushLine('err', `Run failed: ${ msg }`);
     console.error('[AgentRoutines] Failed to launch routine:', err);
     isRunBusy.value = false;
     clearStallTimer();
@@ -620,6 +652,9 @@ function handleWorkflowEvent(event: any) {
   case 'workflow_started':
     resetNodeStates();
     liveEvents.value = [];
+    // Fresh run — drop any leftover error from the previous attempt so
+    // the UI doesn't hold onto stale state across runs.
+    runError.value = null;
     isRunBusy.value = true;
     pushLine('dec', `started · ${ props.workflowId ?? 'routine' }`, event.timestamp);
     break;
@@ -850,6 +885,23 @@ function onNodeCtxRemove() {
   nodes.value = nodes.value.filter(n => n.id !== id);
   edges.value = edges.value.filter(e => e.source !== id && e.target !== id);
   if (selectedNodeId.value === id) selectedNodeId.value = null;
+  closeNodeCtx();
+}
+
+// Partial-graph re-execution — stubbed until PlaybookController grows a
+// `start-from-node` entry point. Logging the target for now so at least
+// the click is observable in devtools.
+function onNodeCtxRunFromHere() {
+  const id = nodeCtx.nodeId;
+  console.log('[AgentRoutines] Run from here (stub) — target node:', id);
+  closeNodeCtx();
+}
+
+// Checkpoint inspection — needs an IPC that reads the stored output for
+// a given (workflowId, nodeId) pair. Stubbed until that lands.
+function onNodeCtxInspectOutput() {
+  const id = nodeCtx.nodeId;
+  console.log('[AgentRoutines] Inspect output (stub) — target node:', id);
   closeNodeCtx();
 }
 
@@ -1282,11 +1334,19 @@ watch(
   top: 28px;
   left: 52px;
   z-index: 4;
-  pointer-events: none;
+  /* Scrollable so auto-scroll + user-pause-to-read behaviour works. Wheel
+   * events inside this box run the container's scroll rather than the
+   * VueFlow pane underneath — the area is narrow enough that this is a
+   * net win. */
+  pointer-events: auto;
   font-family: var(--mono);
   font-size: 11px;
   line-height: 1.7;
   width: 28%;
+  max-height: 42vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.8) 15%, black 35%);
   mask-image: linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.8) 15%, black 35%);
 }
