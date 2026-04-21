@@ -1187,7 +1187,10 @@ export function buildGuestBridgeScript(): string {
       document.addEventListener('DOMContentLoaded', function() { setTimeout(checkForLoginForm, 500); });
     }
 
-    // Watch for SPA-rendered login forms
+    // Watch for SPA-rendered login forms. At document-start, document.documentElement
+    // may not yet be a Node (preload runs before the DOM skeleton is materialised),
+    // so observe() throws TypeError. Defer to DOMContentLoaded if needed — by
+    // then <html> and <body> are live and MutationObserver will reliably attach.
     var loginObserver = new MutationObserver(function(mutations) {
       for (var i = 0; i < mutations.length; i++) {
         var added = mutations[i].addedNodes;
@@ -1202,7 +1205,17 @@ export function buildGuestBridgeScript(): string {
         }
       }
     });
-    loginObserver.observe(document.documentElement, { childList: true, subtree: true });
+    function attachLoginObserver() {
+      var root = document.documentElement || document.body;
+      if (root && root.nodeType === 1) {
+        loginObserver.observe(root, { childList: true, subtree: true });
+      }
+    }
+    if (document.documentElement) {
+      attachLoginObserver();
+    } else {
+      document.addEventListener('DOMContentLoaded', attachLoginObserver, { once: true });
+    }
 
     // Reset on SPA navigation
     var lastVaultUrl = location.href;

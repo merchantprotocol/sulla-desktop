@@ -814,50 +814,10 @@ function closeAnyTab(tab: HeaderTab) {
   }
 }
 
-// Auto-open a browser tab when the agent registers a new active asset
-
-watch(
-  () => persona.activeAssets.filter(a => a.active).map(a => ({ id: a.id, url: a.url, title: a.title, type: a.type, content: a.content })),
-  (currentAssets) => {
-    const currentIds = currentAssets.map(a => a.id);
-
-    for (const asset of currentAssets) {
-      if (knownAssetIds.value.has(asset.id)) {
-        // Update content for existing document tabs (agent may upsert with new content)
-        if (asset.type === 'document' && asset.content) {
-          const existingTab = browserTabs.find((t: any) => t.assetId === asset.id);
-          if (existingTab) {
-            updateTab(existingTab.id, { content: asset.content });
-          }
-        }
-        continue;
-      }
-
-      if (asset.type === 'document' && asset.content) {
-        // Document asset with raw HTML content — open as Shadow DOM tab
-        knownAssetIds.value.add(asset.id);
-        const tab = createTab('about:blank', { mode: 'document' });
-        updateTab(tab.id, { title: asset.title || 'Document', assetId: asset.id, content: asset.content });
-      } else if (asset.url) {
-        // Standard iframe asset
-        knownAssetIds.value.add(asset.id);
-        const tab = createTab(asset.url);
-        updateTab(tab.id, { title: asset.title || 'Website', assetId: asset.id });
-      }
-    }
-    // Clean up removed assets — close the corresponding browser tab
-    for (const id of knownAssetIds.value) {
-      if (!currentIds.includes(id)) {
-        knownAssetIds.value.delete(id);
-        const tab = browserTabs.find((t: any) => t.assetId === id);
-        if (tab) {
-          closeBrowserTab(tab.id);
-        }
-      }
-    }
-  },
-  { immediate: true },
-);
+// Agent-opened tabs now come from the main-process TabRegistry directly;
+// the activeAssets → tabs sync watcher was removed. See
+// pkg/rancher-desktop/main/browserTabs/TabRegistry.ts. The UI will mirror
+// main's state through a `tabs:change` IPC subscription.
 
 // ── Phase 5: Pointer-event drag-and-drop ──
 

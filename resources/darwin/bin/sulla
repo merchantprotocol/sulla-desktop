@@ -18,12 +18,12 @@ if [ -f /etc/sulla-env ]; then
 fi
 
 SOCKET="/tmp/sulla-tools.sock"
-SULLA_HOST="${SULLA_HOST:-host.docker.internal}"
+SULLA_HOST="${SULLA_HOST:-host.lima.internal}"
 FIRST="$1"
 BODY="$2"
 
 # Known internal tool categories
-TOOL_CATEGORIES="meta|docker|github|playwright|chrome|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|skills|workflow|computer-use"
+TOOL_CATEGORIES="meta|docker|github|browser|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|applescript|notify"
 
 # ── Help & discovery ─────────────────────────────────────────────
 # sulla --help | sulla -h | sulla help | sulla (no args)
@@ -42,25 +42,23 @@ Flags:
 
 Categories:
   meta              Tools for browsing available tools, installing skills, and meta management
+  agents            Sub-agent spawning and job management
+  applescript       Execute AppleScript to control macOS apps (Calendar, Mail, Finder, etc.)
   bridge            Bidirectional communication bridge between heartbeat and frontend
-  browser           Web search tools (Brave, DuckDuckGo)
+  browser           Open/close tabs, read page content, click + fill forms, screenshot, exec JS, cookies, history, notifications
   calendar          Calendar event management
-  chrome            Browser extension-style APIs — history, notifications, storage, cookies
-  computer-use      Visual computer use — screenshot-based interaction
   docker            Docker container management
   extensions        Extension marketplace — browse, install, uninstall Docker Compose stacks
-  fs                File system operations
   github            GitHub repository management
   kubectl           Kubernetes cluster management
   lima              Lima VM instance management
+  n8n               n8n workflow automation
+  notify            Send desktop notifications to alert the user
   pg                PostgreSQL database queries
-  playwright        Browser automation suite — DOM tools, visual tools, exec_in_page
   rdctl             Sulla Desktop / rdctl management commands
   redis             Redis key/value store operations
-  skills            Search, load, and create reusable skill files
   slack             Slack messaging and reactions
   vault             Credential vault — list accounts, read/set secrets
-  workspace         Workspace folder management
 
 Run "sulla <category> --help" to see tools in a category.
 Run "sulla vault/list_accounts '{}'" to discover proxy accounts.

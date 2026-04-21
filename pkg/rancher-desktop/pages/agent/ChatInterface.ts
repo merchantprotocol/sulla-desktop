@@ -161,10 +161,8 @@ export class ChatInterface {
     return this.persona.stopReason.value === 'max_loops' && !this.persona.graphRunning.value;
   });
 
-  /** Active sidebar assets (iframes, documents) managed by the persona service */
-  readonly activeAssets = computed<PersonaSidebarAsset[]>(() => {
-    return [...this.persona.activeAssets];
-  });
+  /** Retained for back-compat; always empty — tabs moved to main-process TabRegistry. */
+  readonly activeAssets = computed<PersonaSidebarAsset[]>(() => []);
 
   readonly threadId = computed(() => {
     return this.persona.getThreadId();

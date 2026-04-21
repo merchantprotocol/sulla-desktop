@@ -29,21 +29,29 @@ mac:
   gatekeeperAssess: false
   icon: ./resources/icons/sulla-app-icon.png
   target: [ dmg, zip ]
-  identity: ~ # We sign in a separate step
+  # Sign + notarize inline when CSC_LINK / APPLE_ID env vars are set
+  # (provided by GitHub secrets in the Package workflow). If either is
+  # missing electron-builder leaves the build unsigned, matching the
+  # old "we sign in a separate step" behaviour for local dev.
   entitlements: ./packaging/entitlements.mac.plist
   entitlementsInherit: ./packaging/entitlements.mac.plist
+  notarize: true
   artifactName: Sulla-Desktop-${version}-mac.${ext}
   extendInfo:
     NSMicrophoneUsageDescription: "Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio."
     NSCameraUsageDescription: "Sulla Desktop uses your camera for the capture studio face-cam overlay."
     NSScreenCaptureUsageDescription: "Sulla Desktop needs screen recording access for the capture studio to record your screen."
     NSAppleEventsUsageDescription: "Sulla uses automation to interact with apps on your Mac — like managing your calendar, creating reminders, or controlling music playback. You choose which apps to enable."
-  extraFiles:
-    - build/signing-config-mac.yaml
-    - { from: dist/electron-builder.yaml, to: electron-builder.yml }
+  # extraFiles dropped the mac-only signing-config + electron-builder.yml
+  # copies that the legacy "sign in a separate step" flow needed.
+  # Placing loose non-executable files directly in Contents/ causes
+  # codesign to abort with "code object is not signed at all / In
+  # subcomponent: Contents/electron-builder.yml". Inline signing doesn't
+  # need those files, so they're gone from the app bundle entirely.
 win:
   icon: ./pkg/rancher-desktop/pages/agent/sulla-icon.ico
   target: [ zip ]
+  artifactName: Sulla-Desktop-${version}-win.${ext}
   signtoolOptions:
     signingHashAlgorithms: [ sha256 ] # We only support Windows 10 + WSL2
   requestedExecutionLevel: asInvoker # The _app_ doesn't need privileges

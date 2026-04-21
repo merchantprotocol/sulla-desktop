@@ -1,4 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
+import { saveScreenshot } from './screenshot_store';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
@@ -159,13 +160,13 @@ export class ExecInPageWorker extends BaseTool {
         responseObj.sullaLog = returnValue.sullaLog;
       }
 
-      // Post-execution: screenshot
+      // Post-execution: screenshot (persisted to disk, returns compact ref)
       if (screenshot) {
         try {
           const screenshotData = await result.bridge.captureScreenshot({ format: 'jpeg', quality: 80 });
           if (screenshotData?.base64) {
-            responseObj.screenshotBase64 = screenshotData.base64;
-            responseObj.screenshotMediaType = screenshotData.mediaType;
+            const ref = await saveScreenshot(screenshotData.base64, screenshotData.mediaType);
+            responseObj.screenshot = ref;
           }
         } catch { /* screenshot is best-effort */ }
       }

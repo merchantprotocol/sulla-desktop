@@ -1303,10 +1303,26 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // streams tool_use / thinking blocks). Surface these as thinking bubbles
     // so the user can see Claude is running tools and not just hanging.
     // De-dupe consecutive identical messages.
+    //
+    // When an activity arrives while we're mid-stream, flush whatever's in
+    // the text buffer, emit a 'streaming_complete' boundary so the UI closes
+    // that streaming bubble, and reset the buffer. The next onToken call
+    // will then start a fresh streaming bubble — so the UI shows
+    // think → message → think → message instead of merging everything.
     let lastActivity = '';
     const onActivity = (message: string): void => {
       if (!message || message === lastActivity) return;
       lastActivity = message;
+
+      if (!isVoiceMode && contentBuffer.trim()) {
+        const stripped = stripProtocolTags(contentBuffer);
+        if (stripped.trim()) {
+          this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+        }
+        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        contentBuffer = '';
+      }
+
       this.wsChatMessage(state, message, 'assistant', 'thinking');
     };
 
@@ -1435,7 +1451,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   ): Promise<boolean> {
     // Defence-in-depth: strip agent protocol XML before any user-visible output
     content = stripProtocolTags(content);
-    if (!content) {
+    // Segment-boundary sentinels (streaming_complete, thinking_complete)
+    // carry meaning in `kind` with intentionally empty content. Don't drop
+    // them here — the renderer needs them to close the current bubble so
+    // the next segment starts a fresh one.
+    const isSentinelKind = kind === 'streaming_complete' || kind === 'thinking_complete';
+    if (!content && !isSentinelKind) {
       return false;
     }
 

@@ -128,7 +128,10 @@
                     <div
                       class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
                       v-html="renderMarkdown(m.content)"
-                    /><span class="streaming-cursor" />
+                    /><span
+                      v-if="!(m as any)._completed"
+                      class="streaming-cursor"
+                    />
                   </div>
                 </div>
               </div>

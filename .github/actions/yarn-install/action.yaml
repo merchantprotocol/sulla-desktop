@@ -39,8 +39,51 @@ runs:
     run: echo "M1=1" >> "${GITHUB_ENV}"
     shell: bash
 
-  - run: yarn install --immutable --ignore-platform
+  # Skip lifecycle scripts during the dependency install itself — the
+  # "[5/5] Building fresh packages" phase has been hanging silently on
+  # mac/win for ~18 minutes without ever naming the offending package.
+  # Native modules get rebuilt in the next step by electron-builder's
+  # install-app-deps (invoked from scripts/postinstall.ts) which emits
+  # per-package progress and honours our overall step timeout.
+  - run: yarn install --immutable --ignore-platform --ignore-scripts
     shell: bash
+
+  # --ignore-scripts above skipped electron's own install script, so the
+  # electron binary (and chrome-sandbox, node_modules/electron/dist/*)
+  # was never downloaded. Re-run it explicitly with retries — GitHub
+  # Releases drops the connection mid-download ("socket hang up") on
+  # the macOS and Windows runners roughly one run in three. The 40MB/s
+  # Linux runners almost never see it. Three attempts with a 30s back-
+  # off clears it without masking a real outage.
+  - name: Download electron binary
+    shell: bash
+    env:
+      DEBUG: 'electron*,@electron*'
+    run: |
+      for attempt in 1 2 3; do
+        echo "::group::electron install attempt ${attempt}"
+        if node node_modules/electron/install.js; then
+          echo "::endgroup::"
+          exit 0
+        fi
+        echo "::endgroup::"
+        if [ "${attempt}" -lt 3 ]; then
+          echo "Attempt ${attempt} failed, retrying in 30s..."
+          sleep 30
+        fi
+      done
+      echo "All 3 attempts failed" >&2
+      exit 1
+
+  # Our postinstall.ts downloads external deps (Lima, Trivy, Moby spec,
+  # etc.) and then calls electron-builder install-app-deps to rebuild
+  # native modules (node-pty, better-sqlite3) against Electron's ABI.
+  # Running it as its own step isolates failures and makes them visible.
+  - run: node scripts/ts-wrapper.js scripts/postinstall.ts
+    shell: bash
+    env:
+      npm_config_loglevel: verbose
+      DEBUG: 'electron*,@electron*'
 
   - name: Fix electron sandbox
     if: runner.os == 'Linux'

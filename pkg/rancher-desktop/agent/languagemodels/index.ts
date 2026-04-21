@@ -155,8 +155,17 @@ class LLMRegistryImpl {
       ? mps.getSubconsciousProvider()
       : await SullaSettingsModel.get('subconsciousProvider', 'default');
 
+    // Each candidate only qualifies if it has a non-empty model id. Falling
+    // through to an unconfigured provider produces HTTP 400 "Model not found:
+    // " on every subconscious turn, which spams the logs. We silently try the
+    // next candidate in that case.
+    const hasUsableModel = (svc: BaseLanguageModel | null | undefined): boolean => {
+      try { return !!(svc?.getModel?.() || '').trim() } catch { return false }
+    };
+
     if (subconsciousProvider && subconsciousProvider !== 'default') {
-      return this.getServiceByProvider(subconsciousProvider);
+      const svc = await this.getServiceByProvider(subconsciousProvider);
+      if (hasUsableModel(svc)) return svc;
     }
 
     const secondaryProvider = mps
@@ -164,7 +173,8 @@ class LLMRegistryImpl {
       : await SullaSettingsModel.get('secondaryProvider', 'grok');
 
     if (secondaryProvider) {
-      return this.getServiceByProvider(secondaryProvider);
+      const svc = await this.getServiceByProvider(secondaryProvider);
+      if (hasUsableModel(svc)) return svc;
     }
 
     return this.getPrimaryService();

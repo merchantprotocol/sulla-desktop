@@ -49,19 +49,18 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'chrome', 'computer-use', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'observation', 'pg', 'playwright', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
 
   private categoryDescriptions: Record<string, string> = {
     applescript:        'Execute AppleScript to control macOS applications (Calendar, Reminders, Mail, Finder, etc.) that the user has enabled in Computer Use Settings.',
-    'computer-use':     'Visual computer use tools — screenshot-based interaction with coordinate clicking, typing, and scrolling. Anthropic-native computer_20250124 protocol.',
     meta:               'Tools for browsing available tools, installing skills, and meta management.',
     memory:             'Tools for the memory recall subconscious agent — tool discovery and catalog browsing.',
     observation:        'Observational memory tools for the subconscious observation curator agent.',
     bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',
-    browser:            'Web search tools like Brave and DuckDuckGo.',
+    browser:            'Open/close tabs, read page content, click + fill forms, screenshot, exec JS, inspect cookies/history, background browsing, and desktop notifications. Open returns the page snapshot inline so you do not need a second call.',
     calendar:           'Tools for managing calendar events.',
     docker:             'Tools for Docker container management.',
     extensions:         'Tools for browsing the extension marketplace catalog, listing installed extensions, installing new extensions, and uninstalling extensions. Extensions are Docker Compose stacks managed by Sulla Desktop.',
@@ -75,12 +74,11 @@ export class ToolRegistry {
     rdctl:              'Sulla Desktop / rdctl management commands.',
     agents:             'Sub-agent spawning and job management — run parallel background agents and check their results.',
     integrations:       'Tools for checking integration status and retrieving integration credentials.',
-    chrome:             'Browser extension-style APIs — browsing history search/modification, conversation history search, persistent key-value storage, cookie management, desktop notifications, background browsing, network monitoring, and scheduled alarms.',
     lima:               'Lima VM instance management.',
     n8n:                'n8n workflow automation — list, execute, create, and manage n8n workflows and their executions.',
+    notify:             'Send desktop notifications to alert the user when async work completes or needs attention.',
     vault:              'Credential vault — list saved credentials, check integration connection status, read secrets, and autofill login forms.',
     workflow:           'Workflow management — execute, validate, and manage Sulla workflow definitions.',
-    playwright:         'Browser automation suite with two interaction modes: (1) DOM tools — click_element, set_field, browse_page for simple actions; (2) exec_in_page + window.__sulla helpers for multi-step workflows in one call. Also includes visual tools — take_screenshot with coordinate grid, click_at/type_at for pixel-precise interaction, get_page_snapshot(mode: "dehydrated") for compressed DOM overview. Load the web-research-playwright skill for full docs.',
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
     projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',
     // Integration catalog categories (tools executed via ActivePieces)

@@ -14,6 +14,12 @@ export interface BrowserTab {
   assetId?: string;
   /** Raw HTML content for document-mode tabs (rendered in Shadow DOM) */
   content?: string;
+  /**
+   * Last time something touched this tab (create, updateTab, URL/title/content
+   * change from backend). Used for idle-close of agent tabs. Only populated
+   * on tabs created after this field was added.
+   */
+  lastAccessedAt?: number;
 }
 
 export interface ClosedTab {
@@ -29,6 +35,13 @@ const STORAGE_KEY = 'sulla:browser-tabs';
 const HISTORY_KEY = 'sulla:closed-tabs';
 const ORDER_KEY = 'sulla:tab-order';
 const MAX_HISTORY = 25;
+// Cap the restored-tab count to stop a runaway agent from creating hundreds
+// of tabs, persisting them, and blacking out the main chat window on next
+// launch (each restored tab spawns a WebContentsView and loads its page —
+// hundreds of concurrent page loads saturate the event loop). Dedupe on
+// load too — if an upsert loop snuck past the backend dedupe, we still
+// collapse same-URL+same-mode entries here.
+const MAX_RESTORED_TABS = 20;
 
 function loadPersistedTabs(): BrowserTab[] {
   try {
@@ -36,8 +49,25 @@ function loadPersistedTabs(): BrowserTab[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
+    // Dedupe by (url + mode) so a runaway "open same URL 500 times" loop
+    // collapses to a single entry on restore.
+    const seen = new Set<string>();
+    const deduped: any[] = [];
+    for (const t of parsed) {
+      const key = `${ t?.mode || '' }|${ t?.url || '' }`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(t);
+    }
+    // Keep only the most recent MAX_RESTORED_TABS entries (from the end).
+    const capped = deduped.length > MAX_RESTORED_TABS
+      ? deduped.slice(deduped.length - MAX_RESTORED_TABS)
+      : deduped;
+    if (capped.length < parsed.length) {
+      console.warn(`[useBrowserTabs] Restored ${ capped.length } tab(s) after dedupe+cap (was ${ parsed.length } in storage)`);
+    }
     // Rehydrate: reset loading state
-    return parsed.map((t: any) => ({ ...t, loading: false }));
+    return capped.map((t: any) => ({ ...t, loading: false }));
   } catch {
     return [];
   }
@@ -45,8 +75,19 @@ function loadPersistedTabs(): BrowserTab[] {
 
 function persistTabs(tabList: BrowserTab[]): void {
   try {
-    // Strip large HTML content to avoid blowing localStorage limits
-    const toStore = tabList.map((t) => {
+    // Agent-origin tabs (created by the `browser/tab` tool — they carry an
+    // `assetId`) are ephemeral. They should not survive app restart: the
+    // agent can always reopen what it needs on the next run, and persisting
+    // them is exactly how we end up restoring hundreds of WebContentsViews
+    // and blacking out the main chat window. Only user-initiated tabs
+    // (no assetId) persist.
+    const userTabs = tabList.filter(t => !t.assetId);
+    // Strip large HTML content + enforce the cap on write too, so a live
+    // runaway can't balloon localStorage between app launches.
+    const capped = userTabs.length > MAX_RESTORED_TABS
+      ? userTabs.slice(userTabs.length - MAX_RESTORED_TABS)
+      : userTabs;
+    const toStore = capped.map((t) => {
       if (t.content && t.content.length > 50_000) {
         return { ...t, content: undefined };
       }
@@ -56,13 +97,107 @@ function persistTabs(tabList: BrowserTab[]): void {
   } catch { /* best-effort */ }
 }
 
+// Hard cap on concurrent agent-origin tabs (those with assetId). When an
+// agent opens many distinct URLs in one session we keep the 10 most-recent
+// and evict the oldest so RAM stays bounded regardless of how busy the agent
+// gets. User-opened tabs (no assetId) are never evicted by this.
+const MAX_AGENT_TABS = 10;
+
+// Idle-close timeout for agent-origin tabs. Tabs that haven't been touched
+// (created, updated, navigated) in this long get auto-closed. User tabs are
+// never touched by this timer. Check runs every CHECK_INTERVAL_MS.
+const AGENT_TAB_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const AGENT_TAB_CHECK_INTERVAL_MS = 60 * 1000;    // 1 minute
+
 const restoredTabs = loadPersistedTabs();
 const tabs = reactive<BrowserTab[]>(restoredTabs);
 
-// Persist tab state on every change
+// Enforce the agent-tab cap. Called synchronously from the write paths that
+// can push the count over the limit (createTab + updateTab with a new
+// assetId). Previously this ran as a `watch(tabs, deep: true)`, but because
+// it mutates the same array it watches, any other deep write on tabs
+// (e.g. lastAccessedAt updates from state-update IPC) re-triggered the
+// watcher and a feedback loop could spin the renderer. Inline is
+// deterministic and non-reactive — no self-triggering possible.
+function enforceAgentTabCap(): void {
+  const agentIndexes: number[] = [];
+  for (let i = 0; i < tabs.length; i++) {
+    if (tabs[i].assetId) agentIndexes.push(i);
+  }
+  const overflow = agentIndexes.length - MAX_AGENT_TABS;
+  if (overflow <= 0) return;
+  // Splice in reverse so earlier indexes stay valid as we remove.
+  const toRemove = agentIndexes.slice(0, overflow).reverse();
+  for (const idx of toRemove) tabs.splice(idx, 1);
+  console.warn(`[useBrowserTabs] Evicted ${ overflow } agent tab(s) over cap (${ MAX_AGENT_TABS })`);
+}
+
+// Run once on startup in case persisted state had >MAX_AGENT_TABS agent tabs.
+enforceAgentTabCap();
+
+// Persist tab state on every change (user-origin tabs only — see persistTabs)
 watch(tabs, (current) => {
   persistTabs([...current]);
 }, { deep: true });
+
+// ── Main-process tab mirror ─────────────────────────────────────────
+// Main owns the list of agent-opened tabs (TabRegistry). When it changes,
+// ensure each one has a matching local tab so the UI can render chrome for
+// it. User-opened tabs continue to live entirely in this composable.
+//
+// We do NOT push local changes back up — main is the authority for
+// agent tabs. This one-way flow replaces the previous bidirectional
+// activeAssets ↔ tabs sync that deadlocked the renderer.
+interface MainTabRecord {
+  assetId: string;
+  title:   string;
+  url:     string;
+  origin:  'user' | 'agent';
+}
+
+function mirrorMainTabs(mainTabs: MainTabRecord[]): void {
+  const mainByAsset = new Map(mainTabs.filter(t => t.origin === 'agent').map(t => [t.assetId, t]));
+
+  // Remove local agent tabs that no longer exist in main.
+  for (let i = tabs.length - 1; i >= 0; i--) {
+    const tab = tabs[i];
+    if (tab.assetId && !mainByAsset.has(tab.assetId)) {
+      tabs.splice(i, 1);
+    }
+  }
+
+  // Add / update local tabs for each main agent tab.
+  for (const mt of mainByAsset.values()) {
+    const existing = tabs.find(t => t.assetId === mt.assetId);
+    if (existing) {
+      existing.title = mt.title;
+      existing.url = mt.url;
+    } else {
+      tabs.push({
+        id:             mt.assetId,
+        url:            mt.url,
+        title:          mt.title,
+        favicon:        '',
+        loading:        false,
+        mode:           'browser',
+        assetId:        mt.assetId,
+        lastAccessedAt: Date.now(),
+      });
+    }
+  }
+}
+
+try {
+  (ipcRenderer as any).invoke('tabs:list').then((initial: MainTabRecord[]) => {
+    if (Array.isArray(initial)) mirrorMainTabs(initial);
+  }).catch(() => {});
+
+  (ipcRenderer as any).on('tabs:change', (_e: unknown, mainTabs: MainTabRecord[]) => {
+    mirrorMainTabs(mainTabs);
+  });
+} catch {
+  // Non-Electron context (tests) — skip.
+}
 
 // ── Closed-tab history ──
 
@@ -168,12 +303,13 @@ export function useBrowserTabs() {
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {
     const mode: BrowserTabMode = opts?.mode ?? (url === 'about:blank' ? 'welcome' : 'browser');
     const tab: BrowserTab = {
-      id:      generateId(),
+      id:             generateId(),
       url,
-      title:   MODE_TITLES[mode] || 'New Tab',
-      favicon: '',
-      loading: false,
+      title:          MODE_TITLES[mode] || 'New Tab',
+      favicon:        '',
+      loading:        false,
       mode,
+      lastAccessedAt: Date.now(),
     };
 
     tabs.push(tab);
@@ -259,12 +395,19 @@ export function useBrowserTabs() {
     const tab = tabs.find(t => t.id === id);
 
     if (tab) {
+      // Track whether this update turns a user tab into an agent tab, so we
+      // only run the cap check when it's meaningful.
+      const becameAgentTab = !tab.assetId && !!updates.assetId;
+
       Object.assign(tab, updates);
+      tab.lastAccessedAt = Date.now();
 
       // Re-record when URL or title changes (navigation event)
       if (updates.url || updates.title) {
         recordTabToHistory(tab);
       }
+
+      if (becameAgentTab) enforceAgentTabCap();
     }
   }
 

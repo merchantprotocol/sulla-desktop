@@ -67,7 +67,6 @@ export interface DispatchContext {
     threadId?: string,
     nodeId?: string,
   ): void;
-  applyAssetLifecycleUpdate(data: any, type: string): boolean;
   removeAsset(assetId: string): void;
 }
 
@@ -147,6 +146,23 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   }
 
   const content = data?.content !== undefined ? String(data.content) : '';
+
+  // Segment-boundary sentinels: kind carries the meaning, content is empty
+  // by design. Must be handled BEFORE the empty-content drop or the signal
+  // gets swallowed and the streaming/thinking bubbles never close.
+  const kindRaw = typeof data?.kind === 'string' ? data.kind : undefined;
+  if (kindRaw === 'streaming_complete' || kindRaw === 'thinking_complete') {
+    const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === target && m.role === 'assistant' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
+    }
+    return;
+  }
+
   if (!content.trim()) {
     console.warn(`⚠️ [MessageDispatcher] EMPTY CONTENT assistant message dropped`, {
       msgType: msg.type, channel: agentId, threadId: msgThreadId,
@@ -203,11 +219,15 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     });
   }
 
-  // ── Streaming: update in-place ──
+  // ── Streaming: update in-place, but respect segment boundaries ──
   if (kind === 'streaming' && role === 'assistant') {
+    // Only reuse a streaming bubble if it hasn't been marked complete
+    // (e.g. by a preceding streaming_complete event or a thinking event
+    // arriving mid-stream). Otherwise this token belongs to a new segment.
     let existingIdx = -1;
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
-      if (ctx.messages[i].kind === 'streaming' && ctx.messages[i].role === 'assistant') {
+      const m = ctx.messages[i];
+      if (m.kind === 'streaming' && m.role === 'assistant' && !(m as any)._completed) {
         existingIdx = i;
         break;
       }
@@ -215,7 +235,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     if (existingIdx !== -1) {
       ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent };
     } else {
-      // First streaming chunk — collapse any open thinking bubble
+      // First streaming chunk of a new segment — collapse any open thinking bubble
       for (let i = ctx.messages.length - 1; i >= 0; i--) {
         const m = ctx.messages[i];
         if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
@@ -231,6 +251,20 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         kind,
         content:   finalContent,
       });
+    }
+    return;
+  }
+
+  // ── Streaming complete: close current streaming bubble so the next
+  //    streaming token starts a fresh bubble. Fired when the model
+  //    transitions from text output to thinking/tool_use.              ──
+  if (kind === 'streaming_complete') {
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'streaming' && m.role === 'assistant' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
     }
     return;
   }
@@ -273,17 +307,52 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
-  // ── Non-streaming: remove prior streaming bubble ──
+  // ── Non-streaming assistant message: reconcile with any streaming segments ──
   if (role === 'assistant') {
-    let streamIdx = -1;
+    // Collect recent assistant streaming bubbles (our segmented view of this
+    // turn). Walk back until we hit a user message or non-assistant kind.
+    const recentStreamIndexes: number[] = [];
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
-      if (ctx.messages[i].kind === 'streaming' && ctx.messages[i].role === 'assistant') {
-        streamIdx = i;
-        break;
-      }
+      const m = ctx.messages[i];
+      if (m.role !== 'assistant') break;
+      if (m.kind === 'streaming') recentStreamIndexes.push(i);
     }
-    if (streamIdx !== -1) {
-      ctx.messages.splice(streamIdx, 1);
+
+    if (recentStreamIndexes.length > 0) {
+      // Concatenate what the user has already seen from the streaming
+      // segments (oldest-first). If the incoming full content is already
+      // represented by those segments — which is the normal case when
+      // AgentNode.execute dumps reply.content after a streaming turn — drop
+      // the incoming message to avoid showing it twice. Otherwise remove the
+      // segments and let the non-streaming message replace them.
+      const streamedConcat = recentStreamIndexes
+        .slice()
+        .reverse()
+        .map(i => ctx.messages[i].content || '')
+        .join('');
+      const incoming = finalContent.trim();
+      const streamed = streamedConcat.trim();
+      const alreadyShown = streamed.length > 0 && (
+        streamed === incoming ||
+        (streamed.length >= Math.max(1, incoming.length * 0.6) && incoming.startsWith(streamed))
+      );
+      if (alreadyShown) {
+        // Keep the existing segment bubbles, close any open thinking bubble,
+        // and swallow the duplicate dump.
+        for (let i = ctx.messages.length - 1; i >= 0; i--) {
+          const m = ctx.messages[i];
+          if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+            (ctx.messages[i] as any)._completed = true;
+            break;
+          }
+        }
+        return;
+      }
+      // Content doesn't match segments — remove ALL of them (not just the
+      // last) so the non-streaming message replaces the whole turn.
+      for (const idx of recentStreamIndexes) {
+        ctx.messages.splice(idx, 1);
+      }
     }
 
     // Mark any open thinking bubble as completed
@@ -350,24 +419,9 @@ function handleSpeakDispatch(ctx: DispatchContext, agentId: string, msgThreadId:
   }
 }
 
-// ─── Handler: asset lifecycle ───────────────────────────────────
-
-function handleRegisterOrActivateAsset(ctx: DispatchContext, _agentId: string, _threadId: string, msg: WebSocketMessage): void {
-  const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-  if (ctx.applyAssetLifecycleUpdate(data, 'register_or_activate_asset')) return;
-  console.error('[MessageDispatcher] register_or_activate_asset payload not handled', { data });
-}
-
-function handleDeactivateAsset(ctx: DispatchContext, _agentId: string, _threadId: string, msg: WebSocketMessage): void {
-  const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-  const assetId = String(data?.assetId || '').trim();
-  if (assetId) {
-    ctx.removeAsset(assetId);
-    console.log(`[MessageDispatcher] deactivate_asset: removed ${ assetId }`);
-  } else {
-    console.error('[MessageDispatcher] deactivate_asset: missing assetId', { data });
-  }
-}
+// Asset lifecycle handlers (register_or_activate_asset, deactivate_asset)
+// were removed. Tabs are now owned by main-process TabRegistry; the agent
+// tool opens/closes them directly without WS round-trips.
 
 // ─── Handler: progress / plan_update ────────────────────────────
 
@@ -945,8 +999,8 @@ export function createMessageDispatcher(): MessageDispatcher {
   dispatcher.register('speak_dispatch', handleSpeakDispatch);
 
   // Assets
-  dispatcher.register('register_or_activate_asset', handleRegisterOrActivateAsset);
-  dispatcher.register('deactivate_asset', handleDeactivateAsset);
+  // register_or_activate_asset / deactivate_asset handlers removed —
+  // see TabRegistry.
 
   // Progress / tools
   dispatcher.register('progress', handleProgress);

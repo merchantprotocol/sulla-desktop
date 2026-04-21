@@ -1,4 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
+import { saveScreenshot } from './screenshot_store';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
@@ -64,12 +65,12 @@ export class ScreenshotWorker extends BaseTool {
 
       const title = await result.bridge.getPageTitle();
       const url = await result.bridge.getPageUrl();
+      const ref = await saveScreenshot(screenshot.base64, screenshot.mediaType);
 
       return {
-        successBoolean:      true,
-        responseString:      `[${ result.assetId }] Screenshot captured: ${ title } (${ url })${ legend }`,
-        screenshotBase64:    screenshot.base64,
-        screenshotMediaType: screenshot.mediaType,
+        successBoolean: true,
+        responseString: `[${ result.assetId }] Screenshot captured: ${ title } (${ url }) — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Use Read on that path to load the image into vision context.${ legend }`,
+        screenshot:     ref,
       } as any;
     } catch (err) {
       // Clean up on error
