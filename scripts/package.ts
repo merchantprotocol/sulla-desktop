@@ -144,7 +144,13 @@ class Builder {
   protected async afterPack(context: AfterPackContext) {
     await this.flipFuses(context);
     await this.writeLinuxDesktopFile(context);
-    await this.removeMacUsageDescriptions(context);
+    // removeMacUsageDescriptions() intentionally not called: modifying
+    // Info.plist in afterPack invalidates the signature electron-builder
+    // is about to apply. The asymmetric re-sign (arm64 yes, x64 no) left
+    // Electron Framework.framework without a Developer ID signature on
+    // x64, which fails Gatekeeper despite notarization succeeding.
+    // extendInfo in electron-builder.yml overrides the UsageDescription
+    // keys that matter for our permission prompts; the rest can stay.
   }
 
   async package(): Promise<CliOptions> {
