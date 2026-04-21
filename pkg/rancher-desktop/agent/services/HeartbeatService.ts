@@ -271,7 +271,14 @@ export class HeartbeatService {
       hour12:   true,
     });
 
-    return `\nCurrent time: ${ timeStr }\nTimezone: ${ tz }\n\n${ base }`;
+    const directive = `This is your scheduled autonomous work time.
+
+Current time: ${ timeStr }
+Timezone: ${ tz }
+
+Your active projects and goals have been loaded into your recall context. Review them and take meaningful action on the highest-priority next step. Work autonomously until you make concrete progress, then summarize what you accomplished.${ base ? `\n\n${ base }` : '' }`;
+
+    return directive;
   }
 
   /** Call from UI after settings change to force immediate check */

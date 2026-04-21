@@ -1,6 +1,7 @@
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { parseJson } from '../../services/JsonParseService';
 import { BaseTool, ToolResponse } from '../base';
+import { generateClaudeCodeMemoryFile } from '../../prompts/generateClaudeCodeMemoryFile';
 
 // Generate a 4-character random ID using lowercase, uppercase, and numbers
 function generateTinyId(): string {
@@ -62,6 +63,7 @@ export class AddObservationalMemoryWorker extends BaseTool {
         timestamp: new Date().toISOString(),
       };
       await SullaSettingsModel.set('observationalMemory', JSON.stringify(memoryArray));
+      generateClaudeCodeMemoryFile().catch(() => {});
       return {
         successBoolean: true,
         responseString: `Remembering (updated): "${ content }" (id: ${ memoryArray[duplicateIndex].id }, priority: ${ priority })`,
@@ -96,6 +98,7 @@ export class AddObservationalMemoryWorker extends BaseTool {
 
     // Save back to settings
     await SullaSettingsModel.set('observationalMemory', JSON.stringify(memoryArray));
+    generateClaudeCodeMemoryFile().catch(() => {});
 
     return {
       successBoolean: true,
