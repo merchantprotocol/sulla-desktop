@@ -147,6 +147,15 @@ function buildWorkflowFromTemplate({ slug, manifest }: WrapOptions): Record<stri
   const routineId = newId('routine');
   const now = new Date().toISOString();
 
+  // Flatten the manifest description to a single-line tagline — the
+  // routine node uses this as its subtitle on the canvas, matching
+  // what library-drawer cards show for their role line.
+  const tagline = String(manifest.description ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .split(/[.!?]\s/)[0]
+    .slice(0, 140);
+
   return {
     id:          workflowId,
     name:        `${ manifest.name ?? slug } · new routine`,
@@ -166,6 +175,7 @@ function buildWorkflowFromTemplate({ slug, manifest }: WrapOptions): Record<stri
           category: 'trigger',
           title:    'Manual Trigger',
           kicker:   'Trigger',
+          role:     'Fires when the user runs this routine.',
         },
       },
       {
@@ -182,6 +192,8 @@ function buildWorkflowFromTemplate({ slug, manifest }: WrapOptions): Record<stri
           category:     'agent',
           title:        manifest.name ?? slug,
           kicker:       'Routine',
+          role:         tagline || `Executes the ${ slug } template.`,
+          quote:        manifest.category ? `"${ manifest.section ?? 'Core' } · ${ manifest.category }"` : undefined,
           templateSlug: slug,
           templateId:   manifest.id ?? null,
           config:       {}, // user fills in required inputs via the config panel

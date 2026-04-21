@@ -116,10 +116,14 @@
               v-for="r in routinesController.running.value"
               :key="r.id"
               :routine="r"
-              primary-label="Open"
-              secondary-label="Watch"
-              @primary="onOpenRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
+              primary-label="Run"
+              secondary-label="Edit"
+              @primary="onOpenRun(r.id)"
+              @secondary="onOpenEdit(r.id)"
+              @open="onOpenRun(r.id)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @delete="onDelete(r)"
             />
           </ActSection>
 
@@ -133,10 +137,14 @@
               v-for="r in routinesController.scheduled.value"
               :key="r.id"
               :routine="r"
-              primary-label="Open"
-              secondary-label="Skip next"
-              @primary="onOpenRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
+              primary-label="Run"
+              secondary-label="Edit"
+              @primary="onOpenRun(r.id)"
+              @secondary="onOpenEdit(r.id)"
+              @open="onOpenRun(r.id)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @delete="onDelete(r)"
             />
           </ActSection>
 
@@ -152,8 +160,12 @@
               :routine="r"
               :primary-label="r.status === 'draft' ? 'Publish' : 'Run'"
               secondary-label="Edit"
-              @primary="onOpenRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
+              @primary="onPrimaryClick(r)"
+              @secondary="onOpenEdit(r.id)"
+              @open="onOpenRun(r.id)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @delete="onDelete(r)"
             />
           </ActSection>
 
@@ -273,7 +285,7 @@ import { useTemplates } from '@pkg/composables/useTemplates';
 type Tab = 'routines' | 'templates';
 
 const emit = defineEmits<{
-  (e: 'open-workflow', id: string): void
+  (e: 'open-workflow', id: string, mode?: 'edit' | 'run'): void
   (e: 'use-template', slug: string): void
   (e: 'new-blank'): void
 }>();
@@ -337,14 +349,49 @@ const ribbonStatusLabel = computed(() => {
 
 const todayStr = new Date().toISOString().slice(0, 10);
 
-function onOpenRoutine(id: string) {
-  emit('open-workflow', id);
+// Card body click = run mode. The explicit Edit button routes to edit
+// mode. "Publish" on a draft toggles status in place without navigating;
+// "Run" on a production routine lands in run mode like a card click.
+function onOpenRun(id: string) {
+  emit('open-workflow', id, 'run');
 }
+function onOpenEdit(id: string) {
+  emit('open-workflow', id, 'edit');
+}
+function onPrimaryClick(routine: { id: string; status: string }) {
+  if (routine.status === 'draft') {
+    // Publish = status toggle, stays on the playbill.
+    void routinesController.togglePublish(routine.id);
+
+    return;
+  }
+  onOpenRun(routine.id);
+}
+
 function onUseTemplate(slug: string) {
   emit('use-template', slug);
 }
 function onNewBlank() {
   emit('new-blank');
+}
+
+async function onDuplicate(id: string) {
+  await routinesController.duplicate(id);
+}
+
+async function onToggleArchive(id: string) {
+  await routinesController.toggleArchive(id);
+}
+
+async function onDelete(routine: { id: string; name: string }) {
+  // Destructive and permanent — confirm explicitly. Native confirm is
+  // ugly but bounded and won't surprise anyone; a prettier modal is a
+  // later polish pass.
+  const ok = window.confirm(
+    `Delete "${ routine.name }" permanently? This can't be undone.`,
+  );
+  if (!ok) return;
+  await routinesController.remove(routine.id);
 }
 </script>
 

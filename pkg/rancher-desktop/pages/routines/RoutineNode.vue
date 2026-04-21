@@ -1,13 +1,54 @@
 <template>
   <div
     class="t02"
-    :class="[stateClass, { 'menu-open': menuOpen }]"
+    :class="[stateClass, { 'menu-open': menuOpen, 'is-loop': isLoop }]"
   >
+    <!-- Default target handle — suppressed for loop cards, which own their
+         own four-handle layout below. -->
     <Handle
+      v-if="!isLoop"
       type="target"
       :position="Position.Left"
       class="t02-handle"
     />
+
+    <!-- Loop-specific handles: In (top), Start (bottom), Back (right),
+         Exit (left). Each handle sits at its natural edge; labels float
+         just outside the card so the user can see which connector is
+         which. Design carried over from the original workflow editor. -->
+    <template v-if="isLoop">
+      <Handle
+        id="loop-entry"
+        type="target"
+        :position="Position.Top"
+        class="t02-handle loop-dot"
+      />
+      <span class="loop-label loop-label-top">In</span>
+
+      <Handle
+        id="loop-start"
+        type="source"
+        :position="Position.Bottom"
+        class="t02-handle loop-dot"
+      />
+      <span class="loop-label loop-label-bottom">Start</span>
+
+      <Handle
+        id="loop-back"
+        type="target"
+        :position="Position.Right"
+        class="t02-handle loop-dot"
+      />
+      <span class="loop-label loop-label-right">Back</span>
+
+      <Handle
+        id="loop-exit"
+        type="source"
+        :position="Position.Left"
+        class="t02-handle loop-dot"
+      />
+      <span class="loop-label loop-label-left">Exit</span>
+    </template>
 
     <div class="inner">
       <div class="stub">
@@ -125,11 +166,36 @@
       </div>
     </div>
 
+    <!-- Default source handle — suppressed for nodes that render their
+         own multi-handle layout (loop, condition, router). -->
     <Handle
+      v-if="!isLoop && !hasRouteHandles"
       type="source"
       :position="Position.Right"
       class="t02-handle"
     />
+
+    <!-- Route handles for condition (true/false) and router (N routes).
+         Rendered as a labeled bar hanging off the bottom of the card so
+         adding a new route grows the bar without reshaping the node. -->
+    <div
+      v-if="hasRouteHandles"
+      class="route-handles-bar"
+    >
+      <div
+        v-for="route in routeHandles"
+        :key="route.id"
+        class="route-handle-col"
+      >
+        <Handle
+          :id="route.id"
+          type="source"
+          :position="Position.Bottom"
+          class="t02-handle route-handle-dot"
+        />
+        <span class="route-handle-label">{{ route.label }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -142,6 +208,8 @@ interface RoutineNodeData {
   nodeCode:       string;
   kicker:         string;
   title:          string;
+  subtype?:       string;
+  category?:      string;
   role?:          string;
   quote?:         string;
   think?:         string;
@@ -154,6 +222,8 @@ interface RoutineNodeData {
     icon?:     string;
     initials?: string;
   };
+  /** Per-node configuration — shape depends on subtype. */
+  config?: Record<string, unknown>;
 }
 
 const props = defineProps<{
@@ -165,6 +235,46 @@ const menuOpen = ref(false);
 
 const routinesMode = inject<Ref<'edit' | 'run'>>('routines-mode');
 const isEditMode = computed(() => routinesMode?.value === 'edit');
+
+// Loop nodes carry four labeled handles (In / Start / Back / Exit)
+// instead of the usual left-target / right-source pair. Detect them up
+// front so the template can switch layouts cleanly.
+const isLoop = computed(() => props.data.subtype === 'loop');
+
+// Condition and router nodes fan out into multiple labeled source
+// handles. Condition is fixed at True/False; router grows with the
+// node's config.routes array, so adding a route in the config panel
+// surfaces a new handle automatically.
+interface RouteHandle { id: string; label: string }
+
+const routeHandles = computed<RouteHandle[]>(() => {
+  const subtype = props.data.subtype;
+
+  if (subtype === 'condition') {
+    return [
+      { id: 'condition-true',  label: 'True' },
+      { id: 'condition-false', label: 'False' },
+    ];
+  }
+
+  if (subtype === 'router') {
+    const routes = (props.data.config?.routes as Array<{ label?: string }> | undefined) ?? [];
+    if (routes.length === 0) {
+      // A router with no configured routes still needs a source handle
+      // so the user can wire *something* before committing to a config.
+      return [{ id: 'route-0', label: 'Default' }];
+    }
+
+    return routes.map((r, idx) => ({
+      id:    `route-${ idx }`,
+      label: (r.label && String(r.label).trim()) || `Route ${ idx + 1 }`,
+    }));
+  }
+
+  return [];
+});
+
+const hasRouteHandles = computed(() => routeHandles.value.length > 0);
 
 const stateClass = computed(() => {
   if (props.data.state === 'running') return 'running';
@@ -272,6 +382,10 @@ onBeforeUnmount(() => {
 .t02 .inner {
   flex: 1;
   display: flex;
+  /* Consistent minimum height so cards with short content still leave
+     room for the footer to sit at the bottom of the card rather than
+     floating up against the body. */
+  min-height: 122px;
   border-radius: 10px;
   overflow: hidden;
   background: linear-gradient(135deg, rgba(24, 36, 62, 0.95), rgba(14, 22, 40, 0.98));
@@ -416,6 +530,9 @@ onBeforeUnmount(() => {
 }
 
 .wb-foot {
+  /* Push to the bottom of .col (a flex column) regardless of body
+     length, so every node's footer aligns at the same place. */
+  margin-top: auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -537,5 +654,92 @@ onBeforeUnmount(() => {
 .t02.running .t02-handle {
   background: var(--violet-400);
   box-shadow: 0 0 6px rgba(139, 92, 246, 0.6);
+}
+
+/* Condition / router — horizontal bar of labeled source handles that
+   hangs off the bottom of the card. Grows with the number of routes in
+   `data.config.routes` so the canvas reflects the current branching. */
+.route-handles-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -26px;
+  display: flex;
+  justify-content: center;
+  gap: 22px;
+  padding: 0 12px;
+  pointer-events: none;
+}
+.route-handle-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+.route-handle-col .t02-handle {
+  pointer-events: all;
+}
+.t02-handle.route-handle-dot {
+  width: 10px;
+  height: 10px;
+  background: var(--steel-300);
+  border-color: rgba(14, 22, 40, 0.9);
+}
+.t02.running .t02-handle.route-handle-dot {
+  background: var(--violet-300);
+}
+.route-handle-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--steel-300);
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Loop cards — four labeled handles. Dots are slightly larger and
+   brighter so the user can see which side is which; labels float just
+   outside the card near their dot. */
+.t02.is-loop .t02-handle.loop-dot {
+  width: 10px;
+  height: 10px;
+  background: var(--steel-300);
+  border-color: rgba(14, 22, 40, 0.9);
+}
+.t02.is-loop.running .t02-handle.loop-dot {
+  background: var(--violet-300);
+}
+.loop-label {
+  position: absolute;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--steel-300);
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+}
+.loop-label-top {
+  top: -4px;
+  left: 50%;
+  transform: translate(-50%, -100%);
+}
+.loop-label-bottom {
+  bottom: -4px;
+  left: 50%;
+  transform: translate(-50%, 100%);
+}
+.loop-label-right {
+  right: -10px;
+  top: 50%;
+  transform: translate(100%, -50%);
+}
+.loop-label-left {
+  left: -10px;
+  top: 50%;
+  transform: translate(-100%, -50%);
 }
 </style>

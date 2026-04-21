@@ -252,6 +252,31 @@
       />
     </template>
 
+    <!-- Run-mode FAB: triggers execution of this routine. Placed in the
+         same position as the Add-node FAB so switching modes swaps the
+         affordance rather than stacking both on screen. -->
+    <template v-if="mode === 'run'">
+      <button
+        type="button"
+        class="routines-fab run-fab"
+        :class="{ busy: isRunBusy }"
+        :aria-label="isRunBusy ? 'Run starting…' : 'Run routine'"
+        :disabled="isRunBusy"
+        @click="onRunClick"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path d="M8 5.14v13.72L19 12 8 5.14z" />
+        </svg>
+      </button>
+      <div class="routines-fab-tip">
+        {{ isRunBusy ? 'Starting…' : 'Run routine' }}
+      </div>
+    </template>
+
     <NodeConfigPanel
       :open="configOpen"
       :node="selectedNode"
@@ -402,7 +427,6 @@ import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
 
 import { useWorkflowPersistence, type WorkflowDefinition } from '@pkg/composables/useWorkflowPersistence';
-import { NODE_REGISTRY } from '@pkg/pages/editor/workflow/nodeRegistry';
 
 import {
   enrichNodesForDisplay,
@@ -412,9 +436,6 @@ import {
   type Integration,
 } from './routines/libraryMapping';
 
-function defaultsFor(subtype: string): Record<string, unknown> {
-  return NODE_REGISTRY.find(n => n.subtype === subtype)?.defaultConfig() ?? {};
-}
 import CommandPrompt from './routines/CommandPrompt.vue';
 import NodeConfigPanel from './routines/NodeConfigPanel.vue';
 import NodeDrawer from './routines/NodeDrawer.vue';
@@ -426,19 +447,43 @@ type Mode = 'edit' | 'run';
 // `workflowId` is set when navigated to from RoutinesHome or the /routines/:id
 // route. When unset, the canvas renders the hardcoded demo graph unchanged
 // (useful for standalone previews and for the ad-hoc BrowserTab mount path).
-// Emitting `back-to-home` lets the parent return to the playbill view.
+// `initialMode` lets the caller open the canvas straight into edit or run —
+// card clicks from the playbill land in run mode, the explicit Edit button
+// opens in edit mode. Emitting `back-to-home` returns to the playbill.
 const props = defineProps<{
-  workflowId?: string;
+  workflowId?:  string;
+  initialMode?: 'edit' | 'run';
 }>();
 
 defineEmits<(e: 'back-to-home') => void>();
 
-const mode = ref<Mode>('edit');
+const mode = ref<Mode>(props.initialMode ?? 'edit');
 const editLocked = ref(false);
 const locked = computed(() => mode.value === 'run' || editLocked.value);
 
 const drawerOpen = ref(false);
 const promptOpen = ref(false);
+
+// Run-mode FAB state. Phase 2 Step 2 is visual-only — the click logs
+// the intent so we can verify the button wires up end-to-end without
+// yet touching the execution pipeline. Step 3 replaces this with the
+// real `routines-execute` IPC call + event subscription.
+const isRunBusy = ref(false);
+
+function onRunClick() {
+  if (!props.workflowId) {
+    console.warn('[AgentRoutines] Run clicked with no workflowId — nothing to execute.');
+
+    return;
+  }
+  if (isRunBusy.value) return;
+  isRunBusy.value = true;
+  console.log(`[AgentRoutines] Run requested for workflow "${ props.workflowId }" — execution wiring lands in Phase 2 Step 3.`);
+  // Flash-only busy state so the button gives feedback on click.
+  setTimeout(() => {
+    isRunBusy.value = false;
+  }, 800);
+}
 
 const selectedNodeId = ref<string | null>(null);
 const selectedNode = computed(() => nodes.value.find(n => n.id === selectedNodeId.value) || null);
@@ -777,7 +822,7 @@ onMounted(async() => {
   document.addEventListener('keydown', onKeydown);
 
   // Hydrate from the store when the parent handed us a workflow id.
-  // Without an id the canvas stays on its hardcoded demo graph.
+  // Without an id the canvas stays empty.
   if (props.workflowId) {
     const def = await persistence.load(props.workflowId);
     if (def) {
@@ -794,10 +839,10 @@ onMounted(async() => {
     // Wait a tick so the watch registered below sees the post-hydration
     // state as its baseline rather than firing on the initial assignments.
     await nextTick();
-  } else {
-    // Standalone preview path — still enrich so the hardcoded demo
-    // renders consistently with DB-loaded workflows.
-    enrichNodesForDisplay(nodes.value);
+    // Snap the viewport to the freshly-loaded graph. fit-view-on-init
+    // fired against an empty canvas, so without this the user lands on
+    // whatever the default viewport was instead of their nodes.
+    fitView();
   }
   hasHydrated.value = true;
 });
@@ -818,100 +863,8 @@ onBeforeUnmount(() => {
   }
 });
 
-const nodes = ref<any[]>([
-  {
-    id:       'trigger-1',
-    type:     'routine',
-    position: { x: 0, y: 140 },
-    data:     {
-      state:         'done',
-      nodeCode:      'T-01',
-      kicker:        'Trigger',
-      title:         'Chat Trigger',
-      role:          'Entry · user message',
-      quote:         '"Write a blog on AI for SMB owners."',
-      subtype:       'chat-app',
-      category:      'trigger',
-      config:        defaultsFor('chat-app'),
-      avatar:        { type: 'trigger', icon: '⚡' },
-      metricsStrong: '2s',
-      metrics:       ' ago',
-      footerRight:   'captured',
-    },
-  },
-  {
-    id:       'agent-kr',
-    type:     'routine',
-    position: { x: 290, y: 140 },
-    data:     {
-      state:       'done',
-      nodeCode:    'A-04',
-      kicker:      'Agent',
-      title:       'Keyword Research',
-      role:        'SEO Strategist',
-      quote:       '"Honest about data limits."',
-      subtype:     'agent',
-      category:    'agent',
-      config:      defaultsFor('agent'),
-      avatar:      { type: 'default', initials: 'KR' },
-      metrics:     '⏱ 32s · $0.04',
-      footerRight: '94%',
-    },
-  },
-  {
-    id:       'agent-tr',
-    type:     'routine',
-    position: { x: 580, y: 140 },
-    data:     {
-      state:       'running',
-      nodeCode:    'A-07',
-      kicker:      'Session',
-      title:       'Topic Researcher',
-      role:        'Audience Intent',
-      quote:       '"Translates tech for non-tech owners."',
-      subtype:     'agent',
-      category:    'agent',
-      config:      defaultsFor('agent'),
-      avatar:      { type: 'default', initials: 'TR' },
-      think:       'Reading 14 SMB forum threads…',
-      thinkStrong: '14 SMB forum threads',
-      metrics:     '⏱ 1m 04s · $0.07',
-      footerRight: '91%',
-    },
-  },
-  {
-    id:       'agent-cb',
-    type:     'routine',
-    position: { x: 870, y: 140 },
-    data:     {
-      state:       'failed',
-      nodeCode:    'A-11',
-      kicker:      'Agent',
-      title:       'Brief Generator',
-      role:        'Content Strategist',
-      quote:       '"Opinionated about structure."',
-      subtype:     'agent',
-      category:    'agent',
-      config:      defaultsFor('agent'),
-      avatar:      { type: 'default', initials: 'CB' },
-      metrics:     '⏱ 12s · $0.02',
-      footerRight: 'timed out',
-    },
-  },
-]);
-
-const edges = ref<any[]>([
-  { id: 'e1', source: 'trigger-1', target: 'agent-kr', type: 'smoothstep' },
-  { id: 'e2', source: 'agent-kr', target: 'agent-tr', type: 'smoothstep' },
-  {
-    id:       'e3',
-    source:   'agent-tr',
-    target:   'agent-cb',
-    type:     'smoothstep',
-    animated: true,
-    style:    { stroke: '#a78bfa', strokeWidth: 2 },
-  },
-]);
+const nodes = ref<any[]>([]);
+const edges = ref<any[]>([]);
 
 // Auto-save on any mutation of the graph or its metadata. Deep watch so
 // in-place changes to nodes/edges (position, config, label) are caught
@@ -1255,19 +1208,22 @@ watch(
   outline-offset: 2px;
 }
 
-/* Edges — clickable with a fat invisible hit area, subtle default, violet when selected. */
+/* Edges — clickable with a fat invisible hit area. Selection is a
+   glowing blue; the violet palette is reserved for the "running"/active
+   state on animated edges so the two reads don't collide. */
 .routines-flow :deep(.vue-flow__edge-path) {
   stroke: rgba(168, 192, 220, 0.55);
   stroke-width: 2;
-  transition: stroke 0.12s ease, stroke-width 0.12s ease;
+  transition: stroke 0.12s ease, stroke-width 0.12s ease, filter 0.12s ease;
 }
 .routines-flow :deep(.vue-flow__edge:hover .vue-flow__edge-path) {
-  stroke: var(--violet-300);
+  stroke: #7dd3fc; /* brighter cyan-blue on hover */
 }
 .routines-flow :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
-  stroke: var(--violet-400);
+  stroke: #60a5fa; /* glowing blue for the selected state */
   stroke-width: 3;
-  filter: drop-shadow(0 0 6px rgba(139, 92, 246, 0.6));
+  filter: drop-shadow(0 0 6px rgba(96, 165, 250, 0.75))
+    drop-shadow(0 0 14px rgba(96, 165, 250, 0.35));
 }
 /* Widen the hit area so edges are easy to click. */
 .routines-flow :deep(.vue-flow__edge .vue-flow__edge-interaction) {
@@ -1391,6 +1347,35 @@ watch(
 .routines-fab.active {
   transform: rotate(45deg);
   background: linear-gradient(135deg, #4b3085, #2a1555);
+}
+
+/* Run-mode variant — same violet palette as the Add-node FAB but with
+   a play triangle instead of a plus, and a slightly brighter glow so
+   the button reads as "go" rather than "create". */
+.routines-fab.run-fab {
+  font-size: 0; /* suppress any stray text; icon is an inline svg */
+}
+.routines-fab.run-fab svg {
+  width: 22px;
+  height: 22px;
+  margin-left: 2px; /* optical nudge — the triangle is heavier on the right */
+  color: white;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.35));
+}
+.routines-fab.run-fab:hover {
+  box-shadow:
+    0 12px 32px rgba(139, 92, 246, 0.5),
+    0 0 24px rgba(139, 92, 246, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.routines-fab.run-fab.busy {
+  cursor: progress;
+  opacity: 0.75;
+  animation: run-fab-pulse 1.1s ease-in-out infinite;
+}
+@keyframes run-fab-pulse {
+  0%, 100% { box-shadow: 0 10px 28px rgba(139, 92, 246, 0.4), 0 0 18px rgba(139, 92, 246, 0.35); }
+  50%      { box-shadow: 0 10px 28px rgba(139, 92, 246, 0.55), 0 0 32px rgba(139, 92, 246, 0.7); }
 }
 
 .routines-fab-tip {

@@ -197,16 +197,25 @@ export function initSullaWorkflowEvents(): void {
     return definition;
   });
 
-  // Save (create or update) a workflow — saves in-place if exists, otherwise to draft/
+  // ── Workflow mutations — DB-only ──
+  // YAML files were removed in the Phase 1 cutover. Postgres is the only
+  // writer now; the runtime (Phase 2) queries the workflows table directly.
+  // Errors propagate to the caller — we don't log-and-swallow any more
+  // because there's no redundant path left to hide behind.
+
   ipcMainProxy.handle('workflow-save', async(_event: unknown, workflow: any) => {
+    if (!workflow?.id) {
+      throw new Error('workflow-save: workflow.id is required');
+    }
+
     workflow.updatedAt = new Date().toISOString();
     if (!workflow.createdAt) {
       workflow.createdAt = workflow.updatedAt;
     }
 
     // Strip runtime execution state from nodes before persisting —
-    // execution state belongs in PostgreSQL (workflow_checkpoints table),
-    // not in the YAML definition file. Writing it here corrupts config edits.
+    // execution state belongs in workflow_checkpoints, not in the
+    // definition JSONB. Writing it here corrupts config edits.
     if (Array.isArray(workflow.nodes)) {
       for (const node of workflow.nodes) {
         if (node.data?.execution) {
@@ -215,98 +224,92 @@ export function initSullaWorkflowEvents(): void {
       }
     }
 
-    // Find existing file to determine which subfolder it's in
-    const existing = findWorkflowFileInSubfolders(workflow.id);
-    const targetDir = existing ? path.dirname(existing.filePath) : getSubfolderDirs().draft;
+    const WorkflowModel = await importWorkflowModel();
+    // Let the model reuse the row's existing status when this is an
+    // update; only brand-new rows default to 'draft' via upsertFromDefinition.
+    const existing = await WorkflowModel.findById(workflow.id);
+    const status = (existing?.attributes.status ?? workflow._status ?? 'draft') as WorkflowStatus;
 
-    fs.mkdirSync(targetDir, { recursive: true });
+    await WorkflowModel.upsertFromDefinition(workflow, { status });
 
-    // Remove old file if it exists under a different name (handles renames)
-    const newFilePath = path.join(targetDir, `${ slugifyWorkflowName(workflow.name) }.yaml`);
+    console.log(`[Sulla] Workflow saved: ${ workflow.name ?? workflow.id } (id: ${ workflow.id }, status: ${ status })`);
 
-    if (existing && existing.filePath !== newFilePath) {
-      fs.unlinkSync(existing.filePath);
-      console.log(`[Sulla] Workflow renamed: ${ path.basename(existing.filePath) } -> ${ path.basename(newFilePath) }`);
-    }
-
-    fs.writeFileSync(newFilePath, yaml.stringify(workflow, { lineWidth: 0 }), 'utf-8');
-
-    console.log(`[Sulla] Workflow saved: ${ path.basename(newFilePath) } (id: ${ workflow.id })`);
-
-    // Phase 1 of DB cutover: dual-write to Postgres alongside the YAML file.
-    // YAML remains the source of truth for the runtime (WorkflowRegistry scans disk).
-    // DB failures are logged-and-swallowed so they can never block a user's save.
-    try {
-      const WorkflowModel = await importWorkflowModel();
-      const status = (existing?.status ?? 'draft') as WorkflowStatus;
-
-      await WorkflowModel.upsertFromDefinition(workflow, { status });
-    } catch (err) {
-      console.warn('[Sulla] DB dual-write for workflow-save failed (YAML write succeeded):', err);
-    }
-
-    // Refresh workflow schedules in case a schedule trigger was added/changed
+    // Kick the scheduler — Phase 2 rewrites this to read from the DB too.
     refreshWorkflowSchedules();
 
     return true;
   });
 
-  // Delete a workflow (searches all subfolders)
   ipcMainProxy.handle('workflow-delete', async(_event: unknown, workflowId: string) => {
-    const found = findWorkflowFileInSubfolders(workflowId);
+    if (!workflowId) throw new Error('workflow-delete: workflowId is required');
 
-    if (found) {
-      fs.unlinkSync(found.filePath);
-      console.log(`[Sulla] Workflow deleted: ${ path.basename(found.filePath) } (id: ${ workflowId })`);
+    const WorkflowModel = await importWorkflowModel();
+    const deleted = await WorkflowModel.deleteById(workflowId);
+
+    if (deleted) {
+      console.log(`[Sulla] Workflow deleted: ${ workflowId }`);
     } else {
       console.log(`[Sulla] Workflow not found for deletion: ${ workflowId }`);
     }
 
-    try {
-      const WorkflowModel = await importWorkflowModel();
-
-      await WorkflowModel.deleteById(workflowId);
-    } catch (err) {
-      console.warn('[Sulla] DB dual-write for workflow-delete failed:', err);
-    }
-
     refreshWorkflowSchedules();
 
-    return true;
+    return deleted;
   });
 
-  // Move a workflow between subfolders (draft ↔ production ↔ archive)
   ipcMainProxy.handle('workflow-move', async(_event: unknown, workflowId: string, targetStatus: WorkflowStatus) => {
-    const found = findWorkflowFileInSubfolders(workflowId);
+    if (!workflowId) throw new Error('workflow-move: workflowId is required');
 
-    if (!found) {
+    const WorkflowModel = await importWorkflowModel();
+    const updated = await WorkflowModel.updateStatus(workflowId, targetStatus);
+
+    if (!updated) {
       throw new Error(`Workflow not found: ${ workflowId }`);
     }
 
-    if (found.status === targetStatus) {
-      return { success: true, newStatus: targetStatus };
-    }
+    console.log(`[Sulla] Workflow moved: ${ workflowId } -> ${ targetStatus }`);
 
-    const targetDir = getSubfolderDirs()[targetStatus];
-    fs.mkdirSync(targetDir, { recursive: true });
-
-    const newFilePath = path.join(targetDir, path.basename(found.filePath));
-    fs.renameSync(found.filePath, newFilePath);
-
-    console.log(`[Sulla] Workflow moved: ${ path.basename(found.filePath) } (${ found.status } -> ${ targetStatus })`);
-
-    try {
-      const WorkflowModel = await importWorkflowModel();
-
-      await WorkflowModel.updateStatus(workflowId, targetStatus);
-    } catch (err) {
-      console.warn('[Sulla] DB dual-write for workflow-move failed:', err);
-    }
-
-    // Refresh schedules when workflows move to/from production
+    // Schedules care about the draft/production boundary — refresh.
     refreshWorkflowSchedules();
 
     return { success: true, newStatus: targetStatus };
+  });
+
+  // Duplicate an existing workflow. Copies its definition into a fresh
+  // id with " (copy)" appended to the name; always lands in draft.
+  ipcMainProxy.handle('workflow-duplicate', async(_event: unknown, workflowId: string) => {
+    if (!workflowId) throw new Error('workflow-duplicate: workflowId is required');
+
+    const WorkflowModel = await importWorkflowModel();
+    const original = await WorkflowModel.findById(workflowId);
+
+    if (!original) {
+      throw new Error(`Workflow not found: ${ workflowId }`);
+    }
+
+    const originalDef = original.attributes.definition as Record<string, unknown>;
+    const newId = `workflow-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
+    const now = new Date().toISOString();
+
+    const duplicate: Record<string, unknown> = {
+      ...originalDef,
+      id:        newId,
+      name:      `${ String(originalDef.name ?? original.attributes.name ?? 'Untitled') } (copy)`,
+      createdAt: now,
+      updatedAt: now,
+      _status:   'draft',
+    };
+
+    await WorkflowModel.upsertFromDefinition(duplicate, {
+      status:       'draft',
+      changeReason: `duplicated from ${ workflowId }`,
+    });
+
+    console.log(`[Sulla] Workflow duplicated: ${ workflowId } -> ${ newId }`);
+
+    refreshWorkflowSchedules();
+
+    return { id: newId, name: duplicate.name as string };
   });
 
   // ── DB-backed read handlers (Phase 1 verification path) ──

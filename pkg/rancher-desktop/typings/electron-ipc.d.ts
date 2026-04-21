@@ -339,6 +339,7 @@ export interface IpcMainInvokeEvents {
   // DB-backed workflow reads (Phase 1 verification path for the Postgres cutover)
   'workflow-db-list':     () => { id: string; name: string; description: string | null; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus; updatedAt: string; nodeCount: number }[];
   'workflow-db-get':      (workflowId: string) => any;
+  'workflow-duplicate':   (workflowId: string) => { id: string; name: string };
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
 
   // Routine template registry (scanned from ~/sulla/routines/<slug>/routine.yaml)

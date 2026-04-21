@@ -98,25 +98,26 @@ export class WorkflowSchedulerService {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    console.log('[WorkflowSchedulerService] Initializing...');
-
-    try {
-      this.scanAndSchedule();
-    } catch (err) {
-      console.error('[WorkflowSchedulerService] Initialization failed:', err);
-    }
+    // The legacy YAML-backed scheduler is intentionally disabled: the
+    // old workflow system is being removed in favour of the new routines
+    // platform, which is DB-backed and will get its own scheduler rewrite
+    // in Phase 2. Cancel any jobs that survived from a previous run and
+    // leave this service as a no-op shell until then.
+    console.log('[WorkflowSchedulerService] Disabled — legacy YAML scheduler skipped. Phase 2 rewrites this against the routines DB.');
+    this.cancelAll();
 
     this.initialized = true;
   }
 
   /**
    * Re-scan workflows and update schedules.
-   * Call this when workflows are saved/deleted from production.
+   *
+   * No-op while the legacy scheduler is disabled. `workflow-save` and
+   * friends still call this, but it does nothing until the Phase 2
+   * rewrite lands a DB-backed scan.
    */
   refresh(): void {
-    console.log('[WorkflowSchedulerService] Refreshing schedules...');
-    this.cancelAll();
-    this.scanAndSchedule();
+    // Intentionally empty.
   }
 
   /**

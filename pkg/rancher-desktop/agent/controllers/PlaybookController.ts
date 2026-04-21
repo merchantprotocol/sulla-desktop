@@ -1169,7 +1169,11 @@ export class PlaybookController<TState = any> {
           try {
             const { getWorkflowRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
             const subRegistry = getWorkflowRegistry();
-            const subDefinition = subRegistry.loadWorkflow(step.workflowId);
+            const subDefinition = await subRegistry.loadWorkflow(step.workflowId);
+
+            if (!subDefinition) {
+              throw new Error(`Sub-workflow not found: ${ step.workflowId }`);
+            }
 
             if (step.agentId) {
               console.log(`[PlaybookController] Delegating sub-workflow "${ subWfLabel }" to agent "${ step.agentId }"`);
@@ -1247,7 +1251,11 @@ export class PlaybookController<TState = any> {
           try {
             const { getWorkflowRegistry: getTransferRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
             const transferRegistry = getTransferRegistry();
-            const targetDefinition = transferRegistry.loadWorkflow(step.targetWorkflowId);
+            const targetDefinition = await transferRegistry.loadWorkflow(step.targetWorkflowId);
+
+            if (!targetDefinition) {
+              throw new Error(`Transfer target workflow not found: ${ step.targetWorkflowId }`);
+            }
 
             this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: transferLabel, output: { transferred: step.targetWorkflowId } });
             await this.saveCheckpoint(step.updatedPlaybook, step.nodeId, transferLabel, 'transfer', { transferred: step.targetWorkflowId });

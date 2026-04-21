@@ -252,6 +252,7 @@
           <AgentRoutines
             :key="activeRoutineId"
             :workflow-id="activeRoutineId"
+            :initial-mode="activeRoutineMode"
             @back-to-home="activeRoutineId = null"
           />
           <button
@@ -333,11 +334,15 @@ function onSetMode(mode: BrowserTabMode) {
 // ── Routines sub-navigation state ──
 // When a routine or template is selected, switch from the playbill
 // landing view (RoutinesHome) to the canvas editor (AgentRoutines).
-// `null` means show the landing view.
+// `null` means show the landing view. The mode determines whether the
+// canvas opens in run (default, triggered by card click) or edit (the
+// explicit Edit button on the card).
 const activeRoutineId = ref<string | null>(null);
+const activeRoutineMode = ref<'edit' | 'run'>('run');
 
-function onOpenRoutine(id: string) {
+function onOpenRoutine(id: string, mode: 'edit' | 'run' = 'run') {
   activeRoutineId.value = id;
+  activeRoutineMode.value = mode;
 }
 
 async function onUseTemplate(slug: string) {
@@ -950,9 +955,9 @@ onUnmounted(() => {
   position: absolute;
   top: 18px;
   left: 58px;
-  // Below the NodeDrawer (z-index 10) so the library can slide over
-  // the back button when opened. Above the canvas chrome (brackets at
-  // z-index 4) so it remains visible the rest of the time.
+  /* Below the NodeDrawer (z-index 10) so the library can slide over
+     the back button when opened. Above the canvas chrome (brackets at
+     z-index 4) so it remains visible the rest of the time. */
   z-index: 5;
   padding: 6px 12px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
