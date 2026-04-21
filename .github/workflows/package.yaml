@@ -7,11 +7,6 @@ on:
     - 'v*'
   # Manual dispatch → build artifacts only (release step is tag-gated below)
   workflow_dispatch:
-    inputs:
-      sign:
-        type: boolean
-        default: true
-        description: Whether to check signing result
 
 defaults:
   run:
