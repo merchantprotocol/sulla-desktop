@@ -274,11 +274,24 @@ export function useRoutines() {
     routines.value.filter(r => r.status === 'running'));
   const scheduled = computed(() =>
     routines.value.filter(r => r.status === 'scheduled'));
+  // Idle now means "in the wings but still active" — drafts included,
+  // archived excluded. Archived routines get their own tab.
   const idle = computed(() =>
-    routines.value.filter(r => ['idle', 'draft', 'archive'].includes(r.status)));
+    routines.value.filter(r => ['idle', 'draft'].includes(r.status)));
+  const archived = computed(() =>
+    routines.value.filter(r => r.status === 'archive'));
 
   const stats = computed<RoutinesStats>(() => computeStats(routines.value));
-  const isEmpty = computed(() => !isLoading.value && routines.value.length === 0);
+  // "Empty" now reflects the My Routines tab — if every routine you own
+  // is archived, we still want the My Routines empty state so the user
+  // is guided toward templates / new routines, not staring at Act sections
+  // with nothing in them.
+  const isEmpty = computed(() => {
+    if (isLoading.value) return false;
+    const nonArchived = routines.value.filter(r => r.status !== 'archive');
+
+    return nonArchived.length === 0;
+  });
 
   return {
     // state
@@ -291,6 +304,7 @@ export function useRoutines() {
     running,
     scheduled,
     idle,
+    archived,
 
     // derived
     stats,
