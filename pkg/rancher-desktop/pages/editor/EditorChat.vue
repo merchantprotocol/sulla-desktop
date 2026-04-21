@@ -258,9 +258,12 @@
       class="chat-messages"
       :class="{ dark: isDark }"
     >
-      <!-- Empty state -->
+      <!-- Empty state — hide as soon as the agent is doing anything,
+           even before the first message round-trips back from the
+           backend. Otherwise the new-tab intro hangs on screen for
+           seconds while the user wonders if their send went through. -->
       <div
-        v-if="messages.length === 0 && !loading"
+        v-if="messages.length === 0 && !isBusy"
         class="chat-empty"
       >
         <p class="chat-empty-text">
@@ -270,7 +273,7 @@
 
       <!-- Spacer pushes messages to bottom when few messages -->
       <div
-        v-if="messages.length > 0"
+        v-if="messages.length > 0 || isBusy"
         class="chat-messages-spacer"
       />
 
