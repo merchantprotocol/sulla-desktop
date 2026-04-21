@@ -319,12 +319,17 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     }
 
     if (recentStreamIndexes.length > 0) {
-      // Concatenate what the user has already seen from the streaming
-      // segments (oldest-first). If the incoming full content is already
-      // represented by those segments — which is the normal case when
-      // AgentNode.execute dumps reply.content after a streaming turn — drop
-      // the incoming message to avoid showing it twice. Otherwise remove the
-      // segments and let the non-streaming message replace them.
+      // The user has already seen the streaming segments. NEVER wipe them
+      // here — abort messages, error notices, and other status pings would
+      // erase the actual response content (this is the bug where hitting
+      // Stop blanked everything except thinking bubbles).
+      //
+      // Two cases:
+      //   1. Incoming content is the post-stream "full reply" dump (matches
+      //      the concatenated segments). Drop it — segments already cover it.
+      //   2. Incoming content is something else (status, error, abort,
+      //      separate follow-up). Let it through as a new bubble alongside
+      //      the segments.
       const streamedConcat = recentStreamIndexes
         .slice()
         .reverse()
@@ -334,11 +339,11 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       const streamed = streamedConcat.trim();
       const alreadyShown = streamed.length > 0 && (
         streamed === incoming ||
-        (streamed.length >= Math.max(1, incoming.length * 0.6) && incoming.startsWith(streamed))
+        (streamed.length >= Math.max(1, incoming.length * 0.6) && incoming.startsWith(streamed)) ||
+        streamed.startsWith(incoming)
       );
       if (alreadyShown) {
-        // Keep the existing segment bubbles, close any open thinking bubble,
-        // and swallow the duplicate dump.
+        // Close any open thinking bubble and swallow the duplicate dump.
         for (let i = ctx.messages.length - 1; i >= 0; i--) {
           const m = ctx.messages[i];
           if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
@@ -348,11 +353,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         }
         return;
       }
-      // Content doesn't match segments — remove ALL of them (not just the
-      // last) so the non-streaming message replaces the whole turn.
-      for (const idx of recentStreamIndexes) {
-        ctx.messages.splice(idx, 1);
-      }
+      // Different content — keep the segments, fall through and append the
+      // incoming message as a new bubble below them.
     }
 
     // Mark any open thinking bubble as completed
