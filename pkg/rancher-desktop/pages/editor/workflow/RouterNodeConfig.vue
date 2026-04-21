@@ -176,18 +176,18 @@ function onPromptChange(event: Event) {
 }
 
 function onRouteChange(idx: number, field: 'label' | 'description', value: string) {
-  const routes = [...props.config.routes];
+  const routes = [...(props.config.routes ?? [])];
   routes[idx] = { ...routes[idx], [field]: value };
   emit('update-config', props.nodeId, { ...props.config, routes });
 }
 
 function addRoute() {
-  const routes = [...props.config.routes, { label: '', description: '' }];
+  const routes = [...(props.config.routes ?? []), { label: '', description: '' }];
   emit('update-config', props.nodeId, { ...props.config, routes });
 }
 
 function removeRoute(idx: number) {
-  const routes = props.config.routes.filter((_, i) => i !== idx);
+  const routes = (props.config.routes ?? []).filter((_, i) => i !== idx);
   emit('update-config', props.nodeId, { ...props.config, routes });
 }
 </script>
