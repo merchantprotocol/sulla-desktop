@@ -120,6 +120,7 @@
               secondary-label="Watch"
               @primary="onOpenRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
+              @export="onExport(r.id)"
             />
           </ActSection>
 
@@ -137,6 +138,7 @@
               secondary-label="Skip next"
               @primary="onOpenRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
+              @export="onExport(r.id)"
             />
           </ActSection>
 
@@ -154,6 +156,7 @@
               secondary-label="Edit"
               @primary="onOpenRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
+              @export="onExport(r.id)"
             />
           </ActSection>
 
@@ -269,6 +272,7 @@ import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
 import TemplateStrip from '@pkg/components/routines/TemplateStrip.vue';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type Tab = 'routines' | 'templates';
 
@@ -345,6 +349,18 @@ function onUseTemplate(slug: string) {
 }
 function onNewBlank() {
   emit('new-blank');
+}
+async function onExport(id: string) {
+  // Fires the native save dialog in the main process; surfaces any
+  // failure through the routines controller's existing error channel
+  // so the view layer stays consistent with other IPC failure paths.
+  try {
+    await ipcRenderer.invoke('routines-export', id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    routinesController.error.value = `Export failed: ${ msg }`;
+    console.error('[Routines] Export failed:', err);
+  }
 }
 </script>
 

@@ -345,6 +345,7 @@ export interface IpcMainInvokeEvents {
   'routines-template-list':        () => { slug: string; name: string; description: string; version: string; section: string; category: string; runtime: string | null; tags: string[]; inputCount: number; outputCount: number; permissions: string }[];
   'routines-template-instantiate': (slug: string) => { id: string; name: string };
   'routines-create-blank':         () => { id: string; name: string };
+  'routines-export':               (workflowId: string) => { path: string } | { canceled: true };
 
   // Workflow execution
   'workflow-execute':          (workflowId: string, triggerPayload: unknown) => { executionId: string };

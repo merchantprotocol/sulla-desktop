@@ -83,12 +83,61 @@
       >
         {{ secondaryLabel }}
       </button>
+
+      <!-- Kebab menu — houses the "less common" routine actions
+           (export today, duplicate/archive/delete later) so the primary
+           CTAs stay uncluttered. -->
+      <div class="kebab-wrap">
+        <button
+          type="button"
+          class="btn ghost kebab"
+          aria-haspopup="menu"
+          :aria-expanded="menuOpen"
+          title="More actions"
+          @click="toggleMenu"
+        >
+          ⋯
+        </button>
+        <ul
+          v-if="menuOpen"
+          class="kebab-menu"
+          role="menu"
+        >
+          <li
+            role="menuitem"
+            @click="onMenuSelect('export')"
+          >
+            Export
+          </li>
+          <li
+            class="disabled"
+            role="menuitem"
+            aria-disabled="true"
+          >
+            Duplicate
+          </li>
+          <li
+            class="disabled"
+            role="menuitem"
+            aria-disabled="true"
+          >
+            Archive
+          </li>
+          <li
+            class="disabled"
+            role="menuitem"
+            aria-disabled="true"
+          >
+            Delete
+          </li>
+        </ul>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 
 import type { RoutineSummary } from '@pkg/types/routines';
 
@@ -104,11 +153,25 @@ const props = defineProps<{
   secondaryLabel: string;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'open'): void;
   (e: 'primary'): void;
   (e: 'secondary'): void;
+  (e: 'export'): void;
 }>();
+
+// Kebab dropdown state. Local to the strip — parent sees only the
+// emitted action (`export`, and later duplicate/archive/delete).
+const menuOpen = ref(false);
+
+function toggleMenu() {
+  menuOpen.value = !menuOpen.value;
+}
+
+function onMenuSelect(action: 'export') {
+  menuOpen.value = false;
+  if (action === 'export') emit('export');
+}
 
 // Status chip styling is a view concern — compute it from the
 // domain model rather than making the template do the mapping.
@@ -355,4 +418,49 @@ const timingLabel = computed(() => {
   border-color: rgba(196, 212, 230, 0.75);
 }
 .btn.ghost { background: transparent; }
+
+.kebab-wrap {
+  position: relative;
+  display: inline-block;
+}
+.btn.kebab {
+  padding: 4px 10px;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.kebab-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 140px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: rgba(20, 30, 54, 0.96);
+  border: 1px solid rgba(168, 192, 220, 0.3);
+  border-radius: 4px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+  z-index: 20;
+  backdrop-filter: blur(6px);
+}
+.kebab-menu li {
+  padding: 7px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--steel-100);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.kebab-menu li:hover:not(.disabled) {
+  background: rgba(74, 111, 165, 0.22);
+  color: white;
+}
+.kebab-menu li.disabled {
+  color: var(--steel-500);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
 </style>
