@@ -6,6 +6,7 @@ import * as path from 'path';
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
 import { resolveLimactlPath, resolveLimaHome } from '../tools/util/CommandRunner';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
+import { redisClient } from '../database/RedisClient';
 import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
@@ -38,8 +39,38 @@ const log = Logging.background;
  * (or ANTHROPIC_API_KEY) and stay out of its auth lifecycle.
  */
 export class ClaudeCodeService extends BaseLanguageModel {
-  // conversationId → Claude session_id captured from a prior spawn.
+  // conversationId → Claude session_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
+
+  private readonly SESSION_KEY_PREFIX = 'claude_code_session:';
+  private readonly SESSION_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+
+  private async getSession(convId: string): Promise<string | undefined> {
+    const cached = this.sessions.get(convId);
+    if (cached) return cached;
+    try {
+      const stored = await redisClient.get(`${ this.SESSION_KEY_PREFIX }${ convId }`);
+      if (stored) {
+        this.sessions.set(convId, stored);
+        return stored;
+      }
+    } catch { /* Redis unavailable — start fresh session */ }
+    return undefined;
+  }
+
+  private async setSession(convId: string, sessionId: string): Promise<void> {
+    this.sessions.set(convId, sessionId);
+    try {
+      await redisClient.set(`${ this.SESSION_KEY_PREFIX }${ convId }`, sessionId, this.SESSION_TTL_SECONDS);
+    } catch { /* Redis unavailable — session persists in memory only this run */ }
+  }
+
+  private async deleteSession(convId: string): Promise<void> {
+    this.sessions.delete(convId);
+    try {
+      await redisClient.del(`${ this.SESSION_KEY_PREFIX }${ convId }`);
+    } catch { /* Redis unavailable — non-fatal */ }
+  }
 
   override getContextWindow(): number {
     return 200_000;
@@ -242,6 +273,48 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   /**
+   * Build a <sulla_context> prefix to prepend to every outgoing user message.
+   * Includes:
+   *   - High-priority observational memory entries (critical + high)
+   *   - Recall context produced by the subconscious middleware this turn
+   *
+   * Injecting here rather than relying solely on --append-system-prompt ensures
+   * Claude treats this context as part of the user turn — which it weights more
+   * heavily than appended system prompt content. It also fixes the resumed-
+   * session gap: --resume sends only the latest user message, so recall context
+   * merged into prior assistant messages was silently dropped.
+   */
+  private async buildUserMessageContextPrefix(state?: BaseThreadState): Promise<string> {
+    const parts: string[] = [];
+
+    // High-priority observational memory
+    try {
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      const { parseJson } = await import('../services/JsonParseService');
+      const raw     = await SullaSettingsModel.get('observationalMemory', '[]');
+      const entries = parseJson(raw);
+      if (Array.isArray(entries)) {
+        const high = (entries as any[]).filter(e =>
+          ['critical', 'high'].includes((e?.priority ?? '').toLowerCase()),
+        );
+        if (high.length > 0) {
+          const lines = high.map((e: any) => `- ${ e.content ?? '' }`).join('\n');
+          parts.push(`<observational_memory>\n${ lines }\n</observational_memory>`);
+        }
+      }
+    } catch { /* non-fatal */ }
+
+    // Recall context from subconscious middleware (may be null on first turn)
+    const recallContext = (state?.metadata as any)?.recallContext;
+    if (recallContext && typeof recallContext === 'string' && recallContext.trim()) {
+      parts.push(`<recall_context>\n${ recallContext.trim() }\n</recall_context>`);
+    }
+
+    if (parts.length === 0) return '';
+    return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;
+  }
+
+  /**
    * Spawn claude -p in the VM, stream text_delta chunks to the callback,
    * return the final text.
    *
@@ -281,20 +354,26 @@ export class ClaudeCodeService extends BaseLanguageModel {
     }
 
     const convId = options.conversationId ?? '__default__';
-    const existingSession = retryWithoutSession ? undefined : this.sessions.get(convId);
+    const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
 
     // Prompt strategy:
     //   - existingSession → send only the latest user message (Claude has the
     //     rest via --resume + prompt cache)
     //   - no session    → seed Claude with the full curated transcript
-    const prompt = existingSession
+    const basePrompt = existingSession
       ? this.extractLatestUserMessage(messages)
       : this.serializeFullTranscript(messages);
 
-    if (!prompt.trim()) {
+    if (!basePrompt.trim()) {
       const roles = messages.map(m => m.role).join(',');
       throw new Error(`Claude Code got no extractable prompt from ${ messages.length } messages (roles=${ roles })`);
     }
+
+    // Prepend Sulla context (high-priority observational memory + recall context)
+    // to the outgoing user message. This travels with every turn regardless of
+    // whether the session is resumed, so Claude can't deprioritize it.
+    const contextPrefix = await this.buildUserMessageContextPrefix(options.state);
+    const prompt = contextPrefix ? `${ contextPrefix }\n\n${ basePrompt }` : basePrompt;
 
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
 
@@ -308,25 +387,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const envAssignments: string[] = [];
     if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(oauthToken) }`);
     if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(apiKey) }`);
-
-    // Prefer the caller-built system prompt (BaseNode.createNodeRunContext
-    // adds it as a role='system' message). That way subagents (memory-recall,
-    // observation, unstuck-research) get their specialized prompt — not the
-    // generic primary-agent Sulla prompt — and we avoid the double-system-
-    // prompt trap that made Claude spin reconciling conflicting instructions.
-    //
-    // When the messages array has no system message (e.g. DesktopRelay
-    // directly calls chatStream with a bare user turn), fall back to
-    // buildFullSystemPrompt so Claude still gets the full Sulla context.
-    let appendSystemPrompt = this.extractSystemPromptFromMessages(messages);
-    if (!appendSystemPrompt.trim()) {
-      try {
-        const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
-        appendSystemPrompt = await buildFullSystemPrompt({ provider: 'anthropic' });
-      } catch (err) {
-        log.log(`[ClaudeCodeService] buildFullSystemPrompt fallback failed, continuing without it: ${ (err as Error)?.message ?? err }`);
-      }
-    }
 
     // Mint an MCP session bound to the calling graph state, if we have one
     // AND the in-process MCP server is listening. Claude can then call
@@ -347,6 +407,13 @@ export class ClaudeCodeService extends BaseLanguageModel {
       }
     }
 
+    // Refresh ~/.claude/CLAUDE.md with the full system prompt before spawning.
+    // CLAUDE.md is the sole source of system context for Claude Code — no
+    // --append-system-prompt is used.
+    import('../prompts/generateClaudeCodeMemoryFile').then(({ generateClaudeCodeMemoryFile }) => {
+      generateClaudeCodeMemoryFile().catch(() => {});
+    }).catch(() => {});
+
     const claudeArgs = [
       'claude',
       '-p', shq(prompt),
@@ -355,9 +422,6 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--include-partial-messages',
       '--dangerously-skip-permissions',
     ];
-    if (appendSystemPrompt.trim()) {
-      claudeArgs.push('--append-system-prompt', shq(appendSystemPrompt));
-    }
     if (existingSession) {
       claudeArgs.push('--resume', shq(existingSession));
     }
@@ -581,7 +645,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         // fresh session so the user doesn't see a dead-end error.
         if (sessionInUse && !retryWithoutSession) {
           log.warn(`[ClaudeCodeService] Session "${ existingSession }" locked; retrying without --resume for conversationId=${ convId }`);
-          this.sessions.delete(convId);
+          this.deleteSession(convId).catch(() => {});
           this.runClaude(messages, callbacks, options, true).then(
             r => resolve(r),
             reject,
@@ -590,7 +654,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
         }
 
         if (capturedSessionId) {
-          this.sessions.set(convId, capturedSessionId);
+          this.setSession(convId, capturedSessionId).catch(() => {});
         }
 
         if (errored) {

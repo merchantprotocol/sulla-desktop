@@ -1,6 +1,7 @@
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { parseJson } from '../../services/JsonParseService';
 import { BaseTool, ToolResponse } from '../base';
+import { generateClaudeCodeMemoryFile } from '../../prompts/generateClaudeCodeMemoryFile';
 
 /**
  * Remove Observational Memory Tool - Worker class for execution
@@ -55,6 +56,7 @@ export class RemoveObservationalMemoryWorker extends BaseTool {
     // Save back to settings
     try {
       await SullaSettingsModel.set('observationalMemory', JSON.stringify(memoryArray));
+      generateClaudeCodeMemoryFile().catch(() => {});
     } catch (e: any) {
       return {
         successBoolean: false,

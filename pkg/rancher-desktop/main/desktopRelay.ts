@@ -327,6 +327,31 @@ class DesktopRelayClient {
         data:      { threadId: conversationId },
         timestamp: Date.now(),
       });
+      // Ack back to mobile so it knows the run ended without waiting for
+      // `done` (which may never arrive after an abort). The mobile session
+      // socket stays open — this is not a close signal.
+      this.send({ type: 'stopped' });
+      return;
+    }
+
+    if (msg.type === 'inject') {
+      // Mobile sent a mid-run message. Inject it into the running graph state
+      // without aborting — the agent picks it up at the next loop boundary.
+      const lastUser = (msg.messages ?? []).slice().reverse().find((m: any) => m.role === 'user');
+      const content = (lastUser?.content ?? '').trim();
+      if (!content) return;
+      const conversationId = msg.conversationId ?? this.currentRoom ?? undefined;
+      console.log(`[DesktopRelay] Inject received for conversationId=${ conversationId ?? '(none)' }`);
+      const wsService = getWebSocketClientService();
+      wsService.send(MOBILE_RELAY_CHANNEL, {
+        type:      'inject_message',
+        data:      {
+          content,
+          threadId: conversationId,
+          metadata: { source: 'mobile-relay', inputSource: 'keyboard', conversationId },
+        },
+        timestamp: Date.now(),
+      });
       return;
     }
 
@@ -386,6 +411,11 @@ class DesktopRelayClient {
       },
       timestamp: Date.now(),
     });
+
+    // ACK immediately so mobile knows the desktop received the message and the
+    // agent loop is starting. Without this, mobile sits in silence until the
+    // first streaming chunk arrives — which can look like a timeout.
+    this.send({ type: 'ack' });
   }
 
   /**
@@ -471,12 +501,13 @@ class DesktopRelayClient {
         }
 
         if (kind === 'progress' || kind === '') {
-          // Agent's authoritative final text for this iteration. Record it
-          // so we can ship it via `done` at graph_execution_complete. Don't
-          // forward as chunk — it duplicates the streaming content mobile
-          // has already been building, and emitting a chunk here with the
-          // full text would double up the mobile's streamBuffer.
-          finalTextByThread.set(threadId, stripped);
+          // Agent's authoritative final text for this iteration. Send it
+          // immediately as its own committed message so mobile can append it
+          // to the thread and speak it without waiting for the full graph to
+          // finish. Reset the streaming buffer so the next iteration starts
+          // a fresh streaming bubble rather than accumulating onto this one.
+          streamedByThread.delete(threadId);
+          this.send({ type: 'message', content: stripped });
           return;
         }
 
@@ -486,15 +517,16 @@ class DesktopRelayClient {
 
       if (msg.type === 'transfer_data') {
         // Graph.execute emits { role: 'system', content: 'graph_execution_complete' }
-        // on the channel when the agent run is fully done. THIS is the only
-        // place we emit `done` to mobile — any earlier and the mobile socket
-        // closes mid-stream.
+        // on the channel when the agent run is fully done. If progress messages
+        // arrived, they were already forwarded as `message` events and the
+        // streamed buffer was cleared — so finalText will be empty and `done`
+        // is just a completion signal. If no progress message arrived (a
+        // streaming-only run), the streamed buffer still holds the text and
+        // we ship it here as the sole content for backward compatibility.
         const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
         const content = typeof data.content === 'string' ? data.content : '';
         if (content !== 'graph_execution_complete') return;
         const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
-        // Prefer the agent's authoritative final text; fall back to whatever
-        // we streamed if no progress message arrived (non-streaming-only run).
         const finalText = finalTextByThread.get(threadId) ?? streamedByThread.get(threadId) ?? '';
         streamedByThread.delete(threadId);
         finalTextByThread.delete(threadId);
