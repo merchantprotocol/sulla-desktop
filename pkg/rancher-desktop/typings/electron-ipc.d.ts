@@ -350,6 +350,7 @@ export interface IpcMainInvokeEvents {
     runtime:     'python' | 'shell' | 'node';
     inputs:      Record<string, Record<string, unknown>>;
     outputs:     Record<string, Record<string, unknown>>;
+    permissions: { env: string[] };
   }[];
 
   // Routine template registry (scanned from ~/sulla/routines/<slug>/routine.yaml)

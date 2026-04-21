@@ -13,6 +13,7 @@ import { initSullaCloudAuthEvents } from './sullaCloudAuth';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
 import { initMessageBusIpc } from './messageBusIpc';
 import { initSullaDebugEvents } from './sullaDebugEvents';
+import { initSullaFunctionEvents } from './sullaFunctionEvents';
 import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
 import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
@@ -814,6 +815,7 @@ export function initSullaEvents(): void {
   initSullaRoutineTemplateEvents();
   initSullaRoutineExportEvents();
   initSullaDebugEvents();
+  initSullaFunctionEvents();
 
   // ── Integration Config API (YAML-defined integrations) ──────────
 
