@@ -106,44 +106,46 @@
             />
           </svg>
         </template>
-        <ControlButton
-          class="history-btn history-undo"
-          :class="{ disabled: !history.canUndo.value }"
-          :disabled="!history.canUndo.value"
-          :title="`Undo (${ shortcutLabel('Z') })`"
-          @click="undo"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+        <template v-if="mode === 'edit'">
+          <ControlButton
+            class="history-btn history-undo"
+            :class="{ disabled: !history.canUndo.value }"
+            :disabled="!history.canUndo.value"
+            :title="`Undo (${ shortcutLabel('Z') })`"
+            @click="undo"
           >
-            <path d="M9 14L4 9l5-5" />
-            <path d="M4 9h11a5 5 0 0 1 0 10h-4" />
-          </svg>
-        </ControlButton>
-        <ControlButton
-          class="history-btn history-redo"
-          :class="{ disabled: !history.canRedo.value }"
-          :disabled="!history.canRedo.value"
-          :title="`Redo (${ shortcutLabel('Shift+Z') })`"
-          @click="redo"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M9 14L4 9l5-5" />
+              <path d="M4 9h11a5 5 0 0 1 0 10h-4" />
+            </svg>
+          </ControlButton>
+          <ControlButton
+            class="history-btn history-redo"
+            :class="{ disabled: !history.canRedo.value }"
+            :disabled="!history.canRedo.value"
+            :title="`Redo (${ shortcutLabel('Shift+Z') })`"
+            @click="redo"
           >
-            <path d="M15 14l5-5-5-5" />
-            <path d="M20 9H9a5 5 0 0 0 0 10h4" />
-          </svg>
-        </ControlButton>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M15 14l5-5-5-5" />
+              <path d="M20 9H9a5 5 0 0 0 0 10h4" />
+            </svg>
+          </ControlButton>
+        </template>
         <ControlButton
           class="mode-toggle"
           :class="{ 'is-edit': mode === 'edit' }"
@@ -200,6 +202,18 @@
       />
     </VueFlow>
 
+    <!-- Stream backdrop — solid panel that occupies the exact footprint
+         of the live stream, sitting above the VueFlow canvas (hides the
+         node cards behind it) but below the ambient canvas overlays
+         (glow, stars, brackets) so those still read through. Only
+         rendered once the stream actually has content — an empty panel
+         is just visual clutter blocking cards underneath. -->
+    <div
+      v-if="mode === 'run' && liveEvents.length > 0"
+      class="stream-backdrop"
+      aria-hidden="true"
+    />
+
     <div class="glow blue" />
     <div class="glow violet" />
     <div class="stars" />
@@ -208,22 +222,15 @@
     <div class="bracket bl" />
     <div class="bracket br" />
 
+    <!-- Live stream — only renders once events arrive so an idle routine
+         doesn't show an empty panel covering the canvas. -->
     <div
-      v-if="mode === 'run'"
+      v-if="mode === 'run' && liveEvents.length > 0"
       ref="streamRef"
       class="stream"
     >
       <div
-        v-if="liveEvents.length === 0"
-        class="line"
-      >
-        <span class="t">--:--:--</span>
-        <span class="k dec">idle</span>
-        <span class="msg">press ▶ to start a run</span>
-      </div>
-      <div
         v-for="(line, idx) in liveEvents"
-        v-else
         :key="idx"
         class="line"
         :class="{ current: idx === liveEvents.length - 1 }"
@@ -232,7 +239,7 @@
         <span
           class="k"
           :class="line.k"
-        >{{ streamKindLabel(line.k) }}</span>
+        >{{ line.badge || streamKindLabel(line.k) }}</span>
         <span class="msg">{{ line.msg }}</span>
       </div>
     </div>
@@ -268,7 +275,7 @@
       <div class="left">
         <template v-if="mode === 'run'">
           <span>Elapsed</span>
-          <span class="tc">00:03:42</span>
+          <span class="tc">{{ runElapsedLabel }}</span>
         </template>
         <template v-else>
           <span>Mode</span>
@@ -276,16 +283,26 @@
         </template>
       </div>
       <div class="center">
-        <div class="mark">
-          A Sulla Original
-        </div>
-        <div class="signature">
-          Made entirely by <span class="sig-mark">agents</span>.
-        </div>
+        <template v-if="mode === 'run' && isRunBusy && runningTitle">
+          <div class="kicker">
+            Now Producing
+          </div>
+          <div class="output-now">
+            {{ runningTitle }}
+          </div>
+        </template>
+        <template v-else>
+          <div class="mark">
+            A Sulla Original
+          </div>
+          <div class="signature">
+            Made entirely by <span class="sig-mark">agents</span>.
+          </div>
+        </template>
       </div>
       <div class="right">
         <template v-if="mode === 'run'">
-          <b>3</b> / 21 agents · ETA <b>5m 18s</b>
+          <b>{{ completedCount }}</b> / {{ totalExecutableCount }} agents<template v-if="runEtaLabel"> · ETA <b>{{ runEtaLabel }}</b></template>
         </template>
         <template v-else>
           {{ nodes.length }} nodes · drag to build
@@ -321,12 +338,12 @@
       <button
         type="button"
         class="routines-fab run-fab"
-        :class="{ busy: isRunBusy, 'is-stop': isRunBusy }"
-        :aria-label="isRunBusy ? 'Stop routine' : 'Run routine'"
-        @click="isRunBusy ? onStopClick() : onRunClick()"
+        :class="{ busy: isRunBusy, 'is-stop': isStopVisible, stalled: isStalled }"
+        :aria-label="isStopVisible ? 'Stop routine' : 'Run routine'"
+        @click="isStopVisible ? onStopClick() : onRunClick()"
       >
         <svg
-          v-if="isRunBusy"
+          v-if="isStopVisible"
           viewBox="0 0 24 24"
           fill="currentColor"
           aria-hidden="true"
@@ -343,7 +360,7 @@
         </svg>
       </button>
       <div class="routines-fab-tip">
-        {{ isRunBusy ? 'Stop routine' : 'Run routine' }}
+        {{ isStopVisible ? (isStalled ? 'Stop routine (stalled)' : 'Stop routine') : 'Run routine' }}
       </div>
     </template>
 
@@ -406,6 +423,22 @@
         <span class="ico">⛶</span>
         <span class="lbl">Fit to screen</span>
         <span class="sc">F</span>
+      </div>
+      <div class="sep" />
+      <div
+        class="cm-item"
+        @click="onCtxScreenshot"
+      >
+        <span class="ico">📸</span>
+        <span class="lbl">Screenshot view</span>
+      </div>
+      <div
+        class="cm-item"
+        :class="{ accent: isRecording }"
+        @click="onCtxRecord"
+      >
+        <span class="ico">{{ isRecording ? '⏹' : '⏺' }}</span>
+        <span class="lbl">{{ isRecording ? 'Stop recording' : 'Record execution' }}</span>
       </div>
       <template v-if="mode === 'edit'">
         <div class="sep" />
@@ -496,6 +529,7 @@ import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
 
+import { useLiveClock } from '@pkg/composables/useLiveClock';
 import { useWorkflowHistory } from '@pkg/composables/useWorkflowHistory';
 import { useWorkflowPersistence, type WorkflowDefinition } from '@pkg/composables/useWorkflowPersistence';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -528,7 +562,12 @@ const props = defineProps<{
   initialMode?: 'edit' | 'run';
 }>();
 
-defineEmits<(e: 'back-to-home') => void>();
+const emit = defineEmits<{
+  'back-to-home': [];
+  /** Fires whenever execution state flips — parent hides the "All routines"
+      back button (and anything else in its chrome) while a run is live. */
+  'running-change': [running: boolean];
+}>();
 
 const mode = ref<Mode>(props.initialMode ?? 'edit');
 const editLocked = ref(false);
@@ -542,9 +581,87 @@ const promptOpen = ref(false);
 // sulla-desktop agent graph and kicks graph.execute(); the agent
 // orchestrates from there, emitting WebSocket events. The subscription
 // below maps those events into node-state updates and stream lines.
+// `hasActiveExecution` is the source of truth for "is a run still live?".
+// It flips true the moment we hit Run and only flips false on a *real*
+// terminal event from the backend (workflow_completed/failed/aborted) or
+// a successful abort IPC round-trip. The stall watchdog surfaces a
+// "stalled" hint but does NOT clear this flag — otherwise a quiet stream
+// would strand the user with a dangling backend run and no Stop button.
+const hasActiveExecution = ref(false);
+const isStalled = ref(false);
 const isRunBusy = ref(false);
 const runError = ref<string | null>(null);
 const lastExecutionId = ref<string | null>(null);
+
+// Emit on transitions so the parent can hide its chrome during a run
+// without needing its own WebSocket subscription.
+watch(hasActiveExecution, (v) => emit('running-change', v), { immediate: true });
+
+// The Stop button is visible whenever the backend might still be doing
+// work. `hasActiveExecution` keeps it available even if the event stream
+// goes quiet (stall) — the user must always be able to abort a dangling
+// run, otherwise they're stuck waiting with no recourse.
+const isStopVisible = computed(() => hasActiveExecution.value || isRunBusy.value);
+
+// ── Run-level telemetry for the bottom Output Ribbon ──
+// `runStartedAt` is stamped on `workflow_started` and cleared on the
+// terminal events so the ribbon's elapsed counter freezes at the final
+// runtime. Completed nodes get tallied in a ref so the ribbon's X / Y
+// readout updates reactively as the run progresses.
+const runStartedAt = ref<number | null>(null);
+const runEndedAt = ref<number | null>(null);
+const runCompletedNodeIds = ref<Set<string>>(new Set());
+const runClock = useLiveClock();
+
+function formatRunDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '00:00';
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${ String(h).padStart(2, '0') }:${ mm }:${ ss }` : `${ mm }:${ ss }`;
+}
+
+const runElapsedLabel = computed(() => {
+  if (!runStartedAt.value) return '00:00';
+  const end = runEndedAt.value ?? runClock.value;
+  return formatRunDuration(end - runStartedAt.value);
+});
+
+// Trigger nodes don't run through the orchestrator; exclude them from
+// the ribbon's X / Y count so the total matches what actually executes.
+const totalExecutableCount = computed(() => {
+  return nodes.value.filter(n => n.data?.category !== 'trigger').length;
+});
+
+const completedCount = computed(() => runCompletedNodeIds.value.size);
+
+const runningTitle = computed(() => {
+  for (const n of nodes.value) {
+    const running = n.data?.execution?.status === 'running' || n.data?.state === 'running';
+    if (running) {
+      return (n.data?.title as string | undefined) || (n.data?.label as string | undefined) || 'agent';
+    }
+  }
+  return '';
+});
+
+// ETA is a rough "average time per completed node × remaining". Shown
+// only once we have at least two completions so the initial guess isn't
+// wildly off. Cleared when the run ends.
+const runEtaLabel = computed(() => {
+  if (!isRunBusy.value || !runStartedAt.value) return '';
+  const completed = runCompletedNodeIds.value.size;
+  if (completed < 2) return '';
+  const total = totalExecutableCount.value;
+  const remaining = Math.max(total - completed, 0);
+  if (remaining === 0) return '';
+  const elapsed = runClock.value - runStartedAt.value;
+  const avg = elapsed / completed;
+  return formatRunDuration(avg * remaining);
+});
 
 // ── Live event stream ──
 // `liveEvents` is what the top-left stream panel renders while a run
@@ -555,6 +672,10 @@ interface StreamLine {
   t:   string;
   k:   'tool' | 'obs' | 'thk' | 'dec' | 'err';
   msg: string;
+  /** Optional override for the kind chip label. When set, the chip shows
+      this string instead of the default "thinking"/"tool"/etc. — used
+      for `thk` lines so the chip tells you *which* node is thinking. */
+  badge?: string;
 }
 const liveEvents = ref<StreamLine[]>([]);
 
@@ -586,17 +707,20 @@ watch(() => liveEvents.value.length, () => {
   }
 });
 
-// Safety timeout: clears `isRunBusy` if no completion event ever lands
-// (e.g. the agent graph faulted in a way that skipped the final emit).
-// Reset on every node event to extend the window as long as work is
-// visibly happening; final completion events clear it explicitly.
+// Stall watchdog — a quiet event stream doesn't mean the backend died.
+// Long agent thinking phases or remote calls can pause the event stream
+// for minutes while the run is still very much alive. So stalling only
+// SURFACES a hint (`isStalled`); it no longer clears `isRunBusy` or
+// `hasActiveExecution`. The Stop button stays live the entire time —
+// the user must always be able to abort a dangling run.
 const MAX_STALL_MS = 90_000;
 let runStallTimer: ReturnType<typeof setTimeout> | null = null;
 
 function bumpStallTimer() {
   if (runStallTimer) clearTimeout(runStallTimer);
+  isStalled.value = false;
   runStallTimer = setTimeout(() => {
-    isRunBusy.value = false;
+    isStalled.value = true;
     runStallTimer = null;
   }, MAX_STALL_MS);
 }
@@ -606,6 +730,25 @@ function clearStallTimer() {
     clearTimeout(runStallTimer);
     runStallTimer = null;
   }
+  isStalled.value = false;
+}
+
+// Centralized lifecycle transitions so the three flags never get out of
+// sync. `beginRun` fires the instant the user hits Play; `endRun` fires
+// only on real terminal signals (workflow_completed/failed/aborted or a
+// confirmed abort IPC) — never from the stall watchdog.
+function beginRun() {
+  hasActiveExecution.value = true;
+  isRunBusy.value = true;
+  runError.value = null;
+  liveEvents.value = [];
+  bumpStallTimer();
+}
+
+function endRun() {
+  hasActiveExecution.value = false;
+  isRunBusy.value = false;
+  clearStallTimer();
 }
 
 async function onRunClick() {
@@ -614,12 +757,9 @@ async function onRunClick() {
 
     return;
   }
-  if (isRunBusy.value) return;
+  if (hasActiveExecution.value) return;
 
-  isRunBusy.value = true;
-  runError.value = null;
-  liveEvents.value = [];
-  bumpStallTimer();
+  beginRun();
 
   try {
     const result = await ipcRenderer.invoke('routines-execute', props.workflowId);
@@ -633,19 +773,17 @@ async function onRunClick() {
     // pick it up later; this just makes sure the error is visible now.
     pushLine('err', `Run failed: ${ msg }`);
     console.error('[AgentRoutines] Failed to launch routine:', err);
-    isRunBusy.value = false;
-    clearStallTimer();
+    endRun();
   }
 }
 
 async function onStopClick() {
   const execId = lastExecutionId.value;
   if (!execId) {
-    // No known execution — just clear the busy flag so the user can
+    // No known execution — just clear local state so the user can
     // recover the UI. The walker is either already done or never
     // started; either way there's nothing to abort.
-    isRunBusy.value = false;
-    clearStallTimer();
+    endRun();
 
     return;
   }
@@ -655,19 +793,14 @@ async function onStopClick() {
     if (!result?.aborted) {
       pushLine('err', `abort failed${ result?.reason ? `: ${ result.reason }` : '' }`);
     }
-    // The backend emits `workflow_aborted` on success — the stream
-    // handler there flips isRunBusy off. If the IPC reported no
-    // active execution, fall back to clearing the flag ourselves so
-    // the button returns to Play.
-    if (!result?.aborted) {
-      isRunBusy.value = false;
-      clearStallTimer();
-    }
+    // On success the backend emits `workflow_aborted` which hits the
+    // event handler and calls endRun(). If the IPC reported no active
+    // execution, the backend already lost track of it — clear locally.
+    if (!result?.aborted) endRun();
   } catch (err) {
     console.error('[AgentRoutines] Failed to abort routine:', err);
     pushLine('err', `abort failed: ${ err instanceof Error ? err.message : String(err) }`);
-    isRunBusy.value = false;
-    clearStallTimer();
+    endRun();
   }
 }
 
@@ -677,18 +810,118 @@ async function onStopClick() {
 // checks `props.workflowId` + `hasHydrated` so these mutations won't
 // round-trip to the store.
 
-function setNodeState(nodeId: string, state: 'idle' | 'queued' | 'running' | 'done' | 'failed') {
+// Map UI state vocabulary → execution.status vocabulary the node
+// component reads for timestamped state transitions.
+function execStatusFor(state: 'idle' | 'queued' | 'running' | 'done' | 'failed') {
+  switch (state) {
+  case 'running': return 'running' as const;
+  case 'done':    return 'completed' as const;
+  case 'failed':  return 'failed' as const;
+  case 'queued':  return 'waiting' as const;
+  default:        return undefined;
+  }
+}
+
+// ── Cinematic auto-follow camera ──
+// When a node starts running during a live execution, pan + zoom the
+// canvas so the active card sits centered and takes roughly a fifth of
+// the viewport. Includes its 1-hop neighbors in the fit so the viewer
+// can see where data is coming from and where it's heading next. Only
+// fires during `isRunBusy` so editing stays uninterrupted, and can be
+// opted out via `cinemaMode.value`.
+const cinemaMode = ref(true);
+
+function focusOnRunningNode(nodeId: string) {
+  if (!cinemaMode.value || !isRunBusy.value) return;
+
+  // Collect 1-hop neighbors on both sides so the frame tells a story:
+  // source → running → target.
+  const neighbors = new Set<string>([nodeId]);
+  for (const edge of edges.value) {
+    if (edge.source === nodeId) neighbors.add(edge.target);
+    if (edge.target === nodeId) neighbors.add(edge.source);
+  }
+  const ids = [...neighbors].filter(id => nodes.value.some(n => n.id === id));
+  if (ids.length === 0) return;
+
+  // Padding ~1.2 keeps the running card around 20-25% of the viewport
+  // width on a typical canvas — wide enough to read details, with the
+  // neighbors visible at the edges of frame for context.
+  void fitView({
+    nodes:    ids,
+    padding:  1.2,
+    duration: 700,
+    maxZoom:  1.4,
+    minZoom:  0.4,
+  });
+}
+
+function setNodeState(
+  nodeId: string,
+  state: 'idle' | 'queued' | 'running' | 'done' | 'failed',
+  ts?: number,
+) {
   const node = nodes.value.find(n => n.id === nodeId);
   if (!node) return;
-  node.data = { ...node.data, state };
+
+  const t = typeof ts === 'number' && Number.isFinite(ts) ? ts : Date.now();
+  const prevExec = (node.data?.execution as
+    { startedAt?: number; completedAt?: number } | undefined) ?? {};
+  const execStatus = execStatusFor(state);
+
+  // Stamp startedAt/completedAt so RoutineNode.vue's elapsed counter has
+  // a clock to read. `running` always starts a fresh timer (overwrites
+  // any previous start). `done`/`failed` seal the duration — preserve an
+  // existing startedAt if the run actually had one.
+  let startedAt = prevExec.startedAt;
+  let completedAt = prevExec.completedAt;
+
+  if (state === 'running') {
+    startedAt = t;
+    completedAt = undefined;
+  } else if (state === 'done' || state === 'failed') {
+    completedAt = t;
+    if (typeof startedAt !== 'number') startedAt = t;
+  } else if (state === 'idle' || state === 'queued') {
+    startedAt = undefined;
+    completedAt = undefined;
+  }
+
+  node.data = {
+    ...node.data,
+    state,
+    execution: {
+      ...(node.data?.execution as Record<string, unknown> ?? {}),
+      status: execStatus,
+      startedAt,
+      completedAt,
+    },
+  };
 }
 
 function resetNodeStates() {
   for (const node of nodes.value) {
     if (node.data?.state && node.data.state !== 'idle') {
-      node.data = { ...node.data, state: 'idle' };
+      node.data = {
+        ...node.data,
+        state:     'idle',
+        execution: undefined,
+      };
     }
   }
+}
+
+// Attach the node's output to its `execution` bag so the right-hand
+// drawer can show it when the user clicks a running/done card during a
+// run. We keep the raw value — the drawer does its own formatting.
+function setNodeExecutionOutput(nodeId: string, output: unknown) {
+  const node = nodes.value.find(n => n.id === nodeId);
+  if (!node) return;
+  const prevExec = (node.data?.execution as Record<string, unknown> | undefined) ?? {};
+  node.data = {
+    ...node.data,
+    execution: { ...prevExec, output },
+  };
 }
 
 // ── Event handler ──
@@ -705,8 +938,9 @@ function stamp(ts?: number): string {
   return `${ h }:${ m }:${ s }`;
 }
 
-function pushLine(kind: StreamLine['k'], msg: string, ts?: number) {
-  const line = { t: stamp(ts), k: kind, msg };
+function pushLine(kind: StreamLine['k'], msg: string, ts?: number, badge?: string) {
+  const line: StreamLine = { t: stamp(ts), k: kind, msg };
+  if (badge) line.badge = badge;
   liveEvents.value = [...liveEvents.value.slice(-49), line];
 }
 
@@ -722,6 +956,20 @@ function streamKindLabel(kind: StreamLine['k']): string {
   case 'err':  return 'error';
   default:     return kind;
   }
+}
+
+// Strip XML/HTML tags, CDATA sections, and HTML entities from agent
+// content before it lands in the stream. Agents occasionally emit
+// structured thinking like `<thinking>…</thinking>` or tool-call blobs
+// like `<function_calls>…</function_calls>` that read as noise in a
+// live ticker — we want the prose, not the envelope.
+function stripXml(s: string): string {
+  return s
+    .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, ' ')
+    .replace(/<\/?[a-zA-Z][^>]*>/g, ' ')
+    .replace(/&(?:[a-zA-Z]+|#\d+);/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Resolve a human-readable name for a node. Prefer the event-supplied
@@ -757,42 +1005,67 @@ function handleWorkflowEvent(event: any) {
   const nodeId = event?.nodeId as string | undefined;
   const nodeLabel = event?.nodeLabel as string | undefined;
   const who = displayNodeName(nodeId, nodeLabel);
+  // PlaybookController emits ISO strings; the elapsed counter in
+  // RoutineNode needs ms. Parse once per event so every setNodeState
+  // call inside this switch gets the same timebase.
+  const tsMs = typeof event?.timestamp === 'string'
+    ? Date.parse(event.timestamp)
+    : (typeof event?.timestamp === 'number' ? event.timestamp : Date.now());
 
   switch (event?.type) {
   case 'workflow_started':
     resetNodeStates();
-    liveEvents.value = [];
-    // Fresh run — drop any leftover error from the previous attempt so
-    // the UI doesn't hold onto stale state across runs.
-    runError.value = null;
-    isRunBusy.value = true;
+    // Re-arm the run lifecycle flags in case this is a reconnect (the
+    // user's initial Run click already called beginRun, but a late-
+    // arriving reconnect needs the same setup so the Stop button stays
+    // correct and the stall watchdog restarts).
+    beginRun();
+    runStartedAt.value = tsMs;
+    runEndedAt.value = null;
+    runCompletedNodeIds.value = new Set();
     pushLine('dec', 'started', event.timestamp);
     break;
 
   case 'node_started':
-    if (nodeId) setNodeState(nodeId, 'running');
+    if (nodeId) {
+      setNodeState(nodeId, 'running', tsMs);
+      focusOnRunningNode(nodeId);
+    }
     pushLine('tool', who, event.timestamp);
     break;
 
   case 'node_completed':
-    if (nodeId) setNodeState(nodeId, 'done');
+    if (nodeId) {
+      setNodeState(nodeId, 'done', tsMs);
+      if (event.output != null) setNodeExecutionOutput(nodeId, event.output);
+      // Tally toward the ribbon's X / Y without double-counting if the
+      // same node completes twice (retry paths do re-emit).
+      if (!runCompletedNodeIds.value.has(nodeId)) {
+        const next = new Set(runCompletedNodeIds.value);
+        next.add(nodeId);
+        runCompletedNodeIds.value = next;
+      }
+    }
     pushLine('obs', `${ who } · done`, event.timestamp);
     break;
 
   case 'node_failed': {
-    if (nodeId) setNodeState(nodeId, 'failed');
-    const err = typeof event.error === 'string' ? event.error : JSON.stringify(event.error ?? 'failed');
+    if (nodeId) setNodeState(nodeId, 'failed', tsMs);
+    const raw = typeof event.error === 'string' ? event.error : JSON.stringify(event.error ?? 'failed');
+    const err = stripXml(raw).slice(0, 240);
     pushLine('err', `${ who } · ${ err }`, event.timestamp);
     break;
   }
 
   case 'node_thinking':
     // All agent thinking surfaces in the top-left stream — the node
-    // itself no longer renders a bubble. Prefix with the resolved
-    // label so multi-agent routines are legible as the stream fills.
+    // itself no longer renders a bubble. The chip shows the node's name
+    // (via `badge`) instead of the generic "thinking" label so multi-
+    // agent routines stay legible; the message itself is just the prose.
+    // `stripXml` drops tool-call envelopes and <thinking> wrappers.
     if (event.content) {
-      const text = String(event.content).replace(/\s+/g, ' ').trim().slice(0, 200);
-      pushLine('thk', `${ who } — ${ text }`, event.timestamp);
+      const text = stripXml(String(event.content)).slice(0, 220);
+      if (text) pushLine('thk', text, event.timestamp, who);
     }
     break;
 
@@ -803,20 +1076,20 @@ function handleWorkflowEvent(event: any) {
 
   case 'workflow_completed':
     pushLine('dec', 'completed', event.timestamp);
-    isRunBusy.value = false;
-    clearStallTimer();
+    runEndedAt.value = tsMs;
+    endRun();
     break;
 
   case 'workflow_aborted':
     pushLine('err', `aborted${ event.reason ? `: ${ event.reason }` : '' }`, event.timestamp);
-    isRunBusy.value = false;
-    clearStallTimer();
+    runEndedAt.value = tsMs;
+    endRun();
     break;
 
   case 'workflow_failed':
     pushLine('err', `failed${ event.error ? `: ${ event.error }` : '' }`, event.timestamp);
-    isRunBusy.value = false;
-    clearStallTimer();
+    runEndedAt.value = tsMs;
+    endRun();
     break;
 
   case 'workflow_paused':
@@ -1065,9 +1338,18 @@ function onNodeClick({ node }: { node: { id: string } }) {
   closeCtxMenu();
   closeNodeCtx();
   selectedEdgeId.value = null;
-  // Config sidebar is an edit-mode affordance only.
-  if (mode.value !== 'edit') return;
-  selectedNodeId.value = node.id;
+  if (mode.value === 'edit') {
+    selectedNodeId.value = node.id;
+    return;
+  }
+  // Run mode — only reveal the inspect drawer for cards that have actually
+  // executed (or are executing). Idle/queued cards have nothing to show yet
+  // and clicking them would pop an empty drawer.
+  const target = nodes.value.find(n => n.id === node.id);
+  const state = target?.data?.state;
+  if (state === 'running' || state === 'done' || state === 'failed') {
+    selectedNodeId.value = node.id;
+  }
 }
 
 function onPaneClick() {
@@ -1264,6 +1546,167 @@ function onCtxZoomIn() { closeCtxMenu(); zoomIn(); }
 function onCtxZoomOut() { closeCtxMenu(); zoomOut(); }
 function onCtxFitView() { closeCtxMenu(); fitView(); }
 
+// ── Screenshot + record ──
+// Both reuse the `capture-studio:get-sources` IPC the capture studio
+// page already owns; keeping one capturer entry-point avoids diverging
+// permission flows or Electron source listings. Selection heuristic is
+// "first window whose name matches the app" — falls back to the first
+// screen source if nothing matches.
+
+function slugifyRoutineTitle(): string {
+  const t = (title.value || 'routine').toString();
+  return t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'routine';
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Give the browser a tick to actually pick up the blob before revoking.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function acquireWindowStream(): Promise<MediaStream> {
+  // `capture-studio:get-sources` is the IPC the capture studio already
+  // exposes; reuse it rather than wiring a second capturer endpoint.
+  // Matches useMediaSources's `require('electron')` pattern so behavior
+  // stays consistent across pages.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { ipcRenderer } = require('electron');
+  const sources = await ipcRenderer.invoke('capture-studio:get-sources') as Array<{
+    id: string; name: string;
+  }>;
+  if (!sources?.length) throw new Error('No capture sources available');
+
+  // Prefer a Sulla window; fall back to the first screen if none match
+  // so the user still gets something to look at.
+  const ours = sources.find(s => /sulla|rancher|routines/i.test(s.name));
+  const fallback = sources.find(s => /screen/i.test(s.name)) ?? sources[0];
+  const sourceId = (ours ?? fallback).id;
+
+  return await (navigator.mediaDevices as any).getUserMedia({
+    audio: false,
+    video: {
+      mandatory: {
+        chromeMediaSource:   'desktop',
+        chromeMediaSourceId: sourceId,
+      },
+    },
+  });
+}
+
+async function onCtxScreenshot() {
+  closeCtxMenu();
+  let stream: MediaStream | null = null;
+  try {
+    stream = await acquireWindowStream();
+
+    // Pull one frame through an off-DOM <video> element. ImageCapture
+    // would be cleaner but isn't universally available in Electron's
+    // Chromium channel; the video element + canvas path is battle-tested.
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    await video.play();
+
+    // Wait one frame so the video has real dimensions to draw from.
+    await new Promise<void>((resolve) => {
+      if (video.videoWidth > 0) resolve();
+      else video.onloadedmetadata = () => resolve();
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('No 2D context');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Screenshot failed to encode');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadBlob(blob, `${ slugifyRoutineTitle() }-${ ts }.png`);
+  } catch (err) {
+    console.warn('[AgentRoutines] Screenshot failed:', err);
+    pushLine('err', `screenshot failed: ${ err instanceof Error ? err.message : String(err) }`);
+  } finally {
+    stream?.getTracks().forEach(t => t.stop());
+  }
+}
+
+// ── Recording state ──
+// Kept outside reactive objects because MediaRecorder mutates over time
+// and we don't want Vue tracking its internals.
+const isRecording = ref(false);
+let activeRecorder: MediaRecorder | null = null;
+let activeRecorderStream: MediaStream | null = null;
+let activeRecorderChunks: Blob[] = [];
+
+async function startRecording() {
+  const stream = await acquireWindowStream();
+  activeRecorderStream = stream;
+  activeRecorderChunks = [];
+
+  // webm/vp9 is the most reliable MediaRecorder mime across Chromium
+  // versions; fall back to the default if the browser won't accept it.
+  const mimeCandidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp9', 'video/webm'];
+  const mimeType = mimeCandidates.find(m => (window as any).MediaRecorder?.isTypeSupported?.(m));
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) activeRecorderChunks.push(e.data);
+  };
+  recorder.onstop = () => {
+    const blob = new Blob(activeRecorderChunks, { type: recorder.mimeType || 'video/webm' });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadBlob(blob, `${ slugifyRoutineTitle() }-${ ts }.webm`);
+    activeRecorderChunks = [];
+    activeRecorderStream?.getTracks().forEach(t => t.stop());
+    activeRecorderStream = null;
+    activeRecorder = null;
+    isRecording.value = false;
+  };
+
+  // Stop automatically if the user ends the OS-level share from the
+  // system UI — otherwise the recording would silently dangle.
+  stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+    if (activeRecorder?.state === 'recording') activeRecorder.stop();
+  });
+
+  recorder.start(1000); // 1s slices so Blob assembly isn't all at once
+  activeRecorder = recorder;
+  isRecording.value = true;
+  pushLine('dec', 'recording started');
+}
+
+function stopRecording() {
+  if (!activeRecorder) return;
+  if (activeRecorder.state === 'recording') activeRecorder.stop();
+  pushLine('dec', 'recording stopped — saving');
+}
+
+async function onCtxRecord() {
+  closeCtxMenu();
+  try {
+    if (isRecording.value) {
+      stopRecording();
+    } else {
+      await startRecording();
+    }
+  } catch (err) {
+    console.warn('[AgentRoutines] Recording toggle failed:', err);
+    pushLine('err', `recording failed: ${ err instanceof Error ? err.message : String(err) }`);
+    isRecording.value = false;
+    activeRecorderStream?.getTracks().forEach(t => t.stop());
+    activeRecorderStream = null;
+    activeRecorder = null;
+  }
+}
+
 function toggleEditLock() {
   closeCtxMenu();
   if (mode.value !== 'edit') return;
@@ -1394,6 +1837,49 @@ onBeforeUnmount(() => {
 
 const nodes = ref<any[]>([]);
 const edges = ref<any[]>([]);
+
+// ── Live edge styling ──
+// An edge is "flowing" when its source is done AND its target is
+// running — i.e. data actually traversed this specific edge during
+// the current transition. Driving animation off this pair instead of
+// "target is running" avoids lighting up edges from dead branches or
+// never-fed predecessors: at a convergent join, only the predecessors
+// that have actually completed contribute; at a divergent router,
+// only the chosen branch (whose target reaches `running`) lights up.
+function nodeStateOf(id: string): string | undefined {
+  const n = nodes.value.find(x => x.id === id);
+  const exec = n?.data?.execution?.status;
+  if (exec === 'running')   return 'running';
+  if (exec === 'completed') return 'done';
+  if (exec === 'failed')    return 'failed';
+  if (exec === 'waiting')   return 'queued';
+  return (n?.data?.state as string | undefined);
+}
+
+function recomputeEdgeFlow() {
+  let touched = false;
+  for (const edge of edges.value) {
+    const src = nodeStateOf(edge.source);
+    const tgt = nodeStateOf(edge.target);
+    // Light only edges where data actually flowed this turn. `done → running`
+    // is the unambiguous transition window. `running → running` covers the
+    // brief overlap where source is still wrapping up as target is spun up.
+    const shouldFlow = (src === 'done' && tgt === 'running')
+      || (src === 'running' && tgt === 'running');
+    const wasFlowing = !!edge.animated;
+    if (shouldFlow === wasFlowing) continue;
+    edge.animated = shouldFlow;
+    const base = 'routine-edge';
+    edge.class = shouldFlow ? `${ base } flowing` : base;
+    touched = true;
+  }
+  if (touched) edges.value = [...edges.value];
+}
+
+// Deep-watch nodes so any state transition (running/done/failed) on either
+// endpoint of any edge re-evaluates the flow set. Runs cheap — O(edges),
+// and only fires on actual data mutations thanks to Vue's equality check.
+watch(nodes, () => recomputeEdgeFlow(), { deep: true });
 
 // Auto-save on any mutation of the graph or its metadata. Deep watch so
 // in-place changes to nodes/edges (position, config, label) are caught
@@ -1597,37 +2083,83 @@ watch(
   letter-spacing: 0.01em;
 }
 
+/* Opaque panel that occupies the stream's footprint, sitting above the
+   VueFlow canvas (z-index 0/auto) but below the ambient overlays
+   (glow/stars at z-index 2, brackets/stream at z-index 4). Hides node
+   cards behind the stream so the ticker text is legible, while the
+   canvas mood layers still read through on top. Solid in the middle,
+   mask-faded at top/bottom so no hard rectangle shows. */
+.stream-backdrop {
+  position: absolute;
+  top: 28px;
+  left: 52px;
+  z-index: 1;
+  width: 28%;
+  height: 240px;
+  pointer-events: none;
+  background: linear-gradient(135deg, #03060c 0%, #070d1a 60%, #01030a 100%);
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.78) 14%, black 32%, black 86%, rgba(0,0,0,0.55) 100%);
+  mask-image: linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.78) 14%, black 32%, black 86%, rgba(0,0,0,0.55) 100%);
+}
+
 .stream {
   position: absolute;
   top: 28px;
   left: 52px;
   z-index: 4;
-  /* Scrollable so auto-scroll + user-pause-to-read behaviour works. Wheel
-   * events inside this box run the container's scroll rather than the
-   * VueFlow pane underneath — the area is narrow enough that this is a
-   * net win. */
+  /* Vertical scrolling only — long thinking messages wrap inside the
+   * line instead of running off the right edge and summoning a
+   * horizontal scrollbar. Vertical scroll is preserved so the user can
+   * read older lines before they fade off the top. */
   pointer-events: auto;
   font-family: var(--mono);
   font-size: 11px;
   line-height: 1.7;
   width: 28%;
-  max-height: 42vh;
+  max-height: 240px;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+  scrollbar-color: rgba(168, 192, 220, 0.25) transparent;
   -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.8) 15%, black 35%);
   mask-image: linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.8) 15%, black 35%);
+}
+/* Chromium scrollbar — invisible track, soft thumb that darkens on
+   hover. Keeps the stream clean at rest. */
+.stream::-webkit-scrollbar {
+  width: 6px;
+}
+.stream::-webkit-scrollbar-track {
+  background: transparent;
+}
+.stream::-webkit-scrollbar-thumb {
+  background: rgba(168, 192, 220, 0.18);
+  border-radius: 3px;
+  transition: background 0.15s ease;
+}
+.stream:hover::-webkit-scrollbar-thumb {
+  background: rgba(168, 192, 220, 0.35);
+}
+.stream::-webkit-scrollbar-thumb:hover {
+  background: rgba(196, 212, 230, 0.55);
 }
 .line {
   display: flex;
   gap: 8px;
-  align-items: center;
+  align-items: flex-start;
   padding: 1px 0;
+  /* Wrap long messages instead of extending the line beyond the stream
+     width — that's what would have summoned a horizontal scrollbar. */
+  min-width: 0;
 }
 .line .t {
   color: var(--steel-400);
   flex-shrink: 0;
   font-size: 10px;
+  /* Nudge the timestamp down a touch so it aligns optically with the
+     first line of a wrapping message. */
+  line-height: 1.7;
 }
 .line .k {
   flex-shrink: 0;
@@ -1637,6 +2169,12 @@ watch(
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  /* Node names in the badge slot (thinking lines) can be long — clamp so
+     a single line name doesn't wrap or blow out the stream column. */
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .line .k.tool { background: rgba(168,192,220,0.18); color: var(--steel-100); border: 1px solid rgba(168,192,220,0.25); }
 .line .k.obs  { background: rgba(74,111,165,0.25); color: #b4d0f0; border: 1px solid rgba(116,158,214,0.35); }
@@ -1652,7 +2190,17 @@ watch(
   color: #fda4af;
   border: 1px solid rgba(244,63,94,0.5);
 }
-.line .msg { color: var(--steel-200); font-size: 11px; }
+.line .msg {
+  color: var(--steel-200);
+  font-size: 11px;
+  /* Wrap long thinking strings so they flow inside the stream instead
+     of forcing horizontal scroll. `min-width: 0` on the parent flex
+     item lets this shrink below its intrinsic content width. */
+  min-width: 0;
+  flex: 1;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
 .line .msg .h {
   color: white;
   background: rgba(139,92,246,0.2);
@@ -1726,6 +2274,29 @@ watch(
   color: var(--violet-300);
   font-weight: 700;
 }
+/* Live-run center readout — replaces the "Sulla Original" watermark
+   while a routine is running, mirroring the design's "Now Producing"
+   ribbon. */
+.ribbon .center .kicker {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  color: var(--violet-300);
+  text-transform: uppercase;
+}
+.ribbon .center .output-now {
+  font-family: var(--serif);
+  font-size: 16px;
+  font-style: italic;
+  color: white;
+  margin-top: 4px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ribbon .center .output-now::before { content: '« '; color: var(--violet-300); font-style: normal; }
+.ribbon .center .output-now::after  { content: ' »'; color: var(--violet-300); font-style: normal; }
 .ribbon .right {
   font-family: var(--mono);
   font-size: 10px;
@@ -1781,6 +2352,34 @@ watch(
   stroke-width: 3;
   filter: drop-shadow(0 0 6px rgba(96, 165, 250, 0.75))
     drop-shadow(0 0 14px rgba(96, 165, 250, 0.35));
+}
+/* Flowing edge: data is moving from source into a currently-running target.
+   VueFlow's `.animated` class already adds the dash-draw animation; we
+   paint it violet with a glow so it reads as "alive" on a dark canvas. */
+.routines-flow :deep(.vue-flow__edge.flowing .vue-flow__edge-path) {
+  stroke: #a78bfa;
+  stroke-width: 2.5;
+  stroke-dasharray: 6 5;
+  filter: drop-shadow(0 0 6px rgba(139, 92, 246, 0.8))
+    drop-shadow(0 0 14px rgba(139, 92, 246, 0.4));
+  animation: routine-edge-flow 1.2s linear infinite;
+}
+.routines-flow :deep(.vue-flow__edge.flowing.selected .vue-flow__edge-path) {
+  /* Selected + flowing: keep the violet — selection ring is still legible
+     via the wider stroke and halo. */
+  stroke: #c4b5fd;
+}
+.routines-flow :deep(.vue-flow__arrowhead) {
+  fill: rgba(168, 192, 220, 0.55);
+}
+.routines-flow :deep(.vue-flow__edge.flowing .vue-flow__arrowhead),
+.routines-flow :deep(.vue-flow__edge.flowing .vue-flow__edge-marker) {
+  fill: #a78bfa;
+  filter: drop-shadow(0 0 4px rgba(139, 92, 246, 0.7));
+}
+@keyframes routine-edge-flow {
+  from { stroke-dashoffset: 22; }
+  to   { stroke-dashoffset: 0; }
 }
 /* Widen the hit area so edges are easy to click. */
 .routines-flow :deep(.vue-flow__edge .vue-flow__edge-interaction) {
@@ -1970,6 +2569,14 @@ watch(
 @keyframes run-fab-stop-pulse {
   0%, 100% { box-shadow: 0 10px 28px rgba(244, 63, 94, 0.4), 0 0 18px rgba(244, 63, 94, 0.35); }
   50%      { box-shadow: 0 10px 28px rgba(244, 63, 94, 0.6),  0 0 32px rgba(244, 63, 94, 0.7); }
+}
+/* Stalled — the event stream has been quiet for a while but the backend
+   might still be working (long agent thinking, remote call, etc). Slow
+   the pulse and desaturate so the button reads "still live but quiet"
+   without losing its clickability. */
+.routines-fab.run-fab.busy.stalled {
+  background: linear-gradient(135deg, rgba(180, 90, 110, 0.85), rgba(130, 35, 55, 0.85));
+  animation-duration: 2.6s;
 }
 
 .routines-fab-tip {

@@ -96,36 +96,19 @@
           >
             {{ data.quote }}
           </div>
-          <div
-            v-if="data.state === 'running' && data.think"
-            class="think"
-          >
-            <svg
-              class="ic"
-              width="11"
-              height="11"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-            >
-              <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.5.5 1 1.3 1 2.3v1h6v-1c0-1 .5-1.8 1-2.3A7 7 0 0 0 12 2z" />
-            </svg>
-            <span>
-              <template
-                v-for="(part, i) in thinkParts"
-                :key="i"
-              >
-                <strong v-if="part.strong">{{ part.text }}</strong>
-                <template v-else>{{ part.text }}</template>
-              </template>
-            </span>
-          </div>
         </div>
         <div class="wb-foot">
           <span class="m">
-            <strong v-if="data.metricsStrong">{{ data.metricsStrong }}</strong>
-            <template v-if="data.metrics">{{ data.metrics }}</template>
+            <template v-if="elapsedLabel">
+              <span
+                class="elapsed"
+                :class="{ live: effectiveState === 'running' }"
+              >{{ elapsedLabel }}</span>
+            </template>
+            <template v-else>
+              <strong v-if="data.metricsStrong">{{ data.metricsStrong }}</strong>
+              <template v-if="data.metrics">{{ data.metrics }}</template>
+            </template>
           </span>
           <span
             class="qp"
@@ -212,6 +195,8 @@
 import { Handle, Position } from '@vue-flow/core';
 import { computed, inject, onBeforeUnmount, ref, type Ref } from 'vue';
 
+import { useLiveClock } from '@pkg/composables/useLiveClock';
+
 import { getNodeDefinition } from '@pkg/pages/editor/workflow/nodeRegistry';
 
 /**
@@ -239,8 +224,6 @@ interface RoutineNodeData {
   category?:      string;
   role?:          string;
   quote?:         string;
-  think?:         string;
-  thinkStrong?:   string;
   metrics?:       string;
   metricsStrong?: string;
   footerRight?:   string;
@@ -358,20 +341,36 @@ const footerStatusClass = computed(() => {
   }
 });
 
-const thinkParts = computed(() => {
-  const msg = props.data.think || '';
-  const strong = props.data.thinkStrong;
+// Shared 1 Hz clock — one setInterval feeds every card on the canvas so
+// thirty running nodes don't mean thirty timers. Ticks only exist while
+// any node is live (see `useLiveClock` for ref-counted lifecycle).
+const now = useLiveClock();
 
-  if (!strong || !msg.includes(strong)) {
-    return [{ text: msg, strong: false }];
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m >= 60) {
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${ h }h ${ String(mm).padStart(2, '0') }m`;
   }
-  const [before, after] = msg.split(strong);
+  return m > 0 ? `${ m }m ${ String(s).padStart(2, '0') }s` : `${ s }s`;
+}
 
-  return [
-    { text: before, strong: false },
-    { text: strong, strong: true },
-    { text: after, strong: false },
-  ];
+// Live elapsed for the running state, frozen duration for the done state.
+// Queued/idle/failed cards show nothing so the stub stays compact.
+const elapsedLabel = computed(() => {
+  const exec = props.data.execution;
+  if (!exec?.startedAt) return '';
+  if (effectiveState.value === 'running') {
+    return formatDuration(now.value - exec.startedAt);
+  }
+  if (effectiveState.value === 'done' && exec.completedAt) {
+    return formatDuration(exec.completedAt - exec.startedAt);
+  }
+  return '';
 });
 
 function toggleMenu() {
@@ -444,9 +443,22 @@ onBeforeUnmount(() => {
   border-color: rgba(167, 139, 250, 0.55);
   box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.2), 0 0 36px rgba(139, 92, 246, 0.28);
 }
+/* Done state: subtle green completion glow + a thin check tick over the
+   avatar so completed cards read at a glance as "ran and finished"
+   without stealing attention from whichever node is currently live. */
 .t02.done .inner {
-  opacity: 0.92;
+  opacity: 0.94;
+  border-color: rgba(122, 212, 168, 0.35);
+  box-shadow: 0 0 0 1px rgba(122, 212, 168, 0.14), 0 0 22px rgba(52, 160, 110, 0.18);
 }
+.t02.done .stub .av {
+  background: linear-gradient(135deg, #7ad4a8, #2f855a);
+  box-shadow: 0 0 8px rgba(52, 160, 110, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.t02.done .stub { border-right-color: rgba(122, 212, 168, 0.4); }
+.t02.done .wb-foot { background: rgba(52, 160, 110, 0.06); }
+.t02.done .wb-foot .qp { color: #7ad4a8; }
+.t02.done .wb-foot .qp::before { background: #7ad4a8; }
 .t02.failed .inner {
   border-color: rgba(244, 63, 94, 0.55);
   box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.2), 0 0 32px rgba(244, 63, 94, 0.28);
@@ -531,8 +543,23 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 .t02.running .stub .st { color: var(--violet-300); }
-.t02.done .stub .st    { color: #8fb3d9; }
+.t02.done .stub .st    { color: #7ad4a8; }
 .t02.failed .stub .st  { color: var(--rose-400); }
+
+/* Elapsed/duration readout in the footer left slot. Tabular digits so
+   the counter doesn't jitter as seconds tick up. */
+.wb-foot .m .elapsed {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--steel-200);
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+}
+.wb-foot .m .elapsed.live {
+  color: var(--violet-200);
+  text-shadow: 0 0 6px rgba(139, 92, 246, 0.55);
+}
+.t02.done .wb-foot .m .elapsed { color: #7ad4a8; }
 
 .t02 .col {
   flex: 1;
@@ -584,25 +611,6 @@ onBeforeUnmount(() => {
 .t02.failed .body .q {
   border-left-color: var(--rose-400);
   color: var(--rose-300);
-}
-.t02 .body .think {
-  margin-top: 7px;
-  padding: 6px 8px;
-  background: rgba(139, 92, 246, 0.14);
-  border: 1px solid rgba(167, 139, 250, 0.22);
-  border-radius: 6px;
-  font-size: 10px;
-  color: #d8cdfa;
-  line-height: 1.35;
-  display: flex;
-  gap: 5px;
-  align-items: flex-start;
-}
-.t02 .body .think strong { color: white; }
-.t02 .body .think .ic {
-  flex-shrink: 0;
-  color: var(--violet-400);
-  margin-top: 1px;
 }
 
 .wb-foot {

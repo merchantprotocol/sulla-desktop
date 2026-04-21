@@ -72,6 +72,39 @@
         </div>
       </div>
 
+      <!-- Execution output — only visible once the card has actually run.
+           Shown above the config panel during a run so the user gets the
+           live result first, then has the config below as reference. -->
+      <section
+        v-if="node && hasExecutionInfo"
+        class="exec-section"
+      >
+        <header class="exec-head">
+          <span class="exec-title">Output</span>
+          <span
+            v-if="node.data.state"
+            class="exec-state"
+            :class="node.data.state"
+          >{{ statusLabel }}</span>
+          <span
+            v-if="formatExecDuration()"
+            class="exec-duration"
+          >{{ formatExecDuration() }}</span>
+        </header>
+        <div
+          v-if="node.data.execution?.error"
+          class="exec-error"
+        >{{ node.data.execution.error }}</div>
+        <pre
+          v-if="outputText"
+          class="exec-output"
+        >{{ outputText }}</pre>
+        <div
+          v-else-if="node.data.state === 'running'"
+          class="exec-pending"
+        >Working…</div>
+      </section>
+
       <!-- Per-subtype config panel (routed from the workflow editor) -->
       <div
         v-if="node && panelComponent"
@@ -124,6 +157,13 @@ interface RoutineNodeShape {
     category?:  string;
     config?:    Record<string, unknown>;
     avatar?:    { type?: string; icon?: string; initials?: string };
+    execution?: {
+      status?:      'running' | 'completed' | 'failed' | 'waiting' | 'skipped';
+      output?:      unknown;
+      error?:       string;
+      startedAt?:   number;
+      completedAt?: number;
+    };
   };
 }
 
@@ -203,6 +243,45 @@ const statusLabel = computed(() => {
   default:        return 'Idle';
   }
 });
+
+// Flatten the raw execution output into something the drawer can display
+// as prose. Strings pass through, Anthropic-style block arrays get their
+// text blocks joined, everything else falls back to pretty JSON. Empty
+// string means "nothing worth showing" — the template hides the section.
+const outputText = computed<string>(() => {
+  const raw = props.node?.data?.execution?.output;
+  if (raw == null) return '';
+  if (typeof raw === 'string') return raw.trim();
+  if (Array.isArray(raw)) {
+    const text = raw
+      .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
+      .map((b: any) => b.text)
+      .join('\n').trim();
+    if (text) return text;
+    try { return JSON.stringify(raw, null, 2); } catch { return String(raw); }
+  }
+  if (typeof raw === 'object') {
+    try { return JSON.stringify(raw, null, 2); } catch { return String(raw); }
+  }
+  return String(raw);
+});
+
+const hasExecutionInfo = computed(() => {
+  const exec = props.node?.data?.execution;
+  if (!exec) return false;
+  return !!exec.output || !!exec.error || !!exec.startedAt;
+});
+
+function formatExecDuration(): string {
+  const exec = props.node?.data?.execution;
+  if (!exec?.startedAt) return '';
+  const end = exec.completedAt ?? Date.now();
+  const ms = Math.max(end - exec.startedAt, 0);
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${ m }m ${ String(s).padStart(2, '0') }s` : `${ s }s`;
+}
 </script>
 
 <style scoped>
@@ -402,6 +481,85 @@ const statusLabel = computed(() => {
   font-style: italic;
   color: var(--violet-300);
   line-height: 1.3;
+}
+
+/* Execution output — appears above the config panel when a node has
+   actually run. Header strip shows the state pill + elapsed; the body
+   is a monospace pre for readable JSON / prose output. */
+.exec-section {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: rgba(14, 22, 40, 0.7);
+  border: 1px solid rgba(167, 139, 250, 0.24);
+  border-radius: 8px;
+}
+.exec-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.exec-title {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--violet-300);
+  flex-shrink: 0;
+}
+.exec-state {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  flex-shrink: 0;
+}
+.exec-state.running { color: var(--violet-300); }
+.exec-state.done    { color: #7ad4a8; }
+.exec-state.failed  { color: #fca5a5; }
+.exec-state.queued,
+.exec-state.idle    { color: var(--steel-400); }
+.exec-duration {
+  margin-left: auto;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  color: var(--steel-300);
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+.exec-output {
+  margin: 0;
+  padding: 10px 12px;
+  background: rgba(6, 12, 26, 0.7);
+  border: 1px solid rgba(168, 192, 220, 0.14);
+  border-radius: 6px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #d6dde8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
+}
+.exec-error {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  color: #fca5a5;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.exec-pending {
+  padding: 10px 12px;
+  color: var(--violet-300);
+  font-style: italic;
+  font-size: 12px;
 }
 
 /* Host container for whichever editor config panel is mounted.

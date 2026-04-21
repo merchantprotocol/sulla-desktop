@@ -597,7 +597,21 @@ export class PlaybookController<TState = any> {
           this.emitPlaybookEvent(state, 'node_started', { nodeId: opNodeId, nodeLabel: opLabel, prompt: step.prompt });
 
           this.injectWorkflowMessage(state, step.prompt);
-          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+          // Scope workflowNodeId to this orchestrator step so BaseNode.wsChatMessage
+          // emits node_thinking events attributed to this node. Without this, the
+          // orchestrator's streaming reasoning never reaches the Live stream.
+          const opPrevNodeId = (state as any).metadata?.workflowNodeId;
+          const opPrevParentChannel = (state as any).metadata?.workflowParentChannel;
+          (state as any).metadata.workflowNodeId = opNodeId;
+          (state as any).metadata.workflowParentChannel = (state as any).metadata?.wsChannel || 'workbench';
+
+          try {
+            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+          } finally {
+            (state as any).metadata.workflowNodeId = opPrevNodeId;
+            (state as any).metadata.workflowParentChannel = opPrevParentChannel;
+          }
 
           let opMsgs = (state as any).messages;
           let opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
@@ -641,7 +655,18 @@ export class PlaybookController<TState = any> {
             `Original instructions:\n${ step.prompt }\n\n` +
             `You MUST produce a substantive text response now. This is the output that will be ` +
             `passed to the next step in the workflow. Do not end your turn until you have provided it.`);
-            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+
+            const opRetryPrevNodeId = (state as any).metadata?.workflowNodeId;
+            const opRetryPrevParentChannel = (state as any).metadata?.workflowParentChannel;
+            (state as any).metadata.workflowNodeId = opNodeId;
+            (state as any).metadata.workflowParentChannel = (state as any).metadata?.wsChannel || 'workbench';
+
+            try {
+              state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+            } finally {
+              (state as any).metadata.workflowNodeId = opRetryPrevNodeId;
+              (state as any).metadata.workflowParentChannel = opRetryPrevParentChannel;
+            }
 
             opMsgs = (state as any).messages;
             opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
