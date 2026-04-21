@@ -223,19 +223,10 @@ export async function bootstrapSullaHome(): Promise<void> {
   fs.mkdirSync(trainingDir, { recursive: true });
   fs.mkdirSync(conversationsDir, { recursive: true });
 
-  // Clone default repos before creating subfolders — check for .git to detect
-  // whether the directory is a real clone vs an empty dir created by mkdirSync.
+  // Clone default repos only if missing — preserve any existing local state.
   for (const { dir, repo } of BOOTSTRAP_REPOS) {
     const target = dir();
     if (fs.existsSync(path.join(target, '.git'))) {
-      try {
-        console.log(`[Sulla] Fetching latest for ${ target }`);
-        await execFileAsync('git', ['-C', target, 'fetch', 'origin']);
-        await execFileAsync('git', ['-C', target, 'reset', '--hard', '@{u}']);
-        console.log(`[Sulla] Updated ${ target } successfully`);
-      } catch (err) {
-        console.error(`[Sulla] Failed to update ${ target }:`, err);
-      }
       continue;
     }
     // Clear any non-git contents so clone can succeed
