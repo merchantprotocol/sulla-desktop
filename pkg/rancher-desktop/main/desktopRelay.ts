@@ -411,6 +411,11 @@ class DesktopRelayClient {
       },
       timestamp: Date.now(),
     });
+
+    // ACK immediately so mobile knows the desktop received the message and the
+    // agent loop is starting. Without this, mobile sits in silence until the
+    // first streaming chunk arrives — which can look like a timeout.
+    this.send({ type: 'ack' });
   }
 
   /**
