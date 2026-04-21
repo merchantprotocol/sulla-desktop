@@ -65,7 +65,13 @@ export class SettingsError extends Error {
 export const defaultSettings = {
   version:     CURRENT_SETTINGS_VERSION,
   application: {
-    adminAccess: false,
+    // Default to true so first-launch prompts the user for admin access,
+    // which socket_vmnet needs to give QEMU a network on Intel macOS.
+    // With this false, updateConfig() drops networks entirely (see
+    // backend/lima.ts "Administrator access disallowed") and QEMU exits
+    // immediately, breaking the whole VM startup. Users can flip it off
+    // in settings if they don't want sudo prompts.
+    adminAccess: true,
     debug:       false,
     extensions:  {
       allowed: {
