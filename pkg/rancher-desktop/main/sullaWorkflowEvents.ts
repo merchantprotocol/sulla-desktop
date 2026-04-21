@@ -205,8 +205,14 @@ export function initSullaWorkflowEvents(): void {
 
   ipcMainProxy.handle('workflow-save', async(_event: unknown, workflow: any) => {
     if (!workflow?.id) {
+      console.error('[workflow-save] missing workflow.id', workflow);
       throw new Error('workflow-save: workflow.id is required');
     }
+
+    const nodeCount = Array.isArray(workflow.nodes) ? workflow.nodes.length : 0;
+    const edgeCount = Array.isArray(workflow.edges) ? workflow.edges.length : 0;
+    const started = Date.now();
+    console.log(`[workflow-save] → id=${ workflow.id } name="${ workflow.name ?? '' }" ${ nodeCount }n/${ edgeCount }e`);
 
     workflow.updatedAt = new Date().toISOString();
     if (!workflow.createdAt) {
@@ -224,92 +230,129 @@ export function initSullaWorkflowEvents(): void {
       }
     }
 
-    const WorkflowModel = await importWorkflowModel();
-    // Let the model reuse the row's existing status when this is an
-    // update; only brand-new rows default to 'draft' via upsertFromDefinition.
-    const existing = await WorkflowModel.findById(workflow.id);
-    const status = (existing?.attributes.status ?? workflow._status ?? 'draft') as WorkflowStatus;
+    try {
+      const WorkflowModel = await importWorkflowModel();
+      // Let the model reuse the row's existing status when this is an
+      // update; only brand-new rows default to 'draft' via upsertFromDefinition.
+      const existing = await WorkflowModel.findById(workflow.id);
+      const status = (existing?.attributes.status ?? workflow._status ?? 'draft') as WorkflowStatus;
 
-    await WorkflowModel.upsertFromDefinition(workflow, { status });
+      await WorkflowModel.upsertFromDefinition(workflow, { status });
 
-    console.log(`[Sulla] Workflow saved: ${ workflow.name ?? workflow.id } (id: ${ workflow.id }, status: ${ status })`);
+      const ms = Date.now() - started;
+      console.log(`[workflow-save] ← ok id=${ workflow.id } status=${ status } in ${ ms }ms`);
 
-    // Kick the scheduler — Phase 2 rewrites this to read from the DB too.
-    refreshWorkflowSchedules();
+      // Kick the scheduler — it re-scans the DB for production rows.
+      refreshWorkflowSchedules();
 
-    return true;
+      return true;
+    } catch (err) {
+      console.error(`[workflow-save] ✗ id=${ workflow.id }`, err);
+      throw err;
+    }
   });
 
   ipcMainProxy.handle('workflow-delete', async(_event: unknown, workflowId: string) => {
-    if (!workflowId) throw new Error('workflow-delete: workflowId is required');
-
-    const WorkflowModel = await importWorkflowModel();
-    const deleted = await WorkflowModel.deleteById(workflowId);
-
-    if (deleted) {
-      console.log(`[Sulla] Workflow deleted: ${ workflowId }`);
-    } else {
-      console.log(`[Sulla] Workflow not found for deletion: ${ workflowId }`);
+    if (!workflowId) {
+      console.error('[workflow-delete] missing workflowId');
+      throw new Error('workflow-delete: workflowId is required');
     }
+    console.log(`[workflow-delete] → id=${ workflowId }`);
 
-    refreshWorkflowSchedules();
+    try {
+      const WorkflowModel = await importWorkflowModel();
+      const deleted = await WorkflowModel.deleteById(workflowId);
 
-    return deleted;
+      console.log(`[workflow-delete] ← ${ deleted ? 'ok' : 'miss' } id=${ workflowId }`);
+
+      refreshWorkflowSchedules();
+
+      return deleted;
+    } catch (err) {
+      console.error(`[workflow-delete] ✗ id=${ workflowId }`, err);
+      throw err;
+    }
   });
 
   ipcMainProxy.handle('workflow-move', async(_event: unknown, workflowId: string, targetStatus: WorkflowStatus) => {
-    if (!workflowId) throw new Error('workflow-move: workflowId is required');
-
-    const WorkflowModel = await importWorkflowModel();
-    const updated = await WorkflowModel.updateStatus(workflowId, targetStatus);
-
-    if (!updated) {
-      throw new Error(`Workflow not found: ${ workflowId }`);
+    if (!workflowId) {
+      console.error('[workflow-move] missing workflowId');
+      throw new Error('workflow-move: workflowId is required');
     }
+    console.log(`[workflow-move] → id=${ workflowId } status=${ targetStatus }`);
 
-    console.log(`[Sulla] Workflow moved: ${ workflowId } -> ${ targetStatus }`);
+    try {
+      const WorkflowModel = await importWorkflowModel();
+      const updated = await WorkflowModel.updateStatus(workflowId, targetStatus);
 
-    // Schedules care about the draft/production boundary — refresh.
-    refreshWorkflowSchedules();
+      if (!updated) {
+        console.warn(`[workflow-move] ✗ id=${ workflowId } — not found`);
+        throw new Error(`Workflow not found: ${ workflowId }`);
+      }
 
-    return { success: true, newStatus: targetStatus };
+      console.log(`[workflow-move] ← ok id=${ workflowId } → ${ targetStatus }`);
+
+      // Schedules care about the draft/production boundary — refresh.
+      refreshWorkflowSchedules();
+
+      return { success: true, newStatus: targetStatus };
+    } catch (err) {
+      // `not found` already logged above — avoid double-logging it, but
+      // catch any other failure (DB down, etc.) here.
+      if (!(err instanceof Error) || !err.message.startsWith('Workflow not found')) {
+        console.error(`[workflow-move] ✗ id=${ workflowId }`, err);
+      }
+      throw err;
+    }
   });
 
   // Duplicate an existing workflow. Copies its definition into a fresh
   // id with " (copy)" appended to the name; always lands in draft.
   ipcMainProxy.handle('workflow-duplicate', async(_event: unknown, workflowId: string) => {
-    if (!workflowId) throw new Error('workflow-duplicate: workflowId is required');
-
-    const WorkflowModel = await importWorkflowModel();
-    const original = await WorkflowModel.findById(workflowId);
-
-    if (!original) {
-      throw new Error(`Workflow not found: ${ workflowId }`);
+    if (!workflowId) {
+      console.error('[workflow-duplicate] missing workflowId');
+      throw new Error('workflow-duplicate: workflowId is required');
     }
+    console.log(`[workflow-duplicate] → id=${ workflowId }`);
 
-    const originalDef = original.attributes.definition as Record<string, unknown>;
-    const newId = `workflow-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
-    const now = new Date().toISOString();
+    try {
+      const WorkflowModel = await importWorkflowModel();
+      const original = await WorkflowModel.findById(workflowId);
 
-    const duplicate: Record<string, unknown> = {
-      ...originalDef,
-      id:        newId,
-      name:      `${ String(originalDef.name ?? original.attributes.name ?? 'Untitled') } (copy)`,
-      createdAt: now,
-      updatedAt: now,
-      _status:   'draft',
-    };
+      if (!original) {
+        console.warn(`[workflow-duplicate] ✗ id=${ workflowId } — not found`);
+        throw new Error(`Workflow not found: ${ workflowId }`);
+      }
 
-    await WorkflowModel.upsertFromDefinition(duplicate, {
-      status:       'draft',
-      changeReason: `duplicated from ${ workflowId }`,
-    });
+      const originalDef = original.attributes.definition as Record<string, unknown>;
+      const newId = `workflow-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
+      const now = new Date().toISOString();
 
-    console.log(`[Sulla] Workflow duplicated: ${ workflowId } -> ${ newId }`);
+      const duplicate: Record<string, unknown> = {
+        ...originalDef,
+        id:        newId,
+        name:      `${ String(originalDef.name ?? original.attributes.name ?? 'Untitled') } (copy)`,
+        createdAt: now,
+        updatedAt: now,
+        _status:   'draft',
+      };
 
-    refreshWorkflowSchedules();
+      await WorkflowModel.upsertFromDefinition(duplicate, {
+        status:       'draft',
+        changeReason: `duplicated from ${ workflowId }`,
+      });
 
-    return { id: newId, name: duplicate.name as string };
+      console.log(`[workflow-duplicate] ← ok ${ workflowId } → ${ newId }`);
+
+      refreshWorkflowSchedules();
+
+      return { id: newId, name: duplicate.name as string };
+    } catch (err) {
+      if (!(err instanceof Error) || !err.message.startsWith('Workflow not found')) {
+        console.error(`[workflow-duplicate] ✗ id=${ workflowId }`, err);
+      }
+      throw err;
+    }
   });
 
   // ── DB-backed read handlers (Phase 1 verification path) ──

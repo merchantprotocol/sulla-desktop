@@ -133,35 +133,43 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
     const enabled = definition.enabled !== false;
 
     const existing = await WorkflowModel.findById(id);
+    const isInsert = !existing;
     const definitionBefore = existing ? existing.attributes.definition ?? null : null;
 
-    const row = await postgresClient.queryOne(
-      `INSERT INTO workflows (id, name, description, version, status, definition, enabled)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-       ON CONFLICT (id) DO UPDATE SET
-         name        = EXCLUDED.name,
-         description = EXCLUDED.description,
-         version     = EXCLUDED.version,
-         status      = EXCLUDED.status,
-         definition  = EXCLUDED.definition,
-         enabled     = EXCLUDED.enabled,
-         updated_at  = CURRENT_TIMESTAMP
-       RETURNING *`,
-      [id, name, description, version, status, JSON.stringify(definition), enabled],
-    );
+    try {
+      const row = await postgresClient.queryOne(
+        `INSERT INTO workflows (id, name, description, version, status, definition, enabled)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+         ON CONFLICT (id) DO UPDATE SET
+           name        = EXCLUDED.name,
+           description = EXCLUDED.description,
+           version     = EXCLUDED.version,
+           status      = EXCLUDED.status,
+           definition  = EXCLUDED.definition,
+           enabled     = EXCLUDED.enabled,
+           updated_at  = CURRENT_TIMESTAMP
+         RETURNING *`,
+        [id, name, description, version, status, JSON.stringify(definition), enabled],
+      );
 
-    const model = new WorkflowModel();
-    model.databaseFill(row);
+      const model = new WorkflowModel();
+      model.databaseFill(row);
 
-    await WorkflowHistoryModel.recordChange({
-      workflowId:       id,
-      definitionBefore,
-      definitionAfter:  definition,
-      changedBy:        options.changedBy ?? null,
-      changeReason:     options.changeReason ?? null,
-    });
+      await WorkflowHistoryModel.recordChange({
+        workflowId:       id,
+        definitionBefore,
+        definitionAfter:  definition,
+        changedBy:        options.changedBy ?? null,
+        changeReason:     options.changeReason ?? null,
+      });
 
-    return model;
+      console.log(`[WorkflowModel.upsert] ← ok ${ isInsert ? 'INSERT' : 'UPDATE' } id=${ id } status=${ status }${ options.changeReason ? ` reason="${ options.changeReason }"` : '' }`);
+
+      return model;
+    } catch (err) {
+      console.error(`[WorkflowModel.upsert] ✗ id=${ id } status=${ status }`, err);
+      throw err;
+    }
   }
 
   /**
@@ -174,38 +182,65 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
     options: { changedBy?: string } = {},
   ): Promise<WorkflowModel | null> {
     const existing = await WorkflowModel.findById(id);
-    if (!existing) return null;
+    if (!existing) {
+      console.warn(`[WorkflowModel.updateStatus] ✗ id=${ id } — not found`);
+
+      return null;
+    }
     const oldStatus = existing.attributes.status;
-    if (oldStatus === newStatus) return existing;
+    if (oldStatus === newStatus) {
+      console.log(`[WorkflowModel.updateStatus] ← noop id=${ id } already ${ newStatus }`);
 
-    const row = await postgresClient.queryOne(
-      `UPDATE workflows
-       SET status = $2, updated_at = CURRENT_TIMESTAMP
-       WHERE id = $1
-       RETURNING *`,
-      [id, newStatus],
-    );
-    if (!row) return null;
+      return existing;
+    }
 
-    const model = new WorkflowModel();
-    model.databaseFill(row);
+    try {
+      const row = await postgresClient.queryOne(
+        `UPDATE workflows
+         SET status = $2, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1
+         RETURNING *`,
+        [id, newStatus],
+      );
+      if (!row) {
+        console.warn(`[WorkflowModel.updateStatus] ✗ id=${ id } — update returned no row`);
 
-    await WorkflowHistoryModel.recordChange({
-      workflowId:       id,
-      definitionBefore: existing.attributes.definition ?? null,
-      definitionAfter:  model.attributes.definition!,
-      changedBy:        options.changedBy ?? null,
-      changeReason:     `status: ${ oldStatus } -> ${ newStatus }`,
-    });
+        return null;
+      }
 
-    return model;
+      const model = new WorkflowModel();
+      model.databaseFill(row);
+
+      await WorkflowHistoryModel.recordChange({
+        workflowId:       id,
+        definitionBefore: existing.attributes.definition ?? null,
+        definitionAfter:  model.attributes.definition!,
+        changedBy:        options.changedBy ?? null,
+        changeReason:     `status: ${ oldStatus } -> ${ newStatus }`,
+      });
+
+      console.log(`[WorkflowModel.updateStatus] ← ok id=${ id } ${ oldStatus } → ${ newStatus }`);
+
+      return model;
+    } catch (err) {
+      console.error(`[WorkflowModel.updateStatus] ✗ id=${ id } → ${ newStatus }`, err);
+      throw err;
+    }
   }
 
   static async deleteById(id: string): Promise<boolean> {
-    const result = await postgresClient.query(
-      `DELETE FROM workflows WHERE id = $1`,
-      [id],
-    );
-    return (result?.length ?? 0) > 0;
+    try {
+      const result = await postgresClient.query(
+        `DELETE FROM workflows WHERE id = $1`,
+        [id],
+      );
+      const deleted = (result?.length ?? 0) > 0;
+      console.log(`[WorkflowModel.deleteById] ← ${ deleted ? 'ok' : 'miss' } id=${ id }`);
+
+      return deleted;
+    } catch (err) {
+      console.error(`[WorkflowModel.deleteById] ✗ id=${ id }`, err);
+      throw err;
+    }
   }
 }

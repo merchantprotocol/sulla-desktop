@@ -302,68 +302,88 @@ export function initSullaRoutineTemplateEvents(): void {
   });
 
   // ── Direct routine execution ──
-  // Previously a routine was kicked off by sending a chat message like
-  // "Let's run X" — the agent parsed it, called the execute_workflow
-  // tool, and that tool primed the playbook. This handler drops the
-  // chat step entirely: it spins up a fresh agent graph on the default
-  // `sulla-desktop` channel, primes the playbook with
-  // `activateWorkflowOnState`, and kicks the graph loop. The agent is
-  // still the orchestrator — we're just removing the natural-language
-  // handoff from the trigger path.
+  // Thin IPC wrapper around `executeRoutine` — the real work is below
+  // so the scheduler (and anything else that needs to kick a routine
+  // without a user click) can call the same code path.
   ipcMainProxy.handle('routines-execute', async(_event: unknown, workflowId: string, triggerPayload?: string) => {
-    if (!workflowId) {
-      throw new Error('routines-execute: workflowId is required');
-    }
-
-    // Fresh thread per execution so concurrent runs of the same routine
-    // keep their state and event streams cleanly separated.
-    const executionId = `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
-
-    // sulla-desktop is the default agent for every graph. This is
-    // intentional — there is no per-routine agent assignment, and
-    // there doesn't need to be.
-    const WS_CHANNEL = 'sulla-desktop';
-
-    const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
-    const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
-
-    const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, executionId);
-    const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
-    const state = (graphResult as { state: Record<string, any> }).state;
-
-    // Scope the thread to this workflow so the agent doesn't wander off
-    // and pick up unrelated routines. `activateWorkflowOnState` honours
-    // this — it'll refuse to activate anything else.
-    state.metadata = state.metadata ?? {};
-    state.metadata.scopedWorkflowId = workflowId;
-
-    // Trigger payload becomes the "user message" threaded into the
-    // playbook state. A direct click of Play doesn't carry a natural
-    // language intent, so we synthesize one the downstream nodes can
-    // lean on if they need it.
-    const message = (triggerPayload ?? '').trim() || `Run routine ${ workflowId }`;
-
-    const activation = await activateWorkflowOnState(state as any, {
-      workflowId,
-      message,
-    });
-
-    if (!activation.ok) {
-      throw new Error(activation.responseString);
-    }
-
-    // Fire-and-forget — the renderer subscribes to the WebSocket event
-    // stream for progress. Surfacing errors here only helps the main
-    // process logs; the UI will see the failure via `workflow_aborted`
-    // / `node_failed` events that PlaybookController already emits.
-    void graph.execute(state).catch((err) => {
-      console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
-    });
-
-    console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);
-
-    return { executionId, workflowId };
+    return await executeRoutine(workflowId, triggerPayload);
   });
 
   console.log('[Sulla] Routine template IPC handlers initialized');
+}
+
+// ─── Execution helper ─────────────────────────────────────────────
+// Previously a routine was kicked off by sending a chat message like
+// "Let's run X" — the agent parsed it, called the execute_workflow
+// tool, and that tool primed the playbook. This helper drops the chat
+// step entirely: it spins up a fresh agent graph on the default
+// `sulla-desktop` channel, primes the playbook with
+// `activateWorkflowOnState`, and kicks the graph loop. The agent is
+// still the orchestrator — we're just removing the natural-language
+// handoff from the trigger path.
+//
+// Exported so both the `routines-execute` IPC handler and the
+// WorkflowSchedulerService cron callbacks share a single code path.
+
+export interface RoutineExecutionResult {
+  executionId: string;
+  workflowId:  string;
+}
+
+export async function executeRoutine(
+  workflowId: string,
+  triggerPayload?: string,
+): Promise<RoutineExecutionResult> {
+  if (!workflowId) {
+    throw new Error('executeRoutine: workflowId is required');
+  }
+
+  // Fresh thread per execution so concurrent runs of the same routine
+  // keep their state and event streams cleanly separated.
+  const executionId = `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
+
+  // sulla-desktop is the default agent for every graph. This is
+  // intentional — there is no per-routine agent assignment, and
+  // there doesn't need to be.
+  const WS_CHANNEL = 'sulla-desktop';
+
+  const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+  const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
+
+  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, executionId);
+  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
+  const state = (graphResult as { state: Record<string, any> }).state;
+
+  // Scope the thread to this workflow so the agent doesn't wander off
+  // and pick up unrelated routines. `activateWorkflowOnState` honours
+  // this — it'll refuse to activate anything else.
+  state.metadata = state.metadata ?? {};
+  state.metadata.scopedWorkflowId = workflowId;
+
+  // Trigger payload becomes the "user message" threaded into the
+  // playbook state. A direct click of Play doesn't carry a natural
+  // language intent, so we synthesize one the downstream nodes can
+  // lean on if they need it.
+  const message = (triggerPayload ?? '').trim() || `Run routine ${ workflowId }`;
+
+  const activation = await activateWorkflowOnState(state as any, {
+    workflowId,
+    message,
+  });
+
+  if (!activation.ok) {
+    throw new Error(activation.responseString);
+  }
+
+  // Fire-and-forget — the renderer subscribes to the WebSocket event
+  // stream for progress. Surfacing errors here only helps the main
+  // process logs; the UI will see the failure via `workflow_aborted`
+  // / `node_failed` events that PlaybookController already emits.
+  void graph.execute(state).catch((err) => {
+    console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
+  });
+
+  console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);
+
+  return { executionId, workflowId };
 }
