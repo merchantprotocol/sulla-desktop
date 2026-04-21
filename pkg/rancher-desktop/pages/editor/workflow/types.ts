@@ -3,7 +3,7 @@
 export type WorkflowNodeCategory = 'trigger' | 'agent' | 'routing' | 'flow-control' | 'io';
 
 export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'schedule' | 'sulla-desktop' | 'workbench' | 'chat-completions';
-export type AgentNodeSubtype = 'agent' | 'integration-call' | 'tool-call' | 'orchestrator-prompt';
+export type AgentNodeSubtype = 'agent' | 'integration-call' | 'tool-call' | 'orchestrator-prompt' | 'function';
 export type RoutingNodeSubtype = 'router' | 'condition';
 export type FlowControlNodeSubtype = 'wait' | 'loop' | 'parallel' | 'merge' | 'sub-workflow';
 export type IONodeSubtype = 'user-input' | 'response' | 'transfer';
@@ -80,6 +80,25 @@ export interface IntegrationCallNodeConfig {
   defaults:           Record<string, string>;
   /** Description shown to the orchestrator before the call executes, for parameter validation. */
   preCallDescription: string;
+}
+
+export interface FunctionNodeConfig {
+  /**
+   * Slug of a function in ~/sulla/functions/. Runtime (python/node/shell) is
+   * derived from the function's own function.yaml — not picked here.
+   */
+  functionRef:      string;
+  /** Input value bindings. Values support {{variable}} template syntax. */
+  inputs:           Record<string, string>;
+  /**
+   * Per-node vault account bindings. The function declares which env vars it
+   * needs (spec.permissions.env); each entry here maps one of those env var
+   * names to a vault account + secret path. Injected at invocation time,
+   * cleared after.
+   */
+  vaultAccounts:    Record<string, { accountId: string; secretPath: string }>;
+  /** Override the function's declared timeout (e.g. "60s"). Null = use function default. */
+  timeoutOverride:  string | null;
 }
 
 export interface RouterNodeConfig {

@@ -150,6 +150,7 @@ const PANELS: Record<string, Component> = {
   agent:                 defineAsyncComponent(() => import('@pkg/pages/editor/workflow/AgentNodeConfig.vue')),
   'tool-call':           defineAsyncComponent(() => import('@pkg/pages/editor/workflow/ToolCallNodeConfig.vue')),
   'integration-call':    defineAsyncComponent(() => import('@pkg/pages/editor/workflow/IntegrationCallNodeConfig.vue')),
+  function:              defineAsyncComponent(() => import('@pkg/pages/editor/workflow/FunctionNodeConfig.vue')),
   'orchestrator-prompt': defineAsyncComponent(() => import('@pkg/pages/editor/workflow/OrchestratorPromptNodeConfig.vue')),
   router:                defineAsyncComponent(() => import('@pkg/pages/editor/workflow/RouterNodeConfig.vue')),
   condition:             defineAsyncComponent(() => import('@pkg/pages/editor/workflow/ConditionNodeConfig.vue')),
@@ -177,7 +178,7 @@ const panelComponent = computed<Component | null>(() => {
 
 const NEEDS_SUBTYPE = new Set(['flow-control', 'io']);
 const NEEDS_UPSTREAM = new Set([
-  'agent', 'tool-call', 'integration-call', 'orchestrator-prompt', 'flow-control', 'io',
+  'agent', 'tool-call', 'integration-call', 'function', 'orchestrator-prompt', 'flow-control', 'io',
 ]);
 
 const panelProps = computed(() => {

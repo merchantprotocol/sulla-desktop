@@ -51,6 +51,8 @@ const ICONS = {
   transfer: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><line x1="21" y1="3" x2="14" y2="10"/><path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/></svg>',
 
   orchestratorPrompt: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" y1="10" x2="15" y2="10"/></svg>',
+
+  function: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3 H4 V21 H9"/><path d="M15 3 H20 V21 H15"/><path d="M10 9 H14"/><path d="M10 15 H14"/></svg>',
 };
 
 export const NODE_REGISTRY: NodeTypeDefinition[] = [
@@ -156,6 +158,20 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     iconSvg:       ICONS.orchestratorPrompt,
     defaultLabel:  'Prompt',
     defaultConfig: () => ({ prompt: '' }),
+  },
+  {
+    subtype:       'function',
+    category:      'agent',
+    label:         'Function',
+    description:   'Invoke a user-defined function in a sandboxed runtime',
+    iconSvg:       ICONS.function,
+    defaultLabel:  'Function',
+    defaultConfig: () => ({
+      functionRef:     '',
+      inputs:          {},
+      vaultAccounts:   {},
+      timeoutOverride: null,
+    }),
   },
 
   // ── Routing ──

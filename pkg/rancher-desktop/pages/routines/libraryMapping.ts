@@ -40,7 +40,7 @@ function initialsFrom(label: string): string {
 
 function avatarFor(def: NodeTypeDefinition): RoutineAvatarType {
   if (def.category === 'trigger') return 'trigger';
-  if (def.subtype === 'tool-call' || def.subtype === 'integration-call') return 'tool';
+  if (def.subtype === 'tool-call' || def.subtype === 'integration-call' || def.subtype === 'function') return 'tool';
   if (def.category === 'agent') return 'agent';
   if (def.subtype === 'loop') return 'loop';
   if (def.category === 'routing' || def.category === 'flow-control') return 'logic';
@@ -51,6 +51,7 @@ function kickerFor(def: NodeTypeDefinition): string {
   if (def.category === 'trigger') return 'Trigger';
   if (def.subtype === 'tool-call') return 'Tool';
   if (def.subtype === 'integration-call') return 'Integration';
+  if (def.subtype === 'function') return 'Function';
   if (def.category === 'agent') return 'Agent';
   if (def.category === 'routing') return 'Routing';
   if (def.category === 'flow-control') return 'Flow';

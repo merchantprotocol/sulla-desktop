@@ -1154,6 +1154,219 @@ export class PlaybookController<TState = any> {
           break;
         }
 
+        case 'execute_function': {
+          const fnNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: fnNodeLabel });
+
+          // Default timeout 60s; allow override like "30s" / "2m" / "90".
+          function parseTimeoutMs(value: string | null): number {
+            if (!value) return 60_000;
+            const trimmed = String(value).trim();
+            const match = /^(\d+)(ms|s|m|h)?$/i.exec(trimmed);
+            if (!match) return 60_000;
+            const num = Number(match[1]);
+            const unit = (match[2] || 's').toLowerCase();
+            const mul = unit === 'ms' ? 1 : unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000;
+            return num * mul;
+          }
+
+          // Redact secret VALUES (not keys) from a string. Defense-in-depth:
+          // the runtime should already have scrubbed its own error messages.
+          function redactSecrets(text: string, secrets: string[]): string {
+            if (!text || !secrets.length) return text;
+            let out = text;
+            for (const s of [...secrets].filter(Boolean).sort((a, b) => b.length - a.length)) {
+              if (s && out.includes(s)) out = out.split(s).join('***');
+            }
+            return out;
+          }
+
+          const RUNTIME_URLS: Record<string, string> = {
+            python: 'http://127.0.0.1:30118',
+            shell:  'http://127.0.0.1:30119',
+            node:   'http://127.0.0.1:30120',
+          };
+
+          // SECURITY: `env` is a short-lived local holding plaintext secrets.
+          // It is NEVER logged, NEVER passed to saveCheckpoint/emit*/console.
+          // Nulled immediately after the POST resolves.
+          let env: Record<string, string> | null = null;
+          let secretValues: string[] = [];
+
+          try {
+            const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
+            const yaml = await import('yaml');
+            const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
+
+            const functionsDir = resolveSullaFunctionsDir();
+            const yamlPath = pathUtil.join(functionsDir, step.functionRef, 'function.yaml');
+
+            if (!fsSync.existsSync(yamlPath)) {
+              throw new Error(`Function not found: ${ step.functionRef } (no function.yaml at ${ yamlPath })`);
+            }
+
+            const manifest: any = yaml.parse(fsSync.readFileSync(yamlPath, 'utf-8')) || {};
+            const runtime: string = manifest?.spec?.runtime || '';
+            const baseUrl = RUNTIME_URLS[runtime];
+            if (!baseUrl) {
+              throw new Error(`Unknown runtime "${ runtime }" for function "${ step.functionRef }"`);
+            }
+
+            // ── Resolve vault bindings into plaintext env ──
+            // Only resolve keys declared in the manifest's spec.permissions.env.
+            // Missing bindings for declared keys = hard fail (never POST partial).
+            const declaredEnvKeys: string[] = Array.isArray(manifest?.spec?.permissions?.env)
+              ? manifest.spec.permissions.env.filter((k: any) => typeof k === 'string')
+              : [];
+            const vaultAccounts = step.vaultAccounts || {};
+
+            if (declaredEnvKeys.length > 0) {
+              env = {};
+              for (const key of declaredEnvKeys) {
+                const binding = vaultAccounts[key];
+                if (!binding || !binding.accountId || !binding.secretPath) {
+                  throw new Error(
+                    `Function ${ step.functionRef } requires env ${ key }, but no vault binding found`,
+                  );
+                }
+                // secretPath is "integrationId.property" (or just "property"
+                // scoped to a single integration). We accept either — if no
+                // dot, treat the whole thing as property and use accountId
+                // alone to locate it across any integration. Practical
+                // bindings always include the integrationId to be specific.
+                let integrationId = '';
+                let property = binding.secretPath;
+                const dotIdx = binding.secretPath.indexOf('.');
+                if (dotIdx > 0) {
+                  integrationId = binding.secretPath.slice(0, dotIdx);
+                  property = binding.secretPath.slice(dotIdx + 1);
+                }
+
+                let model: any = null;
+                if (integrationId) {
+                  model = await IntegrationValueModel.findByKey(integrationId, binding.accountId, property);
+                } else {
+                  // No integrationId in the path — scan accounts and match on property.
+                  // This is intentional to keep bindings flexible; vault resolver
+                  // returns null if nothing matches.
+                  const rows = await IntegrationValueModel.query(
+                    `SELECT * FROM "integration_values" WHERE "account_id" = $1 AND "property" = $2 LIMIT 1`,
+                    [binding.accountId, property],
+                  );
+                  if (rows.length > 0) {
+                    // Re-fetch via findByKey once we know the integration, so decryption runs.
+                    model = await IntegrationValueModel.findByKey(
+                      rows[0].integration_id as string,
+                      binding.accountId,
+                      property,
+                    );
+                  }
+                }
+
+                const plaintext = model?.attributes?.value;
+                if (typeof plaintext !== 'string' || plaintext.length === 0) {
+                  throw new Error(
+                    `Function ${ step.functionRef } requires env ${ key }, but no vault binding found`,
+                  );
+                }
+                env[key] = plaintext;
+              }
+              secretValues = Object.values(env);
+            }
+
+            const timeoutMs = parseTimeoutMs(step.timeoutOverride);
+            const ac = new AbortController();
+            const timer = setTimeout(() => ac.abort(), timeoutMs);
+
+            let resp: Response;
+            try {
+              resp = await fetch(`${ baseUrl }/invoke`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                  name:    step.functionRef,
+                  version: 'HEAD',
+                  inputs:  step.inputs,
+                  env:     env || {},
+                }),
+                signal: ac.signal,
+              });
+            } finally {
+              clearTimeout(timer);
+              // Drop the plaintext env reference as soon as the POST body is
+              // on the wire. (Success path; failure path below also nulls.)
+              env = null;
+            }
+
+            if (!resp.ok) {
+              let detail = `HTTP ${ resp.status }`;
+              try {
+                const body: any = await resp.json();
+                if (body && typeof body.detail === 'string') detail = body.detail;
+              } catch { /* non-JSON body — keep status string */ }
+              // Defensively re-redact before surfacing.
+              throw new Error(redactSecrets(detail, secretValues));
+            }
+
+            const payload: any = await resp.json();
+            const outputs = payload?.outputs ?? {};
+            const durationMs = Number(payload?.duration_ms) || 0;
+
+            const result = { outputs, durationMs };
+
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, result, undefined);
+            meta.activeWorkflow = completed.updatedPlaybook;
+
+            const resultText = JSON.stringify(result);
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: fnNodeLabel, output: resultText });
+            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+            // NOTE: checkpoint carries inputs + outputs only, never env.
+            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, fnNodeLabel, 'function', resultText);
+
+            const fnMsg = `[Workflow Function: ${ fnNodeLabel }]\n` +
+              `Function: ${ step.functionRef } (${ runtime })\n` +
+              `Inputs: ${ JSON.stringify(step.inputs) }\n` +
+              `Duration: ${ durationMs }ms\n\n` +
+              `Outputs:\n${ JSON.stringify(outputs) }`;
+            this.injectWorkflowMessage(state, fnMsg, true);
+
+            if (completed.action === 'workflow_completed') {
+              this.emitPlaybookEvent(state, 'workflow_completed', {});
+              state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+              return state;
+            }
+          } catch (err: any) {
+            // Ensure env is gone even on early failure paths.
+            env = null;
+            const rawMsg = err?.name === 'AbortError'
+              ? `Function call timed out`
+              : (err?.message || String(err));
+            const errMsg = redactSecrets(rawMsg, secretValues);
+            console.error(`[PlaybookController] Function call failed: ${ errMsg }`);
+
+            const errorResult = `Function call failed: ${ errMsg }`;
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, errorResult, undefined);
+            meta.activeWorkflow = completed.updatedPlaybook;
+
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: fnNodeLabel, output: errorResult });
+            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+
+            const errorMsg = `[Workflow Function Failed: ${ fnNodeLabel }]\n` +
+              `Function: ${ step.functionRef }\n` +
+              `Error: ${ errMsg }\n\n` +
+              `The workflow will continue — review the error and decide how to proceed.`;
+            this.injectWorkflowMessage(state, errorMsg);
+            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+          } finally {
+            // Final defense-in-depth — zero secret material.
+            env = null;
+            secretValues = [];
+          }
+
+          break;
+        }
+
         case 'spawn_sub_workflow': {
           const subWfLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
           playbookLog('spawn_sub_workflow', {
