@@ -37,8 +37,16 @@ export class BackendGraphWebSocketService {
   private readonly wsService = getWebSocketClientService();
   private readonly schedulerService = getSchedulerService();
   private unsubscribes: (() => void)[] = [];
+  // Keyed by `${channelId}|${threadId}` so concurrent threads on the same
+  // channel (e.g. multiple chat tabs sharing the workbench WebSocket) can
+  // run in parallel. Previously this was keyed by channelId alone, which
+  // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
   private subscribedChannels = new Set<string>();
+
+  private abortKey(channelId: string, threadId: string): string {
+    return `${ channelId }|${ threadId }`;
+  }
 
   constructor() {
     this.initialize();
@@ -185,7 +193,19 @@ export class BackendGraphWebSocketService {
     }
 
     if (msg.type === 'stop_run') {
-      this.activeAborts.get(channelId)?.abort();
+      // Stop a specific thread when the frontend supplies one (current chat
+      // tab); otherwise stop every active run on the channel as a fallback
+      // for older clients.
+      const data = typeof msg.data === 'string' ? {} : (msg.data as any);
+      const stopThreadId = typeof data?.threadId === 'string' ? data.threadId : '';
+      if (stopThreadId) {
+        this.activeAborts.get(this.abortKey(channelId, stopThreadId))?.abort();
+      } else {
+        const prefix = `${ channelId }|`;
+        for (const [k, abort] of this.activeAborts) {
+          if (k.startsWith(prefix)) abort.abort();
+        }
+      }
       return;
     }
 
@@ -281,24 +301,23 @@ export class BackendGraphWebSocketService {
         });
       }
 
-      // Abort any prior run still in flight on this channel before starting
-      // a new one. Without this, rapid user sends (e.g. mobile PTT firing
-      // twice before the first reply lands) spawn two concurrent graph
-      // executions on the same state object and corrupt per-thread stream
-      // buffers downstream (the mobile-relay bridge keys its streamed-text
-      // and final-text maps by thread id, so two active runs on the same
-      // thread race through each other's state).
-      const prior = this.activeAborts.get(channelId);
+      // Abort any prior run still in flight FOR THIS SAME THREAD before
+      // starting a new one. Per-thread (not per-channel) so multiple chat
+      // tabs sharing the same WebSocket channel can run in parallel.
+      // Rapid double-sends from the same tab still get coalesced because
+      // they share a thread id.
+      const abortKey = this.abortKey(channelId, threadId);
+      const prior = this.activeAborts.get(abortKey);
       if (prior) {
         try { prior.abort(); } catch { /* already aborted */ }
-        this.activeAborts.delete(channelId);
+        this.activeAborts.delete(abortKey);
       }
 
       // Create abort service for this run.
       // Set state first so stop_run can't race between activeAborts and state.
       const abort = new AbortService();
       state.metadata.options.abort = abort;
-      this.activeAborts.set(channelId, abort);
+      this.activeAborts.set(abortKey, abort);
 
       // Route responses back to the originating channel
       state.metadata.wsChannel = channelId;
@@ -361,7 +380,7 @@ export class BackendGraphWebSocketService {
         });
       }
     } finally {
-      this.activeAborts.delete(channelId);
+      this.activeAborts.delete(this.abortKey(channelId, threadId));
     }
   }
 
