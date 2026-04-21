@@ -2,7 +2,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document' | 'secretary' | 'vault' | 'account' | 'history';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'extensions' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines';
 
 export interface BrowserTab {
   id:       string;
@@ -298,6 +298,7 @@ export function useBrowserTabs() {
     vault:        'Password Manager',
     account:      'My Account',
     history:      'History',
+    routines:     'Routines',
   };
 
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {

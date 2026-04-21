@@ -279,6 +279,13 @@ export function openMain() {
 
     Shortcuts.register(
       window,
+      { ...CommandOrControl, key: '6' },
+      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'routines' }),
+      'open routines',
+    );
+
+    Shortcuts.register(
+      window,
       { ...CommandOrControl, key: 'L' },
       () => openLanguageModelSettings(),
       'open language model settings',

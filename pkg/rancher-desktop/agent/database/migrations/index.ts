@@ -15,6 +15,7 @@ import { up as up_0019, down as down_0019 } from './0019_create_conversation_his
 import { up as up_0020, down as down_0020 } from './0020_create_claude_conversations_table';
 import { up as up_0021, down as down_0021 } from './0021_create_claude_messages_table';
 import { up as up_0022, down as down_0022 } from './0022_create_sync_queue_table';
+import { up as up_0023, down as down_0023 } from './0023_create_workflows_table';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -33,4 +34,5 @@ export const migrationsRegistry = [
   { name: '0020_create_claude_conversations_table', up: up_0020, down: down_0020 },
   { name: '0021_create_claude_messages_table', up: up_0021, down: down_0021 },
   { name: '0022_create_sync_queue_table', up: up_0022, down: down_0022 },
+  { name: '0023_create_workflows_table', up: up_0023, down: down_0023 },
 ] as const;

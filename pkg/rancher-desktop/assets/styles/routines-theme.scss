@@ -1,0 +1,41 @@
+// Routines "deep-ocean" palette — steel-blue primary, violet secondary.
+// Emitted as CSS custom properties so descendant scoped styles can read
+// them without re-importing the mixin. Keep in one place so the whole
+// Routines feature shares a single source of truth for the theme.
+//
+// Usage (matches the project's existing @import-based style system):
+//   @import '@pkg/assets/styles/routines-theme.scss';
+//   .my-root { @include routines-theme-vars; }
+//
+// Child components do NOT need to import this file — CSS custom
+// properties cascade from the root through all descendants, so children
+// can read `var(--steel-400)` directly from their scoped styles.
+
+@mixin routines-theme-vars {
+  // steel-blue (primary)
+  --steel-50:   #e3ecf6;
+  --steel-100:  #c4d4e6;
+  --steel-200:  #a8c0dc;
+  --steel-300:  #8cacc9;
+  --steel-400:  #6989b3;
+  --steel-500:  #4a6fa5;
+  --steel-600:  #3d5e8e;
+  --steel-700:  #2c4871;
+
+  // violet (secondary — used for accent pulses and signature marks only)
+  --violet-100: #ede9fe;
+  --violet-200: #ddd6fe;
+  --violet-300: #c4b5fd;
+  --violet-400: #a78bfa;
+  --violet-500: #8b5cf6;
+
+  // structure
+  --line:        rgba(168, 192, 220, 0.18);
+  --line-strong: rgba(168, 192, 220, 0.32);
+  --text:        #e6ecf5;
+
+  // typography
+  --mono:  ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --serif: "Iowan Old Style", "Palatino", Georgia, serif;
+  --sans:  -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+}

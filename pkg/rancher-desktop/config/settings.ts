@@ -65,7 +65,13 @@ export class SettingsError extends Error {
 export const defaultSettings = {
   version:     CURRENT_SETTINGS_VERSION,
   application: {
-    adminAccess: false,
+    // Default to true so first-launch prompts the user for admin access,
+    // which socket_vmnet needs to give QEMU a network on Intel macOS.
+    // With this false, updateConfig() drops networks entirely (see
+    // backend/lima.ts "Administrator access disallowed") and QEMU exits
+    // immediately, breaking the whole VM startup. Users can flip it off
+    // in settings if they don't want sudo prompts.
+    adminAccess: true,
     debug:       false,
     extensions:  {
       allowed: {
@@ -95,13 +101,20 @@ export const defaultSettings = {
   virtualMachine: {
     memoryInGB: 2,
     numberCPUs: 2,
-    /** can only be set to VMType.VZ on macOS Ventura and later */
-    type:       process.platform === 'darwin' && parseInt(os.release(), 10) >= 23 ? VMType.VZ : VMType.QEMU,
+    /**
+     * Prefer Apple's Virtualization.framework (`vz`) whenever the host
+     * supports it — no external QEMU binary required, faster startup, and
+     * Intel hosts running macOS 13+ can run x86_64 guests natively via
+     * HVF. macOS 13 Ventura is Darwin 22, so the threshold is `>= 22`.
+     * Older macOS falls back to QEMU (which requires the user to have
+     * qemu-system-* installed via brew/macports on Intel).
+     */
+    type:       process.platform === 'darwin' && parseInt(os.release(), 10) >= 22 ? VMType.VZ : VMType.QEMU,
     /** can only be used when type is VMType.VZ, and only on aarch64 */
     useRosetta: false,
     mount:      {
       // Mount type defaults to virtiofs when using VZ.
-      type: process.platform === 'darwin' && parseInt(os.release(), 10) >= 23 ? MountType.VIRTIOFS : MountType.REVERSE_SSHFS,
+      type: process.platform === 'darwin' && parseInt(os.release(), 10) >= 22 ? MountType.VIRTIOFS : MountType.REVERSE_SSHFS,
     },
   },
   WSL:        { integrations: {} as Record<string, boolean> },
