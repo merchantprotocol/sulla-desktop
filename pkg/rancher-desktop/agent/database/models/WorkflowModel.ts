@@ -119,7 +119,19 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
    */
   static async upsertFromDefinition(
     definition: Record<string, any>,
-    options: { status?: WorkflowStatus; changedBy?: string; changeReason?: string } = {},
+    options: {
+      status?:       WorkflowStatus;
+      changedBy?:    string;
+      changeReason?: string;
+      /**
+       * Skip the workflow_history row for this save. Used by undo/redo
+       * restores — applying a previous version shouldn't pollute the
+       * audit trail with sawtooth "undo" / "redo" entries. The current
+       * state of the `workflows` table still updates so reload reflects
+       * the restore.
+       */
+      skipHistory?:  boolean;
+    } = {},
   ): Promise<WorkflowModel> {
     const id = String(definition.id ?? '').trim();
     if (!id) throw new Error('WorkflowModel.upsertFromDefinition: definition.id is required');
@@ -155,15 +167,17 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
       const model = new WorkflowModel();
       model.databaseFill(row);
 
-      await WorkflowHistoryModel.recordChange({
-        workflowId:       id,
-        definitionBefore,
-        definitionAfter:  definition,
-        changedBy:        options.changedBy ?? null,
-        changeReason:     options.changeReason ?? null,
-      });
+      if (!options.skipHistory) {
+        await WorkflowHistoryModel.recordChange({
+          workflowId:       id,
+          definitionBefore,
+          definitionAfter:  definition,
+          changedBy:        options.changedBy ?? null,
+          changeReason:     options.changeReason ?? null,
+        });
+      }
 
-      console.log(`[WorkflowModel.upsert] ← ok ${ isInsert ? 'INSERT' : 'UPDATE' } id=${ id } status=${ status }${ options.changeReason ? ` reason="${ options.changeReason }"` : '' }`);
+      console.log(`[WorkflowModel.upsert] ← ok ${ isInsert ? 'INSERT' : 'UPDATE' } id=${ id } status=${ status }${ options.skipHistory ? ' (no-history)' : '' }${ options.changeReason ? ` reason="${ options.changeReason }"` : '' }`);
 
       return model;
     } catch (err) {

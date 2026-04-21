@@ -1,7 +1,7 @@
 <template>
   <div
     class="t02"
-    :class="[stateClass, { 'menu-open': menuOpen, 'is-loop': isLoop }]"
+    :class="[stateClass, { 'menu-open': menuOpen, 'is-loop': isLoop, 'is-selected': selected }]"
   >
     <!-- Default target handle — suppressed for loop cards, which own their
          own four-handle layout below. -->
@@ -59,7 +59,16 @@
           class="av"
           :class="avatarClass"
         >
-          <span v-if="data.avatar?.icon">{{ data.avatar.icon }}</span>
+          <!-- Order: registry-provided SVG icon > emoji string from
+               data.avatar.icon > derived initials. The SVG path keeps
+               every subtype looking consistent with the legacy editor
+               without requiring every node to carry display fields. -->
+          <span
+            v-if="iconSvg"
+            class="av-icon-svg"
+            v-html="iconSvg"
+          />
+          <span v-else-if="data.avatar?.icon">{{ data.avatar.icon }}</span>
           <span v-else>{{ data.avatar?.initials }}</span>
         </div>
         <div class="st">
@@ -73,7 +82,7 @@
             {{ data.kicker }}
           </div>
           <div class="tt">
-            {{ data.title }}
+            {{ data.title || data.label }}
           </div>
           <div
             v-if="data.role"
@@ -201,13 +210,31 @@
 
 <script setup lang="ts">
 import { Handle, Position } from '@vue-flow/core';
-import { computed, inject, ref, onBeforeUnmount, type Ref } from 'vue';
+import { computed, inject, onBeforeUnmount, ref, type Ref } from 'vue';
+
+import { getNodeDefinition } from '@pkg/pages/editor/workflow/nodeRegistry';
+
+/**
+ * Execution state emitted by PlaybookController and attached to
+ * `data.execution`. Thinking output is displayed in the top-left live
+ * stream panel (see AgentRoutines.vue), not on the node itself.
+ */
+interface NodeExecutionState {
+  status?:      'running' | 'completed' | 'failed' | 'waiting' | 'skipped';
+  output?:      unknown;
+  error?:       string;
+  startedAt?:   number;
+  completedAt?: number;
+}
 
 interface RoutineNodeData {
-  state:          'idle' | 'queued' | 'running' | 'done' | 'failed';
-  nodeCode:       string;
-  kicker:         string;
-  title:          string;
+  state?:         'idle' | 'queued' | 'running' | 'done' | 'failed';
+  nodeCode?:      string;
+  kicker?:        string;
+  /** Primary display name. Falls back to `label` for legacy nodes. */
+  title?:         string;
+  /** Legacy display name used by the older workflow YAML. */
+  label?:         string;
   subtype?:       string;
   category?:      string;
   role?:          string;
@@ -218,17 +245,20 @@ interface RoutineNodeData {
   metricsStrong?: string;
   footerRight?:   string;
   avatar?:        {
-    type?:     'trigger' | 'tool' | 'logic' | 'loop' | 'default';
+    type?:     'trigger' | 'tool' | 'agent' | 'logic' | 'loop' | 'default';
     icon?:     string;
     initials?: string;
   };
   /** Per-node configuration — shape depends on subtype. */
-  config?: Record<string, unknown>;
+  config?:    Record<string, unknown>;
+  /** Live execution state written by PlaybookController during a run. */
+  execution?: NodeExecutionState;
 }
 
 const props = defineProps<{
-  id:   string;
-  data: RoutineNodeData;
+  id:        string;
+  data:      RoutineNodeData;
+  selected?: boolean;
 }>();
 
 const menuOpen = ref(false);
@@ -276,16 +306,35 @@ const routeHandles = computed<RouteHandle[]>(() => {
 
 const hasRouteHandles = computed(() => routeHandles.value.length > 0);
 
-const stateClass = computed(() => {
-  if (props.data.state === 'running') return 'running';
-  if (props.data.state === 'done') return 'done';
-  if (props.data.state === 'queued') return 'queued';
-  if (props.data.state === 'failed') return 'failed';
-  return 'idle';
+// Per-subtype SVG icon, sourced from the shared node registry. Keeps
+// icon ownership in one place (same lookup the legacy workflow renderer
+// used) so every subtype has the right glyph on the canvas without
+// needing `data.avatar.icon` on every node.
+const iconSvg = computed<string>(() => {
+  const subtype = props.data.subtype;
+  if (!subtype) return '';
+
+  return getNodeDefinition(subtype)?.iconSvg ?? '';
 });
 
+// Merge the PlaybookController-emitted `data.execution.status` vocabulary
+// into our own state vocab. When both are present, execution wins —
+// that's the runtime truth. When neither is present, we land on 'idle'.
+const effectiveState = computed<NonNullable<RoutineNodeData['state']>>(() => {
+  const exec = props.data.execution?.status;
+  if (exec === 'running')   return 'running';
+  if (exec === 'completed') return 'done';
+  if (exec === 'failed')    return 'failed';
+  if (exec === 'waiting')   return 'queued';
+  if (exec === 'skipped')   return 'idle';
+
+  return props.data.state ?? 'idle';
+});
+
+const stateClass = computed(() => effectiveState.value);
+
 const statusLabel = computed(() => {
-  switch (props.data.state) {
+  switch (effectiveState.value) {
   case 'running': return 'Live';
   case 'done':    return 'Done';
   case 'queued':  return 'Queue';
@@ -301,7 +350,7 @@ const avatarClass = computed(() => {
 });
 
 const footerStatusClass = computed(() => {
-  switch (props.data.state) {
+  switch (effectiveState.value) {
   case 'running': return 'running';
   case 'done':    return 'done';
   case 'failed':  return 'failed';
@@ -401,6 +450,33 @@ onBeforeUnmount(() => {
 .t02.failed .inner {
   border-color: rgba(244, 63, 94, 0.55);
   box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.2), 0 0 32px rgba(244, 63, 94, 0.28);
+}
+
+/* Selection ring — sits outside the border as a steel-blue halo so the
+   card's own border/running/failed styling remains untouched. Uses
+   double box-shadow: a solid 2px ring hugging the radius plus a soft
+   outer glow so it reads as "lit" rather than "outlined". */
+.t02.is-selected .inner {
+  border-color: rgba(106, 176, 204, 0.75);
+  box-shadow:
+    0 0 0 2px rgba(106, 176, 204, 0.85),
+    0 0 0 4px rgba(106, 176, 204, 0.28),
+    0 0 26px rgba(80, 150, 179, 0.45);
+}
+.t02.is-selected.running .inner {
+  /* When both states apply, blend the selection ring with the running
+     glow — keep the violet interior shadow, swap the outer ring to
+     steel-blue so selection stays legible. */
+  box-shadow:
+    0 0 0 2px rgba(106, 176, 204, 0.85),
+    0 0 0 4px rgba(106, 176, 204, 0.28),
+    0 0 36px rgba(139, 92, 246, 0.28);
+}
+.t02.is-selected.failed .inner {
+  box-shadow:
+    0 0 0 2px rgba(106, 176, 204, 0.85),
+    0 0 0 4px rgba(106, 176, 204, 0.28),
+    0 0 32px rgba(244, 63, 94, 0.28);
 }
 
 .t02 .stub {
@@ -742,4 +818,23 @@ onBeforeUnmount(() => {
   top: 50%;
   transform: translate(-100%, -50%);
 }
+
+/* ── Registry-sourced icon inside the avatar square ──
+   Fills the avatar cell with the SVG the node registry publishes for
+   each subtype. `:deep()` reaches into the inlined SVG (rendered via
+   v-html) so it inherits white stroke/fill on our dark card. */
+.av-icon-svg {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: white;
+}
+.av-icon-svg :deep(svg) {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  fill: none;
+}
+
 </style>

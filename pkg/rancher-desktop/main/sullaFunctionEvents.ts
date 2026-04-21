@@ -21,19 +21,30 @@ const ipcMainProxy = getIpcMainProxy(console);
 
 export type FunctionRuntime = 'python' | 'shell' | 'node';
 
-export interface FunctionListItem {
-  slug:        string;
-  name:        string;
-  description: string;
-  runtime:     FunctionRuntime;
-  inputs:      Record<string, Record<string, unknown>>;
-  outputs:     Record<string, Record<string, unknown>>;
+export interface FunctionIntegrationDep {
+  /** Integration slug (e.g. "slack", "smtp") the function requires. */
+  slug: string;
   /**
-   * Permissions declared by the function manifest. `env` is the list of env
-   * var names the function expects to be bound to vault accounts at the
-   * node-config level. Always present so the UI can iterate safely.
+   * Map of env-var-name → integration-property-name. Keys become env vars
+   * inside the runtime; values reference property names on the chosen
+   * integration account.
    */
-  permissions: { env: string[] };
+  env: Record<string, string>;
+}
+
+export interface FunctionListItem {
+  slug:         string;
+  name:         string;
+  description:  string;
+  runtime:      FunctionRuntime;
+  inputs:       Record<string, Record<string, unknown>>;
+  outputs:      Record<string, Record<string, unknown>>;
+  /**
+   * Integrations this function declares. The UI uses this to render per-node
+   * account pickers; the runtime derives env vars from the chosen account's
+   * properties using each dep's `env` map. Always present (possibly empty).
+   */
+  integrations: FunctionIntegrationDep[];
 }
 
 function getFunctionsDir(): string {
@@ -60,14 +71,33 @@ function normalizeSchema(value: unknown): Record<string, Record<string, unknown>
   return out;
 }
 
-function normalizeEnvPermissions(permissions: unknown): string[] {
-  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) return [];
-  const env = (permissions as Record<string, unknown>).env;
-  if (!Array.isArray(env)) return [];
+function normalizeIntegrations(value: unknown): FunctionIntegrationDep[] {
+  if (!Array.isArray(value)) return [];
 
-  return env
-    .filter((e): e is string => typeof e === 'string' && e.trim().length > 0)
-    .map(e => e.trim());
+  const out: FunctionIntegrationDep[] = [];
+
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const rec = entry as Record<string, unknown>;
+    const slug = typeof rec.slug === 'string' ? rec.slug.trim() : '';
+
+    if (!slug) continue;
+
+    const envRaw = rec.env;
+    const env: Record<string, string> = {};
+
+    if (envRaw && typeof envRaw === 'object' && !Array.isArray(envRaw)) {
+      for (const [k, v] of Object.entries(envRaw as Record<string, unknown>)) {
+        if (typeof k === 'string' && k.trim() && typeof v === 'string' && v.trim()) {
+          env[k.trim()] = v.trim();
+        }
+      }
+    }
+
+    out.push({ slug, env });
+  }
+
+  return out;
 }
 
 export function initSullaFunctionEvents(): void {
@@ -103,12 +133,12 @@ export function initSullaFunctionEvents(): void {
 
         items.push({
           slug,
-          name:        typeof parsed.name === 'string' ? parsed.name : slug,
-          description: typeof parsed.description === 'string' ? parsed.description.trim() : '',
+          name:         typeof parsed.name === 'string' ? parsed.name : slug,
+          description:  typeof parsed.description === 'string' ? parsed.description.trim() : '',
           runtime,
-          inputs:      normalizeSchema(spec.inputs),
-          outputs:     normalizeSchema(spec.outputs),
-          permissions: { env: normalizeEnvPermissions(spec.permissions) },
+          inputs:       normalizeSchema(spec.inputs),
+          outputs:      normalizeSchema(spec.outputs),
+          integrations: normalizeIntegrations(spec.integrations),
         });
       } catch (err) {
         console.warn(`[Sulla] Failed to parse function.yaml in ${ entry.name }:`, err);

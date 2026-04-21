@@ -1212,6 +1212,19 @@ export function initSullaEvents(): void {
     return value ? { value: value.value } : null;
   });
 
+  ipcMainProxy.handle('integration-accounts', async(_event: unknown, slug: string) => {
+    try {
+      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+      const svc = getIntegrationService();
+
+      return await svc.getAccounts(slug);
+    } catch (err) {
+      console.warn('[Sulla] integration-accounts failed:', err);
+
+      return [];
+    }
+  });
+
   // ─────────────────────────────────────────────────────────────
   // Voice event logging — persists frontend voice events to thread log files
   // ─────────────────────────────────────────────────────────────

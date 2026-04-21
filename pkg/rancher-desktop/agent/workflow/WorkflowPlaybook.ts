@@ -342,7 +342,7 @@ export type PlaybookStepResult =
   | { action: 'wait'; nodeId: string; durationMs: number; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'await_user_input'; nodeId: string; promptText: string; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'execute_tool_call'; nodeId: string; toolName: string; params: Record<string, string>; updatedPlaybook: WorkflowPlaybookState }
-  | { action: 'execute_function'; nodeId: string; functionRef: string; inputs: Record<string, string>; vaultAccounts: Record<string, { accountId: string; secretPath: string }>; timeoutOverride: string | null; updatedPlaybook: WorkflowPlaybookState }
+  | { action: 'execute_function'; nodeId: string; functionRef: string; inputs: Record<string, string>; integrationAccounts: Record<string, string | null>; timeoutOverride: string | null; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'transfer_workflow'; nodeId: string; targetWorkflowId: string; payload: unknown; updatedPlaybook: WorkflowPlaybookState }
   | { action: 'waiting_for_sub_agents'; blockedNodeIds: string[]; missingUpstream: string[]; updatedPlaybook: WorkflowPlaybookState };
 
@@ -800,10 +800,12 @@ function handleFunctionNode(
   const functionRef = (config.functionRef as string) || '';
   const inputsTemplates = (config.inputs as Record<string, string>) || {};
   const timeoutOverride = (config.timeoutOverride as string | null) ?? null;
-  // Vault account bindings are references only (accountId + secretPath).
-  // They are NOT secret material — plaintext is resolved just-in-time at
-  // dispatch in PlaybookController. Safe to carry through the step payload.
-  const vaultAccounts = (config.vaultAccounts as Record<string, { accountId: string; secretPath: string }>) || {};
+  // Integration account bindings map integration slug → accountId (or null
+  // meaning "orchestrator picks at runtime"). These are references only —
+  // no secret material flows through this step payload. Plaintext values
+  // are fetched just-in-time by the runtime via a capability token minted
+  // by PlaybookController.
+  const integrationAccounts = (config.integrationAccounts as Record<string, string | null>) || {};
 
   const loopCtx = getLoopContextForNode(playbook, nodeId);
   const resolvedInputs: Record<string, string> = {};
@@ -816,7 +818,7 @@ function handleFunctionNode(
     nodeId,
     functionRef,
     inputs:          resolvedInputs,
-    vaultAccounts,
+    integrationAccounts,
     timeoutOverride,
     updatedPlaybook: playbook,
   };

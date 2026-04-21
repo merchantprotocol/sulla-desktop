@@ -167,10 +167,10 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     iconSvg:       ICONS.function,
     defaultLabel:  'Function',
     defaultConfig: () => ({
-      functionRef:     '',
-      inputs:          {},
-      vaultAccounts:   {},
-      timeoutOverride: null,
+      functionRef:         '',
+      inputs:              {},
+      integrationAccounts: {},
+      timeoutOverride:     null,
     }),
   },
 

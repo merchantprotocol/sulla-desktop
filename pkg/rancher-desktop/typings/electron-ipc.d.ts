@@ -283,6 +283,7 @@ export interface IpcMainInvokeEvents {
   'audio-transcribe':                      (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: { text: string; speaker_id?: string; start?: number; end?: number }[] };
   'audio-speak':                           (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
   'integration-get-value':                 (integrationId: string, property: string) => { value: string } | null;
+  'integration-accounts':                  (slug: string) => { integration_id: string; account_id: string; label: string; active: boolean; connected: boolean; connected_at?: Date }[];
   'desktop-session-start':                 (payload?: { callerName?: string }) => { sessionId: string | null; callId?: string; error?: string };
   'desktop-session-end':                   (sessionId: string) => { ok: boolean };
   'gateway-listener-start':                () => { ok: boolean };
@@ -329,7 +330,7 @@ export interface IpcMainInvokeEvents {
   // Workflow CRUD
   'workflow-list':          () => { id: string; name: string; updatedAt: string; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus }[];
   'workflow-get':           (workflowId: string) => any;
-  'workflow-save':          (workflow: any) => boolean;
+  'workflow-save':          (workflow: any, options?: { skipHistory?: boolean }) => boolean;
   'workflow-delete':        (workflowId: string) => boolean;
   'workflow-move':          (workflowId: string, targetStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus) => { success: boolean; newStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus };
   'workflow-watch-start':   () => boolean;
@@ -344,20 +345,24 @@ export interface IpcMainInvokeEvents {
 
   // User-defined function catalog (scanned from ~/sulla/functions/<slug>/function.yaml)
   'functions-list': () => {
-    slug:        string;
-    name:        string;
-    description: string;
-    runtime:     'python' | 'shell' | 'node';
-    inputs:      Record<string, Record<string, unknown>>;
-    outputs:     Record<string, Record<string, unknown>>;
-    permissions: { env: string[] };
+    slug:         string;
+    name:         string;
+    description:  string;
+    runtime:      'python' | 'shell' | 'node';
+    inputs:       Record<string, Record<string, unknown>>;
+    outputs:      Record<string, Record<string, unknown>>;
+    integrations: {
+      slug: string;
+      env:  Record<string, string>;
+    }[];
   }[];
 
   // Routine template registry (scanned from ~/sulla/routines/<slug>/routine.yaml)
-  'routines-template-list':        () => { slug: string; name: string; description: string; version: string; section: string; category: string; runtime: string | null; tags: string[]; inputCount: number; outputCount: number; permissions: string }[];
+  'routines-template-list':        () => { slug: string; id: string; name: string; description: string; version: string; nodeCount: number; edgeCount: number; triggerTypes: string[]; updatedAt: string }[];
   'routines-template-instantiate': (slug: string) => { id: string; name: string };
   'routines-create-blank':         () => { id: string; name: string };
   'routines-execute':              (workflowId: string, triggerPayload?: string) => { executionId: string; workflowId: string };
+  'routines-abort':                (executionId: string) => { aborted: boolean; reason?: string };
   'routines-export':               (workflowId: string) => { path: string } | { canceled: true };
 
   // Workflow execution

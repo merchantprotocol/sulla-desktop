@@ -87,18 +87,18 @@ export interface FunctionNodeConfig {
    * Slug of a function in ~/sulla/functions/. Runtime (python/node/shell) is
    * derived from the function's own function.yaml — not picked here.
    */
-  functionRef:      string;
+  functionRef:         string;
   /** Input value bindings. Values support {{variable}} template syntax. */
-  inputs:           Record<string, string>;
+  inputs:              Record<string, string>;
   /**
-   * Per-node vault account bindings. The function declares which env vars it
-   * needs (spec.permissions.env); each entry here maps one of those env var
-   * names to a vault account + secret path. Injected at invocation time,
-   * cleared after.
+   * Integration → account binding. Keys are integration slugs the function declared.
+   * Value is the chosen accountId, or `null` meaning the orchestrating agent picks at
+   * runtime. The orchestrator may ALSO override a non-null choice if its context
+   * makes a different account more appropriate.
    */
-  vaultAccounts:    Record<string, { accountId: string; secretPath: string }>;
+  integrationAccounts: Record<string, string | null>;
   /** Override the function's declared timeout (e.g. "60s"). Null = use function default. */
-  timeoutOverride:  string | null;
+  timeoutOverride:     string | null;
 }
 
 export interface RouterNodeConfig {

@@ -1171,33 +1171,31 @@ export class PlaybookController<TState = any> {
             return num * mul;
           }
 
-          // Redact secret VALUES (not keys) from a string. Defense-in-depth:
-          // the runtime should already have scrubbed its own error messages.
-          function redactSecrets(text: string, secrets: string[]): string {
-            if (!text || !secrets.length) return text;
-            let out = text;
-            for (const s of [...secrets].filter(Boolean).sort((a, b) => b.length - a.length)) {
-              if (s && out.includes(s)) out = out.split(s).join('***');
-            }
-            return out;
-          }
-
           const RUNTIME_URLS: Record<string, string> = {
             python: 'http://127.0.0.1:30118',
             shell:  'http://127.0.0.1:30119',
             node:   'http://127.0.0.1:30120',
           };
+          const SECRETS_HOST_URL = 'http://host.lima.internal:30121';
 
-          // SECURITY: `env` is a short-lived local holding plaintext secrets.
-          // It is NEVER logged, NEVER passed to saveCheckpoint/emit*/console.
-          // Nulled immediately after the POST resolves.
-          let env: Record<string, string> | null = null;
-          let secretValues: string[] = [];
+          // SECURITY: `refs` lives only in this local const + the capability
+          // service's in-memory map. It is NEVER passed to saveCheckpoint /
+          // emit* / console / injectWorkflowMessage / completeSubAgent
+          // results, and no account property VALUES are cached on this side
+          // at all — only references (integrationId, accountId, property).
+          // The runtime fetches plaintexts just-in-time via /secrets/fetch.
+          let mintedToken: string | null = null;
+          const invocationId = `fn-${ step.nodeId }-${ Date.now() }-${
+            Math.random().toString(36).slice(2, 8) }`;
+          let runtime = '';
 
           try {
             const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
             const yaml = await import('yaml');
-            const { IntegrationValueModel } = await import('@pkg/agent/database/models/IntegrationValueModel');
+            const { getSecretsCapabilityService } = await import(
+              '@pkg/agent/services/SecretsCapabilityService');
+            const { getIntegrationService } = await import(
+              '@pkg/agent/services/IntegrationService');
 
             const functionsDir = resolveSullaFunctionsDir();
             const yamlPath = pathUtil.join(functionsDir, step.functionRef, 'function.yaml');
@@ -1207,77 +1205,177 @@ export class PlaybookController<TState = any> {
             }
 
             const manifest: any = yaml.parse(fsSync.readFileSync(yamlPath, 'utf-8')) || {};
-            const runtime: string = manifest?.spec?.runtime || '';
+            runtime = manifest?.spec?.runtime || '';
             const baseUrl = RUNTIME_URLS[runtime];
             if (!baseUrl) {
               throw new Error(`Unknown runtime "${ runtime }" for function "${ step.functionRef }"`);
             }
 
-            // ── Resolve vault bindings into plaintext env ──
-            // Only resolve keys declared in the manifest's spec.permissions.env.
-            // Missing bindings for declared keys = hard fail (never POST partial).
-            const declaredEnvKeys: string[] = Array.isArray(manifest?.spec?.permissions?.env)
-              ? manifest.spec.permissions.env.filter((k: any) => typeof k === 'string')
+            // ── Read declared integrations from function.yaml ──
+            //   spec.integrations: [{ slug, env: { ENV_NAME: property_name } }]
+            const declaredIntegrationsRaw = Array.isArray(manifest?.spec?.integrations)
+              ? manifest.spec.integrations
               : [];
-            const vaultAccounts = step.vaultAccounts || {};
+            const declaredIntegrations: Array<{ slug: string; env: Record<string, string> }> =
+              declaredIntegrationsRaw
+                .filter((i: any) => i && typeof i.slug === 'string')
+                .map((i: any) => ({
+                  slug: i.slug as string,
+                  env:  (i.env && typeof i.env === 'object')
+                    ? Object.fromEntries(
+                      Object.entries(i.env).filter(([, v]) => typeof v === 'string') as [string, string][],
+                    )
+                    : {},
+                }));
 
-            if (declaredEnvKeys.length > 0) {
-              env = {};
-              for (const key of declaredEnvKeys) {
-                const binding = vaultAccounts[key];
-                if (!binding || !binding.accountId || !binding.secretPath) {
+            const integrationAccounts = step.integrationAccounts || {};
+            const integrationService = getIntegrationService();
+
+            // ── Resolve each integration to a concrete accountId ──
+            // User-bound or orchestrator-picked. No account property VALUES
+            // are resolved here — only accountIds.
+            const resolved: Record<string, string> = {}; // slug → accountId
+
+            for (const intg of declaredIntegrations) {
+              const bound = Object.prototype.hasOwnProperty.call(integrationAccounts, intg.slug)
+                ? integrationAccounts[intg.slug]
+                : undefined;
+
+              let accountId: string | null = bound ?? null;
+
+              if (accountId == null) {
+                // ── Orchestrator-pick flow ──
+                const accounts = await integrationService.getAccounts(intg.slug);
+
+                if (accounts.length === 0) {
                   throw new Error(
-                    `Function ${ step.functionRef } requires env ${ key }, but no vault binding found`,
+                    `Function ${ step.functionRef } needs a ${ intg.slug } account but none are configured`,
                   );
-                }
-                // secretPath is "integrationId.property" (or just "property"
-                // scoped to a single integration). We accept either — if no
-                // dot, treat the whole thing as property and use accountId
-                // alone to locate it across any integration. Practical
-                // bindings always include the integrationId to be specific.
-                let integrationId = '';
-                let property = binding.secretPath;
-                const dotIdx = binding.secretPath.indexOf('.');
-                if (dotIdx > 0) {
-                  integrationId = binding.secretPath.slice(0, dotIdx);
-                  property = binding.secretPath.slice(dotIdx + 1);
                 }
 
-                let model: any = null;
-                if (integrationId) {
-                  model = await IntegrationValueModel.findByKey(integrationId, binding.accountId, property);
-                } else {
-                  // No integrationId in the path — scan accounts and match on property.
-                  // This is intentional to keep bindings flexible; vault resolver
-                  // returns null if nothing matches.
-                  const rows = await IntegrationValueModel.query(
-                    `SELECT * FROM "integration_values" WHERE "account_id" = $1 AND "property" = $2 LIMIT 1`,
-                    [binding.accountId, property],
+                const defaultAcct = accounts.find(a => a.active);
+                if (accounts.length === 1 && defaultAcct) {
+                  // Trivial pick — no prompt needed.
+                  accountId = defaultAcct.account_id;
+                  console.log(
+                    `[PlaybookController] Orchestrator pick trivial for ${ intg.slug }: ` +
+                    `single account, no prompt sent (invocation=${ invocationId } node=${ step.nodeId } fn=${ step.functionRef })`,
                   );
-                  if (rows.length > 0) {
-                    // Re-fetch via findByKey once we know the integration, so decryption runs.
-                    model = await IntegrationValueModel.findByKey(
-                      rows[0].integration_id as string,
-                      binding.accountId,
-                      property,
+                } else {
+                  // Build a prompt and ask the orchestrator. Mirror the
+                  // existing inline inject + graph.execute + lastAssistant
+                  // pattern used for sub-agent escalations.
+                  const buildPickPrompt = (retry: boolean): string => {
+                    const header = retry
+                      ? `Your last reply didn't match any of the listed account_ids. Try again.\n\n`
+                      : '';
+                    const list = accounts
+                      .map(a => `  - \`${ a.account_id }\` — ${ a.label }`)
+                      .join('\n');
+                    return (
+                      `${ header }Function \`${ step.functionRef }\` needs a \`${ intg.slug }\` account. Pick one of:\n` +
+                      `${ list }\n\n` +
+                      `Respond with only the account_id.`
+                    );
+                  };
+
+                  const readAccountPick = (): string | null => {
+                    const msgs = (state as any).messages;
+                    if (!Array.isArray(msgs)) return null;
+                    const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+                    const raw = lastAssistant?.content ? String(lastAssistant.content) : '';
+                    const candidate = raw.trim();
+                    if (!candidate) return null;
+                    // Exact match first.
+                    const exact = accounts.find(a => a.account_id === candidate);
+                    if (exact) return exact.account_id;
+                    // Then allow "account_id" appearing as a whole token in the reply.
+                    const hit = accounts.find(a =>
+                      new RegExp(`(^|[^A-Za-z0-9_-])${ a.account_id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }([^A-Za-z0-9_-]|$)`).test(candidate),
+                    );
+                    return hit ? hit.account_id : null;
+                  };
+
+                  // Attempt 1
+                  this.injectWorkflowMessage(state, buildPickPrompt(false));
+                  (state as any).metadata._muteWsChat = true;
+                  state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+                  (state as any).metadata._muteWsChat = false;
+
+                  let picked = readAccountPick();
+
+                  // One retry on unrecognized response
+                  if (!picked) {
+                    this.injectWorkflowMessage(state, buildPickPrompt(true));
+                    (state as any).metadata._muteWsChat = true;
+                    state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+                    (state as any).metadata._muteWsChat = false;
+                    picked = readAccountPick();
+                  }
+
+                  if (!picked) {
+                    throw new Error(
+                      `Function ${ step.functionRef } needs a ${ intg.slug } account but orchestrator did not pick a recognized account_id`,
                     );
                   }
-                }
 
-                const plaintext = model?.attributes?.value;
-                if (typeof plaintext !== 'string' || plaintext.length === 0) {
+                  accountId = picked;
+                }
+              } else {
+                // User-bound accountId — verify it exists.
+                // (Orchestrator override of an already-picked account is
+                // explicitly DEFERRED to a future enhancement; for v1 we
+                // always respect the user's pick.)
+                const accounts = await integrationService.getAccounts(intg.slug);
+                const exists = accounts.some(a => a.account_id === accountId);
+                if (!exists) {
                   throw new Error(
-                    `Function ${ step.functionRef } requires env ${ key }, but no vault binding found`,
+                    `Function ${ step.functionRef } references a ${ intg.slug } account that is not configured`,
                   );
                 }
-                env[key] = plaintext;
               }
-              secretValues = Object.values(env);
+
+              resolved[intg.slug] = accountId;
+            }
+
+            // ── Build refs map for the capability service ──
+            // refs: Record<ENV_NAME, { integrationId, accountId, property }>
+            // DO NOT log / checkpoint / inject this.
+            const refs: Record<string, { integrationId: string; accountId: string; property: string }> = {};
+            for (const intg of declaredIntegrations) {
+              const accountId = resolved[intg.slug];
+              for (const [envName, property] of Object.entries(intg.env)) {
+                refs[envName] = {
+                  integrationId: intg.slug,
+                  accountId,
+                  property,
+                };
+              }
+            }
+
+            // Mint the capability token only if at least one env is declared.
+            let secretsToken: string | null = null;
+            let secretsHostUrl: string | null = null;
+            if (Object.keys(refs).length > 0) {
+              const svc = getSecretsCapabilityService();
+              const minted = svc.mint({
+                invocationId,
+                refs,
+                ttlMs: 60_000,
+              });
+              mintedToken = minted.token;
+              secretsToken = minted.token;
+              secretsHostUrl = SECRETS_HOST_URL;
             }
 
             const timeoutMs = parseTimeoutMs(step.timeoutOverride);
             const ac = new AbortController();
             const timer = setTimeout(() => ac.abort(), timeoutMs);
+
+            console.log(
+              `[PlaybookController] Function invoke: ` +
+              `invocation=${ invocationId } node=${ step.nodeId } fn=${ step.functionRef } runtime=${ runtime }`,
+            );
 
             let resp: Response;
             try {
@@ -1285,18 +1383,16 @@ export class PlaybookController<TState = any> {
                 method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body:    JSON.stringify({
-                  name:    step.functionRef,
-                  version: 'HEAD',
-                  inputs:  step.inputs,
-                  env:     env || {},
+                  name:           step.functionRef,
+                  version:        'HEAD',
+                  inputs:         step.inputs,
+                  secretsToken,
+                  secretsHostUrl,
                 }),
                 signal: ac.signal,
               });
             } finally {
               clearTimeout(timer);
-              // Drop the plaintext env reference as soon as the POST body is
-              // on the wire. (Success path; failure path below also nulls.)
-              env = null;
             }
 
             if (!resp.ok) {
@@ -1305,8 +1401,10 @@ export class PlaybookController<TState = any> {
                 const body: any = await resp.json();
                 if (body && typeof body.detail === 'string') detail = body.detail;
               } catch { /* non-JSON body — keep status string */ }
-              // Defensively re-redact before surfacing.
-              throw new Error(redactSecrets(detail, secretValues));
+              // The runtime is responsible for scrubbing its own error
+              // strings before returning them. We don't cache any secret
+              // values here, so there is nothing to re-scrub on our side.
+              throw new Error(detail);
             }
 
             const payload: any = await resp.json();
@@ -1321,7 +1419,8 @@ export class PlaybookController<TState = any> {
             const resultText = JSON.stringify(result);
             this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: fnNodeLabel, output: resultText });
             this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
-            // NOTE: checkpoint carries inputs + outputs only, never env.
+            // NOTE: checkpoint carries only inputs + outputs. No token,
+            // no refs, no secretsHostUrl, no resolved accountIds.
             await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, fnNodeLabel, 'function', resultText);
 
             const fnMsg = `[Workflow Function: ${ fnNodeLabel }]\n` +
@@ -1337,13 +1436,13 @@ export class PlaybookController<TState = any> {
               return state;
             }
           } catch (err: any) {
-            // Ensure env is gone even on early failure paths.
-            env = null;
-            const rawMsg = err?.name === 'AbortError'
+            const errMsg = err?.name === 'AbortError'
               ? `Function call timed out`
               : (err?.message || String(err));
-            const errMsg = redactSecrets(rawMsg, secretValues);
-            console.error(`[PlaybookController] Function call failed: ${ errMsg }`);
+            console.error(
+              `[PlaybookController] Function call failed: ` +
+              `invocation=${ invocationId } node=${ step.nodeId } fn=${ step.functionRef } — ${ errMsg }`,
+            );
 
             const errorResult = `Function call failed: ${ errMsg }`;
             const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, errorResult, undefined);
@@ -1359,9 +1458,18 @@ export class PlaybookController<TState = any> {
             this.injectWorkflowMessage(state, errorMsg);
             state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
           } finally {
-            // Final defense-in-depth — zero secret material.
-            env = null;
-            secretValues = [];
+            // Always invalidate the capability token — whether invoke
+            // succeeded, failed, or threw — so it can't be replayed.
+            if (mintedToken) {
+              try {
+                const { getSecretsCapabilityService } = await import(
+                  '@pkg/agent/services/SecretsCapabilityService');
+                getSecretsCapabilityService().invalidate(mintedToken);
+              } catch {
+                // best-effort — service sweep will clean up on TTL anyway
+              }
+              mintedToken = null;
+            }
           }
 
           break;

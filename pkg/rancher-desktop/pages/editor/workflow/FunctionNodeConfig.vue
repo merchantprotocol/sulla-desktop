@@ -144,63 +144,63 @@
       </div>
     </template>
 
-    <!-- Vault bindings -->
-    <template v-if="envNames.length > 0">
+    <!-- Integrations -->
+    <template v-if="integrationEntries.length > 0">
       <div class="section-divider" />
       <p
         class="section-title"
         :class="{ dark: isDark }"
       >
-        Vault Bindings
+        Integrations
       </p>
       <div class="node-field">
         <p
           class="help-text"
           :class="{ dark: isDark }"
         >
-          Each env var is resolved at invocation time from the Sulla vault.
-          The resolved value never touches the database, logs, or agent context.
+          Pick which saved account to use for each integration this function calls.
+          Choose <em>Let the orchestrator choose</em> to defer the selection to the
+          orchestrating agent at runtime.
         </p>
         <div
-          v-for="envName in envNames"
-          :key="envName"
+          v-for="entry in integrationEntries"
+          :key="entry.slug"
           class="param-row"
         >
           <div class="param-header">
             <span
               class="param-name"
               :class="{ dark: isDark }"
-            >{{ envName }}</span>
+            >{{ entry.slug }}</span>
             <span
+              v-if="entry.env.length > 0"
               class="param-type"
               :class="{ dark: isDark }"
-            >env</span>
+            >{{ entry.env.join(', ') }}</span>
           </div>
-          <div class="vault-grid">
-            <label
-              class="sub-label"
-              :class="{ dark: isDark }"
-            >Account ID</label>
-            <input
-              class="node-field-input"
-              :class="{ dark: isDark }"
-              type="text"
-              placeholder="e.g. default"
-              :value="config.vaultAccounts?.[envName]?.accountId ?? ''"
-              @input="onVaultChange(envName, 'accountId', ($event.target as HTMLInputElement).value)"
+          <select
+            class="node-field-input"
+            :class="{ dark: isDark }"
+            :value="accountSelectValue(entry.slug)"
+            @change="onAccountChange(entry.slug, ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="__orchestrator__">
+              Let the orchestrator choose
+            </option>
+            <option
+              v-for="acc in accountsBySlug[entry.slug] || []"
+              :key="acc.account_id"
+              :value="acc.account_id"
             >
-            <label
-              class="sub-label"
-              :class="{ dark: isDark }"
-            >Secret Path</label>
-            <input
-              class="node-field-input"
-              :class="{ dark: isDark }"
-              type="text"
-              placeholder="e.g. stripe/live/secret_key"
-              :value="config.vaultAccounts?.[envName]?.secretPath ?? ''"
-              @input="onVaultChange(envName, 'secretPath', ($event.target as HTMLInputElement).value)"
-            >
+              {{ acc.label || acc.account_id }}{{ acc.active ? ' (default)' : '' }}
+            </option>
+          </select>
+          <div
+            v-if="!accountsBySlug[entry.slug] || accountsBySlug[entry.slug].length === 0"
+            class="param-desc"
+            :class="{ dark: isDark }"
+          >
+            No accounts configured for {{ entry.slug }}. Add one in Settings → Integrations.
           </div>
         </div>
       </div>
@@ -361,7 +361,7 @@
 
 <script setup lang="ts">
 import { ipcRenderer } from 'electron';
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 
 import type { FunctionNodeConfig } from './types';
 
@@ -372,14 +372,26 @@ export interface UpstreamNodeInfo {
   category: string;
 }
 
+interface IntegrationEntry {
+  slug: string;
+  env:  string[];
+}
+
 interface FunctionItem {
-  slug:        string;
-  name:        string;
-  description: string;
-  runtime:     'python' | 'shell' | 'node';
-  inputs:      Record<string, Record<string, unknown>>;
-  outputs:     Record<string, Record<string, unknown>>;
-  permissions: { env: string[] };
+  slug:         string;
+  name:         string;
+  description:  string;
+  runtime:      'python' | 'shell' | 'node';
+  inputs:       Record<string, Record<string, unknown>>;
+  outputs:      Record<string, Record<string, unknown>>;
+  integrations: IntegrationEntry[];
+}
+
+interface IntegrationAccountInfo {
+  account_id: string;
+  label?:     string;
+  active?:    boolean;
+  connected?: boolean;
 }
 
 interface SchemaEntry {
@@ -467,7 +479,10 @@ function schemaToEntries(schema: Record<string, Record<string, unknown>> | undef
 
 const inputEntries = computed<SchemaEntry[]>(() => schemaToEntries(selectedFunction.value?.inputs));
 const outputEntries = computed<SchemaEntry[]>(() => schemaToEntries(selectedFunction.value?.outputs));
-const envNames = computed<string[]>(() => selectedFunction.value?.permissions?.env ?? []);
+const integrationEntries = computed<IntegrationEntry[]>(() => selectedFunction.value?.integrations ?? []);
+
+/** slug → list of accounts returned from integration-accounts IPC */
+const accountsBySlug = reactive<Record<string, IntegrationAccountInfo[]>>({});
 
 const upstreamChips = computed<{ label: string; token: string }[]>(() => {
   const out: { label: string; token: string }[] = [];
@@ -499,19 +514,19 @@ function emitPatch(patch: Partial<FunctionNodeConfig>) {
 
 function currentConfig(): FunctionNodeConfig {
   return {
-    functionRef:     props.config?.functionRef ?? '',
-    inputs:          props.config?.inputs ?? {},
-    vaultAccounts:   props.config?.vaultAccounts ?? {},
-    timeoutOverride: props.config?.timeoutOverride ?? null,
+    functionRef:         props.config?.functionRef ?? '',
+    inputs:              props.config?.inputs ?? {},
+    integrationAccounts: props.config?.integrationAccounts ?? {},
+    timeoutOverride:     props.config?.timeoutOverride ?? null,
   };
 }
 
 function hasBindings(): boolean {
   const cfg = currentConfig();
   const inputCount = Object.keys(cfg.inputs || {}).length;
-  const vaultCount = Object.keys(cfg.vaultAccounts || {}).length;
+  const integrationCount = Object.keys(cfg.integrationAccounts || {}).length;
 
-  return inputCount > 0 || vaultCount > 0;
+  return inputCount > 0 || integrationCount > 0;
 }
 
 function onFunctionChange(event: Event) {
@@ -522,7 +537,7 @@ function onFunctionChange(event: Event) {
 
   if (hasBindings()) {
     const proceed = typeof window !== 'undefined'
-      ? window.confirm('Changing the function will clear your current input and vault bindings. Continue?')
+      ? window.confirm('Changing the function will clear your current input and integration bindings. Continue?')
       : true;
     if (!proceed) {
       // revert the select to the previous value
@@ -533,10 +548,10 @@ function onFunctionChange(event: Event) {
   }
 
   emit('update-config', props.nodeId, {
-    functionRef:     slug,
-    inputs:          {},
-    vaultAccounts:   {},
-    timeoutOverride: props.config?.timeoutOverride ?? null,
+    functionRef:         slug,
+    inputs:              {},
+    integrationAccounts: {},
+    timeoutOverride:     props.config?.timeoutOverride ?? null,
   });
 }
 
@@ -550,16 +565,37 @@ function onInputChange(name: string, value: string) {
   emitPatch({ inputs });
 }
 
-function onVaultChange(envName: string, field: 'accountId' | 'secretPath', value: string) {
-  const vaultAccounts = { ...(props.config?.vaultAccounts ?? {}) };
-  const existing = vaultAccounts[envName] ?? { accountId: '', secretPath: '' };
-  const next = { ...existing, [field]: value };
-  if (!next.accountId && !next.secretPath) {
-    delete vaultAccounts[envName];
+/** Map the stored value (string | null | undefined) to the select's string value. */
+function accountSelectValue(slug: string): string {
+  const entry = props.config?.integrationAccounts?.[slug];
+  if (entry === null || entry === undefined) return '__orchestrator__';
+
+  return entry;
+}
+
+function onAccountChange(slug: string, value: string) {
+  const integrationAccounts = { ...(props.config?.integrationAccounts ?? {}) };
+  if (value === '__orchestrator__') {
+    integrationAccounts[slug] = null;
   } else {
-    vaultAccounts[envName] = next;
+    integrationAccounts[slug] = value;
   }
-  emitPatch({ vaultAccounts });
+  emitPatch({ integrationAccounts });
+}
+
+async function loadAccountsForIntegration(slug: string): Promise<void> {
+  if (!slug) return;
+  try {
+    const list = await ipcRenderer.invoke('integration-accounts', slug);
+    accountsBySlug[slug] = Array.isArray(list) ? list as IntegrationAccountInfo[] : [];
+  } catch {
+    accountsBySlug[slug] = [];
+  }
+}
+
+async function loadAccountsForSelected(): Promise<void> {
+  const slugs = integrationEntries.value.map(e => e.slug);
+  await Promise.all(slugs.map(loadAccountsForIntegration));
 }
 
 function onTimeoutChange(value: string) {
@@ -621,21 +657,43 @@ function insertAtCursor(paramName: string, token: string) {
   onInputChange(paramName, current + token);
 }
 
+function normalizeIntegrations(raw: unknown): IntegrationEntry[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .map((r: any): IntegrationEntry | null => {
+      const slug = typeof r?.slug === 'string' ? r.slug.trim() : '';
+      if (!slug) return null;
+      const env = Array.isArray(r?.env)
+        ? r.env.filter((e: unknown): e is string => typeof e === 'string')
+        : [];
+
+      return { slug, env };
+    })
+    .filter((e): e is IntegrationEntry => e !== null);
+}
+
 onMounted(async() => {
   try {
     const list = await ipcRenderer.invoke('functions-list');
     functions.value = (list ?? []).map((f: any): FunctionItem => ({
-      slug:        f.slug,
-      name:        f.name,
-      description: f.description,
-      runtime:     f.runtime,
-      inputs:      f.inputs ?? {},
-      outputs:     f.outputs ?? {},
-      permissions: { env: Array.isArray(f.permissions?.env) ? f.permissions.env : [] },
+      slug:         f.slug,
+      name:         f.name,
+      description:  f.description,
+      runtime:      f.runtime,
+      inputs:       f.inputs ?? {},
+      outputs:      f.outputs ?? {},
+      integrations: normalizeIntegrations(f.integrations),
     }));
   } catch {
     functions.value = [];
   }
+
+  await loadAccountsForSelected();
+});
+
+watch(() => props.config?.functionRef, async() => {
+  await loadAccountsForSelected();
 });
 </script>
 
@@ -831,20 +889,6 @@ onMounted(async() => {
   color: var(--text-info);
   border-color: var(--accent-primary);
 }
-
-.vault-grid {
-  display: grid;
-  grid-template-columns: 90px 1fr;
-  gap: 4px 8px;
-  align-items: center;
-}
-.sub-label {
-  font-size: var(--fs-caption);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: var(--tracking-wider);
-}
-.sub-label.dark { color: var(--text-secondary); }
 
 .help-text {
   font-size: var(--fs-body-sm);

@@ -203,7 +203,7 @@ export function initSullaWorkflowEvents(): void {
   // Errors propagate to the caller — we don't log-and-swallow any more
   // because there's no redundant path left to hide behind.
 
-  ipcMainProxy.handle('workflow-save', async(_event: unknown, workflow: any) => {
+  ipcMainProxy.handle('workflow-save', async(_event: unknown, workflow: any, options?: { skipHistory?: boolean }) => {
     if (!workflow?.id) {
       console.error('[workflow-save] missing workflow.id', workflow);
       throw new Error('workflow-save: workflow.id is required');
@@ -211,8 +211,9 @@ export function initSullaWorkflowEvents(): void {
 
     const nodeCount = Array.isArray(workflow.nodes) ? workflow.nodes.length : 0;
     const edgeCount = Array.isArray(workflow.edges) ? workflow.edges.length : 0;
+    const skipHistory = options?.skipHistory === true;
     const started = Date.now();
-    console.log(`[workflow-save] → id=${ workflow.id } name="${ workflow.name ?? '' }" ${ nodeCount }n/${ edgeCount }e`);
+    console.log(`[workflow-save] → id=${ workflow.id } name="${ workflow.name ?? '' }" ${ nodeCount }n/${ edgeCount }e${ skipHistory ? ' (no-history)' : '' }`);
 
     workflow.updatedAt = new Date().toISOString();
     if (!workflow.createdAt) {
@@ -237,7 +238,7 @@ export function initSullaWorkflowEvents(): void {
       const existing = await WorkflowModel.findById(workflow.id);
       const status = (existing?.attributes.status ?? workflow._status ?? 'draft') as WorkflowStatus;
 
-      await WorkflowModel.upsertFromDefinition(workflow, { status });
+      await WorkflowModel.upsertFromDefinition(workflow, { status, skipHistory });
 
       const ms = Date.now() - started;
       console.log(`[workflow-save] ← ok id=${ workflow.id } status=${ status } in ${ ms }ms`);

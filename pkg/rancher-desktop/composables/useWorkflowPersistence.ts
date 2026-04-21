@@ -170,6 +170,42 @@ export function useWorkflowPersistence(options: { debounceMs?: number } = {}) {
     pendingPayload = null;
   }
 
+  /**
+   * Persist a definition without recording a history row. Used by the
+   * undo/redo flow — restoring a previous version shouldn't pollute the
+   * audit trail with sawtooth "undo"/"redo" entries. Returns after the
+   * store acknowledges so the caller can refresh history and know the
+   * on-disk state matches what it just applied.
+   */
+  async function saveSilent(payload: WorkflowDefinition): Promise<void> {
+    // Cancel any pending debounced save — we're about to overwrite the
+    // target id with a known-good snapshot and don't want a trailing
+    // edit to race us.
+    cancel();
+    if (inFlight) await inFlight;
+
+    status.value = 'saving';
+    const started = performance.now();
+    console.log(`${ LOG } restore → id=${ payload.id } ${ nodeSummary(payload) } (no-history)`);
+    try {
+      await ipcRenderer.invoke('workflow-save', payload, { skipHistory: true });
+      error.value = null;
+      lastSavedAt.value = Date.now();
+      status.value = 'saved';
+      const ms = Math.round(performance.now() - started);
+      console.log(`${ LOG } restore ← ok id=${ payload.id } in ${ ms }ms`);
+      if (savedFlashTimer) clearTimeout(savedFlashTimer);
+      savedFlashTimer = setTimeout(() => {
+        if (status.value === 'saved') status.value = 'idle';
+      }, SAVED_FLASH_MS);
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+      status.value = 'error';
+      console.error(`${ LOG } restore ✗ id=${ payload.id }`, err);
+      throw err;
+    }
+  }
+
   return {
     status:       readonly(status),
     error:        readonly(error),
@@ -177,6 +213,7 @@ export function useWorkflowPersistence(options: { debounceMs?: number } = {}) {
     load,
     scheduleSave,
     saveNow,
+    saveSilent,
     cancel,
   };
 }

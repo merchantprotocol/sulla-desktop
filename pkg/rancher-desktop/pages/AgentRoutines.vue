@@ -9,7 +9,7 @@
       v-model:nodes="nodes"
       v-model:edges="edges"
       :default-viewport="{ zoom: 1 }"
-      :default-edge-options="{ type: 'smoothstep', pathOptions: { borderRadius: 12, offset: 20 } }"
+      :default-edge-options="{ type: 'smoothstep' }"
       :delete-key-code="null"
       fit-view-on-init
       class="routines-flow"
@@ -22,6 +22,13 @@
       @connect="onConnect"
     >
       <template #node-routine="nodeProps">
+        <RoutineNode v-bind="nodeProps" />
+      </template>
+      <!-- Historical node type from the old workflow YAML. Routine files
+           imported from the pre-rename world still carry `type: workflow`
+           on every node; render them through the same component so the
+           file stays importable as-is. -->
+      <template #node-workflow="nodeProps">
         <RoutineNode v-bind="nodeProps" />
       </template>
       <Background
@@ -99,6 +106,44 @@
             />
           </svg>
         </template>
+        <ControlButton
+          class="history-btn history-undo"
+          :class="{ disabled: !history.canUndo.value }"
+          :disabled="!history.canUndo.value"
+          :title="`Undo (${ shortcutLabel('Z') })`"
+          @click="undo"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M9 14L4 9l5-5" />
+            <path d="M4 9h11a5 5 0 0 1 0 10h-4" />
+          </svg>
+        </ControlButton>
+        <ControlButton
+          class="history-btn history-redo"
+          :class="{ disabled: !history.canRedo.value }"
+          :disabled="!history.canRedo.value"
+          :title="`Redo (${ shortcutLabel('Shift+Z') })`"
+          @click="redo"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M15 14l5-5-5-5" />
+            <path d="M20 9H9a5 5 0 0 0 0 10h4" />
+          </svg>
+        </ControlButton>
         <ControlButton
           class="mode-toggle"
           :class="{ 'is-edit': mode === 'edit' }"
@@ -276,12 +321,20 @@
       <button
         type="button"
         class="routines-fab run-fab"
-        :class="{ busy: isRunBusy }"
-        :aria-label="isRunBusy ? 'Run starting…' : 'Run routine'"
-        :disabled="isRunBusy"
-        @click="onRunClick"
+        :class="{ busy: isRunBusy, 'is-stop': isRunBusy }"
+        :aria-label="isRunBusy ? 'Stop routine' : 'Run routine'"
+        @click="isRunBusy ? onStopClick() : onRunClick()"
       >
         <svg
+          v-if="isRunBusy"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <rect x="6" y="6" width="12" height="12" rx="1.5" />
+        </svg>
+        <svg
+          v-else
           viewBox="0 0 24 24"
           fill="currentColor"
           aria-hidden="true"
@@ -290,7 +343,7 @@
         </svg>
       </button>
       <div class="routines-fab-tip">
-        {{ isRunBusy ? 'Starting…' : 'Run routine' }}
+        {{ isRunBusy ? 'Stop routine' : 'Run routine' }}
       </div>
     </template>
 
@@ -443,6 +496,7 @@ import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
 
+import { useWorkflowHistory } from '@pkg/composables/useWorkflowHistory';
 import { useWorkflowPersistence, type WorkflowDefinition } from '@pkg/composables/useWorkflowPersistence';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
@@ -520,14 +574,15 @@ watch(() => liveEvents.value.length, () => {
   if (!el) return;
   const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
   if (distanceFromBottom < STICK_THRESHOLD_PX) {
-    nextTick(() => {
-      // Re-read inside nextTick — the new line is in the DOM now, so
-      // scrollHeight reflects its height and we can snap to the true
-      // bottom rather than the pre-render bottom.
+    // Re-read inside nextTick — the new line is in the DOM now, so
+    // scrollHeight reflects its height and we snap to the true bottom
+    // rather than the pre-render bottom. Scroll is cosmetic; floating
+    // the promise is intentional (void marks it as such).
+    void nextTick(() => {
       const node = streamRef.value;
       if (!node) return;
       node.scrollTop = node.scrollHeight;
-    }).catch(() => { /* scroll is cosmetic — swallow */ });
+    });
   }
 });
 
@@ -578,6 +633,39 @@ async function onRunClick() {
     // pick it up later; this just makes sure the error is visible now.
     pushLine('err', `Run failed: ${ msg }`);
     console.error('[AgentRoutines] Failed to launch routine:', err);
+    isRunBusy.value = false;
+    clearStallTimer();
+  }
+}
+
+async function onStopClick() {
+  const execId = lastExecutionId.value;
+  if (!execId) {
+    // No known execution — just clear the busy flag so the user can
+    // recover the UI. The walker is either already done or never
+    // started; either way there's nothing to abort.
+    isRunBusy.value = false;
+    clearStallTimer();
+
+    return;
+  }
+  try {
+    pushLine('dec', 'aborting…');
+    const result = await ipcRenderer.invoke('routines-abort', execId);
+    if (!result?.aborted) {
+      pushLine('err', `abort failed${ result?.reason ? `: ${ result.reason }` : '' }`);
+    }
+    // The backend emits `workflow_aborted` on success — the stream
+    // handler there flips isRunBusy off. If the IPC reported no
+    // active execution, fall back to clearing the flag ourselves so
+    // the button returns to Play.
+    if (!result?.aborted) {
+      isRunBusy.value = false;
+      clearStallTimer();
+    }
+  } catch (err) {
+    console.error('[AgentRoutines] Failed to abort routine:', err);
+    pushLine('err', `abort failed: ${ err instanceof Error ? err.message : String(err) }`);
     isRunBusy.value = false;
     clearStallTimer();
   }
@@ -636,6 +724,27 @@ function streamKindLabel(kind: StreamLine['k']): string {
   }
 }
 
+// Resolve a human-readable name for a node. Prefer the event-supplied
+// label (PlaybookController attaches it), then fall back to the on-canvas
+// node's `data.title`/`data.label`. Raw node ids are never shown — they
+// leak internals like `node-1741000000002-prompt-0` that mean nothing
+// to the user reading the live stream.
+function displayNodeName(nodeId?: string, nodeLabel?: string): string {
+  if (nodeLabel && nodeLabel.trim()) return nodeLabel.trim();
+  if (nodeId) {
+    // Strip subnode suffixes like "-prompt-0" that PlaybookController
+    // appends — the underlying node still lives in nodes.value under
+    // the base id.
+    const baseId = nodeId.replace(/-[a-z]+-\d+$/, '');
+    const node = nodes.value.find(n => n.id === baseId || n.id === nodeId);
+    const d = node?.data as { title?: string; label?: string } | undefined;
+    const name = d?.title || d?.label;
+    if (name && name.trim()) return name.trim();
+  }
+
+  return 'agent';
+}
+
 function handleWorkflowEvent(event: any) {
   // Filter to events belonging to this workflow — events from other
   // routines running on the same channel must not affect this canvas.
@@ -647,6 +756,7 @@ function handleWorkflowEvent(event: any) {
 
   const nodeId = event?.nodeId as string | undefined;
   const nodeLabel = event?.nodeLabel as string | undefined;
+  const who = displayNodeName(nodeId, nodeLabel);
 
   switch (event?.type) {
   case 'workflow_started':
@@ -656,28 +766,34 @@ function handleWorkflowEvent(event: any) {
     // the UI doesn't hold onto stale state across runs.
     runError.value = null;
     isRunBusy.value = true;
-    pushLine('dec', `started · ${ props.workflowId ?? 'routine' }`, event.timestamp);
+    pushLine('dec', 'started', event.timestamp);
     break;
 
   case 'node_started':
     if (nodeId) setNodeState(nodeId, 'running');
-    pushLine('tool', nodeLabel || nodeId || 'node', event.timestamp);
+    pushLine('tool', who, event.timestamp);
     break;
 
   case 'node_completed':
     if (nodeId) setNodeState(nodeId, 'done');
-    pushLine('obs', `${ nodeLabel || nodeId || 'node' } · done`, event.timestamp);
+    pushLine('obs', `${ who } · done`, event.timestamp);
     break;
 
   case 'node_failed': {
     if (nodeId) setNodeState(nodeId, 'failed');
     const err = typeof event.error === 'string' ? event.error : JSON.stringify(event.error ?? 'failed');
-    pushLine('err', `${ nodeLabel || nodeId || 'node' } · ${ err }`, event.timestamp);
+    pushLine('err', `${ who } · ${ err }`, event.timestamp);
     break;
   }
 
   case 'node_thinking':
-    if (event.content) pushLine('thk', String(event.content).slice(0, 140), event.timestamp);
+    // All agent thinking surfaces in the top-left stream — the node
+    // itself no longer renders a bubble. Prefix with the resolved
+    // label so multi-agent routines are legible as the stream fills.
+    if (event.content) {
+      const text = String(event.content).replace(/\s+/g, ' ').trim().slice(0, 200);
+      pushLine('thk', `${ who } — ${ text }`, event.timestamp);
+    }
     break;
 
   case 'edge_activated':
@@ -755,20 +871,150 @@ const subtitle = ref('Twenty-one agents, one article, nine minutes.');
 // watch so the initial assignments from load() don't re-save the same
 // document straight back.
 const persistence = useWorkflowPersistence();
+const history = useWorkflowHistory();
 const baseDefinition = ref<WorkflowDefinition | null>(null);
 const hasHydrated = ref(false);
+// Flag that suppresses the auto-save watch while we're re-hydrating from
+// a history snapshot (undo/redo). Otherwise applyDefinition() would
+// trigger scheduleSave → create a new history row → undo would itself
+// pollute the audit trail we're trying to walk.
+const isRestoring = ref(false);
+
+// VueFlow wraps every on-canvas node/edge with runtime metadata that
+// isn't structured-cloneable across IPC (event handler maps, computed
+// getters, symbol-keyed internals, DOM rects). Before handing a save
+// payload to the main process we reduce each node/edge down to the
+// routine-schema fields — explicit allowlist keeps the wire shape in
+// sync with the YAML contract and avoids DataCloneError surprises.
+//
+// For free-form subtrees (node `data`, `viewport`) we walk the value
+// and drop anything structured-clone rejects (functions, symbols, class
+// instances with non-cloneable backing) while preserving every plain
+// JSON value. Safer than JSON.stringify because it doesn't silently
+// lose Dates or typed arrays — those stay intact and clone fine.
+function toCloneable(v: any): any {
+  if (v === null || v === undefined) return v;
+  const t = typeof v;
+  if (t === 'string' || t === 'number' || t === 'boolean' || t === 'bigint') return v;
+  if (t === 'function' || t === 'symbol') return undefined;
+  if (t !== 'object') return undefined;
+  if (Array.isArray(v)) {
+    return v.map(toCloneable).filter(x => x !== undefined);
+  }
+  // Plain object or reactive proxy over one. Copy own-enumerable
+  // string keys only — drops symbol-keyed internals (VueFlow uses
+  // these for framework-only state) which are the usual DataCloneError
+  // culprit.
+  const out: Record<string, any> = {};
+  for (const k of Object.keys(v)) {
+    try {
+      const cleaned = toCloneable(v[k]);
+      if (cleaned !== undefined) out[k] = cleaned;
+    } catch {
+      // Accessor that throws during read — skip it entirely.
+    }
+  }
+
+  return out;
+}
+
+function toPlainNode(n: any) {
+  return {
+    id:       String(n.id),
+    type:     n.type,
+    position: { x: Number(n.position?.x ?? 0), y: Number(n.position?.y ?? 0) },
+    data:     toCloneable(n.data),
+    ...(n.width  != null ? { width:  n.width  } : {}),
+    ...(n.height != null ? { height: n.height } : {}),
+    ...(n.parentNode ? { parentNode: n.parentNode } : {}),
+  };
+}
+
+function toPlainEdge(e: any) {
+  return {
+    id:     String(e.id),
+    source: e.source,
+    target: e.target,
+    ...(e.sourceHandle ? { sourceHandle: e.sourceHandle } : {}),
+    ...(e.targetHandle ? { targetHandle: e.targetHandle } : {}),
+    ...(e.type ? { type: e.type } : {}),
+    ...(e.label != null ? { label: e.label } : {}),
+    ...(e.data ? { data: toCloneable(e.data) } : {}),
+  };
+}
 
 function buildDefinitionForSave(): WorkflowDefinition | null {
   if (!props.workflowId) return null;
 
+  const base = baseDefinition.value ?? {};
+  const vp: any = (base as any).viewport;
+
   return {
-    ...(baseDefinition.value ?? {}),
+    ...base,
     id:          props.workflowId,
     name:        title.value,
     description: subtitle.value,
-    nodes:       nodes.value,
-    edges:       edges.value,
+    nodes:       nodes.value.map(toPlainNode),
+    edges:       edges.value.map(toPlainEdge),
+    viewport:    vp
+      ? { x: Number(vp.x ?? 0), y: Number(vp.y ?? 0), zoom: Number(vp.zoom ?? 1) }
+      : { x: 0, y: 0, zoom: 1 },
   };
+}
+
+/**
+ * Replace the canvas state with a definition snapshot — used by the
+ * undo/redo flow and by the initial mount hydration. Keeps both paths
+ * in sync so any field the editor cares about is re-applied from the
+ * snapshot consistently.
+ */
+function applyDefinition(def: WorkflowDefinition): void {
+  if (typeof def.name === 'string') title.value = def.name;
+  if (typeof def.description === 'string') subtitle.value = def.description;
+  if (Array.isArray(def.nodes)) nodes.value = def.nodes as typeof nodes.value;
+  if (Array.isArray(def.edges)) edges.value = def.edges as typeof edges.value;
+  baseDefinition.value = def;
+  enrichNodesForDisplay(nodes.value);
+}
+
+async function undo(): Promise<void> {
+  if (!props.workflowId || !history.canUndo.value) return;
+  const snapshot = history.stepBack();
+  if (!snapshot) return;
+  isRestoring.value = true;
+  try {
+    applyDefinition(snapshot);
+    await nextTick();
+    const payload = buildDefinitionForSave();
+    if (payload) await persistence.saveSilent(payload);
+  } finally {
+    // Give the deep watch one tick to flush before re-enabling auto-save.
+    await nextTick();
+    isRestoring.value = false;
+  }
+}
+
+async function redo(): Promise<void> {
+  if (!props.workflowId || !history.canRedo.value) return;
+  const snapshot = history.stepForward();
+  if (!snapshot) return;
+  isRestoring.value = true;
+  try {
+    applyDefinition(snapshot);
+    await nextTick();
+    const payload = buildDefinitionForSave();
+    if (payload) await persistence.saveSilent(payload);
+  } finally {
+    await nextTick();
+    isRestoring.value = false;
+  }
+}
+
+// Platform-appropriate modifier symbol for tooltips. macOS users expect
+// ⌘, Windows/Linux users expect Ctrl.
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent ?? '');
+function shortcutLabel(key: string): string {
+  return isMac ? `⌘${ key }` : `Ctrl+${ key }`;
 }
 
 const persistenceLabel = computed<string | null>(() => {
@@ -1065,6 +1311,20 @@ function onKeydown(e: KeyboardEvent) {
     return;
   }
 
+  // ⌘Z / Ctrl+Z → undo; ⌘⇧Z / Ctrl+Shift+Z → redo. Ignored when typing
+  // in an input so the browser's native text undo still works in name
+  // fields, config panels, and the command prompt.
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+    if (mode.value !== 'edit') return;
+    e.preventDefault();
+    if (e.shiftKey) void redo();
+    else void undo();
+
+    return;
+  }
+
   if (e.key === 'Escape') {
     if (promptOpen.value) promptOpen.value = false;
     else if (ctxMenu.visible) closeCtxMenu();
@@ -1099,18 +1359,11 @@ onMounted(async() => {
   // Hydrate from the store when the parent handed us a workflow id.
   // Without an id the canvas stays empty.
   if (props.workflowId) {
-    const def = await persistence.load(props.workflowId);
-    if (def) {
-      if (typeof def.name === 'string') title.value = def.name;
-      if (typeof def.description === 'string') subtitle.value = def.description;
-      if (Array.isArray(def.nodes)) nodes.value = def.nodes as typeof nodes.value;
-      if (Array.isArray(def.edges)) edges.value = def.edges as typeof edges.value;
-      baseDefinition.value = def;
-      // Backfill display fields (nodeCode, avatar, kicker, state) for
-      // nodes that came off the wire without them — covers templates
-      // and any workflow saved before the display contract existed.
-      enrichNodesForDisplay(nodes.value);
-    }
+    const [def] = await Promise.all([
+      persistence.load(props.workflowId),
+      history.load(props.workflowId),
+    ]);
+    if (def) applyDefinition(def);
     // Wait a tick so the watch registered below sees the post-hydration
     // state as its baseline rather than firing on the initial assignments.
     await nextTick();
@@ -1151,10 +1404,25 @@ watch(
   [title, subtitle, nodes, edges],
   () => {
     if (!hasHydrated.value || !props.workflowId) return;
+    // Suppress auto-save while we're re-hydrating from a history
+    // snapshot — otherwise undo would record a new history row and
+    // turn redo into guesswork.
+    if (isRestoring.value) return;
     const payload = buildDefinitionForSave();
     if (payload) persistence.scheduleSave(payload);
   },
   { deep: true },
+);
+
+// After every real user save, refetch history so the latest row is at
+// the top and the cursor is reset to 0. Undo/redo use `saveSilent` and
+// don't bump `lastSavedAt`, so restores won't retrigger this.
+watch(
+  () => persistence.lastSavedAt.value,
+  (t) => {
+    if (!t || !props.workflowId || isRestoring.value) return;
+    void history.load(props.workflowId);
+  },
 );
 </script>
 
@@ -1579,6 +1847,31 @@ watch(
   background: rgba(139, 92, 246, 0.22);
 }
 
+/* Undo / redo — custom ControlButton children render after the built-in
+   zoom/fit/interactive buttons by default. Flip their flex order so they
+   read first in the toolbar, which matches the "back/forward before
+   anything else" muscle memory users have from every other editor.
+   Separator after redo keeps the history pair visually distinct from
+   zoom/fit. */
+.routines-flow :deep(.vue-flow__controls-button.history-btn) {
+  order: -10;
+}
+.routines-flow :deep(.vue-flow__controls-button.history-undo) {
+  order: -11;
+}
+.routines-flow :deep(.vue-flow__controls-button.history-redo) {
+  order: -10;
+  margin-right: 6px;
+  border-right: 1px solid rgba(168, 192, 220, 0.18);
+  padding-right: 0;
+}
+.routines-flow :deep(.vue-flow__controls-button.history-btn.disabled),
+.routines-flow :deep(.vue-flow__controls-button.history-btn:disabled) {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* ── MiniMap — tactical radar panel ── */
 .routines-flow :deep(.vue-flow__minimap) {
   bottom: 108px;
@@ -1658,13 +1951,25 @@ watch(
     inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 .routines-fab.run-fab.busy {
-  cursor: progress;
-  opacity: 0.75;
-  animation: run-fab-pulse 1.1s ease-in-out infinite;
+  /* Stop mode — pulsing rose/red to make "this is interruptible" read
+     at a glance. No opacity dim (it's a clickable affordance, not a
+     disabled state) and no progress cursor. */
+  cursor: pointer;
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.95), rgba(190, 18, 60, 0.95));
+  animation: run-fab-stop-pulse 1.3s ease-in-out infinite;
 }
-@keyframes run-fab-pulse {
-  0%, 100% { box-shadow: 0 10px 28px rgba(139, 92, 246, 0.4), 0 0 18px rgba(139, 92, 246, 0.35); }
-  50%      { box-shadow: 0 10px 28px rgba(139, 92, 246, 0.55), 0 0 32px rgba(139, 92, 246, 0.7); }
+.routines-fab.run-fab.busy:hover {
+  box-shadow:
+    0 12px 32px rgba(244, 63, 94, 0.55),
+    0 0 24px rgba(244, 63, 94, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.routines-fab.run-fab.busy svg {
+  margin-left: 0; /* square icon needs no optical nudge */
+}
+@keyframes run-fab-stop-pulse {
+  0%, 100% { box-shadow: 0 10px 28px rgba(244, 63, 94, 0.4), 0 0 18px rgba(244, 63, 94, 0.35); }
+  50%      { box-shadow: 0 10px 28px rgba(244, 63, 94, 0.6),  0 0 32px rgba(244, 63, 94, 0.7); }
 }
 
 .routines-fab-tip {

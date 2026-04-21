@@ -12,12 +12,8 @@
 
     <div class="body">
       <div class="top">
-        <span class="cat">{{ template.section }} · {{ template.category }}</span>
+        <span class="cat">{{ template.category }}</span>
         <span class="chip">v{{ template.version }}</span>
-        <span
-          v-if="template.runtime"
-          class="chip"
-        >{{ template.runtime }}</span>
       </div>
       <div class="title">
         {{ template.name }}
@@ -25,21 +21,24 @@
       <div class="desc">
         {{ template.description }}
       </div>
-      <div class="meta">
+      <div
+        v-if="template.triggerTypes.length > 0"
+        class="meta"
+      >
         <span
-          v-for="tag in template.tags"
-          :key="tag"
+          v-for="trig in template.triggerTypes"
+          :key="trig"
           class="chip"
-        >#{{ tag }}</span>
+        >{{ trig }}</span>
       </div>
     </div>
 
     <div class="metrics">
       <div class="big">
-        {{ template.inputCount }}<small>in</small>
+        {{ template.nodeCount }}<small>nodes</small>
       </div>
       <div class="row">
-        <span><b>{{ template.outputCount }}</b> out</span><span>{{ template.permissions }}</span>
+        <span><b>{{ template.edgeCount }}</b> edges</span>
       </div>
       <div class="row">
         <span>{{ template.slug }}</span>

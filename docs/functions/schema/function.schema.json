@@ -61,12 +61,29 @@
           "additionalProperties": { "$ref": "#/$defs/ioField" }
         },
 
+        "integrations": {
+          "type": "array",
+          "description": "Integrations this function depends on. Users pick an account per integration at node-config time (or defer to the orchestrator). Each entry declares which env vars the runtime needs, mapped to property names on the chosen account.",
+          "items": {
+            "type": "object",
+            "required": ["slug", "env"],
+            "additionalProperties": false,
+            "properties": {
+              "slug": { "type": "string", "description": "Integration slug (e.g. 'slack', 'stripe')" },
+              "env": {
+                "type": "object",
+                "description": "Map env-var-name → integration-property-name. Keys become env vars inside the runtime; values reference property names on the integration's account.",
+                "additionalProperties": { "type": "string" }
+              }
+            }
+          }
+        },
+
         "permissions": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "network": { "type": "array", "items": { "type": "string" } },
-            "env":     { "type": "array", "items": { "type": "string" } },
             "filesystem": {
               "type": "array",
               "items": {
@@ -77,8 +94,7 @@
                   "mode": { "type": "string", "enum": ["read", "write"] }
                 }
               }
-            },
-            "secrets": { "type": "array", "items": { "type": "string" } }
+            }
           }
         },
 

@@ -33,7 +33,7 @@ services:
       retries: 3
 
   python_runtime:
-    image: sulla/python-runtime:dev
+    image: ghcr.io/merchantprotocol/sulla-python-runtime:latest
     container_name: sulla_python_runtime
     ports:
       - "127.0.0.1:30118:8080"
@@ -48,7 +48,7 @@ services:
       retries: 3
 
   shell_runtime:
-    image: sulla/shell-runtime:dev
+    image: ghcr.io/merchantprotocol/sulla-shell-runtime:latest
     container_name: sulla_shell_runtime
     ports:
       - "127.0.0.1:30119:8080"
@@ -62,7 +62,7 @@ services:
       retries: 3
 
   node_runtime:
-    image: sulla/node-runtime:dev
+    image: ghcr.io/merchantprotocol/sulla-node-runtime:latest
     container_name: sulla_node_runtime
     ports:
       - "127.0.0.1:30120:8080"

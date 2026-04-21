@@ -45,171 +45,99 @@ function getRoutinesDir(): string {
   return resolveSullaRoutinesDir();
 }
 
-// ─── Manifest parsing ─────────────────────────────────────────────
-// The shape we project out to the renderer. Loose typing on the
-// manifest side since routine.yaml can carry extra fields (author,
-// license, trust, etc.) that the UI doesn't need right now.
+// ─── Routine document parsing ─────────────────────────────────────
+// Each template at ~/sulla/routines/<slug>/routine.yaml is a full
+// routine DAG: top-level metadata plus `nodes`, `edges`, and
+// `viewport`. We only project the fields My Templates needs into the
+// summary row; the rest of the document is passed through verbatim
+// when the user instantiates the template.
 
-interface TemplateManifest {
-  id?:          string;
-  name?:        string;
-  description?: string;
-  slug?:        string;
-  version?:     string;
-  section?:     string;
-  category?:    string;
-  tags?:        string[];
-  spec?: {
-    runtime?:     string;
-    inputs?:      Record<string, unknown>;
-    outputs?:     Record<string, unknown>;
-    permissions?: Record<string, unknown>;
+interface RoutineNodeLike {
+  id?:       string;
+  type?:     string;
+  position?: { x: number; y: number };
+  data?:     {
+    subtype?:  string;
+    category?: string;
+    label?:    string;
+    [k: string]: unknown;
   };
 }
 
-export interface TemplateSummaryRow {
-  slug:        string;
-  name:        string;
-  description: string;
-  version:     string;
-  section:     string;
-  category:    string;
-  runtime:     string | null;
-  tags:        string[];
-  inputCount:  number;
-  outputCount: number;
-  permissions: string;
+interface RoutineEdgeLike {
+  id?:     string;
+  source?: string;
+  target?: string;
+  [k: string]: unknown;
 }
 
-function readManifest(manifestPath: string): TemplateManifest | null {
-  try {
-    const raw = fs.readFileSync(manifestPath, 'utf-8');
+interface RoutineDocument {
+  id?:          string;
+  name?:        string;
+  description?: string;
+  version?:     string | number;
+  createdAt?:   string;
+  updatedAt?:   string;
+  enabled?:     boolean;
+  nodes?:       RoutineNodeLike[];
+  edges?:       RoutineEdgeLike[];
+  viewport?:    { x: number; y: number; zoom: number };
+  [k: string]:  unknown;
+}
 
-    return yaml.parse(raw) as TemplateManifest;
+export interface TemplateSummaryRow {
+  slug:         string;
+  id:           string;
+  name:         string;
+  description:  string;
+  version:      string;
+  nodeCount:    number;
+  edgeCount:    number;
+  /** Subtypes of every node whose `data.category === 'trigger'`. */
+  triggerTypes: string[];
+  updatedAt:    string;
+}
+
+function readRoutineDoc(docPath: string): RoutineDocument | null {
+  try {
+    const raw = fs.readFileSync(docPath, 'utf-8');
+
+    return yaml.parse(raw) as RoutineDocument;
   } catch (err) {
-    console.warn(`[Sulla] Failed to parse template manifest ${ manifestPath }:`, err);
+    console.warn(`[Sulla] Failed to parse routine document ${ docPath }:`, err);
 
     return null;
   }
 }
 
-/** Render the permissions map into a compact single-line hint. */
-function summarizePermissions(spec?: TemplateManifest['spec']): string {
-  const perms = spec?.permissions ?? {};
-  const parts: string[] = [];
-  const network = (perms as Record<string, unknown>).network;
-  if (Array.isArray(network) && network.length > 0) {
-    const first = String(network[0]);
-    parts.push(`network: ${ first === '*' ? '*' : first }`);
+function extractTriggerTypes(doc: RoutineDocument): string[] {
+  const seen = new Set<string>();
+  const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
+  for (const node of nodes) {
+    if (node?.data?.category === 'trigger' && typeof node.data.subtype === 'string') {
+      seen.add(node.data.subtype);
+    }
   }
-  const env = (perms as Record<string, unknown>).env;
-  if (Array.isArray(env) && env.length > 0) parts.push(`env: ${ env.length }`);
-  const secrets = (perms as Record<string, unknown>).secrets;
-  if (Array.isArray(secrets) && secrets.length > 0) parts.push(`secrets: ${ secrets.length }`);
-  if (parts.length === 0) return 'none';
 
-  return parts.join(' · ');
+  return Array.from(seen);
 }
 
-function toSummary(slug: string, manifest: TemplateManifest): TemplateSummaryRow {
+function toSummary(slug: string, doc: RoutineDocument): TemplateSummaryRow {
   return {
     slug,
-    name:        String(manifest.name ?? slug),
-    description: String(manifest.description ?? '').trim().replace(/\s+/g, ' '),
-    version:     String(manifest.version ?? '0.0.0'),
-    section:     String(manifest.section ?? 'Uncategorized'),
-    category:    String(manifest.category ?? 'ops'),
-    runtime:     manifest.spec?.runtime ? String(manifest.spec.runtime) : null,
-    tags:        Array.isArray(manifest.tags) ? manifest.tags.map(String) : [],
-    inputCount:  Object.keys(manifest.spec?.inputs ?? {}).length,
-    outputCount: Object.keys(manifest.spec?.outputs ?? {}).length,
-    permissions: summarizePermissions(manifest.spec),
+    id:           String(doc.id ?? slug),
+    name:         String(doc.name ?? slug),
+    description:  String(doc.description ?? '').trim().replace(/\s+/g, ' '),
+    version:      doc.version != null ? String(doc.version) : '1',
+    nodeCount:    Array.isArray(doc.nodes) ? doc.nodes.length : 0,
+    edgeCount:    Array.isArray(doc.edges) ? doc.edges.length : 0,
+    triggerTypes: extractTriggerTypes(doc),
+    updatedAt:    String(doc.updatedAt ?? ''),
   };
-}
-
-// ─── Workflow wrapping ────────────────────────────────────────────
-// When a template is instantiated, we scaffold a minimal workflow
-// graph around it: one manual trigger + one routine node executing
-// the template. The user can then extend the graph in the editor.
-
-interface WrapOptions {
-  slug:     string;
-  manifest: TemplateManifest;
 }
 
 function newId(prefix: string): string {
   return `${ prefix }-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
-}
-
-function buildWorkflowFromTemplate({ slug, manifest }: WrapOptions): Record<string, unknown> {
-  const workflowId = newId(`workflow-${ slug }`);
-  const triggerId = newId('trigger');
-  const routineId = newId('routine');
-  const now = new Date().toISOString();
-
-  // Flatten the manifest description to a single-line tagline — the
-  // routine node uses this as its subtitle on the canvas, matching
-  // what library-drawer cards show for their role line.
-  const tagline = String(manifest.description ?? '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .split(/[.!?]\s/)[0]
-    .slice(0, 140);
-
-  return {
-    id:          workflowId,
-    name:        `${ manifest.name ?? slug } · new routine`,
-    description: manifest.description ?? `Workflow based on the ${ slug } template.`,
-    version:     '0.1.0',
-    enabled:     true,
-    createdAt:   now,
-    updatedAt:   now,
-    _status:     'draft',
-    nodes: [
-      {
-        id:       triggerId,
-        type:     'routine',
-        position: { x: 80, y: 140 },
-        data:     {
-          subtype:  'manual-trigger',
-          category: 'trigger',
-          title:    'Manual Trigger',
-          kicker:   'Trigger',
-          role:     'Fires when the user runs this routine.',
-        },
-      },
-      {
-        id:       routineId,
-        type:     'routine',
-        position: { x: 400, y: 140 },
-        data:     {
-          // Category is 'agent' because that's the canonical type for
-          // "something that does work" in the workflow runtime — lets
-          // the display pipeline assign proper avatar colors + code
-          // letters. The `subtype` + `kicker` preserve the "routine"
-          // identity at the display layer.
-          subtype:      'template-routine',
-          category:     'agent',
-          title:        manifest.name ?? slug,
-          kicker:       'Routine',
-          role:         tagline || `Executes the ${ slug } template.`,
-          quote:        manifest.category ? `"${ manifest.section ?? 'Core' } · ${ manifest.category }"` : undefined,
-          templateSlug: slug,
-          templateId:   manifest.id ?? null,
-          config:       {}, // user fills in required inputs via the config panel
-        },
-      },
-    ],
-    edges: [
-      {
-        id:     newId('edge'),
-        source: triggerId,
-        target: routineId,
-        type:   'smoothstep',
-      },
-    ],
-    viewport: { x: 0, y: 0, zoom: 1 },
-  };
 }
 
 // ─── Handler registration ─────────────────────────────────────────
@@ -224,11 +152,11 @@ export function initSullaRoutineTemplateEvents(): void {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const manifestPath = path.join(root, entry.name, 'routine.yaml');
-      if (!fs.existsSync(manifestPath)) continue;
-      const manifest = readManifest(manifestPath);
-      if (!manifest) continue;
-      summaries.push(toSummary(entry.name, manifest));
+      const docPath = path.join(root, entry.name, 'routine.yaml');
+      if (!fs.existsSync(docPath)) continue;
+      const doc = readRoutineDoc(docPath);
+      if (!doc) continue;
+      summaries.push(toSummary(entry.name, doc));
     }
 
     // Stable ordering — alphabetical by display name.
@@ -274,31 +202,49 @@ export function initSullaRoutineTemplateEvents(): void {
       throw new Error('routines-template-instantiate: slug is required');
     }
 
-    const manifestPath = path.join(getRoutinesDir(), slug, 'routine.yaml');
-    if (!fs.existsSync(manifestPath)) {
+    const docPath = path.join(getRoutinesDir(), slug, 'routine.yaml');
+    if (!fs.existsSync(docPath)) {
       throw new Error(`Template not found: ${ slug }`);
     }
 
-    const manifest = readManifest(manifestPath);
-    if (!manifest) {
-      throw new Error(`Template manifest is unreadable: ${ slug }`);
+    const doc = readRoutineDoc(docPath);
+    if (!doc) {
+      throw new Error(`Template is unreadable: ${ slug }`);
     }
 
-    const workflow = buildWorkflowFromTemplate({ slug, manifest });
+    // Deep-clone the full routine document into a fresh DB row. Nodes,
+    // edges and viewport are passed through verbatim — the instantiated
+    // routine is a true editable copy of the template, not a scaffold.
+    // Only identity + timestamps are minted fresh so two users of the
+    // same template don't collide on id.
+    const newRoutineId = newId(`routine-${ slug }`);
+    const now = new Date().toISOString();
 
-    // DB-first write. The runtime still scans disk for execution, so a
-    // YAML materialization will happen when the user hits save in the
-    // editor (Phase 4 — workflow-save handler dual-writes disk + DB).
+    const routine: Record<string, unknown> = {
+      ...doc,
+      id:          newRoutineId,
+      name:        String(doc.name ?? slug),
+      description: String(doc.description ?? ''),
+      version:     doc.version ?? 1,
+      enabled:     doc.enabled !== false,
+      createdAt:   now,
+      updatedAt:   now,
+      _status:     'draft',
+      nodes:       Array.isArray(doc.nodes) ? doc.nodes : [],
+      edges:       Array.isArray(doc.edges) ? doc.edges : [],
+      viewport:    doc.viewport ?? { x: 0, y: 0, zoom: 1 },
+    };
+
     const WorkflowModel = await importWorkflowModel();
 
-    await WorkflowModel.upsertFromDefinition(workflow, {
+    await WorkflowModel.upsertFromDefinition(routine, {
       status:       'draft',
       changeReason: `instantiated from template:${ slug }`,
     });
 
-    console.log(`[Sulla] Instantiated template "${ slug }" as workflow "${ workflow.id }"`);
+    console.log(`[Sulla] Instantiated template "${ slug }" as routine "${ newRoutineId }" (${ (routine.nodes as unknown[]).length } nodes, ${ (routine.edges as unknown[]).length } edges)`);
 
-    return { id: workflow.id as string, name: workflow.name as string };
+    return { id: newRoutineId, name: routine.name as string };
   });
 
   // ── Direct routine execution ──
@@ -307,6 +253,60 @@ export function initSullaRoutineTemplateEvents(): void {
   // without a user click) can call the same code path.
   ipcMainProxy.handle('routines-execute', async(_event: unknown, workflowId: string, triggerPayload?: string) => {
     return await executeRoutine(workflowId, triggerPayload);
+  });
+
+  // ── User-initiated abort ──
+  // Flip the active playbook's status to 'aborted' so the next pass
+  // through PlaybookController's walker loop exits cleanly, and emit
+  // the `workflow_aborted` WS event so the UI clears its run state
+  // immediately — before the walker even notices. The in-flight LLM
+  // call or tool invocation isn't interrupted; it finishes and then
+  // the loop winds down. Best-effort; never throws.
+  ipcMainProxy.handle('routines-abort', async(_event: unknown, executionId: string) => {
+    if (!executionId) return { aborted: false, reason: 'missing-execution-id' };
+
+    try {
+      const { GraphRegistry }   = await import('@pkg/agent/services/GraphRegistry');
+      const { abortPlaybook }   = await import('@pkg/agent/workflow/WorkflowPlaybook');
+      const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
+
+      const cached = GraphRegistry.get(executionId) as { state?: Record<string, any> } | null;
+      const state = cached?.state;
+
+      if (!state) {
+        console.warn(`[routines-abort] no cached state for executionId=${ executionId }`);
+
+        return { aborted: false, reason: 'not-found' };
+      }
+
+      const meta = (state.metadata ??= {});
+      if (meta.activeWorkflow) {
+        meta.activeWorkflow = abortPlaybook(meta.activeWorkflow);
+      }
+
+      const channel = meta.wsChannel || 'sulla-desktop';
+
+      try {
+        getWebSocketClientService().send(channel, {
+          type:      'workflow_execution_event',
+          data:      {
+            type:      'workflow_aborted',
+            thread_id: executionId,
+            timestamp: new Date().toISOString(),
+            reason:    'user_requested',
+          },
+          timestamp: Date.now(),
+        });
+      } catch { /* WS best-effort */ }
+
+      console.log(`[routines-abort] ← ok executionId=${ executionId }`);
+
+      return { aborted: true };
+    } catch (err) {
+      console.error(`[routines-abort] ✗ executionId=${ executionId }`, err);
+
+      return { aborted: false, reason: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   console.log('[Sulla] Routine template IPC handlers initialized');
