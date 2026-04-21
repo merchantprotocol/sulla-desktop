@@ -77,7 +77,7 @@
     "@hbilal_9/vue3-chat-scroll": "0.0.4",
     "@kubernetes/client-node": "1.4.0",
     "@langchain/community": "1.1.17",
-    "@langchain/core": "1.1.27",
+    "@langchain/core": "1.1.39",
     "@langchain/langgraph": "1.1.5",
     "@langchain/openai": "1.2.9",
     "@mantine/core": "8.3.16",
