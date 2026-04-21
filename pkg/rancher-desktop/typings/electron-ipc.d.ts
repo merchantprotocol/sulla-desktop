@@ -342,10 +342,21 @@ export interface IpcMainInvokeEvents {
   'workflow-duplicate':   (workflowId: string) => { id: string; name: string };
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
 
+  // User-defined function catalog (scanned from ~/sulla/functions/<slug>/function.yaml)
+  'functions-list': () => {
+    slug:        string;
+    name:        string;
+    description: string;
+    runtime:     'python' | 'shell' | 'node';
+    inputs:      Record<string, Record<string, unknown>>;
+    outputs:     Record<string, Record<string, unknown>>;
+  }[];
+
   // Routine template registry (scanned from ~/sulla/routines/<slug>/routine.yaml)
   'routines-template-list':        () => { slug: string; name: string; description: string; version: string; section: string; category: string; runtime: string | null; tags: string[]; inputCount: number; outputCount: number; permissions: string }[];
   'routines-template-instantiate': (slug: string) => { id: string; name: string };
   'routines-create-blank':         () => { id: string; name: string };
+  'routines-execute':              (workflowId: string, triggerPayload?: string) => { executionId: string; workflowId: string };
 
   // Workflow execution
   'workflow-execute':          (workflowId: string, triggerPayload: unknown) => { executionId: string };

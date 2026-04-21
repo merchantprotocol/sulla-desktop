@@ -82,8 +82,36 @@
 
       <!-- ═══════ MY ROUTINES TAB ═══════ -->
       <template v-if="activeTab === 'routines'">
+        <!-- Booting state — the app shell repaints tabs from localStorage
+             before the Electron backend is up. Show a benign "warming up"
+             message instead of blowing up with a DB connection error. -->
         <EmptyState
-          v-if="routinesController.isEmpty.value"
+          v-if="!systemReady"
+          kicker="Warming up"
+          title="Bringing the backend online…"
+          message="Your routines will appear once the Sulla services finish booting. This is usually a few seconds on first launch."
+        />
+
+        <!-- Error state — shown when the DB fetch failed. Preferable to
+             silently showing "your stage is empty" when something is
+             actually broken underneath. -->
+        <EmptyState
+          v-else-if="routinesController.error.value"
+          kicker="Can't reach the routines"
+          title="Couldn't load your stage."
+          :message="`The database returned an error: ${ routinesController.error.value }`"
+        >
+          <button
+            type="button"
+            class="btn primary"
+            @click="routinesController.refresh()"
+          >
+            Try again
+          </button>
+        </EmptyState>
+
+        <EmptyState
+          v-else-if="routinesController.isEmpty.value"
           kicker="No routines yet"
           title="Your stage is empty."
           message="You haven't built a routine yet. Start from a template — five are waiting in the wings — or compose one from scratch on the canvas."
@@ -273,7 +301,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import ActSection from '@pkg/components/routines/ActSection.vue';
 import EmptyState from '@pkg/components/routines/EmptyState.vue';
@@ -281,6 +309,8 @@ import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
 import TemplateStrip from '@pkg/components/routines/TemplateStrip.vue';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
+
+import { useStartupProgress } from './agent/useStartupProgress';
 
 type Tab = 'routines' | 'templates';
 
@@ -297,11 +327,30 @@ const activeTab = ref<Tab>('routines');
 const routinesController = useRoutines();
 const templatesController = useTemplates();
 
-onMounted(async() => {
+// The playbill can't query Postgres until the backend has booted — the
+// tab is restored from localStorage on first paint, which regularly
+// beats the Electron main-process bring-up. Gate the initial load on
+// `systemReady` and reload automatically the moment it flips true, so
+// the first real render gets real data instead of an ECONNREFUSED.
+const { systemReady } = useStartupProgress();
+
+async function loadAll() {
   await Promise.all([
     routinesController.load(),
     templatesController.load(),
   ]);
+}
+
+onMounted(() => {
+  if (systemReady.value) {
+    void loadAll();
+  }
+});
+
+// Re-fire when readiness toggles true. Handles both the first-boot race
+// and any later reboot of the backend (settings reset, VM restart, etc).
+watch(systemReady, (ready, prev) => {
+  if (ready && !prev) void loadAll();
 });
 
 // Display-layer string derivations. Kept as computeds so the template

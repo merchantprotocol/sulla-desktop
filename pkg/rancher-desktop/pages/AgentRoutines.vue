@@ -167,12 +167,28 @@
       v-if="mode === 'run'"
       class="stream"
     >
-      <div class="line"><span class="t">14:03</span><span class="k tool">tool</span><span class="msg">ahrefs.lookup()</span></div>
-      <div class="line"><span class="t">14:05</span><span class="k obs">observed</span><span class="msg">Volume 8,200/mo · KD 71</span></div>
-      <div class="line"><span class="t">14:08</span><span class="k thk">thinking</span><span class="msg">SEMRush off by 40%</span></div>
-      <div class="line"><span class="t">14:14</span><span class="k tool">tool</span><span class="msg">google_trends.compare()</span></div>
-      <div class="line"><span class="t">14:17</span><span class="k obs">observed</span><span class="msg">rising 3x faster</span></div>
-      <div class="line current"><span class="t">14:19</span><span class="k dec">decided</span><span class="msg">Target: <span class="h">"AI tools SMB"</span></span></div>
+      <div
+        v-if="liveEvents.length === 0"
+        class="line"
+      >
+        <span class="t">--:--:--</span>
+        <span class="k dec">idle</span>
+        <span class="msg">press ▶ to start a run</span>
+      </div>
+      <div
+        v-for="(line, idx) in liveEvents"
+        v-else
+        :key="idx"
+        class="line"
+        :class="{ current: idx === liveEvents.length - 1 }"
+      >
+        <span class="t">{{ line.t }}</span>
+        <span
+          class="k"
+          :class="line.k"
+        >{{ streamKindLabel(line.k) }}</span>
+        <span class="msg">{{ line.msg }}</span>
+      </div>
     </div>
 
     <div class="title-block">
@@ -427,6 +443,8 @@ import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
 
 import { useWorkflowPersistence, type WorkflowDefinition } from '@pkg/composables/useWorkflowPersistence';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 
 import {
   enrichNodesForDisplay,
@@ -464,25 +482,226 @@ const locked = computed(() => mode.value === 'run' || editLocked.value);
 const drawerOpen = ref(false);
 const promptOpen = ref(false);
 
-// Run-mode FAB state. Phase 2 Step 2 is visual-only — the click logs
-// the intent so we can verify the button wires up end-to-end without
-// yet touching the execution pipeline. Step 3 replaces this with the
-// real `routines-execute` IPC call + event subscription.
+// Run-mode FAB state. Clicking Play calls `routines-execute` directly —
+// no chat handoff. The handler primes the playbook on the default
+// sulla-desktop agent graph and kicks graph.execute(); the agent
+// orchestrates from there, emitting WebSocket events. The subscription
+// below maps those events into node-state updates and stream lines.
 const isRunBusy = ref(false);
+const runError = ref<string | null>(null);
+const lastExecutionId = ref<string | null>(null);
 
-function onRunClick() {
+// ── Live event stream ──
+// `liveEvents` is what the top-left stream panel renders while a run
+// is in progress. Populated by the WebSocket subscription below as
+// PlaybookController emits events. Cleared on `workflow_started` so
+// each run begins with a fresh log.
+interface StreamLine {
+  t:   string;
+  k:   'tool' | 'obs' | 'thk' | 'dec' | 'err';
+  msg: string;
+}
+const liveEvents = ref<StreamLine[]>([]);
+
+// Safety timeout: clears `isRunBusy` if no completion event ever lands
+// (e.g. the agent graph faulted in a way that skipped the final emit).
+// Reset on every node event to extend the window as long as work is
+// visibly happening; final completion events clear it explicitly.
+const MAX_STALL_MS = 90_000;
+let runStallTimer: ReturnType<typeof setTimeout> | null = null;
+
+function bumpStallTimer() {
+  if (runStallTimer) clearTimeout(runStallTimer);
+  runStallTimer = setTimeout(() => {
+    isRunBusy.value = false;
+    runStallTimer = null;
+  }, MAX_STALL_MS);
+}
+
+function clearStallTimer() {
+  if (runStallTimer) {
+    clearTimeout(runStallTimer);
+    runStallTimer = null;
+  }
+}
+
+async function onRunClick() {
   if (!props.workflowId) {
     console.warn('[AgentRoutines] Run clicked with no workflowId — nothing to execute.');
 
     return;
   }
   if (isRunBusy.value) return;
+
   isRunBusy.value = true;
-  console.log(`[AgentRoutines] Run requested for workflow "${ props.workflowId }" — execution wiring lands in Phase 2 Step 3.`);
-  // Flash-only busy state so the button gives feedback on click.
-  setTimeout(() => {
+  runError.value = null;
+  liveEvents.value = [];
+  bumpStallTimer();
+
+  try {
+    const result = await ipcRenderer.invoke('routines-execute', props.workflowId);
+    lastExecutionId.value = result.executionId;
+    console.log(`[AgentRoutines] Routine launched — executionId=${ result.executionId }`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    runError.value = msg;
+    console.error('[AgentRoutines] Failed to launch routine:', err);
     isRunBusy.value = false;
-  }, 800);
+    clearStallTimer();
+  }
+}
+
+// ── Node state helpers ──
+// Execution events arrive with node ids; mutate node.data.state so the
+// canvas cards animate. The auto-save watch is deep, but the save gate
+// checks `props.workflowId` + `hasHydrated` so these mutations won't
+// round-trip to the store.
+
+function setNodeState(nodeId: string, state: 'idle' | 'queued' | 'running' | 'done' | 'failed') {
+  const node = nodes.value.find(n => n.id === nodeId);
+  if (!node) return;
+  node.data = { ...node.data, state };
+}
+
+function resetNodeStates() {
+  for (const node of nodes.value) {
+    if (node.data?.state && node.data.state !== 'idle') {
+      node.data = { ...node.data, state: 'idle' };
+    }
+  }
+}
+
+// ── Event handler ──
+// Maps a single PlaybookController event to (a) a node.data.state
+// change, (b) a stream line, or (c) both. Event shape mirrors what
+// EditorChatInterface / AgentEditor already consume elsewhere.
+
+function stamp(ts?: number): string {
+  const d = ts ? new Date(ts) : new Date();
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+
+  return `${ h }:${ m }:${ s }`;
+}
+
+function pushLine(kind: StreamLine['k'], msg: string, ts?: number) {
+  const line = { t: stamp(ts), k: kind, msg };
+  liveEvents.value = [...liveEvents.value.slice(-49), line];
+}
+
+// Short label displayed in the stream kind chip. Kept as a function so
+// the existing CSS selectors (.k.tool, .k.obs, .k.thk, .k.dec, .k.err)
+// still target the class, and the text tracks alongside.
+function streamKindLabel(kind: StreamLine['k']): string {
+  switch (kind) {
+  case 'tool': return 'tool';
+  case 'obs':  return 'observed';
+  case 'thk':  return 'thinking';
+  case 'dec':  return 'decided';
+  case 'err':  return 'error';
+  default:     return kind;
+  }
+}
+
+function handleWorkflowEvent(event: any) {
+  // Filter to events belonging to this workflow — events from other
+  // routines running on the same channel must not affect this canvas.
+  if (event?.workflowId && props.workflowId && event.workflowId !== props.workflowId) {
+    return;
+  }
+
+  bumpStallTimer();
+
+  const nodeId = event?.nodeId as string | undefined;
+  const nodeLabel = event?.nodeLabel as string | undefined;
+
+  switch (event?.type) {
+  case 'workflow_started':
+    resetNodeStates();
+    liveEvents.value = [];
+    isRunBusy.value = true;
+    pushLine('dec', `started · ${ props.workflowId ?? 'routine' }`, event.timestamp);
+    break;
+
+  case 'node_started':
+    if (nodeId) setNodeState(nodeId, 'running');
+    pushLine('tool', nodeLabel || nodeId || 'node', event.timestamp);
+    break;
+
+  case 'node_completed':
+    if (nodeId) setNodeState(nodeId, 'done');
+    pushLine('obs', `${ nodeLabel || nodeId || 'node' } · done`, event.timestamp);
+    break;
+
+  case 'node_failed': {
+    if (nodeId) setNodeState(nodeId, 'failed');
+    const err = typeof event.error === 'string' ? event.error : JSON.stringify(event.error ?? 'failed');
+    pushLine('err', `${ nodeLabel || nodeId || 'node' } · ${ err }`, event.timestamp);
+    break;
+  }
+
+  case 'node_thinking':
+    if (event.content) pushLine('thk', String(event.content).slice(0, 140), event.timestamp);
+    break;
+
+  case 'edge_activated':
+    // Kept silent in the stream — the node-level events already tell
+    // the story. Could visualize the edge later if useful.
+    break;
+
+  case 'workflow_completed':
+    pushLine('dec', 'completed', event.timestamp);
+    isRunBusy.value = false;
+    clearStallTimer();
+    break;
+
+  case 'workflow_aborted':
+    pushLine('err', `aborted${ event.reason ? `: ${ event.reason }` : '' }`, event.timestamp);
+    isRunBusy.value = false;
+    clearStallTimer();
+    break;
+
+  case 'workflow_failed':
+    pushLine('err', `failed${ event.error ? `: ${ event.error }` : '' }`, event.timestamp);
+    isRunBusy.value = false;
+    clearStallTimer();
+    break;
+
+  case 'workflow_paused':
+    pushLine('dec', `paused${ event.reason ? `: ${ event.reason }` : '' }`, event.timestamp);
+    break;
+  }
+}
+
+// ── Subscription lifecycle ──
+// Subscribes to the `sulla-desktop` channel (where routines emit) and
+// forwards `workflow_execution_event` messages to `handleWorkflowEvent`.
+// Stays active for the component's lifetime so mode toggles don't drop
+// events mid-run; the inner filter throws away events unrelated to
+// this canvas.
+let wsUnsubscribe: (() => void) | null = null;
+
+function subscribeToExecutionEvents() {
+  try {
+    const ws = getWebSocketClientService();
+    wsUnsubscribe = ws.onMessage('sulla-desktop', (msg: any) => {
+      if (msg?.type !== 'workflow_execution_event') return;
+      const payload = msg.data;
+      if (!payload) return;
+      handleWorkflowEvent(payload);
+    });
+  } catch (err) {
+    console.warn('[AgentRoutines] WebSocket subscription failed — live events will be inert:', err);
+  }
+}
+
+function unsubscribeFromExecutionEvents() {
+  if (wsUnsubscribe) {
+    try { wsUnsubscribe(); } catch { /* ignore */ }
+    wsUnsubscribe = null;
+  }
+  clearStallTimer();
 }
 
 const selectedNodeId = ref<string | null>(null);
@@ -821,6 +1040,10 @@ onMounted(async() => {
   document.addEventListener('click', onDocClick, true);
   document.addEventListener('keydown', onKeydown);
 
+  // Subscribe before the first hydrate finishes so we don't race any
+  // very-fast execution events (unlikely, but cheap to guarantee).
+  subscribeToExecutionEvents();
+
   // Hydrate from the store when the parent handed us a workflow id.
   // Without an id the canvas stays empty.
   if (props.workflowId) {
@@ -850,6 +1073,7 @@ onMounted(async() => {
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick, true);
   document.removeEventListener('keydown', onKeydown);
+  unsubscribeFromExecutionEvents();
 
   // Best-effort flush of any pending debounced save. Vue doesn't await
   // async unmount handlers, so this is fire-and-forget — good enough
@@ -1094,6 +1318,11 @@ watch(
   color: var(--violet-200);
   border: 1px solid rgba(167,139,250,0.55);
   box-shadow: 0 0 10px rgba(139,92,246,0.25);
+}
+.line .k.err  {
+  background: rgba(244,63,94,0.2);
+  color: #fda4af;
+  border: 1px solid rgba(244,63,94,0.5);
 }
 .line .msg { color: var(--steel-200); font-size: 11px; }
 .line .msg .h {

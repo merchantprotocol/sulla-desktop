@@ -65,14 +65,22 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
   static async listAll(): Promise<WorkflowListRow[]> {
     // Pull summary fields only — description for the list display,
     // jsonb_array_length for a cheap node count without shipping the
-    // full definition. Full definition still goes through findById.
+    // full definition. The CASE guard is defensive: jsonb_array_length
+    // throws on anything that isn't a JSON array, and any pre-cutover
+    // row with an odd `nodes` shape would otherwise poison the whole
+    // query and make the playbill look empty. Full definition still
+    // goes through findById.
     const rows = await postgresClient.queryAll(
       `SELECT id,
               name,
               description,
               status,
               updated_at,
-              COALESCE(jsonb_array_length(definition->'nodes'), 0) AS node_count
+              CASE
+                WHEN jsonb_typeof(definition->'nodes') = 'array'
+                  THEN jsonb_array_length(definition->'nodes')
+                ELSE 0
+              END AS node_count
        FROM workflows
        ORDER BY updated_at DESC`,
       [],

@@ -318,15 +318,13 @@ export function initSullaWorkflowEvents(): void {
   // the primary read path until Phase 2 cuts reads over to the DB.
 
   ipcMainProxy.handle('workflow-db-list', async() => {
-    try {
-      const WorkflowModel = await importWorkflowModel();
+    // Do NOT swallow errors here — returning [] silently makes the
+    // playbill look empty when the real problem is a broken query or a
+    // dead DB connection. The renderer catches into useRoutines.error
+    // and can surface a diagnostic to the user.
+    const WorkflowModel = await importWorkflowModel();
 
-      return await WorkflowModel.listAll();
-    } catch (err) {
-      console.warn('[Sulla] workflow-db-list failed:', err);
-
-      return [];
-    }
+    return WorkflowModel.listAll();
   });
 
   ipcMainProxy.handle('workflow-db-get', async(_event: unknown, workflowId: string) => {
