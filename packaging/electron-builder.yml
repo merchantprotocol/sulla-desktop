@@ -28,7 +28,14 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   icon: ./resources/icons/sulla-app-icon.png
-  target: [ dmg, zip ]
+  # DMG target removed: electron-builder's hdiutil-based DMG builder
+  # drops the Electron Framework binary from the output because it
+  # mis-handles the two-hop symlink chain
+  # (Electron Framework → Versions/Current/Electron Framework,
+  # Current → A). The ZIP target produces the SAME signed, notarized,
+  # Gatekeeper-accepted .app with the framework binary intact — users
+  # download, unzip, drag to Applications, done.
+  target: [ zip ]
   # Sign + notarize inline when CSC_LINK / APPLE_ID env vars are set
   # (provided by GitHub secrets in the Package workflow). If either is
   # missing electron-builder leaves the build unsigned, matching the

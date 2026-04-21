@@ -76,13 +76,8 @@ jobs:
         name: bats.tar.gz
         path: bats/bats.tar.gz
         if-no-files-found: error
-    - name: Upload mac disk image
-      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-      if: matrix.platform == 'mac'
-      with:
-        name: Sulla Desktop.${{ matrix.arch }}.dmg
-        path: dist/Sulla-Desktop*.dmg
-        if-no-files-found: error
+    # DMG upload removed — see packaging/electron-builder.yml mac.target
+    # for context. We ship a signed+notarized ZIP instead, which works.
     - name: Upload mac zip
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       if: matrix.platform == 'mac'
