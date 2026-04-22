@@ -15,6 +15,7 @@ import { initMessageBusIpc } from './messageBusIpc';
 import { initSullaBundleEvents } from './sullaBundleEvents';
 import { initSullaDebugEvents } from './sullaDebugEvents';
 import { initSullaFunctionEvents } from './sullaFunctionEvents';
+import { initSullaLibraryDraftEvents } from './sullaLibraryDraftEvents';
 import { initSullaLibraryEvents } from './sullaLibraryEvents';
 import { initSullaMarketplaceEvents } from './sullaMarketplaceEvents';
 import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
@@ -822,6 +823,7 @@ export function initSullaEvents(): void {
   initSullaBundleEvents();
   initSullaMarketplaceEvents();
   initSullaLibraryEvents();
+  initSullaLibraryDraftEvents();
   initSullaDebugEvents();
   initSullaFunctionEvents();
 

@@ -1,5 +1,27 @@
 <template>
-  <div class="marketplace">
+  <div
+    class="marketplace"
+    :class="{ 'is-detail': showingDetail }"
+  >
+    <!-- Full-page detail takes over when open; list is hidden. -->
+    <MarketplaceDetail
+      v-if="mp.detail.value"
+      :row="mp.detail.value.row"
+      :manifest="mp.detail.value.manifest"
+      :installing="mp.installing.value === mp.detail.value.row.id"
+      :install-error="mp.installError.value"
+      :installed-info="installedForOpenDrawer"
+      @close="onCloseDetail"
+      @install="onInstall(mp.detail.value.row.id)"
+    />
+    <div
+      v-else-if="mp.detailLoading.value"
+      class="full-loading"
+    >
+      Loading template details…
+    </div>
+
+    <template v-else>
     <!-- Left filter rail -->
     <aside class="rail">
       <div class="rail-head">
@@ -154,22 +176,7 @@
       </template>
     </section>
 
-    <MarketplaceDetail
-      v-if="mp.detail.value"
-      :row="mp.detail.value.row"
-      :manifest="mp.detail.value.manifest"
-      :installing="mp.installing.value === mp.detail.value.row.id"
-      :install-error="mp.installError.value"
-      :installed-info="installedForOpenDrawer"
-      @close="onCloseDetail"
-      @install="onInstall(mp.detail.value.row.id)"
-    />
-    <div
-      v-else-if="mp.detailLoading.value"
-      class="drawer-loading"
-    >
-      Loading template details…
-    </div>
+    </template>
   </div>
 </template>
 
@@ -203,6 +210,8 @@ const searchDraft = ref('');
 const emit = defineEmits<{
   (e: 'installed', info: { kind: string; slug: string; path: string; name: string }): void;
 }>();
+
+const showingDetail = computed(() => !!mp.detail.value || mp.detailLoading.value);
 
 const headingLabel = computed(() => {
   const kind = KIND_OPTIONS.find(k => k.value === mp.kind.value);
@@ -251,6 +260,14 @@ async function onInstall(id: string) {
   gap: 24px;
   margin-top: 8px;
   min-height: 400px;
+}
+// When the full-page detail is open, drop the grid and let the detail
+// page own the whole tab width. Without this the detail sits inside the
+// 1fr track with 220px of dead space to its left where the rail used to
+// be — which is exactly the "all jacked up" layout.
+.marketplace.is-detail {
+  display: block;
+  grid-template-columns: none;
 }
 
 .rail {
@@ -436,18 +453,13 @@ async function onInstall(id: string) {
 .btn.ghost:hover:not(:disabled) { border-color: var(--steel-300); color: white; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.drawer-loading {
-  position: fixed;
-  right: 32px;
-  bottom: 32px;
+.full-loading {
+  padding: 80px 20px;
+  text-align: center;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--steel-300);
-  background: rgba(14, 22, 40, 0.9);
-  padding: 10px 14px;
-  border-radius: 4px;
-  border: 1px solid var(--line);
 }
 </style>

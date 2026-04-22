@@ -355,7 +355,7 @@ interface BuiltPayload {
   };
 }
 
-function buildLocalManifest(kind: KindSingular, slug: string): BuiltPayload | null {
+export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPayload | null {
   const pluralKind = KIND_TO_PLURAL[kind];
   const baseDir = kindBaseDir(pluralKind);
   const itemDir = path.join(baseDir, slug);
