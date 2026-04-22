@@ -1,11 +1,12 @@
 <template>
   <div
     class="strip"
-    :class="`kind-${ kind }`"
+    :class="`kind-${kind}`"
+    :data-kind="kind"
   >
     <div
       class="icon"
-      :class="`kind-${ kind }`"
+      :class="`kind-${kind}`"
     >
       {{ initials }}
     </div>
@@ -14,7 +15,7 @@
       <div class="top">
         <span
           class="kind-badge"
-          :class="`kind-${ kind }`"
+          :class="`kind-${kind}`"
         >{{ kindLabel }}</span>
         <span
           v-if="item.version"
@@ -110,22 +111,54 @@ const initials = computed(() => {
 </script>
 
 <style scoped lang="scss">
+// Raised-card treatment — see MarketplaceStrip for the shared rationale.
 .strip {
   display: grid;
   grid-template-columns: 64px 1fr auto;
   gap: 24px;
   align-items: center;
-  padding: 20px 24px;
-  background: linear-gradient(90deg, rgba(18, 28, 48, 0.7), rgba(10, 18, 36, 0.4));
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  margin-bottom: 12px;
+  padding: 20px 24px 20px 27px;
+  background: linear-gradient(135deg, rgba(30, 44, 72, 0.92), rgba(20, 32, 54, 0.88));
+  border: 1px solid rgba(168, 192, 220, 0.22);
+  border-radius: 8px;
+  margin-bottom: 14px;
   position: relative;
-  transition: border-color 0.18s, background 0.18s;
+  overflow: hidden;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 .strip:hover {
-  border-color: rgba(140, 172, 201, 0.5);
-  background: linear-gradient(90deg, rgba(26, 40, 66, 0.82), rgba(16, 26, 46, 0.55));
+  border-color: rgba(196, 212, 230, 0.45);
+  background: linear-gradient(135deg, rgba(40, 58, 92, 0.95), rgba(28, 44, 72, 0.92));
+  transform: translateY(-2px);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.55),
+    0 0 24px rgba(74, 111, 165, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.strip::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  opacity: 0.55;
+  transition: opacity 0.18s, width 0.18s;
+}
+.strip:hover::before { opacity: 1; width: 4px; }
+.strip[data-kind="routines"]::before  { background: linear-gradient(180deg, #6b8fc4, #4a6fa5 50%, #2c4871); }
+.strip[data-kind="skills"]::before    { background: linear-gradient(180deg, #fbbf24, #f59e0b 50%, #b45309); }
+.strip[data-kind="functions"]::before { background: linear-gradient(180deg, #5eead4, #14b8a6 50%, #0e7490); }
+.strip[data-kind="recipes"]::before   { background: linear-gradient(180deg, #f472b6, #db2777 50%, #9d174d); }
+
+.strip::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 24px; right: 24px; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(196, 212, 230, 0.25), transparent);
+  pointer-events: none;
 }
 
 .icon {

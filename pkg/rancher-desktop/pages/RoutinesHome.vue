@@ -315,13 +315,17 @@ import { useStartupProgress } from './agent/useStartupProgress';
 type Tab = 'mywork' | 'library' | 'marketplace';
 type MyWorkView = 'active' | 'archive';
 
+const props = withDefaults(defineProps<{
+  initialTab?: Tab;
+}>(), { initialTab: 'mywork' });
+
 const emit = defineEmits<{
   (e: 'open-workflow', id: string): void
   (e: 'use-template', slug: string): void
   (e: 'new-blank'): void
 }>();
 
-const activeTab = ref<Tab>('mywork');
+const activeTab = ref<Tab>(props.initialTab);
 const myWorkView = ref<MyWorkView>('active');
 
 // Composables = the controller layer. The view only reads their reactive

@@ -123,10 +123,6 @@ document.getElementById('btn-open-sulla').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:open-main');
 });
 
-document.getElementById('btn-open-editor').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-editor');
-});
-
 document.getElementById('btn-open-docker').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:open-docker');
 });
@@ -139,10 +135,6 @@ document.getElementById('btn-open-dashboard').addEventListener('click', () => {
 
 document.getElementById('btn-secretary-mode').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:secretary-mode');
-});
-
-document.getElementById('btn-capture-studio').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-capture-studio');
 });
 
 // Settings panel buttons
@@ -242,33 +234,4 @@ ipcRenderer.on('tray-panel:state-update', (_event, state) => {
     document.getElementById('k8s-status').textContent += ` (${ state.k8sContext })`;
   }
 
-  if (state.extensions) {
-    renderExtensions(state.extensions);
-  }
 });
-
-// ── Extensions rendering ────────────────────────────────────────────────
-
-function renderExtensions(extensions) {
-  const list = document.getElementById('extensions-list');
-
-  if (!extensions || extensions.length === 0) {
-    list.innerHTML = '<span class="empty-text">No extensions installed</span>';
-    return;
-  }
-
-  list.innerHTML = extensions.map(ext => `
-    <button class="ext-item" data-url="${ ext.url }">
-      <span class="ext-icon">${ ext.label.charAt(0).toUpperCase() }</span>
-      ${ ext.label }
-    </button>
-  `).join('');
-
-  // Attach click handlers
-  list.querySelectorAll('.ext-item').forEach(item => {
-    item.addEventListener('click', () => {
-      const url = item.getAttribute('data-url');
-      if (url) ipcRenderer.send('tray-panel:open-url', url);
-    });
-  });
-}

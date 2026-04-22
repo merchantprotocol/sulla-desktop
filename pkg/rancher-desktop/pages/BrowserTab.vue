@@ -137,12 +137,6 @@
       </div>
     </template>
 
-    <template v-else-if="tabMode === 'extensions'">
-      <div class="flex-1 min-h-0 overflow-auto">
-        <AgentExtensions embedded />
-      </div>
-    </template>
-
     <template v-else-if="tabMode === 'vault'">
       <div class="flex-1 min-h-0 overflow-auto">
         <!-- Vault sub-navigation: list → picker → editor -->
@@ -240,10 +234,11 @@
     </template>
 
     <!-- Routines: playbill landing page, switches to canvas when a routine is opened -->
-    <template v-else-if="tabMode === 'routines'">
+    <template v-else-if="tabMode === 'routines' || tabMode === 'marketplace'">
       <div class="flex-1 min-h-0 overflow-hidden relative">
         <RoutinesHome
           v-if="!activeRoutineId"
+          :initial-tab="tabMode === 'marketplace' ? 'marketplace' : 'mywork'"
           @open-workflow="onOpenRoutine"
           @use-template="onUseTemplate"
           @new-blank="onNewBlankRoutine"
@@ -273,7 +268,6 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import AccountEditor from './AccountEditor.vue';
 import AgentCalendar from './AgentCalendar.vue';
 import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
-import AgentExtensions from './AgentExtensions.vue';
 import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentRoutines from './AgentRoutines.vue';
@@ -299,13 +293,13 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   chat:         'Chat',
   calendar:     'Calendar',
   integrations: 'Integrations',
-  extensions:   'Extensions',
   document:     'Document',
   secretary:    'Secretary',
   vault:        'Password Manager',
   account:      'My Account',
   history:      'History',
   routines:     'Routines',
+  marketplace:  'Sulla Studio',
 };
 
 const props = defineProps<{

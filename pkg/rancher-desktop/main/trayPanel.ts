@@ -12,7 +12,7 @@ import { BrowserWindow, ipcMain, app } from 'electron';
 import mainEvents from '@pkg/main/mainEvents';
 import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
-import { openMain, openEditor, openCaptureStudio, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
+import { openMain, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 
 const console = Logging.background;
@@ -102,7 +102,6 @@ export function sendPanelState(state: {
   docker?:     string;
   k8s?:        string;
   k8sContext?: string;
-  extensions?: { id: string; label: string; url: string }[];
 }): void {
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.webContents.send('tray-panel:state-update', state);
@@ -206,11 +205,6 @@ function registerPanelIpc(): void {
     panelWindow?.hide();
   });
 
-  ipcMain.on('tray-panel:open-editor', () => {
-    openEditor();
-    panelWindow?.hide();
-  });
-
   ipcMain.on('tray-panel:open-docker', () => {
     openDockerDashboard();
     panelWindow?.hide();
@@ -218,11 +212,6 @@ function registerPanelIpc(): void {
 
   ipcMain.on('tray-panel:open-dashboard', () => {
     openDashboard();
-    panelWindow?.hide();
-  });
-
-  ipcMain.on('tray-panel:open-capture-studio', () => {
-    openCaptureStudio();
     panelWindow?.hide();
   });
 
