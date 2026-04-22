@@ -364,6 +364,33 @@ export interface IpcMainInvokeEvents {
   'routines-execute':              (workflowId: string, triggerPayload?: string) => { executionId: string; workflowId: string };
   'routines-abort':                (executionId: string) => { aborted: boolean; reason?: string };
   'routines-export':               (workflowId: string) => { path: string } | { canceled: true };
+  'routines-list-runs':            (workflowId: string, limit?: number) => Array<{
+    executionId:     string;
+    workflowId:      string;
+    workflowName:    string;
+    lastNodeId:      string;
+    lastNodeLabel:   string;
+    checkpointCount: number;
+    startedAt:       string;
+    endedAt:         string;
+  }>;
+  'routines-load-run':             (executionId: string) => {
+    executionId:     string;
+    workflowId:      string;
+    workflowName:    string;
+    startedAt:       string;
+    endedAt:         string;
+    checkpointCount: number;
+    nodeOutputs:     Record<string, { nodeId: string; label: string; output: unknown; completedAt: string }>;
+    checkpoints:     Array<{
+      sequence:    number;
+      nodeId:      string;
+      nodeLabel:   string;
+      nodeSubtype: string;
+      nodeOutput:  unknown;
+      createdAt:   string;
+    }>;
+  } | null;
 
   // Workflow execution
   'workflow-execute':          (workflowId: string, triggerPayload: unknown) => { executionId: string };

@@ -177,9 +177,23 @@ export class PlaybookController<TState = any> {
 
   async processWorkflowPlaybook(state: TState): Promise<TState> {
     this.isProcessingPlaybook = true;
+
+    // Scope the workflow routing metadata for the entire playbook walk.
+    // BaseNode.wsChatMessage emits `node_thinking` events whenever these
+    // are set, so every orchestrator LLM turn inside the loop surfaces
+    // its prose into the live stream (attributed to whichever step is
+    // currently running). It also gates the subconscious middleware to
+    // skip during workflow runs. Saved + restored so returning to
+    // non-workflow conversation flow doesn't leave these stamped.
+    const prevWorkflowNodeId = (state as any).metadata?.workflowNodeId;
+    const prevWorkflowParentChannel = (state as any).metadata?.workflowParentChannel;
+    (state as any).metadata.workflowParentChannel = (state as any).metadata?.wsChannel || 'workbench';
+
     try {
       return await this._processWorkflowPlaybookInner(state);
     } finally {
+      (state as any).metadata.workflowNodeId = prevWorkflowNodeId;
+      (state as any).metadata.workflowParentChannel = prevWorkflowParentChannel;
       this.isProcessingPlaybook = false;
 
       if (this._continuationQueued) {
@@ -569,6 +583,14 @@ export class PlaybookController<TState = any> {
         const step: PlaybookStepResult = processNextStep(currentPlaybook);
         meta.activeWorkflow = step.updatedPlaybook;
 
+        // Stamp the current step's nodeId on the state so any graph.execute
+        // call inside this iteration attributes orchestrator thoughts to
+        // that specific node in the live stream. Previous iterations may
+        // have stamped a different node; overwriting each turn keeps the
+        // attribution fresh as the playbook walks.
+        const stepNodeId = (step as any).nodeId;
+        if (stepNodeId) (state as any).metadata.workflowNodeId = stepNodeId;
+
         playbookLog('walker_step', {
           action:         step.action,
           nodeId:         (step as any).nodeId || 'n/a',
@@ -597,21 +619,9 @@ export class PlaybookController<TState = any> {
           this.emitPlaybookEvent(state, 'node_started', { nodeId: opNodeId, nodeLabel: opLabel, prompt: step.prompt });
 
           this.injectWorkflowMessage(state, step.prompt);
-
-          // Scope workflowNodeId to this orchestrator step so BaseNode.wsChatMessage
-          // emits node_thinking events attributed to this node. Without this, the
-          // orchestrator's streaming reasoning never reaches the Live stream.
-          const opPrevNodeId = (state as any).metadata?.workflowNodeId;
-          const opPrevParentChannel = (state as any).metadata?.workflowParentChannel;
-          (state as any).metadata.workflowNodeId = opNodeId;
-          (state as any).metadata.workflowParentChannel = (state as any).metadata?.wsChannel || 'workbench';
-
-          try {
-            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-          } finally {
-            (state as any).metadata.workflowNodeId = opPrevNodeId;
-            (state as any).metadata.workflowParentChannel = opPrevParentChannel;
-          }
+          // workflowNodeId/workflowParentChannel are already scoped at the
+          // top of processWorkflowPlaybook + stamped per loop iteration.
+          state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
           let opMsgs = (state as any).messages;
           let opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
@@ -656,17 +666,8 @@ export class PlaybookController<TState = any> {
             `You MUST produce a substantive text response now. This is the output that will be ` +
             `passed to the next step in the workflow. Do not end your turn until you have provided it.`);
 
-            const opRetryPrevNodeId = (state as any).metadata?.workflowNodeId;
-            const opRetryPrevParentChannel = (state as any).metadata?.workflowParentChannel;
-            (state as any).metadata.workflowNodeId = opNodeId;
-            (state as any).metadata.workflowParentChannel = (state as any).metadata?.wsChannel || 'workbench';
-
-            try {
-              state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
-            } finally {
-              (state as any).metadata.workflowNodeId = opRetryPrevNodeId;
-              (state as any).metadata.workflowParentChannel = opRetryPrevParentChannel;
-            }
+            // Scoping already set at the playbook level + per loop iteration.
+            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
             opMsgs = (state as any).messages;
             opLastAssistant = [...opMsgs].reverse().find((m: any) => m.role === 'assistant');
@@ -1843,10 +1844,12 @@ export class PlaybookController<TState = any> {
   }
 
   private injectWorkflowMessage(state: TState, content: string, _silent?: boolean): void {
-    const msgs = (state as any).messages;
-    if (Array.isArray(msgs)) {
-      msgs.push({ role: 'user', content: `[Workflow] ${ content }` });
+    const s = state as any;
+    if (!Array.isArray(s.messages)) {
+      console.warn('[PlaybookController] injectWorkflowMessage: state.messages was not an array — initializing');
+      s.messages = [];
     }
+    s.messages.push({ role: 'user', content: `[Workflow] ${ content }` });
   }
 
   // ─── Checkpoint ─────────────────────────────────────────────────
@@ -1987,6 +1990,14 @@ export class PlaybookController<TState = any> {
       state: any;
     };
 
+    if (!prompt || !prompt.trim()) {
+      console.error(`[PlaybookController] executeSubAgent: empty prompt for node "${ nodeId }" agent "${ agentId }" — sub-agent would receive no user message`);
+      throw new Error(`Sub-agent "${ agentId || nodeId }" received an empty prompt. The orchestrator must produce a non-empty task message.`);
+    }
+
+    if (!Array.isArray(subState.messages)) {
+      subState.messages = [];
+    }
     subState.messages.push({ role: 'user', content: prompt });
 
     subState.metadata.isSubAgent = true;

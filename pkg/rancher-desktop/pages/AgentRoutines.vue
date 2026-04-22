@@ -3,14 +3,17 @@
     ref="frameRef"
     class="routines-frame"
     @dragover.prevent="onDragOver"
+    @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
       :default-viewport="{ zoom: 1 }"
-      :default-edge-options="{ type: 'smoothstep' }"
+      :default-edge-options="{ type: 'routine' }"
       :delete-key-code="null"
+      :selection-key-code="null"
+      :multi-selection-key-code="null"
       fit-view-on-init
       class="routines-flow"
       :class="{ locked }"
@@ -18,6 +21,8 @@
       @pane-click="onPaneClick"
       @node-click="onNodeClick"
       @node-context-menu="onNodeContextMenu"
+      @node-drag="onNodeDrag"
+      @node-drag-stop="onNodeDragStop"
       @edge-click="onEdgeClick"
       @connect="onConnect"
     >
@@ -30,6 +35,18 @@
            file stays importable as-is. -->
       <template #node-workflow="nodeProps">
         <RoutineNode v-bind="nodeProps" />
+      </template>
+      <!-- Loop container — dashed-frame that (phase 2) parents the body
+           nodes via VueFlow's parentNode. Distinct from other routine
+           nodes so it can own its own layout, handles, and sizing. -->
+      <template #node-loop-frame="nodeProps">
+        <LoopFrameNode v-bind="nodeProps" />
+      </template>
+      <!-- Custom edge with dim base + traveling violet pulse overlay when
+           flowing. Matches the L1 canvas design's animated-gradient feel
+           (which default SmoothStepEdge can't do — only one path). -->
+      <template #edge-routine="edgeProps">
+        <RoutineEdge v-bind="edgeProps" />
       </template>
       <Background
         :variant="BackgroundVariant.Lines"
@@ -147,6 +164,25 @@
           </ControlButton>
         </template>
         <ControlButton
+          v-if="mode === 'run'"
+          class="runs-btn"
+          :class="{ active: runsFlyoutOpen }"
+          title="Run history"
+          @click="toggleRunsFlyout"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+        </ControlButton>
+        <ControlButton
           class="mode-toggle"
           :class="{ 'is-edit': mode === 'edit' }"
           :title="mode === 'edit' ? 'Save (switch to run mode)' : 'Edit routine'"
@@ -244,6 +280,15 @@
       </div>
     </div>
 
+    <!-- Backdrop for the top-right title block. Sits between the canvas
+         (z-index 0/auto) and the ambient overlays so node cards passing
+         beneath the HUD are obscured and the kicker/title stays legible.
+         Matches the stream-backdrop's mask-faded edges for a soft fit. -->
+    <div
+      class="title-backdrop"
+      aria-hidden="true"
+    />
+
     <div class="title-block">
       <div class="title-kicker">
         <span class="d" />{{ mode === 'edit' ? 'EDIT MODE' : 'LIVE' }}
@@ -334,7 +379,7 @@
     <!-- Run-mode FAB: triggers execution of this routine. Placed in the
          same position as the Add-node FAB so switching modes swaps the
          affordance rather than stacking both on screen. -->
-    <template v-if="mode === 'run'">
+    <template v-if="mode === 'run' && !viewingPastRun">
       <button
         type="button"
         class="routines-fab run-fab"
@@ -364,14 +409,134 @@
       </div>
     </template>
 
+    <!-- Runs flyout — anchored under the Runs button in the Controls bar.
+         Lists recent executions for this workflow; clicking one hydrates
+         the canvas with that run's final node outputs for inspection. -->
+    <div
+      v-if="runsFlyoutOpen"
+      class="runs-flyout nodrag"
+      @click.stop
+      @pointerdown.stop
+    >
+      <div class="runs-flyout-head">
+        <span class="runs-flyout-title">Run history</span>
+        <button
+          type="button"
+          class="runs-flyout-close"
+          aria-label="Close"
+          @click="closeRunsFlyout"
+        >✕</button>
+      </div>
+      <div
+        v-if="pastRunsLoading"
+        class="runs-flyout-status"
+      >
+        Loading…
+      </div>
+      <div
+        v-else-if="pastRuns.length === 0"
+        class="runs-flyout-status"
+      >
+        No recorded runs yet.
+      </div>
+      <ul
+        v-else
+        class="runs-list"
+      >
+        <li
+          v-for="run in pastRuns"
+          :key="run.executionId"
+          class="runs-item"
+          :class="{ active: viewingPastRun?.executionId === run.executionId }"
+          @click="openPastRun(run.executionId)"
+        >
+          <span class="runs-item-time">{{ formatRunStamp(run.startedAt) }}</span>
+          <span class="runs-item-body">
+            <span class="runs-item-last">{{ run.lastNodeLabel || '—' }}</span>
+            <span class="runs-item-meta">{{ run.checkpointCount }} steps · {{ formatRunSpan(run.startedAt, run.endedAt) }}</span>
+          </span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Delete confirmation — one dialog for every delete path (keyboard
+         Delete, context menu, future buttons). Enter confirms, Escape
+         cancels; clicking the backdrop also cancels. -->
+    <div
+      v-if="deleteConfirm"
+      class="delete-confirm-backdrop"
+      @click="cancelDelete"
+    >
+      <div
+        class="delete-confirm"
+        role="dialog"
+        aria-labelledby="delete-confirm-title"
+        @click.stop
+      >
+        <div
+          id="delete-confirm-title"
+          class="dc-title"
+        >
+          Delete {{ deleteConfirmSummary }}?
+        </div>
+        <div class="dc-body">
+          This can't be undone from the canvas — only the undo stack will
+          bring it back.
+        </div>
+        <div class="dc-actions">
+          <button
+            type="button"
+            class="dc-btn cancel"
+            @click="cancelDelete"
+          >Cancel</button>
+          <button
+            type="button"
+            class="dc-btn danger"
+            autofocus
+            @click="confirmDelete"
+          >Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Past-run banner — pinned at the top of the frame when the user is
+         inspecting a historical run so the canvas can't be mistaken for a
+         live one. Return-to-live clears node state and drops back to idle. -->
+    <div
+      v-if="viewingPastRun"
+      class="past-run-banner"
+    >
+      <span class="banner-dot" />
+      <span class="banner-text">
+        Viewing past run · <b>{{ formatRunStamp(viewingPastRun.startedAt) }}</b>
+        · {{ formatRunSpan(viewingPastRun.startedAt, viewingPastRun.endedAt) }}
+      </span>
+      <button
+        type="button"
+        class="banner-exit"
+        @click="exitPastRunView"
+      >Return to live</button>
+    </div>
+
+    <!-- Edit mode — right-hand config drawer for the selected node.
+         Run mode uses NodeOutputPanel instead (output + turns, no form). -->
     <NodeConfigPanel
+      v-if="mode === 'edit'"
       :open="configOpen"
       :node="selectedNode"
       :mode="mode"
       :upstream-nodes="upstreamNodes"
+      :children="selectedChildren"
       @close="closeConfig"
       @save="onConfigSave"
       @update-config="onConfigUpdate"
+    />
+    <NodeOutputPanel
+      v-else
+      :open="configOpen"
+      :node="selectedNode"
+      :children="selectedChildren"
+      @close="closeConfig"
     />
 
     <CommandPrompt
@@ -544,8 +709,11 @@ import {
 } from './routines/libraryMapping';
 
 import CommandPrompt from './routines/CommandPrompt.vue';
+import LoopFrameNode from './routines/LoopFrameNode.vue';
 import NodeConfigPanel from './routines/NodeConfigPanel.vue';
 import NodeDrawer from './routines/NodeDrawer.vue';
+import NodeOutputPanel from './routines/NodeOutputPanel.vue';
+import RoutineEdge from './routines/RoutineEdge.vue';
 import RoutineNode from './routines/RoutineNode.vue';
 
 type Mode = 'edit' | 'run';
@@ -675,7 +843,10 @@ interface StreamLine {
   /** Optional override for the kind chip label. When set, the chip shows
       this string instead of the default "thinking"/"tool"/etc. — used
       for `thk` lines so the chip tells you *which* node is thinking. */
-  badge?: string;
+  badge?:  string;
+  /** Emitting node, when the event is node-attributed. Lets the run-mode
+      output drawer filter the global stream down to one card's turns. */
+  nodeId?: string;
 }
 const liveEvents = ref<StreamLine[]>([]);
 
@@ -713,7 +884,11 @@ watch(() => liveEvents.value.length, () => {
 // SURFACES a hint (`isStalled`); it no longer clears `isRunBusy` or
 // `hasActiveExecution`. The Stop button stays live the entire time —
 // the user must always be able to abort a dangling run.
-const MAX_STALL_MS = 90_000;
+// 5 minutes — long enough that a slow subconscious / long agent thinking
+// phase doesn't falsely flag the run as stalled, short enough that a
+// truly dead stream eventually surfaces. This flag is visual-only;
+// Stop stays clickable regardless.
+const MAX_STALL_MS = 300_000;
 let runStallTimer: ReturnType<typeof setTimeout> | null = null;
 
 function bumpStallTimer() {
@@ -738,6 +913,10 @@ function clearStallTimer() {
 // only on real terminal signals (workflow_completed/failed/aborted or a
 // confirmed abort IPC) — never from the stall watchdog.
 function beginRun() {
+  // Launching a live run bumps us out of any historical view — the
+  // banner/hydrated state would otherwise fight with incoming live
+  // events.
+  viewingPastRun.value = null;
   hasActiveExecution.value = true;
   isRunBusy.value = true;
   runError.value = null;
@@ -745,7 +924,37 @@ function beginRun() {
   bumpStallTimer();
 }
 
-function endRun() {
+// Any nodes still in `running` state when a run terminates need to have
+// their execution sealed so the live elapsed timer freezes and the card
+// stops glowing violet. `terminal` decides the settled state: 'done' for
+// clean completions, 'failed' for aborts / failures (the node was in the
+// middle of work and got interrupted — closer to failed than done).
+function freezeRunningNodes(terminal: 'done' | 'failed') {
+  const ts = Date.now();
+  let touched = false;
+  for (const node of nodes.value) {
+    const state = node.data?.state;
+    if (state !== 'running') continue;
+    const prevExec = (node.data?.execution as Record<string, unknown> | undefined) ?? {};
+    node.data = {
+      ...node.data,
+      state:     terminal,
+      execution: {
+        ...prevExec,
+        status:      terminal === 'done' ? 'completed' : 'failed',
+        completedAt: ts,
+        // Preserve existing startedAt so elapsedLabel resolves to a
+        // frozen duration instead of blanking.
+        startedAt:   prevExec.startedAt ?? ts,
+      },
+    };
+    touched = true;
+  }
+  if (touched) nodes.value = [...nodes.value];
+}
+
+function endRun(terminal: 'done' | 'failed' = 'failed') {
+  freezeRunningNodes(terminal);
   hasActiveExecution.value = false;
   isRunBusy.value = false;
   clearStallTimer();
@@ -834,12 +1043,18 @@ const cinemaMode = ref(true);
 function focusOnRunningNode(nodeId: string) {
   if (!cinemaMode.value || !isRunBusy.value) return;
 
+  // Events may arrive with a subnode id (e.g. `-prompt-0`). Resolve to
+  // the real canvas card so the fitView actually matches.
+  const canvasNode = resolveCanvasNode(nodeId);
+  if (!canvasNode) return;
+  const canvasId = canvasNode.id;
+
   // Collect 1-hop neighbors on both sides so the frame tells a story:
   // source → running → target.
-  const neighbors = new Set<string>([nodeId]);
+  const neighbors = new Set<string>([canvasId]);
   for (const edge of edges.value) {
-    if (edge.source === nodeId) neighbors.add(edge.target);
-    if (edge.target === nodeId) neighbors.add(edge.source);
+    if (edge.source === canvasId) neighbors.add(edge.target);
+    if (edge.target === canvasId) neighbors.add(edge.source);
   }
   const ids = [...neighbors].filter(id => nodes.value.some(n => n.id === id));
   if (ids.length === 0) return;
@@ -861,7 +1076,7 @@ function setNodeState(
   state: 'idle' | 'queued' | 'running' | 'done' | 'failed',
   ts?: number,
 ) {
-  const node = nodes.value.find(n => n.id === nodeId);
+  const node = resolveCanvasNode(nodeId);
   if (!node) return;
 
   const t = typeof ts === 'number' && Number.isFinite(ts) ? ts : Date.now();
@@ -915,12 +1130,59 @@ function resetNodeStates() {
 // drawer can show it when the user clicks a running/done card during a
 // run. We keep the raw value — the drawer does its own formatting.
 function setNodeExecutionOutput(nodeId: string, output: unknown) {
-  const node = nodes.value.find(n => n.id === nodeId);
+  const node = resolveCanvasNode(nodeId);
   if (!node) return;
   const prevExec = (node.data?.execution as Record<string, unknown> | undefined) ?? {};
   node.data = {
     ...node.data,
     execution: { ...prevExec, output },
+  };
+}
+
+/**
+ * Per-node conversation log. Mirrors the top-left live stream but stored
+ * on each node so turns survive longer than the global 50-line buffer
+ * and the run-mode output drawer can show a card's full timeline.
+ *
+ * Capped at NODE_TURN_LIMIT so a chatty multi-turn agent can't pin
+ * unbounded memory on the node. Cleared implicitly when the node's
+ * execution bag is reset at the start of a run (see resetNodeStates).
+ */
+interface NodeTurn {
+  t:       string;
+  k:       'tool' | 'obs' | 'thk' | 'dec' | 'err';
+  msg:     string;
+  badge?:  string;
+}
+const NODE_TURN_LIMIT = 200;
+
+// PlaybookController attaches subnode suffixes like `-prompt-0` to the
+// node id on delegation — the same regex `displayNodeName` uses. Resolve
+// here so turns and state transitions route to the actual canvas card
+// even when events carry sub-ids.
+function resolveCanvasNode(nodeId: string) {
+  const direct = nodes.value.find(n => n.id === nodeId);
+  if (direct) return direct;
+  const baseId = nodeId.replace(/-[a-z]+-\d+$/, '');
+  if (baseId !== nodeId) {
+    return nodes.value.find(n => n.id === baseId);
+  }
+  return undefined;
+}
+
+function appendNodeTurn(nodeId: string, turn: NodeTurn) {
+  const node = resolveCanvasNode(nodeId);
+  if (!node) return;
+  const prevExec = (node.data?.execution as { turns?: NodeTurn[] } & Record<string, unknown> | undefined) ?? {};
+  const prevTurns: NodeTurn[] = Array.isArray(prevExec.turns) ? prevExec.turns : [];
+  // Keep the most recent NODE_TURN_LIMIT entries — drops the oldest when
+  // the ring fills so the newest turn is always visible in the drawer.
+  const nextTurns = prevTurns.length >= NODE_TURN_LIMIT
+    ? [...prevTurns.slice(-(NODE_TURN_LIMIT - 1)), turn]
+    : [...prevTurns, turn];
+  node.data = {
+    ...node.data,
+    execution: { ...prevExec, turns: nextTurns },
   };
 }
 
@@ -938,10 +1200,27 @@ function stamp(ts?: number): string {
   return `${ h }:${ m }:${ s }`;
 }
 
-function pushLine(kind: StreamLine['k'], msg: string, ts?: number, badge?: string) {
-  const line: StreamLine = { t: stamp(ts), k: kind, msg };
+function pushLine(
+  kind:    StreamLine['k'],
+  msg:     string,
+  ts?:     number,
+  badge?:  string,
+  nodeId?: string,
+) {
+  const t = stamp(ts);
+  const line: StreamLine = { t, k: kind, msg };
   if (badge) line.badge = badge;
+  if (nodeId) line.nodeId = nodeId;
   liveEvents.value = [...liveEvents.value.slice(-49), line];
+
+  // Shadow every node-attributed line into that node's own turns log —
+  // gives the run-mode output drawer a persistent conversation buffer
+  // that survives past the global stream's 50-line horizon.
+  if (nodeId) {
+    const turn: NodeTurn = { t, k: kind, msg };
+    if (badge) turn.badge = badge;
+    appendNodeTurn(nodeId, turn);
+  }
 }
 
 // Short label displayed in the stream kind chip. Kept as a function so
@@ -1031,7 +1310,7 @@ function handleWorkflowEvent(event: any) {
       setNodeState(nodeId, 'running', tsMs);
       focusOnRunningNode(nodeId);
     }
-    pushLine('tool', who, event.timestamp);
+    pushLine('tool', who, event.timestamp, undefined, nodeId);
     break;
 
   case 'node_completed':
@@ -1046,26 +1325,29 @@ function handleWorkflowEvent(event: any) {
         runCompletedNodeIds.value = next;
       }
     }
-    pushLine('obs', `${ who } · done`, event.timestamp);
+    pushLine('obs', `${ who } · done`, event.timestamp, undefined, nodeId);
     break;
 
   case 'node_failed': {
     if (nodeId) setNodeState(nodeId, 'failed', tsMs);
     const raw = typeof event.error === 'string' ? event.error : JSON.stringify(event.error ?? 'failed');
     const err = stripXml(raw).slice(0, 240);
-    pushLine('err', `${ who } · ${ err }`, event.timestamp);
+    pushLine('err', `${ who } · ${ err }`, event.timestamp, undefined, nodeId);
     break;
   }
 
   case 'node_thinking':
-    // All agent thinking surfaces in the top-left stream — the node
-    // itself no longer renders a bubble. The chip shows the node's name
-    // (via `badge`) instead of the generic "thinking" label so multi-
-    // agent routines stay legible; the message itself is just the prose.
-    // `stripXml` drops tool-call envelopes and <thinking> wrappers.
+    // All agent thinking surfaces in the top-left stream. The chip
+    // prefers the event's `thinkingLabel` when set — subconscious
+    // subagents (memory-recall, observation, summarizer) use it so
+    // their work is visibly attributed instead of silently running
+    // under the orchestrator's name for 30+ seconds.
     if (event.content) {
       const text = stripXml(String(event.content)).slice(0, 220);
-      if (text) pushLine('thk', text, event.timestamp, who);
+      const badge = (typeof event.thinkingLabel === 'string' && event.thinkingLabel.trim())
+        ? event.thinkingLabel.trim()
+        : who;
+      if (text) pushLine('thk', text, event.timestamp, badge, nodeId);
     }
     break;
 
@@ -1077,19 +1359,19 @@ function handleWorkflowEvent(event: any) {
   case 'workflow_completed':
     pushLine('dec', 'completed', event.timestamp);
     runEndedAt.value = tsMs;
-    endRun();
+    endRun('done');
     break;
 
   case 'workflow_aborted':
     pushLine('err', `aborted${ event.reason ? `: ${ event.reason }` : '' }`, event.timestamp);
     runEndedAt.value = tsMs;
-    endRun();
+    endRun('failed');
     break;
 
   case 'workflow_failed':
     pushLine('err', `failed${ event.error ? `: ${ event.error }` : '' }`, event.timestamp);
     runEndedAt.value = tsMs;
-    endRun();
+    endRun('failed');
     break;
 
   case 'workflow_paused':
@@ -1245,7 +1527,16 @@ function applyDefinition(def: WorkflowDefinition): void {
   if (typeof def.name === 'string') title.value = def.name;
   if (typeof def.description === 'string') subtitle.value = def.description;
   if (Array.isArray(def.nodes)) nodes.value = def.nodes as typeof nodes.value;
-  if (Array.isArray(def.edges)) edges.value = def.edges as typeof edges.value;
+  if (Array.isArray(def.edges)) {
+    // Migrate legacy edges that were persisted as `smoothstep` (or with
+    // no type at all) to our custom `routine` edge so every edge picks
+    // up the base-track + traveling-pulse treatment. Auto-save will
+    // re-persist with the new type on the next mutation.
+    edges.value = (def.edges as any[]).map((e) => {
+      if (!e.type || e.type === 'smoothstep') return { ...e, type: 'routine' };
+      return e;
+    }) as typeof edges.value;
+  }
   baseDefinition.value = def;
   enrichNodesForDisplay(nodes.value);
 }
@@ -1303,11 +1594,216 @@ const persistenceLabel = computed<string | null>(() => {
 // Provide mode to descendant RoutineNode components so they can hide edit-only UI.
 provide<typeof mode>('routines-mode', mode);
 
+// When a drag (library item OR an on-canvas node) passes over a loop
+// frame, we stash the frame's id here so the LoopFrameNode can add a
+// "drop target" highlight class. Cleared on drop / drag-end / leave.
+const dropTargetLoopId = ref<string | null>(null);
+provide('routines-drop-target-loop', dropTargetLoopId);
+
 const ctxMenu = reactive({ visible: false, x: 0, y: 0 });
 const nodeCtx = reactive({ visible: false, x: 0, y: 0, nodeId: null as string | null });
 const selectedEdgeId = ref<string | null>(null);
 
-const { setInteractive, zoomIn, zoomOut, fitView, project, addNodes, addEdges } = useVueFlow();
+// ── Run history ──
+// Backed by the `workflow_checkpoints` table. `routines-list-runs`
+// returns summary rows; clicking one fires `routines-load-run` and
+// hydrates the canvas with that run's recorded node outputs. The
+// canvas enters `viewingPastRun` mode — Run / edits disabled until
+// the user returns to live.
+interface PastRunSummary {
+  executionId:     string;
+  workflowId:      string;
+  workflowName:    string;
+  lastNodeId:      string;
+  lastNodeLabel:   string;
+  checkpointCount: number;
+  startedAt:       string;
+  endedAt:         string;
+}
+const runsFlyoutOpen = ref(false);
+const pastRuns = ref<PastRunSummary[]>([]);
+const pastRunsLoading = ref(false);
+const viewingPastRun = ref<{ executionId: string; startedAt: string; endedAt: string } | null>(null);
+
+async function fetchPastRuns() {
+  if (!props.workflowId) {
+    pastRuns.value = [];
+    return;
+  }
+  pastRunsLoading.value = true;
+  try {
+    const rows = await ipcRenderer.invoke('routines-list-runs', props.workflowId, 25);
+    pastRuns.value = Array.isArray(rows) ? rows : [];
+  } catch (err) {
+    console.warn('[AgentRoutines] Failed to load run history:', err);
+    pastRuns.value = [];
+  } finally {
+    pastRunsLoading.value = false;
+  }
+}
+
+function toggleRunsFlyout() {
+  runsFlyoutOpen.value = !runsFlyoutOpen.value;
+  if (runsFlyoutOpen.value) void fetchPastRuns();
+}
+
+function closeRunsFlyout() {
+  runsFlyoutOpen.value = false;
+}
+
+async function openPastRun(executionId: string) {
+  closeRunsFlyout();
+  try {
+    const snapshot = await ipcRenderer.invoke('routines-load-run', executionId);
+    if (!snapshot) {
+      pushLine('err', 'Run snapshot not found');
+      return;
+    }
+    // Clear any in-flight state first so the canvas doesn't show a
+    // half-live, half-historical mix.
+    resetNodeStates();
+    liveEvents.value = [];
+
+    // Apply each checkpointed node's output + state to its canvas card.
+    // Nodes that never ran in this execution stay idle. The baseline
+    // startedAt / completedAt give the elapsed counter a stable frozen
+    // duration.
+    const startedMs = Date.parse(snapshot.startedAt) || Date.now();
+    const endedMs = Date.parse(snapshot.endedAt) || startedMs;
+    for (const [nodeId, entry] of Object.entries(snapshot.nodeOutputs ?? {})) {
+      const out = entry as { nodeId: string; output: unknown; completedAt: string };
+      const completedMs = Date.parse(out.completedAt) || endedMs;
+      setNodeState(out.nodeId ?? nodeId, 'done', completedMs);
+      // Back-date startedAt to give the elapsed readout a sensible
+      // duration — we don't have per-node start times in the checkpoint
+      // so fall back to the run's start.
+      const canvasNode = resolveCanvasNode(out.nodeId ?? nodeId);
+      if (canvasNode) {
+        const exec = (canvasNode.data?.execution as Record<string, unknown> | undefined) ?? {};
+        canvasNode.data = {
+          ...canvasNode.data,
+          execution: { ...exec, startedAt: startedMs, completedAt: completedMs },
+        };
+      }
+      if (out.output != null) setNodeExecutionOutput(out.nodeId ?? nodeId, out.output);
+    }
+
+    viewingPastRun.value = {
+      executionId: snapshot.executionId,
+      startedAt:   snapshot.startedAt,
+      endedAt:     snapshot.endedAt,
+    };
+    // Trigger the edge-flow recompute so idle edges stay dim (no edges
+    // should light up during history view — no node is "running").
+    nodes.value = [...nodes.value];
+  } catch (err) {
+    console.warn('[AgentRoutines] Failed to open past run:', err);
+    pushLine('err', `failed to load run: ${ err instanceof Error ? err.message : String(err) }`);
+  }
+}
+
+function exitPastRunView() {
+  viewingPastRun.value = null;
+  resetNodeStates();
+  liveEvents.value = [];
+}
+
+function formatRunStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) {
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+    ' · ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatRunSpan(startIso: string, endIso: string): string {
+  const ms = Math.max(Date.parse(endIso) - Date.parse(startIso), 0);
+  if (!Number.isFinite(ms)) return '';
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m >= 60) {
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${ h }h ${ String(mm).padStart(2, '0') }m`;
+  }
+  return m > 0 ? `${ m }m ${ String(s).padStart(2, '0') }s` : `${ s }s`;
+}
+
+const { setInteractive, zoomIn, zoomOut, fitView, project, addNodes, addEdges, getSelectedNodes, getSelectedEdges } = useVueFlow();
+
+// ── Delete confirmation ──
+// One dialog handles keyboard Delete, the node context menu's "Remove
+// from flow" item, and any future delete path — keeps deletion behind
+// exactly one confirmation so we can never drop work by accident. The
+// selection snapshot is taken when the dialog opens so subsequent
+// canvas clicks (which would change the selection) don't silently
+// change what gets deleted.
+interface DeleteTarget {
+  nodeIds: string[];
+  edgeIds: string[];
+}
+const deleteConfirm = ref<DeleteTarget | null>(null);
+
+function collectDeletionTarget(): DeleteTarget | null {
+  if (mode.value !== 'edit') return null;
+  const selectedNodes = getSelectedNodes.value ?? [];
+  const selectedEdges = getSelectedEdges.value ?? [];
+  const nodeIds = new Set<string>(selectedNodes.map((n: any) => n.id));
+  const edgeIds = new Set<string>(selectedEdges.map((e: any) => e.id));
+  // Fall back to the explicit selection refs so single-click selections
+  // (which don't always populate VueFlow's multiselect state) still work.
+  if (selectedNodeId.value) nodeIds.add(selectedNodeId.value);
+  if (selectedEdgeId.value) edgeIds.add(selectedEdgeId.value);
+  if (nodeIds.size === 0 && edgeIds.size === 0) return null;
+  return { nodeIds: [...nodeIds], edgeIds: [...edgeIds] };
+}
+
+function requestDelete(explicit?: DeleteTarget) {
+  if (mode.value !== 'edit') return;
+  const target = explicit ?? collectDeletionTarget();
+  if (!target) return;
+  deleteConfirm.value = target;
+}
+
+function cancelDelete() {
+  deleteConfirm.value = null;
+}
+
+function confirmDelete() {
+  const target = deleteConfirm.value;
+  if (!target) return;
+  const nodeIds = new Set(target.nodeIds);
+  const edgeIds = new Set(target.edgeIds);
+  // Drop the selected edges plus any edge orphaned by a removed node —
+  // leaving dangling edges pointing at nothing would break the graph.
+  if (nodeIds.size > 0) {
+    nodes.value = nodes.value.filter(n => !nodeIds.has(n.id));
+    edges.value = edges.value.filter(e => !nodeIds.has(e.source) && !nodeIds.has(e.target));
+  }
+  if (edgeIds.size > 0) {
+    edges.value = edges.value.filter(e => !edgeIds.has(e.id));
+  }
+  // Clear residual selection state so the UI doesn't point at ghosts.
+  if (selectedNodeId.value && nodeIds.has(selectedNodeId.value)) selectedNodeId.value = null;
+  if (selectedEdgeId.value && edgeIds.has(selectedEdgeId.value)) selectedEdgeId.value = null;
+  deleteConfirm.value = null;
+}
+
+const deleteConfirmSummary = computed(() => {
+  const t = deleteConfirm.value;
+  if (!t) return '';
+  const parts: string[] = [];
+  if (t.nodeIds.length === 1) parts.push('1 node');
+  else if (t.nodeIds.length > 1) parts.push(`${ t.nodeIds.length } nodes`);
+  if (t.edgeIds.length === 1) parts.push('1 edge');
+  else if (t.edgeIds.length > 1) parts.push(`${ t.edgeIds.length } edges`);
+  return parts.join(' + ');
+});
 
 watch(locked, (l) => {
   setInteractive(!l);
@@ -1355,6 +1851,7 @@ function onNodeClick({ node }: { node: { id: string } }) {
 function onPaneClick() {
   closeCtxMenu();
   closeNodeCtx();
+  closeRunsFlyout();
   selectedNodeId.value = null;
   selectedEdgeId.value = null;
 }
@@ -1409,11 +1906,11 @@ function onNodeCtxDuplicate() {
 
 function onNodeCtxRemove() {
   if (mode.value !== 'edit' || !nodeCtx.nodeId) { closeNodeCtx(); return; }
+  // Route through the same confirmation dialog keyboard delete uses —
+  // one code path for every delete so the UX stays consistent.
   const id = nodeCtx.nodeId;
-  nodes.value = nodes.value.filter(n => n.id !== id);
-  edges.value = edges.value.filter(e => e.source !== id && e.target !== id);
-  if (selectedNodeId.value === id) selectedNodeId.value = null;
   closeNodeCtx();
+  requestDelete({ nodeIds: [id], edgeIds: [] });
 }
 
 // Partial-graph re-execution — stubbed until PlaybookController grows a
@@ -1468,18 +1965,90 @@ const upstreamNodes = computed(() => {
   });
 });
 
+// Children of the currently-selected node — only populated for loop
+// frames (they're the only container type today). The drawers render
+// this list at the bottom so the user can confirm which cards are
+// nested inside the loop they just selected.
+const selectedChildren = computed(() => {
+  const id = selectedNodeId.value;
+  if (!id) return [];
+  return nodes.value
+    .filter(n => (n as any).parentNode === id)
+    .map(n => ({
+      nodeId:   n.id,
+      label:    (n.data as any)?.title ?? (n.data as any)?.label ?? n.id,
+      kicker:   (n.data as any)?.kicker ?? '',
+      nodeCode: (n.data as any)?.nodeCode ?? '',
+      state:    (n.data as any)?.state ?? 'idle',
+      avatar:   (n.data as any)?.avatar ?? { type: 'default' },
+    }));
+});
+
 // ── Edge connections — drag from one handle to another ──
 function onConnect(params: { source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }) {
   if (mode.value !== 'edit') return;
   addEdges([{
     ...params,
     id:   `e-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 6) }`,
-    type: 'smoothstep',
+    type: 'routine',
   }]);
 }
 
 // ── Drag-and-drop from the library drawer onto the canvas ──
 const frameRef = ref<HTMLElement | null>(null);
+
+/**
+ * Convert a screen-space pointer event to world-space coordinates on the
+ * VueFlow canvas. Accepts MouseEvent / DragEvent / TouchEvent — for
+ * touch events we read the first contact point, since VueFlow's
+ * NodeDragEvent is a MouseTouchEvent union.
+ */
+function pointerToWorld(event: MouseEvent | TouchEvent | DragEvent): { x: number; y: number } {
+  const bounds = frameRef.value?.getBoundingClientRect();
+  let clientX = 0;
+  let clientY = 0;
+  if ('touches' in event && event.touches && event.touches.length > 0) {
+    clientX = event.touches[0].clientX;
+    clientY = event.touches[0].clientY;
+  } else if ('clientX' in event) {
+    clientX = (event as MouseEvent).clientX;
+    clientY = (event as MouseEvent).clientY;
+  }
+  return project({
+    x: clientX - (bounds?.left ?? 0),
+    y: clientY - (bounds?.top ?? 0),
+  });
+}
+
+/**
+ * Is this point inside a loop frame? Returns the topmost loop (by
+ * iteration order) whose rectangle contains (worldX, worldY). `excludeId`
+ * skips a node that's being dragged so a loop can't claim itself as a
+ * child of itself. Coordinates for children are parent-local, so the
+ * comparison lifts them back to world-space before testing.
+ */
+function findLoopAt(worldX: number, worldY: number, excludeId?: string) {
+  for (const n of nodes.value) {
+    if ((n as any).type !== 'loop-frame') continue;
+    if (n.id === excludeId) continue;
+    const w = (n as any).dimensions?.width  ?? (n as any).width  ?? 0;
+    const h = (n as any).dimensions?.height ?? (n as any).height ?? 0;
+    if (!w || !h) continue;
+    // Lift parent-local position to world coords if this loop were ever
+    // itself nested (future-proof for nested loops).
+    let absX = n.position.x;
+    let absY = n.position.y;
+    const parentId = (n as any).parentNode as string | undefined;
+    if (parentId) {
+      const parent = nodes.value.find(p => p.id === parentId);
+      if (parent) { absX += parent.position.x; absY += parent.position.y; }
+    }
+    if (worldX >= absX && worldX <= absX + w && worldY >= absY && worldY <= absY + h) {
+      return { id: n.id, x: absX, y: absY };
+    }
+  }
+  return null;
+}
 
 function onDragOver(event: DragEvent) {
   if (mode.value !== 'edit') return;
@@ -1489,6 +2058,16 @@ function onDragOver(event: DragEvent) {
     || dt.types?.includes('application/x-routine-integration');
   if (!hasRoutine) return;
   dt.dropEffect = 'copy';
+
+  // Highlight a loop that the pointer is currently hovering over so the
+  // user can see their drop is going to land as a child of that loop.
+  const world = pointerToWorld(event);
+  const hit = findLoopAt(world.x, world.y);
+  dropTargetLoopId.value = hit?.id ?? null;
+}
+
+function onDragLeave() {
+  dropTargetLoopId.value = null;
 }
 
 function onDrop(event: DragEvent) {
@@ -1496,14 +2075,19 @@ function onDrop(event: DragEvent) {
   const dt = event.dataTransfer;
   if (!dt) return;
 
-  const bounds = frameRef.value?.getBoundingClientRect();
-  const position = project({
-    x: event.clientX - (bounds?.left ?? 0),
-    y: event.clientY - (bounds?.top ?? 0),
-  });
+  const world = pointerToWorld(event);
   // Center the card on the cursor — RoutineNode is ~220×120
-  position.x -= 110;
-  position.y -= 60;
+  let position = { x: world.x - 110, y: world.y - 60 };
+
+  // If the drop lands inside a loop frame, nest the new node: set
+  // parentNode and convert position to parent-local coords so VueFlow
+  // lays it out correctly inside the frame.
+  const hit = findLoopAt(world.x, world.y);
+  const parentNode = hit?.id;
+  if (hit) {
+    position = { x: position.x - hit.x, y: position.y - hit.y };
+  }
+  dropTargetLoopId.value = null;
 
   const id = `routine-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 6) }`;
 
@@ -1517,6 +2101,7 @@ function onDrop(event: DragEvent) {
         type: 'routine',
         position,
         data: makeIntegrationNodeData(integration),
+        ...(parentNode ? { parentNode, extent: 'parent' } : {}),
       }]);
     } catch { /* malformed payload — ignore */ }
 
@@ -1529,12 +2114,80 @@ function onDrop(event: DragEvent) {
   const item = findLibraryItem(subtype);
   if (!item) return;
 
+  // Loops render through LoopFrameNode (dashed container) rather than the
+  // regular card. VueFlow needs explicit width/height on the group node
+  // so children have somewhere to live. 560×220 fits ~2 cards side-by-side
+  // with room for padding and the label pills. Loops cannot be dropped
+  // into other loops via this path — we clear parentNode for them to
+  // avoid nesting confusion on the first iteration of the feature.
+  if (subtype === 'loop') {
+    addNodes([{
+      id,
+      type: 'loop-frame',
+      position: parentNode ? { x: world.x - 280, y: world.y - 110 } : position,
+      data: makeRoutineNodeData(item),
+      width: 560,
+      height: 220,
+    }]);
+    return;
+  }
+
   addNodes([{
     id,
     type: 'routine',
     position,
     data: makeRoutineNodeData(item),
+    ...(parentNode ? { parentNode, extent: 'parent' } : {}),
   }]);
+}
+
+// ── On-canvas drag: dragging an existing node over a loop ──
+// Mirrors the HTML-drag-drop flow above, but for VueFlow-managed nodes
+// already on the canvas. Lets users drop an existing card into a loop by
+// grabbing it and moving it over the frame. On drop-stop we either
+// (a) assign it to a new parent loop if the drop center lands inside one
+// or (b) clear its parentNode if it was dragged out of its old parent.
+function onNodeDrag(evt: { event: MouseEvent | TouchEvent; node: { id: string; type?: string } }) {
+  if (mode.value !== 'edit') return;
+  if (evt.node.type === 'loop-frame') {
+    // Dragging a loop itself — don't treat it as a candidate child.
+    dropTargetLoopId.value = null;
+    return;
+  }
+  const world = pointerToWorld(evt.event);
+  const hit = findLoopAt(world.x, world.y, evt.node.id);
+  dropTargetLoopId.value = hit?.id ?? null;
+}
+
+function onNodeDragStop(evt: { event: MouseEvent | TouchEvent; node: any }) {
+  if (mode.value !== 'edit') return;
+  dropTargetLoopId.value = null;
+  const node = evt.node;
+  if (node.type === 'loop-frame') return;
+
+  const world = pointerToWorld(evt.event);
+  const hit = findLoopAt(world.x, world.y, node.id);
+
+  const prevParent = node.parentNode as string | undefined;
+  const nextParent = hit?.id;
+
+  if (nextParent === prevParent) return;
+
+  // Find the actual mutable node reference.
+  const target = nodes.value.find(n => n.id === node.id);
+  if (!target) return;
+
+  if (nextParent) {
+    // Entering a loop — convert absolute world coords to parent-local.
+    (target as any).parentNode = nextParent;
+    (target as any).extent = 'parent';
+    target.position = { x: world.x - hit!.x - 110, y: world.y - hit!.y - 60 };
+  } else {
+    // Leaving — lift back to world coords.
+    (target as any).parentNode = undefined;
+    (target as any).extent = undefined;
+    target.position = { x: world.x - 110, y: world.y - 60 };
+  }
 }
 
 function onCtxAddNode() {
@@ -1769,7 +2422,8 @@ function onKeydown(e: KeyboardEvent) {
   }
 
   if (e.key === 'Escape') {
-    if (promptOpen.value) promptOpen.value = false;
+    if (deleteConfirm.value) cancelDelete();
+    else if (promptOpen.value) promptOpen.value = false;
     else if (ctxMenu.visible) closeCtxMenu();
     else if (nodeCtx.visible) closeNodeCtx();
     else if (drawerOpen.value) drawerOpen.value = false;
@@ -1778,15 +2432,33 @@ function onKeydown(e: KeyboardEvent) {
     return;
   }
 
-  // Delete / Backspace — remove the selected edge only. Nodes are removed
-  // through the context menu's "Remove from flow" action.
+  // Enter inside the delete confirm dialog confirms. Gated by
+  // deleteConfirm so we don't hijack Enter elsewhere on the canvas.
+  if (e.key === 'Enter' && deleteConfirm.value) {
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+    confirmDelete();
+    e.preventDefault();
+    return;
+  }
+
+  // Delete / Backspace — prompt a confirmation, then drop every selected
+  // node and/or edge. Multi-select via drag-box is included because we
+  // pull from VueFlow's getSelectedNodes/getSelectedEdges in addition to
+  // the single-click refs.
   if (e.key === 'Delete' || e.key === 'Backspace') {
     const target = e.target as HTMLElement | null;
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-    if (!selectedEdgeId.value) return;
-    const id = selectedEdgeId.value;
-    edges.value = edges.value.filter(edge => edge.id !== id);
-    selectedEdgeId.value = null;
+    // If the confirm dialog is already open, Delete / Backspace confirms
+    // rather than stacking another dialog.
+    if (deleteConfirm.value) {
+      confirmDelete();
+      e.preventDefault();
+      return;
+    }
+    const payload = collectDeletionTarget();
+    if (!payload) return;
+    deleteConfirm.value = payload;
     e.preventDefault();
   }
 }
@@ -1934,6 +2606,25 @@ watch(
   color: #e6ecf5;
   background: linear-gradient(135deg, #03060c 0%, #070d1a 60%, #01030a 100%);
   -webkit-font-smoothing: antialiased;
+  /* Block text-selection by default so dragging across node titles /
+     labels / HUD copy doesn't accidentally highlight a bunch of UI
+     chrome. Re-enabled below for the specific spots where selection is
+     actually wanted (editable title, drawer fields, output <pre>). */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Selection re-enabled in places the user genuinely wants to copy or
+   edit text: the contenteditable routine title/subtitle, any form
+   control, and the config/output drawers (node names, output blocks,
+   config fields). Everything else on the canvas stays click-through. */
+.routines-frame [contenteditable="true"],
+.routines-frame input,
+.routines-frame textarea,
+.routines-frame .config-panel,
+.routines-frame .output-panel {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .routines-flow {
@@ -2026,6 +2717,31 @@ watch(
   pointer-events: none;
   text-align: right;
   max-width: 48%;
+}
+
+/* Mirrors .stream-backdrop for the top-right HUD. Occupies the title
+   block's visual footprint (kicker + title + subtitle + breathing room)
+   so node cards drifting behind the HUD are occluded instead of
+   bleeding through and muddying the headline text. Fades out at the
+   edges so no hard rectangle shows against the starfield. */
+.title-backdrop {
+  position: absolute;
+  top: 28px;
+  right: 52px;
+  z-index: 1;
+  width: 36%;
+  max-width: 540px;
+  height: 140px;
+  pointer-events: none;
+  background: linear-gradient(135deg, #03060c 0%, #070d1a 60%, #01030a 100%);
+  -webkit-mask-image:
+    linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.78) 18%, black 40%, black 82%, rgba(0,0,0,0.45) 100%),
+    linear-gradient(270deg, black 0%, black 70%, rgba(0,0,0,0.4) 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.78) 18%, black 40%, black 82%, rgba(0,0,0,0.45) 100%),
+    linear-gradient(270deg, black 0%, black 70%, rgba(0,0,0,0.4) 100%);
+  mask-composite: intersect;
 }
 .title-kicker {
   font-family: var(--mono);
@@ -2339,52 +3055,288 @@ watch(
 /* Edges — clickable with a fat invisible hit area. Selection is a
    glowing blue; the violet palette is reserved for the "running"/active
    state on animated edges so the two reads don't collide. */
-.routines-flow :deep(.vue-flow__edge-path) {
-  stroke: rgba(168, 192, 220, 0.55);
-  stroke-width: 2;
-  transition: stroke 0.12s ease, stroke-width 0.12s ease, filter 0.12s ease;
+/* Edge hover — brighten the base path a touch. The routine edge owns
+   its full painting (base + pulse) in RoutineEdge.vue; we only override
+   the hover state here because scoped styles in the component can't
+   see :hover from the VueFlow wrapper. */
+.routines-flow :deep(.vue-flow__edge:hover .routine-edge-base:not(.flowing):not(.selected)) {
+  stroke: #7dd3fc;
 }
-.routines-flow :deep(.vue-flow__edge:hover .vue-flow__edge-path) {
-  stroke: #7dd3fc; /* brighter cyan-blue on hover */
+
+/* Runs flyout — anchored above the controls row. Lists recent past
+   executions for this workflow; clicking one hydrates the canvas with
+   that run's final node state for inspection. */
+.runs-flyout {
+  position: absolute;
+  left: 120px;
+  bottom: 150px;
+  z-index: 12;
+  min-width: 280px;
+  max-width: 360px;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(24, 36, 62, 0.98), rgba(14, 22, 40, 0.98));
+  border: 1px solid rgba(168, 192, 220, 0.25);
+  border-radius: 8px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
 }
-.routines-flow :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
-  stroke: #60a5fa; /* glowing blue for the selected state */
-  stroke-width: 3;
-  filter: drop-shadow(0 0 6px rgba(96, 165, 250, 0.75))
-    drop-shadow(0 0 14px rgba(96, 165, 250, 0.35));
+.runs-flyout-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(105, 137, 179, 0.08);
+  border-bottom: 1px solid rgba(168, 192, 220, 0.12);
 }
-/* Flowing edge: data is moving from source into a currently-running target.
-   VueFlow's `.animated` class already adds the dash-draw animation; we
-   paint it violet with a glow so it reads as "alive" on a dark canvas. */
-.routines-flow :deep(.vue-flow__edge.flowing .vue-flow__edge-path) {
-  stroke: #a78bfa;
-  stroke-width: 2.5;
-  stroke-dasharray: 6 5;
-  filter: drop-shadow(0 0 6px rgba(139, 92, 246, 0.8))
-    drop-shadow(0 0 14px rgba(139, 92, 246, 0.4));
-  animation: routine-edge-flow 1.2s linear infinite;
+.runs-flyout-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--violet-300);
 }
-.routines-flow :deep(.vue-flow__edge.flowing.selected .vue-flow__edge-path) {
-  /* Selected + flowing: keep the violet — selection ring is still legible
-     via the wider stroke and halo. */
-  stroke: #c4b5fd;
+.runs-flyout-close {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--steel-300);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 4px;
 }
-.routines-flow :deep(.vue-flow__arrowhead) {
-  fill: rgba(168, 192, 220, 0.55);
+.runs-flyout-close:hover { background: rgba(168, 192, 220, 0.1); color: white; }
+.runs-flyout-status {
+  padding: 14px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--steel-400);
+  text-align: center;
 }
-.routines-flow :deep(.vue-flow__edge.flowing .vue-flow__arrowhead),
-.routines-flow :deep(.vue-flow__edge.flowing .vue-flow__edge-marker) {
-  fill: #a78bfa;
-  filter: drop-shadow(0 0 4px rgba(139, 92, 246, 0.7));
+.runs-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 192, 220, 0.25) transparent;
 }
-@keyframes routine-edge-flow {
-  from { stroke-dashoffset: 22; }
-  to   { stroke-dashoffset: 0; }
+.runs-list::-webkit-scrollbar { width: 6px; }
+.runs-list::-webkit-scrollbar-thumb {
+  background: rgba(168, 192, 220, 0.25);
+  border-radius: 3px;
 }
-/* Widen the hit area so edges are easy to click. */
-.routines-flow :deep(.vue-flow__edge .vue-flow__edge-interaction) {
-  stroke: transparent;
-  stroke-width: 18;
+.runs-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--steel-200);
+}
+.runs-item:hover { background: rgba(139, 92, 246, 0.1); color: white; }
+.runs-item.active { background: rgba(139, 92, 246, 0.18); color: white; }
+.runs-item-time {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--violet-300);
+  letter-spacing: 0.05em;
+  padding-top: 2px;
+  white-space: nowrap;
+}
+.runs-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.runs-item-last {
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.runs-item-meta {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--steel-400);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Delete confirmation — centered modal over the canvas. Backdrop dims
+   the canvas and captures outside-click to cancel. Enter confirms via
+   the autofocused Delete button; Escape cancels via the keydown
+   handler. Kept narrow so it never crowds the viewport. */
+.delete-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 6, 12, 0.55);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.delete-confirm {
+  min-width: 340px;
+  max-width: 440px;
+  padding: 18px 20px 16px;
+  background: linear-gradient(180deg, rgba(24, 36, 62, 0.98), rgba(14, 22, 40, 0.98));
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  border-radius: 10px;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.6),
+    0 0 30px rgba(244, 63, 94, 0.22);
+  color: var(--steel-100);
+}
+.delete-confirm .dc-title {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: white;
+  line-height: 1.25;
+  margin-bottom: 8px;
+}
+.delete-confirm .dc-body {
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--steel-300);
+  margin-bottom: 16px;
+}
+.delete-confirm .dc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.delete-confirm .dc-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.delete-confirm .dc-btn.cancel {
+  background: transparent;
+  border-color: rgba(168, 192, 220, 0.3);
+  color: var(--steel-200);
+}
+.delete-confirm .dc-btn.cancel:hover {
+  background: rgba(168, 192, 220, 0.08);
+  color: white;
+}
+.delete-confirm .dc-btn.danger {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.95), rgba(190, 18, 60, 0.95));
+  border-color: rgba(244, 63, 94, 0.6);
+  color: white;
+  box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.25), 0 0 16px rgba(244, 63, 94, 0.35);
+}
+.delete-confirm .dc-btn.danger:hover {
+  box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.45), 0 0 22px rgba(244, 63, 94, 0.55);
+}
+.delete-confirm .dc-btn.danger:focus-visible {
+  outline: 2px solid rgba(244, 63, 94, 0.55);
+  outline-offset: 2px;
+}
+
+/* Past-run banner — pinned at the top of the frame during history
+   viewing so live and recorded runs can't be confused. */
+.past-run-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: linear-gradient(180deg, rgba(24, 36, 62, 0.95), rgba(14, 22, 40, 0.95));
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  border-radius: 999px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45), 0 0 22px rgba(139, 92, 246, 0.2);
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--steel-100);
+}
+.past-run-banner .banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--violet-400);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.7);
+}
+.past-run-banner .banner-text b { color: white; font-weight: 700; }
+.past-run-banner .banner-exit {
+  background: transparent;
+  border: 1px solid rgba(167, 139, 250, 0.5);
+  color: var(--violet-200);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.past-run-banner .banner-exit:hover {
+  background: rgba(139, 92, 246, 0.2);
+  color: white;
+  border-color: var(--violet-300);
+}
+
+/* Drag-to-select marquee (V6 — brackets + soft fill).
+   A whisper of steel-blue fill so overlapped cards still feel contained,
+   plus four bracket corners that echo the canvas frame chrome. Painted
+   entirely via background-image layers so there's no extra DOM. */
+.routines-flow :deep(.vue-flow__selection) {
+  background: rgba(80, 150, 179, 0.08);
+  border: none;
+  border-radius: 0;
+  --bk: rgba(106, 176, 204, 0.95);
+  --bk-size: 16px;
+  --bk-thick: 1.5px;
+  background-image:
+    linear-gradient(rgba(80, 150, 179, 0.08), rgba(80, 150, 179, 0.08)),
+    linear-gradient(var(--bk), var(--bk)), linear-gradient(var(--bk), var(--bk)),
+    linear-gradient(var(--bk), var(--bk)), linear-gradient(var(--bk), var(--bk)),
+    linear-gradient(var(--bk), var(--bk)), linear-gradient(var(--bk), var(--bk)),
+    linear-gradient(var(--bk), var(--bk)), linear-gradient(var(--bk), var(--bk));
+  background-size:
+    100% 100%,
+    var(--bk-size) var(--bk-thick), var(--bk-thick) var(--bk-size),
+    var(--bk-size) var(--bk-thick), var(--bk-thick) var(--bk-size),
+    var(--bk-size) var(--bk-thick), var(--bk-thick) var(--bk-size),
+    var(--bk-size) var(--bk-thick), var(--bk-thick) var(--bk-size);
+  background-repeat: no-repeat;
+  background-position:
+    center,
+    top    left,  top    left,
+    top    right, top    right,
+    bottom left,  bottom left,
+    bottom right, bottom right;
+}
+
+/* Post-select summary rect (around already-selected nodes after the drag
+   ends). Quieter than the live marquee so the two don't compete. */
+.routines-flow :deep(.vue-flow__nodesselection-rect) {
+  background: rgba(80, 150, 179, 0.05);
+  border: 1px dashed rgba(106, 176, 204, 0.55);
+  border-radius: 4px;
 }
 
 /* ── Controls — toolbar treatment (matches V3 drawer-reveal mockup) ── */
@@ -2457,6 +3409,18 @@ watch(
 }
 .routines-flow :deep(.vue-flow__controls-button.history-undo) {
   order: -11;
+}
+/* Runs button sits just before the mode toggle in run mode. Active
+   class flips it violet to echo the open flyout. */
+.routines-flow :deep(.vue-flow__controls-button.runs-btn) {
+  order: -9;
+  margin-right: 6px;
+  border-right: 1px solid rgba(168, 192, 220, 0.18);
+  padding-right: 0;
+}
+.routines-flow :deep(.vue-flow__controls-button.runs-btn.active) {
+  color: var(--violet-300);
+  background: rgba(139, 92, 246, 0.15);
 }
 .routines-flow :deep(.vue-flow__controls-button.history-redo) {
   order: -10;
@@ -2621,9 +3585,13 @@ watch(
 }
 
 /* ── Editable title / subtitle (edit mode only) ── */
+/* The parent .title-block is pointer-events:none so its empty padding
+   doesn't swallow canvas clicks. Re-enable pointer-events on the two
+   editable children so the user can actually click to focus them. */
 .title-main.editable,
 .title-sub.editable {
   cursor: text;
+  pointer-events: auto;
   border-radius: 3px;
   outline: 1px dashed transparent;
   outline-offset: 4px;

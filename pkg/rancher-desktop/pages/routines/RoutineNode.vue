@@ -3,10 +3,11 @@
     class="t02"
     :class="[stateClass, { 'menu-open': menuOpen, 'is-loop': isLoop, 'is-selected': selected }]"
   >
-    <!-- Default target handle — suppressed for loop cards, which own their
-         own four-handle layout below. -->
+    <!-- Default target handle — suppressed for loop cards (which own their
+         own four-handle layout below) and triggers (which are graph
+         entry points with no inbound edge). -->
     <Handle
-      v-if="!isLoop"
+      v-if="!isLoop && !isTrigger"
       type="target"
       :position="Position.Left"
       class="t02-handle"
@@ -168,26 +169,30 @@
     />
 
     <!-- Route handles for condition (true/false) and router (N routes).
-         Rendered as a labeled bar hanging off the bottom of the card so
-         adding a new route grows the bar without reshaping the node. -->
-    <div
-      v-if="hasRouteHandles"
-      class="route-handles-bar"
-    >
-      <div
+         Each handle is explicitly positioned by leftPercent so adding a
+         new route never causes overlap — VueFlow's default would stack
+         every Position.Bottom handle at the card's center-bottom. The
+         matching label is absolutely positioned below the card at the
+         same percent so handle + label stay paired regardless of count. -->
+    <template v-if="hasRouteHandles">
+      <Handle
         v-for="route in routeHandles"
-        :key="route.id"
-        class="route-handle-col"
-      >
-        <Handle
-          :id="route.id"
-          type="source"
-          :position="Position.Bottom"
-          class="t02-handle route-handle-dot"
-        />
-        <span class="route-handle-label">{{ route.label }}</span>
+        :key="`h-${ route.id }`"
+        :id="route.id"
+        type="source"
+        :position="Position.Bottom"
+        class="t02-handle route-handle-dot"
+        :style="{ left: `${ route.leftPercent }%` }"
+      />
+      <div class="route-labels-bar">
+        <span
+          v-for="route in routeHandles"
+          :key="`l-${ route.id }`"
+          class="route-handle-label"
+          :style="{ left: `${ route.leftPercent }%` }"
+        >{{ route.label }}</span>
       </div>
-    </div>
+    </template>
   </div>
 </template>
 
@@ -254,20 +259,44 @@ const isEditMode = computed(() => routinesMode?.value === 'edit');
 // front so the template can switch layouts cleanly.
 const isLoop = computed(() => props.data.subtype === 'loop');
 
+// Triggers are the graph entry point — they only emit, never receive.
+// Suppress the default left-side target handle so users can't wire
+// inbound edges into something that will never consume them.
+const isTrigger = computed(() => {
+  return props.data.category === 'trigger'
+    || props.data.avatar?.type === 'trigger';
+});
+
 // Condition and router nodes fan out into multiple labeled source
 // handles. Condition is fixed at True/False; router grows with the
 // node's config.routes array, so adding a route in the config panel
 // surfaces a new handle automatically.
-interface RouteHandle { id: string; label: string }
+interface RouteHandle {
+  id:    string;
+  label: string;
+  /** 0–100 percentage along the card's bottom edge. Applied to both the
+   *  Handle and the label so they stay aligned when routes are added or
+   *  removed. Without this every handle would stack at center-bottom
+   *  (VueFlow's default Position.Bottom) and overlap. */
+  leftPercent: number;
+}
+
+function distributeRoutes<T extends { id: string; label: string }>(raw: T[]): RouteHandle[] {
+  const n = raw.length;
+  return raw.map((r, idx) => ({
+    ...r,
+    leftPercent: ((idx + 0.5) / n) * 100,
+  }));
+}
 
 const routeHandles = computed<RouteHandle[]>(() => {
   const subtype = props.data.subtype;
 
   if (subtype === 'condition') {
-    return [
+    return distributeRoutes([
       { id: 'condition-true',  label: 'True' },
       { id: 'condition-false', label: 'False' },
-    ];
+    ]);
   }
 
   if (subtype === 'router') {
@@ -275,13 +304,13 @@ const routeHandles = computed<RouteHandle[]>(() => {
     if (routes.length === 0) {
       // A router with no configured routes still needs a source handle
       // so the user can wire *something* before committing to a config.
-      return [{ id: 'route-0', label: 'Default' }];
+      return distributeRoutes([{ id: 'route-0', label: 'Default' }]);
     }
 
-    return routes.map((r, idx) => ({
+    return distributeRoutes(routes.map((r, idx) => ({
       id:    `route-${ idx }`,
       label: (r.label && String(r.label).trim()) || `Route ${ idx + 1 }`,
-    }));
+    })));
   }
 
   return [];
@@ -451,10 +480,6 @@ onBeforeUnmount(() => {
   border-color: rgba(122, 212, 168, 0.35);
   box-shadow: 0 0 0 1px rgba(122, 212, 168, 0.14), 0 0 22px rgba(52, 160, 110, 0.18);
 }
-.t02.done .stub .av {
-  background: linear-gradient(135deg, #7ad4a8, #2f855a);
-  box-shadow: 0 0 8px rgba(52, 160, 110, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
-}
 .t02.done .stub { border-right-color: rgba(122, 212, 168, 0.4); }
 .t02.done .wb-foot { background: rgba(52, 160, 110, 0.06); }
 .t02.done .wb-foot .qp { color: #7ad4a8; }
@@ -510,6 +535,10 @@ onBeforeUnmount(() => {
   letter-spacing: 0.15em;
   text-transform: uppercase;
 }
+/* Avatar color = node type. Intentionally does NOT react to running /
+   done / failed — the card's border, inner shadow, stub-dash, and
+   footer already carry state; the avatar stays a stable identifier of
+   what kind of node this is. */
 .t02 .stub .av {
   width: 34px;
   height: 34px;
@@ -523,18 +552,11 @@ onBeforeUnmount(() => {
   background: linear-gradient(135deg, var(--steel-400), var(--steel-700));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
-.t02.running .stub .av {
-  background: linear-gradient(135deg, var(--violet-400), var(--violet-600));
-  box-shadow: 0 0 12px rgba(139, 92, 246, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
-}
-.t02.failed .stub .av {
-  background: linear-gradient(135deg, var(--rose-400), var(--rose-600));
-  box-shadow: 0 0 12px rgba(244, 63, 94, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2);
-}
 .t02 .stub .av.trigger { background: linear-gradient(135deg, var(--amber-400), var(--amber-600)); }
 .t02 .stub .av.tool    { background: linear-gradient(135deg, var(--teal-400), var(--teal-600)); }
 .t02 .stub .av.logic   { background: linear-gradient(135deg, #94a3b8, #475569); }
 .t02 .stub .av.loop    { background: linear-gradient(135deg, #8fb3d9, var(--steel-600)); }
+.t02 .stub .av.agent   { background: linear-gradient(135deg, var(--violet-400), var(--violet-600)); }
 .t02 .stub .st {
   font-family: var(--mono);
   font-size: 8px;
@@ -740,40 +762,34 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 6px rgba(139, 92, 246, 0.6);
 }
 
-/* Condition / router — horizontal bar of labeled source handles that
-   hangs off the bottom of the card. Grows with the number of routes in
-   `data.config.routes` so the canvas reflects the current branching. */
-.route-handles-bar {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -26px;
-  display: flex;
-  justify-content: center;
-  gap: 22px;
-  padding: 0 12px;
-  pointer-events: none;
-}
-.route-handle-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  pointer-events: none;
-}
-.route-handle-col .t02-handle {
-  pointer-events: all;
-}
+/* Condition / router — labeled source handles spread evenly along the
+   card's bottom edge. Each handle + label is absolutely positioned by
+   its route.leftPercent so adding a route rebalances the layout instead
+   of stacking. */
 .t02-handle.route-handle-dot {
   width: 10px;
   height: 10px;
   background: var(--steel-300);
   border-color: rgba(14, 22, 40, 0.9);
+  /* Default VueFlow applies `transform: translate(-50%, 50%)` to
+     Position.Bottom handles; that centers each handle on its (left, 100%)
+     anchor so our leftPercent reads as "center the dot at this X". */
 }
 .t02.running .t02-handle.route-handle-dot {
   background: var(--violet-300);
 }
+.route-labels-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -26px;
+  height: 18px;
+  pointer-events: none;
+}
 .route-handle-label {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
   font-family: var(--mono);
   font-size: 9px;
   letter-spacing: 0.14em;

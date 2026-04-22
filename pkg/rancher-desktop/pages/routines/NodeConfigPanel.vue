@@ -123,6 +123,43 @@
         <span class="ico">◈</span>
         <span>No configuration panel for this node type yet.</span>
       </div>
+
+      <!-- Children — loop frames list their nested cards so the user can
+           see the loop body from the edit drawer without having to click
+           away. Skipped for nodes with no children. -->
+      <section
+        v-if="children && children.length > 0"
+        class="c-section c-children"
+      >
+        <header class="c-section-head">
+          <span class="c-section-title">Children</span>
+          <span class="c-section-count">{{ children.length }}</span>
+        </header>
+        <ul class="cp-children">
+          <li
+            v-for="c in children"
+            :key="c.nodeId"
+            class="cp-child"
+            :class="c.state"
+          >
+            <span
+              class="cp-child-av"
+              :class="c.avatar?.type"
+            >
+              <template v-if="c.avatar?.icon">{{ c.avatar.icon }}</template>
+              <template v-else>{{ c.avatar?.initials || '—' }}</template>
+            </span>
+            <span class="cp-child-body">
+              <span class="cp-child-kicker">{{ c.kicker }} · {{ c.nodeCode }}</span>
+              <span class="cp-child-title">{{ c.label }}</span>
+            </span>
+            <span
+              class="cp-child-state"
+              :class="c.state"
+            >{{ c.state }}</span>
+          </li>
+        </ul>
+      </section>
     </div>
 
     <footer
@@ -142,6 +179,15 @@ interface UpstreamNodeInfo {
   label:    string;
   subtype:  string;
   category: string;
+}
+
+interface ChildSummary {
+  nodeId:   string;
+  label:    string;
+  kicker:   string;
+  nodeCode: string;
+  state:    string;
+  avatar:   { type?: string; icon?: string; initials?: string };
 }
 
 interface RoutineNodeShape {
@@ -172,6 +218,9 @@ const props = defineProps<{
   node:           RoutineNodeShape | null;
   mode:           'edit' | 'run';
   upstreamNodes?: UpstreamNodeInfo[];
+  /** Children of this node — loop frames list their nested cards at the
+   *  bottom of the panel so the user can confirm the loop body. */
+  children?:      ChildSummary[];
 }>();
 
 defineEmits<{
@@ -747,5 +796,118 @@ function formatExecDuration(): string {
   letter-spacing: 0.12em;
   color: var(--steel-400);
   text-transform: uppercase;
+}
+
+/* ── Children list (loop body summary) ── */
+.c-section {
+  padding: 0 14px;
+  margin-top: 14px;
+}
+.c-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+  border-bottom: 1px dashed rgba(168, 192, 220, 0.15);
+}
+.c-section-title {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.25em;
+  color: var(--violet-300);
+  text-transform: uppercase;
+}
+.c-section-count {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--steel-400);
+}
+.cp-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cp-child {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: rgba(20, 30, 54, 0.55);
+  border: 1px solid rgba(168, 192, 220, 0.12);
+}
+.cp-child.running { border-color: rgba(167, 139, 250, 0.35); }
+.cp-child.done    { border-color: rgba(122, 212, 168, 0.3); }
+.cp-child.failed  { border-color: rgba(244, 63, 94, 0.35); }
+.cp-child-av {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  color: white;
+  font-weight: 800;
+  font-size: 10px;
+  background: linear-gradient(135deg, var(--steel-400), var(--steel-600));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.cp-child-av.trigger { background: linear-gradient(135deg, var(--amber-400), var(--amber-600)); }
+.cp-child-av.tool    { background: linear-gradient(135deg, var(--teal-400), var(--teal-600)); }
+.cp-child-av.logic   { background: linear-gradient(135deg, #94a3b8, #475569); }
+.cp-child-av.loop    { background: linear-gradient(135deg, var(--violet-400), var(--violet-600)); }
+.cp-child-av.agent   { background: linear-gradient(135deg, var(--violet-400), var(--violet-600)); }
+.cp-child-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.cp-child-kicker {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: var(--steel-400);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cp-child-title {
+  font-family: var(--serif);
+  font-size: 13px;
+  font-style: italic;
+  color: white;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cp-child-state {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid rgba(168, 192, 220, 0.2);
+  color: var(--steel-300);
+}
+.cp-child-state.running {
+  color: var(--violet-200);
+  border-color: rgba(167, 139, 250, 0.4);
+  background: rgba(139, 92, 246, 0.12);
+}
+.cp-child-state.done {
+  color: #7ad4a8;
+  border-color: rgba(122, 212, 168, 0.35);
+}
+.cp-child-state.failed {
+  color: var(--rose-400);
+  border-color: rgba(244, 63, 94, 0.35);
 }
 </style>

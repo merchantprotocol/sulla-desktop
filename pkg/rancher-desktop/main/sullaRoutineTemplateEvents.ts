@@ -309,6 +309,113 @@ export function initSullaRoutineTemplateEvents(): void {
     }
   });
 
+  // ── Run history ──
+  // The canvas persists per-node snapshots to `workflow_checkpoints`
+  // during every run (WorkflowCheckpointModel.saveCheckpoint). These
+  // two handlers expose that for a run-history drawer in the UI so the
+  // user can pick any past run and inspect its final state.
+
+  /** List recent runs for a given workflow — most-recent-first.
+   *  Returns one summary row per execution_id, plus the latest checkpoint's
+   *  node label and timestamp so the UI can caption each row. */
+  ipcMainProxy.handle('routines-list-runs', async(_event: unknown, workflowId: string, limit?: number) => {
+    if (!workflowId) return [];
+    try {
+      const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
+      const rows = await postgresClient.queryAll(
+        `WITH latest AS (
+           SELECT DISTINCT ON (execution_id)
+             execution_id,
+             workflow_id,
+             workflow_name,
+             node_id,
+             node_label,
+             sequence,
+             created_at
+           FROM workflow_checkpoints
+           WHERE workflow_id = $1
+           ORDER BY execution_id, sequence DESC
+         ),
+         counts AS (
+           SELECT execution_id, COUNT(*)::int AS checkpoint_count, MIN(created_at) AS started_at
+           FROM workflow_checkpoints
+           WHERE workflow_id = $1
+           GROUP BY execution_id
+         )
+         SELECT l.*, c.checkpoint_count, c.started_at
+         FROM latest l
+         JOIN counts c USING (execution_id)
+         ORDER BY l.created_at DESC
+         LIMIT $2`,
+        [workflowId, typeof limit === 'number' && limit > 0 ? limit : 25],
+      );
+      return rows.map((row: any) => ({
+        executionId:     row.execution_id,
+        workflowId:      row.workflow_id,
+        workflowName:    row.workflow_name,
+        lastNodeId:      row.node_id,
+        lastNodeLabel:   row.node_label,
+        checkpointCount: Number(row.checkpoint_count ?? 0),
+        startedAt:       row.started_at instanceof Date ? row.started_at.toISOString() : row.started_at,
+        endedAt:         row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+      }));
+    } catch (err) {
+      console.error('[routines-list-runs] failed:', err);
+      return [];
+    }
+  });
+
+  /** Full snapshot for a single run. Returns every checkpoint in order +
+   *  a convenience map of nodeId → {label, output, completedAt} so the
+   *  renderer can hydrate node cards directly without walking checkpoints. */
+  ipcMainProxy.handle('routines-load-run', async(_event: unknown, executionId: string) => {
+    if (!executionId) return null;
+    try {
+      const { WorkflowCheckpointModel } = await import('@pkg/agent/database/models/WorkflowCheckpointModel');
+      const checkpoints = await WorkflowCheckpointModel.findByExecution(executionId);
+      if (checkpoints.length === 0) return null;
+
+      const nodeOutputs: Record<string, { nodeId: string; label: string; output: unknown; completedAt: string }> = {};
+      for (const cp of checkpoints) {
+        const a = cp.attributes as any;
+        // Keep the last output per node id — retries / re-runs overwrite
+        // naturally since checkpoints are sequence-ordered.
+        nodeOutputs[a.node_id] = {
+          nodeId:      a.node_id,
+          label:       a.node_label,
+          output:      a.node_output,
+          completedAt: a.created_at instanceof Date ? a.created_at.toISOString() : a.created_at,
+        };
+      }
+
+      const first = checkpoints[0].attributes as any;
+      const last = checkpoints[checkpoints.length - 1].attributes as any;
+      return {
+        executionId,
+        workflowId:      first.workflow_id,
+        workflowName:    first.workflow_name,
+        startedAt:       first.created_at instanceof Date ? first.created_at.toISOString() : first.created_at,
+        endedAt:         last.created_at instanceof Date ? last.created_at.toISOString() : last.created_at,
+        checkpointCount: checkpoints.length,
+        nodeOutputs,
+        checkpoints:     checkpoints.map(cp => {
+          const a = cp.attributes as any;
+          return {
+            sequence:    a.sequence,
+            nodeId:      a.node_id,
+            nodeLabel:   a.node_label,
+            nodeSubtype: a.node_subtype,
+            nodeOutput:  a.node_output,
+            createdAt:   a.created_at instanceof Date ? a.created_at.toISOString() : a.created_at,
+          };
+        }),
+      };
+    } catch (err) {
+      console.error('[routines-load-run] failed:', err);
+      return null;
+    }
+  });
+
   console.log('[Sulla] Routine template IPC handlers initialized');
 }
 
