@@ -40,7 +40,7 @@ function initialsFrom(label: string): string {
 
 function avatarFor(def: NodeTypeDefinition): RoutineAvatarType {
   if (def.category === 'trigger') return 'trigger';
-  if (def.subtype === 'tool-call' || def.subtype === 'integration-call' || def.subtype === 'function') return 'tool';
+  if (def.subtype === 'tool-call' || def.subtype === 'integration-call') return 'tool';
   if (def.category === 'agent') return 'agent';
   if (def.subtype === 'loop') return 'loop';
   if (def.category === 'routing' || def.category === 'flow-control') return 'logic';
@@ -51,7 +51,6 @@ function kickerFor(def: NodeTypeDefinition): string {
   if (def.category === 'trigger') return 'Trigger';
   if (def.subtype === 'tool-call') return 'Tool';
   if (def.subtype === 'integration-call') return 'Integration';
-  if (def.subtype === 'function') return 'Function';
   if (def.category === 'agent') return 'Agent';
   if (def.category === 'routing') return 'Routing';
   if (def.category === 'flow-control') return 'Flow';
@@ -169,18 +168,6 @@ function kickerForCategory(category: string): string {
   }
 }
 
-/** Generic fallback role when the node data doesn't carry one. */
-function roleForCategory(category: string): string {
-  switch (category) {
-  case 'trigger':      return 'Starts the flow.';
-  case 'agent':        return 'Performs work in the flow.';
-  case 'routing':      return 'Picks a path based on conditions.';
-  case 'flow-control': return 'Coordinates timing and branching.';
-  case 'io':           return 'Reads or writes external data.';
-  default:             return '';
-  }
-}
-
 function avatarDefault(category: string, title: string): Record<string, unknown> {
   if (category === 'trigger') {
     return { type: 'trigger', icon: '⚡' };
@@ -225,13 +212,6 @@ export function enrichNodesForDisplay(nodes: NodeLike[]): void {
 
     if (!data.avatar) data.avatar = avatarDefault(category, title);
     if (!data.kicker) data.kicker = kickerForCategory(category);
-    if (!data.role) {
-      // Only inject a fallback when the category offers a meaningful
-      // one — "" would render as a blank line; omitting the field lets
-      // the v-if in RoutineNode skip the slot entirely.
-      const fallback = roleForCategory(category);
-      if (fallback) data.role = fallback;
-    }
     if (!data.state) data.state = 'idle';
   }
 }

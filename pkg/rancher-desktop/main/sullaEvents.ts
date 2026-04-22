@@ -14,7 +14,6 @@ import { initConversationHistoryIpc } from './conversationHistoryIpc';
 import { initMessageBusIpc } from './messageBusIpc';
 import { initSullaBundleEvents } from './sullaBundleEvents';
 import { initSullaDebugEvents } from './sullaDebugEvents';
-import { initSullaFunctionEvents } from './sullaFunctionEvents';
 import { initSullaLibraryDraftEvents } from './sullaLibraryDraftEvents';
 import { initSullaLibraryEvents } from './sullaLibraryEvents';
 import { initSullaMarketplaceEvents } from './sullaMarketplaceEvents';
@@ -825,7 +824,6 @@ export function initSullaEvents(): void {
   initSullaLibraryEvents();
   initSullaLibraryDraftEvents();
   initSullaDebugEvents();
-  initSullaFunctionEvents();
 
   // ── Integration Config API (YAML-defined integrations) ──────────
 
@@ -1220,19 +1218,6 @@ export function initSullaEvents(): void {
     const value = await service.getIntegrationValue(integrationId, property);
 
     return value ? { value: value.value } : null;
-  });
-
-  ipcMainProxy.handle('integration-accounts', async(_event: unknown, slug: string) => {
-    try {
-      const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
-      const svc = getIntegrationService();
-
-      return await svc.getAccounts(slug);
-    } catch (err) {
-      console.warn('[Sulla] integration-accounts failed:', err);
-
-      return [];
-    }
   });
 
   // ─────────────────────────────────────────────────────────────

@@ -513,15 +513,6 @@ Electron.app.whenReady().then(async() => {
     initSullaEvents();
     initChromeApiIpc();
 
-    // Start the capability-token-based secrets HTTP server for runtime
-    // containers (reachable from the Lima VM at host.lima.internal:30121).
-    try {
-      const { startSullaSecretsServer } = await import('@pkg/main/sullaSecretsServer');
-      await startSullaSecretsServer();
-    } catch (err) {
-      console.warn('[Sulla] Failed to start secrets server:', err);
-    }
-
     await initUI();
     await checkForBackendLock();
     await setPathManager(cfg.application.pathManagementStrategy);
@@ -1019,18 +1010,6 @@ Electron.app.on('before-quit', async(event) => {
     console.log('[Shutdown] Threat proxy shut down');
   } catch (err) {
     console.error('[Shutdown] Threat proxy shutdown error:', err);
-  }
-
-  // Shut down the capability-token secrets HTTP server.
-  try {
-    await withTimeout('sulla-secrets-server/shutdown', 5_000, (async() => {
-      const { stopSullaSecretsServer } = await import('@pkg/main/sullaSecretsServer');
-
-      await stopSullaSecretsServer();
-    })());
-    console.log('[Shutdown] Sulla secrets server shut down');
-  } catch (err) {
-    console.error('[Shutdown] Sulla secrets server shutdown error:', err);
   }
 
   sullaLog({ topic: 'shutdown', level: 'info', message: 'Calling sullaEnd()' });

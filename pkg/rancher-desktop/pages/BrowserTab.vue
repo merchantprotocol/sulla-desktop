@@ -252,12 +252,9 @@
           <AgentRoutines
             :key="activeRoutineId"
             :workflow-id="activeRoutineId"
-            :initial-mode="activeRoutineMode"
             @back-to-home="activeRoutineId = null"
-            @running-change="routineRunning = $event"
           />
           <button
-            v-if="!routineRunning"
             type="button"
             class="routines-back-btn"
             @click="activeRoutineId = null"
@@ -336,30 +333,12 @@ function onSetMode(mode: BrowserTabMode) {
 // ── Routines sub-navigation state ──
 // When a routine or template is selected, switch from the playbill
 // landing view (RoutinesHome) to the canvas editor (AgentRoutines).
-// `null` means show the landing view. The mode determines whether the
-// canvas opens in run (default, triggered by card click) or edit (the
-// explicit Edit button on the card).
+// `null` means show the landing view.
 const activeRoutineId = ref<string | null>(null);
-const activeRoutineMode = ref<'edit' | 'run'>('run');
-// Tracks whether the open routine is currently executing. Bubbled up
-// from AgentRoutines via `@running-change` so we can hide the "All
-// routines" back button while a run is live — the user shouldn't be
-// able to accidentally walk away from an active execution.
-const routineRunning = ref(false);
 
-function onOpenRoutine(id: string, mode: 'edit' | 'run' = 'run') {
+function onOpenRoutine(id: string) {
   activeRoutineId.value = id;
-  activeRoutineMode.value = mode;
-  // Reset running state when opening a new routine — AgentRoutines will
-  // re-emit true via @running-change if a run actually kicks off.
-  routineRunning.value = false;
 }
-
-// Whenever the user navigates away from the canvas back to the list,
-// drop the running flag so the next routine opens clean.
-watch(activeRoutineId, (id) => {
-  if (!id) routineRunning.value = false;
-});
 
 async function onUseTemplate(slug: string) {
   // Clone the template into the workflows table, then open the new
@@ -971,9 +950,9 @@ onUnmounted(() => {
   position: absolute;
   top: 18px;
   left: 58px;
-  /* Below the NodeDrawer (z-index 10) so the library can slide over
-     the back button when opened. Above the canvas chrome (brackets at
-     z-index 4) so it remains visible the rest of the time. */
+  // Below the NodeDrawer (z-index 10) so the library can slide over
+  // the back button when opened. Above the canvas chrome (brackets at
+  // z-index 4) so it remains visible the rest of the time.
   z-index: 5;
   padding: 6px 12px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;

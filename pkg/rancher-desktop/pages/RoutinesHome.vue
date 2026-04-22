@@ -127,32 +127,7 @@
              before the Electron backend is up. Show a benign "warming up"
              message instead of blowing up with a DB connection error. -->
         <EmptyState
-          v-if="!systemReady"
-          kicker="Warming up"
-          title="Bringing the backend online…"
-          message="Your routines will appear once the Sulla services finish booting. This is usually a few seconds on first launch."
-        />
-
-        <!-- Error state — shown when the DB fetch failed. Preferable to
-             silently showing "your stage is empty" when something is
-             actually broken underneath. -->
-        <EmptyState
-          v-else-if="routinesController.error.value"
-          kicker="Can't reach the routines"
-          title="Couldn't load your stage."
-          :message="`The database returned an error: ${ routinesController.error.value }`"
-        >
-          <button
-            type="button"
-            class="btn primary"
-            @click="routinesController.refresh()"
-          >
-            Try again
-          </button>
-        </EmptyState>
-
-        <EmptyState
-          v-else-if="routinesController.isEmpty.value"
+          v-if="routinesController.isEmpty.value"
           kicker="No routines yet"
           title="Your stage is empty."
           message="You haven't built a routine yet. Start from a template — some are waiting in your Library — or compose one from scratch on the canvas."
@@ -185,15 +160,10 @@
               v-for="r in routinesController.running.value"
               :key="r.id"
               :routine="r"
-              primary-label="Run"
-              secondary-label="Edit"
-              @primary="onOpenRun(r.id)"
-              @secondary="onOpenEdit(r.id)"
-              @open="onOpenRun(r.id)"
-              @duplicate="onDuplicate(r.id)"
-              @archive="onToggleArchive(r.id)"
-              @delete="onDelete(r)"
-              @export="onExport(r.id)"
+              primary-label="Open"
+              secondary-label="Watch"
+              @primary="onOpenRoutine(r.id)"
+              @open="onOpenRoutine(r.id)"
             />
           </ActSection>
 
@@ -207,15 +177,10 @@
               v-for="r in routinesController.scheduled.value"
               :key="r.id"
               :routine="r"
-              primary-label="Run"
-              secondary-label="Edit"
-              @primary="onOpenRun(r.id)"
-              @secondary="onOpenEdit(r.id)"
-              @open="onOpenRun(r.id)"
-              @duplicate="onDuplicate(r.id)"
-              @archive="onToggleArchive(r.id)"
-              @delete="onDelete(r)"
-              @export="onExport(r.id)"
+              primary-label="Open"
+              secondary-label="Skip next"
+              @primary="onOpenRoutine(r.id)"
+              @open="onOpenRoutine(r.id)"
             />
           </ActSection>
 
@@ -231,13 +196,8 @@
               :routine="r"
               :primary-label="r.status === 'draft' ? 'Publish' : 'Run'"
               secondary-label="Edit"
-              @primary="onPrimaryClick(r)"
-              @secondary="onOpenEdit(r.id)"
-              @open="onOpenRun(r.id)"
-              @duplicate="onDuplicate(r.id)"
-              @archive="onToggleArchive(r.id)"
-              @delete="onDelete(r)"
-              @export="onExport(r.id)"
+              @primary="onOpenRoutine(r.id)"
+              @open="onOpenRoutine(r.id)"
             />
           </ActSection>
 
@@ -339,7 +299,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 
 import ActSection from '@pkg/components/routines/ActSection.vue';
 import EmptyState from '@pkg/components/routines/EmptyState.vue';
@@ -348,7 +308,6 @@ import MarketplaceTab from '@pkg/components/routines/MarketplaceTab.vue';
 import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { useStartupProgress } from './agent/useStartupProgress';
 
@@ -356,10 +315,9 @@ type Tab = 'mywork' | 'library' | 'marketplace';
 type MyWorkView = 'active' | 'archive';
 
 const emit = defineEmits<{
-  (e: 'open-workflow', id: string, mode?: 'edit' | 'run'): void
+  (e: 'open-workflow', id: string): void
   (e: 'use-template', slug: string): void
   (e: 'new-blank'): void
-  (e: 'restore-routine', id: string): void
 }>();
 
 const activeTab = ref<Tab>('mywork');
@@ -388,18 +346,6 @@ async function loadAll() {
     routinesController.load(),
     templatesController.load(),
   ]);
-}
-
-onMounted(() => {
-  if (systemReady.value) {
-    void loadAll();
-  }
-});
-
-// Re-fire when readiness toggles true. Handles both the first-boot race
-// and any later reboot of the backend (settings reset, VM restart, etc).
-watch(systemReady, (ready, prev) => {
-  if (ready && !prev) void loadAll();
 });
 
 // Display-layer string derivations. Kept as computeds so the template
@@ -482,25 +428,9 @@ const ribbonStatusLabel = computed(() => {
 
 const todayStr = new Date().toISOString().slice(0, 10);
 
-// Card body click = run mode. The explicit Edit button routes to edit
-// mode. "Publish" on a draft toggles status in place without navigating;
-// "Run" on a production routine lands in run mode like a card click.
-function onOpenRun(id: string) {
-  emit('open-workflow', id, 'run');
+function onOpenRoutine(id: string) {
+  emit('open-workflow', id);
 }
-function onOpenEdit(id: string) {
-  emit('open-workflow', id, 'edit');
-}
-function onPrimaryClick(routine: { id: string; status: string }) {
-  if (routine.status === 'draft') {
-    // Publish = status toggle, stays on the playbill.
-    void routinesController.togglePublish(routine.id);
-
-    return;
-  }
-  onOpenRun(routine.id);
-}
-
 function onUseTemplate(slug: string) {
   emit('use-template', slug);
 }

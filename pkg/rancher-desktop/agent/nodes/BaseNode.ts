@@ -794,15 +794,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const callToolAccessPolicy = this.buildToolAccessPolicyForCall(options);
     const messages = [...nodeRunContext.messages];
 
-    // Guard: if there are no non-system messages at all the LLM provider will
-    // throw "no extractable prompt". Inject a minimal context message so the
-    // agent can at least respond rather than crashing.
-    const hasUserContent = messages.some(m => m.role !== 'system');
-    if (!hasUserContent) {
-      console.warn(`[${ this.name }] normalizedChat: no non-system messages — injecting context placeholder to prevent empty-prompt error`);
-      messages.unshift({ role: 'user', content: '[Context] Continue executing your current task based on the system instructions above.' });
-    }
-
     // Check if the last non-system message is from the assistant.
     // This indicates the agent has already responded and the graph should be done.
     const lastNonSystemMessage = messages.filter(m => m.role !== 'system').pop();
@@ -1526,12 +1517,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // If this agent is running inside a workflow, also emit a node_thinking
     // event so the workflow canvas can display the conversation in a bubble.
-    // Subconscious subagents set `workflowThinkingLabel` so the frontend
-    // can show e.g. "memory-recall" / "observation" as the badge instead
-    // of attributing silently to the orchestrator node.
     const workflowNodeId = (state.metadata as any).workflowNodeId;
     const workflowParentChannel = (state.metadata as any).workflowParentChannel;
-    const workflowThinkingLabel = (state.metadata as any).workflowThinkingLabel;
     if (workflowNodeId && workflowParentChannel) {
       console.log(`[BaseNode:wsChatMessage] Emitting node_thinking → channel="${ workflowParentChannel }", nodeId="${ workflowNodeId }", content="${ content.trim().slice(0, 80) }"`);
       try {
@@ -1539,14 +1526,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         ws.send(workflowParentChannel, {
           type: 'workflow_execution_event',
           data: {
-            type:          'node_thinking',
-            nodeId:        workflowNodeId,
-            content:       content.trim(),
+            type:      'node_thinking',
+            nodeId:    workflowNodeId,
+            content:   content.trim(),
             role,
             kind,
-            thread_id:     threadId,
-            thinkingLabel: workflowThinkingLabel || undefined,
-            timestamp:     new Date().toISOString(),
+            thread_id: threadId,
+            timestamp: new Date().toISOString(),
           },
           timestamp: Date.now(),
         });

@@ -319,13 +319,12 @@ function getFileMenu(): MenuItem {
         enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'chat' }),
       },
-      // Hidden: Open Calendar
-      // {
-      //   label:       'Open Calendar',
-      //   accelerator: 'CmdOrCtrl+2',
-      //   enabled:     userLoggedIn,
-      //   click:       () => sendAgentCommand('open-tab', { mode: 'calendar' }),
-      // },
+      {
+        label:       'Open Calendar',
+        accelerator: 'CmdOrCtrl+2',
+        enabled:     userLoggedIn,
+        click:       () => sendAgentCommand('open-tab', { mode: 'calendar' }),
+      },
       {
         label:       'Open Integrations',
         accelerator: 'CmdOrCtrl+3',
@@ -373,19 +372,18 @@ function getFileMenu(): MenuItem {
         ],
       },
       { type: 'separator' },
-      // Hidden: Open Agent Workbench / Open Capture Studio
-      // {
-      //   label:       'Open Agent Workbench',
-      //   accelerator: 'CmdOrCtrl+Shift+E',
-      //   enabled:     userLoggedIn,
-      //   click:       openEditor,
-      // },
-      // {
-      //   label:       'Open Capture Studio',
-      //   accelerator: 'CmdOrCtrl+Shift+R',
-      //   enabled:     userLoggedIn,
-      //   click:       openCaptureStudio,
-      // },
+      {
+        label:       'Open Agent Workbench',
+        accelerator: 'CmdOrCtrl+Shift+E',
+        enabled:     userLoggedIn,
+        click:       openEditor,
+      },
+      {
+        label:       'Open Capture Studio',
+        accelerator: 'CmdOrCtrl+Shift+R',
+        enabled:     userLoggedIn,
+        click:       openCaptureStudio,
+      },
       {
         label:   'Open Docker Dashboard',
         enabled: userLoggedIn,
@@ -853,11 +851,10 @@ function getWindowsApplicationMenu(): MenuItem[] {
           label: 'Open Sulla Agent',
           click: () => sendAgentCommand('open-tab', { mode: 'chat' }),
         },
-        // Hidden: Open Calendar
-        // {
-        //   label: 'Open Calendar',
-        //   click: () => sendAgentCommand('open-tab', { mode: 'calendar' }),
-        // },
+        {
+          label: 'Open Calendar',
+          click: () => sendAgentCommand('open-tab', { mode: 'calendar' }),
+        },
         {
           label: 'Open Integrations',
           click: () => sendAgentCommand('open-tab', { mode: 'integrations' }),
@@ -875,12 +872,11 @@ function getWindowsApplicationMenu(): MenuItem[] {
           click: () => sendAgentCommand('open-tab', { mode: 'routines' }),
         },
         { type: 'separator' },
-        // Hidden: Open Agent Workbench
-        // {
-        //   label:       'Open Agent Workbench',
-        //   accelerator: 'CmdOrCtrl+Shift+E',
-        //   click:       openEditor,
-        // },
+        {
+          label:       'Open Agent Workbench',
+          accelerator: 'CmdOrCtrl+Shift+E',
+          click:       openEditor,
+        },
         {
           label: 'Open Docker Dashboard',
           click: openDockerDashboard,

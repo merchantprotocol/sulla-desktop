@@ -2687,16 +2687,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Ensure data directory is writable by container user (postgres=UID 70)
     await fs.promises.chmod(path.join(sullaDataDir, 'sulla-postgres'), 0o777);
 
-    // Resolve the user's functions directory for runtime containers (read-only bind mount).
-    // Lima mounts the host home directory into the VM at the same path, so the host path
-    // is valid for Docker bind mounts inside the VM.
-    const sullaFunctionsDir = path.join(os.homedir(), 'sulla', 'functions');
-
-    await fs.promises.mkdir(sullaFunctionsDir, { recursive: true });
-
     let composeYaml = yaml.stringify(compose, { defaultStringType: 'QUOTE_DOUBLE' });
     composeYaml = composeYaml.replace(/\{\{sullaDataDir\}\}/g, sullaDataDir);
-    composeYaml = composeYaml.replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
     await this.writeFile('/tmp/sulla-docker-compose.yml', composeYaml, 0o644);
   }
 
