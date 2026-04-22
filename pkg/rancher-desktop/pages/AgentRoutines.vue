@@ -3,14 +3,17 @@
     ref="frameRef"
     class="routines-frame"
     @dragover.prevent="onDragOver"
+    @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
     <VueFlow
       v-model:nodes="nodes"
       v-model:edges="edges"
       :default-viewport="{ zoom: 1 }"
-      :default-edge-options="{ type: 'smoothstep', pathOptions: { borderRadius: 12, offset: 20 } }"
+      :default-edge-options="{ type: 'routine' }"
       :delete-key-code="null"
+      :selection-key-code="null"
+      :multi-selection-key-code="null"
       fit-view-on-init
       class="routines-flow"
       :class="{ locked }"
@@ -18,11 +21,32 @@
       @pane-click="onPaneClick"
       @node-click="onNodeClick"
       @node-context-menu="onNodeContextMenu"
+      @node-drag="onNodeDrag"
+      @node-drag-stop="onNodeDragStop"
       @edge-click="onEdgeClick"
       @connect="onConnect"
     >
       <template #node-routine="nodeProps">
         <RoutineNode v-bind="nodeProps" />
+      </template>
+      <!-- Historical node type from the old workflow YAML. Routine files
+           imported from the pre-rename world still carry `type: workflow`
+           on every node; render them through the same component so the
+           file stays importable as-is. -->
+      <template #node-workflow="nodeProps">
+        <RoutineNode v-bind="nodeProps" />
+      </template>
+      <!-- Loop container — dashed-frame that (phase 2) parents the body
+           nodes via VueFlow's parentNode. Distinct from other routine
+           nodes so it can own its own layout, handles, and sizing. -->
+      <template #node-loop-frame="nodeProps">
+        <LoopFrameNode v-bind="nodeProps" />
+      </template>
+      <!-- Custom edge with dim base + traveling violet pulse overlay when
+           flowing. Matches the L1 canvas design's animated-gradient feel
+           (which default SmoothStepEdge can't do — only one path). -->
+      <template #edge-routine="edgeProps">
+        <RoutineEdge v-bind="edgeProps" />
       </template>
       <Background
         :variant="BackgroundVariant.Lines"
@@ -99,6 +123,65 @@
             />
           </svg>
         </template>
+        <template v-if="mode === 'edit'">
+          <ControlButton
+            class="history-btn history-undo"
+            :class="{ disabled: !history.canUndo.value }"
+            :disabled="!history.canUndo.value"
+            :title="`Undo (${ shortcutLabel('Z') })`"
+            @click="undo"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M9 14L4 9l5-5" />
+              <path d="M4 9h11a5 5 0 0 1 0 10h-4" />
+            </svg>
+          </ControlButton>
+          <ControlButton
+            class="history-btn history-redo"
+            :class="{ disabled: !history.canRedo.value }"
+            :disabled="!history.canRedo.value"
+            :title="`Redo (${ shortcutLabel('Shift+Z') })`"
+            @click="redo"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M15 14l5-5-5-5" />
+              <path d="M20 9H9a5 5 0 0 0 0 10h4" />
+            </svg>
+          </ControlButton>
+        </template>
+        <ControlButton
+          v-if="mode === 'run'"
+          class="runs-btn"
+          :class="{ active: runsFlyoutOpen }"
+          title="Run history"
+          @click="toggleRunsFlyout"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+        </ControlButton>
         <ControlButton
           class="mode-toggle"
           :class="{ 'is-edit': mode === 'edit' }"
@@ -155,6 +238,18 @@
       />
     </VueFlow>
 
+    <!-- Stream backdrop — solid panel that occupies the exact footprint
+         of the live stream, sitting above the VueFlow canvas (hides the
+         node cards behind it) but below the ambient canvas overlays
+         (glow, stars, brackets) so those still read through. Only
+         rendered once the stream actually has content — an empty panel
+         is just visual clutter blocking cards underneath. -->
+    <div
+      v-if="mode === 'run' && liveEvents.length > 0"
+      class="stream-backdrop"
+      aria-hidden="true"
+    />
+
     <div class="glow blue" />
     <div class="glow violet" />
     <div class="stars" />
@@ -163,17 +258,36 @@
     <div class="bracket bl" />
     <div class="bracket br" />
 
+    <!-- Live stream — only renders once events arrive so an idle routine
+         doesn't show an empty panel covering the canvas. -->
     <div
-      v-if="mode === 'run'"
+      v-if="mode === 'run' && liveEvents.length > 0"
+      ref="streamRef"
       class="stream"
     >
-      <div class="line"><span class="t">14:03</span><span class="k tool">tool</span><span class="msg">ahrefs.lookup()</span></div>
-      <div class="line"><span class="t">14:05</span><span class="k obs">observed</span><span class="msg">Volume 8,200/mo · KD 71</span></div>
-      <div class="line"><span class="t">14:08</span><span class="k thk">thinking</span><span class="msg">SEMRush off by 40%</span></div>
-      <div class="line"><span class="t">14:14</span><span class="k tool">tool</span><span class="msg">google_trends.compare()</span></div>
-      <div class="line"><span class="t">14:17</span><span class="k obs">observed</span><span class="msg">rising 3x faster</span></div>
-      <div class="line current"><span class="t">14:19</span><span class="k dec">decided</span><span class="msg">Target: <span class="h">"AI tools SMB"</span></span></div>
+      <div
+        v-for="(line, idx) in liveEvents"
+        :key="idx"
+        class="line"
+        :class="{ current: idx === liveEvents.length - 1 }"
+      >
+        <span class="t">{{ line.t }}</span>
+        <span
+          class="k"
+          :class="line.k"
+        >{{ line.badge || streamKindLabel(line.k) }}</span>
+        <span class="msg">{{ line.msg }}</span>
+      </div>
     </div>
+
+    <!-- Backdrop for the top-right title block. Sits between the canvas
+         (z-index 0/auto) and the ambient overlays so node cards passing
+         beneath the HUD are obscured and the kicker/title stays legible.
+         Matches the stream-backdrop's mask-faded edges for a soft fit. -->
+    <div
+      class="title-backdrop"
+      aria-hidden="true"
+    />
 
     <div class="title-block">
       <div class="title-kicker">
@@ -206,7 +320,7 @@
       <div class="left">
         <template v-if="mode === 'run'">
           <span>Elapsed</span>
-          <span class="tc">00:03:42</span>
+          <span class="tc">{{ runElapsedLabel }}</span>
         </template>
         <template v-else>
           <span>Mode</span>
@@ -214,16 +328,26 @@
         </template>
       </div>
       <div class="center">
-        <div class="mark">
-          A Sulla Original
-        </div>
-        <div class="signature">
-          Made entirely by <span class="sig-mark">agents</span>.
-        </div>
+        <template v-if="mode === 'run' && isRunBusy && runningTitle">
+          <div class="kicker">
+            Now Producing
+          </div>
+          <div class="output-now">
+            {{ runningTitle }}
+          </div>
+        </template>
+        <template v-else>
+          <div class="mark">
+            A Sulla Original
+          </div>
+          <div class="signature">
+            Made entirely by <span class="sig-mark">agents</span>.
+          </div>
+        </template>
       </div>
       <div class="right">
         <template v-if="mode === 'run'">
-          <b>3</b> / 21 agents · ETA <b>5m 18s</b>
+          <b>{{ completedCount }}</b> / {{ totalExecutableCount }} agents<template v-if="runEtaLabel"> · ETA <b>{{ runEtaLabel }}</b></template>
         </template>
         <template v-else>
           {{ nodes.length }} nodes · drag to build
@@ -252,14 +376,167 @@
       />
     </template>
 
+    <!-- Run-mode FAB: triggers execution of this routine. Placed in the
+         same position as the Add-node FAB so switching modes swaps the
+         affordance rather than stacking both on screen. -->
+    <template v-if="mode === 'run' && !viewingPastRun">
+      <button
+        type="button"
+        class="routines-fab run-fab"
+        :class="{ busy: isRunBusy, 'is-stop': isStopVisible, stalled: isStalled }"
+        :aria-label="isStopVisible ? 'Stop routine' : 'Run routine'"
+        @click="isStopVisible ? onStopClick() : onRunClick()"
+      >
+        <svg
+          v-if="isStopVisible"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <rect x="6" y="6" width="12" height="12" rx="1.5" />
+        </svg>
+        <svg
+          v-else
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path d="M8 5.14v13.72L19 12 8 5.14z" />
+        </svg>
+      </button>
+      <div class="routines-fab-tip">
+        {{ isStopVisible ? (isStalled ? 'Stop routine (stalled)' : 'Stop routine') : 'Run routine' }}
+      </div>
+    </template>
+
+    <!-- Runs flyout — anchored under the Runs button in the Controls bar.
+         Lists recent executions for this workflow; clicking one hydrates
+         the canvas with that run's final node outputs for inspection. -->
+    <div
+      v-if="runsFlyoutOpen"
+      class="runs-flyout nodrag"
+      @click.stop
+      @pointerdown.stop
+    >
+      <div class="runs-flyout-head">
+        <span class="runs-flyout-title">Run history</span>
+        <button
+          type="button"
+          class="runs-flyout-close"
+          aria-label="Close"
+          @click="closeRunsFlyout"
+        >✕</button>
+      </div>
+      <div
+        v-if="pastRunsLoading"
+        class="runs-flyout-status"
+      >
+        Loading…
+      </div>
+      <div
+        v-else-if="pastRuns.length === 0"
+        class="runs-flyout-status"
+      >
+        No recorded runs yet.
+      </div>
+      <ul
+        v-else
+        class="runs-list"
+      >
+        <li
+          v-for="run in pastRuns"
+          :key="run.executionId"
+          class="runs-item"
+          :class="{ active: viewingPastRun?.executionId === run.executionId }"
+          @click="openPastRun(run.executionId)"
+        >
+          <span class="runs-item-time">{{ formatRunStamp(run.startedAt) }}</span>
+          <span class="runs-item-body">
+            <span class="runs-item-last">{{ run.lastNodeLabel || '—' }}</span>
+            <span class="runs-item-meta">{{ run.checkpointCount }} steps · {{ formatRunSpan(run.startedAt, run.endedAt) }}</span>
+          </span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Delete confirmation — one dialog for every delete path (keyboard
+         Delete, context menu, future buttons). Enter confirms, Escape
+         cancels; clicking the backdrop also cancels. -->
+    <div
+      v-if="deleteConfirm"
+      class="delete-confirm-backdrop"
+      @click="cancelDelete"
+    >
+      <div
+        class="delete-confirm"
+        role="dialog"
+        aria-labelledby="delete-confirm-title"
+        @click.stop
+      >
+        <div
+          id="delete-confirm-title"
+          class="dc-title"
+        >
+          Delete {{ deleteConfirmSummary }}?
+        </div>
+        <div class="dc-body">
+          This can't be undone from the canvas — only the undo stack will
+          bring it back.
+        </div>
+        <div class="dc-actions">
+          <button
+            type="button"
+            class="dc-btn cancel"
+            @click="cancelDelete"
+          >Cancel</button>
+          <button
+            type="button"
+            class="dc-btn danger"
+            autofocus
+            @click="confirmDelete"
+          >Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Past-run banner — pinned at the top of the frame when the user is
+         inspecting a historical run so the canvas can't be mistaken for a
+         live one. Return-to-live clears node state and drops back to idle. -->
+    <div
+      v-if="viewingPastRun"
+      class="past-run-banner"
+    >
+      <span class="banner-dot" />
+      <span class="banner-text">
+        Viewing past run · <b>{{ formatRunStamp(viewingPastRun.startedAt) }}</b>
+        · {{ formatRunSpan(viewingPastRun.startedAt, viewingPastRun.endedAt) }}
+      </span>
+      <button
+        type="button"
+        class="banner-exit"
+        @click="exitPastRunView"
+      >Return to live</button>
+    </div>
+
+    <!-- Edit mode — right-hand config drawer for the selected node.
+         Run mode uses NodeOutputPanel instead (output + turns, no form). -->
     <NodeConfigPanel
+      v-if="mode === 'edit'"
       :open="configOpen"
       :node="selectedNode"
       :mode="mode"
       :upstream-nodes="upstreamNodes"
+      :children="selectedChildren"
       @close="closeConfig"
       @save="onConfigSave"
       @update-config="onConfigUpdate"
+    />
+    <NodeOutputPanel
+      v-else
+      :open="configOpen"
+      :node="selectedNode"
+      :children="selectedChildren"
+      @close="closeConfig"
     />
 
     <CommandPrompt
@@ -311,6 +588,22 @@
         <span class="ico">⛶</span>
         <span class="lbl">Fit to screen</span>
         <span class="sc">F</span>
+      </div>
+      <div class="sep" />
+      <div
+        class="cm-item"
+        @click="onCtxScreenshot"
+      >
+        <span class="ico">📸</span>
+        <span class="lbl">Screenshot view</span>
+      </div>
+      <div
+        class="cm-item"
+        :class="{ accent: isRecording }"
+        @click="onCtxRecord"
+      >
+        <span class="ico">{{ isRecording ? '⏹' : '⏺' }}</span>
+        <span class="lbl">{{ isRecording ? 'Stop recording' : 'Record execution' }}</span>
       </div>
       <template v-if="mode === 'edit'">
         <div class="sep" />
@@ -364,14 +657,14 @@
       />
       <div
         class="cm-item"
-        @click="closeNodeCtx"
+        @click="onNodeCtxRunFromHere"
       >
         <span class="ico">▶</span>
         <span class="lbl">Run from here</span>
       </div>
       <div
         class="cm-item"
-        @click="closeNodeCtx"
+        @click="onNodeCtxInspectOutput"
       >
         <span class="ico">◎</span>
         <span class="lbl">Inspect output</span>
@@ -401,8 +694,11 @@ import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
 
+import { useLiveClock } from '@pkg/composables/useLiveClock';
+import { useWorkflowHistory } from '@pkg/composables/useWorkflowHistory';
 import { useWorkflowPersistence, type WorkflowDefinition } from '@pkg/composables/useWorkflowPersistence';
-import { NODE_REGISTRY } from '@pkg/pages/editor/workflow/nodeRegistry';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 
 import {
   enrichNodesForDisplay,
@@ -412,12 +708,12 @@ import {
   type Integration,
 } from './routines/libraryMapping';
 
-function defaultsFor(subtype: string): Record<string, unknown> {
-  return NODE_REGISTRY.find(n => n.subtype === subtype)?.defaultConfig() ?? {};
-}
 import CommandPrompt from './routines/CommandPrompt.vue';
+import LoopFrameNode from './routines/LoopFrameNode.vue';
 import NodeConfigPanel from './routines/NodeConfigPanel.vue';
 import NodeDrawer from './routines/NodeDrawer.vue';
+import NodeOutputPanel from './routines/NodeOutputPanel.vue';
+import RoutineEdge from './routines/RoutineEdge.vue';
 import RoutineNode from './routines/RoutineNode.vue';
 
 type Mode = 'edit' | 'run';
@@ -426,19 +722,693 @@ type Mode = 'edit' | 'run';
 // `workflowId` is set when navigated to from RoutinesHome or the /routines/:id
 // route. When unset, the canvas renders the hardcoded demo graph unchanged
 // (useful for standalone previews and for the ad-hoc BrowserTab mount path).
-// Emitting `back-to-home` lets the parent return to the playbill view.
+// `initialMode` lets the caller open the canvas straight into edit or run —
+// card clicks from the playbill land in run mode, the explicit Edit button
+// opens in edit mode. Emitting `back-to-home` returns to the playbill.
 const props = defineProps<{
-  workflowId?: string;
+  workflowId?:  string;
+  initialMode?: 'edit' | 'run';
 }>();
 
-defineEmits<(e: 'back-to-home') => void>();
+const emit = defineEmits<{
+  'back-to-home': [];
+  /** Fires whenever execution state flips — parent hides the "All routines"
+      back button (and anything else in its chrome) while a run is live. */
+  'running-change': [running: boolean];
+}>();
 
-const mode = ref<Mode>('edit');
+const mode = ref<Mode>(props.initialMode ?? 'edit');
 const editLocked = ref(false);
 const locked = computed(() => mode.value === 'run' || editLocked.value);
 
 const drawerOpen = ref(false);
 const promptOpen = ref(false);
+
+// Run-mode FAB state. Clicking Play calls `routines-execute` directly —
+// no chat handoff. The handler primes the playbook on the default
+// sulla-desktop agent graph and kicks graph.execute(); the agent
+// orchestrates from there, emitting WebSocket events. The subscription
+// below maps those events into node-state updates and stream lines.
+// `hasActiveExecution` is the source of truth for "is a run still live?".
+// It flips true the moment we hit Run and only flips false on a *real*
+// terminal event from the backend (workflow_completed/failed/aborted) or
+// a successful abort IPC round-trip. The stall watchdog surfaces a
+// "stalled" hint but does NOT clear this flag — otherwise a quiet stream
+// would strand the user with a dangling backend run and no Stop button.
+const hasActiveExecution = ref(false);
+const isStalled = ref(false);
+const isRunBusy = ref(false);
+const runError = ref<string | null>(null);
+const lastExecutionId = ref<string | null>(null);
+
+// Emit on transitions so the parent can hide its chrome during a run
+// without needing its own WebSocket subscription.
+watch(hasActiveExecution, (v) => emit('running-change', v), { immediate: true });
+
+// The Stop button is visible whenever the backend might still be doing
+// work. `hasActiveExecution` keeps it available even if the event stream
+// goes quiet (stall) — the user must always be able to abort a dangling
+// run, otherwise they're stuck waiting with no recourse.
+const isStopVisible = computed(() => hasActiveExecution.value || isRunBusy.value);
+
+// ── Run-level telemetry for the bottom Output Ribbon ──
+// `runStartedAt` is stamped on `workflow_started` and cleared on the
+// terminal events so the ribbon's elapsed counter freezes at the final
+// runtime. Completed nodes get tallied in a ref so the ribbon's X / Y
+// readout updates reactively as the run progresses.
+const runStartedAt = ref<number | null>(null);
+const runEndedAt = ref<number | null>(null);
+const runCompletedNodeIds = ref<Set<string>>(new Set());
+const runClock = useLiveClock();
+
+function formatRunDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '00:00';
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${ String(h).padStart(2, '0') }:${ mm }:${ ss }` : `${ mm }:${ ss }`;
+}
+
+const runElapsedLabel = computed(() => {
+  if (!runStartedAt.value) return '00:00';
+  const end = runEndedAt.value ?? runClock.value;
+  return formatRunDuration(end - runStartedAt.value);
+});
+
+// Trigger nodes don't run through the orchestrator; exclude them from
+// the ribbon's X / Y count so the total matches what actually executes.
+const totalExecutableCount = computed(() => {
+  return nodes.value.filter(n => n.data?.category !== 'trigger').length;
+});
+
+const completedCount = computed(() => runCompletedNodeIds.value.size);
+
+const runningTitle = computed(() => {
+  for (const n of nodes.value) {
+    const running = n.data?.execution?.status === 'running' || n.data?.state === 'running';
+    if (running) {
+      return (n.data?.title as string | undefined) || (n.data?.label as string | undefined) || 'agent';
+    }
+  }
+  return '';
+});
+
+// ETA is a rough "average time per completed node × remaining". Shown
+// only once we have at least two completions so the initial guess isn't
+// wildly off. Cleared when the run ends.
+const runEtaLabel = computed(() => {
+  if (!isRunBusy.value || !runStartedAt.value) return '';
+  const completed = runCompletedNodeIds.value.size;
+  if (completed < 2) return '';
+  const total = totalExecutableCount.value;
+  const remaining = Math.max(total - completed, 0);
+  if (remaining === 0) return '';
+  const elapsed = runClock.value - runStartedAt.value;
+  const avg = elapsed / completed;
+  return formatRunDuration(avg * remaining);
+});
+
+// ── Live event stream ──
+// `liveEvents` is what the top-left stream panel renders while a run
+// is in progress. Populated by the WebSocket subscription below as
+// PlaybookController emits events. Cleared on `workflow_started` so
+// each run begins with a fresh log.
+interface StreamLine {
+  t:   string;
+  k:   'tool' | 'obs' | 'thk' | 'dec' | 'err';
+  msg: string;
+  /** Optional override for the kind chip label. When set, the chip shows
+      this string instead of the default "thinking"/"tool"/etc. — used
+      for `thk` lines so the chip tells you *which* node is thinking. */
+  badge?:  string;
+  /** Emitting node, when the event is node-attributed. Lets the run-mode
+      output drawer filter the global stream down to one card's turns. */
+  nodeId?: string;
+}
+const liveEvents = ref<StreamLine[]>([]);
+
+// ── Stream auto-scroll ──
+// The stream is append-only, so new lines fall below the visible area
+// as the list grows. We stick-to-bottom by default but respect the user
+// when they've scrolled up to read older lines — detected by measuring
+// the gap between scrollTop+clientHeight and scrollHeight. If that gap
+// is within STICK_THRESHOLD_PX, the next new line snaps us back; if
+// they're scrolled further up, we hold position until they scroll back
+// into the stickiness zone on a later line.
+const streamRef = ref<HTMLElement | null>(null);
+const STICK_THRESHOLD_PX = 40;
+
+watch(() => liveEvents.value.length, () => {
+  const el = streamRef.value;
+  if (!el) return;
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+  if (distanceFromBottom < STICK_THRESHOLD_PX) {
+    // Re-read inside nextTick — the new line is in the DOM now, so
+    // scrollHeight reflects its height and we snap to the true bottom
+    // rather than the pre-render bottom. Scroll is cosmetic; floating
+    // the promise is intentional (void marks it as such).
+    void nextTick(() => {
+      const node = streamRef.value;
+      if (!node) return;
+      node.scrollTop = node.scrollHeight;
+    });
+  }
+});
+
+// Stall watchdog — a quiet event stream doesn't mean the backend died.
+// Long agent thinking phases or remote calls can pause the event stream
+// for minutes while the run is still very much alive. So stalling only
+// SURFACES a hint (`isStalled`); it no longer clears `isRunBusy` or
+// `hasActiveExecution`. The Stop button stays live the entire time —
+// the user must always be able to abort a dangling run.
+// 5 minutes — long enough that a slow subconscious / long agent thinking
+// phase doesn't falsely flag the run as stalled, short enough that a
+// truly dead stream eventually surfaces. This flag is visual-only;
+// Stop stays clickable regardless.
+const MAX_STALL_MS = 300_000;
+let runStallTimer: ReturnType<typeof setTimeout> | null = null;
+
+function bumpStallTimer() {
+  if (runStallTimer) clearTimeout(runStallTimer);
+  isStalled.value = false;
+  runStallTimer = setTimeout(() => {
+    isStalled.value = true;
+    runStallTimer = null;
+  }, MAX_STALL_MS);
+}
+
+function clearStallTimer() {
+  if (runStallTimer) {
+    clearTimeout(runStallTimer);
+    runStallTimer = null;
+  }
+  isStalled.value = false;
+}
+
+// Centralized lifecycle transitions so the three flags never get out of
+// sync. `beginRun` fires the instant the user hits Play; `endRun` fires
+// only on real terminal signals (workflow_completed/failed/aborted or a
+// confirmed abort IPC) — never from the stall watchdog.
+function beginRun() {
+  // Launching a live run bumps us out of any historical view — the
+  // banner/hydrated state would otherwise fight with incoming live
+  // events.
+  viewingPastRun.value = null;
+  hasActiveExecution.value = true;
+  isRunBusy.value = true;
+  runError.value = null;
+  liveEvents.value = [];
+  bumpStallTimer();
+}
+
+// Any nodes still in `running` state when a run terminates need to have
+// their execution sealed so the live elapsed timer freezes and the card
+// stops glowing violet. `terminal` decides the settled state: 'done' for
+// clean completions, 'failed' for aborts / failures (the node was in the
+// middle of work and got interrupted — closer to failed than done).
+function freezeRunningNodes(terminal: 'done' | 'failed') {
+  const ts = Date.now();
+  let touched = false;
+  for (const node of nodes.value) {
+    const state = node.data?.state;
+    if (state !== 'running') continue;
+    const prevExec = (node.data?.execution as Record<string, unknown> | undefined) ?? {};
+    node.data = {
+      ...node.data,
+      state:     terminal,
+      execution: {
+        ...prevExec,
+        status:      terminal === 'done' ? 'completed' : 'failed',
+        completedAt: ts,
+        // Preserve existing startedAt so elapsedLabel resolves to a
+        // frozen duration instead of blanking.
+        startedAt:   prevExec.startedAt ?? ts,
+      },
+    };
+    touched = true;
+  }
+  if (touched) nodes.value = [...nodes.value];
+}
+
+function endRun(terminal: 'done' | 'failed' = 'failed') {
+  freezeRunningNodes(terminal);
+  hasActiveExecution.value = false;
+  isRunBusy.value = false;
+  clearStallTimer();
+}
+
+async function onRunClick() {
+  if (!props.workflowId) {
+    console.warn('[AgentRoutines] Run clicked with no workflowId — nothing to execute.');
+
+    return;
+  }
+  if (hasActiveExecution.value) return;
+
+  beginRun();
+
+  try {
+    const result = await ipcRenderer.invoke('routines-execute', props.workflowId);
+    lastExecutionId.value = result.executionId;
+    console.log(`[AgentRoutines] Routine launched — executionId=${ result.executionId }`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    runError.value = msg;
+    // Surface the failure in the live stream so the user sees it without
+    // digging into devtools. `runError` is still kept so other UI can
+    // pick it up later; this just makes sure the error is visible now.
+    pushLine('err', `Run failed: ${ msg }`);
+    console.error('[AgentRoutines] Failed to launch routine:', err);
+    endRun();
+  }
+}
+
+async function onStopClick() {
+  const execId = lastExecutionId.value;
+  if (!execId) {
+    // No known execution — just clear local state so the user can
+    // recover the UI. The walker is either already done or never
+    // started; either way there's nothing to abort.
+    endRun();
+
+    return;
+  }
+  try {
+    pushLine('dec', 'aborting…');
+    const result = await ipcRenderer.invoke('routines-abort', execId);
+    if (!result?.aborted) {
+      pushLine('err', `abort failed${ result?.reason ? `: ${ result.reason }` : '' }`);
+    }
+    // On success the backend emits `workflow_aborted` which hits the
+    // event handler and calls endRun(). If the IPC reported no active
+    // execution, the backend already lost track of it — clear locally.
+    if (!result?.aborted) endRun();
+  } catch (err) {
+    console.error('[AgentRoutines] Failed to abort routine:', err);
+    pushLine('err', `abort failed: ${ err instanceof Error ? err.message : String(err) }`);
+    endRun();
+  }
+}
+
+// ── Node state helpers ──
+// Execution events arrive with node ids; mutate node.data.state so the
+// canvas cards animate. The auto-save watch is deep, but the save gate
+// checks `props.workflowId` + `hasHydrated` so these mutations won't
+// round-trip to the store.
+
+// Map UI state vocabulary → execution.status vocabulary the node
+// component reads for timestamped state transitions.
+function execStatusFor(state: 'idle' | 'queued' | 'running' | 'done' | 'failed') {
+  switch (state) {
+  case 'running': return 'running' as const;
+  case 'done':    return 'completed' as const;
+  case 'failed':  return 'failed' as const;
+  case 'queued':  return 'waiting' as const;
+  default:        return undefined;
+  }
+}
+
+// ── Cinematic auto-follow camera ──
+// When a node starts running during a live execution, pan + zoom the
+// canvas so the active card sits centered and takes roughly a fifth of
+// the viewport. Includes its 1-hop neighbors in the fit so the viewer
+// can see where data is coming from and where it's heading next. Only
+// fires during `isRunBusy` so editing stays uninterrupted, and can be
+// opted out via `cinemaMode.value`.
+const cinemaMode = ref(true);
+
+function focusOnRunningNode(nodeId: string) {
+  if (!cinemaMode.value || !isRunBusy.value) return;
+
+  // Events may arrive with a subnode id (e.g. `-prompt-0`). Resolve to
+  // the real canvas card so the fitView actually matches.
+  const canvasNode = resolveCanvasNode(nodeId);
+  if (!canvasNode) return;
+  const canvasId = canvasNode.id;
+
+  // Collect 1-hop neighbors on both sides so the frame tells a story:
+  // source → running → target.
+  const neighbors = new Set<string>([canvasId]);
+  for (const edge of edges.value) {
+    if (edge.source === canvasId) neighbors.add(edge.target);
+    if (edge.target === canvasId) neighbors.add(edge.source);
+  }
+  const ids = [...neighbors].filter(id => nodes.value.some(n => n.id === id));
+  if (ids.length === 0) return;
+
+  // Padding ~1.2 keeps the running card around 20-25% of the viewport
+  // width on a typical canvas — wide enough to read details, with the
+  // neighbors visible at the edges of frame for context.
+  void fitView({
+    nodes:    ids,
+    padding:  1.2,
+    duration: 700,
+    maxZoom:  1.4,
+    minZoom:  0.4,
+  });
+}
+
+function setNodeState(
+  nodeId: string,
+  state: 'idle' | 'queued' | 'running' | 'done' | 'failed',
+  ts?: number,
+) {
+  const node = resolveCanvasNode(nodeId);
+  if (!node) return;
+
+  const t = typeof ts === 'number' && Number.isFinite(ts) ? ts : Date.now();
+  const prevExec = (node.data?.execution as
+    { startedAt?: number; completedAt?: number } | undefined) ?? {};
+  const execStatus = execStatusFor(state);
+
+  // Stamp startedAt/completedAt so RoutineNode.vue's elapsed counter has
+  // a clock to read. `running` always starts a fresh timer (overwrites
+  // any previous start). `done`/`failed` seal the duration — preserve an
+  // existing startedAt if the run actually had one.
+  let startedAt = prevExec.startedAt;
+  let completedAt = prevExec.completedAt;
+
+  if (state === 'running') {
+    startedAt = t;
+    completedAt = undefined;
+  } else if (state === 'done' || state === 'failed') {
+    completedAt = t;
+    if (typeof startedAt !== 'number') startedAt = t;
+  } else if (state === 'idle' || state === 'queued') {
+    startedAt = undefined;
+    completedAt = undefined;
+  }
+
+  node.data = {
+    ...node.data,
+    state,
+    execution: {
+      ...(node.data?.execution as Record<string, unknown> ?? {}),
+      status: execStatus,
+      startedAt,
+      completedAt,
+    },
+  };
+}
+
+function resetNodeStates() {
+  for (const node of nodes.value) {
+    if (node.data?.state && node.data.state !== 'idle') {
+      node.data = {
+        ...node.data,
+        state:     'idle',
+        execution: undefined,
+      };
+    }
+  }
+}
+
+// Attach the node's output to its `execution` bag so the right-hand
+// drawer can show it when the user clicks a running/done card during a
+// run. We keep the raw value — the drawer does its own formatting.
+function setNodeExecutionOutput(nodeId: string, output: unknown) {
+  const node = resolveCanvasNode(nodeId);
+  if (!node) return;
+  const prevExec = (node.data?.execution as Record<string, unknown> | undefined) ?? {};
+  node.data = {
+    ...node.data,
+    execution: { ...prevExec, output },
+  };
+}
+
+/**
+ * Per-node conversation log. Mirrors the top-left live stream but stored
+ * on each node so turns survive longer than the global 50-line buffer
+ * and the run-mode output drawer can show a card's full timeline.
+ *
+ * Capped at NODE_TURN_LIMIT so a chatty multi-turn agent can't pin
+ * unbounded memory on the node. Cleared implicitly when the node's
+ * execution bag is reset at the start of a run (see resetNodeStates).
+ */
+interface NodeTurn {
+  t:       string;
+  k:       'tool' | 'obs' | 'thk' | 'dec' | 'err';
+  msg:     string;
+  badge?:  string;
+}
+const NODE_TURN_LIMIT = 200;
+
+// PlaybookController attaches subnode suffixes like `-prompt-0` to the
+// node id on delegation — the same regex `displayNodeName` uses. Resolve
+// here so turns and state transitions route to the actual canvas card
+// even when events carry sub-ids.
+function resolveCanvasNode(nodeId: string) {
+  const direct = nodes.value.find(n => n.id === nodeId);
+  if (direct) return direct;
+  const baseId = nodeId.replace(/-[a-z]+-\d+$/, '');
+  if (baseId !== nodeId) {
+    return nodes.value.find(n => n.id === baseId);
+  }
+  return undefined;
+}
+
+function appendNodeTurn(nodeId: string, turn: NodeTurn) {
+  const node = resolveCanvasNode(nodeId);
+  if (!node) return;
+  const prevExec = (node.data?.execution as { turns?: NodeTurn[] } & Record<string, unknown> | undefined) ?? {};
+  const prevTurns: NodeTurn[] = Array.isArray(prevExec.turns) ? prevExec.turns : [];
+  // Keep the most recent NODE_TURN_LIMIT entries — drops the oldest when
+  // the ring fills so the newest turn is always visible in the drawer.
+  const nextTurns = prevTurns.length >= NODE_TURN_LIMIT
+    ? [...prevTurns.slice(-(NODE_TURN_LIMIT - 1)), turn]
+    : [...prevTurns, turn];
+  node.data = {
+    ...node.data,
+    execution: { ...prevExec, turns: nextTurns },
+  };
+}
+
+// ── Event handler ──
+// Maps a single PlaybookController event to (a) a node.data.state
+// change, (b) a stream line, or (c) both. Event shape mirrors what
+// EditorChatInterface / AgentEditor already consume elsewhere.
+
+function stamp(ts?: number): string {
+  const d = ts ? new Date(ts) : new Date();
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+
+  return `${ h }:${ m }:${ s }`;
+}
+
+function pushLine(
+  kind:    StreamLine['k'],
+  msg:     string,
+  ts?:     number,
+  badge?:  string,
+  nodeId?: string,
+) {
+  const t = stamp(ts);
+  const line: StreamLine = { t, k: kind, msg };
+  if (badge) line.badge = badge;
+  if (nodeId) line.nodeId = nodeId;
+  liveEvents.value = [...liveEvents.value.slice(-49), line];
+
+  // Shadow every node-attributed line into that node's own turns log —
+  // gives the run-mode output drawer a persistent conversation buffer
+  // that survives past the global stream's 50-line horizon.
+  if (nodeId) {
+    const turn: NodeTurn = { t, k: kind, msg };
+    if (badge) turn.badge = badge;
+    appendNodeTurn(nodeId, turn);
+  }
+}
+
+// Short label displayed in the stream kind chip. Kept as a function so
+// the existing CSS selectors (.k.tool, .k.obs, .k.thk, .k.dec, .k.err)
+// still target the class, and the text tracks alongside.
+function streamKindLabel(kind: StreamLine['k']): string {
+  switch (kind) {
+  case 'tool': return 'tool';
+  case 'obs':  return 'observed';
+  case 'thk':  return 'thinking';
+  case 'dec':  return 'decided';
+  case 'err':  return 'error';
+  default:     return kind;
+  }
+}
+
+// Strip XML/HTML tags, CDATA sections, and HTML entities from agent
+// content before it lands in the stream. Agents occasionally emit
+// structured thinking like `<thinking>…</thinking>` or tool-call blobs
+// like `<function_calls>…</function_calls>` that read as noise in a
+// live ticker — we want the prose, not the envelope.
+function stripXml(s: string): string {
+  return s
+    .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, ' ')
+    .replace(/<\/?[a-zA-Z][^>]*>/g, ' ')
+    .replace(/&(?:[a-zA-Z]+|#\d+);/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Resolve a human-readable name for a node. Prefer the event-supplied
+// label (PlaybookController attaches it), then fall back to the on-canvas
+// node's `data.title`/`data.label`. Raw node ids are never shown — they
+// leak internals like `node-1741000000002-prompt-0` that mean nothing
+// to the user reading the live stream.
+function displayNodeName(nodeId?: string, nodeLabel?: string): string {
+  if (nodeLabel && nodeLabel.trim()) return nodeLabel.trim();
+  if (nodeId) {
+    // Strip subnode suffixes like "-prompt-0" that PlaybookController
+    // appends — the underlying node still lives in nodes.value under
+    // the base id.
+    const baseId = nodeId.replace(/-[a-z]+-\d+$/, '');
+    const node = nodes.value.find(n => n.id === baseId || n.id === nodeId);
+    const d = node?.data as { title?: string; label?: string } | undefined;
+    const name = d?.title || d?.label;
+    if (name && name.trim()) return name.trim();
+  }
+
+  return 'agent';
+}
+
+function handleWorkflowEvent(event: any) {
+  // Filter to events belonging to this workflow — events from other
+  // routines running on the same channel must not affect this canvas.
+  if (event?.workflowId && props.workflowId && event.workflowId !== props.workflowId) {
+    return;
+  }
+
+  bumpStallTimer();
+
+  const nodeId = event?.nodeId as string | undefined;
+  const nodeLabel = event?.nodeLabel as string | undefined;
+  const who = displayNodeName(nodeId, nodeLabel);
+  // PlaybookController emits ISO strings; the elapsed counter in
+  // RoutineNode needs ms. Parse once per event so every setNodeState
+  // call inside this switch gets the same timebase.
+  const tsMs = typeof event?.timestamp === 'string'
+    ? Date.parse(event.timestamp)
+    : (typeof event?.timestamp === 'number' ? event.timestamp : Date.now());
+
+  switch (event?.type) {
+  case 'workflow_started':
+    resetNodeStates();
+    // Re-arm the run lifecycle flags in case this is a reconnect (the
+    // user's initial Run click already called beginRun, but a late-
+    // arriving reconnect needs the same setup so the Stop button stays
+    // correct and the stall watchdog restarts).
+    beginRun();
+    runStartedAt.value = tsMs;
+    runEndedAt.value = null;
+    runCompletedNodeIds.value = new Set();
+    pushLine('dec', 'started', event.timestamp);
+    break;
+
+  case 'node_started':
+    if (nodeId) {
+      setNodeState(nodeId, 'running', tsMs);
+      focusOnRunningNode(nodeId);
+    }
+    pushLine('tool', who, event.timestamp, undefined, nodeId);
+    break;
+
+  case 'node_completed':
+    if (nodeId) {
+      setNodeState(nodeId, 'done', tsMs);
+      if (event.output != null) setNodeExecutionOutput(nodeId, event.output);
+      // Tally toward the ribbon's X / Y without double-counting if the
+      // same node completes twice (retry paths do re-emit).
+      if (!runCompletedNodeIds.value.has(nodeId)) {
+        const next = new Set(runCompletedNodeIds.value);
+        next.add(nodeId);
+        runCompletedNodeIds.value = next;
+      }
+    }
+    pushLine('obs', `${ who } · done`, event.timestamp, undefined, nodeId);
+    break;
+
+  case 'node_failed': {
+    if (nodeId) setNodeState(nodeId, 'failed', tsMs);
+    const raw = typeof event.error === 'string' ? event.error : JSON.stringify(event.error ?? 'failed');
+    const err = stripXml(raw).slice(0, 240);
+    pushLine('err', `${ who } · ${ err }`, event.timestamp, undefined, nodeId);
+    break;
+  }
+
+  case 'node_thinking':
+    // All agent thinking surfaces in the top-left stream. The chip
+    // prefers the event's `thinkingLabel` when set — subconscious
+    // subagents (memory-recall, observation, summarizer) use it so
+    // their work is visibly attributed instead of silently running
+    // under the orchestrator's name for 30+ seconds.
+    if (event.content) {
+      const text = stripXml(String(event.content)).slice(0, 220);
+      const badge = (typeof event.thinkingLabel === 'string' && event.thinkingLabel.trim())
+        ? event.thinkingLabel.trim()
+        : who;
+      if (text) pushLine('thk', text, event.timestamp, badge, nodeId);
+    }
+    break;
+
+  case 'edge_activated':
+    // Kept silent in the stream — the node-level events already tell
+    // the story. Could visualize the edge later if useful.
+    break;
+
+  case 'workflow_completed':
+    pushLine('dec', 'completed', event.timestamp);
+    runEndedAt.value = tsMs;
+    endRun('done');
+    break;
+
+  case 'workflow_aborted':
+    pushLine('err', `aborted${ event.reason ? `: ${ event.reason }` : '' }`, event.timestamp);
+    runEndedAt.value = tsMs;
+    endRun('failed');
+    break;
+
+  case 'workflow_failed':
+    pushLine('err', `failed${ event.error ? `: ${ event.error }` : '' }`, event.timestamp);
+    runEndedAt.value = tsMs;
+    endRun('failed');
+    break;
+
+  case 'workflow_paused':
+    pushLine('dec', `paused${ event.reason ? `: ${ event.reason }` : '' }`, event.timestamp);
+    break;
+  }
+}
+
+// ── Subscription lifecycle ──
+// Subscribes to the `sulla-desktop` channel (where routines emit) and
+// forwards `workflow_execution_event` messages to `handleWorkflowEvent`.
+// Stays active for the component's lifetime so mode toggles don't drop
+// events mid-run; the inner filter throws away events unrelated to
+// this canvas.
+let wsUnsubscribe: (() => void) | null = null;
+
+function subscribeToExecutionEvents() {
+  try {
+    const ws = getWebSocketClientService();
+    wsUnsubscribe = ws.onMessage('sulla-desktop', (msg: any) => {
+      if (msg?.type !== 'workflow_execution_event') return;
+      const payload = msg.data;
+      if (!payload) return;
+      handleWorkflowEvent(payload);
+    });
+  } catch (err) {
+    console.warn('[AgentRoutines] WebSocket subscription failed — live events will be inert:', err);
+  }
+}
+
+function unsubscribeFromExecutionEvents() {
+  if (wsUnsubscribe) {
+    try { wsUnsubscribe(); } catch { /* ignore */ }
+    wsUnsubscribe = null;
+  }
+  clearStallTimer();
+}
 
 const selectedNodeId = ref<string | null>(null);
 const selectedNode = computed(() => nodes.value.find(n => n.id === selectedNodeId.value) || null);
@@ -456,20 +1426,159 @@ const subtitle = ref('Twenty-one agents, one article, nine minutes.');
 // watch so the initial assignments from load() don't re-save the same
 // document straight back.
 const persistence = useWorkflowPersistence();
+const history = useWorkflowHistory();
 const baseDefinition = ref<WorkflowDefinition | null>(null);
 const hasHydrated = ref(false);
+// Flag that suppresses the auto-save watch while we're re-hydrating from
+// a history snapshot (undo/redo). Otherwise applyDefinition() would
+// trigger scheduleSave → create a new history row → undo would itself
+// pollute the audit trail we're trying to walk.
+const isRestoring = ref(false);
+
+// VueFlow wraps every on-canvas node/edge with runtime metadata that
+// isn't structured-cloneable across IPC (event handler maps, computed
+// getters, symbol-keyed internals, DOM rects). Before handing a save
+// payload to the main process we reduce each node/edge down to the
+// routine-schema fields — explicit allowlist keeps the wire shape in
+// sync with the YAML contract and avoids DataCloneError surprises.
+//
+// For free-form subtrees (node `data`, `viewport`) we walk the value
+// and drop anything structured-clone rejects (functions, symbols, class
+// instances with non-cloneable backing) while preserving every plain
+// JSON value. Safer than JSON.stringify because it doesn't silently
+// lose Dates or typed arrays — those stay intact and clone fine.
+function toCloneable(v: any): any {
+  if (v === null || v === undefined) return v;
+  const t = typeof v;
+  if (t === 'string' || t === 'number' || t === 'boolean' || t === 'bigint') return v;
+  if (t === 'function' || t === 'symbol') return undefined;
+  if (t !== 'object') return undefined;
+  if (Array.isArray(v)) {
+    return v.map(toCloneable).filter(x => x !== undefined);
+  }
+  // Plain object or reactive proxy over one. Copy own-enumerable
+  // string keys only — drops symbol-keyed internals (VueFlow uses
+  // these for framework-only state) which are the usual DataCloneError
+  // culprit.
+  const out: Record<string, any> = {};
+  for (const k of Object.keys(v)) {
+    try {
+      const cleaned = toCloneable(v[k]);
+      if (cleaned !== undefined) out[k] = cleaned;
+    } catch {
+      // Accessor that throws during read — skip it entirely.
+    }
+  }
+
+  return out;
+}
+
+function toPlainNode(n: any) {
+  return {
+    id:       String(n.id),
+    type:     n.type,
+    position: { x: Number(n.position?.x ?? 0), y: Number(n.position?.y ?? 0) },
+    data:     toCloneable(n.data),
+    ...(n.width  != null ? { width:  n.width  } : {}),
+    ...(n.height != null ? { height: n.height } : {}),
+    ...(n.parentNode ? { parentNode: n.parentNode } : {}),
+  };
+}
+
+function toPlainEdge(e: any) {
+  return {
+    id:     String(e.id),
+    source: e.source,
+    target: e.target,
+    ...(e.sourceHandle ? { sourceHandle: e.sourceHandle } : {}),
+    ...(e.targetHandle ? { targetHandle: e.targetHandle } : {}),
+    ...(e.type ? { type: e.type } : {}),
+    ...(e.label != null ? { label: e.label } : {}),
+    ...(e.data ? { data: toCloneable(e.data) } : {}),
+  };
+}
 
 function buildDefinitionForSave(): WorkflowDefinition | null {
   if (!props.workflowId) return null;
 
+  const base = baseDefinition.value ?? {};
+  const vp: any = (base as any).viewport;
+
   return {
-    ...(baseDefinition.value ?? {}),
+    ...base,
     id:          props.workflowId,
     name:        title.value,
     description: subtitle.value,
-    nodes:       nodes.value,
-    edges:       edges.value,
+    nodes:       nodes.value.map(toPlainNode),
+    edges:       edges.value.map(toPlainEdge),
+    viewport:    vp
+      ? { x: Number(vp.x ?? 0), y: Number(vp.y ?? 0), zoom: Number(vp.zoom ?? 1) }
+      : { x: 0, y: 0, zoom: 1 },
   };
+}
+
+/**
+ * Replace the canvas state with a definition snapshot — used by the
+ * undo/redo flow and by the initial mount hydration. Keeps both paths
+ * in sync so any field the editor cares about is re-applied from the
+ * snapshot consistently.
+ */
+function applyDefinition(def: WorkflowDefinition): void {
+  if (typeof def.name === 'string') title.value = def.name;
+  if (typeof def.description === 'string') subtitle.value = def.description;
+  if (Array.isArray(def.nodes)) nodes.value = def.nodes as typeof nodes.value;
+  if (Array.isArray(def.edges)) {
+    // Migrate legacy edges that were persisted as `smoothstep` (or with
+    // no type at all) to our custom `routine` edge so every edge picks
+    // up the base-track + traveling-pulse treatment. Auto-save will
+    // re-persist with the new type on the next mutation.
+    edges.value = (def.edges as any[]).map((e) => {
+      if (!e.type || e.type === 'smoothstep') return { ...e, type: 'routine' };
+      return e;
+    }) as typeof edges.value;
+  }
+  baseDefinition.value = def;
+  enrichNodesForDisplay(nodes.value);
+}
+
+async function undo(): Promise<void> {
+  if (!props.workflowId || !history.canUndo.value) return;
+  const snapshot = history.stepBack();
+  if (!snapshot) return;
+  isRestoring.value = true;
+  try {
+    applyDefinition(snapshot);
+    await nextTick();
+    const payload = buildDefinitionForSave();
+    if (payload) await persistence.saveSilent(payload);
+  } finally {
+    // Give the deep watch one tick to flush before re-enabling auto-save.
+    await nextTick();
+    isRestoring.value = false;
+  }
+}
+
+async function redo(): Promise<void> {
+  if (!props.workflowId || !history.canRedo.value) return;
+  const snapshot = history.stepForward();
+  if (!snapshot) return;
+  isRestoring.value = true;
+  try {
+    applyDefinition(snapshot);
+    await nextTick();
+    const payload = buildDefinitionForSave();
+    if (payload) await persistence.saveSilent(payload);
+  } finally {
+    await nextTick();
+    isRestoring.value = false;
+  }
+}
+
+// Platform-appropriate modifier symbol for tooltips. macOS users expect
+// ⌘, Windows/Linux users expect Ctrl.
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent ?? '');
+function shortcutLabel(key: string): string {
+  return isMac ? `⌘${ key }` : `Ctrl+${ key }`;
 }
 
 const persistenceLabel = computed<string | null>(() => {
@@ -485,11 +1594,216 @@ const persistenceLabel = computed<string | null>(() => {
 // Provide mode to descendant RoutineNode components so they can hide edit-only UI.
 provide<typeof mode>('routines-mode', mode);
 
+// When a drag (library item OR an on-canvas node) passes over a loop
+// frame, we stash the frame's id here so the LoopFrameNode can add a
+// "drop target" highlight class. Cleared on drop / drag-end / leave.
+const dropTargetLoopId = ref<string | null>(null);
+provide('routines-drop-target-loop', dropTargetLoopId);
+
 const ctxMenu = reactive({ visible: false, x: 0, y: 0 });
 const nodeCtx = reactive({ visible: false, x: 0, y: 0, nodeId: null as string | null });
 const selectedEdgeId = ref<string | null>(null);
 
-const { setInteractive, zoomIn, zoomOut, fitView, project, addNodes, addEdges } = useVueFlow();
+// ── Run history ──
+// Backed by the `workflow_checkpoints` table. `routines-list-runs`
+// returns summary rows; clicking one fires `routines-load-run` and
+// hydrates the canvas with that run's recorded node outputs. The
+// canvas enters `viewingPastRun` mode — Run / edits disabled until
+// the user returns to live.
+interface PastRunSummary {
+  executionId:     string;
+  workflowId:      string;
+  workflowName:    string;
+  lastNodeId:      string;
+  lastNodeLabel:   string;
+  checkpointCount: number;
+  startedAt:       string;
+  endedAt:         string;
+}
+const runsFlyoutOpen = ref(false);
+const pastRuns = ref<PastRunSummary[]>([]);
+const pastRunsLoading = ref(false);
+const viewingPastRun = ref<{ executionId: string; startedAt: string; endedAt: string } | null>(null);
+
+async function fetchPastRuns() {
+  if (!props.workflowId) {
+    pastRuns.value = [];
+    return;
+  }
+  pastRunsLoading.value = true;
+  try {
+    const rows = await ipcRenderer.invoke('routines-list-runs', props.workflowId, 25);
+    pastRuns.value = Array.isArray(rows) ? rows : [];
+  } catch (err) {
+    console.warn('[AgentRoutines] Failed to load run history:', err);
+    pastRuns.value = [];
+  } finally {
+    pastRunsLoading.value = false;
+  }
+}
+
+function toggleRunsFlyout() {
+  runsFlyoutOpen.value = !runsFlyoutOpen.value;
+  if (runsFlyoutOpen.value) void fetchPastRuns();
+}
+
+function closeRunsFlyout() {
+  runsFlyoutOpen.value = false;
+}
+
+async function openPastRun(executionId: string) {
+  closeRunsFlyout();
+  try {
+    const snapshot = await ipcRenderer.invoke('routines-load-run', executionId);
+    if (!snapshot) {
+      pushLine('err', 'Run snapshot not found');
+      return;
+    }
+    // Clear any in-flight state first so the canvas doesn't show a
+    // half-live, half-historical mix.
+    resetNodeStates();
+    liveEvents.value = [];
+
+    // Apply each checkpointed node's output + state to its canvas card.
+    // Nodes that never ran in this execution stay idle. The baseline
+    // startedAt / completedAt give the elapsed counter a stable frozen
+    // duration.
+    const startedMs = Date.parse(snapshot.startedAt) || Date.now();
+    const endedMs = Date.parse(snapshot.endedAt) || startedMs;
+    for (const [nodeId, entry] of Object.entries(snapshot.nodeOutputs ?? {})) {
+      const out = entry as { nodeId: string; output: unknown; completedAt: string };
+      const completedMs = Date.parse(out.completedAt) || endedMs;
+      setNodeState(out.nodeId ?? nodeId, 'done', completedMs);
+      // Back-date startedAt to give the elapsed readout a sensible
+      // duration — we don't have per-node start times in the checkpoint
+      // so fall back to the run's start.
+      const canvasNode = resolveCanvasNode(out.nodeId ?? nodeId);
+      if (canvasNode) {
+        const exec = (canvasNode.data?.execution as Record<string, unknown> | undefined) ?? {};
+        canvasNode.data = {
+          ...canvasNode.data,
+          execution: { ...exec, startedAt: startedMs, completedAt: completedMs },
+        };
+      }
+      if (out.output != null) setNodeExecutionOutput(out.nodeId ?? nodeId, out.output);
+    }
+
+    viewingPastRun.value = {
+      executionId: snapshot.executionId,
+      startedAt:   snapshot.startedAt,
+      endedAt:     snapshot.endedAt,
+    };
+    // Trigger the edge-flow recompute so idle edges stay dim (no edges
+    // should light up during history view — no node is "running").
+    nodes.value = [...nodes.value];
+  } catch (err) {
+    console.warn('[AgentRoutines] Failed to open past run:', err);
+    pushLine('err', `failed to load run: ${ err instanceof Error ? err.message : String(err) }`);
+  }
+}
+
+function exitPastRunView() {
+  viewingPastRun.value = null;
+  resetNodeStates();
+  liveEvents.value = [];
+}
+
+function formatRunStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) {
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+    ' · ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatRunSpan(startIso: string, endIso: string): string {
+  const ms = Math.max(Date.parse(endIso) - Date.parse(startIso), 0);
+  if (!Number.isFinite(ms)) return '';
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m >= 60) {
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return `${ h }h ${ String(mm).padStart(2, '0') }m`;
+  }
+  return m > 0 ? `${ m }m ${ String(s).padStart(2, '0') }s` : `${ s }s`;
+}
+
+const { setInteractive, zoomIn, zoomOut, fitView, project, addNodes, addEdges, getSelectedNodes, getSelectedEdges } = useVueFlow();
+
+// ── Delete confirmation ──
+// One dialog handles keyboard Delete, the node context menu's "Remove
+// from flow" item, and any future delete path — keeps deletion behind
+// exactly one confirmation so we can never drop work by accident. The
+// selection snapshot is taken when the dialog opens so subsequent
+// canvas clicks (which would change the selection) don't silently
+// change what gets deleted.
+interface DeleteTarget {
+  nodeIds: string[];
+  edgeIds: string[];
+}
+const deleteConfirm = ref<DeleteTarget | null>(null);
+
+function collectDeletionTarget(): DeleteTarget | null {
+  if (mode.value !== 'edit') return null;
+  const selectedNodes = getSelectedNodes.value ?? [];
+  const selectedEdges = getSelectedEdges.value ?? [];
+  const nodeIds = new Set<string>(selectedNodes.map((n: any) => n.id));
+  const edgeIds = new Set<string>(selectedEdges.map((e: any) => e.id));
+  // Fall back to the explicit selection refs so single-click selections
+  // (which don't always populate VueFlow's multiselect state) still work.
+  if (selectedNodeId.value) nodeIds.add(selectedNodeId.value);
+  if (selectedEdgeId.value) edgeIds.add(selectedEdgeId.value);
+  if (nodeIds.size === 0 && edgeIds.size === 0) return null;
+  return { nodeIds: [...nodeIds], edgeIds: [...edgeIds] };
+}
+
+function requestDelete(explicit?: DeleteTarget) {
+  if (mode.value !== 'edit') return;
+  const target = explicit ?? collectDeletionTarget();
+  if (!target) return;
+  deleteConfirm.value = target;
+}
+
+function cancelDelete() {
+  deleteConfirm.value = null;
+}
+
+function confirmDelete() {
+  const target = deleteConfirm.value;
+  if (!target) return;
+  const nodeIds = new Set(target.nodeIds);
+  const edgeIds = new Set(target.edgeIds);
+  // Drop the selected edges plus any edge orphaned by a removed node —
+  // leaving dangling edges pointing at nothing would break the graph.
+  if (nodeIds.size > 0) {
+    nodes.value = nodes.value.filter(n => !nodeIds.has(n.id));
+    edges.value = edges.value.filter(e => !nodeIds.has(e.source) && !nodeIds.has(e.target));
+  }
+  if (edgeIds.size > 0) {
+    edges.value = edges.value.filter(e => !edgeIds.has(e.id));
+  }
+  // Clear residual selection state so the UI doesn't point at ghosts.
+  if (selectedNodeId.value && nodeIds.has(selectedNodeId.value)) selectedNodeId.value = null;
+  if (selectedEdgeId.value && edgeIds.has(selectedEdgeId.value)) selectedEdgeId.value = null;
+  deleteConfirm.value = null;
+}
+
+const deleteConfirmSummary = computed(() => {
+  const t = deleteConfirm.value;
+  if (!t) return '';
+  const parts: string[] = [];
+  if (t.nodeIds.length === 1) parts.push('1 node');
+  else if (t.nodeIds.length > 1) parts.push(`${ t.nodeIds.length } nodes`);
+  if (t.edgeIds.length === 1) parts.push('1 edge');
+  else if (t.edgeIds.length > 1) parts.push(`${ t.edgeIds.length } edges`);
+  return parts.join(' + ');
+});
 
 watch(locked, (l) => {
   setInteractive(!l);
@@ -520,14 +1834,24 @@ function onNodeClick({ node }: { node: { id: string } }) {
   closeCtxMenu();
   closeNodeCtx();
   selectedEdgeId.value = null;
-  // Config sidebar is an edit-mode affordance only.
-  if (mode.value !== 'edit') return;
-  selectedNodeId.value = node.id;
+  if (mode.value === 'edit') {
+    selectedNodeId.value = node.id;
+    return;
+  }
+  // Run mode — only reveal the inspect drawer for cards that have actually
+  // executed (or are executing). Idle/queued cards have nothing to show yet
+  // and clicking them would pop an empty drawer.
+  const target = nodes.value.find(n => n.id === node.id);
+  const state = target?.data?.state;
+  if (state === 'running' || state === 'done' || state === 'failed') {
+    selectedNodeId.value = node.id;
+  }
 }
 
 function onPaneClick() {
   closeCtxMenu();
   closeNodeCtx();
+  closeRunsFlyout();
   selectedNodeId.value = null;
   selectedEdgeId.value = null;
 }
@@ -582,10 +1906,27 @@ function onNodeCtxDuplicate() {
 
 function onNodeCtxRemove() {
   if (mode.value !== 'edit' || !nodeCtx.nodeId) { closeNodeCtx(); return; }
+  // Route through the same confirmation dialog keyboard delete uses —
+  // one code path for every delete so the UX stays consistent.
   const id = nodeCtx.nodeId;
-  nodes.value = nodes.value.filter(n => n.id !== id);
-  edges.value = edges.value.filter(e => e.source !== id && e.target !== id);
-  if (selectedNodeId.value === id) selectedNodeId.value = null;
+  closeNodeCtx();
+  requestDelete({ nodeIds: [id], edgeIds: [] });
+}
+
+// Partial-graph re-execution — stubbed until PlaybookController grows a
+// `start-from-node` entry point. Logging the target for now so at least
+// the click is observable in devtools.
+function onNodeCtxRunFromHere() {
+  const id = nodeCtx.nodeId;
+  console.log('[AgentRoutines] Run from here (stub) — target node:', id);
+  closeNodeCtx();
+}
+
+// Checkpoint inspection — needs an IPC that reads the stored output for
+// a given (workflowId, nodeId) pair. Stubbed until that lands.
+function onNodeCtxInspectOutput() {
+  const id = nodeCtx.nodeId;
+  console.log('[AgentRoutines] Inspect output (stub) — target node:', id);
   closeNodeCtx();
 }
 
@@ -624,18 +1965,90 @@ const upstreamNodes = computed(() => {
   });
 });
 
+// Children of the currently-selected node — only populated for loop
+// frames (they're the only container type today). The drawers render
+// this list at the bottom so the user can confirm which cards are
+// nested inside the loop they just selected.
+const selectedChildren = computed(() => {
+  const id = selectedNodeId.value;
+  if (!id) return [];
+  return nodes.value
+    .filter(n => (n as any).parentNode === id)
+    .map(n => ({
+      nodeId:   n.id,
+      label:    (n.data as any)?.title ?? (n.data as any)?.label ?? n.id,
+      kicker:   (n.data as any)?.kicker ?? '',
+      nodeCode: (n.data as any)?.nodeCode ?? '',
+      state:    (n.data as any)?.state ?? 'idle',
+      avatar:   (n.data as any)?.avatar ?? { type: 'default' },
+    }));
+});
+
 // ── Edge connections — drag from one handle to another ──
 function onConnect(params: { source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }) {
   if (mode.value !== 'edit') return;
   addEdges([{
     ...params,
     id:   `e-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 6) }`,
-    type: 'smoothstep',
+    type: 'routine',
   }]);
 }
 
 // ── Drag-and-drop from the library drawer onto the canvas ──
 const frameRef = ref<HTMLElement | null>(null);
+
+/**
+ * Convert a screen-space pointer event to world-space coordinates on the
+ * VueFlow canvas. Accepts MouseEvent / DragEvent / TouchEvent — for
+ * touch events we read the first contact point, since VueFlow's
+ * NodeDragEvent is a MouseTouchEvent union.
+ */
+function pointerToWorld(event: MouseEvent | TouchEvent | DragEvent): { x: number; y: number } {
+  const bounds = frameRef.value?.getBoundingClientRect();
+  let clientX = 0;
+  let clientY = 0;
+  if ('touches' in event && event.touches && event.touches.length > 0) {
+    clientX = event.touches[0].clientX;
+    clientY = event.touches[0].clientY;
+  } else if ('clientX' in event) {
+    clientX = (event as MouseEvent).clientX;
+    clientY = (event as MouseEvent).clientY;
+  }
+  return project({
+    x: clientX - (bounds?.left ?? 0),
+    y: clientY - (bounds?.top ?? 0),
+  });
+}
+
+/**
+ * Is this point inside a loop frame? Returns the topmost loop (by
+ * iteration order) whose rectangle contains (worldX, worldY). `excludeId`
+ * skips a node that's being dragged so a loop can't claim itself as a
+ * child of itself. Coordinates for children are parent-local, so the
+ * comparison lifts them back to world-space before testing.
+ */
+function findLoopAt(worldX: number, worldY: number, excludeId?: string) {
+  for (const n of nodes.value) {
+    if ((n as any).type !== 'loop-frame') continue;
+    if (n.id === excludeId) continue;
+    const w = (n as any).dimensions?.width  ?? (n as any).width  ?? 0;
+    const h = (n as any).dimensions?.height ?? (n as any).height ?? 0;
+    if (!w || !h) continue;
+    // Lift parent-local position to world coords if this loop were ever
+    // itself nested (future-proof for nested loops).
+    let absX = n.position.x;
+    let absY = n.position.y;
+    const parentId = (n as any).parentNode as string | undefined;
+    if (parentId) {
+      const parent = nodes.value.find(p => p.id === parentId);
+      if (parent) { absX += parent.position.x; absY += parent.position.y; }
+    }
+    if (worldX >= absX && worldX <= absX + w && worldY >= absY && worldY <= absY + h) {
+      return { id: n.id, x: absX, y: absY };
+    }
+  }
+  return null;
+}
 
 function onDragOver(event: DragEvent) {
   if (mode.value !== 'edit') return;
@@ -645,6 +2058,16 @@ function onDragOver(event: DragEvent) {
     || dt.types?.includes('application/x-routine-integration');
   if (!hasRoutine) return;
   dt.dropEffect = 'copy';
+
+  // Highlight a loop that the pointer is currently hovering over so the
+  // user can see their drop is going to land as a child of that loop.
+  const world = pointerToWorld(event);
+  const hit = findLoopAt(world.x, world.y);
+  dropTargetLoopId.value = hit?.id ?? null;
+}
+
+function onDragLeave() {
+  dropTargetLoopId.value = null;
 }
 
 function onDrop(event: DragEvent) {
@@ -652,14 +2075,19 @@ function onDrop(event: DragEvent) {
   const dt = event.dataTransfer;
   if (!dt) return;
 
-  const bounds = frameRef.value?.getBoundingClientRect();
-  const position = project({
-    x: event.clientX - (bounds?.left ?? 0),
-    y: event.clientY - (bounds?.top ?? 0),
-  });
+  const world = pointerToWorld(event);
   // Center the card on the cursor — RoutineNode is ~220×120
-  position.x -= 110;
-  position.y -= 60;
+  let position = { x: world.x - 110, y: world.y - 60 };
+
+  // If the drop lands inside a loop frame, nest the new node: set
+  // parentNode and convert position to parent-local coords so VueFlow
+  // lays it out correctly inside the frame.
+  const hit = findLoopAt(world.x, world.y);
+  const parentNode = hit?.id;
+  if (hit) {
+    position = { x: position.x - hit.x, y: position.y - hit.y };
+  }
+  dropTargetLoopId.value = null;
 
   const id = `routine-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 6) }`;
 
@@ -673,6 +2101,7 @@ function onDrop(event: DragEvent) {
         type: 'routine',
         position,
         data: makeIntegrationNodeData(integration),
+        ...(parentNode ? { parentNode, extent: 'parent' } : {}),
       }]);
     } catch { /* malformed payload — ignore */ }
 
@@ -685,12 +2114,80 @@ function onDrop(event: DragEvent) {
   const item = findLibraryItem(subtype);
   if (!item) return;
 
+  // Loops render through LoopFrameNode (dashed container) rather than the
+  // regular card. VueFlow needs explicit width/height on the group node
+  // so children have somewhere to live. 560×220 fits ~2 cards side-by-side
+  // with room for padding and the label pills. Loops cannot be dropped
+  // into other loops via this path — we clear parentNode for them to
+  // avoid nesting confusion on the first iteration of the feature.
+  if (subtype === 'loop') {
+    addNodes([{
+      id,
+      type: 'loop-frame',
+      position: parentNode ? { x: world.x - 280, y: world.y - 110 } : position,
+      data: makeRoutineNodeData(item),
+      width: 560,
+      height: 220,
+    }]);
+    return;
+  }
+
   addNodes([{
     id,
     type: 'routine',
     position,
     data: makeRoutineNodeData(item),
+    ...(parentNode ? { parentNode, extent: 'parent' } : {}),
   }]);
+}
+
+// ── On-canvas drag: dragging an existing node over a loop ──
+// Mirrors the HTML-drag-drop flow above, but for VueFlow-managed nodes
+// already on the canvas. Lets users drop an existing card into a loop by
+// grabbing it and moving it over the frame. On drop-stop we either
+// (a) assign it to a new parent loop if the drop center lands inside one
+// or (b) clear its parentNode if it was dragged out of its old parent.
+function onNodeDrag(evt: { event: MouseEvent | TouchEvent; node: { id: string; type?: string } }) {
+  if (mode.value !== 'edit') return;
+  if (evt.node.type === 'loop-frame') {
+    // Dragging a loop itself — don't treat it as a candidate child.
+    dropTargetLoopId.value = null;
+    return;
+  }
+  const world = pointerToWorld(evt.event);
+  const hit = findLoopAt(world.x, world.y, evt.node.id);
+  dropTargetLoopId.value = hit?.id ?? null;
+}
+
+function onNodeDragStop(evt: { event: MouseEvent | TouchEvent; node: any }) {
+  if (mode.value !== 'edit') return;
+  dropTargetLoopId.value = null;
+  const node = evt.node;
+  if (node.type === 'loop-frame') return;
+
+  const world = pointerToWorld(evt.event);
+  const hit = findLoopAt(world.x, world.y, node.id);
+
+  const prevParent = node.parentNode as string | undefined;
+  const nextParent = hit?.id;
+
+  if (nextParent === prevParent) return;
+
+  // Find the actual mutable node reference.
+  const target = nodes.value.find(n => n.id === node.id);
+  if (!target) return;
+
+  if (nextParent) {
+    // Entering a loop — convert absolute world coords to parent-local.
+    (target as any).parentNode = nextParent;
+    (target as any).extent = 'parent';
+    target.position = { x: world.x - hit!.x - 110, y: world.y - hit!.y - 60 };
+  } else {
+    // Leaving — lift back to world coords.
+    (target as any).parentNode = undefined;
+    (target as any).extent = undefined;
+    target.position = { x: world.x - 110, y: world.y - 60 };
+  }
 }
 
 function onCtxAddNode() {
@@ -701,6 +2198,167 @@ function onCtxAddNode() {
 function onCtxZoomIn() { closeCtxMenu(); zoomIn(); }
 function onCtxZoomOut() { closeCtxMenu(); zoomOut(); }
 function onCtxFitView() { closeCtxMenu(); fitView(); }
+
+// ── Screenshot + record ──
+// Both reuse the `capture-studio:get-sources` IPC the capture studio
+// page already owns; keeping one capturer entry-point avoids diverging
+// permission flows or Electron source listings. Selection heuristic is
+// "first window whose name matches the app" — falls back to the first
+// screen source if nothing matches.
+
+function slugifyRoutineTitle(): string {
+  const t = (title.value || 'routine').toString();
+  return t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'routine';
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Give the browser a tick to actually pick up the blob before revoking.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function acquireWindowStream(): Promise<MediaStream> {
+  // `capture-studio:get-sources` is the IPC the capture studio already
+  // exposes; reuse it rather than wiring a second capturer endpoint.
+  // Matches useMediaSources's `require('electron')` pattern so behavior
+  // stays consistent across pages.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { ipcRenderer } = require('electron');
+  const sources = await ipcRenderer.invoke('capture-studio:get-sources') as Array<{
+    id: string; name: string;
+  }>;
+  if (!sources?.length) throw new Error('No capture sources available');
+
+  // Prefer a Sulla window; fall back to the first screen if none match
+  // so the user still gets something to look at.
+  const ours = sources.find(s => /sulla|rancher|routines/i.test(s.name));
+  const fallback = sources.find(s => /screen/i.test(s.name)) ?? sources[0];
+  const sourceId = (ours ?? fallback).id;
+
+  return await (navigator.mediaDevices as any).getUserMedia({
+    audio: false,
+    video: {
+      mandatory: {
+        chromeMediaSource:   'desktop',
+        chromeMediaSourceId: sourceId,
+      },
+    },
+  });
+}
+
+async function onCtxScreenshot() {
+  closeCtxMenu();
+  let stream: MediaStream | null = null;
+  try {
+    stream = await acquireWindowStream();
+
+    // Pull one frame through an off-DOM <video> element. ImageCapture
+    // would be cleaner but isn't universally available in Electron's
+    // Chromium channel; the video element + canvas path is battle-tested.
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    await video.play();
+
+    // Wait one frame so the video has real dimensions to draw from.
+    await new Promise<void>((resolve) => {
+      if (video.videoWidth > 0) resolve();
+      else video.onloadedmetadata = () => resolve();
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('No 2D context');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Screenshot failed to encode');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadBlob(blob, `${ slugifyRoutineTitle() }-${ ts }.png`);
+  } catch (err) {
+    console.warn('[AgentRoutines] Screenshot failed:', err);
+    pushLine('err', `screenshot failed: ${ err instanceof Error ? err.message : String(err) }`);
+  } finally {
+    stream?.getTracks().forEach(t => t.stop());
+  }
+}
+
+// ── Recording state ──
+// Kept outside reactive objects because MediaRecorder mutates over time
+// and we don't want Vue tracking its internals.
+const isRecording = ref(false);
+let activeRecorder: MediaRecorder | null = null;
+let activeRecorderStream: MediaStream | null = null;
+let activeRecorderChunks: Blob[] = [];
+
+async function startRecording() {
+  const stream = await acquireWindowStream();
+  activeRecorderStream = stream;
+  activeRecorderChunks = [];
+
+  // webm/vp9 is the most reliable MediaRecorder mime across Chromium
+  // versions; fall back to the default if the browser won't accept it.
+  const mimeCandidates = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp9', 'video/webm'];
+  const mimeType = mimeCandidates.find(m => (window as any).MediaRecorder?.isTypeSupported?.(m));
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) activeRecorderChunks.push(e.data);
+  };
+  recorder.onstop = () => {
+    const blob = new Blob(activeRecorderChunks, { type: recorder.mimeType || 'video/webm' });
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    downloadBlob(blob, `${ slugifyRoutineTitle() }-${ ts }.webm`);
+    activeRecorderChunks = [];
+    activeRecorderStream?.getTracks().forEach(t => t.stop());
+    activeRecorderStream = null;
+    activeRecorder = null;
+    isRecording.value = false;
+  };
+
+  // Stop automatically if the user ends the OS-level share from the
+  // system UI — otherwise the recording would silently dangle.
+  stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+    if (activeRecorder?.state === 'recording') activeRecorder.stop();
+  });
+
+  recorder.start(1000); // 1s slices so Blob assembly isn't all at once
+  activeRecorder = recorder;
+  isRecording.value = true;
+  pushLine('dec', 'recording started');
+}
+
+function stopRecording() {
+  if (!activeRecorder) return;
+  if (activeRecorder.state === 'recording') activeRecorder.stop();
+  pushLine('dec', 'recording stopped — saving');
+}
+
+async function onCtxRecord() {
+  closeCtxMenu();
+  try {
+    if (isRecording.value) {
+      stopRecording();
+    } else {
+      await startRecording();
+    }
+  } catch (err) {
+    console.warn('[AgentRoutines] Recording toggle failed:', err);
+    pushLine('err', `recording failed: ${ err instanceof Error ? err.message : String(err) }`);
+    isRecording.value = false;
+    activeRecorderStream?.getTracks().forEach(t => t.stop());
+    activeRecorderStream = null;
+    activeRecorder = null;
+  }
+}
 
 function toggleEditLock() {
   closeCtxMenu();
@@ -749,8 +2407,23 @@ function onKeydown(e: KeyboardEvent) {
     return;
   }
 
+  // ⌘Z / Ctrl+Z → undo; ⌘⇧Z / Ctrl+Shift+Z → redo. Ignored when typing
+  // in an input so the browser's native text undo still works in name
+  // fields, config panels, and the command prompt.
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+    if (mode.value !== 'edit') return;
+    e.preventDefault();
+    if (e.shiftKey) void redo();
+    else void undo();
+
+    return;
+  }
+
   if (e.key === 'Escape') {
-    if (promptOpen.value) promptOpen.value = false;
+    if (deleteConfirm.value) cancelDelete();
+    else if (promptOpen.value) promptOpen.value = false;
     else if (ctxMenu.visible) closeCtxMenu();
     else if (nodeCtx.visible) closeNodeCtx();
     else if (drawerOpen.value) drawerOpen.value = false;
@@ -759,15 +2432,33 @@ function onKeydown(e: KeyboardEvent) {
     return;
   }
 
-  // Delete / Backspace — remove the selected edge only. Nodes are removed
-  // through the context menu's "Remove from flow" action.
+  // Enter inside the delete confirm dialog confirms. Gated by
+  // deleteConfirm so we don't hijack Enter elsewhere on the canvas.
+  if (e.key === 'Enter' && deleteConfirm.value) {
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+    confirmDelete();
+    e.preventDefault();
+    return;
+  }
+
+  // Delete / Backspace — prompt a confirmation, then drop every selected
+  // node and/or edge. Multi-select via drag-box is included because we
+  // pull from VueFlow's getSelectedNodes/getSelectedEdges in addition to
+  // the single-click refs.
   if (e.key === 'Delete' || e.key === 'Backspace') {
     const target = e.target as HTMLElement | null;
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-    if (!selectedEdgeId.value) return;
-    const id = selectedEdgeId.value;
-    edges.value = edges.value.filter(edge => edge.id !== id);
-    selectedEdgeId.value = null;
+    // If the confirm dialog is already open, Delete / Backspace confirms
+    // rather than stacking another dialog.
+    if (deleteConfirm.value) {
+      confirmDelete();
+      e.preventDefault();
+      return;
+    }
+    const payload = collectDeletionTarget();
+    if (!payload) return;
+    deleteConfirm.value = payload;
     e.preventDefault();
   }
 }
@@ -776,34 +2467,28 @@ onMounted(async() => {
   document.addEventListener('click', onDocClick, true);
   document.addEventListener('keydown', onKeydown);
 
+  // Subscribe before the first hydrate finishes so we don't race any
+  // very-fast execution events (unlikely, but cheap to guarantee).
+  subscribeToExecutionEvents();
+
   // Hydrate from the store when the parent handed us a workflow id.
-  // Without an id the canvas stays on its hardcoded demo graph.
+  // Without an id the canvas stays empty.
   if (props.workflowId) {
-    const def = await persistence.load(props.workflowId);
-    if (def) {
-      if (typeof def.name === 'string') title.value = def.name;
-      if (typeof def.description === 'string') subtitle.value = def.description;
-      if (Array.isArray(def.nodes)) nodes.value = def.nodes as typeof nodes.value;
-      if (Array.isArray(def.edges)) edges.value = def.edges as typeof edges.value;
-      baseDefinition.value = def;
-      // Backfill display fields (nodeCode, avatar, kicker, state) for
-      // nodes that came off the wire without them — covers templates
-      // and any workflow saved before the display contract existed.
-      enrichNodesForDisplay(nodes.value);
-    }
+    const [def] = await Promise.all([
+      persistence.load(props.workflowId),
+      history.load(props.workflowId),
+    ]);
+    if (def) applyDefinition(def);
     // Wait a tick so the watch registered below sees the post-hydration
     // state as its baseline rather than firing on the initial assignments.
     await nextTick();
-  } else {
-    // Standalone preview path — still enrich so the hardcoded demo
-    // renders consistently with DB-loaded workflows.
-    enrichNodesForDisplay(nodes.value);
+    // Snap the viewport to the freshly-loaded graph. fit-view-on-init
+    // fired against an empty canvas, so without this the user lands on
+    // whatever the default viewport was instead of their nodes.
+    fitView();
   }
   hasHydrated.value = true;
 
-  // Push menu-context so the File → Routines → "Export Current Routine…"
-  // item can target this routine. Fire-and-forget; the main process stores
-  // last-known context and enables/disables the menu item on rebuild.
   if (props.workflowId) {
     try {
       ipcRenderer.send('app-state:set-routine-context' as any, {
@@ -818,9 +2503,8 @@ onMounted(async() => {
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick, true);
   document.removeEventListener('keydown', onKeydown);
+  unsubscribeFromExecutionEvents();
 
-  // Clear menu-context so "Export Current Routine…" greys out again
-  // when the user leaves the editor.
   try {
     ipcRenderer.send('app-state:set-routine-context' as any, null);
   } catch { /* non-fatal */ }
@@ -837,100 +2521,51 @@ onBeforeUnmount(() => {
   }
 });
 
-const nodes = ref<any[]>([
-  {
-    id:       'trigger-1',
-    type:     'routine',
-    position: { x: 0, y: 140 },
-    data:     {
-      state:         'done',
-      nodeCode:      'T-01',
-      kicker:        'Trigger',
-      title:         'Chat Trigger',
-      role:          'Entry · user message',
-      quote:         '"Write a blog on AI for SMB owners."',
-      subtype:       'chat-app',
-      category:      'trigger',
-      config:        defaultsFor('chat-app'),
-      avatar:        { type: 'trigger', icon: '⚡' },
-      metricsStrong: '2s',
-      metrics:       ' ago',
-      footerRight:   'captured',
-    },
-  },
-  {
-    id:       'agent-kr',
-    type:     'routine',
-    position: { x: 290, y: 140 },
-    data:     {
-      state:       'done',
-      nodeCode:    'A-04',
-      kicker:      'Agent',
-      title:       'Keyword Research',
-      role:        'SEO Strategist',
-      quote:       '"Honest about data limits."',
-      subtype:     'agent',
-      category:    'agent',
-      config:      defaultsFor('agent'),
-      avatar:      { type: 'default', initials: 'KR' },
-      metrics:     '⏱ 32s · $0.04',
-      footerRight: '94%',
-    },
-  },
-  {
-    id:       'agent-tr',
-    type:     'routine',
-    position: { x: 580, y: 140 },
-    data:     {
-      state:       'running',
-      nodeCode:    'A-07',
-      kicker:      'Session',
-      title:       'Topic Researcher',
-      role:        'Audience Intent',
-      quote:       '"Translates tech for non-tech owners."',
-      subtype:     'agent',
-      category:    'agent',
-      config:      defaultsFor('agent'),
-      avatar:      { type: 'default', initials: 'TR' },
-      think:       'Reading 14 SMB forum threads…',
-      thinkStrong: '14 SMB forum threads',
-      metrics:     '⏱ 1m 04s · $0.07',
-      footerRight: '91%',
-    },
-  },
-  {
-    id:       'agent-cb',
-    type:     'routine',
-    position: { x: 870, y: 140 },
-    data:     {
-      state:       'failed',
-      nodeCode:    'A-11',
-      kicker:      'Agent',
-      title:       'Brief Generator',
-      role:        'Content Strategist',
-      quote:       '"Opinionated about structure."',
-      subtype:     'agent',
-      category:    'agent',
-      config:      defaultsFor('agent'),
-      avatar:      { type: 'default', initials: 'CB' },
-      metrics:     '⏱ 12s · $0.02',
-      footerRight: 'timed out',
-    },
-  },
-]);
+const nodes = ref<any[]>([]);
+const edges = ref<any[]>([]);
 
-const edges = ref<any[]>([
-  { id: 'e1', source: 'trigger-1', target: 'agent-kr', type: 'smoothstep' },
-  { id: 'e2', source: 'agent-kr', target: 'agent-tr', type: 'smoothstep' },
-  {
-    id:       'e3',
-    source:   'agent-tr',
-    target:   'agent-cb',
-    type:     'smoothstep',
-    animated: true,
-    style:    { stroke: '#a78bfa', strokeWidth: 2 },
-  },
-]);
+// ── Live edge styling ──
+// An edge is "flowing" when its source is done AND its target is
+// running — i.e. data actually traversed this specific edge during
+// the current transition. Driving animation off this pair instead of
+// "target is running" avoids lighting up edges from dead branches or
+// never-fed predecessors: at a convergent join, only the predecessors
+// that have actually completed contribute; at a divergent router,
+// only the chosen branch (whose target reaches `running`) lights up.
+function nodeStateOf(id: string): string | undefined {
+  const n = nodes.value.find(x => x.id === id);
+  const exec = n?.data?.execution?.status;
+  if (exec === 'running')   return 'running';
+  if (exec === 'completed') return 'done';
+  if (exec === 'failed')    return 'failed';
+  if (exec === 'waiting')   return 'queued';
+  return (n?.data?.state as string | undefined);
+}
+
+function recomputeEdgeFlow() {
+  let touched = false;
+  for (const edge of edges.value) {
+    const src = nodeStateOf(edge.source);
+    const tgt = nodeStateOf(edge.target);
+    // Light only edges where data actually flowed this turn. `done → running`
+    // is the unambiguous transition window. `running → running` covers the
+    // brief overlap where source is still wrapping up as target is spun up.
+    const shouldFlow = (src === 'done' && tgt === 'running')
+      || (src === 'running' && tgt === 'running');
+    const wasFlowing = !!edge.animated;
+    if (shouldFlow === wasFlowing) continue;
+    edge.animated = shouldFlow;
+    const base = 'routine-edge';
+    edge.class = shouldFlow ? `${ base } flowing` : base;
+    touched = true;
+  }
+  if (touched) edges.value = [...edges.value];
+}
+
+// Deep-watch nodes so any state transition (running/done/failed) on either
+// endpoint of any edge re-evaluates the flow set. Runs cheap — O(edges),
+// and only fires on actual data mutations thanks to Vue's equality check.
+watch(nodes, () => recomputeEdgeFlow(), { deep: true });
 
 // Auto-save on any mutation of the graph or its metadata. Deep watch so
 // in-place changes to nodes/edges (position, config, label) are caught
@@ -941,10 +2576,25 @@ watch(
   [title, subtitle, nodes, edges],
   () => {
     if (!hasHydrated.value || !props.workflowId) return;
+    // Suppress auto-save while we're re-hydrating from a history
+    // snapshot — otherwise undo would record a new history row and
+    // turn redo into guesswork.
+    if (isRestoring.value) return;
     const payload = buildDefinitionForSave();
     if (payload) persistence.scheduleSave(payload);
   },
   { deep: true },
+);
+
+// After every real user save, refetch history so the latest row is at
+// the top and the cursor is reset to 0. Undo/redo use `saveSilent` and
+// don't bump `lastSavedAt`, so restores won't retrigger this.
+watch(
+  () => persistence.lastSavedAt.value,
+  (t) => {
+    if (!t || !props.workflowId || isRestoring.value) return;
+    void history.load(props.workflowId);
+  },
 );
 </script>
 
@@ -970,6 +2620,25 @@ watch(
   color: #e6ecf5;
   background: linear-gradient(135deg, #03060c 0%, #070d1a 60%, #01030a 100%);
   -webkit-font-smoothing: antialiased;
+  /* Block text-selection by default so dragging across node titles /
+     labels / HUD copy doesn't accidentally highlight a bunch of UI
+     chrome. Re-enabled below for the specific spots where selection is
+     actually wanted (editable title, drawer fields, output <pre>). */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Selection re-enabled in places the user genuinely wants to copy or
+   edit text: the contenteditable routine title/subtitle, any form
+   control, and the config/output drawers (node names, output blocks,
+   config fields). Everything else on the canvas stays click-through. */
+.routines-frame [contenteditable="true"],
+.routines-frame input,
+.routines-frame textarea,
+.routines-frame .config-panel,
+.routines-frame .output-panel {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .routines-flow {
@@ -1063,6 +2732,31 @@ watch(
   text-align: right;
   max-width: 48%;
 }
+
+/* Mirrors .stream-backdrop for the top-right HUD. Occupies the title
+   block's visual footprint (kicker + title + subtitle + breathing room)
+   so node cards drifting behind the HUD are occluded instead of
+   bleeding through and muddying the headline text. Fades out at the
+   edges so no hard rectangle shows against the starfield. */
+.title-backdrop {
+  position: absolute;
+  top: 28px;
+  right: 52px;
+  z-index: 1;
+  width: 36%;
+  max-width: 540px;
+  height: 140px;
+  pointer-events: none;
+  background: linear-gradient(135deg, #03060c 0%, #070d1a 60%, #01030a 100%);
+  -webkit-mask-image:
+    linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.78) 18%, black 40%, black 82%, rgba(0,0,0,0.45) 100%),
+    linear-gradient(270deg, black 0%, black 70%, rgba(0,0,0,0.4) 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.78) 18%, black 40%, black 82%, rgba(0,0,0,0.45) 100%),
+    linear-gradient(270deg, black 0%, black 70%, rgba(0,0,0,0.4) 100%);
+  mask-composite: intersect;
+}
 .title-kicker {
   font-family: var(--mono);
   font-size: 10px;
@@ -1119,29 +2813,83 @@ watch(
   letter-spacing: 0.01em;
 }
 
+/* Opaque panel that occupies the stream's footprint, sitting above the
+   VueFlow canvas (z-index 0/auto) but below the ambient overlays
+   (glow/stars at z-index 2, brackets/stream at z-index 4). Hides node
+   cards behind the stream so the ticker text is legible, while the
+   canvas mood layers still read through on top. Solid in the middle,
+   mask-faded at top/bottom so no hard rectangle shows. */
+.stream-backdrop {
+  position: absolute;
+  top: 28px;
+  left: 52px;
+  z-index: 1;
+  width: 28%;
+  height: 240px;
+  pointer-events: none;
+  background: linear-gradient(135deg, #03060c 0%, #070d1a 60%, #01030a 100%);
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.78) 14%, black 32%, black 86%, rgba(0,0,0,0.55) 100%);
+  mask-image: linear-gradient(180deg, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.78) 14%, black 32%, black 86%, rgba(0,0,0,0.55) 100%);
+}
+
 .stream {
   position: absolute;
   top: 28px;
   left: 52px;
   z-index: 4;
-  pointer-events: none;
+  /* Vertical scrolling only — long thinking messages wrap inside the
+   * line instead of running off the right edge and summoning a
+   * horizontal scrollbar. Vertical scroll is preserved so the user can
+   * read older lines before they fade off the top. */
+  pointer-events: auto;
   font-family: var(--mono);
   font-size: 11px;
   line-height: 1.7;
   width: 28%;
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 192, 220, 0.25) transparent;
   -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.8) 15%, black 35%);
   mask-image: linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.8) 15%, black 35%);
+}
+/* Chromium scrollbar — invisible track, soft thumb that darkens on
+   hover. Keeps the stream clean at rest. */
+.stream::-webkit-scrollbar {
+  width: 6px;
+}
+.stream::-webkit-scrollbar-track {
+  background: transparent;
+}
+.stream::-webkit-scrollbar-thumb {
+  background: rgba(168, 192, 220, 0.18);
+  border-radius: 3px;
+  transition: background 0.15s ease;
+}
+.stream:hover::-webkit-scrollbar-thumb {
+  background: rgba(168, 192, 220, 0.35);
+}
+.stream::-webkit-scrollbar-thumb:hover {
+  background: rgba(196, 212, 230, 0.55);
 }
 .line {
   display: flex;
   gap: 8px;
-  align-items: center;
+  align-items: flex-start;
   padding: 1px 0;
+  /* Wrap long messages instead of extending the line beyond the stream
+     width — that's what would have summoned a horizontal scrollbar. */
+  min-width: 0;
 }
 .line .t {
   color: var(--steel-400);
   flex-shrink: 0;
   font-size: 10px;
+  /* Nudge the timestamp down a touch so it aligns optically with the
+     first line of a wrapping message. */
+  line-height: 1.7;
 }
 .line .k {
   flex-shrink: 0;
@@ -1151,6 +2899,12 @@ watch(
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  /* Node names in the badge slot (thinking lines) can be long — clamp so
+     a single line name doesn't wrap or blow out the stream column. */
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .line .k.tool { background: rgba(168,192,220,0.18); color: var(--steel-100); border: 1px solid rgba(168,192,220,0.25); }
 .line .k.obs  { background: rgba(74,111,165,0.25); color: #b4d0f0; border: 1px solid rgba(116,158,214,0.35); }
@@ -1161,7 +2915,22 @@ watch(
   border: 1px solid rgba(167,139,250,0.55);
   box-shadow: 0 0 10px rgba(139,92,246,0.25);
 }
-.line .msg { color: var(--steel-200); font-size: 11px; }
+.line .k.err  {
+  background: rgba(244,63,94,0.2);
+  color: #fda4af;
+  border: 1px solid rgba(244,63,94,0.5);
+}
+.line .msg {
+  color: var(--steel-200);
+  font-size: 11px;
+  /* Wrap long thinking strings so they flow inside the stream instead
+     of forcing horizontal scroll. `min-width: 0` on the parent flex
+     item lets this shrink below its intrinsic content width. */
+  min-width: 0;
+  flex: 1;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
 .line .msg .h {
   color: white;
   background: rgba(139,92,246,0.2);
@@ -1235,6 +3004,29 @@ watch(
   color: var(--violet-300);
   font-weight: 700;
 }
+/* Live-run center readout — replaces the "Sulla Original" watermark
+   while a routine is running, mirroring the design's "Now Producing"
+   ribbon. */
+.ribbon .center .kicker {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  color: var(--violet-300);
+  text-transform: uppercase;
+}
+.ribbon .center .output-now {
+  font-family: var(--serif);
+  font-size: 16px;
+  font-style: italic;
+  color: white;
+  margin-top: 4px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ribbon .center .output-now::before { content: '« '; color: var(--violet-300); font-style: normal; }
+.ribbon .center .output-now::after  { content: ' »'; color: var(--violet-300); font-style: normal; }
 .ribbon .right {
   font-family: var(--mono);
   font-size: 10px;
@@ -1274,24 +3066,291 @@ watch(
   outline-offset: 2px;
 }
 
-/* Edges — clickable with a fat invisible hit area, subtle default, violet when selected. */
-.routines-flow :deep(.vue-flow__edge-path) {
-  stroke: rgba(168, 192, 220, 0.55);
-  stroke-width: 2;
-  transition: stroke 0.12s ease, stroke-width 0.12s ease;
+/* Edges — clickable with a fat invisible hit area. Selection is a
+   glowing blue; the violet palette is reserved for the "running"/active
+   state on animated edges so the two reads don't collide. */
+/* Edge hover — brighten the base path a touch. The routine edge owns
+   its full painting (base + pulse) in RoutineEdge.vue; we only override
+   the hover state here because scoped styles in the component can't
+   see :hover from the VueFlow wrapper. */
+.routines-flow :deep(.vue-flow__edge:hover .routine-edge-base:not(.flowing):not(.selected)) {
+  stroke: #7dd3fc;
 }
-.routines-flow :deep(.vue-flow__edge:hover .vue-flow__edge-path) {
-  stroke: var(--violet-300);
+
+/* Runs flyout — anchored above the controls row. Lists recent past
+   executions for this workflow; clicking one hydrates the canvas with
+   that run's final node state for inspection. */
+.runs-flyout {
+  position: absolute;
+  left: 120px;
+  bottom: 150px;
+  z-index: 12;
+  min-width: 280px;
+  max-width: 360px;
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(24, 36, 62, 0.98), rgba(14, 22, 40, 0.98));
+  border: 1px solid rgba(168, 192, 220, 0.25);
+  border-radius: 8px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
 }
-.routines-flow :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
-  stroke: var(--violet-400);
-  stroke-width: 3;
-  filter: drop-shadow(0 0 6px rgba(139, 92, 246, 0.6));
+.runs-flyout-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(105, 137, 179, 0.08);
+  border-bottom: 1px solid rgba(168, 192, 220, 0.12);
 }
-/* Widen the hit area so edges are easy to click. */
-.routines-flow :deep(.vue-flow__edge .vue-flow__edge-interaction) {
-  stroke: transparent;
-  stroke-width: 18;
+.runs-flyout-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--violet-300);
+}
+.runs-flyout-close {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--steel-300);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.runs-flyout-close:hover { background: rgba(168, 192, 220, 0.1); color: white; }
+.runs-flyout-status {
+  padding: 14px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--steel-400);
+  text-align: center;
+}
+.runs-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(168, 192, 220, 0.25) transparent;
+}
+.runs-list::-webkit-scrollbar { width: 6px; }
+.runs-list::-webkit-scrollbar-thumb {
+  background: rgba(168, 192, 220, 0.25);
+  border-radius: 3px;
+}
+.runs-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--steel-200);
+}
+.runs-item:hover { background: rgba(139, 92, 246, 0.1); color: white; }
+.runs-item.active { background: rgba(139, 92, 246, 0.18); color: white; }
+.runs-item-time {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--violet-300);
+  letter-spacing: 0.05em;
+  padding-top: 2px;
+  white-space: nowrap;
+}
+.runs-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.runs-item-last {
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.runs-item-meta {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--steel-400);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Delete confirmation — centered modal over the canvas. Backdrop dims
+   the canvas and captures outside-click to cancel. Enter confirms via
+   the autofocused Delete button; Escape cancels via the keydown
+   handler. Kept narrow so it never crowds the viewport. */
+.delete-confirm-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 6, 12, 0.55);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.delete-confirm {
+  min-width: 340px;
+  max-width: 440px;
+  padding: 18px 20px 16px;
+  background: linear-gradient(180deg, rgba(24, 36, 62, 0.98), rgba(14, 22, 40, 0.98));
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  border-radius: 10px;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.6),
+    0 0 30px rgba(244, 63, 94, 0.22);
+  color: var(--steel-100);
+}
+.delete-confirm .dc-title {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: white;
+  line-height: 1.25;
+  margin-bottom: 8px;
+}
+.delete-confirm .dc-body {
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--steel-300);
+  margin-bottom: 16px;
+}
+.delete-confirm .dc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.delete-confirm .dc-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.delete-confirm .dc-btn.cancel {
+  background: transparent;
+  border-color: rgba(168, 192, 220, 0.3);
+  color: var(--steel-200);
+}
+.delete-confirm .dc-btn.cancel:hover {
+  background: rgba(168, 192, 220, 0.08);
+  color: white;
+}
+.delete-confirm .dc-btn.danger {
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.95), rgba(190, 18, 60, 0.95));
+  border-color: rgba(244, 63, 94, 0.6);
+  color: white;
+  box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.25), 0 0 16px rgba(244, 63, 94, 0.35);
+}
+.delete-confirm .dc-btn.danger:hover {
+  box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.45), 0 0 22px rgba(244, 63, 94, 0.55);
+}
+.delete-confirm .dc-btn.danger:focus-visible {
+  outline: 2px solid rgba(244, 63, 94, 0.55);
+  outline-offset: 2px;
+}
+
+/* Past-run banner — pinned at the top of the frame during history
+   viewing so live and recorded runs can't be confused. */
+.past-run-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: linear-gradient(180deg, rgba(24, 36, 62, 0.95), rgba(14, 22, 40, 0.95));
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  border-radius: 999px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45), 0 0 22px rgba(139, 92, 246, 0.2);
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--steel-100);
+}
+.past-run-banner .banner-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--violet-400);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.7);
+}
+.past-run-banner .banner-text b { color: white; font-weight: 700; }
+.past-run-banner .banner-exit {
+  background: transparent;
+  border: 1px solid rgba(167, 139, 250, 0.5);
+  color: var(--violet-200);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.past-run-banner .banner-exit:hover {
+  background: rgba(139, 92, 246, 0.2);
+  color: white;
+  border-color: var(--violet-300);
+}
+
+/* Drag-to-select marquee (V6 — brackets + soft fill).
+   A whisper of steel-blue fill so overlapped cards still feel contained,
+   plus four bracket corners that echo the canvas frame chrome. Painted
+   entirely via background-image layers so there's no extra DOM. */
+.routines-flow :deep(.vue-flow__selection) {
+  background: rgba(80, 150, 179, 0.08);
+  border: none;
+  border-radius: 0;
+  --bk: rgba(106, 176, 204, 0.95);
+  --bk-size: 16px;
+  --bk-thick: 1.5px;
+  background-image:
+    linear-gradient(rgba(80, 150, 179, 0.08), rgba(80, 150, 179, 0.08)),
+    linear-gradient(var(--bk), var(--bk)), linear-gradient(var(--bk), var(--bk)),
+    linear-gradient(var(--bk), var(--bk)), linear-gradient(var(--bk), var(--bk)),
+    linear-gradient(var(--bk), var(--bk)), linear-gradient(var(--bk), var(--bk)),
+    linear-gradient(var(--bk), var(--bk)), linear-gradient(var(--bk), var(--bk));
+  background-size:
+    100% 100%,
+    var(--bk-size) var(--bk-thick), var(--bk-thick) var(--bk-size),
+    var(--bk-size) var(--bk-thick), var(--bk-thick) var(--bk-size),
+    var(--bk-size) var(--bk-thick), var(--bk-thick) var(--bk-size),
+    var(--bk-size) var(--bk-thick), var(--bk-thick) var(--bk-size);
+  background-repeat: no-repeat;
+  background-position:
+    center,
+    top    left,  top    left,
+    top    right, top    right,
+    bottom left,  bottom left,
+    bottom right, bottom right;
+}
+
+/* Post-select summary rect (around already-selected nodes after the drag
+   ends). Quieter than the live marquee so the two don't compete. */
+.routines-flow :deep(.vue-flow__nodesselection-rect) {
+  background: rgba(80, 150, 179, 0.05);
+  border: 1px dashed rgba(106, 176, 204, 0.55);
+  border-radius: 4px;
 }
 
 /* ── Controls — toolbar treatment (matches V3 drawer-reveal mockup) ── */
@@ -1353,6 +3412,43 @@ watch(
   background: rgba(139, 92, 246, 0.22);
 }
 
+/* Undo / redo — custom ControlButton children render after the built-in
+   zoom/fit/interactive buttons by default. Flip their flex order so they
+   read first in the toolbar, which matches the "back/forward before
+   anything else" muscle memory users have from every other editor.
+   Separator after redo keeps the history pair visually distinct from
+   zoom/fit. */
+.routines-flow :deep(.vue-flow__controls-button.history-btn) {
+  order: -10;
+}
+.routines-flow :deep(.vue-flow__controls-button.history-undo) {
+  order: -11;
+}
+/* Runs button sits just before the mode toggle in run mode. Active
+   class flips it violet to echo the open flyout. */
+.routines-flow :deep(.vue-flow__controls-button.runs-btn) {
+  order: -9;
+  margin-right: 6px;
+  border-right: 1px solid rgba(168, 192, 220, 0.18);
+  padding-right: 0;
+}
+.routines-flow :deep(.vue-flow__controls-button.runs-btn.active) {
+  color: var(--violet-300);
+  background: rgba(139, 92, 246, 0.15);
+}
+.routines-flow :deep(.vue-flow__controls-button.history-redo) {
+  order: -10;
+  margin-right: 6px;
+  border-right: 1px solid rgba(168, 192, 220, 0.18);
+  padding-right: 0;
+}
+.routines-flow :deep(.vue-flow__controls-button.history-btn.disabled),
+.routines-flow :deep(.vue-flow__controls-button.history-btn:disabled) {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* ── MiniMap — tactical radar panel ── */
 .routines-flow :deep(.vue-flow__minimap) {
   bottom: 108px;
@@ -1412,6 +3508,55 @@ watch(
   background: linear-gradient(135deg, #4b3085, #2a1555);
 }
 
+/* Run-mode variant — same violet palette as the Add-node FAB but with
+   a play triangle instead of a plus, and a slightly brighter glow so
+   the button reads as "go" rather than "create". */
+.routines-fab.run-fab {
+  font-size: 0; /* suppress any stray text; icon is an inline svg */
+}
+.routines-fab.run-fab svg {
+  width: 22px;
+  height: 22px;
+  margin-left: 2px; /* optical nudge — the triangle is heavier on the right */
+  color: white;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.35));
+}
+.routines-fab.run-fab:hover {
+  box-shadow:
+    0 12px 32px rgba(139, 92, 246, 0.5),
+    0 0 24px rgba(139, 92, 246, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.routines-fab.run-fab.busy {
+  /* Stop mode — pulsing rose/red to make "this is interruptible" read
+     at a glance. No opacity dim (it's a clickable affordance, not a
+     disabled state) and no progress cursor. */
+  cursor: pointer;
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.95), rgba(190, 18, 60, 0.95));
+  animation: run-fab-stop-pulse 1.3s ease-in-out infinite;
+}
+.routines-fab.run-fab.busy:hover {
+  box-shadow:
+    0 12px 32px rgba(244, 63, 94, 0.55),
+    0 0 24px rgba(244, 63, 94, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+.routines-fab.run-fab.busy svg {
+  margin-left: 0; /* square icon needs no optical nudge */
+}
+@keyframes run-fab-stop-pulse {
+  0%, 100% { box-shadow: 0 10px 28px rgba(244, 63, 94, 0.4), 0 0 18px rgba(244, 63, 94, 0.35); }
+  50%      { box-shadow: 0 10px 28px rgba(244, 63, 94, 0.6),  0 0 32px rgba(244, 63, 94, 0.7); }
+}
+/* Stalled — the event stream has been quiet for a while but the backend
+   might still be working (long agent thinking, remote call, etc). Slow
+   the pulse and desaturate so the button reads "still live but quiet"
+   without losing its clickability. */
+.routines-fab.run-fab.busy.stalled {
+  background: linear-gradient(135deg, rgba(180, 90, 110, 0.85), rgba(130, 35, 55, 0.85));
+  animation-duration: 2.6s;
+}
+
 .routines-fab-tip {
   position: absolute;
   left: 52px;
@@ -1454,9 +3599,13 @@ watch(
 }
 
 /* ── Editable title / subtitle (edit mode only) ── */
+/* The parent .title-block is pointer-events:none so its empty padding
+   doesn't swallow canvas clicks. Re-enable pointer-events on the two
+   editable children so the user can actually click to focus them. */
 .title-main.editable,
 .title-sub.editable {
   cursor: text;
+  pointer-events: auto;
   border-radius: 3px;
   outline: 1px dashed transparent;
   outline-offset: 4px;
