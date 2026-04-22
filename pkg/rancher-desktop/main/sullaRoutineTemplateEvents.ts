@@ -426,3 +426,49 @@ export function initSullaRoutineTemplateEvents(): void {
 
   console.log('[Sulla] Routine template IPC handlers initialized');
 }
+
+export interface RoutineExecutionResult {
+  executionId: string;
+  workflowId:  string;
+}
+
+export async function executeRoutine(
+  workflowId: string,
+  triggerPayload?: string,
+): Promise<RoutineExecutionResult> {
+  if (!workflowId) {
+    throw new Error('executeRoutine: workflowId is required');
+  }
+
+  const executionId = `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
+  const WS_CHANNEL = 'sulla-desktop';
+
+  const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+  const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
+
+  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, executionId);
+  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
+  const state = (graphResult as { state: Record<string, any> }).state;
+
+  state.metadata = state.metadata ?? {};
+  state.metadata.scopedWorkflowId = workflowId;
+
+  const message = (triggerPayload ?? '').trim() || `Run routine ${ workflowId }`;
+
+  const activation = await activateWorkflowOnState(state as any, {
+    workflowId,
+    message,
+  });
+
+  if (!activation.ok) {
+    throw new Error(activation.responseString);
+  }
+
+  void graph.execute(state).catch((err) => {
+    console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
+  });
+
+  console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);
+
+  return { executionId, workflowId };
+}

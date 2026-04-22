@@ -367,6 +367,7 @@ export interface IpcMainInvokeEvents {
   'workflow-get':           (workflowId: string) => any;
   'workflow-save':          (workflow: any) => boolean;
   'workflow-delete':        (workflowId: string) => boolean;
+  'workflow-duplicate':     (workflowId: string) => { id: string; name: string };
   'workflow-move':          (workflowId: string, targetStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus) => { success: boolean; newStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus };
   'workflow-watch-start':   () => boolean;
   'workflow-watch-stop':    () => boolean;
