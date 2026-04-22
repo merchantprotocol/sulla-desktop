@@ -245,7 +245,17 @@ function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
     nodeCount:             nodes.length,
     edgeCount:             edges.length,
     triggerTypes,
+    // Full DAG inlined so marketplace consumers (the public website, the
+    // detail page in Sulla Desktop) can render a mock canvas without
+    // parsing the preview YAML. Node/edge shape matches VueFlow's
+    // serialized form — id/type/position/data for nodes,
+    // id/source/target/type/handles/label for edges.
+    nodes,
+    edges,
   };
+  if (routineDoc?.viewport && typeof routineDoc.viewport === 'object') {
+    routineSummary.viewport = routineDoc.viewport;
+  }
   if (Array.isArray(agent.required_integrations) && agent.required_integrations.length > 0) {
     routineSummary.requiredIntegrations = agent.required_integrations.map(String);
   }

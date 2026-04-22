@@ -159,6 +159,7 @@
           @primary="onPrimary(item.slug)"
           @view="onView(item.slug)"
           @reveal="onReveal(item.slug)"
+          @publish="onPublish(item)"
         />
       </template>
     </section>
@@ -255,7 +256,7 @@ import { computed, onMounted, ref } from 'vue';
 import LibraryDraftDetail from '@pkg/components/routines/LibraryDraftDetail.vue';
 import LibraryItemStrip from '@pkg/components/routines/LibraryItemStrip.vue';
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
-import type { LibraryKind } from '@pkg/composables/useLibrary';
+import type { LibraryItem, LibraryKind } from '@pkg/composables/useLibrary';
 import { useLibrary } from '@pkg/composables/useLibrary';
 import { useLibraryDrafts } from '@pkg/composables/useLibraryDrafts';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
@@ -391,6 +392,48 @@ async function onView(slug: string) {
 function onCloseDetail() {
   detailPayload.value = null;
   forkError.value = null;
+}
+
+// Publish a local library item (routine template folder, skill, function,
+// recipe) straight to the marketplace via bundles-publish. Native confirm
+// keeps the flow bounded; auth failures bubble up from the worker as
+// {error: "..."} with 401-ish strings we surface verbatim.
+async function onPublish(item: LibraryItem) {
+  const pluralToSingular: Record<LibraryKind, 'routine' | 'skill' | 'function' | 'recipe'> = {
+    routines:  'routine',
+    skills:    'skill',
+    functions: 'function',
+    recipes:   'recipe',
+  };
+  const kind = pluralToSingular[lib.activeKind.value];
+  const label = lib.activeKind.value.slice(0, -1);
+
+  const ok = window.confirm(
+    `Publish ${ label } "${ item.name || item.slug }" to the Sulla Marketplace? It'll land in review as a pending submission.`,
+  );
+  if (!ok) return;
+
+  try {
+    const args = kind === 'recipe'
+      ? { kind, extensionId: item.slug }
+      : { kind, slug: item.slug };
+    const result = await ipcRenderer.invoke('bundles-publish', args);
+    if ('error' in result) {
+      const msg = String(result.error || '');
+      if (/401|unauthor|access token|sign.in|signed in/i.test(msg)) {
+        window.alert('You need to sign in to Sulla Cloud first. Open My Account → Sign in, then try again.');
+      } else {
+        window.alert(`Publish failed: ${ msg }`);
+      }
+      return;
+    }
+    window.alert(
+      `"${ item.name || item.slug }" submitted as ${ result.templateId }. Status: ${ result.status } · bundle ${ result.bundle_status } (${ result.bundle_size } bytes).`,
+    );
+  } catch (err) {
+    console.warn('[Library] publish failed:', err);
+    window.alert(`Publish failed: ${ err instanceof Error ? err.message : String(err) }`);
+  }
 }
 
 async function onFork(row: MarketplaceBrowseRow) {

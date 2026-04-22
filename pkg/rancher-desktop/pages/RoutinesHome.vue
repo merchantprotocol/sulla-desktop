@@ -164,6 +164,7 @@
               secondary-label="Watch"
               @primary="onOpenRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
+              @publish="onPublishRoutine(r)"
             />
           </ActSection>
 
@@ -181,6 +182,7 @@
               secondary-label="Skip next"
               @primary="onOpenRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
+              @publish="onPublishRoutine(r)"
             />
           </ActSection>
 
@@ -199,6 +201,7 @@
               @primary="r.status === 'draft' ? onPublishAndRun(r.id) : onOpenRoutine(r.id)"
               @secondary="onEditRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
+              @publish="onPublishRoutine(r)"
             />
           </ActSection>
 
@@ -249,6 +252,7 @@
               @primary="onRestoreRoutine(r.id)"
               @secondary="onEditRoutine(r.id)"
               @open="onEditRoutine(r.id)"
+              @publish="onPublishRoutine(r)"
             />
           </ActSection>
 
@@ -485,6 +489,34 @@ async function onDelete(routine: { id: string; name: string }) {
   );
   if (!ok) return;
   await routinesController.remove(routine.id);
+}
+
+// Publish a routine to the marketplace. The main process checks the user's
+// Sulla Cloud session; if they aren't signed in, we surface a prompt so
+// they can authenticate instead of silently failing. Native confirm/alert
+// keeps the flow bounded — a custom modal can come later.
+async function onPublishRoutine(routine: { id: string; name: string }) {
+  const ok = window.confirm(
+    `Publish "${ routine.name }" to the Sulla Marketplace? It'll land in review as a pending submission.`,
+  );
+  if (!ok) return;
+  try {
+    const result = await ipcRenderer.invoke('routines-publish-to-marketplace' as any, routine.id);
+    if (result?.needs_auth) {
+      window.alert('You need to sign in to Sulla Cloud first. Open My Account → Sign in, then try again.');
+      return;
+    }
+    if (result?.error) {
+      window.alert(`Publish failed: ${ result.error }`);
+      return;
+    }
+    window.alert(
+      `"${ routine.name }" submitted to the marketplace as ${ result.templateId }. Status: ${ result.status ?? 'pending' }.`,
+    );
+  } catch (err) {
+    console.error('[RoutinesHome] publish failed:', err);
+    window.alert(`Publish failed: ${ err instanceof Error ? err.message : String(err) }`);
+  }
 }
 
 // Archive tab uses its own "Restore" affordance. Restoring just flips

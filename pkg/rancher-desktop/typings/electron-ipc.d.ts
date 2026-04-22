@@ -416,6 +416,10 @@ export interface IpcMainInvokeEvents {
   'routines-export':               (workflowId: string) => { path: string } | { canceled: true } | { error: string };
   'routines-export-template':      (slug: string) => { path: string } | { canceled: true } | { error: string };
   'routines-import':               () => { slug: string; id: string; name: string } | { canceled: true } | { error: string };
+  'routines-publish-to-marketplace': (workflowId: string) =>
+    | { templateId: string; slug: string; name: string; status: string; bundleSize: number }
+    | { needs_auth: true }
+    | { error: string };
 
   // #region Bundles (cross-kind marketplace install + publish)
   // Install: fetch manifest + zip from the marketplace, extract into the

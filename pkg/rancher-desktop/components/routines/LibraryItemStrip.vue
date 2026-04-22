@@ -70,6 +70,13 @@
       >
         Reveal
       </button>
+      <button
+        type="button"
+        class="btn ghost"
+        @click="$emit('publish')"
+      >
+        Publish to Marketplace
+      </button>
     </div>
   </div>
 </template>
@@ -89,6 +96,7 @@ defineEmits<{
   (e: 'primary'): void;
   (e: 'view'): void;
   (e: 'reveal'): void;
+  (e: 'publish'): void;
 }>();
 
 const KIND_LABELS: Record<LibraryKind, string> = {

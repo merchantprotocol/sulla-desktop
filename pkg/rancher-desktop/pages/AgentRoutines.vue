@@ -1471,7 +1471,23 @@ function unsubscribeFromExecutionEvents() {
 
 const selectedNodeId = ref<string | null>(null);
 const selectedNode = computed(() => nodes.value.find(n => n.id === selectedNodeId.value) || null);
-const configOpen = computed(() => selectedNodeId.value !== null);
+
+// Edit-mode config drawer only opens for nodes that actually have
+// something to configure. Sticky notes (and any future annotation nodes)
+// carry no `data.config`, so clicking them selects the node on-canvas —
+// surfacing the palette and resize handles — without popping a drawer
+// that would have no fields to show. Run mode leaves the drawer's open
+// state alone: onNodeClick already gates it by execution state, and the
+// drawer is showing output, not config.
+const configOpen = computed(() => {
+  if (selectedNodeId.value === null) return false;
+  if (mode.value !== 'edit') return true;
+  const node = selectedNode.value;
+  if (!node) return false;
+  const cfg = (node.data as any)?.config;
+  if (!cfg || typeof cfg !== 'object' || Object.keys(cfg).length === 0) return false;
+  return true;
+});
 
 const title = ref('Blog Production Pipeline');
 const subtitle = ref('Twenty-one agents, one article, nine minutes.');

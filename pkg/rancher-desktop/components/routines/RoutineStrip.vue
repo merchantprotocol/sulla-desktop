@@ -126,6 +126,14 @@
             >
               Export…
             </button>
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitem"
+              @click="emitAction('publish')"
+            >
+              Publish to Marketplace…
+            </button>
             <div class="menu-sep" />
             <button
               type="button"
@@ -167,6 +175,7 @@ const emit = defineEmits<{
   (e: 'archive'): void;
   (e: 'delete'): void;
   (e: 'export'): void;
+  (e: 'publish'): void;
 }>();
 
 // ── Actions kebab menu ──

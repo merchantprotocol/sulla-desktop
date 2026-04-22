@@ -7,11 +7,14 @@
   >
     <!-- View mode: markdown rendered through `marked` + DOMPurify. Same
          pipeline NodeOutputPanel uses so sanitization rules stay in one
-         place. Falls back to a dim placeholder when the note is empty. -->
+         place. Falls back to a dim placeholder when the note is empty.
+         No `.nodrag` here — the body IS the drag surface, VueFlow owns
+         pointerdown so the user can pick up and move the note from
+         anywhere on it. Double-click still falls through to `onDoubleClick`
+         on the wrapper and swaps to the textarea. -->
     <div
       v-if="!isEditing"
-      class="sticky-body nodrag"
-      @pointerdown.stop
+      class="sticky-body"
     >
       <div
         v-if="renderedHtml"
@@ -47,9 +50,12 @@
 
     <!-- Edit mode: plain textarea. VueFlow would otherwise grab pointer events
          and drag the node instead of letting the user select/type, so .nodrag
-         plus pointerdown.stop pin the pointer to the textarea. -->
+         plus pointerdown.stop pin the pointer to the textarea. Explicit
+         `v-if` (not `v-else`) because the palette div sits between this and
+         the view body — a `v-else` would pair with the palette, not the body,
+         and render the textarea alongside the rendered markdown. -->
     <textarea
-      v-else
+      v-if="isEditing"
       ref="editorRef"
       v-model="draft"
       class="sticky-editor nodrag"
@@ -446,18 +452,22 @@ function beginResize(e: PointerEvent, dir: ResizeDir) {
   border: 0;
 }
 
-/* ── Color palette ── */
+/* ── Color palette ──
+   Sits INSIDE the top-right of the note so the wrapper's `overflow: hidden`
+   doesn't have to be lifted. Floats above the body content, `.nodrag`
+   keeps clicks from starting a VueFlow drag. */
 .sticky-palette {
   position: absolute;
-  top: -14px;
-  right: 10px;
+  top: 6px;
+  right: 6px;
   display: flex;
   gap: 4px;
   padding: 3px 5px;
-  background: rgba(14, 24, 40, 0.95);
+  background: rgba(14, 24, 40, 0.85);
   border: 1px solid rgba(140, 172, 210, 0.35);
-  border-radius: 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(4px);
   z-index: 6;
 }
 .sticky-palette .swatch {

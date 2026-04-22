@@ -196,6 +196,54 @@ function seedMinimalBundle(bundleRoot: string, routineName: string): void {
   fs.writeFileSync(path.join(bundleRoot, 'README.md'), readme, 'utf-8');
 }
 
+/**
+ * Build a routine bundle in a temp directory. Shared between the export
+ * (dialog-to-disk) path and the publish (manifest-to-marketplace) path so
+ * both produce identical bundle shapes.
+ *
+ * Caller is responsible for cleaning up `tmpRoot` with `rmrfSync`.
+ */
+async function buildRoutineBundleToTmpdir(workflowId: string): Promise<{
+  tmpRoot:    string;
+  slug:       string;
+  name:       string;
+  id:         string;
+  definition: Record<string, unknown>;
+}> {
+  const WorkflowModel = await importWorkflowModel();
+  const row = await WorkflowModel.findById(workflowId);
+  if (!row) throw new Error(`Routine not found: ${ workflowId }`);
+
+  const attrs = row.attributes as Record<string, unknown>;
+  const id = String(attrs.id ?? workflowId);
+  const name = String(attrs.name ?? 'routine');
+  const sourceTemplateSlug = (attrs.source_template_slug ?? null) as string | null;
+  const definition = (attrs.definition ?? {}) as Record<string, unknown>;
+
+  const slug = slugify(name);
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-bundle-'));
+
+  let seededFromTemplate = false;
+  if (sourceTemplateSlug) {
+    const sourceDir = path.join(getRoutinesDir(), sourceTemplateSlug);
+    if (fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory()) {
+      fs.cpSync(sourceDir, tmpRoot, { recursive: true });
+      seededFromTemplate = true;
+    }
+  }
+  if (!seededFromTemplate) seedMinimalBundle(tmpRoot, name);
+
+  const cleaned = stripRuntime(definition);
+  fs.writeFileSync(
+    path.join(tmpRoot, 'routine.yaml'),
+    yaml.stringify(cleaned, { lineWidth: 0 }),
+    'utf-8',
+  );
+  writeRoutineMeta(tmpRoot, { sourceTemplateSlug, sourceRoutineId: id });
+
+  return { tmpRoot, slug, name, id, definition: cleaned };
+}
+
 export function initSullaRoutineExportEvents(): void {
   // ── Export a DB routine ──
   // Pulls the routine from Postgres, merges with the source template's
@@ -323,6 +371,73 @@ export function initSullaRoutineExportEvents(): void {
       console.error(`[Sulla] Template export failed for "${ slug }":`, err);
 
       return { error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ── Publish a DB routine to the marketplace ──
+  // End-to-end: auth-check → build bundle in tmpdir → buildManifest →
+  // submitManifest → uploadBundle. Returns { needs_auth: true } when the
+  // user isn't signed into Sulla Cloud so the UI can prompt. Leaves the
+  // routine's local state untouched (nothing written back to ~/sulla/).
+  ipcMainProxy.handle('routines-publish-to-marketplace', async(_event: unknown, workflowId: string) => {
+    if (!workflowId || typeof workflowId !== 'string') {
+      return { error: 'workflowId is required' };
+    }
+
+    const { getCurrentAccessToken } = await import('@pkg/main/sullaCloudAuth');
+    const token = await getCurrentAccessToken();
+    if (!token) {
+      return { needs_auth: true as const };
+    }
+
+    const { buildManifest } = await import('@pkg/main/marketplace/manifestBuilder');
+    const { submitManifest, uploadBundle } = await import('@pkg/main/marketplace/client');
+
+    let bundle: { tmpRoot: string; slug: string; name: string; id: string } | null = null;
+    let zipPath: string | null = null;
+    try {
+      bundle = await buildRoutineBundleToTmpdir(workflowId);
+
+      const manifest = buildManifest('routine', {
+        slug:       bundle.slug,
+        bundleRoot: bundle.tmpRoot,
+      });
+
+      const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-publish-'));
+      zipPath = path.join(stagingDir, `${ bundle.slug }.zip`);
+      await zipDirectory(bundle.tmpRoot, bundle.slug, zipPath);
+
+      const submitted = await submitManifest({
+        kind:        'routine',
+        name:        String((manifest.metadata as any)?.name ?? bundle.name),
+        description: String((manifest.metadata as any)?.description ?? ''),
+        version:     String((manifest.metadata as any)?.version ?? '1.0.0'),
+        tags:        Array.isArray((manifest.metadata as any)?.tags) ? (manifest.metadata as any).tags : [],
+        manifest,
+      });
+      const uploaded = await uploadBundle(submitted.id, zipPath);
+
+      console.log(`[Sulla] Published routine "${ bundle.id }" → ${ submitted.id } (${ uploaded.bundle_size } bytes, pending review)`);
+
+      return {
+        templateId:   submitted.id,
+        slug:         submitted.slug,
+        name:         bundle.name,
+        status:       uploaded.status,
+        bundleSize:   uploaded.bundle_size,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[Sulla] Publish failed for routine "${ workflowId }":`, err);
+
+      return { error: message };
+    } finally {
+      if (bundle?.tmpRoot) rmrfSync(bundle.tmpRoot);
+      if (zipPath) {
+        try {
+          rmrfSync(path.dirname(zipPath));
+        } catch { /* ignore — best-effort staging cleanup */ }
+      }
     }
   });
 
