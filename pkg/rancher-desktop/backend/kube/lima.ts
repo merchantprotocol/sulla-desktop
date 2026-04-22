@@ -504,18 +504,7 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
       return deployment;
     });
 
-    // Substitute {{sullaFunctionsDir}} with the user's ~/sulla/functions path
-    // so the runtime containers (python/shell/node) can bind-mount it read-only.
-    // The directory is created if it doesn't exist so the K8s hostPath mount
-    // doesn't fail on a fresh install. Mirrors the pattern in backend/lima.ts's
-    // prepareSullaComposeFile for the compose path.
-    const sullaFunctionsDir = path.join(os.homedir(), 'sulla', 'functions');
-    await fs.promises.mkdir(sullaFunctionsDir, { recursive: true });
-
-    const yamlContent = deployments
-      .map(doc => yaml.stringify(doc, { defaultStringType: 'QUOTE_DOUBLE' }))
-      .join('---\n')
-      .replace(/\{\{sullaFunctionsDir\}\}/g, sullaFunctionsDir);
+    const yamlContent = deployments.map(doc => yaml.stringify(doc, { defaultStringType: 'QUOTE_DOUBLE' })).join('---\n');
     await fs.promises.writeFile(deploymentPath, yamlContent, 'utf-8');
     await this.vm.lima('copy', deploymentPath, `${ MACHINE_NAME }:/tmp/sulla-deployments.yaml`);
   }

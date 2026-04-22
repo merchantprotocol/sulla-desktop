@@ -4,18 +4,19 @@
  * External trigger sources (calendar, chat apps, desktop, API) call the registry
  * with a trigger type and a user message. The registry:
  *
- *   1. Queries the `workflows` table for rows matching the trigger type
- *   2. If one match → returns it directly
- *   3. If multiple matches → uses LLM to pick the best one based on triggerDescription
- *   4. Can also be called with a specific workflowId to skip selection
+ * 1. Scans all saved workflows for trigger nodes matching that type
+ * 2. If one match → returns it directly
+ * 3. If multiple matches → uses LLM to pick the best one based on triggerDescription
+ * 4. Can also be called with a specific workflowId to skip selection
  *
  * The registry does NOT execute workflows — it only selects them. Execution is
- * handled by the graph walker via WorkflowPlaybook.
- *
- * As of Phase 2, this reads exclusively from Postgres (WorkflowModel). The
- * previous YAML-scanning implementation is gone; `~/sulla/resources/workflows/`
- * and the user-home workflow dirs are no longer consulted.
+ * handled by the agent's graph loop via WorkflowPlaybook.
  */
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+import yaml from 'yaml';
 
 import type {
   WorkflowDefinition,
@@ -44,40 +45,15 @@ interface WorkflowCandidate {
   triggerDescription: string;
 }
 
-/**
- * Dynamic import of WorkflowModel — keeps the Postgres layer out of the
- * agent's startup bundle, matching the pattern used elsewhere.
- */
-async function getModel() {
-  const mod = await import('@pkg/agent/database/models/WorkflowModel');
-
-  return mod.WorkflowModel;
-}
-
-/**
- * Extract the "definition" payload from a WorkflowModel row. Does a
- * little normalisation so downstream code (playbook controllers,
- * execute_workflow tool) sees a consistent shape regardless of what
- * was stored.
- */
-function definitionFromModel(
-  row: Awaited<ReturnType<Awaited<ReturnType<typeof getModel>>['findById']>>,
-): WorkflowDefinition | null {
-  if (!row) return null;
-  const def = row.attributes.definition as WorkflowDefinition | undefined;
-  if (!def) return null;
-
-  // Slug lets the LLM reference workflows without exposing raw IDs.
-  // Fall back to the row id if the definition doesn't carry a slug.
-  const asAny = def as WorkflowDefinition & { slug?: string; _slug?: string };
-  asAny._slug = asAny.slug ?? asAny._slug ?? row.attributes.id;
-
-  return def;
-}
-
 // ── Registry ──
 
 export class WorkflowRegistry {
+  private workflowsDirs: string[];
+
+  constructor(workflowsDirs: string | string[]) {
+    this.workflowsDirs = Array.isArray(workflowsDirs) ? workflowsDirs : [workflowsDirs];
+  }
+
   /**
    * Select the appropriate workflow for a message.
    * Returns the workflow definition so callers can activate it via the playbook.
@@ -85,33 +61,29 @@ export class WorkflowRegistry {
   async dispatch(options: WorkflowDispatchOptions): Promise<WorkflowDispatchResult | null> {
     const { triggerType, message, workflowId } = options;
 
-    console.log(`[WorkflowRegistry] dispatch() triggerType="${ triggerType }", workflowId="${ workflowId || '(auto)' }", message="${ message.slice(0, 80) }"`);
+    console.log(`[WorkflowRegistry] dispatch() called — triggerType="${ triggerType }", workflowId="${ workflowId || '(auto)' }", message="${ message.slice(0, 80) }"`);
 
-    let definition: WorkflowDefinition | null = null;
+    let definition: WorkflowDefinition;
 
     if (workflowId) {
-      definition = await this.loadWorkflow(workflowId);
-      if (!definition) {
-        console.log(`[WorkflowRegistry] Direct dispatch failed — no workflow with id="${ workflowId }"`);
-
-        return null;
-      }
+      console.log(`[WorkflowRegistry] Direct dispatch to workflowId="${ workflowId }"`);
+      definition = this.loadWorkflow(workflowId);
     } else {
-      const candidates = await this.findCandidates(triggerType);
+      const candidates = this.findCandidates(triggerType);
 
       if (candidates.length === 0) {
         console.log(`[WorkflowRegistry] No workflows found for trigger type: ${ triggerType }`);
-
         return null;
       }
 
       if (candidates.length === 1) {
+        console.log(`[WorkflowRegistry] Single candidate found: "${ candidates[0].definition.name }" (${ candidates[0].definition.id })`);
         definition = candidates[0].definition;
       } else {
+        console.log(`[WorkflowRegistry] ${ candidates.length } candidates found, using LLM to select`);
         const selected = await this.selectWorkflow(candidates, message);
         if (!selected) {
           console.log(`[WorkflowRegistry] LLM could not select a workflow for: "${ message.slice(0, 100) }"`);
-
           return null;
         }
         definition = selected;
@@ -128,81 +100,110 @@ export class WorkflowRegistry {
   }
 
   /**
-   * Find all production workflows that have a trigger node matching the given type.
-   *
-   * The filter is applied in-process after the list query — the trigger
-   * node lives inside the `definition` JSONB, not in a dedicated column.
-   * Numbers are small (tens of routines), so this is fine; if it grows
-   * we can move the predicate into SQL via a jsonb_path_query.
+   * Find all workflows that have a trigger node matching the given type.
    */
-  async findCandidates(triggerType: TriggerNodeSubtype): Promise<WorkflowCandidate[]> {
-    console.log(`[WorkflowRegistry] findCandidates() — looking for triggerType="${ triggerType }"`);
-
-    const WorkflowModel = await getModel();
-    const rows = await WorkflowModel.listByStatus('production');
-
+  findCandidates(triggerType: TriggerNodeSubtype): WorkflowCandidate[] {
     const candidates: WorkflowCandidate[] = [];
+    const seenIds = new Set<string>();
 
-    for (const row of rows) {
-      const definition = definitionFromModel(row);
-      if (!definition) continue;
+    console.log(`[WorkflowRegistry] findCandidates() — looking for triggerType="${ triggerType }" in dirs=${ JSON.stringify(this.workflowsDirs) }`);
 
-      const triggerNode = (definition.nodes ?? []).find(
-        node => node.data?.category === 'trigger' && node.data?.subtype === triggerType,
-      );
-      if (!triggerNode) continue;
+    for (const workflowsDir of this.workflowsDirs) {
+      if (!fs.existsSync(workflowsDir)) {
+        console.log(`[WorkflowRegistry] Workflows dir does not exist: ${ workflowsDir }`);
+        continue;
+      }
 
-      candidates.push({
-        definition,
-        triggerDescription:
-          (triggerNode.data.config?.triggerDescription as string) ||
-          definition.name ||
-          '',
-      });
+      const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+      console.log(`[WorkflowRegistry] Found ${ entries.length } entries in ${ workflowsDir }`);
+
+      for (const entry of entries) {
+        if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+
+        try {
+          const filePath = path.join(workflowsDir, entry.name);
+          const raw = fs.readFileSync(filePath, 'utf-8');
+          const definition: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+
+          // Attach slug derived from filename — this is what the LLM uses to reference workflows
+          const fileSlug = entry.name.replace(/\.(yaml|json)$/, '');
+          (definition as any)._slug = (definition as any).slug || fileSlug;
+
+          // Skip duplicates — user workflows (later dirs) override native ones
+          const id = definition.id || fileSlug;
+          if (seenIds.has(id)) continue;
+          seenIds.add(id);
+
+          console.log(`[WorkflowRegistry] Scanning "${ entry.name }": name="${ definition.name }", slug="${ (definition as any)._slug }"`);
+
+          let matched = false;
+          for (const node of definition.nodes) {
+            if (node.data.category === 'trigger') {
+              console.log(`[WorkflowRegistry]   → Trigger node found: subtype="${ node.data.subtype }", looking for="${ triggerType }", match=${ node.data.subtype === triggerType }`);
+            }
+            if (
+              node.data.category === 'trigger' &&
+              node.data.subtype === triggerType
+            ) {
+              candidates.push({
+                definition,
+                triggerDescription: (node.data.config?.triggerDescription as string) || definition.name || '',
+              });
+              matched = true;
+              break;
+            }
+          }
+          if (!matched) {
+            console.log(`[WorkflowRegistry]   → No matching trigger for "${ triggerType }"`);
+          }
+        } catch (err) {
+          console.warn(`[WorkflowRegistry] Failed to parse ${ entry.name }:`, err);
+        }
+      }
     }
 
-    console.log(`[WorkflowRegistry] findCandidates() — ${ candidates.length } candidate(s)`);
-
+    console.log(`[WorkflowRegistry] findCandidates() result: ${ candidates.length } candidate(s)`);
     return candidates;
   }
 
   /**
-   * Load a specific workflow by id. Returns null when no row exists so
-   * callers can discriminate "not found" from a hard failure.
-   *
-   * Accepts both the canonical row id and a slug — when the caller
-   * passes a slug (e.g. "daily-planning"), we list production rows and
-   * match by `definition.slug` in-process.
+   * Load a specific workflow by ID (scans files since filenames are name-slugs, not IDs).
    */
-  async loadWorkflow(workflowId: string): Promise<WorkflowDefinition | null> {
-    const WorkflowModel = await getModel();
-
-    // Fast path: direct id match.
-    const byId = await WorkflowModel.findById(workflowId);
-    if (byId) return definitionFromModel(byId);
-
-    // Slug fallback — the LLM speaks slugs, so resolve them against
-    // production rows. Falls through to null when nothing matches.
+  loadWorkflow(workflowId: string): WorkflowDefinition {
     const needle = workflowId.toLowerCase();
-    const productionRows = await WorkflowModel.listByStatus('production');
 
-    for (const row of productionRows) {
-      const def = definitionFromModel(row);
-      if (!def) continue;
-      const asAny = def as WorkflowDefinition & { slug?: string; _slug?: string };
-      if (
-        asAny.slug?.toLowerCase() === needle ||
-        asAny._slug?.toLowerCase() === needle
-      ) {
-        return def;
+    for (const workflowsDir of this.workflowsDirs) {
+      if (!fs.existsSync(workflowsDir)) continue;
+
+      const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
+        try {
+          const filePath = path.join(workflowsDir, entry.name);
+          const raw = fs.readFileSync(filePath, 'utf-8');
+          const parsed: WorkflowDefinition = entry.name.endsWith('.json') ? JSON.parse(raw) : yaml.parse(raw);
+
+          // Match by slug or filename (without extension) — never expose raw IDs to the LLM
+          const fileBaseName = entry.name.replace(/\.(yaml|json)$/, '');
+          (parsed as any)._slug = (parsed as any).slug || fileBaseName;
+
+          if (
+            ((parsed as any).slug?.toLowerCase() === needle) ||
+            fileBaseName.toLowerCase() === needle ||
+            parsed.id === workflowId
+          ) {
+            return parsed;
+          }
+        } catch { /* skip unparseable files */ }
       }
     }
 
-    return null;
+    throw new Error(`Workflow not found: ${ workflowId }`);
   }
 
   /**
-   * Use the LLM to select the best workflow for a given message.
+   * Use LLM to select the best workflow for a given message.
    */
   private async selectWorkflow(
     candidates: WorkflowCandidate[],
@@ -243,8 +244,8 @@ let instance: WorkflowRegistry | null = null;
 
 export function getWorkflowRegistry(): WorkflowRegistry {
   if (!instance) {
-    instance = new WorkflowRegistry();
+    const { resolveAllWorkflowsProductionDirs } = require('@pkg/agent/utils/sullaPaths');
+    instance = new WorkflowRegistry(resolveAllWorkflowsProductionDirs());
   }
-
   return instance;
 }

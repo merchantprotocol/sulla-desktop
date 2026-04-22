@@ -27,13 +27,6 @@ justfile
 .env
 log/*
 llm/
+training/__pycache__/validate_training_data.cpython-313.pyc
 resources/browserTabPreload.js.map
 logs/background-web-requests.log
-
-# Python bytecode caches (training/, etc.)
-**/__pycache__/
-**/*.py[cod]
-
-# Nested node_modules anywhere under the repo.
-# Top-level /node_modules/ is already matched above.
-**/node_modules/

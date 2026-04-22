@@ -192,18 +192,18 @@ function setCombinator(c: 'and' | 'or') {
 }
 
 function onRuleChange(idx: number, field: 'field' | 'operator' | 'value', value: string) {
-  const rules = [...(props.config.rules ?? [])];
+  const rules = [...props.config.rules];
   rules[idx] = { ...rules[idx], [field]: value };
   emit('update-config', props.nodeId, { ...props.config, rules });
 }
 
 function addRule() {
-  const rules = [...(props.config.rules ?? []), { field: '', operator: 'equals', value: '' }];
+  const rules = [...props.config.rules, { field: '', operator: 'equals', value: '' }];
   emit('update-config', props.nodeId, { ...props.config, rules });
 }
 
 function removeRule(idx: number) {
-  const rules = (props.config.rules ?? []).filter((_, i) => i !== idx);
+  const rules = props.config.rules.filter((_, i) => i !== idx);
   emit('update-config', props.nodeId, { ...props.config, rules });
 }
 </script>

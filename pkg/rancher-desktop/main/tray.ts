@@ -61,16 +61,15 @@ export class Tray {
         openMain();
       },
     },
-    // Hidden: Open Agent Workbench
-    // {
-    //   id:    'editor',
-    //   label: 'Open Agent Workbench',
-    //   icon:  path.join(paths.resources, 'icons', 'book-open-16.png'),
-    //   type:  'normal',
-    //   click() {
-    //     openEditor();
-    //   },
-    // },
+    {
+      id:    'editor',
+      label: 'Open Agent Workbench',
+      icon:  path.join(paths.resources, 'icons', 'book-open-16.png'),
+      type:  'normal',
+      click() {
+        openEditor();
+      },
+    },
     {
       id:    'secretary-mode',
       label: 'Secretary Mode',
