@@ -476,21 +476,19 @@ export const GraphRegistry = {
    * Does not cache in registry (each invocation is ephemeral).
    */
   createSubconscious: async function(opts: {
-    systemPrompt:           string;
-    tools:                  string[];
-    userMessage:            string;
-    messages?:              any[];
-    maxIterations?:         number;
-    temperature?:           number;
-    format?:                'json';
-    maxTokens?:             number;
-    responseHandler?:       (response: string, state: BaseThreadState) => void;
-    parentAbortSignal?:     any;
-    agentLabel?:            string;
-    parentConversationId?:  string;
-    parentWsChannel?:       string;
-    workflowNodeId?:        string;
-    workflowParentChannel?: string;
+    systemPrompt:          string;
+    tools:                 string[];
+    userMessage:           string;
+    messages?:             any[];
+    maxIterations?:        number;
+    temperature?:          number;
+    format?:               'json';
+    maxTokens?:            number;
+    responseHandler?:      (response: string, state: BaseThreadState) => void;
+    parentAbortSignal?:    any;
+    agentLabel?:           string;
+    parentConversationId?: string;
+    parentWsChannel?:      string;
   }): Promise<{
       graph:    Graph<BaseThreadState>;
       state:    BaseThreadState;
@@ -534,8 +532,6 @@ export const GraphRegistry = {
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
       parentAbortSignal:    (parentState.metadata as any).options?.abort,
-      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
-      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
       responseHandler(response: string, state: BaseThreadState) {
         let actions: { deletions: Set<string>; summaries: Map<string, string> };
         try {
@@ -599,8 +595,6 @@ export const GraphRegistry = {
       agentLabel:             'memory-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
-      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
-      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
     });
     return { graph, state, threadId: state.metadata.threadId };
   },
@@ -624,8 +618,6 @@ export const GraphRegistry = {
       agentLabel:             'observation',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
-      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
-      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
     });
     return { graph, state, threadId: state.metadata.threadId };
   },
@@ -1017,12 +1009,6 @@ async function buildSubconsciousState(opts: {
   parentConversationId?: string;
   /** Parent's WebSocket channel — subconscious agents push thinking messages here */
   parentWsChannel?:      string;
-  /** When invoked inside a workflow run, these route the subagent's
-      BaseNode.wsChatMessage emits into the workflow's live stream so the
-      user can see subconscious work progressing (otherwise a long memory-
-      recall looks like a total stall on the canvas). */
-  workflowNodeId?:       string;
-  workflowParentChannel?: string;
 }): Promise<BaseThreadState> {
   const threadId = `subconscious_${ Date.now() }_${ ++threadCounter }`;
 
@@ -1081,16 +1067,6 @@ async function buildSubconsciousState(opts: {
       format:           opts.format,
       maxTokens:        opts.maxTokens,
       responseHandler:  opts.responseHandler,
-
-      // Workflow routing — when set, BaseNode.wsChatMessage will emit
-      // `node_thinking` events into the workflow's live stream so the
-      // user sees subconscious progress instead of a dead canvas during
-      // long recall/observation phases. The `agentLabel` prefix is what
-      // the frontend uses to attribute the thought to the subconscious
-      // rather than the orchestrator node itself.
-      workflowNodeId:        opts.workflowNodeId,
-      workflowParentChannel: opts.workflowParentChannel,
-      workflowThinkingLabel: opts.agentLabel,
     },
   } as any;
 }

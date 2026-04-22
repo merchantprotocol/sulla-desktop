@@ -15,7 +15,6 @@ const SULLA_CONVERSATIONS_DIR_ENV = 'SULLA_CONVERSATIONS_DIR';
 const SULLA_WORKFLOWS_DIR_ENV = 'SULLA_WORKFLOWS_DIR';
 const SULLA_ROUTINES_DIR_ENV = 'SULLA_ROUTINES_DIR';
 const SULLA_INTEGRATIONS_DIR_ENV = 'SULLA_INTEGRATIONS_DIR';
-const SULLA_FUNCTIONS_DIR_ENV = 'SULLA_FUNCTIONS_DIR';
 const SULLA_RESOURCES_DIR_ENV = 'SULLA_RESOURCES_DIR';
 const SULLA_CODEBASE_DIR_ENV = 'SULLA_CODEBASE_DIR';
 
@@ -106,21 +105,6 @@ export function resolveSullaRoutinesDir(): string {
   }
 
   return path.join(resolveSullaHomeDir(), 'routines');
-}
-
-/**
- * User-defined functions live at ~/sulla/functions/<slug>/ — each has a
- * function.yaml manifest plus main.py / main.sh / main.js depending on
- * spec.runtime. The runtime containers (python/shell/node) load and invoke
- * them via HTTP.
- */
-export function resolveSullaFunctionsDir(): string {
-  const envPath = String(process.env[SULLA_FUNCTIONS_DIR_ENV] || '').trim();
-  if (envPath) {
-    return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
-  }
-
-  return path.join(resolveSullaHomeDir(), 'functions');
 }
 
 export function resolveSullaIntegrationsDir(): string {

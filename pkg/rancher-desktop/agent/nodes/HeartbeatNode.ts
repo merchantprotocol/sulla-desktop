@@ -72,10 +72,8 @@ export class HeartbeatNode extends BaseNode {
 
     // ----------------------------------------------------------------
     // 2. SUBCONSCIOUS MIDDLEWARE (memory recall, observations)
+    // Skip during tool-call loops — only run on fresh turns.
     // ----------------------------------------------------------------
-    // Same pattern as AgentNode: skip during tool-call loops, and the
-    // middleware itself bails when state.metadata.workflowNodeId is set
-    // so a routine-triggered heartbeat path stays fast.
     const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
     if (!isToolCallLoop) {
       const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);

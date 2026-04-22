@@ -48,8 +48,8 @@ export async function activateWorkflowOnState(
     let matches = false;
     try {
       const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
-      const resolved = await getWorkflowRegistry().loadWorkflow(workflowId);
-      matches = resolved?.id === scopedWorkflowId;
+      const resolved = getWorkflowRegistry().loadWorkflow(workflowId);
+      matches = resolved.id === scopedWorkflowId;
     } catch { /* not found — doesn't match */ }
     if (!matches) {
       return {
@@ -81,24 +81,17 @@ export async function activateWorkflowOnState(
     };
   }
 
-  // Load the workflow definition via the registry (DB-backed).
+  // Load the workflow definition via the registry (scans production dir)
   let definition: WorkflowDefinition | null = null;
 
   try {
     const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
     const registry = getWorkflowRegistry();
-    definition = await registry.loadWorkflow(workflowId);
+    definition = registry.loadWorkflow(workflowId);
   } catch (err) {
     return {
       ok:             false,
-      responseString: `Workflow "${ workflowId }" could not be loaded: ${ err instanceof Error ? err.message : String(err) }`,
-    };
-  }
-
-  if (!definition) {
-    return {
-      ok:             false,
-      responseString: `Workflow "${ workflowId }" not found. Use the slug shown in your system prompt.`,
+      responseString: `Workflow "${ workflowId }" not found. Use the slug shown in your system prompt (the filename without extension, e.g. "ask-date-time").`,
     };
   }
 
