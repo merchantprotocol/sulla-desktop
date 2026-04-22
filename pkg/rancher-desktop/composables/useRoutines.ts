@@ -193,11 +193,89 @@ export function useRoutines() {
     return load();
   }
 
+  /**
+   * Permanently delete a routine. Always reloads the list from the DB
+   * after the call so the UI reflects the authoritative state, even if
+   * the IPC handler's return value is ambiguous (e.g. delete succeeded
+   * but the driver returns an empty-ish `result` that fails our local
+   * optimistic filter).
+   */
+  async function remove(id: string): Promise<boolean> {
+    try {
+      const removed = await ipcRenderer.invoke('workflow-delete', id);
+
+      await load();
+
+      return !!removed;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+      await load();
+
+      return false;
+    }
+  }
+
+  /**
+   * Duplicate a routine. Returns the new routine's id so the caller can
+   * navigate to it in the editor. The row lists are refreshed to include
+   * the fresh copy.
+   */
+  async function duplicate(id: string): Promise<string | null> {
+    try {
+      const result = await ipcRenderer.invoke('workflow-duplicate', id);
+      await load();
+
+      return result.id;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+
+      return null;
+    }
+  }
+
+  /**
+   * Flip between 'archive' and 'draft'. Archive takes a routine out of
+   * the active set; the inverse puts it back as a draft so the user
+   * can decide whether to promote to production.
+   */
+  async function toggleArchive(id: string): Promise<void> {
+    const row = routines.value.find(r => r.id === id);
+    if (!row) return;
+    const nextStatus = row.status === 'archive' ? 'draft' : 'archive';
+    try {
+      await ipcRenderer.invoke('workflow-move', id, nextStatus);
+      await load();
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  /**
+   * Toggle between 'draft' and 'production'. Called from the Publish
+   * button on draft routines; when a production routine is clicked the
+   * same way we pull it back to draft (unpublish).
+   */
+  async function togglePublish(id: string): Promise<void> {
+    const row = routines.value.find(r => r.id === id);
+    if (!row) return;
+    // UI status is derived from DB status — 'idle' view status maps to
+    // DB 'production', so we target DB statuses here directly.
+    const nextStatus = row.status === 'draft' ? 'production' : 'draft';
+    try {
+      await ipcRenderer.invoke('workflow-move', id, nextStatus);
+      await load();
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    }
+  }
+
   // Grouped views — keep the template free of filter logic.
   const running = computed(() =>
     routines.value.filter(r => r.status === 'running'));
   const scheduled = computed(() =>
     routines.value.filter(r => r.status === 'scheduled'));
+  // Idle now means "in the wings but still active" — drafts included,
+  // archived excluded. Archived routines get their own tab.
   const idle = computed(() =>
     routines.value.filter(r => ['idle', 'draft'].includes(r.status)));
   // Archived routines go in their own bucket — the template renders them
@@ -206,7 +284,16 @@ export function useRoutines() {
     routines.value.filter(r => r.status === 'archive'));
 
   const stats = computed<RoutinesStats>(() => computeStats(routines.value));
-  const isEmpty = computed(() => !isLoading.value && routines.value.length === 0);
+  // "Empty" now reflects the My Routines tab — if every routine you own
+  // is archived, we still want the My Routines empty state so the user
+  // is guided toward templates / new routines, not staring at Act sections
+  // with nothing in them.
+  const isEmpty = computed(() => {
+    if (isLoading.value) return false;
+    const nonArchived = routines.value.filter(r => r.status !== 'archive');
+
+    return nonArchived.length === 0;
+  });
 
   return {
     // state
@@ -227,5 +314,9 @@ export function useRoutines() {
     // actions
     load,
     refresh,
+    remove,
+    duplicate,
+    toggleArchive,
+    togglePublish,
   };
 }
