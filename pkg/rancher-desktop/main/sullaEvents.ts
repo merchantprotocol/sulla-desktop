@@ -12,9 +12,13 @@ import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
 import { initMessageBusIpc } from './messageBusIpc';
+import { initSullaBundleEvents } from './sullaBundleEvents';
 import { initSullaDebugEvents } from './sullaDebugEvents';
 import { initSullaFunctionEvents } from './sullaFunctionEvents';
+import { initSullaLibraryEvents } from './sullaLibraryEvents';
+import { initSullaMarketplaceEvents } from './sullaMarketplaceEvents';
 import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
+import { initSullaRoutineImportEvents } from './sullaRoutineImportEvents';
 import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
 
@@ -814,6 +818,10 @@ export function initSullaEvents(): void {
   initSullaWorkflowEvents();
   initSullaRoutineTemplateEvents();
   initSullaRoutineExportEvents();
+  initSullaRoutineImportEvents();
+  initSullaBundleEvents();
+  initSullaMarketplaceEvents();
+  initSullaLibraryEvents();
   initSullaDebugEvents();
   initSullaFunctionEvents();
 

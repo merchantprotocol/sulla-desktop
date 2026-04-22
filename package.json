@@ -160,6 +160,7 @@
     "which": "6.0.0",
     "ws": "^8.20.0",
     "yaml": "2.8.2",
+    "yazl": "^3.3.1",
     "zod-to-json-schema": "3.23.5"
   },
   "devDependencies": {
@@ -198,6 +199,7 @@
     "@types/semver": "7.7.1",
     "@types/tar-stream": "3.1.4",
     "@types/which": "3.0.4",
+    "@types/yazl": "^3.3.1",
     "@vue/cli-plugin-babel": "5.0.9",
     "@vue/cli-plugin-router": "5.0.9",
     "@vue/cli-plugin-vuex": "5.0.9",

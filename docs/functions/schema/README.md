@@ -2,6 +2,8 @@
 
 A **function** is a single unit of executable code — Python, Node, or shell — that lives at `~/sulla/functions/<slug>/` and runs inside one of the Sulla [runtime containers](../../routines/schema/runtime-containers.md). Functions are the code-level building block of Sulla; [routines](../../routines/schema/README.md) are the orchestration layer that *calls* functions via the `subtype: 'function'` node on the canvas.
 
+> Functions are **one of four peer kinds** in the bundle model — routines, skills, functions, recipes. They share the same marketplace bundle format and import/export/publish/install flow. See [`../../bundles/README.md`](../../bundles/README.md) for the cross-kind contract. The function-specific manifest summary (`functionSummary`) is derived from `function.yaml` at publish time.
+
 ## Functions vs. routines
 
 | Functions                                                   | Routines                                                     |

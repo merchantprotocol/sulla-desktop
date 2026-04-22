@@ -123,6 +123,19 @@ export function resolveSullaFunctionsDir(): string {
   return path.join(resolveSullaHomeDir(), 'functions');
 }
 
+/**
+ * Marketplace-installed recipes (extension configs) live at
+ * ~/sulla/recipes/<slug>/ — each contains a `recipe.yaml` describing
+ * how to run a Docker container plus any supporting config.
+ *
+ * We don't ship Docker images through the marketplace (too large) —
+ * the recipe describes which image to pull and how to configure it.
+ * Runtime (start/stop/logs) is handled by the Docker extension system.
+ */
+export function resolveSullaRecipesDir(): string {
+  return path.join(resolveSullaHomeDir(), 'recipes');
+}
+
 export function resolveSullaIntegrationsDir(): string {
   const envPath = String(process.env[SULLA_INTEGRATIONS_DIR_ENV] || '').trim();
   if (envPath) {
