@@ -1990,6 +1990,17 @@ export class PlaybookController<TState = any> {
       state: any;
     };
 
+    // Register this sub-agent's threadId on the parent so a user-abort
+    // on the parent routine can fan-out and cancel every in-flight
+    // sub-agent. Without this the parent walker stops at the next step
+    // boundary but sub-agent graphs keep running their LLM/tool loops
+    // until they return naturally.
+    const parentMeta = (_state as any).metadata;
+    if (parentMeta) {
+      const active = (parentMeta.activeSubAgentThreadIds ??= []);
+      if (!active.includes(threadId)) active.push(threadId);
+    }
+
     if (!prompt || !prompt.trim()) {
       console.error(`[PlaybookController] executeSubAgent: empty prompt for node "${ nodeId }" agent "${ agentId }" — sub-agent would receive no user message`);
       throw new Error(`Sub-agent "${ agentId || nodeId }" received an empty prompt. The orchestrator must produce a non-empty task message.`);
@@ -2006,7 +2017,19 @@ export class PlaybookController<TState = any> {
     subState.metadata.workflowNodeId = nodeId;
     subState.metadata.workflowParentChannel = parentChannel;
 
-    const finalState = await graph.execute(subState);
+    let finalState: any;
+    try {
+      finalState = await graph.execute(subState);
+    } finally {
+      // Deregister from the parent's active-sub-agents list. Must run on
+      // every exit path — success, contract-violation, or thrown error —
+      // so an abort that fans out to stale threadIds doesn't see zombies.
+      if (parentMeta?.activeSubAgentThreadIds) {
+        const arr: string[] = parentMeta.activeSubAgentThreadIds;
+        const idx = arr.indexOf(threadId);
+        if (idx >= 0) arr.splice(idx, 1);
+      }
+    }
 
     const agentMeta = (finalState.metadata)?.agent || {};
     const agentStatus = String(agentMeta.status || '').toLowerCase();

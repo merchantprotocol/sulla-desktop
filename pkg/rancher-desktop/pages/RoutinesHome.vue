@@ -196,7 +196,8 @@
               :routine="r"
               :primary-label="r.status === 'draft' ? 'Publish' : 'Run'"
               secondary-label="Edit"
-              @primary="onOpenRoutine(r.id)"
+              @primary="r.status === 'draft' ? onPublishAndRun(r.id) : onOpenRoutine(r.id)"
+              @secondary="onEditRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
             />
           </ActSection>
@@ -246,8 +247,8 @@
               primary-label="Restore"
               secondary-label="Open"
               @primary="onRestoreRoutine(r.id)"
-              @secondary="onOpenRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
+              @secondary="onEditRoutine(r.id)"
+              @open="onEditRoutine(r.id)"
             />
           </ActSection>
 
@@ -320,9 +321,10 @@ const props = withDefaults(defineProps<{
 }>(), { initialTab: 'mywork' });
 
 const emit = defineEmits<{
-  (e: 'open-workflow', id: string): void
+  (e: 'open-workflow', id: string, mode?: 'edit' | 'run'): void
   (e: 'use-template', slug: string): void
   (e: 'new-blank'): void
+  (e: 'restore-routine', id: string): void
 }>();
 
 const activeTab = ref<Tab>(props.initialTab);
@@ -446,7 +448,19 @@ const ribbonStatusLabel = computed(() => {
 const todayStr = new Date().toISOString().slice(0, 10);
 
 function onOpenRoutine(id: string) {
-  emit('open-workflow', id);
+  emit('open-workflow', id, 'run');
+}
+function onEditRoutine(id: string) {
+  emit('open-workflow', id, 'edit');
+}
+async function onPublishAndRun(id: string) {
+  try {
+    await ipcRenderer.invoke('workflow-move', id, 'production');
+    await routinesController.load();
+  } catch (err) {
+    console.error('[RoutinesHome] publish failed:', err);
+  }
+  emit('open-workflow', id, 'run');
 }
 function onUseTemplate(slug: string) {
   emit('use-template', slug);
@@ -632,10 +646,10 @@ async function onImport() {
   width: 34px; height: 34px; border-radius: 8px;
   background: linear-gradient(135deg, var(--steel-400), var(--steel-600));
   display: grid; place-items: center; color: white;
-  font-family: var(--serif); font-style: italic; font-size: 18px;
+  font-family: var(--serif); font-size: 18px;
   box-shadow: 0 0 18px rgba(74,111,165,0.45);
 }
-.brand-name { font-family: var(--serif); font-style: italic; font-size: 18px; color: white; }
+.brand-name { font-family: var(--serif); font-size: 18px; color: white; }
 .brand-sub {
   font-family: var(--mono); font-size: 9px; letter-spacing: 0.22em;
   color: var(--steel-400); text-transform: uppercase; margin-top: 2px;
@@ -727,12 +741,12 @@ async function onImport() {
 @keyframes pulse-v { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 .hero h1 {
-  font-family: var(--serif); font-style: italic; font-size: 68px;
+  font-family: var(--serif); font-size: 68px;
   color: white; line-height: 1; margin: 0 0 16px;
   letter-spacing: -0.02em; font-weight: 600;
 }
 .hero .dek {
-  font-family: var(--serif); font-size: 17px; font-style: italic;
+  font-family: var(--serif); font-size: 17px;
   color: var(--steel-200); max-width: 640px; margin: 0 auto 26px;
   line-height: 1.55;
 }
@@ -747,7 +761,7 @@ async function onImport() {
 }
 .rollup-row > div:last-child { border-right: none; }
 .rollup-row b {
-  display: block; font-family: var(--serif); font-style: italic;
+  display: block; font-family: var(--serif);
   font-size: 28px; color: white; line-height: 1;
 }
 
@@ -808,7 +822,7 @@ async function onImport() {
   font-family: var(--sans); font-size: 13.5px; color: var(--text);
 }
 .template-search input::placeholder {
-  color: var(--steel-400); font-style: italic;
+  color: var(--steel-400);
 }
 .template-count {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
@@ -863,7 +877,7 @@ async function onImport() {
   color: var(--steel-400); text-transform: uppercase;
 }
 .ribbon .c .sig {
-  font-family: var(--serif); font-size: 14px; font-style: italic; color: white;
+  font-family: var(--serif); font-size: 14px; color: white;
   margin-top: 4px; line-height: 1.2;
 }
 .ribbon .c .sig b { color: var(--violet-300); font-weight: 700; }

@@ -54,7 +54,7 @@
               {{ node.data.kicker }}
             </div>
             <div class="t">
-              {{ node.data.title || 'Untitled' }}
+              {{ node.data.title || (node.data as any).label || 'Untitled' }}
             </div>
             <div
               v-if="node.data.role"
@@ -72,11 +72,14 @@
         </div>
       </div>
 
-      <!-- Execution output — only visible once the card has actually run.
-           Shown above the config panel during a run so the user gets the
-           live result first, then has the config below as reference. -->
+      <!-- Execution output — only in run mode. Edit mode is a pristine
+           configuration view; stale output from a previous run would
+           just confuse the "what does this node do?" question the user
+           is here to answer. Run mode has NodeOutputPanel for live
+           output, but this block also surfaces output inline when the
+           canvas is actively running. -->
       <section
-        v-if="node && hasExecutionInfo"
+        v-if="node && mode === 'run' && hasExecutionInfo"
         class="exec-section"
       >
         <header class="exec-head">
@@ -435,13 +438,19 @@ function formatExecDuration(): string {
 }
 
 .c-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.c-body > * {
+  flex-shrink: 0;
 }
 
 /* Preview card */

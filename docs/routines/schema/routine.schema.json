@@ -78,8 +78,9 @@
           "minLength": 1
         },
         "type": {
-          "const": "workflow",
-          "description": "vue-flow node type. Always the literal string 'workflow' — per-node differentiation is on `data.subtype`."
+          "type": "string",
+          "enum": ["workflow", "routine", "loop-frame", "sticky-note"],
+          "description": "vue-flow node type. `workflow`/`routine` are executable graph nodes (differentiated further via `data.subtype`). `loop-frame` is a container that parents body nodes via `parentNode`. `sticky-note` is a non-executing canvas annotation."
         },
         "position": {
           "type": "object",
@@ -90,15 +91,19 @@
             "y": { "type": "number" }
           }
         },
+        "width":  { "type": "number", "description": "Persisted node width. Required for resizable types (loop-frame, sticky-note); optional elsewhere." },
+        "height": { "type": "number", "description": "Persisted node height. Required for resizable types." },
+        "zIndex": { "type": "number", "description": "VueFlow render order. Sticky notes use a negative zIndex so they sit behind executable nodes." },
+        "parentNode": { "type": "string", "description": "ID of a containing node (currently only loop-frame). When set, `position` is parent-local." },
         "data": { "$ref": "#/$defs/nodeData" }
       }
     },
 
     "nodeData": {
       "type": "object",
-      "required": ["subtype", "category", "label", "config"],
+      "required": ["subtype", "category"],
       "additionalProperties": true,
-      "description": "Persistent node data. `execution` state is runtime-only and MUST NOT appear in exports.",
+      "description": "Persistent node data. `execution` state is runtime-only and MUST NOT appear in exports. `label` and `config` are required for executable nodes but optional for annotation types like sticky notes.",
       "properties": {
         "subtype": {
           "type": "string",
@@ -107,21 +112,29 @@
             "agent", "integration-call", "tool-call", "orchestrator-prompt", "function",
             "router", "condition",
             "wait", "loop", "parallel", "merge", "sub-workflow",
-            "user-input", "response", "transfer"
+            "user-input", "response", "transfer",
+            "sticky-note"
           ],
-          "description": "Drawn from WorkflowNodeSubtype. `function` invokes a function at ~/sulla/functions/<slug>/ via the matching runtime container."
+          "description": "Drawn from WorkflowNodeSubtype. `function` invokes a function at ~/sulla/functions/<slug>/ via the matching runtime container. `sticky-note` is a canvas annotation and never executes."
         },
         "category": {
           "type": "string",
-          "enum": ["trigger", "agent", "routing", "flow-control", "io"]
+          "enum": ["trigger", "agent", "routing", "flow-control", "io", "annotation"],
+          "description": "High-level role. `annotation` marks nodes the DAG walker must skip (sticky notes)."
         },
-        "label": {
-          "type": "string"
-        },
-        "config": {
+        "label":   { "type": "string" },
+        "config":  {
           "type": "object",
-          "description": "Per-subtype config. Shape depends on `subtype` — see the per-subtype config interfaces in pkg/rancher-desktop/pages/editor/workflow/types.ts (TriggerNodeConfig, AgentNodeConfig, FunctionNodeConfig, RouterNodeConfig, ...).",
+          "description": "Per-subtype config. Shape depends on `subtype` — see the per-subtype config interfaces in pkg/rancher-desktop/pages/editor/workflow/types.ts (TriggerNodeConfig, AgentNodeConfig, FunctionNodeConfig, RouterNodeConfig, ...). Not required for sticky notes.",
           "additionalProperties": true
+        },
+        "content": {
+          "type": "string",
+          "description": "Sticky-note only. Markdown body of the note (GFM + line breaks). Rendered through DOMPurify on display; YouTube/Vimeo/video URLs on their own line auto-embed as iframes/video tags. Image references may be absolute HTTPS URLs or `sulla-routine-asset://<slug>/<file>` paths resolving into the routine template's `assets/` folder."
+        },
+        "bgColor": {
+          "type": "string",
+          "description": "Sticky-note only. Background fill as a CSS color string (typically rgba). Empty/omitted = use the default steel-blue. UI picker ships 7 presets but any valid CSS color persists."
         }
       }
     },

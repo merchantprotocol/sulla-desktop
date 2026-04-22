@@ -7,7 +7,11 @@
     <header class="d-head">
       <div class="title">
         <div class="k">
-          {{ view === 'integrations' ? 'Integrations · browse by category' : `Library · ${ totalCount } nodes` }}
+          {{
+            view === 'integrations' ? 'Integrations · browse by category'
+            : view === 'functions' ? `Functions · ${ functionItems.length } installed`
+            : `Library · ${ totalCount } nodes`
+          }}
         </div>
         <div class="t">
           Drag a card
@@ -64,11 +68,20 @@
               <span class="nm">Integrations</span>
               <span class="arr">›</span>
             </button>
+
+            <button
+              type="button"
+              class="cat cat-special"
+              @click="openFunctions"
+            >
+              <span class="nm">Functions</span>
+              <span class="arr">›</span>
+            </button>
           </div>
 
           <!-- Page 2: integration sub-categories -->
           <div
-            v-else
+            v-else-if="view === 'integrations'"
             key="integrations"
             class="nav-page"
           >
@@ -93,6 +106,30 @@
             >
               <span class="nm">{{ cat }}</span>
             </button>
+          </div>
+
+          <!-- Page 3: functions (flat list — no sub-categories) -->
+          <div
+            v-else
+            key="functions"
+            class="nav-page"
+          >
+            <button
+              type="button"
+              class="cat cat-back"
+              @click="closeFunctions"
+            >
+              <span class="arr">‹</span>
+              <span class="nm">Back</span>
+            </button>
+
+            <div class="cat-divider" />
+
+            <div class="fn-nav-hint">
+              {{ loadingFunctions ? 'Loading…' : functionItems.length === 0
+                ? 'No functions installed yet.'
+                : 'Drag any card onto the canvas.' }}
+            </div>
           </div>
         </Transition>
       </nav>
@@ -185,7 +222,7 @@
 
           <!-- Integration cards -->
           <div
-            v-else
+            v-else-if="view === 'integrations'"
             key="int-cards"
             class="cards-page"
           >
@@ -227,7 +264,13 @@
                     I-{{ int.id.slice(0, 3).toUpperCase() }}
                   </div>
                   <div class="av tool">
-                    {{ initials(int.name) }}
+                    <img
+                      v-if="isImageIcon(int.icon) && safeIconSrc(int.icon ?? '')"
+                      :src="safeIconSrc(int.icon ?? '') ?? ''"
+                      :alt="int.name"
+                      class="integration-icon"
+                    >
+                    <template v-else>{{ initials(int.name) }}</template>
                   </div>
                   <div class="st">
                     Integration
@@ -251,6 +294,70 @@
               </div>
             </template>
           </div>
+
+          <!-- Function cards — installed user-defined functions. -->
+          <div
+            v-else
+            key="fn-cards"
+            class="cards-page"
+          >
+            <div
+              v-if="loadingFunctions"
+              class="empty-hint"
+            >
+              <span class="ico">◷</span>
+              <span>Loading functions…</span>
+            </div>
+
+            <div
+              v-else-if="functionItems.length === 0"
+              class="empty-hint"
+            >
+              <span class="ico">∅</span>
+              <span>
+                No functions installed. Drop a function folder into
+                <code>~/sulla/functions/&lt;slug&gt;/</code> to make it show up.
+              </span>
+            </div>
+
+            <template v-else>
+              <div
+                v-for="fn in functionItems"
+                :key="fn.slug"
+                class="drag-card"
+                draggable="true"
+                :data-function="fn.slug"
+                @dragstart="onFunctionDragStart($event, fn)"
+              >
+                <div class="stub">
+                  <div class="no">
+                    F-{{ fn.slug.slice(0, 3).toUpperCase() }}
+                  </div>
+                  <div class="av tool">
+                    {{ initials(fn.name) }}
+                  </div>
+                  <div class="st">
+                    Function
+                  </div>
+                </div>
+                <div class="body">
+                  <div class="k">
+                    {{ fn.runtime }}
+                  </div>
+                  <div class="t">
+                    {{ fn.name }}
+                  </div>
+                  <div
+                    v-if="fn.description"
+                    class="q"
+                  >
+                    "{{ fn.description }}"
+                  </div>
+                </div>
+                <div class="grab-hint">⁞⁞</div>
+              </div>
+            </template>
+          </div>
         </Transition>
       </div>
     </div>
@@ -267,9 +374,11 @@ import { computed, ref } from 'vue';
 
 import {
   INTEGRATION_CATEGORIES,
+  loadFunctions,
   loadIntegrationsFor,
   ROUTINE_LIBRARY,
   ROUTINE_LIBRARY_BY_CATEGORY,
+  type FunctionInfo,
   type Integration,
   type RoutineLibraryItem,
 } from './libraryMapping';
@@ -280,7 +389,7 @@ defineEmits<{ close: [] }>();
 const library = ROUTINE_LIBRARY_BY_CATEGORY;
 const totalCount = computed(() => ROUTINE_LIBRARY.length);
 
-type DrawerView = 'root' | 'integrations';
+type DrawerView = 'root' | 'integrations' | 'functions';
 const view = ref<DrawerView>('root');
 
 // Root nav state
@@ -295,6 +404,10 @@ const activeIntegrationCategory = ref<string | null>(null);
 const integrationItems = ref<Integration[]>([]);
 const loadingIntegrations = ref(false);
 
+// Function nav state — flat list, hydrated on first open.
+const functionItems = ref<FunctionInfo[]>([]);
+const loadingFunctions = ref(false);
+
 function selectRootCategory(category: string) {
   activeCategory.value = category;
 }
@@ -307,6 +420,20 @@ function closeIntegrations() {
   view.value = 'root';
   activeIntegrationCategory.value = null;
   integrationItems.value = [];
+}
+
+async function openFunctions() {
+  view.value = 'functions';
+  loadingFunctions.value = true;
+  try {
+    functionItems.value = await loadFunctions();
+  } finally {
+    loadingFunctions.value = false;
+  }
+}
+
+function closeFunctions() {
+  view.value = 'root';
 }
 
 async function selectIntegrationCategory(cat: string) {
@@ -327,9 +454,36 @@ function initials(name: string): string {
   return words[0].slice(0, 2).toUpperCase();
 }
 
+function isImageIcon(icon?: string): boolean {
+  if (!icon) return false;
+
+  return /\.(svg|png|avif|jpg|jpeg|webp)$/i.test(icon);
+}
+
+function safeIconSrc(icon: string): string | null {
+  try {
+    return require(`@pkg/assets/images/${ icon }`);
+  } catch {
+    return null;
+  }
+}
+
 function onDragStart(event: DragEvent, item: RoutineLibraryItem) {
   if (!event.dataTransfer) return;
-  event.dataTransfer.setData('application/x-routine-subtype', item.subtype);
+  // Annotation items (sticky notes, future callouts…) use a distinct
+  // payload so the canvas drop handler branches into the annotation path
+  // instead of trying to look the subtype up in NODE_REGISTRY.
+  if (item.kind === 'annotation') {
+    event.dataTransfer.setData('application/x-routine-annotation', item.subtype);
+  } else {
+    event.dataTransfer.setData('application/x-routine-subtype', item.subtype);
+  }
+  event.dataTransfer.effectAllowed = 'copy';
+}
+
+function onFunctionDragStart(event: DragEvent, fn: FunctionInfo) {
+  if (!event.dataTransfer) return;
+  event.dataTransfer.setData('application/x-routine-function', JSON.stringify(fn));
   event.dataTransfer.effectAllowed = 'copy';
 }
 
@@ -751,7 +905,20 @@ function onIntegrationDragStart(event: DragEvent, integration: Integration) {
 .drag-card .stub .av.tool    { background: linear-gradient(135deg, var(--teal-400), var(--teal-600)); }
 .drag-card .stub .av.logic   { background: linear-gradient(135deg, #94a3b8, #475569); }
 .drag-card .stub .av.loop    { background: linear-gradient(135deg, #8fb3d9, var(--steel-600)); }
+.drag-card .stub .av.note    { background: linear-gradient(135deg, rgba(80, 150, 179, 0.9), rgba(80, 150, 179, 0.45)); }
 .drag-card .stub .av.default { background: linear-gradient(135deg, var(--steel-400), var(--steel-700)); }
+.drag-card .stub .av .integration-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
+}
+.fn-nav-hint {
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--steel-400, #6989b3);
+}
 .drag-card .stub .st {
   font-family: var(--mono);
   font-size: 7.5px;

@@ -73,7 +73,15 @@ Extended documentation the orchestrating agent may consult on demand — API ref
 
 ### `assets/` — OPTIONAL
 
-Static binary/media assets. Images used in README.md, screenshots, diagrams, sample CSVs, whatever.
+Static binary/media assets. Two distinct roles:
+
+1. **Documentation assets** — images referenced from `README.md` / `AGENT.md`, screenshots, diagrams, sample CSVs, exporter-prep hero art. Filenames are free-form.
+
+2. **Sticky-note media** — images, diagrams, or locally-hosted clips embedded in canvas sticky notes. These are referenced from `node.data.content` (the sticky's markdown) via the `sulla-routine-asset://<slug>/<file>` URI scheme. The renderer resolves that URI to `~/sulla/routines/<slug>/assets/<file>` so the canvas shows the image even when the routine has never been exported. When the user drops an image onto a sticky note, the desktop app copies the file into this folder and rewrites the markdown to reference it.
+
+   Recommended convention for drop-targeted files: `sticky-<nodeId>-<original-filename>` — keeps per-note media grouped and prevents filename collisions across multiple sticky notes in the same routine.
+
+Sticky notes may also embed remote media directly (absolute HTTPS URLs for images; YouTube / Vimeo / `.mp4|.webm|.ogg` URLs auto-embed as players). Use `assets/` when you want the media to travel inside the bundle — otherwise remote URLs are fine and keep the zip small.
 
 ### `functions/` — OPTIONAL
 

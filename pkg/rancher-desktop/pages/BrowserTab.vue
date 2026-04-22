@@ -238,7 +238,7 @@
       <div class="flex-1 min-h-0 overflow-hidden relative">
         <RoutinesHome
           v-if="!activeRoutineId"
-          :initial-tab="tabMode === 'marketplace' ? 'marketplace' : 'mywork'"
+          :initial-tab="routinesLandingTab ?? (tabMode === 'marketplace' ? 'marketplace' : 'mywork')"
           @open-workflow="onOpenRoutine"
           @use-template="onUseTemplate"
           @new-blank="onNewBlankRoutine"
@@ -247,12 +247,13 @@
           <AgentRoutines
             :key="activeRoutineId"
             :workflow-id="activeRoutineId"
-            @back-to-home="activeRoutineId = null"
+            :initial-mode="activeRoutineMode"
+            @back-to-home="onBackToRoutinesHome"
           />
           <button
             type="button"
             class="routines-back-btn"
-            @click="activeRoutineId = null"
+            @click="onBackToRoutinesHome"
           >
             ← All routines
           </button>
@@ -329,9 +330,20 @@ function onSetMode(mode: BrowserTabMode) {
 // landing view (RoutinesHome) to the canvas editor (AgentRoutines).
 // `null` means show the landing view.
 const activeRoutineId = ref<string | null>(null);
+const activeRoutineMode = ref<'edit' | 'run'>('edit');
+// After backing out of a routine we always want to land on My Work,
+// even if the user originally opened the routine from the Marketplace
+// or Library tab. Null means "defer to tabMode for initial tab".
+const routinesLandingTab = ref<'mywork' | 'library' | 'marketplace' | null>(null);
 
-function onOpenRoutine(id: string) {
+function onOpenRoutine(id: string, mode: 'edit' | 'run' = 'edit') {
   activeRoutineId.value = id;
+  activeRoutineMode.value = mode;
+}
+
+function onBackToRoutinesHome() {
+  activeRoutineId.value = null;
+  routinesLandingTab.value = 'mywork';
 }
 
 async function onUseTemplate(slug: string) {

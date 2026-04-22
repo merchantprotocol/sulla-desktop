@@ -628,6 +628,16 @@ function processNode(
   case 'tool-call':
     return handleNativeToolCallNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);
 
+    // ── Desktop notification — preset tool-call targeting notify_user ──
+  case 'desktop-notification':
+    return handleNativeToolCallNode(
+      playbook,
+      nodeId,
+      { ...config, toolName: 'notify_user' },
+      upstreamOutputs,
+      triggerPayload,
+    );
+
     // ── Integration call — execute integration API ──
   case 'integration-call':
     return handleToolCallNode(playbook, nodeId, config, upstreamOutputs, triggerPayload);

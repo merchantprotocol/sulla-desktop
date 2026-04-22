@@ -42,6 +42,12 @@
       <template #node-loop-frame="nodeProps">
         <LoopFrameNode v-bind="nodeProps" />
       </template>
+      <!-- Sticky note — non-executing annotation node. Doesn't run, doesn't
+           emit events, doesn't count toward execution totals. Pure canvas
+           documentation (markdown, media, colored background). -->
+      <template #node-sticky-note="nodeProps">
+        <StickyNoteNode v-bind="nodeProps" />
+      </template>
       <!-- Custom edge with dim base + traveling violet pulse overlay when
            flowing. Matches the L1 canvas design's animated-gradient feel
            (which default SmoothStepEdge can't do — only one path). -->
@@ -128,7 +134,7 @@
             class="history-btn history-undo"
             :class="{ disabled: !history.canUndo.value }"
             :disabled="!history.canUndo.value"
-            :title="`Undo (${ shortcutLabel('Z') })`"
+            :title="`Undo (${shortcutLabel('Z')})`"
             @click="undo"
           >
             <svg
@@ -147,7 +153,7 @@
             class="history-btn history-redo"
             :class="{ disabled: !history.canRedo.value }"
             :disabled="!history.canRedo.value"
-            :title="`Redo (${ shortcutLabel('Shift+Z') })`"
+            :title="`Redo (${shortcutLabel('Shift+Z')})`"
             @click="redo"
           >
             <svg
@@ -164,6 +170,19 @@
           </ControlButton>
         </template>
         <ControlButton
+          v-if="mode === 'edit' && props.workflowId"
+          class="status-toggle"
+          :class="{ 'is-production': workflowStatus === 'production', disabled: statusBusy }"
+          :disabled="statusBusy"
+          :title="workflowStatus === 'production'
+            ? 'Published — click to move back to draft'
+            : 'Draft — click to publish to production'"
+          @click="togglePublished"
+        >
+          <span class="status-dot" />
+          <span class="status-lbl">{{ workflowStatus === 'production' ? 'Published' : 'Draft' }}</span>
+        </ControlButton>
+        <ControlButton
           v-if="mode === 'run'"
           class="runs-btn"
           :class="{ active: runsFlyoutOpen }"
@@ -178,7 +197,11 @@
             stroke-linecap="round"
             stroke-linejoin="round"
           >
-            <circle cx="12" cy="12" r="9" />
+            <circle
+              cx="12"
+              cy="12"
+              r="9"
+            />
             <path d="M12 7v5l3 2" />
           </svg>
         </ControlButton>
@@ -305,7 +328,9 @@
         spellcheck="false"
         @blur="onTitleBlur"
         @keydown.enter.prevent="($event.target as HTMLElement).blur()"
-      >{{ title }}</div>
+      >
+        {{ title }}
+      </div>
       <div
         class="title-sub"
         :class="{ editable: mode === 'edit' }"
@@ -313,7 +338,9 @@
         spellcheck="false"
         @blur="onSubtitleBlur"
         @keydown.enter.prevent="($event.target as HTMLElement).blur()"
-      >{{ subtitle }}</div>
+      >
+        {{ subtitle }}
+      </div>
     </div>
 
     <div class="ribbon">
@@ -347,7 +374,9 @@
       </div>
       <div class="right">
         <template v-if="mode === 'run'">
-          <b>{{ completedCount }}</b> / {{ totalExecutableCount }} agents<template v-if="runEtaLabel"> · ETA <b>{{ runEtaLabel }}</b></template>
+          <b>{{ completedCount }}</b> / {{ totalExecutableCount }} agents<template v-if="runEtaLabel">
+            · ETA <b>{{ runEtaLabel }}</b>
+          </template>
         </template>
         <template v-else>
           {{ nodes.length }} nodes · drag to build
@@ -362,7 +391,9 @@
         :class="{ active: drawerOpen }"
         :aria-label="drawerOpen ? 'Close library' : 'Add node'"
         @click="drawerOpen = !drawerOpen"
-      >+</button>
+      >
+        +
+      </button>
       <div
         v-if="!drawerOpen"
         class="routines-fab-tip"
@@ -393,7 +424,13 @@
           fill="currentColor"
           aria-hidden="true"
         >
-          <rect x="6" y="6" width="12" height="12" rx="1.5" />
+          <rect
+            x="6"
+            y="6"
+            width="12"
+            height="12"
+            rx="1.5"
+          />
         </svg>
         <svg
           v-else
@@ -425,7 +462,9 @@
           class="runs-flyout-close"
           aria-label="Close"
           @click="closeRunsFlyout"
-        >✕</button>
+        >
+          ✕
+        </button>
       </div>
       <div
         v-if="pastRunsLoading"
@@ -488,13 +527,17 @@
             type="button"
             class="dc-btn cancel"
             @click="cancelDelete"
-          >Cancel</button>
+          >
+            Cancel
+          </button>
           <button
             type="button"
             class="dc-btn danger"
             autofocus
             @click="confirmDelete"
-          >Delete</button>
+          >
+            Delete
+          </button>
         </div>
       </div>
     </div>
@@ -515,7 +558,9 @@
         type="button"
         class="banner-exit"
         @click="exitPastRunView"
-      >Return to live</button>
+      >
+        Return to live
+      </button>
     </div>
 
     <!-- Edit mode — right-hand config drawer for the selected node.
@@ -560,6 +605,14 @@
         <span class="ico">＋</span>
         <span class="lbl">Add node</span>
         <span class="sc">⌘K</span>
+      </div>
+      <div
+        v-if="mode === 'edit'"
+        class="cm-item"
+        @click="onCtxAddStickyNote"
+      >
+        <span class="ico">✎</span>
+        <span class="lbl">Add sticky note</span>
       </div>
       <div
         v-if="mode === 'edit'"
@@ -694,20 +747,6 @@ import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/controls/dist/style.css';
 import '@vue-flow/minimap/dist/style.css';
 
-import { useLiveClock } from '@pkg/composables/useLiveClock';
-import { useWorkflowHistory } from '@pkg/composables/useWorkflowHistory';
-import { useWorkflowPersistence, type WorkflowDefinition } from '@pkg/composables/useWorkflowPersistence';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
-
-import {
-  enrichNodesForDisplay,
-  findLibraryItem,
-  makeIntegrationNodeData,
-  makeRoutineNodeData,
-  type Integration,
-} from './routines/libraryMapping';
-
 import CommandPrompt from './routines/CommandPrompt.vue';
 import LoopFrameNode from './routines/LoopFrameNode.vue';
 import NodeConfigPanel from './routines/NodeConfigPanel.vue';
@@ -715,6 +754,22 @@ import NodeDrawer from './routines/NodeDrawer.vue';
 import NodeOutputPanel from './routines/NodeOutputPanel.vue';
 import RoutineEdge from './routines/RoutineEdge.vue';
 import RoutineNode from './routines/RoutineNode.vue';
+import StickyNoteNode from './routines/StickyNoteNode.vue';
+import {
+  enrichNodesForDisplay,
+  findLibraryItem,
+  makeFunctionNodeData,
+  makeIntegrationNodeData,
+  makeRoutineNodeData,
+  type FunctionInfo,
+  type Integration,
+} from './routines/libraryMapping';
+
+import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
+import { useLiveClock } from '@pkg/composables/useLiveClock';
+import { useWorkflowHistory } from '@pkg/composables/useWorkflowHistory';
+import { useWorkflowPersistence, type WorkflowDefinition } from '@pkg/composables/useWorkflowPersistence';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type Mode = 'edit' | 'run';
 
@@ -731,7 +786,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'back-to-home': [];
+  'back-to-home':   [];
   /** Fires whenever execution state flips — parent hides the "All routines"
       back button (and anything else in its chrome) while a run is live. */
   'running-change': [running: boolean];
@@ -798,10 +853,14 @@ const runElapsedLabel = computed(() => {
   return formatRunDuration(end - runStartedAt.value);
 });
 
-// Trigger nodes don't run through the orchestrator; exclude them from
-// the ribbon's X / Y count so the total matches what actually executes.
+// Trigger nodes don't run through the orchestrator; sticky notes are
+// canvas annotations and never execute. Exclude both from the ribbon's
+// X / Y count so the total matches what actually executes.
 const totalExecutableCount = computed(() => {
-  return nodes.value.filter(n => n.data?.category !== 'trigger').length;
+  return nodes.value.filter((n) => {
+    if ((n).type === 'sticky-note') return false;
+    return n.data?.category !== 'trigger';
+  }).length;
 });
 
 const completedCount = computed(() => runCompletedNodeIds.value.size);
@@ -837,9 +896,9 @@ const runEtaLabel = computed(() => {
 // PlaybookController emits events. Cleared on `workflow_started` so
 // each run begins with a fresh log.
 interface StreamLine {
-  t:   string;
-  k:   'tool' | 'obs' | 'thk' | 'dec' | 'err';
-  msg: string;
+  t:       string;
+  k:       'tool' | 'obs' | 'thk' | 'dec' | 'err';
+  msg:     string;
   /** Optional override for the kind chip label. When set, the chip shows
       this string instead of the default "thinking"/"tool"/etc. — used
       for `thk` lines so the chip tells you *which* node is thinking. */
@@ -920,7 +979,7 @@ function beginRun() {
   hasActiveExecution.value = true;
   isRunBusy.value = true;
   runError.value = null;
-  liveEvents.value = [];
+  liveEvents.value = [{ t: stamp(), k: 'thk', msg: 'Loading routine…', badge: 'booting' }];
   bumpStallTimer();
 }
 
@@ -1024,10 +1083,10 @@ async function onStopClick() {
 function execStatusFor(state: 'idle' | 'queued' | 'running' | 'done' | 'failed') {
   switch (state) {
   case 'running': return 'running' as const;
-  case 'done':    return 'completed' as const;
-  case 'failed':  return 'failed' as const;
-  case 'queued':  return 'waiting' as const;
-  default:        return undefined;
+  case 'done': return 'completed' as const;
+  case 'failed': return 'failed' as const;
+  case 'queued': return 'waiting' as const;
+  default: return undefined;
   }
 }
 
@@ -1149,10 +1208,10 @@ function setNodeExecutionOutput(nodeId: string, output: unknown) {
  * execution bag is reset at the start of a run (see resetNodeStates).
  */
 interface NodeTurn {
-  t:       string;
-  k:       'tool' | 'obs' | 'thk' | 'dec' | 'err';
-  msg:     string;
-  badge?:  string;
+  t:      string;
+  k:      'tool' | 'obs' | 'thk' | 'dec' | 'err';
+  msg:    string;
+  badge?: string;
 }
 const NODE_TURN_LIMIT = 200;
 
@@ -1229,11 +1288,11 @@ function pushLine(
 function streamKindLabel(kind: StreamLine['k']): string {
   switch (kind) {
   case 'tool': return 'tool';
-  case 'obs':  return 'observed';
-  case 'thk':  return 'thinking';
-  case 'dec':  return 'decided';
-  case 'err':  return 'error';
-  default:     return kind;
+  case 'obs': return 'observed';
+  case 'thk': return 'thinking';
+  case 'dec': return 'decided';
+  case 'err': return 'error';
+  default: return kind;
   }
 }
 
@@ -1257,7 +1316,7 @@ function stripXml(s: string): string {
 // leak internals like `node-1741000000002-prompt-0` that mean nothing
 // to the user reading the live stream.
 function displayNodeName(nodeId?: string, nodeLabel?: string): string {
-  if (nodeLabel && nodeLabel.trim()) return nodeLabel.trim();
+  if (nodeLabel?.trim()) return nodeLabel.trim();
   if (nodeId) {
     // Strip subnode suffixes like "-prompt-0" that PlaybookController
     // appends — the underlying node still lives in nodes.value under
@@ -1266,7 +1325,7 @@ function displayNodeName(nodeId?: string, nodeLabel?: string): string {
     const node = nodes.value.find(n => n.id === baseId || n.id === nodeId);
     const d = node?.data as { title?: string; label?: string } | undefined;
     const name = d?.title || d?.label;
-    if (name && name.trim()) return name.trim();
+    if (name?.trim()) return name.trim();
   }
 
   return 'agent';
@@ -1404,7 +1463,7 @@ function subscribeToExecutionEvents() {
 
 function unsubscribeFromExecutionEvents() {
   if (wsUnsubscribe) {
-    try { wsUnsubscribe(); } catch { /* ignore */ }
+    try { wsUnsubscribe() } catch { /* ignore */ }
     wsUnsubscribe = null;
   }
   clearStallTimer();
@@ -1416,6 +1475,24 @@ const configOpen = computed(() => selectedNodeId.value !== null);
 
 const title = ref('Blog Production Pipeline');
 const subtitle = ref('Twenty-one agents, one article, nine minutes.');
+const workflowStatus = ref<'draft' | 'production' | 'archive'>('draft');
+const statusBusy = ref(false);
+
+async function togglePublished(): Promise<void> {
+  if (!props.workflowId || statusBusy.value) return;
+  const next = workflowStatus.value === 'production' ? 'draft' : 'production';
+  statusBusy.value = true;
+  try {
+    const result = await ipcRenderer.invoke('workflow-move', props.workflowId, next);
+    if (result?.success) {
+      workflowStatus.value = result.newStatus ?? next;
+    }
+  } catch (err) {
+    console.error('[AgentRoutines] workflow-move failed:', err);
+  } finally {
+    statusBusy.value = false;
+  }
+}
 
 // ── Persistence ──
 // When `workflowId` is present, the canvas becomes a live editor: the
@@ -1479,8 +1556,9 @@ function toPlainNode(n: any) {
     type:     n.type,
     position: { x: Number(n.position?.x ?? 0), y: Number(n.position?.y ?? 0) },
     data:     toCloneable(n.data),
-    ...(n.width  != null ? { width:  n.width  } : {}),
+    ...(n.width != null ? { width: n.width } : {}),
     ...(n.height != null ? { height: n.height } : {}),
+    ...(n.zIndex != null ? { zIndex: Number(n.zIndex) } : {}),
     ...(n.parentNode ? { parentNode: n.parentNode } : {}),
   };
 }
@@ -1526,6 +1604,10 @@ function buildDefinitionForSave(): WorkflowDefinition | null {
 function applyDefinition(def: WorkflowDefinition): void {
   if (typeof def.name === 'string') title.value = def.name;
   if (typeof def.description === 'string') subtitle.value = def.description;
+  const status = (def as any)._status;
+  if (status === 'draft' || status === 'production' || status === 'archive') {
+    workflowStatus.value = status;
+  }
   if (Array.isArray(def.nodes)) nodes.value = def.nodes as typeof nodes.value;
   if (Array.isArray(def.edges)) {
     // Migrate legacy edges that were persisted as `smoothstep` (or with
@@ -1535,7 +1617,7 @@ function applyDefinition(def: WorkflowDefinition): void {
     edges.value = (def.edges as any[]).map((e) => {
       if (!e.type || e.type === 'smoothstep') return { ...e, type: 'routine' };
       return e;
-    }) as typeof edges.value;
+    });
   }
   baseDefinition.value = def;
   enrichNodesForDisplay(nodes.value);
@@ -1584,10 +1666,10 @@ function shortcutLabel(key: string): string {
 const persistenceLabel = computed<string | null>(() => {
   switch (persistence.status.value) {
   case 'loading': return 'Loading…';
-  case 'saving':  return 'Saving…';
-  case 'saved':   return 'Saved';
-  case 'error':   return 'Save failed';
-  default:        return null;
+  case 'saving': return 'Saving…';
+  case 'saved': return 'Saved';
+  case 'error': return 'Save failed';
+  default: return null;
   }
 });
 
@@ -1816,8 +1898,8 @@ function onInteractionChange(active: boolean) {
 
 function onPaneContextMenu(event: MouseEvent) {
   event.preventDefault();
-  const frame = (event.currentTarget as HTMLElement)?.closest('.routines-frame')
-    ?? (event.target as HTMLElement)?.closest('.routines-frame');
+  const frame = (event.currentTarget as HTMLElement)?.closest('.routines-frame') ??
+    (event.target as HTMLElement)?.closest('.routines-frame');
   const rect = frame?.getBoundingClientRect();
   const fx = rect ? event.clientX - rect.left : event.clientX;
   const fy = rect ? event.clientY - rect.top : event.clientY;
@@ -1869,8 +1951,8 @@ function onNodeContextMenu({ event, node }: { event: MouseEvent | TouchEvent; no
   // Normalise touch vs. mouse coordinates.
   const clientX = 'clientX' in event ? event.clientX : event.touches?.[0]?.clientX ?? 0;
   const clientY = 'clientY' in event ? event.clientY : event.touches?.[0]?.clientY ?? 0;
-  const frame = (event.currentTarget as HTMLElement)?.closest('.routines-frame')
-    ?? (event.target as HTMLElement)?.closest('.routines-frame');
+  const frame = (event.currentTarget as HTMLElement)?.closest('.routines-frame') ??
+    (event.target as HTMLElement)?.closest('.routines-frame');
   const rect = frame?.getBoundingClientRect();
   nodeCtx.x = rect ? clientX - rect.left : clientX;
   nodeCtx.y = rect ? clientY - rect.top : clientY;
@@ -1884,15 +1966,15 @@ function closeNodeCtx() {
 }
 
 function onNodeCtxEdit() {
-  if (mode.value !== 'edit') { closeNodeCtx(); return; }
+  if (mode.value !== 'edit') { closeNodeCtx(); return }
   if (nodeCtx.nodeId) selectedNodeId.value = nodeCtx.nodeId;
   closeNodeCtx();
 }
 
 function onNodeCtxDuplicate() {
-  if (mode.value !== 'edit' || !nodeCtx.nodeId) { closeNodeCtx(); return; }
+  if (mode.value !== 'edit' || !nodeCtx.nodeId) { closeNodeCtx(); return }
   const src = nodes.value.find(n => n.id === nodeCtx.nodeId);
-  if (!src) { closeNodeCtx(); return; }
+  if (!src) { closeNodeCtx(); return }
   const clone = {
     ...src,
     id:       `routine-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 6) }`,
@@ -1905,7 +1987,7 @@ function onNodeCtxDuplicate() {
 }
 
 function onNodeCtxRemove() {
-  if (mode.value !== 'edit' || !nodeCtx.nodeId) { closeNodeCtx(); return; }
+  if (mode.value !== 'edit' || !nodeCtx.nodeId) { closeNodeCtx(); return }
   // Route through the same confirmation dialog keyboard delete uses —
   // one code path for every delete so the UX stays consistent.
   const id = nodeCtx.nodeId;
@@ -1973,14 +2055,14 @@ const selectedChildren = computed(() => {
   const id = selectedNodeId.value;
   if (!id) return [];
   return nodes.value
-    .filter(n => (n as any).parentNode === id)
+    .filter(n => (n).parentNode === id)
     .map(n => ({
       nodeId:   n.id,
-      label:    (n.data as any)?.title ?? (n.data as any)?.label ?? n.id,
-      kicker:   (n.data as any)?.kicker ?? '',
-      nodeCode: (n.data as any)?.nodeCode ?? '',
-      state:    (n.data as any)?.state ?? 'idle',
-      avatar:   (n.data as any)?.avatar ?? { type: 'default' },
+      label:    (n.data)?.title ?? (n.data)?.label ?? n.id,
+      kicker:   (n.data)?.kicker ?? '',
+      nodeCode: (n.data)?.nodeCode ?? '',
+      state:    (n.data)?.state ?? 'idle',
+      avatar:   (n.data)?.avatar ?? { type: 'default' },
     }));
 });
 
@@ -2029,19 +2111,19 @@ function pointerToWorld(event: MouseEvent | TouchEvent | DragEvent): { x: number
  */
 function findLoopAt(worldX: number, worldY: number, excludeId?: string) {
   for (const n of nodes.value) {
-    if ((n as any).type !== 'loop-frame') continue;
+    if ((n).type !== 'loop-frame') continue;
     if (n.id === excludeId) continue;
-    const w = (n as any).dimensions?.width  ?? (n as any).width  ?? 0;
-    const h = (n as any).dimensions?.height ?? (n as any).height ?? 0;
+    const w = (n).dimensions?.width ?? (n).width ?? 0;
+    const h = (n).dimensions?.height ?? (n).height ?? 0;
     if (!w || !h) continue;
     // Lift parent-local position to world coords if this loop were ever
     // itself nested (future-proof for nested loops).
     let absX = n.position.x;
     let absY = n.position.y;
-    const parentId = (n as any).parentNode as string | undefined;
+    const parentId = (n).parentNode as string | undefined;
     if (parentId) {
       const parent = nodes.value.find(p => p.id === parentId);
-      if (parent) { absX += parent.position.x; absY += parent.position.y; }
+      if (parent) { absX += parent.position.x; absY += parent.position.y }
     }
     if (worldX >= absX && worldX <= absX + w && worldY >= absY && worldY <= absY + h) {
       return { id: n.id, x: absX, y: absY };
@@ -2054,8 +2136,10 @@ function onDragOver(event: DragEvent) {
   if (mode.value !== 'edit') return;
   const dt = event.dataTransfer;
   if (!dt) return;
-  const hasRoutine = dt.types?.includes('application/x-routine-subtype')
-    || dt.types?.includes('application/x-routine-integration');
+  const hasRoutine = dt.types?.includes('application/x-routine-subtype') ||
+    dt.types?.includes('application/x-routine-integration') ||
+    dt.types?.includes('application/x-routine-function') ||
+    dt.types?.includes('application/x-routine-annotation');
   if (!hasRoutine) return;
   dt.dropEffect = 'copy';
 
@@ -2091,6 +2175,31 @@ function onDrop(event: DragEvent) {
 
   const id = `routine-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 6) }`;
 
+  // Annotation drop — sticky notes (and future callouts). Go through the
+  // dedicated `sticky-note` VueFlow type so they render via StickyNoteNode
+  // instead of RoutineNode, and sit behind real nodes via negative zIndex.
+  // Deliberately bypasses loop-frame nesting: annotations float above the
+  // graph as documentation, not as execution children.
+  const annotationSubtype = dt.getData('application/x-routine-annotation');
+  if (annotationSubtype === 'sticky-note') {
+    const stickyId = `sticky-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 6) }`;
+    addNodes([{
+      id:       stickyId,
+      type:     'sticky-note',
+      position: { x: world.x - 120, y: world.y - 80 },
+      width:    240,
+      height:   160,
+      zIndex:   -1,
+      data:     {
+        subtype:  'sticky-note',
+        category: 'annotation',
+        content:  '',
+        bgColor:  '',
+      },
+    }]);
+    return;
+  }
+
   // Integration drop — decodes to an integration-call node with the slug pre-set.
   const integrationRaw = dt.getData('application/x-routine-integration');
   if (integrationRaw) {
@@ -2101,6 +2210,23 @@ function onDrop(event: DragEvent) {
         type: 'routine',
         position,
         data: makeIntegrationNodeData(integration),
+        ...(parentNode ? { parentNode, extent: 'parent' } : {}),
+      }]);
+    } catch { /* malformed payload — ignore */ }
+
+    return;
+  }
+
+  // Function drop — decodes to a function subtype node with functionSlug pre-set.
+  const functionRaw = dt.getData('application/x-routine-function');
+  if (functionRaw) {
+    try {
+      const fn = JSON.parse(functionRaw) as FunctionInfo;
+      addNodes([{
+        id,
+        type: 'routine',
+        position,
+        data: makeFunctionNodeData(fn),
         ...(parentNode ? { parentNode, extent: 'parent' } : {}),
       }]);
     } catch { /* malformed payload — ignore */ }
@@ -2123,11 +2249,11 @@ function onDrop(event: DragEvent) {
   if (subtype === 'loop') {
     addNodes([{
       id,
-      type: 'loop-frame',
+      type:     'loop-frame',
       position: parentNode ? { x: world.x - 280, y: world.y - 110 } : position,
-      data: makeRoutineNodeData(item),
-      width: 560,
-      height: 220,
+      data:     makeRoutineNodeData(item),
+      width:    560,
+      height:   220,
     }]);
     return;
   }
@@ -2179,13 +2305,13 @@ function onNodeDragStop(evt: { event: MouseEvent | TouchEvent; node: any }) {
 
   if (nextParent) {
     // Entering a loop — convert absolute world coords to parent-local.
-    (target as any).parentNode = nextParent;
-    (target as any).extent = 'parent';
-    target.position = { x: world.x - hit!.x - 110, y: world.y - hit!.y - 60 };
+    (target).parentNode = nextParent;
+    (target).extent = 'parent';
+    target.position = { x: world.x - hit.x - 110, y: world.y - hit.y - 60 };
   } else {
     // Leaving — lift back to world coords.
-    (target as any).parentNode = undefined;
-    (target as any).extent = undefined;
+    (target).parentNode = undefined;
+    (target).extent = undefined;
     target.position = { x: world.x - 110, y: world.y - 60 };
   }
 }
@@ -2195,9 +2321,40 @@ function onCtxAddNode() {
   if (mode.value !== 'edit') return;
   drawerOpen.value = true;
 }
-function onCtxZoomIn() { closeCtxMenu(); zoomIn(); }
-function onCtxZoomOut() { closeCtxMenu(); zoomOut(); }
-function onCtxFitView() { closeCtxMenu(); fitView(); }
+
+// Spawn a sticky note where the user right-clicked. ctxMenu.{x,y} are
+// frame-relative screen coords (see onPaneContextMenu) — project() lifts
+// them to world coords so the note lands under the cursor regardless of
+// pan/zoom. Width/height default to a comfortable annotation size; the
+// user resizes from there via the 8-direction handles on the note itself.
+function onCtxAddStickyNote() {
+  const spawn = { x: ctxMenu.x, y: ctxMenu.y };
+  closeCtxMenu();
+  if (mode.value !== 'edit') return;
+  const world = project(spawn);
+  const id = `sticky-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 6) }`;
+  addNodes([{
+    id,
+    type:     'sticky-note',
+    position: { x: world.x - 120, y: world.y - 80 },
+    width:    240,
+    height:   160,
+    // Negative zIndex pushes the note behind real nodes in VueFlow's node
+    // layer. Routine/loop-frame nodes stay on top by default (zIndex 0),
+    // so annotations act like a backdrop the user can drag freely without
+    // ever obscuring the executable graph underneath.
+    zIndex:   -1,
+    data:     {
+      subtype:  'sticky-note',
+      category: 'annotation',
+      content:  '',
+      bgColor:  '',
+    },
+  }]);
+}
+function onCtxZoomIn() { closeCtxMenu(); zoomIn() }
+function onCtxZoomOut() { closeCtxMenu(); zoomOut() }
+function onCtxFitView() { closeCtxMenu(); fitView() }
 
 // ── Screenshot + record ──
 // Both reuse the `capture-studio:get-sources` IPC the capture studio
@@ -2228,11 +2385,11 @@ async function acquireWindowStream(): Promise<MediaStream> {
   // exposes; reuse it rather than wiring a second capturer endpoint.
   // Matches useMediaSources's `require('electron')` pattern so behavior
   // stays consistent across pages.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+
   const { ipcRenderer } = require('electron');
-  const sources = await ipcRenderer.invoke('capture-studio:get-sources') as Array<{
+  const sources = await ipcRenderer.invoke('capture-studio:get-sources') as {
     id: string; name: string;
-  }>;
+  }[];
   if (!sources?.length) throw new Error('No capture sources available');
 
   // Prefer a Sulla window; fall back to the first screen if none match
@@ -2535,10 +2692,10 @@ const edges = ref<any[]>([]);
 function nodeStateOf(id: string): string | undefined {
   const n = nodes.value.find(x => x.id === id);
   const exec = n?.data?.execution?.status;
-  if (exec === 'running')   return 'running';
+  if (exec === 'running') return 'running';
   if (exec === 'completed') return 'done';
-  if (exec === 'failed')    return 'failed';
-  if (exec === 'waiting')   return 'queued';
+  if (exec === 'failed') return 'failed';
+  if (exec === 'waiting') return 'queued';
   return (n?.data?.state as string | undefined);
 }
 
@@ -2550,8 +2707,8 @@ function recomputeEdgeFlow() {
     // Light only edges where data actually flowed this turn. `done → running`
     // is the unambiguous transition window. `running → running` covers the
     // brief overlap where source is still wrapping up as target is spun up.
-    const shouldFlow = (src === 'done' && tgt === 'running')
-      || (src === 'running' && tgt === 'running');
+    const shouldFlow = (src === 'done' && tgt === 'running') ||
+      (src === 'running' && tgt === 'running');
     const wasFlowing = !!edge.animated;
     if (shouldFlow === wasFlowing) continue;
     edge.animated = shouldFlow;
@@ -3410,6 +3567,44 @@ watch(
 .routines-flow :deep(.vue-flow__controls-button.mode-toggle.is-edit:hover) {
   color: white;
   background: rgba(139, 92, 246, 0.22);
+}
+
+/* Draft / Production toggle. Sits in the edit-mode toolbar beside the
+   mode switch so publishing is a single click away without leaving the
+   canvas. Dot flips green when production; grey while draft. */
+.routines-flow :deep(.vue-flow__controls-button.status-toggle) {
+  width: auto;
+  padding: 0 8px;
+  gap: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.routines-flow :deep(.vue-flow__controls-button.status-toggle .status-dot) {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(168, 192, 220, 0.45);
+  box-shadow: 0 0 0 2px rgba(168, 192, 220, 0.08);
+}
+.routines-flow :deep(.vue-flow__controls-button.status-toggle.is-production .status-dot) {
+  background: var(--green, #34d399);
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.18);
+}
+.routines-flow :deep(.vue-flow__controls-button.status-toggle.is-production) {
+  color: var(--green, #34d399);
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.08);
+}
+.routines-flow :deep(.vue-flow__controls-button.status-toggle.is-production:hover) {
+  background: rgba(52, 211, 153, 0.18);
+}
+.routines-flow :deep(.vue-flow__controls-button.status-toggle.disabled) {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 /* Undo / redo — custom ControlButton children render after the built-in

@@ -3,7 +3,13 @@
     class="agent-config"
     :class="{ dark: isDark }"
   >
-    <div class="node-field">
+    <!-- Agent picker intentionally hidden. Every node uses the default
+         sulla-desktop agent for now; re-expose when multi-agent routing
+         is ready. -->
+    <div
+      v-if="false"
+      class="node-field"
+    >
       <label
         class="node-field-label"
         :class="{ dark: isDark }"

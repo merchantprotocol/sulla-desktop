@@ -6,14 +6,28 @@ import {
 } from '@pkg/pages/editor/workflow/nodeRegistry';
 import type { WorkflowNodeCategory } from '@pkg/pages/editor/workflow/types';
 
-export type RoutineAvatarType = 'trigger' | 'agent' | 'tool' | 'logic' | 'loop' | 'default';
+export type RoutineAvatarType = 'trigger' | 'agent' | 'tool' | 'logic' | 'loop' | 'note' | 'default';
+
+/** Library items fall into two kinds: executable graph nodes and canvas
+ *  annotations (sticky notes et al). The kind drives the drag payload
+ *  so the canvas drop handler can mint the right node type without
+ *  having to check subtype strings — `annotation` payloads bypass
+ *  `makeRoutineNodeData` entirely and go through the sticky-note path. */
+export type LibraryItemKind = 'node' | 'annotation';
+
+/** Category slugs allowed on library items. Executable node categories come
+ *  from the graph schema; `annotation` is a display-only grouping the drawer
+ *  uses to list non-executing cards like sticky notes. */
+export type LibraryCategory = WorkflowNodeCategory | 'annotation';
 
 export interface RoutineLibraryItem {
   /** Unique slug: same as registry subtype */
   id:          string;
   /** Registry subtype — persisted on dropped nodes */
   subtype:     string;
-  category:    WorkflowNodeCategory;
+  category:    LibraryCategory;
+  /** Branch the drop handler takes. Omitted → behaves like `'node'`. */
+  kind?:       LibraryItemKind;
   /** Short code shown in the card stub, e.g. "T-01" */
   code:        string;
   /** Avatar gradient bucket */
@@ -70,11 +84,19 @@ function codePrefix(category: WorkflowNodeCategory): string {
   }
 }
 
+/** Subtypes that exist in NODE_REGISTRY for runtime/drop-target use but
+ *  should not appear as their own card in the drawer. `integration-call`
+ *  is reachable via the Integrations page instead — the drawer card was
+ *  redundant and confusing next to per-integration entries. Same goes for
+ *  `function` — the Functions category lists every installed function,
+ *  so a generic "Function" card next to them would just be noise. */
+const HIDDEN_FROM_DRAWER = new Set<string>(['integration-call', 'function']);
+
 /** Everything below derives once from NODE_REGISTRY — no runtime duplication. */
 function buildLibrary(): RoutineLibraryItem[] {
   const perCategoryIndex: Record<string, number> = {};
 
-  return NODE_REGISTRY.map((def) => {
+  return NODE_REGISTRY.filter(def => !HIDDEN_FROM_DRAWER.has(def.subtype)).map((def) => {
     perCategoryIndex[def.category] = (perCategoryIndex[def.category] ?? 0) + 1;
     const idx = perCategoryIndex[def.category];
     const code = `${ codePrefix(def.category) }-${ String(idx).padStart(2, '0') }`;
@@ -96,16 +118,45 @@ function buildLibrary(): RoutineLibraryItem[] {
 
 export const ROUTINE_LIBRARY: RoutineLibraryItem[] = buildLibrary();
 
-/** Grouped by category in the display order the editor uses. */
-export const ROUTINE_LIBRARY_BY_CATEGORY: Array<{
-  category: WorkflowNodeCategory;
+/** Annotation items — non-executing canvas elements. Hand-authored here
+ *  because they don't live in NODE_REGISTRY (they're not part of the graph
+ *  schema, just visual sugar). The drawer renders them through the same
+ *  drag-card template as executable nodes, distinguished by `kind`. */
+export const NOTE_LIBRARY: RoutineLibraryItem[] = [
+  {
+    id:         'sticky-note',
+    subtype:    'sticky-note',
+    category:   'annotation',
+    kind:       'annotation',
+    code:       'N-01',
+    avatarType: 'note',
+    initials:   'ST',
+    kicker:     'Note',
+    name:       'Sticky Note',
+    role:       'Canvas annotation — markdown, media, colors.',
+    quote:      '"Document decisions, link docs, embed videos."',
+  },
+];
+
+/** Grouped by category in the display order the editor uses. Notes live
+ *  at the end of the list so they sit below executable categories in the
+ *  left-nav. */
+export const ROUTINE_LIBRARY_BY_CATEGORY: {
+  category: LibraryCategory;
   label:    string;
   items:    RoutineLibraryItem[];
-}> = CATEGORY_ORDER.map(category => ({
-  category,
-  label: CATEGORY_LABELS[category],
-  items: ROUTINE_LIBRARY.filter(item => item.category === category),
-}));
+}[] = [
+  ...CATEGORY_ORDER.map(category => ({
+    category,
+    label: CATEGORY_LABELS[category],
+    items: ROUTINE_LIBRARY.filter(item => item.category === category),
+  })),
+  {
+    category: 'annotation' as const,
+    label:    'Notes',
+    items:    NOTE_LIBRARY,
+  },
+];
 
 export function findLibraryItem(subtype: string): RoutineLibraryItem | undefined {
   return ROUTINE_LIBRARY.find(i => i.id === subtype);
@@ -348,5 +399,69 @@ export function makeIntegrationNodeData(integration: Integration): Record<string
     },
     avatar:      { type: 'tool', initials: initialsFromIntegration(integration.name) },
     footerRight: '—',
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Functions — user-installed function runtimes exposed as drawer cards.
+// Backed by the `functions-list` IPC which scans ~/sulla/functions/<slug>/
+// for a valid function.yaml.
+// ═════════════════════════════════════════════════════════════════════════
+
+export interface FunctionInfo {
+  slug:         string;
+  name:         string;
+  description:  string;
+  runtime:      'python' | 'shell' | 'node';
+  inputs:       Record<string, Record<string, unknown>>;
+  outputs:      Record<string, Record<string, unknown>>;
+  integrations: { slug: string; env: Record<string, string> }[];
+}
+
+let functionsCache: FunctionInfo[] | null = null;
+
+/** Lazy-load all installed functions via the main-process IPC. Results are
+ *  cached for the session; the drawer calls loadFunctions() when the user
+ *  opens the Functions category, so a fresh install during the session
+ *  requires a drawer re-open to pick up new entries. */
+export async function loadFunctions(): Promise<FunctionInfo[]> {
+  if (functionsCache) return functionsCache;
+  try {
+    const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
+    const list = await ipcRenderer.invoke('functions-list') as FunctionInfo[];
+    functionsCache = Array.isArray(list) ? list : [];
+  } catch (err) {
+    console.warn('[libraryMapping] functions-list failed:', err);
+    functionsCache = [];
+  }
+
+  return functionsCache;
+}
+
+/**
+ * Build a RoutineNode `data` payload from a selected function. Always
+ * creates a `function` subtype node so the right-hand config panel opens
+ * the FunctionNodeConfig editor with the slug pre-selected.
+ */
+export function makeFunctionNodeData(fn: FunctionInfo): Record<string, unknown> {
+  const def = NODE_REGISTRY.find(n => n.subtype === 'function');
+  const baseConfig = (def?.defaultConfig() ?? {}) as Record<string, unknown>;
+
+  return {
+    state:       'idle',
+    nodeCode:    `F-${ fn.slug.slice(0, 3).toUpperCase() }`,
+    kicker:      'Function',
+    title:       fn.name,
+    role:        fn.runtime,
+    quote:       fn.description ? `"${ fn.description }"` : '',
+    subtype:     'function',
+    category:    'agent',
+    label:       fn.name,
+    config:      {
+      ...baseConfig,
+      functionSlug: fn.slug,
+    },
+    avatar:      { type: 'tool', initials: initialsFrom(fn.name) },
+    footerRight: fn.runtime,
   };
 }

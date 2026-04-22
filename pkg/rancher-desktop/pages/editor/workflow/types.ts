@@ -6,7 +6,7 @@ export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'schedu
 export type AgentNodeSubtype = 'agent' | 'integration-call' | 'tool-call' | 'orchestrator-prompt' | 'function';
 export type RoutingNodeSubtype = 'router' | 'condition';
 export type FlowControlNodeSubtype = 'wait' | 'loop' | 'parallel' | 'merge' | 'sub-workflow';
-export type IONodeSubtype = 'user-input' | 'response' | 'transfer';
+export type IONodeSubtype = 'user-input' | 'response' | 'transfer' | 'desktop-notification';
 
 export type WorkflowNodeSubtype =
   | TriggerNodeSubtype

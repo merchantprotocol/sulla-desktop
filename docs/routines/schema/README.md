@@ -67,6 +67,36 @@ See [routine.schema.json](./routine.schema.json) for the formal schema (it mirro
 
 Every node has a `subtype` drawn from `WorkflowNodeSubtype` — including the new `subtype: 'function'` that invokes a function (see section 3).
 
+### 2.1 Sticky notes (`type: 'sticky-note'`)
+
+Canvas annotations that never execute. They hold markdown content, a background color, and sit behind executable nodes via a negative `zIndex`. The DAG walker must skip them — they carry `data.category: 'annotation'` for exactly that guard.
+
+```yaml
+nodes:
+  - id:     sticky-xyz
+    type:   sticky-note
+    position: { x: -420, y: -80 }
+    width:  320
+    height: 200
+    zIndex: -1
+    data:
+      subtype:  sticky-note
+      category: annotation
+      bgColor:  "rgba(80, 150, 179, 0.18)"   # empty = default steel-blue
+      content:  |
+        ## Setup
+        1. Configure the Gmail integration in Vault.
+        2. Drop a YouTube URL on its own line to embed a walkthrough:
+        https://youtu.be/dQw4w9WgXcQ
+        3. Images: `![](sulla-routine-asset://my-routine/diagram.png)`
+```
+
+**Rendering:** markdown is parsed with `marked` (GFM + breaks) and sanitized via DOMPurify before insertion. Bare-line YouTube / Vimeo / `.mp4|.webm|.ogg` URLs are expanded to iframe / `<video>` tags by a pre-processor, and iframe `src` values are re-validated against a narrow allowlist inside the sanitizer hook — anything that falls outside the allowlist is stripped.
+
+**Media references:** absolute HTTPS URLs render inline. Bundle-local images use the `sulla-routine-asset://<slug>/<file>` scheme, which the desktop app resolves to `~/sulla/routines/<slug>/assets/<file>`. See [folder-layout.md §2](./folder-layout.md#2-per-file-rules) for the `assets/` convention.
+
+**No handles:** sticky notes cannot be connected to — they own no source/target handles, so edges can't originate or terminate at one.
+
 ---
 
 ## 3. How a routine invokes code: the function node

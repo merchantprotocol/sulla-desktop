@@ -450,6 +450,44 @@ export function initSullaRoutineTemplateEvents(): void {
         meta.activeWorkflow = abortPlaybook(meta.activeWorkflow);
       }
 
+      // Signal the AbortService so any in-flight LLM fetch, tool call,
+      // or sub-agent graph unwinds immediately. Flipping playbook.status
+      // alone only stops the walker at the NEXT processNextStep boundary —
+      // which can be many seconds later if a long LLM response is streaming.
+      const abortService = meta.options?.abort;
+      if (abortService && typeof abortService.abort === 'function' && !abortService.aborted) {
+        try {
+          abortService.abort();
+        } catch (err) {
+          console.warn('[routines-abort] abortService.abort() threw:', err);
+        }
+      }
+
+      // Fan-out abort to every sub-agent PlaybookController spawned off
+      // this routine. Each sub-agent runs on its own graph state (own
+      // AbortService), so parent abort doesn't reach them automatically.
+      // PlaybookController.executeSubAgent registers every threadId on
+      // meta.activeSubAgentThreadIds and removes it on return; snapshot
+      // the list so the array mutating under us (finishing sub-agents)
+      // doesn't trip the iteration.
+      const subThreadIds: string[] = Array.isArray(meta.activeSubAgentThreadIds)
+        ? [...meta.activeSubAgentThreadIds]
+        : [];
+      for (const subThreadId of subThreadIds) {
+        try {
+          const subCached = GraphRegistry.get(subThreadId) as { state?: Record<string, any> } | null;
+          const subAbort = subCached?.state?.metadata?.options?.abort;
+          if (subAbort && typeof subAbort.abort === 'function' && !subAbort.aborted) {
+            subAbort.abort();
+          }
+        } catch (err) {
+          console.warn(`[routines-abort] sub-agent abort failed for threadId=${ subThreadId }:`, err);
+        }
+      }
+      if (subThreadIds.length > 0) {
+        console.log(`[routines-abort] fanned-out abort to ${ subThreadIds.length } sub-agent(s)`);
+      }
+
       const channel = meta.wsChannel || 'sulla-desktop';
 
       try {

@@ -49,12 +49,21 @@ export async function runSubconsciousMiddleware(
   // running routine already has deterministic inputs (the workflow
   // definition + node prompts) and doesn't need memory-recall /
   // observation / summarization on every turn — those only slow the
-  // run down and muddy the live event stream. The `workflowNodeId`
-  // metadata is set by PlaybookController around the orchestrator's
-  // graph.execute call and by executeSubAgent on every sub-agent
-  // state, so this detection covers both orchestrator and delegate
-  // paths cleanly.
-  if ((state.metadata as any).workflowNodeId) {
+  // run down and muddy the live event stream.
+  //
+  // Three signals all mean "inside a routine":
+  //   - workflowNodeId        — set by PlaybookController per step
+  //   - activeWorkflow        — set by activateWorkflowOnState the moment
+  //                             a routine is primed, BEFORE the first
+  //                             graph.execute returns. Critical for the
+  //                             direct-launch path in executeRoutine,
+  //                             which calls graph.execute before
+  //                             PlaybookController has stamped a nodeId.
+  //   - scopedWorkflowId      — set by executeRoutine as a belt-and-suspenders
+  //                             marker in case activeWorkflow hasn't
+  //                             landed yet.
+  const meta = state.metadata as any;
+  if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
     console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
     return;
   }
