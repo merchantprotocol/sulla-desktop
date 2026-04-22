@@ -299,7 +299,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import ActSection from '@pkg/components/routines/ActSection.vue';
 import EmptyState from '@pkg/components/routines/EmptyState.vue';
@@ -308,6 +308,7 @@ import MarketplaceTab from '@pkg/components/routines/MarketplaceTab.vue';
 import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { useStartupProgress } from './agent/useStartupProgress';
 
@@ -346,6 +347,18 @@ async function loadAll() {
     routinesController.load(),
     templatesController.load(),
   ]);
+}
+
+onMounted(() => {
+  if (systemReady.value) {
+    void loadAll();
+  }
+});
+
+// Re-fire when readiness toggles true. Handles both the first-boot race
+// and any later reboot of the backend (settings reset, VM restart, etc).
+watch(systemReady, (ready, prev) => {
+  if (ready && !prev) void loadAll();
 });
 
 // Display-layer string derivations. Kept as computeds so the template
@@ -498,8 +511,8 @@ async function onImport() {
     }
     // Refresh the templates view so the newly-landed folder shows up.
     await templatesController.load();
-    // Switch to the templates tab so the user sees the new card.
-    activeTab.value = 'templates';
+    // Switch to the library tab so the user sees the new card.
+    activeTab.value = 'library';
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[Routines] Import failed:', err);

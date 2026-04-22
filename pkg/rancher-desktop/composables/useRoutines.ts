@@ -199,7 +199,11 @@ export function useRoutines() {
   const scheduled = computed(() =>
     routines.value.filter(r => r.status === 'scheduled'));
   const idle = computed(() =>
-    routines.value.filter(r => ['idle', 'draft', 'archive'].includes(r.status)));
+    routines.value.filter(r => ['idle', 'draft'].includes(r.status)));
+  // Archived routines go in their own bucket — the template renders them
+  // under the "Archive" view separately from idle.
+  const archived = computed(() =>
+    routines.value.filter(r => r.status === 'archive'));
 
   const stats = computed<RoutinesStats>(() => computeStats(routines.value));
   const isEmpty = computed(() => !isLoading.value && routines.value.length === 0);
@@ -215,6 +219,7 @@ export function useRoutines() {
     running,
     scheduled,
     idle,
+    archived,
 
     // derived
     stats,

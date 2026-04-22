@@ -2,15 +2,11 @@
 
 **Status:** Draft
 **Date:** 2026-04-21
-<<<<<<< HEAD
 **Scope:** Defines what a **Routine** is in Sulla Desktop, how it is stored, and how it relates to **Functions** and the **runtime containers** that execute code.
 
 > Routines are **one of four peer kinds** in the bundle model — routines, skills, functions, recipes. Each has its own on-disk folder layout and runtime concerns, but they share the same import/export/publish/install flow. See [`../../bundles/README.md`](../../bundles/README.md) for the cross-kind contract.
 
 > **Heads-up:** "Routine" is the new name for what used to be called a **workflow** inside Sulla Desktop. The old `workflow` terminology is being retired. If a doc, database column, IPC name, or type still says `workflow`.
-=======
-**Scope:** Defines the on-disk format, validation schema, and governance rules for **Routines** — the unit of reusable executable work that workflows compose and the Sulla runtime executes.
->>>>>>> 8d17f29361b8c7cf734279fd7709c9c9b4a68317
 
 ---
 
@@ -24,7 +20,6 @@ A **Routine** is a self-contained unit of work that a workflow node can invoke. 
 - **resources/** — Static read-only data (API schemas, reference docs, modular knowledge).
 - **templates/** — Parameterized output templates (Jinja2, Handlebars).
 
-<<<<<<< HEAD
 In concrete terms:
 
 - **Canvas model:** nodes (typed, per-node config) + edges + viewport + top-level metadata.
@@ -118,13 +113,6 @@ created_at, updated_at                    .routine-meta.yaml ← exporter-manage
 ```
 
 **The canvas writes only to Postgres.** Folders on disk are never auto-updated by the app. They are touched only by explicit user actions: Import (unpacks into a new folder) and the template being hand-authored in a text editor.
-=======
-Routines are what agents author when a workflow needs a step that doesn't exist yet. They map 1:1 onto the runtime-container-per-language execution model (see `PRD_WORKFLOW_SYSTEM.md`).
-
----
-
-## 2. Directory Layout
->>>>>>> 8d17f29361b8c7cf734279fd7709c9c9b4a68317
 
 ```
 routines/<routine-name>/
@@ -142,7 +130,6 @@ routines/<routine-name>/
     └── signature.sha       # Content hash for integrity
 ```
 
-<<<<<<< HEAD
 **Import** unpacks a `.routine.zip` (or a folder the user picks) into `~/sulla/routines/<slug>/`. Slug collisions get suffixed (`-2`, `-3`, …). The DB is not touched — the new template appears in **My Templates** on next scan. Getting it into the DB is a second user action (clicking "Use template" / instantiate).
 
 **Export** pulls from the DB (the source of truth for the DAG). If the routine has a `source_template_slug` pointing to a still-present template folder, the exporter copies that folder into a temp dir, overwrites `routine.yaml` with the current DB definition (stripped of runtime state), updates `.routine-meta.yaml`, zips it, and writes to a user-picked location. If no source template exists, the bundle contains only the seeded minimum. **Export never writes back to `~/sulla/routines/`** — shared artifacts go wherever the user chooses.
@@ -150,7 +137,6 @@ routines/<routine-name>/
 Exporting a template (from **My Templates**) is a simpler path: just zip the existing folder as-is. The DB is not involved.
 
 See [folder-layout.md](./folder-layout.md) for the full per-file spec and [routine.schema.json](./routine.schema.json) for the formal schema of `routine.yaml`.
-=======
 Routines live under `~/sulla/routines/` with the same lifecycle model as workflows:
 
 ```
@@ -159,20 +145,11 @@ Routines live under `~/sulla/routines/` with the same lifecycle model as workflo
 ├── production/   — Active, referenced by workflows
 └── archive/      — Deprecated
 ```
->>>>>>> 8d17f29361b8c7cf734279fd7709c9c9b4a68317
 
 ---
 
 ## 3. The Two-File Split
 
-<<<<<<< HEAD
-| File                        | Purpose                                                                 |
-|-----------------------------|-------------------------------------------------------------------------|
-| `README.md`                 | This document.                                                          |
-| `folder-layout.md`          | Per-file spec for the `~/sulla/routines/<slug>/` template folder.       |
-| `routine.schema.json`       | JSON Schema for the `routine.yaml` document (canvas JSONB + YAML export). |
-| `examples/minimal-routine/` | A tiny example template folder — heartbeat → function → response.       |
-=======
 The decision to split metadata across `ROUTINE.md` and `routine.yaml` is deliberate:
 
 | File           | Audience    | Purpose                                                                 |
@@ -181,18 +158,11 @@ The decision to split metadata across `ROUTINE.md` and `routine.yaml` is deliber
 | `routine.yaml` | Engine      | "How do I execute it?" — typed schema: inputs, outputs, runtime, perms. |
 
 `ROUTINE.md` frontmatter is intentionally thin — only a back-pointer to the routine name + version. All structured metadata lives in `routine.yaml` as the single source of truth, preventing drift between the two files.
->>>>>>> 8d17f29361b8c7cf734279fd7709c9c9b4a68317
 
 ---
 
 ## 4. Workflow Compatibility
 
-<<<<<<< HEAD
-- **Workflow→routine rename rollout.** The code still uses `workflow`/`Workflow` in types, tables, IPC names, and file paths. The docs are leading; the code renames happen in follow-up patches. Tracked in [../../MIGRATION_NOTES.md](../../MIGRATION_NOTES.md).
-- **Bundle schema versioning.** `.routine-meta.yaml` carries a `bundleSchemaVersion` so the importer can refuse or migrate future layouts. `routine.yaml` itself still uses `version: 1` for the DAG-document shape — the two are independent.
-- **Cross-machine routine sync.** Export/import handles one-shot sharing. Continuous sync (git-backed templates, remote registries) is out of scope.
-- **AGENT.md spec.** The frontmatter fields (`name`, `summary`, `triggers`, `required_integrations`, `required_vault_accounts`, `required_functions`, `entry_node`) are described in `folder-layout.md` but don't yet have their own JSON Schema. Add one if the field set stabilizes.
-=======
 `routine.yaml` uses the same top-level metadata conventions as `workflow.yaml`:
 
 | Field         | Workflow | Routine | Notes                              |
@@ -317,4 +287,3 @@ This matches the Helm chart / Docker image / npm package model. Dev ergonomics w
 - **Input/output schema spec:** JSON Schema draft 2020-12 is the obvious pick. Confirm.
 - **Agent-authored routines:** should they default to `_status: draft` + `trust: user` with a mandatory human review before `production` promotion? Proposed yes.
 - **Cross-routine calls:** can a routine invoke another routine directly (not via workflow)? Proposed no — routines are leaves; composition happens in workflows.
->>>>>>> 8d17f29361b8c7cf734279fd7709c9c9b4a68317

@@ -138,6 +138,69 @@ function readManifest(manifestPath: string): TemplateManifest | null {
   }
 }
 
+// ─── DAG-shape parsing (routine.yaml as a graph doc) ────────────────
+// routine.yaml is overloaded — it's both an asset manifest AND a DAG
+// document (nodes/edges/viewport). The scanner reads it as a DAG to
+// project nodeCount/edgeCount/triggerTypes into the template summary;
+// the instantiate handler reads it as a manifest via readManifest().
+
+interface RoutineNodeLike {
+  id?:       string;
+  type?:     string;
+  position?: { x: number; y: number };
+  data?: {
+    subtype?:  string;
+    category?: string;
+    label?:    string;
+    [k: string]: unknown;
+  };
+}
+
+interface RoutineEdgeLike {
+  id?:     string;
+  source?: string;
+  target?: string;
+  [k: string]: unknown;
+}
+
+interface RoutineDocument {
+  id?:          string;
+  name?:        string;
+  description?: string;
+  version?:     string | number;
+  createdAt?:   string;
+  updatedAt?:   string;
+  enabled?:     boolean;
+  nodes?:       RoutineNodeLike[];
+  edges?:       RoutineEdgeLike[];
+  viewport?:    { x: number; y: number; zoom: number };
+  [k: string]:  unknown;
+}
+
+function readRoutineDoc(docPath: string): RoutineDocument | null {
+  try {
+    const raw = fs.readFileSync(docPath, 'utf-8');
+
+    return yaml.parse(raw) as RoutineDocument;
+  } catch (err) {
+    console.warn(`[Sulla] Failed to parse routine document ${ docPath }:`, err);
+
+    return null;
+  }
+}
+
+function extractTriggerTypes(doc: RoutineDocument): string[] {
+  const seen = new Set<string>();
+  const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
+  for (const node of nodes) {
+    if (node?.data?.category === 'trigger' && typeof node.data.subtype === 'string') {
+      seen.add(node.data.subtype);
+    }
+  }
+
+  return Array.from(seen);
+}
+
 /** Render the permissions map into a compact single-line hint. */
 function summarizePermissions(spec?: TemplateManifest['spec']): string {
   const perms = spec?.permissions ?? {};
@@ -350,7 +413,7 @@ export function initSullaRoutineTemplateEvents(): void {
     // editor (Phase 4 — workflow-save handler dual-writes disk + DB).
     const WorkflowModel = await importWorkflowModel();
 
-    await WorkflowModel.upsertFromDefinition(routine, {
+    await WorkflowModel.upsertFromDefinition(workflow, {
       status:             'draft',
       changeReason:       `instantiated from template:${ slug }`,
       sourceTemplateSlug: slug,
