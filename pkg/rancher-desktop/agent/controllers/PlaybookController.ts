@@ -177,9 +177,23 @@ export class PlaybookController<TState = any> {
 
   async processWorkflowPlaybook(state: TState): Promise<TState> {
     this.isProcessingPlaybook = true;
+
+    // Scope the workflow routing metadata for the entire playbook walk.
+    // BaseNode.wsChatMessage emits `node_thinking` events whenever these
+    // are set, so every orchestrator LLM turn inside the loop surfaces
+    // its prose into the live stream (attributed to whichever step is
+    // currently running). It also gates the subconscious middleware to
+    // skip during workflow runs. Saved + restored so returning to
+    // non-workflow conversation flow doesn't leave these stamped.
+    const prevWorkflowNodeId = (state as any).metadata?.workflowNodeId;
+    const prevWorkflowParentChannel = (state as any).metadata?.workflowParentChannel;
+    (state as any).metadata.workflowParentChannel = (state as any).metadata?.wsChannel || 'workbench';
+
     try {
       return await this._processWorkflowPlaybookInner(state);
     } finally {
+      (state as any).metadata.workflowNodeId = prevWorkflowNodeId;
+      (state as any).metadata.workflowParentChannel = prevWorkflowParentChannel;
       this.isProcessingPlaybook = false;
 
       if (this._continuationQueued) {
@@ -569,6 +583,14 @@ export class PlaybookController<TState = any> {
         const step: PlaybookStepResult = processNextStep(currentPlaybook);
         meta.activeWorkflow = step.updatedPlaybook;
 
+        // Stamp the current step's nodeId on the state so any graph.execute
+        // call inside this iteration attributes orchestrator thoughts to
+        // that specific node in the live stream. Previous iterations may
+        // have stamped a different node; overwriting each turn keeps the
+        // attribution fresh as the playbook walks.
+        const stepNodeId = (step as any).nodeId;
+        if (stepNodeId) (state as any).metadata.workflowNodeId = stepNodeId;
+
         playbookLog('walker_step', {
           action:         step.action,
           nodeId:         (step as any).nodeId || 'n/a',
@@ -597,6 +619,8 @@ export class PlaybookController<TState = any> {
           this.emitPlaybookEvent(state, 'node_started', { nodeId: opNodeId, nodeLabel: opLabel, prompt: step.prompt });
 
           this.injectWorkflowMessage(state, step.prompt);
+          // workflowNodeId/workflowParentChannel are already scoped at the
+          // top of processWorkflowPlaybook + stamped per loop iteration.
           state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
           let opMsgs = (state as any).messages;
@@ -641,6 +665,8 @@ export class PlaybookController<TState = any> {
             `Original instructions:\n${ step.prompt }\n\n` +
             `You MUST produce a substantive text response now. This is the output that will be ` +
             `passed to the next step in the workflow. Do not end your turn until you have provided it.`);
+
+            // Scoping already set at the playbook level + per loop iteration.
             state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
             opMsgs = (state as any).messages;
@@ -1154,6 +1180,327 @@ export class PlaybookController<TState = any> {
           break;
         }
 
+        case 'execute_function': {
+          const fnNodeLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
+          this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'incoming');
+          this.emitPlaybookEvent(state, 'node_started', { nodeId: step.nodeId, nodeLabel: fnNodeLabel });
+
+          // Default timeout 60s; allow override like "30s" / "2m" / "90".
+          function parseTimeoutMs(value: string | null): number {
+            if (!value) return 60_000;
+            const trimmed = String(value).trim();
+            const match = /^(\d+)(ms|s|m|h)?$/i.exec(trimmed);
+            if (!match) return 60_000;
+            const num = Number(match[1]);
+            const unit = (match[2] || 's').toLowerCase();
+            const mul = unit === 'ms' ? 1 : unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000;
+            return num * mul;
+          }
+
+          const RUNTIME_URLS: Record<string, string> = {
+            python: 'http://127.0.0.1:30118',
+            shell:  'http://127.0.0.1:30119',
+            node:   'http://127.0.0.1:30120',
+          };
+          const SECRETS_HOST_URL = 'http://host.lima.internal:30121';
+
+          // SECURITY: `refs` lives only in this local const + the capability
+          // service's in-memory map. It is NEVER passed to saveCheckpoint /
+          // emit* / console / injectWorkflowMessage / completeSubAgent
+          // results, and no account property VALUES are cached on this side
+          // at all — only references (integrationId, accountId, property).
+          // The runtime fetches plaintexts just-in-time via /secrets/fetch.
+          let mintedToken: string | null = null;
+          const invocationId = `fn-${ step.nodeId }-${ Date.now() }-${
+            Math.random().toString(36).slice(2, 8) }`;
+          let runtime = '';
+
+          try {
+            const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
+            const yaml = await import('yaml');
+            const { getSecretsCapabilityService } = await import(
+              '@pkg/agent/services/SecretsCapabilityService');
+            const { getIntegrationService } = await import(
+              '@pkg/agent/services/IntegrationService');
+
+            const functionsDir = resolveSullaFunctionsDir();
+            const yamlPath = pathUtil.join(functionsDir, step.functionRef, 'function.yaml');
+
+            if (!fsSync.existsSync(yamlPath)) {
+              throw new Error(`Function not found: ${ step.functionRef } (no function.yaml at ${ yamlPath })`);
+            }
+
+            const manifest: any = yaml.parse(fsSync.readFileSync(yamlPath, 'utf-8')) || {};
+            runtime = manifest?.spec?.runtime || '';
+            const baseUrl = RUNTIME_URLS[runtime];
+            if (!baseUrl) {
+              throw new Error(`Unknown runtime "${ runtime }" for function "${ step.functionRef }"`);
+            }
+
+            // ── Read declared integrations from function.yaml ──
+            //   spec.integrations: [{ slug, env: { ENV_NAME: property_name } }]
+            const declaredIntegrationsRaw = Array.isArray(manifest?.spec?.integrations)
+              ? manifest.spec.integrations
+              : [];
+            const declaredIntegrations: Array<{ slug: string; env: Record<string, string> }> =
+              declaredIntegrationsRaw
+                .filter((i: any) => i && typeof i.slug === 'string')
+                .map((i: any) => ({
+                  slug: i.slug as string,
+                  env:  (i.env && typeof i.env === 'object')
+                    ? Object.fromEntries(
+                      Object.entries(i.env).filter(([, v]) => typeof v === 'string') as [string, string][],
+                    )
+                    : {},
+                }));
+
+            const integrationAccounts = step.integrationAccounts || {};
+            const integrationService = getIntegrationService();
+
+            // ── Resolve each integration to a concrete accountId ──
+            // User-bound or orchestrator-picked. No account property VALUES
+            // are resolved here — only accountIds.
+            const resolved: Record<string, string> = {}; // slug → accountId
+
+            for (const intg of declaredIntegrations) {
+              const bound = Object.prototype.hasOwnProperty.call(integrationAccounts, intg.slug)
+                ? integrationAccounts[intg.slug]
+                : undefined;
+
+              let accountId: string | null = bound ?? null;
+
+              if (accountId == null) {
+                // ── Orchestrator-pick flow ──
+                const accounts = await integrationService.getAccounts(intg.slug);
+
+                if (accounts.length === 0) {
+                  throw new Error(
+                    `Function ${ step.functionRef } needs a ${ intg.slug } account but none are configured`,
+                  );
+                }
+
+                const defaultAcct = accounts.find(a => a.active);
+                if (accounts.length === 1 && defaultAcct) {
+                  // Trivial pick — no prompt needed.
+                  accountId = defaultAcct.account_id;
+                  console.log(
+                    `[PlaybookController] Orchestrator pick trivial for ${ intg.slug }: ` +
+                    `single account, no prompt sent (invocation=${ invocationId } node=${ step.nodeId } fn=${ step.functionRef })`,
+                  );
+                } else {
+                  // Build a prompt and ask the orchestrator. Mirror the
+                  // existing inline inject + graph.execute + lastAssistant
+                  // pattern used for sub-agent escalations.
+                  const buildPickPrompt = (retry: boolean): string => {
+                    const header = retry
+                      ? `Your last reply didn't match any of the listed account_ids. Try again.\n\n`
+                      : '';
+                    const list = accounts
+                      .map(a => `  - \`${ a.account_id }\` — ${ a.label }`)
+                      .join('\n');
+                    return (
+                      `${ header }Function \`${ step.functionRef }\` needs a \`${ intg.slug }\` account. Pick one of:\n` +
+                      `${ list }\n\n` +
+                      `Respond with only the account_id.`
+                    );
+                  };
+
+                  const readAccountPick = (): string | null => {
+                    const msgs = (state as any).messages;
+                    if (!Array.isArray(msgs)) return null;
+                    const lastAssistant = [...msgs].reverse().find((m: any) => m.role === 'assistant');
+                    const raw = lastAssistant?.content ? String(lastAssistant.content) : '';
+                    const candidate = raw.trim();
+                    if (!candidate) return null;
+                    // Exact match first.
+                    const exact = accounts.find(a => a.account_id === candidate);
+                    if (exact) return exact.account_id;
+                    // Then allow "account_id" appearing as a whole token in the reply.
+                    const hit = accounts.find(a =>
+                      new RegExp(`(^|[^A-Za-z0-9_-])${ a.account_id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }([^A-Za-z0-9_-]|$)`).test(candidate),
+                    );
+                    return hit ? hit.account_id : null;
+                  };
+
+                  // Attempt 1
+                  this.injectWorkflowMessage(state, buildPickPrompt(false));
+                  (state as any).metadata._muteWsChat = true;
+                  state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+                  (state as any).metadata._muteWsChat = false;
+
+                  let picked = readAccountPick();
+
+                  // One retry on unrecognized response
+                  if (!picked) {
+                    this.injectWorkflowMessage(state, buildPickPrompt(true));
+                    (state as any).metadata._muteWsChat = true;
+                    state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+                    (state as any).metadata._muteWsChat = false;
+                    picked = readAccountPick();
+                  }
+
+                  if (!picked) {
+                    throw new Error(
+                      `Function ${ step.functionRef } needs a ${ intg.slug } account but orchestrator did not pick a recognized account_id`,
+                    );
+                  }
+
+                  accountId = picked;
+                }
+              } else {
+                // User-bound accountId — verify it exists.
+                // (Orchestrator override of an already-picked account is
+                // explicitly DEFERRED to a future enhancement; for v1 we
+                // always respect the user's pick.)
+                const accounts = await integrationService.getAccounts(intg.slug);
+                const exists = accounts.some(a => a.account_id === accountId);
+                if (!exists) {
+                  throw new Error(
+                    `Function ${ step.functionRef } references a ${ intg.slug } account that is not configured`,
+                  );
+                }
+              }
+
+              resolved[intg.slug] = accountId;
+            }
+
+            // ── Build refs map for the capability service ──
+            // refs: Record<ENV_NAME, { integrationId, accountId, property }>
+            // DO NOT log / checkpoint / inject this.
+            const refs: Record<string, { integrationId: string; accountId: string; property: string }> = {};
+            for (const intg of declaredIntegrations) {
+              const accountId = resolved[intg.slug];
+              for (const [envName, property] of Object.entries(intg.env)) {
+                refs[envName] = {
+                  integrationId: intg.slug,
+                  accountId,
+                  property,
+                };
+              }
+            }
+
+            // Mint the capability token only if at least one env is declared.
+            let secretsToken: string | null = null;
+            let secretsHostUrl: string | null = null;
+            if (Object.keys(refs).length > 0) {
+              const svc = getSecretsCapabilityService();
+              const minted = svc.mint({
+                invocationId,
+                refs,
+                ttlMs: 60_000,
+              });
+              mintedToken = minted.token;
+              secretsToken = minted.token;
+              secretsHostUrl = SECRETS_HOST_URL;
+            }
+
+            const timeoutMs = parseTimeoutMs(step.timeoutOverride);
+            const ac = new AbortController();
+            const timer = setTimeout(() => ac.abort(), timeoutMs);
+
+            console.log(
+              `[PlaybookController] Function invoke: ` +
+              `invocation=${ invocationId } node=${ step.nodeId } fn=${ step.functionRef } runtime=${ runtime }`,
+            );
+
+            let resp: Response;
+            try {
+              resp = await fetch(`${ baseUrl }/invoke`, {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                  name:           step.functionRef,
+                  version:        'HEAD',
+                  inputs:         step.inputs,
+                  secretsToken,
+                  secretsHostUrl,
+                }),
+                signal: ac.signal,
+              });
+            } finally {
+              clearTimeout(timer);
+            }
+
+            if (!resp.ok) {
+              let detail = `HTTP ${ resp.status }`;
+              try {
+                const body: any = await resp.json();
+                if (body && typeof body.detail === 'string') detail = body.detail;
+              } catch { /* non-JSON body — keep status string */ }
+              // The runtime is responsible for scrubbing its own error
+              // strings before returning them. We don't cache any secret
+              // values here, so there is nothing to re-scrub on our side.
+              throw new Error(detail);
+            }
+
+            const payload: any = await resp.json();
+            const outputs = payload?.outputs ?? {};
+            const durationMs = Number(payload?.duration_ms) || 0;
+
+            const result = { outputs, durationMs };
+
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, result, undefined);
+            meta.activeWorkflow = completed.updatedPlaybook;
+
+            const resultText = JSON.stringify(result);
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: fnNodeLabel, output: resultText });
+            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+            // NOTE: checkpoint carries only inputs + outputs. No token,
+            // no refs, no secretsHostUrl, no resolved accountIds.
+            await this.saveCheckpoint(completed.updatedPlaybook, step.nodeId, fnNodeLabel, 'function', resultText);
+
+            const fnMsg = `[Workflow Function: ${ fnNodeLabel }]\n` +
+              `Function: ${ step.functionRef } (${ runtime })\n` +
+              `Inputs: ${ JSON.stringify(step.inputs) }\n` +
+              `Duration: ${ durationMs }ms\n\n` +
+              `Outputs:\n${ JSON.stringify(outputs) }`;
+            this.injectWorkflowMessage(state, fnMsg, true);
+
+            if (completed.action === 'workflow_completed') {
+              this.emitPlaybookEvent(state, 'workflow_completed', {});
+              state = await this.releaseWorkflow(state, completed.updatedPlaybook, 'completed');
+              return state;
+            }
+          } catch (err: any) {
+            const errMsg = err?.name === 'AbortError'
+              ? `Function call timed out`
+              : (err?.message || String(err));
+            console.error(
+              `[PlaybookController] Function call failed: ` +
+              `invocation=${ invocationId } node=${ step.nodeId } fn=${ step.functionRef } — ${ errMsg }`,
+            );
+
+            const errorResult = `Function call failed: ${ errMsg }`;
+            const completed = completeSubAgent(meta.activeWorkflow, step.nodeId, errorResult, undefined);
+            meta.activeWorkflow = completed.updatedPlaybook;
+
+            this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: fnNodeLabel, output: errorResult });
+            this.emitEdgeActivations(state, currentPlaybook.definition, step.nodeId, 'outgoing');
+
+            const errorMsg = `[Workflow Function Failed: ${ fnNodeLabel }]\n` +
+              `Function: ${ step.functionRef }\n` +
+              `Error: ${ errMsg }\n\n` +
+              `The workflow will continue — review the error and decide how to proceed.`;
+            this.injectWorkflowMessage(state, errorMsg);
+            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+          } finally {
+            // Always invalidate the capability token — whether invoke
+            // succeeded, failed, or threw — so it can't be replayed.
+            if (mintedToken) {
+              try {
+                const { getSecretsCapabilityService } = await import(
+                  '@pkg/agent/services/SecretsCapabilityService');
+                getSecretsCapabilityService().invalidate(mintedToken);
+              } catch {
+                // best-effort — service sweep will clean up on TTL anyway
+              }
+              mintedToken = null;
+            }
+          }
+
+          break;
+        }
+
         case 'spawn_sub_workflow': {
           const subWfLabel = this.getPlaybookNodeLabel(currentPlaybook, step.nodeId);
           playbookLog('spawn_sub_workflow', {
@@ -1169,7 +1516,11 @@ export class PlaybookController<TState = any> {
           try {
             const { getWorkflowRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
             const subRegistry = getWorkflowRegistry();
-            const subDefinition = subRegistry.loadWorkflow(step.workflowId);
+            const subDefinition = await subRegistry.loadWorkflow(step.workflowId);
+
+            if (!subDefinition) {
+              throw new Error(`Sub-workflow not found: ${ step.workflowId }`);
+            }
 
             if (step.agentId) {
               console.log(`[PlaybookController] Delegating sub-workflow "${ subWfLabel }" to agent "${ step.agentId }"`);
@@ -1247,7 +1598,11 @@ export class PlaybookController<TState = any> {
           try {
             const { getWorkflowRegistry: getTransferRegistry } = await import('@pkg/agent/workflow/WorkflowRegistry');
             const transferRegistry = getTransferRegistry();
-            const targetDefinition = transferRegistry.loadWorkflow(step.targetWorkflowId);
+            const targetDefinition = await transferRegistry.loadWorkflow(step.targetWorkflowId);
+
+            if (!targetDefinition) {
+              throw new Error(`Transfer target workflow not found: ${ step.targetWorkflowId }`);
+            }
 
             this.emitPlaybookEvent(state, 'node_completed', { nodeId: step.nodeId, nodeLabel: transferLabel, output: { transferred: step.targetWorkflowId } });
             await this.saveCheckpoint(step.updatedPlaybook, step.nodeId, transferLabel, 'transfer', { transferred: step.targetWorkflowId });
@@ -1489,10 +1844,12 @@ export class PlaybookController<TState = any> {
   }
 
   private injectWorkflowMessage(state: TState, content: string, _silent?: boolean): void {
-    const msgs = (state as any).messages;
-    if (Array.isArray(msgs)) {
-      msgs.push({ role: 'user', content: `[Workflow] ${ content }` });
+    const s = state as any;
+    if (!Array.isArray(s.messages)) {
+      console.warn('[PlaybookController] injectWorkflowMessage: state.messages was not an array — initializing');
+      s.messages = [];
     }
+    s.messages.push({ role: 'user', content: `[Workflow] ${ content }` });
   }
 
   // ─── Checkpoint ─────────────────────────────────────────────────
@@ -1633,6 +1990,25 @@ export class PlaybookController<TState = any> {
       state: any;
     };
 
+    // Register this sub-agent's threadId on the parent so a user-abort
+    // on the parent routine can fan-out and cancel every in-flight
+    // sub-agent. Without this the parent walker stops at the next step
+    // boundary but sub-agent graphs keep running their LLM/tool loops
+    // until they return naturally.
+    const parentMeta = (_state as any).metadata;
+    if (parentMeta) {
+      const active = (parentMeta.activeSubAgentThreadIds ??= []);
+      if (!active.includes(threadId)) active.push(threadId);
+    }
+
+    if (!prompt || !prompt.trim()) {
+      console.error(`[PlaybookController] executeSubAgent: empty prompt for node "${ nodeId }" agent "${ agentId }" — sub-agent would receive no user message`);
+      throw new Error(`Sub-agent "${ agentId || nodeId }" received an empty prompt. The orchestrator must produce a non-empty task message.`);
+    }
+
+    if (!Array.isArray(subState.messages)) {
+      subState.messages = [];
+    }
     subState.messages.push({ role: 'user', content: prompt });
 
     subState.metadata.isSubAgent = true;
@@ -1641,7 +2017,19 @@ export class PlaybookController<TState = any> {
     subState.metadata.workflowNodeId = nodeId;
     subState.metadata.workflowParentChannel = parentChannel;
 
-    const finalState = await graph.execute(subState);
+    let finalState: any;
+    try {
+      finalState = await graph.execute(subState);
+    } finally {
+      // Deregister from the parent's active-sub-agents list. Must run on
+      // every exit path — success, contract-violation, or thrown error —
+      // so an abort that fans out to stale threadIds doesn't see zombies.
+      if (parentMeta?.activeSubAgentThreadIds) {
+        const arr: string[] = parentMeta.activeSubAgentThreadIds;
+        const idx = arr.indexOf(threadId);
+        if (idx >= 0) arr.splice(idx, 1);
+      }
+    }
 
     const agentMeta = (finalState.metadata)?.agent || {};
     const agentStatus = String(agentMeta.status || '').toLowerCase();

@@ -75,6 +75,9 @@ export class AgentNode extends BaseNode {
     // primary agent treats it as its own knowledge, not external info.
     // Skip during tool-call loops (consecutiveSameNode > 0) — only run
     // on fresh user turns to avoid redundant LLM calls.
+    // Also skipped inside workflow runs (see the gate at the top of
+    // runSubconsciousMiddleware) so routines aren't slowed by recall/
+    // observation sub-agents on every orchestrator turn.
     const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
     if (!isToolCallLoop) {
       const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);

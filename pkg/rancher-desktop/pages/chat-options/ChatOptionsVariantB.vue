@@ -48,35 +48,11 @@
       <button
         type="button"
         class="vb-card"
-        @click="$emit('pick', 'calendar')"
-      >
-        <div class="vb-card-accent" />
-        <div class="vb-card-content">
-          <span class="vb-card-title">Calendar</span>
-        </div>
-        <span class="vb-card-arrow">&rarr;</span>
-      </button>
-
-      <button
-        type="button"
-        class="vb-card"
         @click="$emit('pick', 'integrations')"
       >
         <div class="vb-card-accent" />
         <div class="vb-card-content">
           <span class="vb-card-title">Integrations</span>
-        </div>
-        <span class="vb-card-arrow">&rarr;</span>
-      </button>
-
-      <button
-        type="button"
-        class="vb-card"
-        @click="$emit('pick', 'extensions')"
-      >
-        <div class="vb-card-accent" />
-        <div class="vb-card-content">
-          <span class="vb-card-title">Extensions</span>
         </div>
         <span class="vb-card-arrow">&rarr;</span>
       </button>

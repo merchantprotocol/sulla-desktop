@@ -54,7 +54,7 @@
               {{ node.data.kicker }}
             </div>
             <div class="t">
-              {{ node.data.title || 'Untitled' }}
+              {{ node.data.title || (node.data as any).label || 'Untitled' }}
             </div>
             <div
               v-if="node.data.role"
@@ -71,6 +71,42 @@
           </div>
         </div>
       </div>
+
+      <!-- Execution output — only in run mode. Edit mode is a pristine
+           configuration view; stale output from a previous run would
+           just confuse the "what does this node do?" question the user
+           is here to answer. Run mode has NodeOutputPanel for live
+           output, but this block also surfaces output inline when the
+           canvas is actively running. -->
+      <section
+        v-if="node && mode === 'run' && hasExecutionInfo"
+        class="exec-section"
+      >
+        <header class="exec-head">
+          <span class="exec-title">Output</span>
+          <span
+            v-if="node.data.state"
+            class="exec-state"
+            :class="node.data.state"
+          >{{ statusLabel }}</span>
+          <span
+            v-if="formatExecDuration()"
+            class="exec-duration"
+          >{{ formatExecDuration() }}</span>
+        </header>
+        <div
+          v-if="node.data.execution?.error"
+          class="exec-error"
+        >{{ node.data.execution.error }}</div>
+        <pre
+          v-if="outputText"
+          class="exec-output"
+        >{{ outputText }}</pre>
+        <div
+          v-else-if="node.data.state === 'running'"
+          class="exec-pending"
+        >Working…</div>
+      </section>
 
       <!-- Per-subtype config panel (routed from the workflow editor) -->
       <div
@@ -90,6 +126,43 @@
         <span class="ico">◈</span>
         <span>No configuration panel for this node type yet.</span>
       </div>
+
+      <!-- Children — loop frames list their nested cards so the user can
+           see the loop body from the edit drawer without having to click
+           away. Skipped for nodes with no children. -->
+      <section
+        v-if="children && children.length > 0"
+        class="c-section c-children"
+      >
+        <header class="c-section-head">
+          <span class="c-section-title">Children</span>
+          <span class="c-section-count">{{ children.length }}</span>
+        </header>
+        <ul class="cp-children">
+          <li
+            v-for="c in children"
+            :key="c.nodeId"
+            class="cp-child"
+            :class="c.state"
+          >
+            <span
+              class="cp-child-av"
+              :class="c.avatar?.type"
+            >
+              <template v-if="c.avatar?.icon">{{ c.avatar.icon }}</template>
+              <template v-else>{{ c.avatar?.initials || '—' }}</template>
+            </span>
+            <span class="cp-child-body">
+              <span class="cp-child-kicker">{{ c.kicker }} · {{ c.nodeCode }}</span>
+              <span class="cp-child-title">{{ c.label }}</span>
+            </span>
+            <span
+              class="cp-child-state"
+              :class="c.state"
+            >{{ c.state }}</span>
+          </li>
+        </ul>
+      </section>
     </div>
 
     <footer
@@ -111,6 +184,15 @@ interface UpstreamNodeInfo {
   category: string;
 }
 
+interface ChildSummary {
+  nodeId:   string;
+  label:    string;
+  kicker:   string;
+  nodeCode: string;
+  state:    string;
+  avatar:   { type?: string; icon?: string; initials?: string };
+}
+
 interface RoutineNodeShape {
   id:   string;
   data: {
@@ -124,6 +206,13 @@ interface RoutineNodeShape {
     category?:  string;
     config?:    Record<string, unknown>;
     avatar?:    { type?: string; icon?: string; initials?: string };
+    execution?: {
+      status?:      'running' | 'completed' | 'failed' | 'waiting' | 'skipped';
+      output?:      unknown;
+      error?:       string;
+      startedAt?:   number;
+      completedAt?: number;
+    };
   };
 }
 
@@ -132,6 +221,9 @@ const props = defineProps<{
   node:           RoutineNodeShape | null;
   mode:           'edit' | 'run';
   upstreamNodes?: UpstreamNodeInfo[];
+  /** Children of this node — loop frames list their nested cards at the
+   *  bottom of the panel so the user can confirm the loop body. */
+  children?:      ChildSummary[];
 }>();
 
 defineEmits<{
@@ -150,6 +242,7 @@ const PANELS: Record<string, Component> = {
   agent:                 defineAsyncComponent(() => import('@pkg/pages/editor/workflow/AgentNodeConfig.vue')),
   'tool-call':           defineAsyncComponent(() => import('@pkg/pages/editor/workflow/ToolCallNodeConfig.vue')),
   'integration-call':    defineAsyncComponent(() => import('@pkg/pages/editor/workflow/IntegrationCallNodeConfig.vue')),
+  function:              defineAsyncComponent(() => import('@pkg/pages/editor/workflow/FunctionNodeConfig.vue')),
   'orchestrator-prompt': defineAsyncComponent(() => import('@pkg/pages/editor/workflow/OrchestratorPromptNodeConfig.vue')),
   router:                defineAsyncComponent(() => import('@pkg/pages/editor/workflow/RouterNodeConfig.vue')),
   condition:             defineAsyncComponent(() => import('@pkg/pages/editor/workflow/ConditionNodeConfig.vue')),
@@ -177,7 +270,7 @@ const panelComponent = computed<Component | null>(() => {
 
 const NEEDS_SUBTYPE = new Set(['flow-control', 'io']);
 const NEEDS_UPSTREAM = new Set([
-  'agent', 'tool-call', 'integration-call', 'orchestrator-prompt', 'flow-control', 'io',
+  'agent', 'tool-call', 'integration-call', 'function', 'orchestrator-prompt', 'flow-control', 'io',
 ]);
 
 const panelProps = computed(() => {
@@ -202,6 +295,45 @@ const statusLabel = computed(() => {
   default:        return 'Idle';
   }
 });
+
+// Flatten the raw execution output into something the drawer can display
+// as prose. Strings pass through, Anthropic-style block arrays get their
+// text blocks joined, everything else falls back to pretty JSON. Empty
+// string means "nothing worth showing" — the template hides the section.
+const outputText = computed<string>(() => {
+  const raw = props.node?.data?.execution?.output;
+  if (raw == null) return '';
+  if (typeof raw === 'string') return raw.trim();
+  if (Array.isArray(raw)) {
+    const text = raw
+      .filter((b: any) => b && b.type === 'text' && typeof b.text === 'string')
+      .map((b: any) => b.text)
+      .join('\n').trim();
+    if (text) return text;
+    try { return JSON.stringify(raw, null, 2); } catch { return String(raw); }
+  }
+  if (typeof raw === 'object') {
+    try { return JSON.stringify(raw, null, 2); } catch { return String(raw); }
+  }
+  return String(raw);
+});
+
+const hasExecutionInfo = computed(() => {
+  const exec = props.node?.data?.execution;
+  if (!exec) return false;
+  return !!exec.output || !!exec.error || !!exec.startedAt;
+});
+
+function formatExecDuration(): string {
+  const exec = props.node?.data?.execution;
+  if (!exec?.startedAt) return '';
+  const end = exec.completedAt ?? Date.now();
+  const ms = Math.max(end - exec.startedAt, 0);
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${ m }m ${ String(s).padStart(2, '0') }s` : `${ s }s`;
+}
 </script>
 
 <style scoped>
@@ -306,13 +438,19 @@ const statusLabel = computed(() => {
 }
 
 .c-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
+  height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.c-body > * {
+  flex-shrink: 0;
 }
 
 /* Preview card */
@@ -401,6 +539,85 @@ const statusLabel = computed(() => {
   font-style: italic;
   color: var(--violet-300);
   line-height: 1.3;
+}
+
+/* Execution output — appears above the config panel when a node has
+   actually run. Header strip shows the state pill + elapsed; the body
+   is a monospace pre for readable JSON / prose output. */
+.exec-section {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  background: rgba(14, 22, 40, 0.7);
+  border: 1px solid rgba(167, 139, 250, 0.24);
+  border-radius: 8px;
+}
+.exec-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.exec-title {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--violet-300);
+  flex-shrink: 0;
+}
+.exec-state {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  flex-shrink: 0;
+}
+.exec-state.running { color: var(--violet-300); }
+.exec-state.done    { color: #7ad4a8; }
+.exec-state.failed  { color: #fca5a5; }
+.exec-state.queued,
+.exec-state.idle    { color: var(--steel-400); }
+.exec-duration {
+  margin-left: auto;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10px;
+  color: var(--steel-300);
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+}
+.exec-output {
+  margin: 0;
+  padding: 10px 12px;
+  background: rgba(6, 12, 26, 0.7);
+  border: 1px solid rgba(168, 192, 220, 0.14);
+  border-radius: 6px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #d6dde8;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
+}
+.exec-error {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 6px;
+  color: #fca5a5;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.exec-pending {
+  padding: 10px 12px;
+  color: var(--violet-300);
+  font-style: italic;
+  font-size: 12px;
 }
 
 /* Host container for whichever editor config panel is mounted.
@@ -588,5 +805,118 @@ const statusLabel = computed(() => {
   letter-spacing: 0.12em;
   color: var(--steel-400);
   text-transform: uppercase;
+}
+
+/* ── Children list (loop body summary) ── */
+.c-section {
+  padding: 0 14px;
+  margin-top: 14px;
+}
+.c-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+  border-bottom: 1px dashed rgba(168, 192, 220, 0.15);
+}
+.c-section-title {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.25em;
+  color: var(--violet-300);
+  text-transform: uppercase;
+}
+.c-section-count {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--steel-400);
+}
+.cp-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cp-child {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: rgba(20, 30, 54, 0.55);
+  border: 1px solid rgba(168, 192, 220, 0.12);
+}
+.cp-child.running { border-color: rgba(167, 139, 250, 0.35); }
+.cp-child.done    { border-color: rgba(122, 212, 168, 0.3); }
+.cp-child.failed  { border-color: rgba(244, 63, 94, 0.35); }
+.cp-child-av {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  color: white;
+  font-weight: 800;
+  font-size: 10px;
+  background: linear-gradient(135deg, var(--steel-400), var(--steel-600));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+.cp-child-av.trigger { background: linear-gradient(135deg, var(--amber-400), var(--amber-600)); }
+.cp-child-av.tool    { background: linear-gradient(135deg, var(--teal-400), var(--teal-600)); }
+.cp-child-av.logic   { background: linear-gradient(135deg, #94a3b8, #475569); }
+.cp-child-av.loop    { background: linear-gradient(135deg, var(--violet-400), var(--violet-600)); }
+.cp-child-av.agent   { background: linear-gradient(135deg, var(--violet-400), var(--violet-600)); }
+.cp-child-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.cp-child-kicker {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: var(--steel-400);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cp-child-title {
+  font-family: var(--serif);
+  font-size: 13px;
+  font-style: italic;
+  color: white;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cp-child-state {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid rgba(168, 192, 220, 0.2);
+  color: var(--steel-300);
+}
+.cp-child-state.running {
+  color: var(--violet-200);
+  border-color: rgba(167, 139, 250, 0.4);
+  background: rgba(139, 92, 246, 0.12);
+}
+.cp-child-state.done {
+  color: #7ad4a8;
+  border-color: rgba(122, 212, 168, 0.35);
+}
+.cp-child-state.failed {
+  color: var(--rose-400);
+  border-color: rgba(244, 63, 94, 0.35);
 }
 </style>

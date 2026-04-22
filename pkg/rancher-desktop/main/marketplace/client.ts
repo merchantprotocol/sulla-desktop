@@ -7,10 +7,12 @@
  *
  * Endpoints covered:
  *
- *   GET  /marketplace/templates/:id            fetchTemplateDetail
- *   GET  /marketplace/templates/:id/download   downloadBundleToFile
- *   POST /marketplace/submit-manifest          submitManifest
- *   PUT  /marketplace/templates/:id/bundle     uploadBundle
+ *   GET    /marketplace/templates/:id          fetchTemplateDetail
+ *   GET    /marketplace/templates/:id/download downloadBundleToFile
+ *   POST   /marketplace/submit-manifest        submitManifest
+ *   PUT    /marketplace/templates/:id/bundle   uploadBundle
+ *   GET    /marketplace/mine                   listMySubmissions
+ *   DELETE /marketplace/templates/:id          takedownTemplate
  *
  * Admin routes are out of scope here (those live on sulla-admin with
  * a static Bearer key).
@@ -71,6 +73,45 @@ export interface UploadBundleResult {
   bundle_status: 'uploaded';
   bundle_size:   number;
   status:        'pending';
+}
+
+/** A row returned by GET /marketplace/mine. Superset of the public fields —
+ *  /mine also surfaces admin_notes and reviewed_at because the author has
+ *  legitimate reason to see review feedback on their own submissions. */
+export interface MySubmissionRow {
+  id:                    string;
+  kind:                  MarketplaceKind;
+  slug:                  string;
+  name:                  string;
+  description?:          string | null;
+  version:               string;
+  author_contractor_id:  string;
+  tags:                  string[];
+  status:                'pending' | 'approved' | 'rejected';
+  bundle_status:         'pending' | 'uploaded' | 'missing';
+  bundle_size?:          number | null;
+  download_count?:       number;
+  featured?:             boolean;
+  tagline?:              string | null;
+  category?:             string | null;
+  admin_notes?:          string | null;
+  reviewed_at?:          string | null;
+  created_at:            string;
+  updated_at:            string;
+}
+
+export interface MySubmissionsPage {
+  templates: MySubmissionRow[];
+  total:     number;
+  page:      number;
+  limit:     number;
+}
+
+/** Server distinguishes the two outcomes so the UI can message correctly
+ *  ("Withdrawn — kept for your records" vs "Deleted"). */
+export interface TakedownResult {
+  success: true;
+  action:  'deleted' | 'withdrawn';
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────

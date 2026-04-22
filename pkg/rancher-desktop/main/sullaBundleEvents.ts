@@ -289,9 +289,6 @@ async function activateRecipeAfterInstall(extensionDir: string): Promise<void> {
 
   await ext.installFromLocalAssets(extensionDir, { autoStart: false });
 
-  // Fire the event the Extensions UI (installed.vue / MarketplaceCatalog.vue)
-  // listens for. This is the same event the legacy GitHub-pull install
-  // emits via background.ts after success, so the UI updates identically.
   const mainEvents = (await import('@pkg/main/mainEvents')).default;
 
   mainEvents.emit('extensions/changed' as any);

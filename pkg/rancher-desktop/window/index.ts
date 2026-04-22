@@ -252,36 +252,22 @@ export function openMain() {
     Shortcuts.register(
       window,
       { ...CommandOrControl, key: '2' },
-      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'calendar' }),
-      'open calendar',
-    );
-
-    Shortcuts.register(
-      window,
-      { ...CommandOrControl, key: '3' },
       () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'integrations' }),
       'open integrations',
     );
 
     Shortcuts.register(
       window,
-      { ...CommandOrControl, key: '4' },
+      { ...CommandOrControl, key: '3' },
       () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'vault' }),
       'open password manager',
     );
 
     Shortcuts.register(
       window,
-      { ...CommandOrControl, key: '5' },
-      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'extensions' }),
-      'open extensions',
-    );
-
-    Shortcuts.register(
-      window,
-      { ...CommandOrControl, key: '6' },
-      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'routines' }),
-      'open routines',
+      { ...CommandOrControl, key: '4' },
+      () => window.webContents.send('agent-command', { command: 'open-tab', mode: 'marketplace' }),
+      'open sulla studio',
     );
 
     Shortcuts.register(
@@ -305,12 +291,6 @@ export function openMain() {
       'open computer use settings',
     );
 
-    Shortcuts.register(
-      window,
-      { ...CommandOrControl, shift: true, key: 'E' },
-      () => openEditor(),
-      'open agent workbench',
-    );
   }
 
   window.on('closed', () => {

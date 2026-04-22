@@ -92,7 +92,7 @@
         </div>
 
         <div class="publish-card">
-          <h4>Submit to marketplace</h4>
+          <h4>Publish to Marketplace</h4>
           <p>Upload this draft to Sulla Cloud for admin review. Approved submissions appear in the public marketplace for others to install.</p>
           <button
             type="button"
@@ -100,7 +100,7 @@
             :disabled="!!drafts.publishing.value"
             @click="doPublishMarketplace"
           >
-            {{ drafts.publishing.value === 'marketplace' ? 'Uploading…' : 'Submit for review' }}
+            {{ drafts.publishing.value === 'marketplace' ? 'Uploading…' : 'Publish to Marketplace' }}
           </button>
         </div>
 

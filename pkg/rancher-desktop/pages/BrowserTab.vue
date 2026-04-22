@@ -137,12 +137,6 @@
       </div>
     </template>
 
-    <template v-else-if="tabMode === 'extensions'">
-      <div class="flex-1 min-h-0 overflow-auto">
-        <AgentExtensions embedded />
-      </div>
-    </template>
-
     <template v-else-if="tabMode === 'vault'">
       <div class="flex-1 min-h-0 overflow-auto">
         <!-- Vault sub-navigation: list → picker → editor -->
@@ -240,10 +234,11 @@
     </template>
 
     <!-- Routines: playbill landing page, switches to canvas when a routine is opened -->
-    <template v-else-if="tabMode === 'routines'">
+    <template v-else-if="tabMode === 'routines' || tabMode === 'marketplace'">
       <div class="flex-1 min-h-0 overflow-hidden relative">
         <RoutinesHome
           v-if="!activeRoutineId"
+          :initial-tab="routinesLandingTab ?? (tabMode === 'marketplace' ? 'marketplace' : 'mywork')"
           @open-workflow="onOpenRoutine"
           @use-template="onUseTemplate"
           @new-blank="onNewBlankRoutine"
@@ -252,12 +247,13 @@
           <AgentRoutines
             :key="activeRoutineId"
             :workflow-id="activeRoutineId"
-            @back-to-home="activeRoutineId = null"
+            :initial-mode="activeRoutineMode"
+            @back-to-home="onBackToRoutinesHome"
           />
           <button
             type="button"
             class="routines-back-btn"
-            @click="activeRoutineId = null"
+            @click="onBackToRoutinesHome"
           >
             ← All routines
           </button>
@@ -273,7 +269,6 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import AccountEditor from './AccountEditor.vue';
 import AgentCalendar from './AgentCalendar.vue';
 import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
-import AgentExtensions from './AgentExtensions.vue';
 import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentRoutines from './AgentRoutines.vue';
@@ -299,13 +294,13 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   chat:         'Chat',
   calendar:     'Calendar',
   integrations: 'Integrations',
-  extensions:   'Extensions',
   document:     'Document',
   secretary:    'Secretary',
   vault:        'Password Manager',
   account:      'My Account',
   history:      'History',
   routines:     'Routines',
+  marketplace:  'Sulla Studio',
 };
 
 const props = defineProps<{
@@ -335,9 +330,20 @@ function onSetMode(mode: BrowserTabMode) {
 // landing view (RoutinesHome) to the canvas editor (AgentRoutines).
 // `null` means show the landing view.
 const activeRoutineId = ref<string | null>(null);
+const activeRoutineMode = ref<'edit' | 'run'>('edit');
+// After backing out of a routine we always want to land on My Work,
+// even if the user originally opened the routine from the Marketplace
+// or Library tab. Null means "defer to tabMode for initial tab".
+const routinesLandingTab = ref<'mywork' | 'library' | 'marketplace' | null>(null);
 
-function onOpenRoutine(id: string) {
+function onOpenRoutine(id: string, mode: 'edit' | 'run' = 'edit') {
   activeRoutineId.value = id;
+  activeRoutineMode.value = mode;
+}
+
+function onBackToRoutinesHome() {
+  activeRoutineId.value = null;
+  routinesLandingTab.value = 'mywork';
 }
 
 async function onUseTemplate(slug: string) {

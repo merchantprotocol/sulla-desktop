@@ -10,7 +10,6 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 import './agent-tailwind.css';
 
 import AgentCalendar from '../pages/AgentCalendar.vue';
-import AgentExtensions from '../pages/AgentExtensions.vue';
 import AgentIntegrationDetail from '../pages/AgentIntegrationDetail.vue';
 import AgentIntegrations from '../pages/AgentIntegrations.vue';
 import AgentRouter from '../pages/AgentRouter.vue';
@@ -31,7 +30,6 @@ const router = createRouter({
     { path: '/Calendar', component: AgentCalendar, name: 'AgentCalendar' },
     { path: '/Integrations', component: AgentIntegrations, name: 'AgentIntegrations' },
     { path: '/Integrations/:id', component: AgentIntegrationDetail, name: 'AgentIntegrationDetail' },
-    { path: '/Extensions', component: AgentExtensions, name: 'AgentExtensions' },
     { path: '/Browser/:id', component: BrowserTabStub, name: 'BrowserTab' },
 
     { path: '/Extension/:name/:path*', component: ExtensionView, name: 'ExtensionView' },

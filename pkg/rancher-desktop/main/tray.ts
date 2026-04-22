@@ -21,7 +21,7 @@ import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
-import { openMain, send, openEditor, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
+import { openMain, send, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -62,15 +62,6 @@ export class Tray {
       },
     },
     {
-      id:    'editor',
-      label: 'Open Agent Workbench',
-      icon:  path.join(paths.resources, 'icons', 'book-open-16.png'),
-      type:  'normal',
-      click() {
-        openEditor();
-      },
-    },
-    {
       id:    'secretary-mode',
       label: 'Secretary Mode',
       icon:  path.join(paths.resources, 'icons', 'automation-play.png'),
@@ -89,12 +80,6 @@ export class Tray {
           }
         }
       },
-    },
-    { type: 'separator' },
-    {
-      id:      'extensions',
-      label:   'Extensions',
-      submenu: [{ label: 'No extensions installed', enabled: false }],
     },
     { type: 'separator' },
     {
@@ -307,12 +292,6 @@ export class Tray {
     mainEvents.on('k8s-check-state', this.k8sStateChangedEvent);
     mainEvents.on('settings-update', this.settingsUpdateEvent);
 
-    // Refresh the Extensions submenu when extensions change
-    mainEvents.on('settings-update', () => {
-      this.refreshExtensionsMenu();
-    });
-    this.refreshExtensionsMenu();
-
     // If the network connectivity diagnostic changes results, update it here.
     mainEvents.on('diagnostics-event', payload => {
       if (payload.id !== 'network-connectivity') {
@@ -517,7 +496,7 @@ export class Tray {
       });
     } else {
       // Re-enable items that were disabled when logged out
-      const loginControlled = new Set(['editor', 'docker-dashboard', 'extensions', 'secretary-mode']);
+      const loginControlled = new Set(['docker-dashboard', 'secretary-mode']);
       this.contextMenuItems.forEach((item) => {
         if (item.id && loginControlled.has(item.id)) {
           item.enabled = true;
@@ -580,84 +559,4 @@ export class Tray {
     });
   }
 
-  /**
-   * Refresh the Extensions submenu from the backend API.
-   * Each installed extension with extraUrls gets a submenu entry;
-   * hovering over the extension name shows its registered URLs.
-   */
-  protected async refreshExtensionsMenu(): Promise<void> {
-    try {
-      const credentials = await mainEvents.invoke('api-get-credentials');
-
-      if (!credentials) {
-        return;
-      }
-
-      const authHeader = `Basic ${ Buffer.from(`${ credentials.user }:${ credentials.password }`).toString('base64') }`;
-      const response = await fetch('http://127.0.0.1:6107/v1/extensions', {
-        headers: { Authorization: authHeader },
-      });
-
-      if (!response.ok) {
-        return;
-      }
-
-      const data: Record<string, {
-        version:    string;
-        metadata:   any;
-        labels:     Record<string, string>;
-        extraUrls?: { label: string; url: string }[];
-      }> = await response.json();
-
-      const extensionsMenu = this.contextMenuItems.find(item => item.id === 'extensions');
-
-      if (!extensionsMenu) {
-        return;
-      }
-
-      const entries = Object.entries(data);
-
-      if (entries.length === 0) {
-        extensionsMenu.submenu = [{ label: 'No extensions installed', enabled: false }];
-      } else {
-        extensionsMenu.submenu = entries.map(([id, ext]) => {
-          const title = ext.labels?.['org.opencontainers.image.title'] || id;
-          const urls = ext.extraUrls ?? [];
-
-          if (urls.length === 0) {
-            return {
-              label:   title,
-              enabled: false,
-            };
-          }
-
-          return {
-            label:   title,
-            submenu: urls.map(link => ({
-              label: link.label,
-              click: () => {
-                openUrlInApp(link.url);
-              },
-            })),
-          };
-        });
-      }
-
-      // Forward extensions to the custom panel
-      const panelExtensions = entries
-        .filter(([, ext]) => (ext.extraUrls ?? []).length > 0)
-        .flatMap(([id, ext]) => {
-          const title = ext.labels?.['org.opencontainers.image.title'] || id;
-
-          return (ext.extraUrls ?? []).map(link => ({
-            id,
-            label: `${ title } — ${ link.label }`,
-            url:   link.url,
-          }));
-        });
-      sendPanelState({ extensions: panelExtensions });
-    } catch (ex) {
-      console.debug(`Failed to refresh extensions tray menu: ${ ex }`);
-    }
-  }
 }

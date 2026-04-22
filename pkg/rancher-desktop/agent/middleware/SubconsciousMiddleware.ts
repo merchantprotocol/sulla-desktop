@@ -45,6 +45,29 @@ export async function runSubconsciousMiddleware(
   state: BaseThreadState,
   options: SubconsciousMiddlewareOptions,
 ): Promise<void> {
+  // Workflow-bound agents skip the entire subconscious pipeline. A
+  // running routine already has deterministic inputs (the workflow
+  // definition + node prompts) and doesn't need memory-recall /
+  // observation / summarization on every turn — those only slow the
+  // run down and muddy the live event stream.
+  //
+  // Three signals all mean "inside a routine":
+  //   - workflowNodeId        — set by PlaybookController per step
+  //   - activeWorkflow        — set by activateWorkflowOnState the moment
+  //                             a routine is primed, BEFORE the first
+  //                             graph.execute returns. Critical for the
+  //                             direct-launch path in executeRoutine,
+  //                             which calls graph.execute before
+  //                             PlaybookController has stamped a nodeId.
+  //   - scopedWorkflowId      — set by executeRoutine as a belt-and-suspenders
+  //                             marker in case activeWorkflow hasn't
+  //                             landed yet.
+  const meta = state.metadata as any;
+  if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
+    console.log('[SubconsciousMiddleware] Skipped — running inside a workflow');
+    return;
+  }
+
   const startTime = Date.now();
   const launched: string[] = [];
   const awaitedTasks: Promise<void>[] = [];

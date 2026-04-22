@@ -7,7 +7,11 @@
     <header class="d-head">
       <div class="title">
         <div class="k">
-          {{ view === 'integrations' ? 'Integrations · browse by category' : `Library · ${ totalCount } nodes` }}
+          {{
+            view === 'integrations' ? 'Integrations · browse by category'
+            : view === 'functions' ? `Functions · ${ functionItems.length } installed`
+            : `Library · ${ totalCount } nodes`
+          }}
         </div>
         <div class="t">
           Drag a card
@@ -64,11 +68,20 @@
               <span class="nm">Integrations</span>
               <span class="arr">›</span>
             </button>
+
+            <button
+              type="button"
+              class="cat cat-special"
+              @click="openFunctions"
+            >
+              <span class="nm">Functions</span>
+              <span class="arr">›</span>
+            </button>
           </div>
 
           <!-- Page 2: integration sub-categories -->
           <div
-            v-else
+            v-else-if="view === 'integrations'"
             key="integrations"
             class="nav-page"
           >
@@ -94,6 +107,30 @@
               <span class="nm">{{ cat }}</span>
             </button>
           </div>
+
+          <!-- Page 3: functions (flat list — no sub-categories) -->
+          <div
+            v-else
+            key="functions"
+            class="nav-page"
+          >
+            <button
+              type="button"
+              class="cat cat-back"
+              @click="closeFunctions"
+            >
+              <span class="arr">‹</span>
+              <span class="nm">Back</span>
+            </button>
+
+            <div class="cat-divider" />
+
+            <div class="fn-nav-hint">
+              {{ loadingFunctions ? 'Loading…' : functionItems.length === 0
+                ? 'No functions installed yet.'
+                : 'Drag any card onto the canvas.' }}
+            </div>
+          </div>
         </Transition>
       </nav>
 
@@ -109,55 +146,83 @@
             key="root-cards"
             class="cards-page"
           >
-            <div
+            <template
               v-for="item in activeItems"
               :key="item.id"
-              class="drag-card"
-              draggable="true"
-              :data-subtype="item.subtype"
-              @dragstart="onDragStart($event, item)"
             >
-              <div class="stub">
-                <div class="no">
-                  {{ item.code }}
+              <!-- Loop items render as a mini dashed frame so the drawer
+                   preview matches the thing that lands on the canvas —
+                   WYSIWYG. Same drag payload as the regular card path. -->
+              <div
+                v-if="item.subtype === 'loop'"
+                class="drag-card drag-card-loop"
+                draggable="true"
+                :data-subtype="item.subtype"
+                @dragstart="onDragStart($event, item)"
+              >
+                <div class="loop-preview">
+                  <div class="loop-preview-label">
+                    <span class="ic">↻</span>
+                    <span>Loop · {{ item.name || 'for each' }}</span>
+                  </div>
+                  <div class="loop-preview-counter">iteration</div>
+                  <div class="loop-preview-hint">
+                    Drag me onto the canvas<br>then drop cards inside
+                  </div>
                 </div>
-                <div
-                  class="av"
-                  :class="item.avatarType"
-                >
-                  {{ item.initials }}
-                </div>
-                <div class="st">
-                  {{ item.kicker }}
-                </div>
+                <div class="grab-hint">⁞⁞</div>
               </div>
-              <div class="body">
-                <div class="k">
-                  {{ item.kicker }}
+
+              <!-- Generic card (everything else). -->
+              <div
+                v-else
+                class="drag-card"
+                draggable="true"
+                :data-subtype="item.subtype"
+                @dragstart="onDragStart($event, item)"
+              >
+                <div class="stub">
+                  <div class="no">
+                    {{ item.code }}
+                  </div>
+                  <div
+                    class="av"
+                    :class="item.avatarType"
+                  >
+                    {{ item.initials }}
+                  </div>
+                  <div class="st">
+                    {{ item.kicker }}
+                  </div>
                 </div>
-                <div class="t">
-                  {{ item.name }}
+                <div class="body">
+                  <div class="k">
+                    {{ item.kicker }}
+                  </div>
+                  <div class="t">
+                    {{ item.name }}
+                  </div>
+                  <div
+                    v-if="item.role"
+                    class="r"
+                  >
+                    {{ item.role }}
+                  </div>
+                  <div
+                    v-if="item.quote"
+                    class="q"
+                  >
+                    {{ item.quote }}
+                  </div>
                 </div>
-                <div
-                  v-if="item.role"
-                  class="r"
-                >
-                  {{ item.role }}
-                </div>
-                <div
-                  v-if="item.quote"
-                  class="q"
-                >
-                  {{ item.quote }}
-                </div>
+                <div class="grab-hint">⁞⁞</div>
               </div>
-              <div class="grab-hint">⁞⁞</div>
-            </div>
+            </template>
           </div>
 
           <!-- Integration cards -->
           <div
-            v-else
+            v-else-if="view === 'integrations'"
             key="int-cards"
             class="cards-page"
           >
@@ -199,7 +264,13 @@
                     I-{{ int.id.slice(0, 3).toUpperCase() }}
                   </div>
                   <div class="av tool">
-                    {{ initials(int.name) }}
+                    <img
+                      v-if="isImageIcon(int.icon) && safeIconSrc(int.icon ?? '')"
+                      :src="safeIconSrc(int.icon ?? '') ?? ''"
+                      :alt="int.name"
+                      class="integration-icon"
+                    >
+                    <template v-else>{{ initials(int.name) }}</template>
                   </div>
                   <div class="st">
                     Integration
@@ -223,6 +294,70 @@
               </div>
             </template>
           </div>
+
+          <!-- Function cards — installed user-defined functions. -->
+          <div
+            v-else
+            key="fn-cards"
+            class="cards-page"
+          >
+            <div
+              v-if="loadingFunctions"
+              class="empty-hint"
+            >
+              <span class="ico">◷</span>
+              <span>Loading functions…</span>
+            </div>
+
+            <div
+              v-else-if="functionItems.length === 0"
+              class="empty-hint"
+            >
+              <span class="ico">∅</span>
+              <span>
+                No functions installed. Drop a function folder into
+                <code>~/sulla/functions/&lt;slug&gt;/</code> to make it show up.
+              </span>
+            </div>
+
+            <template v-else>
+              <div
+                v-for="fn in functionItems"
+                :key="fn.slug"
+                class="drag-card"
+                draggable="true"
+                :data-function="fn.slug"
+                @dragstart="onFunctionDragStart($event, fn)"
+              >
+                <div class="stub">
+                  <div class="no">
+                    F-{{ fn.slug.slice(0, 3).toUpperCase() }}
+                  </div>
+                  <div class="av tool">
+                    {{ initials(fn.name) }}
+                  </div>
+                  <div class="st">
+                    Function
+                  </div>
+                </div>
+                <div class="body">
+                  <div class="k">
+                    {{ fn.runtime }}
+                  </div>
+                  <div class="t">
+                    {{ fn.name }}
+                  </div>
+                  <div
+                    v-if="fn.description"
+                    class="q"
+                  >
+                    "{{ fn.description }}"
+                  </div>
+                </div>
+                <div class="grab-hint">⁞⁞</div>
+              </div>
+            </template>
+          </div>
         </Transition>
       </div>
     </div>
@@ -239,9 +374,11 @@ import { computed, ref } from 'vue';
 
 import {
   INTEGRATION_CATEGORIES,
+  loadFunctions,
   loadIntegrationsFor,
   ROUTINE_LIBRARY,
   ROUTINE_LIBRARY_BY_CATEGORY,
+  type FunctionInfo,
   type Integration,
   type RoutineLibraryItem,
 } from './libraryMapping';
@@ -252,7 +389,7 @@ defineEmits<{ close: [] }>();
 const library = ROUTINE_LIBRARY_BY_CATEGORY;
 const totalCount = computed(() => ROUTINE_LIBRARY.length);
 
-type DrawerView = 'root' | 'integrations';
+type DrawerView = 'root' | 'integrations' | 'functions';
 const view = ref<DrawerView>('root');
 
 // Root nav state
@@ -267,6 +404,10 @@ const activeIntegrationCategory = ref<string | null>(null);
 const integrationItems = ref<Integration[]>([]);
 const loadingIntegrations = ref(false);
 
+// Function nav state — flat list, hydrated on first open.
+const functionItems = ref<FunctionInfo[]>([]);
+const loadingFunctions = ref(false);
+
 function selectRootCategory(category: string) {
   activeCategory.value = category;
 }
@@ -279,6 +420,20 @@ function closeIntegrations() {
   view.value = 'root';
   activeIntegrationCategory.value = null;
   integrationItems.value = [];
+}
+
+async function openFunctions() {
+  view.value = 'functions';
+  loadingFunctions.value = true;
+  try {
+    functionItems.value = await loadFunctions();
+  } finally {
+    loadingFunctions.value = false;
+  }
+}
+
+function closeFunctions() {
+  view.value = 'root';
 }
 
 async function selectIntegrationCategory(cat: string) {
@@ -299,9 +454,36 @@ function initials(name: string): string {
   return words[0].slice(0, 2).toUpperCase();
 }
 
+function isImageIcon(icon?: string): boolean {
+  if (!icon) return false;
+
+  return /\.(svg|png|avif|jpg|jpeg|webp)$/i.test(icon);
+}
+
+function safeIconSrc(icon: string): string | null {
+  try {
+    return require(`@pkg/assets/images/${ icon }`);
+  } catch {
+    return null;
+  }
+}
+
 function onDragStart(event: DragEvent, item: RoutineLibraryItem) {
   if (!event.dataTransfer) return;
-  event.dataTransfer.setData('application/x-routine-subtype', item.subtype);
+  // Annotation items (sticky notes, future callouts…) use a distinct
+  // payload so the canvas drop handler branches into the annotation path
+  // instead of trying to look the subtype up in NODE_REGISTRY.
+  if (item.kind === 'annotation') {
+    event.dataTransfer.setData('application/x-routine-annotation', item.subtype);
+  } else {
+    event.dataTransfer.setData('application/x-routine-subtype', item.subtype);
+  }
+  event.dataTransfer.effectAllowed = 'copy';
+}
+
+function onFunctionDragStart(event: DragEvent, fn: FunctionInfo) {
+  if (!event.dataTransfer) return;
+  event.dataTransfer.setData('application/x-routine-function', JSON.stringify(fn));
   event.dataTransfer.effectAllowed = 'copy';
 }
 
@@ -607,6 +789,86 @@ function onIntegrationDragStart(event: DragEvent, integration: Integration) {
   transform: scale(0.98);
 }
 
+/* ── Loop drawer preview ──
+   Mini version of LoopFrameNode so the drawer shows the user what's
+   actually going to land on the canvas — dashed violet frame, label
+   pill, counter pill, hint text. Dimensions shrink-to-fit the drawer's
+   card column; the real frame gets sized at drop time. */
+.drag-card-loop {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 18px 8px 8px;
+  min-height: 110px;
+}
+.drag-card-loop:hover {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  transform: translateY(-1px);
+}
+.drag-card-loop .loop-preview {
+  position: relative;
+  width: 100%;
+  min-height: 92px;
+  padding: 20px 14px 14px;
+  border-radius: 10px;
+  border: 1.5px dashed rgba(167, 139, 250, 0.65);
+  background: rgba(52, 40, 90, 0.25);
+  box-shadow: inset 0 0 24px rgba(139, 92, 246, 0.12);
+  box-sizing: border-box;
+}
+.drag-card-loop:hover .loop-preview {
+  border-color: rgba(196, 181, 253, 0.85);
+  background: rgba(58, 42, 100, 0.32);
+  box-shadow: inset 0 0 32px rgba(139, 92, 246, 0.22), 0 0 20px rgba(139, 92, 246, 0.2);
+}
+.drag-card-loop .loop-preview-label {
+  position: absolute;
+  top: -10px;
+  left: 12px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, var(--violet-500), var(--violet-600));
+  border: 1px solid rgba(196, 181, 253, 0.5);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  color: white;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.drag-card-loop .loop-preview-label .ic {
+  font-size: 10px;
+  line-height: 1;
+}
+.drag-card-loop .loop-preview-counter {
+  position: absolute;
+  top: -10px;
+  right: 12px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(28, 20, 50, 0.95);
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  color: var(--violet-300);
+  text-transform: uppercase;
+}
+.drag-card-loop .loop-preview-hint {
+  font-family: var(--serif);
+  font-size: 11px;
+  font-style: italic;
+  color: var(--violet-200);
+  text-align: center;
+  line-height: 1.4;
+  opacity: 0.75;
+}
+
 .drag-card .stub {
   width: 52px;
   padding: 10px 4px;
@@ -643,7 +905,20 @@ function onIntegrationDragStart(event: DragEvent, integration: Integration) {
 .drag-card .stub .av.tool    { background: linear-gradient(135deg, var(--teal-400), var(--teal-600)); }
 .drag-card .stub .av.logic   { background: linear-gradient(135deg, #94a3b8, #475569); }
 .drag-card .stub .av.loop    { background: linear-gradient(135deg, #8fb3d9, var(--steel-600)); }
+.drag-card .stub .av.note    { background: linear-gradient(135deg, rgba(80, 150, 179, 0.9), rgba(80, 150, 179, 0.45)); }
 .drag-card .stub .av.default { background: linear-gradient(135deg, var(--steel-400), var(--steel-700)); }
+.drag-card .stub .av .integration-icon {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  display: block;
+}
+.fn-nav-hint {
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--steel-400, #6989b3);
+}
 .drag-card .stub .st {
   font-family: var(--mono);
   font-size: 7.5px;

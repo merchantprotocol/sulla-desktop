@@ -7,7 +7,7 @@ import { State } from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
 import setupUpdate from '@pkg/main/update';
 import Logging from '@pkg/utils/logging';
-import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openComputerUseSettings, openCaptureStudio, openMain, openEditor, getWindow, openUrlInApp } from '@pkg/window';
+import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openComputerUseSettings, openMain, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
 import { openPreferences } from '@pkg/window/preferences';
 
@@ -320,37 +320,25 @@ function getFileMenu(): MenuItem {
         click:       () => sendAgentCommand('open-tab', { mode: 'chat' }),
       },
       {
-        label:       'Open Calendar',
-        accelerator: 'CmdOrCtrl+2',
-        enabled:     userLoggedIn,
-        click:       () => sendAgentCommand('open-tab', { mode: 'calendar' }),
-      },
-      {
         label:       'Open Integrations',
-        accelerator: 'CmdOrCtrl+3',
+        accelerator: 'CmdOrCtrl+2',
         enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'integrations' }),
       },
       {
         label:       'Open Password Manager',
-        accelerator: 'CmdOrCtrl+4',
+        accelerator: 'CmdOrCtrl+3',
         enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'vault' }),
       },
       {
-        label:       'Open Extensions',
-        accelerator: 'CmdOrCtrl+5',
+        label:       'Open Sulla Studio',
+        accelerator: 'CmdOrCtrl+4',
         enabled:     userLoggedIn,
-        click:       () => sendAgentCommand('open-tab', { mode: 'extensions' }),
+        click:       () => sendAgentCommand('open-tab', { mode: 'marketplace' }),
       },
       {
-        label:       'Open Routines',
-        accelerator: 'CmdOrCtrl+6',
-        enabled:     userLoggedIn,
-        click:       () => sendAgentCommand('open-tab', { mode: 'routines' }),
-      },
-      {
-        label:   'Routines',
+        label:   'Routine File',
         enabled: userLoggedIn,
         submenu: [
           {
@@ -372,18 +360,6 @@ function getFileMenu(): MenuItem {
         ],
       },
       { type: 'separator' },
-      {
-        label:       'Open Agent Workbench',
-        accelerator: 'CmdOrCtrl+Shift+E',
-        enabled:     userLoggedIn,
-        click:       openEditor,
-      },
-      {
-        label:       'Open Capture Studio',
-        accelerator: 'CmdOrCtrl+Shift+R',
-        enabled:     userLoggedIn,
-        click:       openCaptureStudio,
-      },
       {
         label:   'Open Docker Dashboard',
         enabled: userLoggedIn,
@@ -852,10 +828,6 @@ function getWindowsApplicationMenu(): MenuItem[] {
           click: () => sendAgentCommand('open-tab', { mode: 'chat' }),
         },
         {
-          label: 'Open Calendar',
-          click: () => sendAgentCommand('open-tab', { mode: 'calendar' }),
-        },
-        {
           label: 'Open Integrations',
           click: () => sendAgentCommand('open-tab', { mode: 'integrations' }),
         },
@@ -864,19 +836,10 @@ function getWindowsApplicationMenu(): MenuItem[] {
           click: () => sendAgentCommand('open-tab', { mode: 'vault' }),
         },
         {
-          label: 'Open Extensions',
-          click: () => sendAgentCommand('open-tab', { mode: 'extensions' }),
-        },
-        {
-          label: 'Open Routines',
-          click: () => sendAgentCommand('open-tab', { mode: 'routines' }),
+          label: 'Open Sulla Studio',
+          click: () => sendAgentCommand('open-tab', { mode: 'marketplace' }),
         },
         { type: 'separator' },
-        {
-          label:       'Open Agent Workbench',
-          accelerator: 'CmdOrCtrl+Shift+E',
-          click:       openEditor,
-        },
         {
           label: 'Open Docker Dashboard',
           click: openDockerDashboard,

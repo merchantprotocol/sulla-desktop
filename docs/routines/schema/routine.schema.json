@@ -1,37 +1,26 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sulla.desktop/schemas/routine.schema.json",
-  "title": "Sulla Routine Manifest",
-  "description": "Schema for routine.yaml — the engine-facing execution manifest for a Sulla Routine. Compatible with workflow.yaml top-level metadata conventions.",
+  "title": "Sulla Routine Document",
+  "description": "Schema for a Routine — the DAG document authored on the Sulla canvas. The same document shape is stored as JSONB in the Postgres `workflows.definition` column and is serialized as `routine.yaml` for export/import. Mirrors the `WorkflowDefinition` TypeScript interface in pkg/rancher-desktop/pages/editor/workflow/types.ts.",
   "type": "object",
   "required": [
-    "apiVersion",
-    "kind",
     "id",
     "name",
     "description",
     "version",
-    "schemaversion",
-    "spec"
+    "createdAt",
+    "updatedAt",
+    "nodes",
+    "edges"
   ],
   "additionalProperties": false,
 
   "properties": {
-    "apiVersion": {
-      "type": "string",
-      "const": "sulla/v1",
-      "description": "Schema API version. Fixed to sulla/v1 for this schema revision."
-    },
-    "kind": {
-      "type": "string",
-      "const": "Routine",
-      "description": "Disambiguates routine.yaml from workflow.yaml (which has kind: Workflow)."
-    },
-
     "id": {
       "type": "string",
-      "pattern": "^routine-[a-z0-9][a-z0-9-]*[a-z0-9]$",
-      "description": "Unique identifier. Must start with 'routine-' followed by the lowercase-kebab-case slug."
+      "minLength": 1,
+      "description": "Unique identifier for the routine. Typically 'workflow-<kebab-slug>' or 'routine-<kebab-slug>'."
     },
     "name": {
       "type": "string",
@@ -40,229 +29,128 @@
     },
     "description": {
       "type": "string",
-      "minLength": 1,
-      "description": "What the routine does and when to use it. Read by the LLM for selection."
+      "description": "What the routine does and when it runs. Read by the workflow registry + LLM."
     },
-
     "version": {
-      "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$",
-      "description": "Semver version of this routine. Immutable once published."
-    },
-    "schemaversion": {
-      "type": "integer",
-      "minimum": 1,
-      "description": "Format version of the routine schema itself. Bump on breaking schema changes."
-    },
-
-    "enabled": {
-      "type": "boolean",
-      "default": true,
-      "description": "Whether this routine is active. Mirrors workflow.yaml convention."
+      "const": 1,
+      "description": "Document schema version. Bump if the routine document shape changes in a breaking way."
     },
     "createdAt": {
       "type": "string",
-      "format": "date-time",
-      "description": "ISO-8601 timestamp of creation."
+      "format": "date-time"
     },
     "updatedAt": {
       "type": "string",
-      "format": "date-time",
-      "description": "ISO-8601 timestamp of last edit."
-    },
-    "_status": {
-      "type": "string",
-      "enum": ["draft", "production", "archive"],
-      "default": "draft",
-      "description": "Lifecycle stage. Matches workflow.yaml convention."
+      "format": "date-time"
     },
 
-    "slug": {
-      "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
-      "description": "Lowercase-kebab-case identifier. Must match the directory name and the id suffix."
-    },
-    "tags": {
+    "nodes": {
       "type": "array",
-      "items": { "type": "string" },
-      "description": "Classification tags for discovery and filtering."
+      "description": "The nodes on the canvas.",
+      "items": { "$ref": "#/$defs/node" }
     },
-    "section": {
-      "type": "string",
-      "description": "Top-level grouping in the UI (e.g. 'Integrations', 'Standard Operating Procedures')."
-    },
-    "category": {
-      "type": "string",
-      "description": "Sub-grouping within a section (e.g. 'Billing', 'Content Creation')."
-    },
-    "triggers": {
+    "edges": {
       "type": "array",
-      "items": { "type": "string" },
-      "description": "Natural-language phrases that should surface this routine to the LLM."
+      "description": "Directed edges connecting nodes.",
+      "items": { "$ref": "#/$defs/edge" }
     },
-
-    "author": {
-      "type": "string",
-      "description": "Email or handle of the author."
-    },
-    "license": {
-      "type": "string",
-      "description": "License identifier (SPDX) or reference."
-    },
-    "locked": {
-      "type": "boolean",
-      "default": false,
-      "description": "When true, all edits require human approval (even pre-publish)."
-    },
-    "trust": {
-      "type": "string",
-      "enum": ["user", "verified", "marketplace"],
-      "default": "user",
-      "description": "Trust tier. Drives execution tier (shared runtime vs isolated container) and edit permissions."
-    },
-    "immutable": {
-      "type": "boolean",
-      "default": false,
-      "description": "Set to true on publish. Runtime refuses any edit that would change the signature."
-    },
-
-    "spec": {
+    "viewport": {
       "type": "object",
-      "description": "Execution specification. How the engine runs this routine.",
-      "required": ["runtime", "entrypoint"],
+      "description": "Persisted pan/zoom of the canvas.",
+      "required": ["x", "y", "zoom"],
       "additionalProperties": false,
       "properties": {
-        "runtime": {
-          "type": "string",
-          "enum": ["python", "node", "shell", "agent"],
-          "description": "Which runtime container executes this routine. 'agent' means the entrypoint is an LLM prompt, not code."
-        },
-        "entrypoint": {
-          "type": "string",
-          "description": "Path to the entry function, relative to the routine root. Format depends on runtime:\n- python: 'functions/main.py::handler'\n- node: 'functions/main.js::handler'\n- shell: 'functions/main.sh'\n- agent: 'functions/prompt.md'"
-        },
-        "compatibility": {
-          "type": "string",
-          "description": "Human-readable runtime requirements (e.g. 'python>=3.12', 'node>=20')."
-        },
-
-        "inputs": {
-          "type": "object",
-          "description": "Map of input name → JSON Schema definition.",
-          "additionalProperties": {
-            "$ref": "#/$defs/ioField"
-          }
-        },
-        "outputs": {
-          "type": "object",
-          "description": "Map of output name → JSON Schema definition.",
-          "additionalProperties": {
-            "$ref": "#/$defs/ioField"
-          }
-        },
-
-        "permissions": {
-          "type": "object",
-          "description": "Capabilities the routine requires. Enforced by the runtime container sandbox.",
-          "additionalProperties": false,
-          "properties": {
-            "network": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Allowed outbound hosts (glob patterns, e.g. 'api.stripe.com', '*.googleapis.com'). Empty array = no network."
-            },
-            "env": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Environment variable names the routine may read. Values resolved from the Sulla vault at invocation time."
-            },
-            "filesystem": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "required": ["path", "mode"],
-                "additionalProperties": false,
-                "properties": {
-                  "path": { "type": "string" },
-                  "mode": { "type": "string", "enum": ["read", "write"] }
-                }
-              },
-              "description": "Filesystem paths the routine may access beyond its own directory."
-            },
-            "secrets": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Vault secret keys the routine may request at invocation."
-            }
-          }
-        },
-
-        "timeout": {
-          "type": "string",
-          "pattern": "^\\d+(ms|s|m|h)$",
-          "description": "Max execution duration. Format: '30s', '5m', '1h'."
-        },
-        "retries": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "max": { "type": "integer", "minimum": 0 },
-            "backoff": {
-              "type": "string",
-              "enum": ["none", "linear", "exponential"]
-            }
-          }
-        },
-
-        "resources": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Glob patterns for files in resources/ that the runtime should pre-load."
-        },
-        "templates": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Glob patterns for files in templates/ that the runtime should register."
-        }
+        "x":    { "type": "number" },
+        "y":    { "type": "number" },
+        "zoom": { "type": "number" }
       }
     }
   },
 
   "$defs": {
-    "ioField": {
+    "node": {
       "type": "object",
-      "description": "A single input or output field. A subset of JSON Schema.",
-      "required": ["type"],
-      "additionalProperties": true,
+      "required": ["id", "type", "position", "data"],
+      "additionalProperties": false,
       "properties": {
-        "type": {
-          "oneOf": [
-            { "type": "string", "enum": ["string", "number", "integer", "boolean", "object", "array", "null"] },
-            {
-              "type": "array",
-              "items": { "type": "string", "enum": ["string", "number", "integer", "boolean", "object", "array", "null"] }
-            }
-          ]
-        },
-        "description": { "type": "string" },
-        "required": { "type": "boolean", "default": false },
-        "default": {},
-        "enum": { "type": "array" },
-        "pattern": { "type": "string" },
-        "format": { "type": "string" },
-        "minimum": { "type": "number" },
-        "maximum": { "type": "number" },
-        "minLength": { "type": "integer", "minimum": 0 },
-        "maxLength": { "type": "integer", "minimum": 0 },
-        "items": { "$ref": "#/$defs/ioField" },
-        "properties": {
-          "type": "object",
-          "additionalProperties": { "$ref": "#/$defs/ioField" }
-        },
-        "schema": {
+        "id": {
           "type": "string",
-          "description": "Path to an external JSON Schema file (relative to routine root), e.g. 'resources/invoice-schema.json'."
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": ["workflow", "routine", "loop-frame", "sticky-note"],
+          "description": "vue-flow node type. `workflow`/`routine` are executable graph nodes (differentiated further via `data.subtype`). `loop-frame` is a container that parents body nodes via `parentNode`. `sticky-note` is a non-executing canvas annotation."
+        },
+        "position": {
+          "type": "object",
+          "required": ["x", "y"],
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "number" },
+            "y": { "type": "number" }
+          }
+        },
+        "width":  { "type": "number", "description": "Persisted node width. Required for resizable types (loop-frame, sticky-note); optional elsewhere." },
+        "height": { "type": "number", "description": "Persisted node height. Required for resizable types." },
+        "zIndex": { "type": "number", "description": "VueFlow render order. Sticky notes use a negative zIndex so they sit behind executable nodes." },
+        "parentNode": { "type": "string", "description": "ID of a containing node (currently only loop-frame). When set, `position` is parent-local." },
+        "data": { "$ref": "#/$defs/nodeData" }
+      }
+    },
+
+    "nodeData": {
+      "type": "object",
+      "required": ["subtype", "category"],
+      "additionalProperties": true,
+      "description": "Persistent node data. `execution` state is runtime-only and MUST NOT appear in exports. `label` and `config` are required for executable nodes but optional for annotation types like sticky notes.",
+      "properties": {
+        "subtype": {
+          "type": "string",
+          "enum": [
+            "calendar", "chat-app", "heartbeat", "schedule", "sulla-desktop", "workbench", "chat-completions",
+            "agent", "integration-call", "tool-call", "orchestrator-prompt", "function",
+            "router", "condition",
+            "wait", "loop", "parallel", "merge", "sub-workflow",
+            "user-input", "response", "transfer",
+            "sticky-note"
+          ],
+          "description": "Drawn from WorkflowNodeSubtype. `function` invokes a function at ~/sulla/functions/<slug>/ via the matching runtime container. `sticky-note` is a canvas annotation and never executes."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["trigger", "agent", "routing", "flow-control", "io", "annotation"],
+          "description": "High-level role. `annotation` marks nodes the DAG walker must skip (sticky notes)."
+        },
+        "label":   { "type": "string" },
+        "config":  {
+          "type": "object",
+          "description": "Per-subtype config. Shape depends on `subtype` — see the per-subtype config interfaces in pkg/rancher-desktop/pages/editor/workflow/types.ts (TriggerNodeConfig, AgentNodeConfig, FunctionNodeConfig, RouterNodeConfig, ...). Not required for sticky notes.",
+          "additionalProperties": true
+        },
+        "content": {
+          "type": "string",
+          "description": "Sticky-note only. Markdown body of the note (GFM + line breaks). Rendered through DOMPurify on display; YouTube/Vimeo/video URLs on their own line auto-embed as iframes/video tags. Image references may be absolute HTTPS URLs or `sulla-routine-asset://<slug>/<file>` paths resolving into the routine template's `assets/` folder."
+        },
+        "bgColor": {
+          "type": "string",
+          "description": "Sticky-note only. Background fill as a CSS color string (typically rgba). Empty/omitted = use the default steel-blue. UI picker ships 7 presets but any valid CSS color persists."
         }
+      }
+    },
+
+    "edge": {
+      "type": "object",
+      "required": ["id", "source", "target"],
+      "additionalProperties": false,
+      "properties": {
+        "id":           { "type": "string", "minLength": 1 },
+        "source":       { "type": "string", "minLength": 1 },
+        "target":       { "type": "string", "minLength": 1 },
+        "sourceHandle": { "type": "string" },
+        "targetHandle": { "type": "string" },
+        "label":        { "type": "string" },
+        "animated":     { "type": "boolean" }
       }
     }
   }

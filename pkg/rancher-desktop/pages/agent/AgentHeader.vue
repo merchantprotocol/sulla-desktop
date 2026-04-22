@@ -325,28 +325,12 @@
           Chat
         </router-link>
         <router-link
-          to="/Calendar"
-          class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
-          :class="route.path === '/Calendar' ? 'text-content bg-surface' : 'text-content-secondary hover:text-content hover:bg-surface'"
-          @click="toggleMobileMenu"
-        >
-          Calendar
-        </router-link>
-        <router-link
           to="/Integrations"
           class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
           :class="route.path === '/Integrations' ? 'text-content bg-surface' : 'text-content-secondary hover:text-content hover:bg-surface'"
           @click="toggleMobileMenu"
         >
           Integrations
-        </router-link>
-        <router-link
-          to="/Extensions"
-          class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
-          :class="route.path === '/Extensions' ? 'text-content bg-surface' : 'text-content-secondary hover:text-content hover:bg-surface'"
-          @click="toggleMobileMenu"
-        >
-          Extensions
         </router-link>
         <router-link
           v-for="item in extensionMenuItems"
@@ -631,9 +615,6 @@ function handleMoreMenuAction(
   case 'integrations':
     openModeTab('integrations');
     break;
-  case 'extensions':
-    openModeTab('extensions');
-    break;
   case 'secretary':
     openModeTab('secretary');
     break;
@@ -706,8 +687,8 @@ const allTabsById = computed(() => {
     });
   }
 
-  // Browser tabs — non-browser modes (calendar, integrations, extensions) get pill style
-  const pillModes = new Set(['chat', 'calendar', 'integrations', 'extensions', 'vault', 'account', 'routines']);
+  // Browser tabs — non-browser modes (calendar, integrations, marketplace) get pill style
+  const pillModes = new Set(['chat', 'calendar', 'integrations', 'vault', 'account', 'routines', 'marketplace']);
 
   for (const bt of browserTabs) {
     const id = `browser-${ bt.id }`;

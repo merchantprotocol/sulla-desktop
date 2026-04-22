@@ -424,5 +424,238 @@ export function initSullaRoutineTemplateEvents(): void {
     return { id: workflow.id as string, name: workflow.name as string };
   });
 
+  ipcMainProxy.handle('routines-execute', async(_event: unknown, workflowId: string, triggerPayload?: string) => {
+    return await executeRoutine(workflowId, triggerPayload);
+  });
+
+  ipcMainProxy.handle('routines-abort', async(_event: unknown, executionId: string) => {
+    if (!executionId) return { aborted: false, reason: 'missing-execution-id' };
+
+    try {
+      const { GraphRegistry }   = await import('@pkg/agent/services/GraphRegistry');
+      const { abortPlaybook }   = await import('@pkg/agent/workflow/WorkflowPlaybook');
+      const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
+
+      const cached = GraphRegistry.get(executionId) as { state?: Record<string, any> } | null;
+      const state = cached?.state;
+
+      if (!state) {
+        console.warn(`[routines-abort] no cached state for executionId=${ executionId }`);
+
+        return { aborted: false, reason: 'not-found' };
+      }
+
+      const meta = (state.metadata ??= {});
+      if (meta.activeWorkflow) {
+        meta.activeWorkflow = abortPlaybook(meta.activeWorkflow);
+      }
+
+      // Signal the AbortService so any in-flight LLM fetch, tool call,
+      // or sub-agent graph unwinds immediately. Flipping playbook.status
+      // alone only stops the walker at the NEXT processNextStep boundary —
+      // which can be many seconds later if a long LLM response is streaming.
+      const abortService = meta.options?.abort;
+      if (abortService && typeof abortService.abort === 'function' && !abortService.aborted) {
+        try {
+          abortService.abort();
+        } catch (err) {
+          console.warn('[routines-abort] abortService.abort() threw:', err);
+        }
+      }
+
+      // Fan-out abort to every sub-agent PlaybookController spawned off
+      // this routine. Each sub-agent runs on its own graph state (own
+      // AbortService), so parent abort doesn't reach them automatically.
+      // PlaybookController.executeSubAgent registers every threadId on
+      // meta.activeSubAgentThreadIds and removes it on return; snapshot
+      // the list so the array mutating under us (finishing sub-agents)
+      // doesn't trip the iteration.
+      const subThreadIds: string[] = Array.isArray(meta.activeSubAgentThreadIds)
+        ? [...meta.activeSubAgentThreadIds]
+        : [];
+      for (const subThreadId of subThreadIds) {
+        try {
+          const subCached = GraphRegistry.get(subThreadId) as { state?: Record<string, any> } | null;
+          const subAbort = subCached?.state?.metadata?.options?.abort;
+          if (subAbort && typeof subAbort.abort === 'function' && !subAbort.aborted) {
+            subAbort.abort();
+          }
+        } catch (err) {
+          console.warn(`[routines-abort] sub-agent abort failed for threadId=${ subThreadId }:`, err);
+        }
+      }
+      if (subThreadIds.length > 0) {
+        console.log(`[routines-abort] fanned-out abort to ${ subThreadIds.length } sub-agent(s)`);
+      }
+
+      const channel = meta.wsChannel || 'sulla-desktop';
+
+      try {
+        getWebSocketClientService().send(channel, {
+          type:      'workflow_execution_event',
+          data:      {
+            type:      'workflow_aborted',
+            thread_id: executionId,
+            timestamp: new Date().toISOString(),
+            reason:    'user_requested',
+          },
+          timestamp: Date.now(),
+        });
+      } catch { /* WS best-effort */ }
+
+      console.log(`[routines-abort] ← ok executionId=${ executionId }`);
+
+      return { aborted: true };
+    } catch (err) {
+      console.error(`[routines-abort] ✗ executionId=${ executionId }`, err);
+
+      return { aborted: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMainProxy.handle('routines-list-runs', async(_event: unknown, workflowId: string, limit?: number) => {
+    if (!workflowId) return [];
+    try {
+      const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
+      const rows = await postgresClient.queryAll(
+        `WITH latest AS (
+           SELECT DISTINCT ON (execution_id)
+             execution_id,
+             workflow_id,
+             workflow_name,
+             node_id,
+             node_label,
+             sequence,
+             created_at
+           FROM workflow_checkpoints
+           WHERE workflow_id = $1
+           ORDER BY execution_id, sequence DESC
+         ),
+         counts AS (
+           SELECT execution_id, COUNT(*)::int AS checkpoint_count, MIN(created_at) AS started_at
+           FROM workflow_checkpoints
+           WHERE workflow_id = $1
+           GROUP BY execution_id
+         )
+         SELECT l.*, c.checkpoint_count, c.started_at
+         FROM latest l
+         JOIN counts c USING (execution_id)
+         ORDER BY l.created_at DESC
+         LIMIT $2`,
+        [workflowId, typeof limit === 'number' && limit > 0 ? limit : 25],
+      );
+
+      return rows.map((row: any) => ({
+        executionId:     row.execution_id,
+        workflowId:      row.workflow_id,
+        workflowName:    row.workflow_name,
+        lastNodeId:      row.node_id,
+        lastNodeLabel:   row.node_label,
+        checkpointCount: Number(row.checkpoint_count ?? 0),
+        startedAt:       row.started_at instanceof Date ? row.started_at.toISOString() : row.started_at,
+        endedAt:         row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+      }));
+    } catch (err) {
+      console.error('[routines-list-runs] failed:', err);
+
+      return [];
+    }
+  });
+
+  ipcMainProxy.handle('routines-load-run', async(_event: unknown, executionId: string) => {
+    if (!executionId) return null;
+    try {
+      const { WorkflowCheckpointModel } = await import('@pkg/agent/database/models/WorkflowCheckpointModel');
+      const checkpoints = await WorkflowCheckpointModel.findByExecution(executionId);
+      if (checkpoints.length === 0) return null;
+
+      const nodeOutputs: Record<string, { nodeId: string; label: string; output: unknown; completedAt: string }> = {};
+      for (const cp of checkpoints) {
+        const a = cp.attributes as any;
+        nodeOutputs[a.node_id] = {
+          nodeId:      a.node_id,
+          label:       a.node_label,
+          output:      a.node_output,
+          completedAt: a.created_at instanceof Date ? a.created_at.toISOString() : a.created_at,
+        };
+      }
+
+      const first = checkpoints[0].attributes as any;
+      const last = checkpoints[checkpoints.length - 1].attributes as any;
+
+      return {
+        executionId,
+        workflowId:      first.workflow_id,
+        workflowName:    first.workflow_name,
+        startedAt:       first.created_at instanceof Date ? first.created_at.toISOString() : first.created_at,
+        endedAt:         last.created_at instanceof Date ? last.created_at.toISOString() : last.created_at,
+        checkpointCount: checkpoints.length,
+        nodeOutputs,
+        checkpoints:     checkpoints.map((cp) => {
+          const a = cp.attributes as any;
+
+          return {
+            sequence:    a.sequence,
+            nodeId:      a.node_id,
+            nodeLabel:   a.node_label,
+            nodeSubtype: a.node_subtype,
+            nodeOutput:  a.node_output,
+            createdAt:   a.created_at instanceof Date ? a.created_at.toISOString() : a.created_at,
+          };
+        }),
+      };
+    } catch (err) {
+      console.error('[routines-load-run] failed:', err);
+
+      return null;
+    }
+  });
+
   console.log('[Sulla] Routine template IPC handlers initialized');
+}
+
+export interface RoutineExecutionResult {
+  executionId: string;
+  workflowId:  string;
+}
+
+export async function executeRoutine(
+  workflowId: string,
+  triggerPayload?: string,
+): Promise<RoutineExecutionResult> {
+  if (!workflowId) {
+    throw new Error('executeRoutine: workflowId is required');
+  }
+
+  const executionId = `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
+  const WS_CHANNEL = 'sulla-desktop';
+
+  const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+  const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
+
+  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, executionId);
+  const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
+  const state = (graphResult as { state: Record<string, any> }).state;
+
+  state.metadata = state.metadata ?? {};
+  state.metadata.scopedWorkflowId = workflowId;
+
+  const message = (triggerPayload ?? '').trim() || `Run routine ${ workflowId }`;
+
+  const activation = await activateWorkflowOnState(state as any, {
+    workflowId,
+    message,
+  });
+
+  if (!activation.ok) {
+    throw new Error(activation.responseString);
+  }
+
+  void graph.execute(state).catch((err) => {
+    console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
+  });
+
+  console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);
+
+  return { executionId, workflowId };
 }

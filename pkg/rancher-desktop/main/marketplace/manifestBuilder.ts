@@ -87,6 +87,42 @@ function describeBundleFiles(bundleRoot: string, slugPrefix: string): { files: B
   return { files, totalSize };
 }
 
+// ─── Source / origin metadata ───────────────────────────────────────
+//
+// Optional sections the envelope may carry when an artifact was IMPORTED
+// from an upstream catalog (e.g. clawhub) rather than authored natively
+// in our marketplace. Native exports leave these undefined.
+//
+// Applies to every kind (routine | skill | function | recipe).
+//
+// The marketplace worker mirrors these into the matching `source_*`
+// columns on `marketplace_templates` (migration 036) so they're
+// queryable, sortable, and don't disappear into a JSON blob.
+
+export interface ManifestSourceAuthor {
+  handle?: string | null;
+  name?:   string | null;
+  avatar?: string | null;
+}
+
+export interface ManifestSource {
+  origin:     string;                 // e.g. 'clawhub'
+  slug?:      string | null;          // slug at origin
+  url?:       string | null;          // canonical URL on origin
+  createdAt?: string | null;          // ISO 8601
+  updatedAt?: string | null;          // ISO 8601
+  author?:    ManifestSourceAuthor | null;
+}
+
+export interface ManifestSourceStats {
+  installsAllTime?: number | null;
+  installsCurrent?: number | null;
+  downloads?:       number | null;
+  stars?:           number | null;
+  comments?:        number | null;
+  versions?:        number | null;
+}
+
 // ─── Common envelope ────────────────────────────────────────────────
 
 function baseEnvelope(kind: MarketplaceKind, metadata: Record<string, unknown>) {
@@ -209,7 +245,17 @@ function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
     nodeCount:             nodes.length,
     edgeCount:             edges.length,
     triggerTypes,
+    // Full DAG inlined so marketplace consumers (the public website, the
+    // detail page in Sulla Desktop) can render a mock canvas without
+    // parsing the preview YAML. Node/edge shape matches VueFlow's
+    // serialized form — id/type/position/data for nodes,
+    // id/source/target/type/handles/label for edges.
+    nodes,
+    edges,
   };
+  if (routineDoc?.viewport && typeof routineDoc.viewport === 'object') {
+    routineSummary.viewport = routineDoc.viewport;
+  }
   if (Array.isArray(agent.required_integrations) && agent.required_integrations.length > 0) {
     routineSummary.requiredIntegrations = agent.required_integrations.map(String);
   }

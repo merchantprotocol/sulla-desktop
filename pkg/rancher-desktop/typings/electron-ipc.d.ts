@@ -319,6 +319,7 @@ export interface IpcMainInvokeEvents {
   'audio-transcribe':                      (payload: { audio: ArrayBuffer; mimeType: string; diarize?: boolean; model?: string; sessionId?: string }) => { text: string; words?: { text: string; speaker_id?: string; start?: number; end?: number }[] };
   'audio-speak':                           (payload: { text: string; voiceId?: string }) => { audio: ArrayBuffer; mimeType: string };
   'integration-get-value':                 (integrationId: string, property: string) => { value: string } | null;
+  'integration-accounts':                  (slug: string) => { integration_id: string; account_id: string; label: string; active: boolean; connected: boolean; connected_at?: Date }[];
   'desktop-session-start':                 (payload?: { callerName?: string }) => { sessionId: string | null; callId?: string; error?: string };
   'desktop-session-end':                   (sessionId: string) => { ok: boolean };
   'gateway-listener-start':                () => { ok: boolean };
@@ -365,8 +366,9 @@ export interface IpcMainInvokeEvents {
   // Workflow CRUD
   'workflow-list':          () => { id: string; name: string; updatedAt: string; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus }[];
   'workflow-get':           (workflowId: string) => any;
-  'workflow-save':          (workflow: any) => boolean;
+  'workflow-save':          (workflow: any, options?: { skipHistory?: boolean }) => boolean;
   'workflow-delete':        (workflowId: string) => boolean;
+  'workflow-duplicate':     (workflowId: string) => { id: string; name: string };
   'workflow-move':          (workflowId: string, targetStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus) => { success: boolean; newStatus: import('@pkg/pages/editor/workflow/types').WorkflowStatus };
   'workflow-watch-start':   () => boolean;
   'workflow-watch-stop':    () => boolean;
@@ -376,6 +378,20 @@ export interface IpcMainInvokeEvents {
   'workflow-db-list':     () => { id: string; name: string; description: string | null; status: import('@pkg/pages/editor/workflow/types').WorkflowStatus; updatedAt: string; nodeCount: number }[];
   'workflow-db-get':      (workflowId: string) => any;
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
+
+  // User-defined function catalog (scanned from ~/sulla/functions/<slug>/function.yaml)
+  'functions-list': () => {
+    slug:         string;
+    name:         string;
+    description:  string;
+    runtime:      'python' | 'shell' | 'node';
+    inputs:       Record<string, Record<string, unknown>>;
+    outputs:      Record<string, Record<string, unknown>>;
+    integrations: {
+      slug: string;
+      env:  Record<string, string>;
+    }[];
+  }[];
 
   // Routine template registry (scanned from ~/sulla/routines/<slug>/routine.yaml)
   'routines-template-list':        () => {
@@ -400,6 +416,10 @@ export interface IpcMainInvokeEvents {
   'routines-export':               (workflowId: string) => { path: string } | { canceled: true } | { error: string };
   'routines-export-template':      (slug: string) => { path: string } | { canceled: true } | { error: string };
   'routines-import':               () => { slug: string; id: string; name: string } | { canceled: true } | { error: string };
+  'routines-publish-to-marketplace': (workflowId: string) =>
+    | { templateId: string; slug: string; name: string; status: string; bundleSize: number }
+    | { needs_auth: true }
+    | { error: string };
 
   // #region Bundles (cross-kind marketplace install + publish)
   // Install: fetch manifest + zip from the marketplace, extract into the

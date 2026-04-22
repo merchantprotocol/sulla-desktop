@@ -23,7 +23,6 @@ const router = createRouter({
     { path: '/Calendar', redirect: '/' },
     { path: '/Filesystem', redirect: '/' },
     { path: '/Integrations', redirect: '/' },
-    { path: '/Extensions', redirect: '/' },
   ],
 });
 
