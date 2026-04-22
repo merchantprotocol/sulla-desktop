@@ -8,6 +8,32 @@ import semver from 'semver';
 import type { ServiceEntry } from '@pkg/backend/k8s';
 import { SnapshotDialog, SnapshotEvent } from '@pkg/main/snapshots/types';
 import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
+
+/**
+ * Row shape returned by the marketplace `GET /marketplace/browse` endpoint
+ * and embedded inside the `GET /marketplace/templates/:id` detail response
+ * (alongside a `manifest` field). Matches the `sulla/v3` browse promotions
+ * documented in docs/marketplace/api.md.
+ */
+export interface MarketplaceBrowseRow {
+  id:                    string;
+  kind:                  'routine' | 'skill' | 'function' | 'recipe';
+  slug:                  string;
+  name:                  string;
+  description?:          string | null;
+  tagline?:              string | null;
+  version:               string;
+  category?:             string | null;
+  author_contractor_id:  string;
+  author_display?:       string | null;
+  tags:                  string[];
+  featured?:             boolean;
+  hero_media?:           { type: string; url: string; poster?: string } | null;
+  bundle_size:           number;
+  download_count:        number;
+  created_at:            string;
+  updated_at:            string;
+}
 /**
  * IpcMainEvents describes events the renderer can send to the main process,
  * i.e. ipcRenderer.send() -> ipcMain.on().
@@ -132,6 +158,16 @@ export interface IpcMainEvents {
 
   // #region IPC Message Bus
   'message-bus:send': (channelId: string, message: any) => void;
+  // #endregion
+
+  // #region Routine menu context (renderer → main)
+  // Pushed by RoutinesHome / AgentRoutines when the visible surface changes.
+  // Drives enable/disable of File → Routines menu items.
+  'app-state:set-routine-context': (ctx:
+    | { mode: 'routine';  id: string;   name: string }
+    | { mode: 'template'; slug: string; name: string }
+    | null
+  ) => void;
   // #endregion
 
   // #region Conversation History
@@ -342,9 +378,200 @@ export interface IpcMainInvokeEvents {
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
 
   // Routine template registry (scanned from ~/sulla/routines/<slug>/routine.yaml)
-  'routines-template-list':        () => { slug: string; name: string; description: string; version: string; section: string; category: string; runtime: string | null; tags: string[]; inputCount: number; outputCount: number; permissions: string }[];
+  'routines-template-list':        () => {
+    slug:                   string;
+    id:                     string;
+    name:                   string;
+    description:            string;
+    version:                string;
+    nodeCount:              number;
+    edgeCount:              number;
+    triggerTypes:           string[];
+    updatedAt:              string;
+    hasAgentMd?:            boolean;
+    summary?:               string;
+    requiredIntegrations?:  string[];
+    requiredFunctions?:     string[];
+  }[];
   'routines-template-instantiate': (slug: string) => { id: string; name: string };
   'routines-create-blank':         () => { id: string; name: string };
+  'routines-execute':              (workflowId: string, triggerPayload?: string) => { executionId: string; workflowId: string };
+  'routines-abort':                (executionId: string) => { aborted: boolean; reason?: string };
+  'routines-export':               (workflowId: string) => { path: string } | { canceled: true } | { error: string };
+  'routines-export-template':      (slug: string) => { path: string } | { canceled: true } | { error: string };
+  'routines-import':               () => { slug: string; id: string; name: string } | { canceled: true } | { error: string };
+
+  // #region Bundles (cross-kind marketplace install + publish)
+  // Install: fetch manifest + zip from the marketplace, extract into the
+  // kind's install target, and (for recipes) run the existing extension
+  // install pipeline against local assets. Does NOT auto-start recipes —
+  // the user clicks Launch separately from the library UI.
+  'bundles-install-from-marketplace': (templateId: string) => {
+    kind:        'routine' | 'skill' | 'function' | 'recipe';
+    slug:        string;
+    templateId:  string;
+    name:        string;
+    installedAt: string;
+  } | { error: string };
+
+  // Publish: build a sulla/v3 manifest from a local bundle folder, then
+  // two-step submit (POST /submit-manifest → PUT /bundle).
+  'bundles-publish': (args: {
+    kind:         'routine' | 'skill' | 'function' | 'recipe';
+    slug?:        string;
+    extensionId?: string;
+    overrides?:   { name?: string; description?: string; version?: string; tags?: string[] };
+  }) => {
+    templateId:    string;
+    slug:          string;
+    bundle_status: 'uploaded';
+    bundle_size:   number;
+    status:        'pending';
+  } | { error: string };
+
+  // Bulk publisher — iterates a directory of sibling bundle folders
+  // (e.g. `sulla-recipes/recipes/`) and publishes each. Continues on
+  // individual errors; per-folder results + summary counts come back.
+  'bundles-publish-bulk-from-dir': (args: {
+    sourceDir: string;
+    kind:      'routine' | 'skill' | 'function' | 'recipe';
+    filter?:   string[];
+    dryRun?:   boolean;
+  }) => {
+    results: Array<{
+      slug:        string;
+      status:      'ok' | 'skipped' | 'error';
+      templateId?: string;
+      message?:    string;
+    }>;
+    summary: { ok: number; error: number; total: number };
+  } | { error: string };
+  // #endregion
+
+  // Marketplace (Cloudflare workers, sulla/v3 manifest+bundle).
+  // Every call is JWT-gated via getCurrentAccessToken(); `{ error }` comes
+  // back when the caller isn't signed in, the network fails, or the server
+  // returns a non-2xx.
+  'marketplace-browse':  (opts?: {
+    kind?:  'routine' | 'skill' | 'function' | 'recipe';
+    q?:     string;
+    sort?:  'popular' | 'newest' | 'featured';
+    page?:  number;
+    limit?: number;
+  }) => {
+    templates: Array<MarketplaceBrowseRow>;
+    total:     number;
+    page:      number;
+    limit:     number;
+  } | { error: string };
+  'marketplace-detail':  (id: string) => {
+    template: MarketplaceBrowseRow & { manifest: Record<string, unknown> };
+  } | { error: string };
+  'marketplace-install': (id: string) => {
+    kind:      'routine' | 'skill' | 'function' | 'recipe';
+    slug:      string;
+    path:      string;
+    name:      string;
+  } | { error: string };
+
+  // Library — reads the local on-disk registries populated by marketplace installs
+  // (plus manual folders). Each returns a flat list the Studio → Library tab
+  // renders in its corresponding panel.
+  'library-list-skills':   () => Array<{
+    slug:         string;
+    name:         string;
+    description:  string;
+    category?:    string;
+    condition?:   string;
+    promptLength: number;
+    updatedAt:    string;
+  }>;
+  'library-list-recipes':  () => Array<{
+    slug:         string;
+    name:         string;
+    description:  string;
+    version:      string;
+    image?:       string;
+    extension?:   string;
+    updatedAt:    string;
+  }>;
+  /** Reveal a library item on disk in the OS file manager. */
+  'library-reveal': (kind: 'routines' | 'skills' | 'functions' | 'recipes', slug: string) => { revealed: boolean; path?: string; error?: string };
+  /**
+   * Build a sulla/v3-shaped `{ template, manifest }` payload for a local
+   * library item so the detail drawer can render it with the same component
+   * used for marketplace entries. Reads the core doc, README, and file tree
+   * directly from disk; does NOT hit the network.
+   */
+  'library-read-manifest': (
+    kind: 'routines' | 'skills' | 'functions' | 'recipes',
+    slug: string,
+  ) => {
+    template: MarketplaceBrowseRow & { manifest: Record<string, unknown> };
+  } | { error: string };
+
+  // ── Drafts (Phase 2) ───────────────────────────────────────
+  // Library items can be "forked" into an editable DB row (the draft).
+  // Edits live in the draft until the user Publishes, at which point the
+  // draft materialises back to ~/sulla/<kind>s/<slug>/ or to the marketplace.
+  'library-fork':           (kind: 'skill' | 'function' | 'recipe', slug: string) => { id: string } | { error: string };
+  'library-drafts-list':    (kind?: 'skill' | 'function' | 'recipe') => Array<{
+    id:         string;
+    kind:       'skill' | 'function' | 'recipe';
+    slug:       string;
+    base_slug:  string | null;
+    name:       string;
+    updated_at: string;
+  }>;
+  'library-draft-get':      (id: string) => {
+    id:            string;
+    kind:          'skill' | 'function' | 'recipe';
+    slug:          string;
+    base_slug:     string | null;
+    manifest_json: Record<string, unknown>;
+    files_json:    Record<string, string>;
+    created_at:    string;
+    updated_at:    string;
+  } | { error: string };
+  'library-draft-save':     (id: string, patch: {
+    slug?:         string;
+    manifest_json?: Record<string, unknown>;
+    files_json?:    Record<string, string>;
+  }) => { ok: true } | { error: string };
+  'library-draft-delete':   (id: string) => { ok: true } | { error: string };
+
+  // ── Publish (Phase 3) ──────────────────────────────────────
+  /** Materialise a draft back to ~/sulla/<kind>s/<targetSlug>/. */
+  'library-draft-publish-local':       (id: string, targetSlug?: string) => { path: string; slug: string } | { error: string };
+  /** Submit the draft to the marketplace (v3 two-step). */
+  'library-draft-publish-marketplace': (id: string) => { templateId: string; bundleStatus: string } | { error: string };
+  'routines-list-runs':            (workflowId: string, limit?: number) => Array<{
+    executionId:     string;
+    workflowId:      string;
+    workflowName:    string;
+    lastNodeId:      string;
+    lastNodeLabel:   string;
+    checkpointCount: number;
+    startedAt:       string;
+    endedAt:         string;
+  }>;
+  'routines-load-run':             (executionId: string) => {
+    executionId:     string;
+    workflowId:      string;
+    workflowName:    string;
+    startedAt:       string;
+    endedAt:         string;
+    checkpointCount: number;
+    nodeOutputs:     Record<string, { nodeId: string; label: string; output: unknown; completedAt: string }>;
+    checkpoints:     Array<{
+      sequence:    number;
+      nodeId:      string;
+      nodeLabel:   string;
+      nodeSubtype: string;
+      nodeOutput:  unknown;
+      createdAt:   string;
+    }>;
+  } | null;
 
   // Workflow execution
   'workflow-execute':          (workflowId: string, triggerPayload: unknown) => { executionId: string };

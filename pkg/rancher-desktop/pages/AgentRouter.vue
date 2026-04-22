@@ -274,6 +274,45 @@ function onAgentCommand(_event: any, args: any) {
     router.push(`/Browser/${ tab.id }`);
     break;
   }
+  case 'routines:import': {
+    // Fire IPC. On success the routines tab scanner picks up the new
+    // folder on its next refresh — we open the tab to trigger that.
+    (ipcRenderer.invoke as any)('routines-import').then((result: any) => {
+      if (result?.canceled) return;
+      if (result?.error) {
+        console.warn('[Routines] Import failed:', result.error);
+
+        return;
+      }
+      // Surface the new template by switching to the routines tab.
+      const tab = createTab('about:blank', { mode: 'routines' } as any);
+
+      router.push(`/Browser/${ tab.id }`);
+    }).catch((err: unknown) => {
+      console.error('[Routines] Import IPC error:', err);
+    });
+    break;
+  }
+  case 'routines:export': {
+    const id = args.id;
+    if (!id) break;
+    (ipcRenderer.invoke as any)('routines-export', id).then((result: any) => {
+      if (result?.error) console.warn('[Routines] Export failed:', result.error);
+    }).catch((err: unknown) => {
+      console.error('[Routines] Export IPC error:', err);
+    });
+    break;
+  }
+  case 'routines:export-template': {
+    const slug = args.slug;
+    if (!slug) break;
+    (ipcRenderer.invoke as any)('routines-export-template', slug).then((result: any) => {
+      if (result?.error) console.warn('[Routines] Template export failed:', result.error);
+    }).catch((err: unknown) => {
+      console.error('[Routines] Template export IPC error:', err);
+    });
+    break;
+  }
   }
 }
 

@@ -64,6 +64,13 @@
       >
         Preview
       </button>
+      <button
+        type="button"
+        class="btn ghost"
+        @click="$emit('export')"
+      >
+        Export
+      </button>
     </div>
   </div>
 </template>
@@ -78,6 +85,7 @@ defineProps<{
 defineEmits<{
   (e: 'use'): void;
   (e: 'preview'): void;
+  (e: 'export'): void;
 }>();
 </script>
 

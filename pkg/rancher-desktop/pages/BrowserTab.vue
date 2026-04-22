@@ -950,9 +950,9 @@ onUnmounted(() => {
   position: absolute;
   top: 18px;
   left: 58px;
-  // Below the NodeDrawer (z-index 10) so the library can slide over
-  // the back button when opened. Above the canvas chrome (brackets at
-  // z-index 4) so it remains visible the rest of the time.
+  /* Below the NodeDrawer (z-index 10) so the library can slide over
+     the back button when opened. Above the canvas chrome (brackets at
+     z-index 4) so it remains visible the rest of the time. */
   z-index: 5;
   padding: 6px 12px;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;

@@ -68,17 +68,62 @@ interface TemplateManifest {
 }
 
 export interface TemplateSummaryRow {
-  slug:        string;
-  name:        string;
-  description: string;
-  version:     string;
-  section:     string;
-  category:    string;
-  runtime:     string | null;
-  tags:        string[];
-  inputCount:  number;
-  outputCount: number;
-  permissions: string;
+  slug:         string;
+  id:           string;
+  name:         string;
+  description:  string;
+  version:      string;
+  nodeCount:    number;
+  edgeCount:    number;
+  /** Subtypes of every node whose `data.category === 'trigger'`. */
+  triggerTypes: string[];
+  updatedAt:    string;
+
+  // ─── AGENT.md metadata (all optional — present only when the template
+  // ships an AGENT.md with parseable YAML frontmatter) ────────────────
+  hasAgentMd?:           boolean;
+  /** One-line pitch from AGENT.md frontmatter `summary`. Falls back to `description`. */
+  summary?:              string;
+  /** Integration slugs the routine needs available. */
+  requiredIntegrations?: string[];
+  /** Function slugs that must exist at ~/sulla/functions/<slug>/. */
+  requiredFunctions?:    string[];
+}
+
+/**
+ * AGENT.md is a markdown file with optional YAML frontmatter between
+ * `---` fences. We only care about the frontmatter — the body is
+ * orchestrator-facing prose, not summary material.
+ */
+interface AgentFrontmatter {
+  name?:                     string;
+  summary?:                  string;
+  triggers?:                 string[];
+  required_integrations?:    string[];
+  required_vault_accounts?:  string[];
+  required_functions?:       string[];
+  entry_node?:               string;
+}
+
+function readAgentMd(templateDir: string): AgentFrontmatter | null {
+  const agentPath = path.join(templateDir, 'AGENT.md');
+  if (!fs.existsSync(agentPath)) return null;
+
+  try {
+    const raw = fs.readFileSync(agentPath, 'utf-8');
+    // Frontmatter must start at byte 0 (leading --- newline) to count.
+    // Anything else and we treat the file as body-only markdown.
+    const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!match) return {}; // file exists but no frontmatter — still "has AGENT.md"
+
+    const parsed = yaml.parse(match[1]);
+
+    return (parsed && typeof parsed === 'object') ? parsed as AgentFrontmatter : {};
+  } catch (err) {
+    console.warn(`[Sulla] Failed to parse AGENT.md at ${ agentPath }:`, err);
+
+    return null;
+  }
 }
 
 function readManifest(manifestPath: string): TemplateManifest | null {
@@ -91,6 +136,69 @@ function readManifest(manifestPath: string): TemplateManifest | null {
 
     return null;
   }
+}
+
+// ─── DAG-shape parsing (routine.yaml as a graph doc) ────────────────
+// routine.yaml is overloaded — it's both an asset manifest AND a DAG
+// document (nodes/edges/viewport). The scanner reads it as a DAG to
+// project nodeCount/edgeCount/triggerTypes into the template summary;
+// the instantiate handler reads it as a manifest via readManifest().
+
+interface RoutineNodeLike {
+  id?:       string;
+  type?:     string;
+  position?: { x: number; y: number };
+  data?: {
+    subtype?:  string;
+    category?: string;
+    label?:    string;
+    [k: string]: unknown;
+  };
+}
+
+interface RoutineEdgeLike {
+  id?:     string;
+  source?: string;
+  target?: string;
+  [k: string]: unknown;
+}
+
+interface RoutineDocument {
+  id?:          string;
+  name?:        string;
+  description?: string;
+  version?:     string | number;
+  createdAt?:   string;
+  updatedAt?:   string;
+  enabled?:     boolean;
+  nodes?:       RoutineNodeLike[];
+  edges?:       RoutineEdgeLike[];
+  viewport?:    { x: number; y: number; zoom: number };
+  [k: string]:  unknown;
+}
+
+function readRoutineDoc(docPath: string): RoutineDocument | null {
+  try {
+    const raw = fs.readFileSync(docPath, 'utf-8');
+
+    return yaml.parse(raw) as RoutineDocument;
+  } catch (err) {
+    console.warn(`[Sulla] Failed to parse routine document ${ docPath }:`, err);
+
+    return null;
+  }
+}
+
+function extractTriggerTypes(doc: RoutineDocument): string[] {
+  const seen = new Set<string>();
+  const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
+  for (const node of nodes) {
+    if (node?.data?.category === 'trigger' && typeof node.data.subtype === 'string') {
+      seen.add(node.data.subtype);
+    }
+  }
+
+  return Array.from(seen);
 }
 
 /** Render the permissions map into a compact single-line hint. */
@@ -111,20 +219,45 @@ function summarizePermissions(spec?: TemplateManifest['spec']): string {
   return parts.join(' · ');
 }
 
-function toSummary(slug: string, manifest: TemplateManifest): TemplateSummaryRow {
-  return {
+function toSummary(slug: string, doc: RoutineDocument, templateDir: string): TemplateSummaryRow {
+  const agent = readAgentMd(templateDir);
+
+  // AGENT.md wins on display name / summary when present — it's the
+  // orchestrator-curated copy, whereas `doc.name` / `doc.description`
+  // come from whatever the canvas dumped. Fall back cleanly.
+  const name = (agent?.name && agent.name.trim()) || String(doc.name ?? slug);
+  const description = String(doc.description ?? '').trim().replace(/\s+/g, ' ');
+  const summary = (agent?.summary && agent.summary.trim()) || description;
+
+  // AGENT.md's `triggers:` is a hint list, not a source of truth. The
+  // real triggers are the nodes in the DAG. We still extract
+  // extractTriggerTypes() below for the card's quick-glance badge row.
+  const triggerTypes = extractTriggerTypes(doc);
+
+  const row: TemplateSummaryRow = {
     slug,
-    name:        String(manifest.name ?? slug),
-    description: String(manifest.description ?? '').trim().replace(/\s+/g, ' '),
-    version:     String(manifest.version ?? '0.0.0'),
-    section:     String(manifest.section ?? 'Uncategorized'),
-    category:    String(manifest.category ?? 'ops'),
-    runtime:     manifest.spec?.runtime ? String(manifest.spec.runtime) : null,
-    tags:        Array.isArray(manifest.tags) ? manifest.tags.map(String) : [],
-    inputCount:  Object.keys(manifest.spec?.inputs ?? {}).length,
-    outputCount: Object.keys(manifest.spec?.outputs ?? {}).length,
-    permissions: summarizePermissions(manifest.spec),
+    id:           String(doc.id ?? slug),
+    name,
+    description,
+    version:      doc.version != null ? String(doc.version) : '1',
+    nodeCount:    Array.isArray(doc.nodes) ? doc.nodes.length : 0,
+    edgeCount:    Array.isArray(doc.edges) ? doc.edges.length : 0,
+    triggerTypes,
+    updatedAt:    String(doc.updatedAt ?? ''),
   };
+
+  if (agent !== null) {
+    row.hasAgentMd = true;
+    if (summary && summary !== description) row.summary = summary;
+    if (Array.isArray(agent.required_integrations) && agent.required_integrations.length > 0) {
+      row.requiredIntegrations = agent.required_integrations.map(String);
+    }
+    if (Array.isArray(agent.required_functions) && agent.required_functions.length > 0) {
+      row.requiredFunctions = agent.required_functions.map(String);
+    }
+  }
+
+  return row;
 }
 
 // ─── Workflow wrapping ────────────────────────────────────────────
@@ -212,11 +345,12 @@ export function initSullaRoutineTemplateEvents(): void {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const manifestPath = path.join(root, entry.name, 'routine.yaml');
-      if (!fs.existsSync(manifestPath)) continue;
-      const manifest = readManifest(manifestPath);
-      if (!manifest) continue;
-      summaries.push(toSummary(entry.name, manifest));
+      const templateDir = path.join(root, entry.name);
+      const docPath = path.join(templateDir, 'routine.yaml');
+      if (!fs.existsSync(docPath)) continue;
+      const doc = readRoutineDoc(docPath);
+      if (!doc) continue;
+      summaries.push(toSummary(entry.name, doc, templateDir));
     }
 
     // Stable ordering — alphabetical by display name.
@@ -280,8 +414,9 @@ export function initSullaRoutineTemplateEvents(): void {
     const WorkflowModel = await importWorkflowModel();
 
     await WorkflowModel.upsertFromDefinition(workflow, {
-      status:       'draft',
-      changeReason: `instantiated from template:${ slug }`,
+      status:             'draft',
+      changeReason:       `instantiated from template:${ slug }`,
+      sourceTemplateSlug: slug,
     });
 
     console.log(`[Sulla] Instantiated template "${ slug }" as workflow "${ workflow.id }"`);

@@ -23,10 +23,10 @@
           </div>
           <div>
             <div class="brand-name">
-              Sulla Workbench
+              Sulla Studio
             </div>
             <div class="brand-sub">
-              Agent Routines
+              Agent assets + marketplace
             </div>
           </div>
         </div>
@@ -34,20 +34,36 @@
           <button
             type="button"
             class="tab"
-            :class="{ on: activeTab === 'routines' }"
-            @click="activeTab = 'routines'"
+            :class="{ on: activeTab === 'mywork' }"
+            @click="activeTab = 'mywork'"
           >
-            My Routines
+            My Work
             <span class="tab-num">{{ routinesController.routines.value.length }}</span>
           </button>
           <button
             type="button"
             class="tab"
-            :class="{ on: activeTab === 'templates' }"
-            @click="activeTab = 'templates'"
+            :class="{ on: activeTab === 'library' }"
+            @click="activeTab = 'library'"
           >
-            My Templates
-            <span class="tab-num">{{ templatesController.templates.value.length }}</span>
+            Library
+            <span class="tab-num">{{ totalLibraryCount }}</span>
+          </button>
+          <button
+            type="button"
+            class="tab"
+            :class="{ on: activeTab === 'marketplace' }"
+            @click="activeTab = 'marketplace'"
+          >
+            Marketplace
+          </button>
+          <button
+            type="button"
+            class="tab import-btn"
+            :title="'Import a .routine.zip or a routine folder'"
+            @click="onImport"
+          >
+            + Import
           </button>
         </nav>
       </div>
@@ -57,12 +73,12 @@
         <div class="kicker">
           <span class="d" />{{ heroKicker }}
         </div>
-        <h1>Routines.</h1>
+        <h1>{{ heroTitle }}</h1>
         <div class="dek">
           {{ heroDek }}
         </div>
         <div
-          v-if="activeTab === 'routines' && routinesController.routines.value.length > 0"
+          v-if="activeTab === 'mywork' && myWorkView === 'active' && routinesController.routines.value.length > 0"
           class="rollup-row"
         >
           <div>
@@ -80,20 +96,48 @@
         </div>
       </div>
 
-      <!-- ═══════ MY ROUTINES TAB ═══════ -->
-      <template v-if="activeTab === 'routines'">
+      <!-- ═══════ MY WORK TAB ═══════ -->
+      <template v-if="activeTab === 'mywork'">
+        <!-- sub-view toggle: Active routines vs. Archive -->
+        <div class="subtabs">
+          <button
+            type="button"
+            class="subtab"
+            :class="{ on: myWorkView === 'active' }"
+            @click="myWorkView = 'active'"
+          >
+            Active
+            <span class="subtab-num">{{ routinesController.routines.value.length }}</span>
+          </button>
+          <button
+            type="button"
+            class="subtab"
+            :class="{ on: myWorkView === 'archive' }"
+            @click="myWorkView = 'archive'"
+          >
+            Archive
+            <span class="subtab-num">{{ routinesController.archived.value.length }}</span>
+          </button>
+        </div>
+      </template>
+
+      <!-- ═══════ MY WORK → ACTIVE ═══════ -->
+      <template v-if="activeTab === 'mywork' && myWorkView === 'active'">
+        <!-- Booting state — the app shell repaints tabs from localStorage
+             before the Electron backend is up. Show a benign "warming up"
+             message instead of blowing up with a DB connection error. -->
         <EmptyState
           v-if="routinesController.isEmpty.value"
           kicker="No routines yet"
           title="Your stage is empty."
-          message="You haven't built a routine yet. Start from a template — five are waiting in the wings — or compose one from scratch on the canvas."
+          message="You haven't built a routine yet. Start from a template — some are waiting in your Library — or compose one from scratch on the canvas."
         >
           <button
             type="button"
             class="btn primary"
-            @click="activeTab = 'templates'"
+            @click="activeTab = 'library'"
           >
-            Browse templates →
+            Browse your library →
           </button>
           <button
             type="button"
@@ -172,67 +216,61 @@
         </template>
       </template>
 
-      <!-- ═══════ MY TEMPLATES TAB ═══════ -->
-      <template v-else>
-        <div class="template-search">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <circle
-              cx="11"
-              cy="11"
-              r="8"
-            />
-            <line
-              x1="21"
-              y1="21"
-              x2="16.65"
-              y2="16.65"
-            />
-          </svg>
-          <input
-            v-model="templatesController.search.value"
-            type="text"
-            placeholder="Search templates by name, tag, or category…"
-          >
-          <span class="template-count">
-            {{ templatesController.filtered.value.length }} of {{ templatesController.templates.value.length }}
-          </span>
-        </div>
-
+      <!-- ═══════ MY WORK → ARCHIVE ═══════ -->
+      <template v-else-if="activeTab === 'mywork' && myWorkView === 'archive'">
         <EmptyState
-          v-if="templatesController.hasNoMatches.value"
-          class="empty-small"
-          kicker="No matches"
-          :title="noMatchesTitle"
-          message="Try a shorter search or clear the filter."
-        />
+          v-if="routinesController.archived.value.length === 0"
+          kicker="The vault is empty"
+          title="Nothing archived."
+          message="No archived routines. When you archive one from Active, it lands here."
+        >
+          <button
+            type="button"
+            class="btn primary"
+            @click="myWorkView = 'active'"
+          >
+            ← Back to Active
+          </button>
+        </EmptyState>
 
         <template v-else>
           <ActSection
-            act-num="Registry"
-            title="Templates on disk"
-            :count-label="templatesCountLabel"
+            act-num="Vault"
+            title="Archived routines"
+            :count-label="archivedCountLabel"
           >
-            <TemplateStrip
-              v-for="t in templatesController.filtered.value"
-              :key="t.slug"
-              :template="t"
-              @use="onUseTemplate(t.slug)"
+            <RoutineStrip
+              v-for="r in routinesController.archived.value"
+              :key="r.id"
+              :routine="r"
+              primary-label="Restore"
+              secondary-label="Open"
+              @primary="onRestoreRoutine(r.id)"
+              @secondary="onOpenRoutine(r.id)"
+              @open="onOpenRoutine(r.id)"
             />
           </ActSection>
 
           <div class="closer">
             <div class="closer-sub">
-              Templates live in <code>~/sulla/routines/</code> — each is a standalone git repo you can version and share.
+              Archived routines stay in the database — restore any of them and they return to Active.
             </div>
           </div>
         </template>
+      </template>
+
+      <!-- ═══════ LIBRARY TAB ═══════ -->
+      <template v-else-if="activeTab === 'library'">
+        <LibraryTab
+          @use-template="onUseTemplate"
+        />
+      </template>
+
+      <!-- ═══════ MARKETPLACE TAB ═══════ -->
+      <template v-else-if="activeTab === 'marketplace'">
+        <MarketplaceTab
+          @installed="onMarketplaceInstalled"
+        />
       </template>
         </div>
 
@@ -240,7 +278,7 @@
              so it reads as "end of document" rather than a sticky bar. -->
         <div class="ribbon">
           <div class="l">
-            <span>Routines</span>
+            <span>Studio</span>
             <span class="tc">{{ ribbonStatusLabel }}</span>
           </div>
           <div class="c">
@@ -261,16 +299,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import ActSection from '@pkg/components/routines/ActSection.vue';
 import EmptyState from '@pkg/components/routines/EmptyState.vue';
+import LibraryTab from '@pkg/components/routines/LibraryTab.vue';
+import MarketplaceTab from '@pkg/components/routines/MarketplaceTab.vue';
 import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
-import TemplateStrip from '@pkg/components/routines/TemplateStrip.vue';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-type Tab = 'routines' | 'templates';
+import { useStartupProgress } from './agent/useStartupProgress';
+
+type Tab = 'mywork' | 'library' | 'marketplace';
+type MyWorkView = 'active' | 'archive';
 
 const emit = defineEmits<{
   (e: 'open-workflow', id: string): void
@@ -278,18 +321,44 @@ const emit = defineEmits<{
   (e: 'new-blank'): void
 }>();
 
-const activeTab = ref<Tab>('routines');
+const activeTab = ref<Tab>('mywork');
+const myWorkView = ref<MyWorkView>('active');
 
 // Composables = the controller layer. The view only reads their reactive
 // state and forwards user intents back to them or up to the parent.
 const routinesController = useRoutines();
 const templatesController = useTemplates();
 
-onMounted(async() => {
+// Total count across all four library kinds — shown on the Library tab button.
+// We reuse `templatesController.templates` for routines (already loaded) and
+// let the Library tab component hydrate the rest lazily; this is a rough
+// lower bound until the user opens the Library tab.
+const totalLibraryCount = computed(() => templatesController.templates.value.length);
+
+// The playbill can't query Postgres until the backend has booted — the
+// tab is restored from localStorage on first paint, which regularly
+// beats the Electron main-process bring-up. Gate the initial load on
+// `systemReady` and reload automatically the moment it flips true, so
+// the first real render gets real data instead of an ECONNREFUSED.
+const { systemReady } = useStartupProgress();
+
+async function loadAll() {
   await Promise.all([
     routinesController.load(),
     templatesController.load(),
   ]);
+}
+
+onMounted(() => {
+  if (systemReady.value) {
+    void loadAll();
+  }
+});
+
+// Re-fire when readiness toggles true. Handles both the first-boot race
+// and any later reboot of the backend (settings reset, VM restart, etc).
+watch(systemReady, (ready, prev) => {
+  if (ready && !prev) void loadAll();
 });
 
 // Display-layer string derivations. Kept as computeds so the template
@@ -297,24 +366,48 @@ onMounted(async() => {
 // terse and lets the eslint style rules stay strict.
 
 // Hero kicker shifts with the active tab. Playbill-adjacent phrasing,
-// but contextual so the two tabs feel like different places.
-const heroKicker = computed(() =>
-  activeTab.value === 'routines' ? 'The Cast' : 'The Library');
+// but contextual so the three tabs feel like different places.
+const heroKicker = computed(() => {
+  switch (activeTab.value) {
+  case 'mywork':
+    return myWorkView.value === 'archive' ? 'The Vault' : 'The Cast';
+  case 'library':     return 'The Library';
+  case 'marketplace': return 'The Commons';
+  default:            return 'The Studio';
+  }
+});
+
+const heroTitle = computed(() => {
+  switch (activeTab.value) {
+  case 'mywork':      return myWorkView.value === 'archive' ? 'Archive.' : 'My Work.';
+  case 'library':     return 'Library.';
+  case 'marketplace': return 'Marketplace.';
+  default:            return 'Studio.';
+  }
+});
 
 const heroDek = computed(() => {
   const count = routinesController.routines.value.length;
-  if (activeTab.value === 'routines') {
+  if (activeTab.value === 'mywork') {
+    if (myWorkView.value === 'archive') {
+      return 'Archived routines preserved from the active set. Restore them any time.';
+    }
     if (count === 0) {
-      return 'Nothing running, nothing scheduled, nothing idle. Start from a template to your right, or compose something new from the canvas.';
+      return 'Nothing running, nothing scheduled, nothing idle. Start from a template in your Library, or compose something new from the canvas.';
     }
     const plural = count === 1 ? '' : 's';
     const reclaimed = routinesController.stats.value.reclaimed;
 
     return `${ count } routine${ plural }. ${ reclaimed } of human-equivalent work reclaimed this week. Each one a small constellation of agents, rehearsed until they run without you.`;
   }
-  const tplCount = templatesController.templates.value.length;
+  if (activeTab.value === 'library') {
+    return 'Your collected routines, skills, functions, and recipes. Everything installed from the marketplace or added by hand lives here.';
+  }
+  if (activeTab.value === 'marketplace') {
+    return 'Routines, skills, functions, and recipes the community has published. Install one and it drops straight into your Library — reviewed before it lands here.';
+  }
 
-  return `${ tplCount } templates on disk. Each is a self-contained git repo in ~/sulla/routines/ — pick one and it lands in your database as a fresh routine, ready to edit on the canvas.`;
+  return 'Four kinds, one home.';
 });
 
 const runningCountLabel = computed(() => {
@@ -325,14 +418,25 @@ const runningCountLabel = computed(() => {
 
 const scheduledCountLabel = computed(() => `${ routinesController.scheduled.value.length } upcoming`);
 
-const templatesCountLabel = computed(() => `${ templatesController.filtered.value.length } available`);
+const archivedCountLabel = computed(() => {
+  const n = routinesController.archived.value.length;
 
-const noMatchesTitle = computed(() => `Nothing found for "${ templatesController.search.value }"`);
+  return `${ n } routine${ n === 1 ? '' : 's' } archived`;
+});
 
 const ribbonStatusLabel = computed(() => {
-  return activeTab.value === 'routines'
-    ? `${ routinesController.routines.value.length } in database`
-    : `${ templatesController.templates.value.length } on disk`;
+  switch (activeTab.value) {
+  case 'marketplace':
+    return 'Browsing Sulla Cloud';
+  case 'library':
+    return `${ templatesController.templates.value.length } templates on disk`;
+  case 'mywork':
+    return myWorkView.value === 'archive'
+      ? `${ routinesController.archived.value.length } archived`
+      : `${ routinesController.routines.value.length } in database`;
+  default:
+    return '';
+  }
 });
 
 const todayStr = new Date().toISOString().slice(0, 10);
@@ -345,6 +449,75 @@ function onUseTemplate(slug: string) {
 }
 function onNewBlank() {
   emit('new-blank');
+}
+async function onDuplicate(id: string) {
+  await routinesController.duplicate(id);
+}
+
+async function onToggleArchive(id: string) {
+  await routinesController.toggleArchive(id);
+}
+
+async function onDelete(routine: { id: string; name: string }) {
+  // Destructive and permanent — confirm explicitly. Native confirm is
+  // ugly but bounded and won't surprise anyone; a prettier modal is a
+  // later polish pass.
+  const ok = window.confirm(
+    `Delete "${ routine.name }" permanently? This can't be undone.`,
+  );
+  if (!ok) return;
+  await routinesController.remove(routine.id);
+}
+
+// Archive tab uses its own "Restore" affordance. Restoring just flips
+// archive → draft via the existing toggleArchive action.
+async function onRestoreRoutine(id: string) {
+  await routinesController.toggleArchive(id);
+  emit('restore-routine', id);
+}
+
+// When the marketplace tab installs something, refresh the relevant
+// local view so the user sees it land. Routines become templates; skills
+// + functions don't have tabs here today so the refresh is a no-op for
+// them (the filesystem scan runs next time the consuming surface opens).
+async function onMarketplaceInstalled(info: { kind: string; slug: string; path: string; name: string }) {
+  if (info.kind === 'routine') {
+    await templatesController.load();
+  }
+}
+
+async function onExport(id: string) {
+  // Fires the native save dialog in the main process; surfaces any
+  // failure through the routines controller's existing error channel
+  // so the view layer stays consistent with other IPC failure paths.
+  try {
+    await ipcRenderer.invoke('routines-export', id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // error is a readonly ref on the controller; mirror via console.
+    console.error('[Routines] Export failed:', err);
+    window.alert(`Export failed: ${ msg }`);
+  }
+}
+
+async function onImport() {
+  try {
+    const result = await ipcRenderer.invoke('routines-import') as any;
+    if (result?.canceled) return;
+    if (result?.error) {
+      window.alert(`Import failed: ${ result.error }`);
+
+      return;
+    }
+    // Refresh the templates view so the newly-landed folder shows up.
+    await templatesController.load();
+    // Switch to the library tab so the user sees the new card.
+    activeTab.value = 'library';
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[Routines] Import failed:', err);
+    window.alert(`Import failed: ${ msg }`);
+  }
 }
 </script>
 
@@ -432,8 +605,12 @@ function onNewBlank() {
 }
 .bracket.tl { top: 22px; left: 22px; border-top: 1.5px solid; border-left: 1.5px solid; }
 .bracket.tr { top: 22px; right: 22px; border-top: 1.5px solid; border-right: 1.5px solid; }
-.bracket.bl { bottom: 22px; left: 22px; border-bottom: 1.5px solid; border-left: 1.5px solid; }
-.bracket.br { bottom: 22px; right: 22px; border-bottom: 1.5px solid; border-right: 1.5px solid; }
+// Bottom brackets sit below the ribbon footer so the ribbon reads as the
+// real bottom chrome and the brackets frame the whole thing (including
+// the banner bar). Offset chosen so the bracket's corner lines up with
+// the canvas's bottom padding rather than the ribbon's margin.
+.bracket.bl { bottom: 6px; left: 22px; border-bottom: 1.5px solid; border-left: 1.5px solid; }
+.bracket.br { bottom: 6px; right: 22px; border-bottom: 1.5px solid; border-right: 1.5px solid; }
 
 .shell {
   position: relative; z-index: 3;
@@ -482,6 +659,44 @@ function onNewBlank() {
   background: rgba(168,192,220,0.12); color: var(--steel-300); letter-spacing: 0.06em;
 }
 .tab.on .tab-num { background: rgba(196,212,230,0.2); color: white; }
+
+// Sub-tabs inside My Work — Active / Archive toggle.
+.subtabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+.subtab {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 7px 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(168, 192, 220, 0.22);
+  background: transparent;
+  color: var(--steel-300);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.subtab:hover { color: white; border-color: var(--steel-300); }
+.subtab.on {
+  color: white;
+  background: rgba(74, 111, 165, 0.22);
+  border-color: rgba(140, 172, 201, 0.5);
+}
+.subtab-num {
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 2px;
+  background: rgba(168, 192, 220, 0.12);
+  color: var(--steel-300);
+  letter-spacing: 0.06em;
+}
+.subtab.on .subtab-num { background: rgba(196, 212, 230, 0.2); color: white; }
 
 .hero {
   text-align: center;

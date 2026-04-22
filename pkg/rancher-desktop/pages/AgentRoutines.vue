@@ -800,11 +800,30 @@ onMounted(async() => {
     enrichNodesForDisplay(nodes.value);
   }
   hasHydrated.value = true;
+
+  // Push menu-context so the File → Routines → "Export Current Routine…"
+  // item can target this routine. Fire-and-forget; the main process stores
+  // last-known context and enables/disables the menu item on rebuild.
+  if (props.workflowId) {
+    try {
+      ipcRenderer.send('app-state:set-routine-context' as any, {
+        mode: 'routine',
+        id:   props.workflowId,
+        name: title.value || 'Routine',
+      });
+    } catch { /* non-fatal */ }
+  }
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', onDocClick, true);
   document.removeEventListener('keydown', onKeydown);
+
+  // Clear menu-context so "Export Current Routine…" greys out again
+  // when the user leaves the editor.
+  try {
+    ipcRenderer.send('app-state:set-routine-context' as any, null);
+  } catch { /* non-fatal */ }
 
   // Best-effort flush of any pending debounced save. Vue doesn't await
   // async unmount handlers, so this is fire-and-forget — good enough

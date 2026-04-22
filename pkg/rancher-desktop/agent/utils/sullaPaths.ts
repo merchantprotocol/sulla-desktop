@@ -12,6 +12,7 @@ const SULLA_SKILLS_DIR_ENV = 'SULLA_SKILLS_DIR';
 const SULLA_WORKSPACES_DIR_ENV = 'SULLA_WORKSPACES_DIR';
 const SULLA_AGENTS_DIR_ENV = 'SULLA_AGENTS_DIR';
 const SULLA_CONVERSATIONS_DIR_ENV = 'SULLA_CONVERSATIONS_DIR';
+const SULLA_FUNCTIONS_DIR_ENV = 'SULLA_FUNCTIONS_DIR_ENV';
 const SULLA_WORKFLOWS_DIR_ENV = 'SULLA_WORKFLOWS_DIR';
 const SULLA_ROUTINES_DIR_ENV = 'SULLA_ROUTINES_DIR';
 const SULLA_INTEGRATIONS_DIR_ENV = 'SULLA_INTEGRATIONS_DIR';
@@ -105,6 +106,34 @@ export function resolveSullaRoutinesDir(): string {
   }
 
   return path.join(resolveSullaHomeDir(), 'routines');
+}
+
+/**
+ * User-defined functions live at ~/sulla/functions/<slug>/ — each has a
+ * function.yaml manifest plus main.py / main.sh / main.js depending on
+ * spec.runtime. The runtime containers (python/shell/node) load and invoke
+ * them via HTTP.
+ */
+export function resolveSullaFunctionsDir(): string {
+  const envPath = String(process.env[SULLA_FUNCTIONS_DIR_ENV] || '').trim();
+  if (envPath) {
+    return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
+  }
+
+  return path.join(resolveSullaHomeDir(), 'functions');
+}
+
+/**
+ * Marketplace-installed recipes (extension configs) live at
+ * ~/sulla/recipes/<slug>/ — each contains a `recipe.yaml` describing
+ * how to run a Docker container plus any supporting config.
+ *
+ * We don't ship Docker images through the marketplace (too large) —
+ * the recipe describes which image to pull and how to configure it.
+ * Runtime (start/stop/logs) is handled by the Docker extension system.
+ */
+export function resolveSullaRecipesDir(): string {
+  return path.join(resolveSullaHomeDir(), 'recipes');
 }
 
 export function resolveSullaIntegrationsDir(): string {

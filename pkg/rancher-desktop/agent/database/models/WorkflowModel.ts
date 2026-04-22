@@ -6,15 +6,16 @@ import { WorkflowHistoryModel } from './WorkflowHistoryModel';
 export type WorkflowStatus = 'draft' | 'production' | 'archive';
 
 interface WorkflowAttributes {
-  id:          string;
-  name:        string;
-  description: string | null;
-  version:     string | null;
-  status:      WorkflowStatus;
-  definition:  Record<string, unknown>;
-  enabled:     boolean;
-  created_at:  Date;
-  updated_at:  Date;
+  id:                   string;
+  name:                 string;
+  description:          string | null;
+  version:              string | null;
+  status:               WorkflowStatus;
+  definition:           Record<string, unknown>;
+  enabled:              boolean;
+  source_template_slug: string | null;
+  created_at:           Date;
+  updated_at:           Date;
 }
 
 export interface WorkflowListRow {
@@ -42,6 +43,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
     'status',
     'definition',
     'enabled',
+    'source_template_slug',
   ];
 
   protected readonly casts: Record<string, string> = {
@@ -111,7 +113,27 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
    */
   static async upsertFromDefinition(
     definition: Record<string, any>,
-    options: { status?: WorkflowStatus; changedBy?: string; changeReason?: string } = {},
+    options: {
+      status?:       WorkflowStatus;
+      changedBy?:    string;
+      changeReason?: string;
+      /**
+       * Skip the workflow_history row for this save. Used by undo/redo
+       * restores — applying a previous version shouldn't pollute the
+       * audit trail with sawtooth "undo" / "redo" entries. The current
+       * state of the `workflows` table still updates so reload reflects
+       * the restore.
+       */
+      skipHistory?:  boolean;
+      /**
+       * The slug of the template this routine was instantiated from. Set
+       * on the initial INSERT (from the instantiate handler) and preserved
+       * on subsequent canvas saves — UPDATE never touches this column, so
+       * passing it later is a no-op. Use setSourceTemplateSlug if you
+       * genuinely need to change it after creation.
+       */
+      sourceTemplateSlug?: string | null;
+    } = {},
   ): Promise<WorkflowModel> {
     const id = String(definition.id ?? '').trim();
     if (!id) throw new Error('WorkflowModel.upsertFromDefinition: definition.id is required');
@@ -123,24 +145,25 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
       ?? (definition._status as WorkflowStatus | undefined)
       ?? 'draft') as WorkflowStatus;
     const enabled = definition.enabled !== false;
+    const sourceTemplateSlug = options.sourceTemplateSlug ?? null;
 
     const existing = await WorkflowModel.findById(id);
     const definitionBefore = existing ? existing.attributes.definition ?? null : null;
 
-    const row = await postgresClient.queryOne(
-      `INSERT INTO workflows (id, name, description, version, status, definition, enabled)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
-       ON CONFLICT (id) DO UPDATE SET
-         name        = EXCLUDED.name,
-         description = EXCLUDED.description,
-         version     = EXCLUDED.version,
-         status      = EXCLUDED.status,
-         definition  = EXCLUDED.definition,
-         enabled     = EXCLUDED.enabled,
-         updated_at  = CURRENT_TIMESTAMP
-       RETURNING *`,
-      [id, name, description, version, status, JSON.stringify(definition), enabled],
-    );
+      const row = await postgresClient.queryOne(
+        `INSERT INTO workflows (id, name, description, version, status, definition, enabled, source_template_slug)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           name        = EXCLUDED.name,
+           description = EXCLUDED.description,
+           version     = EXCLUDED.version,
+           status      = EXCLUDED.status,
+           definition  = EXCLUDED.definition,
+           enabled     = EXCLUDED.enabled,
+           updated_at  = CURRENT_TIMESTAMP
+         RETURNING *`,
+        [id, name, description, version, status, JSON.stringify(definition), enabled, sourceTemplateSlug],
+      );
 
     const model = new WorkflowModel();
     model.databaseFill(row);

@@ -315,6 +315,126 @@ export class RecipeExtensionImpl implements Extension {
     );
   }
 
+  // ─── Install from local assets (marketplace path) ──────────────────
+  // The GitHub-pull `install()` above fetches files from the sulla-recipes
+  // repo. This sibling method assumes the bundle has already been extracted
+  // to `extensionDir` on disk — the code path used when a user installs a
+  // recipe from the sulla/v3 marketplace (the zip was downloaded and unpacked
+  // in place). Skips `pullRecipeAssets()` entirely; every other phase of
+  // install (variable resolution, setup, mark-installed, integration
+  // credentials) runs identically. Does NOT auto-start by default —
+  // marketplace installs are two-step: drop into library, user clicks Launch.
+
+  /**
+   * Install a recipe whose files are already present on disk at
+   * `extensionDir`. Assumed invariant: `installation.yaml` and any
+   * referenced compose/icon files are at that path.
+   *
+   * @param extensionDir Absolute path where the bundle was extracted.
+   *                     Typically `paths.extensionRoot/<manifest.id>/`.
+   * @param opts.autoStart If true, run `start()` after install. Default false
+   *                       — user triggers launch from the library UI.
+   */
+  async installFromLocalAssets(
+    extensionDir: string,
+    opts: { autoStart?: boolean } = {},
+  ): Promise<boolean> {
+    this._dirOverride = extensionDir;
+
+    if (await this.isInstalled()) {
+      console.debug(`Recipe extension ${ this.id } already installed.`);
+
+      return false;
+    }
+
+    sullaLog({ topic: 'extensions', level: 'info', message: `[install-local:${ this.id }] start`, data: { dir: extensionDir } });
+
+    // Phase 1: manifest is already on disk (we extracted the zip). `getManifest()`
+    // reads local by default, so this populates `this._manifest` without any
+    // HTTP call.
+    const manifest = await this.getManifest();
+
+    // Confirm the dir aligns with manifest.id — marketplace caller should
+    // have already renamed tmpdir to extensionRoot/<manifest.id>. Defensive.
+    const canonicalDir = path.join(paths.extensionRoot, manifest.id);
+    if (path.resolve(extensionDir) !== path.resolve(canonicalDir)) {
+      throw new ExtensionErrorImpl(
+        ExtensionErrorCode.INVALID_METADATA,
+        `Install dir ${ extensionDir } does not match canonical ${ canonicalDir } (manifest.id=${ manifest.id })`,
+      );
+    }
+
+    try {
+      // Save labels.json — empty object is fine for marketplace installs.
+      // Authors can enrich via Docker labels on the image itself later.
+      await fs.promises.writeFile(
+        path.join(this.dir, 'labels.json'),
+        JSON.stringify(await this.labels, undefined, 2),
+      );
+
+      // Phase 2b: resolve {{variables}} in compose + write .env
+      await this.processComposeFile();
+      await this.writeEnvFile();
+      sullaLog({ topic: 'extensions', level: 'info', message: `[install-local:${ this.id }] variable resolution done` });
+
+      // Phase 3: run setup commands from installation.yaml
+      await this.runSetup(manifest);
+      sullaLog({ topic: 'extensions', level: 'info', message: `[install-local:${ this.id }] setup finished` });
+
+      // Phase 4: mark installed
+      await fs.promises.writeFile(
+        path.join(this.dir, this.VERSION_FILE),
+        this.version,
+        'utf-8',
+      );
+      await fs.promises.writeFile(
+        path.join(this.dir, this.INSTALLED_LOCK),
+        JSON.stringify({ installedAt: new Date().toISOString(), version: this.version }),
+        'utf-8',
+      );
+    } catch (ex) {
+      const err = ex as any;
+
+      sullaLog({
+        topic:   'extensions',
+        level:   'error',
+        message: `installFromLocalAssets failed for ${ this.id }`,
+        error:   ex,
+        data:    {
+          message: err?.message,
+          code:    err?.code,
+          stdout:  err?.stdout,
+          stderr:  err?.stderr,
+          dir:     this.dir,
+        },
+      });
+      // Do NOT auto-clean the dir here — the user may want to inspect what
+      // landed. The marketplace install IPC is responsible for rollback.
+      throw ex;
+    }
+
+    mainEvents.emit('settings-write', {
+      application: { extensions: { installed: { [this.id]: this.version } } },
+    });
+    Electron.session.defaultSession.clearCache();
+
+    if (manifest.integrations) {
+      await this.saveIntegrationCredentials(manifest.integrations);
+    }
+
+    sullaLog({ topic: 'extensions', level: 'info', message: `[install-local:${ this.id }] installed successfully (autoStart=${ !!opts.autoStart })` });
+
+    if (opts.autoStart) {
+      try {
+        await this.start();
+      } catch (ex) {
+        sullaLog({ topic: 'extensions', level: 'warn', message: `post-install start failed (non-fatal)`, error: ex });
+      }
+    }
+
+    return true;
+  }
+
   /**
    * Pull all assets from the remote recipe folder into the local extension dir.
    * Uses the GitHub Contents API to list files, then downloads each one.
@@ -1178,4 +1298,64 @@ export async function createRecipeExtension(
   }
 
   return new RecipeExtensionImpl(slug, version, entry);
+}
+
+/**
+ * Create a RecipeExtensionImpl from a recipe already present on disk
+ * (no catalog fetch required). Used by the sulla/v3 marketplace install
+ * flow — the bundle zip has been extracted to `extensionDir`, so we
+ * synthesize a MarketplaceEntry from the local installation.yaml instead
+ * of hitting the sulla-recipes GitHub catalog.
+ *
+ * Caller should then invoke `.installFromLocalAssets(extensionDir)` on
+ * the returned impl to run the (GitHub-fetch-free) install pipeline.
+ */
+export async function createRecipeExtensionFromLocalDir(
+  extensionDir: string,
+): Promise<RecipeExtensionImpl> {
+  const manifestPath = path.join(extensionDir, 'installation.yaml');
+  let manifestText: string;
+
+  try {
+    manifestText = await fs.promises.readFile(manifestPath, 'utf-8');
+  } catch {
+    throw new ExtensionErrorImpl(
+      ExtensionErrorCode.FILE_NOT_FOUND,
+      `installation.yaml not found at ${ manifestPath }`,
+    );
+  }
+
+  let manifest: InstallationManifest;
+
+  try {
+    manifest = yaml.parse(manifestText) as InstallationManifest;
+  } catch (err) {
+    throw new ExtensionErrorImpl(
+      ExtensionErrorCode.INVALID_METADATA,
+      `installation.yaml is not valid YAML at ${ manifestPath }: ${ err instanceof Error ? err.message : String(err) }`,
+    );
+  }
+
+  if (!manifest?.id || !manifest?.version) {
+    throw new ExtensionErrorImpl(
+      ExtensionErrorCode.INVALID_METADATA,
+      `installation.yaml is missing required fields (id, version) at ${ manifestPath }`,
+    );
+  }
+
+  // Synthesize a minimal catalog entry. The UI reads this for card metadata;
+  // fields not available from a local recipe (publisher, containerd flag)
+  // fall back to sensible defaults.
+  const syntheticEntry: MarketplaceEntry = {
+    slug:                  manifest.id,
+    version:               manifest.version,
+    containerd_compatible: false,
+    labels:                {},
+    title:                 manifest.name ?? manifest.id,
+    logo:                  manifest.icon ?? '',
+    publisher:             '',
+    short_description:     manifest.description ?? '',
+  };
+
+  return new RecipeExtensionImpl(manifest.id, manifest.version, syntheticEntry);
 }

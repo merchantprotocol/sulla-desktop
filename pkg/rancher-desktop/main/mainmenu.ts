@@ -1,4 +1,4 @@
-import Electron, { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions, shell } from 'electron';
+import Electron, { BrowserWindow, Menu, MenuItem, MenuItemConstructorOptions, ipcMain, shell } from 'electron';
 
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import type { ConversationHistoryRecord } from '@pkg/agent/database/models/ConversationHistoryModel';
@@ -16,6 +16,32 @@ const console = Logging.mainmenu;
 // State for dynamic menu updates
 let kubernetesState: State = State.STOPPED;
 let userLoggedIn = false;
+
+/**
+ * Current routine-surface context, pushed from the renderer via
+ * `app-state:set-routine-context` whenever the user navigates to or
+ * away from a routine/template. Drives enable/disable on the File →
+ * Routines submenu items.
+ */
+type RoutineContext =
+  | { mode: 'routine';  id: string;   name: string }
+  | { mode: 'template'; slug: string; name: string }
+  | null;
+
+let currentRoutineContext: RoutineContext = null;
+
+/** Set by the app-state IPC listener (registered below). */
+function setRoutineContext(ctx: RoutineContext): void {
+  currentRoutineContext = ctx;
+  rebuildMenu();
+}
+
+// Listen for context updates from the renderer. Renderers send this
+// fire-and-forget whenever the visible surface changes (navigate into
+// the editor, open a template, return to the routines home, etc.).
+ipcMain.on('app-state:set-routine-context', (_event, ctx: RoutineContext) => {
+  setRoutineContext(ctx && typeof ctx === 'object' ? ctx : null);
+});
 
 /** Called by vault IPC handlers when lock state changes */
 export function setUserLoggedIn(unlocked: boolean): void {
@@ -322,6 +348,28 @@ function getFileMenu(): MenuItem {
         accelerator: 'CmdOrCtrl+6',
         enabled:     userLoggedIn,
         click:       () => sendAgentCommand('open-tab', { mode: 'routines' }),
+      },
+      {
+        label:   'Routines',
+        enabled: userLoggedIn,
+        submenu: [
+          {
+            label:       'Import Routine…',
+            accelerator: 'CmdOrCtrl+Shift+I',
+            enabled:     userLoggedIn,
+            click:       () => sendAgentCommand('routines:import'),
+          },
+          {
+            label:       'Export Current Routine…',
+            accelerator: 'CmdOrCtrl+Shift+E',
+            enabled:     userLoggedIn && currentRoutineContext?.mode === 'routine',
+            click:       () => {
+              if (currentRoutineContext?.mode === 'routine') {
+                sendAgentCommand('routines:export', { id: currentRoutineContext.id });
+              }
+            },
+          },
+        ],
       },
       { type: 'separator' },
       {
