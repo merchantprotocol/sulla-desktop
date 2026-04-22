@@ -109,50 +109,78 @@
             key="root-cards"
             class="cards-page"
           >
-            <div
+            <template
               v-for="item in activeItems"
               :key="item.id"
-              class="drag-card"
-              draggable="true"
-              :data-subtype="item.subtype"
-              @dragstart="onDragStart($event, item)"
             >
-              <div class="stub">
-                <div class="no">
-                  {{ item.code }}
+              <!-- Loop items render as a mini dashed frame so the drawer
+                   preview matches the thing that lands on the canvas —
+                   WYSIWYG. Same drag payload as the regular card path. -->
+              <div
+                v-if="item.subtype === 'loop'"
+                class="drag-card drag-card-loop"
+                draggable="true"
+                :data-subtype="item.subtype"
+                @dragstart="onDragStart($event, item)"
+              >
+                <div class="loop-preview">
+                  <div class="loop-preview-label">
+                    <span class="ic">↻</span>
+                    <span>Loop · {{ item.name || 'for each' }}</span>
+                  </div>
+                  <div class="loop-preview-counter">iteration</div>
+                  <div class="loop-preview-hint">
+                    Drag me onto the canvas<br>then drop cards inside
+                  </div>
                 </div>
-                <div
-                  class="av"
-                  :class="item.avatarType"
-                >
-                  {{ item.initials }}
-                </div>
-                <div class="st">
-                  {{ item.kicker }}
-                </div>
+                <div class="grab-hint">⁞⁞</div>
               </div>
-              <div class="body">
-                <div class="k">
-                  {{ item.kicker }}
+
+              <!-- Generic card (everything else). -->
+              <div
+                v-else
+                class="drag-card"
+                draggable="true"
+                :data-subtype="item.subtype"
+                @dragstart="onDragStart($event, item)"
+              >
+                <div class="stub">
+                  <div class="no">
+                    {{ item.code }}
+                  </div>
+                  <div
+                    class="av"
+                    :class="item.avatarType"
+                  >
+                    {{ item.initials }}
+                  </div>
+                  <div class="st">
+                    {{ item.kicker }}
+                  </div>
                 </div>
-                <div class="t">
-                  {{ item.name }}
+                <div class="body">
+                  <div class="k">
+                    {{ item.kicker }}
+                  </div>
+                  <div class="t">
+                    {{ item.name }}
+                  </div>
+                  <div
+                    v-if="item.role"
+                    class="r"
+                  >
+                    {{ item.role }}
+                  </div>
+                  <div
+                    v-if="item.quote"
+                    class="q"
+                  >
+                    {{ item.quote }}
+                  </div>
                 </div>
-                <div
-                  v-if="item.role"
-                  class="r"
-                >
-                  {{ item.role }}
-                </div>
-                <div
-                  v-if="item.quote"
-                  class="q"
-                >
-                  {{ item.quote }}
-                </div>
+                <div class="grab-hint">⁞⁞</div>
               </div>
-              <div class="grab-hint">⁞⁞</div>
-            </div>
+            </template>
           </div>
 
           <!-- Integration cards -->
@@ -605,6 +633,86 @@ function onIntegrationDragStart(event: DragEvent, integration: Integration) {
 .drag-card:active {
   cursor: grabbing;
   transform: scale(0.98);
+}
+
+/* ── Loop drawer preview ──
+   Mini version of LoopFrameNode so the drawer shows the user what's
+   actually going to land on the canvas — dashed violet frame, label
+   pill, counter pill, hint text. Dimensions shrink-to-fit the drawer's
+   card column; the real frame gets sized at drop time. */
+.drag-card-loop {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 18px 8px 8px;
+  min-height: 110px;
+}
+.drag-card-loop:hover {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  transform: translateY(-1px);
+}
+.drag-card-loop .loop-preview {
+  position: relative;
+  width: 100%;
+  min-height: 92px;
+  padding: 20px 14px 14px;
+  border-radius: 10px;
+  border: 1.5px dashed rgba(167, 139, 250, 0.65);
+  background: rgba(52, 40, 90, 0.25);
+  box-shadow: inset 0 0 24px rgba(139, 92, 246, 0.12);
+  box-sizing: border-box;
+}
+.drag-card-loop:hover .loop-preview {
+  border-color: rgba(196, 181, 253, 0.85);
+  background: rgba(58, 42, 100, 0.32);
+  box-shadow: inset 0 0 32px rgba(139, 92, 246, 0.22), 0 0 20px rgba(139, 92, 246, 0.2);
+}
+.drag-card-loop .loop-preview-label {
+  position: absolute;
+  top: -10px;
+  left: 12px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, var(--violet-500), var(--violet-600));
+  border: 1px solid rgba(196, 181, 253, 0.5);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  color: white;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.drag-card-loop .loop-preview-label .ic {
+  font-size: 10px;
+  line-height: 1;
+}
+.drag-card-loop .loop-preview-counter {
+  position: absolute;
+  top: -10px;
+  right: 12px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(28, 20, 50, 0.95);
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  color: var(--violet-300);
+  text-transform: uppercase;
+}
+.drag-card-loop .loop-preview-hint {
+  font-family: var(--serif);
+  font-size: 11px;
+  font-style: italic;
+  color: var(--violet-200);
+  text-align: center;
+  line-height: 1.4;
+  opacity: 0.75;
 }
 
 .drag-card .stub {

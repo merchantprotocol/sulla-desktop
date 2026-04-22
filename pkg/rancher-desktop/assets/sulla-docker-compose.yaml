@@ -32,5 +32,51 @@ services:
       timeout: 3s
       retries: 3
 
+  python_runtime:
+    image: ghcr.io/merchantprotocol/sulla-python-runtime:latest
+    container_name: sulla_python_runtime
+    ports:
+      - "127.0.0.1:30118:8080"
+    volumes:
+      - "{{sullaFunctionsDir}}:/var/functions:ro"
+      - "sulla_python_runtime_cache:/opt/sulla/cache/deps"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  shell_runtime:
+    image: ghcr.io/merchantprotocol/sulla-shell-runtime:latest
+    container_name: sulla_shell_runtime
+    ports:
+      - "127.0.0.1:30119:8080"
+    volumes:
+      - "{{sullaFunctionsDir}}:/var/functions:ro"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  node_runtime:
+    image: ghcr.io/merchantprotocol/sulla-node-runtime:latest
+    container_name: sulla_node_runtime
+    ports:
+      - "127.0.0.1:30120:8080"
+    volumes:
+      - "{{sullaFunctionsDir}}:/var/functions:ro"
+      - "sulla_node_runtime_cache:/opt/sulla/cache/node_modules"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
 volumes:
   sulla_postgres_data:
+  sulla_python_runtime_cache:
+  sulla_node_runtime_cache:
