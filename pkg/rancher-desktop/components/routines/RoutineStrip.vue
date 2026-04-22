@@ -76,19 +76,74 @@
       >
         {{ primaryLabel }}
       </button>
-      <button
-        type="button"
-        class="btn ghost"
-        @click="$emit('secondary')"
-      >
-        {{ secondaryLabel }}
-      </button>
+      <div class="cta-row">
+        <button
+          type="button"
+          class="btn ghost"
+          @click="$emit('secondary')"
+        >
+          {{ secondaryLabel }}
+        </button>
+        <div
+          class="menu-wrap"
+          @click.stop
+        >
+          <button
+            type="button"
+            class="btn kebab"
+            :class="{ on: menuOpen }"
+            :aria-label="`Actions for ${ routine.name }`"
+            @click="toggleMenu"
+          >
+            ⋮
+          </button>
+          <div
+            v-if="menuOpen"
+            class="menu"
+            role="menu"
+          >
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitem"
+              @click="emitAction('duplicate')"
+            >
+              Duplicate
+            </button>
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitem"
+              @click="emitAction('archive')"
+            >
+              {{ routine.status === 'archive' ? 'Unarchive' : 'Archive' }}
+            </button>
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitem"
+              @click="emitAction('export')"
+            >
+              Export…
+            </button>
+            <div class="menu-sep" />
+            <button
+              type="button"
+              class="menu-item danger"
+              role="menuitem"
+              @click="emitAction('delete')"
+            >
+              Delete…
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 
 import type { RoutineSummary } from '@pkg/types/routines';
 
@@ -104,11 +159,53 @@ const props = defineProps<{
   secondaryLabel: string;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'open'): void;
   (e: 'primary'): void;
   (e: 'secondary'): void;
+  (e: 'duplicate'): void;
+  (e: 'archive'): void;
+  (e: 'delete'): void;
+  (e: 'export'): void;
 }>();
+
+// ── Actions kebab menu ──
+// Lightweight dropdown: opens on click, closes on outside-click or after
+// any menu item fires. A single document-level listener is attached only
+// while the menu is open — no extra state, no full modal.
+const menuOpen = ref(false);
+
+function toggleMenu() {
+  if (menuOpen.value) {
+    closeMenu();
+
+    return;
+  }
+  menuOpen.value = true;
+  // Defer binding until after the click that opened the menu bubbles out,
+  // otherwise that same click would immediately close it again.
+  setTimeout(() => {
+    document.addEventListener('click', onDocClick, { once: true });
+  }, 0);
+}
+
+function closeMenu() {
+  menuOpen.value = false;
+  document.removeEventListener('click', onDocClick);
+}
+
+function onDocClick() {
+  closeMenu();
+}
+
+function emitAction(action: 'duplicate' | 'archive' | 'delete' | 'export') {
+  closeMenu();
+  emit(action);
+}
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onDocClick);
+});
 
 // Status chip styling is a view concern — compute it from the
 // domain model rather than making the template do the mapping.
@@ -323,6 +420,72 @@ const timingLabel = computed(() => {
   gap: 6px;
   align-items: flex-end;
 }
+.cta-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+// Kebab + dropdown for secondary actions (duplicate / archive / delete).
+.menu-wrap { position: relative; }
+.btn.kebab {
+  padding: 6px 10px;
+  font-size: 14px;
+  letter-spacing: 0;
+  line-height: 1;
+  color: var(--steel-200);
+}
+.btn.kebab:hover,
+.btn.kebab.on {
+  color: white;
+  background: rgba(74, 111, 165, 0.28);
+  border-color: rgba(140, 172, 201, 0.5);
+}
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  min-width: 160px;
+  padding: 4px;
+  background: linear-gradient(180deg, rgba(20, 30, 54, 0.96), rgba(14, 22, 40, 0.98));
+  border: 1px solid rgba(168, 192, 220, 0.25);
+  border-radius: 6px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55), 0 0 20px rgba(74, 111, 165, 0.15);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+}
+.menu-item {
+  appearance: none;
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--steel-100);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.menu-item:hover {
+  background: rgba(167, 139, 250, 0.16);
+  color: white;
+}
+.menu-item.danger {
+  color: #fda4af;
+}
+.menu-item.danger:hover {
+  background: rgba(244, 63, 94, 0.18);
+  color: white;
+}
+.menu-sep {
+  height: 1px;
+  background: rgba(168, 192, 220, 0.14);
+  margin: 4px 2px;
+}
 
 .btn {
   font-family: var(--mono);
@@ -355,4 +518,49 @@ const timingLabel = computed(() => {
   border-color: rgba(196, 212, 230, 0.75);
 }
 .btn.ghost { background: transparent; }
+
+.kebab-wrap {
+  position: relative;
+  display: inline-block;
+}
+.btn.kebab {
+  padding: 4px 10px;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.kebab-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 140px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: rgba(20, 30, 54, 0.96);
+  border: 1px solid rgba(168, 192, 220, 0.3);
+  border-radius: 4px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
+  z-index: 20;
+  backdrop-filter: blur(6px);
+}
+.kebab-menu li {
+  padding: 7px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--steel-100);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.kebab-menu li:hover:not(.disabled) {
+  background: rgba(74, 111, 165, 0.22);
+  color: white;
+}
+.kebab-menu li.disabled {
+  color: var(--steel-500);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
 </style>

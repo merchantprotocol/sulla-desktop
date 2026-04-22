@@ -1,23 +1,26 @@
 // WorkflowSchedulerService.ts
 //
-// Scans production workflows for `schedule` trigger nodes, registers cron jobs
-// via node-schedule, and dispatches them through the same WebSocket channel
-// mechanism that SchedulerService and HeartbeatService use.
-
-import * as fs from 'fs';
-import * as path from 'path';
+// Scans production workflows in the Postgres `workflows` table for
+// `schedule` trigger nodes, registers cron jobs via node-schedule, and
+// fires routine execution directly through the shared `executeRoutine`
+// helper when a cron trips.
+//
+// The old YAML-scan + chat-WebSocket handoff is gone — scheduled
+// workflows now execute in-process without any frontend ack round-trip.
 
 import schedule from 'node-schedule';
-import yaml from 'yaml';
-
-import { getWebSocketClientService, type WebSocketMessage } from './WebSocketClientService';
-
-import type {
-  WorkflowDefinition,
-  WorkflowNodeSerialized,
-} from '@pkg/pages/editor/workflow/types';
 
 // ── Types ──
+
+interface ScheduleNode {
+  id:    string;
+  data?: {
+    category?: string;
+    subtype?:  string;
+    label?:    string;
+    config?:   Record<string, unknown>;
+  };
+}
 
 interface ScheduledWorkflowJob {
   workflowId:     string;
@@ -28,10 +31,13 @@ interface ScheduledWorkflowJob {
   job:            schedule.Job;
 }
 
-// ── Constants ──
-
-const FRONTEND_CHANNEL_ID = 'sulla-desktop';
-const ACK_TIMEOUT_MS = 3_000;
+interface ProductionRow {
+  attributes: {
+    id:         string;
+    name:       string;
+    definition: Record<string, unknown>;
+  };
+}
 
 // ── Cron builder ──
 
@@ -90,45 +96,27 @@ export function getWorkflowSchedulerService(): WorkflowSchedulerService {
 export class WorkflowSchedulerService {
   private initialized = false;
   private scheduledJobs = new Map<string, ScheduledWorkflowJob>();
-  private readonly wsService = getWebSocketClientService();
-  private wsInitialized = false;
-  private unsubscribeFrontend: (() => void) | null = null;
-  private pendingAcks = new Map<string, { resolve: (value: boolean) => void; timer: ReturnType<typeof setTimeout> }>();
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    console.log('[WorkflowSchedulerService] Initializing...');
-
-    try {
-      this.scanAndSchedule();
-    } catch (err) {
-      console.error('[WorkflowSchedulerService] Initialization failed:', err);
-    }
-
     this.initialized = true;
+    await this.scanAndSchedule();
   }
 
   /**
-   * Re-scan workflows and update schedules.
-   * Call this when workflows are saved/deleted from production.
+   * Re-scan production workflows in Postgres and rebuild the cron
+   * registry. Called on `workflow-save` / promotion events.
    */
-  refresh(): void {
-    console.log('[WorkflowSchedulerService] Refreshing schedules...');
-    this.cancelAll();
-    this.scanAndSchedule();
+  async refresh(): Promise<void> {
+    await this.scanAndSchedule();
   }
 
   /**
-   * Cancel all scheduled workflow jobs.
+   * Cancel all scheduled workflow jobs and tear the service down.
    */
   shutdown(): void {
     this.cancelAll();
-    if (this.unsubscribeFrontend) {
-      this.unsubscribeFrontend();
-      this.unsubscribeFrontend = null;
-    }
-    this.wsInitialized = false;
     this.initialized = false;
     console.log('[WorkflowSchedulerService] Shut down');
   }
@@ -156,199 +144,91 @@ export class WorkflowSchedulerService {
 
   // ── Private ──
 
-  private scanAndSchedule(): void {
-    const { resolveAllWorkflowsProductionDirs } = require('@pkg/agent/utils/sullaPaths');
-    const workflowsDirs: string[] = resolveAllWorkflowsProductionDirs();
+  /**
+   * Query the DB for production workflows and (re)register a cron job
+   * for each `trigger`/`schedule` node in their definitions. Wipes
+   * existing jobs first so refreshes don't double-schedule.
+   *
+   * Dynamic import keeps the Postgres layer out of the main-process
+   * startup bundle — same pattern as sullaWorkflowEvents.ts and
+   * sullaRoutineTemplateEvents.ts.
+   */
+  private async scanAndSchedule(): Promise<void> {
+    this.cancelAll();
+
+    let rows: ProductionRow[] = [];
+    try {
+      const { WorkflowModel } = await import('@pkg/agent/database/models/WorkflowModel');
+      rows = (await WorkflowModel.listByStatus('production')) as unknown as ProductionRow[];
+    } catch (err) {
+      console.warn('[WorkflowSchedulerService] Failed to load production workflows from DB:', err);
+      return;
+    }
+
     let count = 0;
+    for (const row of rows) {
+      const { id, name } = row.attributes;
+      const definition = row.attributes.definition || {};
+      const nodes = Array.isArray((definition as any).nodes) ? (definition as any).nodes as ScheduleNode[] : [];
 
-    for (const workflowsDir of workflowsDirs) {
-      if (!fs.existsSync(workflowsDir)) {
-        console.log(`[WorkflowSchedulerService] No workflows dir: ${ workflowsDir }`);
-        continue;
-      }
-
-      const entries = fs.readdirSync(workflowsDir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        if (!entry.isFile() || !(entry.name.endsWith('.yaml') || entry.name.endsWith('.json'))) continue;
-
-        try {
-          const filePath = path.join(workflowsDir, entry.name);
-          const raw = fs.readFileSync(filePath, 'utf-8');
-          const definition: WorkflowDefinition = entry.name.endsWith('.json')
-            ? JSON.parse(raw)
-            : yaml.parse(raw);
-
-          for (const node of definition.nodes) {
-            if (node.data.category === 'trigger' && node.data.subtype === 'schedule') {
-              const scheduled = this.registerScheduleNode(definition, node);
-              if (scheduled) count++;
-            }
-          }
-        } catch (err) {
-          console.warn(`[WorkflowSchedulerService] Failed to parse ${ entry.name }:`, err);
-        }
+      for (const node of nodes) {
+        if (node?.data?.category !== 'trigger' || node?.data?.subtype !== 'schedule') continue;
+        if (this.registerScheduleNode(id, name, node)) count++;
       }
     }
 
-    console.log(`[WorkflowSchedulerService] Registered ${ count } schedule trigger(s)`);
+    console.log(`[WorkflowSchedulerService] Registered ${ count } schedule trigger(s) from ${ rows.length } production workflow(s)`);
   }
 
   private registerScheduleNode(
-    definition: WorkflowDefinition,
-    node: WorkflowNodeSerialized,
+    workflowId:   string,
+    workflowName: string,
+    node:         ScheduleNode,
   ): boolean {
-    const config = node.data.config || {};
+    const config = node.data?.config || {};
     const cronExpression = buildCronExpression(config);
 
     if (!cronExpression) {
-      console.warn(`[WorkflowSchedulerService] Skipping schedule trigger "${ node.data.label }" in "${ definition.name }" — could not build cron from config`);
+      console.warn(`[WorkflowSchedulerService] Skipping schedule trigger "${ node.data?.label ?? node.id }" in "${ workflowName }" — could not build cron from config`);
       return false;
     }
 
     const timezone = (config.timezone as string || '').trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const jobKey = `${ definition.id }:${ node.id }`;
+    const jobKey = `${ workflowId }:${ node.id }`;
 
     const job = schedule.scheduleJob(
       { rule: cronExpression, tz: timezone },
       async() => {
-        console.log(`[WorkflowSchedulerService] Cron fired for workflow "${ definition.name }" (node ${ node.id })`);
-        await this.triggerWorkflow(definition, node);
+        console.log(`[WorkflowSchedulerService] Cron fired for workflow "${ workflowName }" (node ${ node.id })`);
+        try {
+          // Dynamic import — avoids a hard cycle between the scheduler
+          // (agent-layer) and the routine execution helper (main-layer).
+          const { executeRoutine } = await import('@pkg/main/sullaRoutineTemplateEvents');
+          await executeRoutine(workflowId, `Scheduled trigger fired for routine ${ workflowName }`);
+        } catch (err) {
+          console.error(`[WorkflowSchedulerService] Failed to execute scheduled routine "${ workflowName }":`, err);
+        }
       },
     );
 
     if (!job) {
-      console.warn(`[WorkflowSchedulerService] Invalid cron "${ cronExpression }" for "${ definition.name }"`);
+      console.warn(`[WorkflowSchedulerService] Invalid cron "${ cronExpression }" for "${ workflowName }"`);
       return false;
     }
 
     this.scheduledJobs.set(jobKey, {
-      workflowId:   definition.id,
-      workflowName: definition.name,
-      nodeId:       node.id,
+      workflowId,
+      workflowName,
+      nodeId: node.id,
       cronExpression,
       timezone,
       job,
     });
 
     const next = job.nextInvocation();
-    console.log(`[WorkflowSchedulerService] Scheduled "${ definition.name }" (${ cronExpression } ${ timezone }) — next: ${ next?.toISOString() ?? 'none' }`);
+    console.log(`[WorkflowSchedulerService] Scheduled "${ workflowName }" (${ cronExpression } ${ timezone }) — next: ${ next?.toISOString() ?? 'none' }`);
 
     return true;
-  }
-
-  private async triggerWorkflow(
-    definition: WorkflowDefinition,
-    node: WorkflowNodeSerialized,
-  ): Promise<void> {
-    try {
-      const prompt = this.buildTriggerPrompt(definition, node);
-
-      const acknowledged = await this.sendToFrontend(definition, prompt);
-      if (acknowledged) {
-        console.log(`[WorkflowSchedulerService] Frontend acknowledged workflow "${ definition.name }"`);
-        return;
-      }
-
-      console.warn(`[WorkflowSchedulerService] Frontend did not ACK workflow "${ definition.name }" — skipping (frontend must be running to execute scheduled workflows)`);
-    } catch (err) {
-      console.error(`[WorkflowSchedulerService] Failed to trigger workflow "${ definition.name }":`, err);
-    }
-  }
-
-  private buildTriggerPrompt(
-    definition: WorkflowDefinition,
-    node: WorkflowNodeSerialized,
-  ): string {
-    const config = node.data.config || {};
-    const timezone = (config.timezone as string || '').trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const now = new Date();
-    const formattedTime = now.toLocaleString('en-US', {
-      timeZone: timezone,
-      weekday:  'long',
-      year:     'numeric',
-      month:    'long',
-      day:      'numeric',
-      hour:     '2-digit',
-      minute:   '2-digit',
-      hour12:   true,
-    });
-
-    const description = (config.triggerDescription as string || '').trim();
-
-    return [
-      `A scheduled workflow has been triggered.`,
-      ``,
-      `## Workflow Details`,
-      ``,
-      `Name: ${ definition.name }`,
-      `Description: ${ definition.description || 'None' }`,
-      `Schedule: ${ buildCronExpression(config) || 'unknown' }`,
-      `Timezone: ${ timezone }`,
-      `Triggered at: ${ formattedTime }`,
-      description ? `Trigger description: ${ description }` : '',
-      ``,
-      `Execute workflow "${ definition.name }" now.`,
-    ].filter(Boolean).join('\n');
-  }
-
-  private buildEventPayload(definition: WorkflowDefinition, prompt: string) {
-    return {
-      type: 'user_message',
-      data: {
-        role:     'user',
-        content:  prompt,
-        metadata: {
-          origin:       'workflow-scheduler',
-          workflowId:   definition.id,
-          workflowName: definition.name,
-          triggerType:  'schedule',
-        },
-      },
-      timestamp: Date.now(),
-    };
-  }
-
-  private ensureFrontendListener(): void {
-    if (this.wsInitialized) return;
-
-    this.wsService.connect(FRONTEND_CHANNEL_ID);
-    this.unsubscribeFrontend = this.wsService.onMessage(FRONTEND_CHANNEL_ID, (msg: WebSocketMessage) => {
-      if (msg.type !== 'workflow_scheduler_ack') return;
-
-      const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-      const workflowId = data?.workflowId as string;
-      if (!workflowId) return;
-
-      const pending = this.pendingAcks.get(workflowId);
-      if (!pending) return;
-
-      clearTimeout(pending.timer);
-      pending.resolve(true);
-      this.pendingAcks.delete(workflowId);
-    }) ?? null;
-
-    this.wsInitialized = true;
-  }
-
-  private async sendToFrontend(definition: WorkflowDefinition, prompt: string): Promise<boolean> {
-    this.ensureFrontendListener();
-    const message = this.buildEventPayload(definition, prompt);
-
-    const sent = await this.wsService.send(FRONTEND_CHANNEL_ID, message);
-    if (!sent) {
-      console.warn(`[WorkflowSchedulerService] Failed to send to frontend for "${ definition.name }"`);
-      return false;
-    }
-
-    return await new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        this.pendingAcks.delete(definition.id);
-        resolve(false);
-      }, ACK_TIMEOUT_MS);
-
-      this.pendingAcks.set(definition.id, { resolve, timer });
-    });
   }
 
   private cancelAll(): void {

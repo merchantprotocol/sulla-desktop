@@ -45,6 +45,7 @@
 
     <!-- Action buttons grid -->
     <div class="vb-grid">
+      <!-- Hidden: Calendar welcome card
       <button
         type="button"
         class="vb-card"
@@ -56,6 +57,7 @@
         </div>
         <span class="vb-card-arrow">&rarr;</span>
       </button>
+      -->
 
       <button
         type="button"

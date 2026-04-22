@@ -123,9 +123,10 @@ document.getElementById('btn-open-sulla').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:open-main');
 });
 
-document.getElementById('btn-open-editor').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-editor');
-});
+// Hidden: Agent Workbench tray link
+// document.getElementById('btn-open-editor').addEventListener('click', () => {
+//   ipcRenderer.send('tray-panel:open-editor');
+// });
 
 document.getElementById('btn-open-docker').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:open-docker');
@@ -141,9 +142,10 @@ document.getElementById('btn-secretary-mode').addEventListener('click', () => {
   ipcRenderer.send('tray-panel:secretary-mode');
 });
 
-document.getElementById('btn-capture-studio').addEventListener('click', () => {
-  ipcRenderer.send('tray-panel:open-capture-studio');
-});
+// Hidden: Capture Studio tray link
+// document.getElementById('btn-capture-studio').addEventListener('click', () => {
+//   ipcRenderer.send('tray-panel:open-capture-studio');
+// });
 
 // Settings panel buttons
 document.getElementById('btn-premium-support').addEventListener('click', () => {

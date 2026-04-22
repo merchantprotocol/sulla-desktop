@@ -324,6 +324,7 @@
         >
           Chat
         </router-link>
+        <!-- Hidden: Calendar mobile menu link
         <router-link
           to="/Calendar"
           class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"
@@ -332,6 +333,8 @@
         >
           Calendar
         </router-link>
+        -->
+
         <router-link
           to="/Integrations"
           class="block py-3 px-4 text-base font-semibold rounded-lg transition-colors"

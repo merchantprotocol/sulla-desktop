@@ -46,19 +46,29 @@ export type RoutineCategory =
   | 'ops'
   | 'goals';
 
+/**
+ * A routine template — what shows in My Templates. The file on disk is
+ * a full routine DAG (`~/sulla/routines/<slug>/routine.yaml`), so the
+ * summary mirrors that shape: metadata + graph counts + the kinds of
+ * triggers the routine wires up. None of the fields are invented; they
+ * all come straight from the YAML.
+ */
 export interface TemplateSummary {
-  slug:        string;
-  name:        string;
-  description: string;
-  category:    RoutineCategory;
-  section:     string;
-  initials:    string;
-  version:     string;
-  runtime?:    string;
-  tags:        string[];
-  inputCount:  number;
-  outputCount: number;
-  permissions: string;
+  slug:         string;
+  id:           string;
+  name:         string;
+  description:  string;
+  version:      string;
+  initials:     string;
+  /** Kept as a hint for card color only; inferred from name/description. */
+  category:     RoutineCategory;
+  /** `nodes.length` from the routine document. */
+  nodeCount:    number;
+  /** `edges.length` from the routine document. */
+  edgeCount:    number;
+  /** Subtypes of every node whose `data.category === 'trigger'`. */
+  triggerTypes: string[];
+  updatedAt?:   string;
 }
 
 /**

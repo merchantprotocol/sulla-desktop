@@ -49,6 +49,15 @@
             My Templates
             <span class="tab-num">{{ templatesController.templates.value.length }}</span>
           </button>
+          <button
+            type="button"
+            class="tab"
+            :class="{ on: activeTab === 'archive' }"
+            @click="activeTab = 'archive'"
+          >
+            Archive
+            <span class="tab-num">{{ routinesController.archived.value.length }}</span>
+          </button>
         </nav>
       </div>
 
@@ -82,8 +91,36 @@
 
       <!-- ═══════ MY ROUTINES TAB ═══════ -->
       <template v-if="activeTab === 'routines'">
+        <!-- Booting state — the app shell repaints tabs from localStorage
+             before the Electron backend is up. Show a benign "warming up"
+             message instead of blowing up with a DB connection error. -->
         <EmptyState
-          v-if="routinesController.isEmpty.value"
+          v-if="!systemReady"
+          kicker="Warming up"
+          title="Bringing the backend online…"
+          message="Your routines will appear once the Sulla services finish booting. This is usually a few seconds on first launch."
+        />
+
+        <!-- Error state — shown when the DB fetch failed. Preferable to
+             silently showing "your stage is empty" when something is
+             actually broken underneath. -->
+        <EmptyState
+          v-else-if="routinesController.error.value"
+          kicker="Can't reach the routines"
+          title="Couldn't load your stage."
+          :message="`The database returned an error: ${ routinesController.error.value }`"
+        >
+          <button
+            type="button"
+            class="btn primary"
+            @click="routinesController.refresh()"
+          >
+            Try again
+          </button>
+        </EmptyState>
+
+        <EmptyState
+          v-else-if="routinesController.isEmpty.value"
           kicker="No routines yet"
           title="Your stage is empty."
           message="You haven't built a routine yet. Start from a template — five are waiting in the wings — or compose one from scratch on the canvas."
@@ -116,10 +153,15 @@
               v-for="r in routinesController.running.value"
               :key="r.id"
               :routine="r"
-              primary-label="Open"
-              secondary-label="Watch"
-              @primary="onOpenRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
+              primary-label="Run"
+              secondary-label="Edit"
+              @primary="onOpenRun(r.id)"
+              @secondary="onOpenEdit(r.id)"
+              @open="onOpenRun(r.id)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @delete="onDelete(r)"
+              @export="onExport(r.id)"
             />
           </ActSection>
 
@@ -133,10 +175,15 @@
               v-for="r in routinesController.scheduled.value"
               :key="r.id"
               :routine="r"
-              primary-label="Open"
-              secondary-label="Skip next"
-              @primary="onOpenRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
+              primary-label="Run"
+              secondary-label="Edit"
+              @primary="onOpenRun(r.id)"
+              @secondary="onOpenEdit(r.id)"
+              @open="onOpenRun(r.id)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @delete="onDelete(r)"
+              @export="onExport(r.id)"
             />
           </ActSection>
 
@@ -152,8 +199,13 @@
               :routine="r"
               :primary-label="r.status === 'draft' ? 'Publish' : 'Run'"
               secondary-label="Edit"
-              @primary="onOpenRoutine(r.id)"
-              @open="onOpenRoutine(r.id)"
+              @primary="onPrimaryClick(r)"
+              @secondary="onOpenEdit(r.id)"
+              @open="onOpenRun(r.id)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @delete="onDelete(r)"
+              @export="onExport(r.id)"
             />
           </ActSection>
 
@@ -173,7 +225,7 @@
       </template>
 
       <!-- ═══════ MY TEMPLATES TAB ═══════ -->
-      <template v-else>
+      <template v-else-if="activeTab === 'templates'">
         <div class="template-search">
           <svg
             width="14"
@@ -234,6 +286,49 @@
           </div>
         </template>
       </template>
+
+      <!-- ═══════ ARCHIVE TAB ═══════ -->
+      <template v-else-if="activeTab === 'archive'">
+        <EmptyState
+          v-if="routinesController.archived.value.length === 0"
+          kicker="The vault is empty"
+          title="Nothing archived."
+          message="No archived routines. When you archive one from My Routines, it lands here."
+        >
+          <button
+            type="button"
+            class="btn primary"
+            @click="activeTab = 'routines'"
+          >
+            ← Back to My Routines
+          </button>
+        </EmptyState>
+
+        <template v-else>
+          <ActSection
+            act-num="Vault"
+            title="Archived routines"
+            :count-label="archivedCountLabel"
+          >
+            <RoutineStrip
+              v-for="r in routinesController.archived.value"
+              :key="r.id"
+              :routine="r"
+              primary-label="Restore"
+              secondary-label="Open"
+              @primary="onRestoreRoutine(r.id)"
+              @secondary="onOpenRoutine(r.id)"
+              @open="onOpenRoutine(r.id)"
+            />
+          </ActSection>
+
+          <div class="closer">
+            <div class="closer-sub">
+              Archived routines stay in the database — restore any of them and they return to My Routines.
+            </div>
+          </div>
+        </template>
+      </template>
         </div>
 
         <!-- ribbon footer — sits in normal flow at the end of the canvas
@@ -261,7 +356,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import ActSection from '@pkg/components/routines/ActSection.vue';
 import EmptyState from '@pkg/components/routines/EmptyState.vue';
@@ -269,13 +364,17 @@ import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
 import TemplateStrip from '@pkg/components/routines/TemplateStrip.vue';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-type Tab = 'routines' | 'templates';
+import { useStartupProgress } from './agent/useStartupProgress';
+
+type Tab = 'routines' | 'templates' | 'archive';
 
 const emit = defineEmits<{
-  (e: 'open-workflow', id: string): void
+  (e: 'open-workflow', id: string, mode?: 'edit' | 'run'): void
   (e: 'use-template', slug: string): void
   (e: 'new-blank'): void
+  (e: 'restore-routine', id: string): void
 }>();
 
 const activeTab = ref<Tab>('routines');
@@ -285,11 +384,30 @@ const activeTab = ref<Tab>('routines');
 const routinesController = useRoutines();
 const templatesController = useTemplates();
 
-onMounted(async() => {
+// The playbill can't query Postgres until the backend has booted — the
+// tab is restored from localStorage on first paint, which regularly
+// beats the Electron main-process bring-up. Gate the initial load on
+// `systemReady` and reload automatically the moment it flips true, so
+// the first real render gets real data instead of an ECONNREFUSED.
+const { systemReady } = useStartupProgress();
+
+async function loadAll() {
   await Promise.all([
     routinesController.load(),
     templatesController.load(),
   ]);
+}
+
+onMounted(() => {
+  if (systemReady.value) {
+    void loadAll();
+  }
+});
+
+// Re-fire when readiness toggles true. Handles both the first-boot race
+// and any later reboot of the backend (settings reset, VM restart, etc).
+watch(systemReady, (ready, prev) => {
+  if (ready && !prev) void loadAll();
 });
 
 // Display-layer string derivations. Kept as computeds so the template
@@ -297,9 +415,15 @@ onMounted(async() => {
 // terse and lets the eslint style rules stay strict.
 
 // Hero kicker shifts with the active tab. Playbill-adjacent phrasing,
-// but contextual so the two tabs feel like different places.
-const heroKicker = computed(() =>
-  activeTab.value === 'routines' ? 'The Cast' : 'The Library');
+// but contextual so the three tabs feel like different places.
+const heroKicker = computed(() => {
+  switch (activeTab.value) {
+  case 'routines':  return 'The Cast';
+  case 'templates': return 'The Library';
+  case 'archive':   return 'The Vault';
+  default:          return 'The Cast';
+  }
+});
 
 const heroDek = computed(() => {
   const count = routinesController.routines.value.length;
@@ -311,6 +435,9 @@ const heroDek = computed(() => {
     const reclaimed = routinesController.stats.value.reclaimed;
 
     return `${ count } routine${ plural }. ${ reclaimed } of human-equivalent work reclaimed this week. Each one a small constellation of agents, rehearsed until they run without you.`;
+  }
+  if (activeTab.value === 'archive') {
+    return 'Archived routines preserved from the active set. Restore them any time.';
   }
   const tplCount = templatesController.templates.value.length;
 
@@ -325,26 +452,92 @@ const runningCountLabel = computed(() => {
 
 const scheduledCountLabel = computed(() => `${ routinesController.scheduled.value.length } upcoming`);
 
+const archivedCountLabel = computed(() => {
+  const n = routinesController.archived.value.length;
+
+  return `${ n } routine${ n === 1 ? '' : 's' } archived`;
+});
+
 const templatesCountLabel = computed(() => `${ templatesController.filtered.value.length } available`);
 
 const noMatchesTitle = computed(() => `Nothing found for "${ templatesController.search.value }"`);
 
 const ribbonStatusLabel = computed(() => {
-  return activeTab.value === 'routines'
-    ? `${ routinesController.routines.value.length } in database`
-    : `${ templatesController.templates.value.length } on disk`;
+  switch (activeTab.value) {
+  case 'routines':
+    return `${ routinesController.routines.value.length } in database`;
+  case 'archive':
+    return `${ routinesController.archived.value.length } archived`;
+  default:
+    return `${ templatesController.templates.value.length } on disk`;
+  }
 });
 
 const todayStr = new Date().toISOString().slice(0, 10);
 
-function onOpenRoutine(id: string) {
-  emit('open-workflow', id);
+// Card body click = run mode. The explicit Edit button routes to edit
+// mode. "Publish" on a draft toggles status in place without navigating;
+// "Run" on a production routine lands in run mode like a card click.
+function onOpenRun(id: string) {
+  emit('open-workflow', id, 'run');
 }
+function onOpenEdit(id: string) {
+  emit('open-workflow', id, 'edit');
+}
+function onPrimaryClick(routine: { id: string; status: string }) {
+  if (routine.status === 'draft') {
+    // Publish = status toggle, stays on the playbill.
+    void routinesController.togglePublish(routine.id);
+
+    return;
+  }
+  onOpenRun(routine.id);
+}
+
 function onUseTemplate(slug: string) {
   emit('use-template', slug);
 }
 function onNewBlank() {
   emit('new-blank');
+}
+async function onDuplicate(id: string) {
+  await routinesController.duplicate(id);
+}
+
+async function onToggleArchive(id: string) {
+  await routinesController.toggleArchive(id);
+}
+
+async function onDelete(routine: { id: string; name: string }) {
+  // Destructive and permanent — confirm explicitly. Native confirm is
+  // ugly but bounded and won't surprise anyone; a prettier modal is a
+  // later polish pass.
+  const ok = window.confirm(
+    `Delete "${ routine.name }" permanently? This can't be undone.`,
+  );
+  if (!ok) return;
+  await routinesController.remove(routine.id);
+}
+
+// Archive tab uses its own "Restore" affordance. Restoring just flips
+// archive → draft via the existing toggleArchive action.
+async function onRestoreRoutine(id: string) {
+  await routinesController.toggleArchive(id);
+  emit('restore-routine', id);
+}
+
+async function onExport(id: string) {
+  // Fires the native save dialog in the main process; surfaces any
+  // failure through the routines controller's existing error channel
+  // so the view layer stays consistent with other IPC failure paths.
+  try {
+    await ipcRenderer.invoke('routines-export', id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // error is a readonly ref on the controller; mirror via console.
+    console.error('[Routines] Export failed:', err);
+    window.alert(`Export failed: ${ msg }`);
+  }
 }
 </script>
 

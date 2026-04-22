@@ -1,0 +1,54 @@
+id: routine-dedupe-emails
+name: Dedupe Emails
+description: >
+  On every heartbeat, pull the current email list from upstream,
+  dedupe it by address, and emit the cleaned list as the response.
+version: 1
+createdAt: "2026-04-21T00:00:00.000Z"
+updatedAt: "2026-04-21T00:00:00.000Z"
+
+viewport: { x: 0, y: 0, zoom: 1 }
+
+nodes:
+  - id: node-trigger
+    type: workflow
+    position: { x: 100, y: 100 }
+    data:
+      subtype: heartbeat
+      category: trigger
+      label: Heartbeat
+      config:
+        triggerType: heartbeat
+        triggerDescription: Deduplicate the incoming email list once per tick.
+
+  - id: node-dedupe
+    type: workflow
+    position: { x: 400, y: 100 }
+    data:
+      subtype: function
+      category: agent
+      label: Dedupe Emails
+      config:
+        functionRef: dedupe-emails
+        inputs:
+          list: "{{ trigger.emails }}"
+        vaultAccounts: {}
+        timeoutOverride: null
+
+  - id: node-respond
+    type: workflow
+    position: { x: 700, y: 100 }
+    data:
+      subtype: response
+      category: io
+      label: Return Cleaned List
+      config:
+        responseTemplate: "{{ node-dedupe.output.unique }}"
+
+edges:
+  - id: edge-1
+    source: node-trigger
+    target: node-dedupe
+  - id: edge-2
+    source: node-dedupe
+    target: node-respond
