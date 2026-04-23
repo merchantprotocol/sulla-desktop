@@ -32,8 +32,21 @@ jobs:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         persist-credentials: false
-        # Needed to run `git describe` to get full version info
+        # Full history so the non-tag fallback can find the most recent tag.
         fetch-depth: 0
+    # Stamp the build version into package.json before packaging so
+    # electron-builder bakes it into the app. Tag pushes get a clean
+    # semver; non-tag builds get `<last-tag>-dev.<short-sha>`.
+    - name: Stamp version
+      run: |
+        if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+          VERSION="${GITHUB_REF_NAME#v}"
+        else
+          BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo 0.0.0)
+          VERSION="${BASE#v}-dev.$(git rev-parse --short HEAD)"
+        fi
+        echo "Stamping version: $VERSION"
+        V="$VERSION" node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); p.version=process.env.V; fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n')"
     # timeout-minutes lives on the workflow step (composite actions
     # reject it). Caps a silent "Building fresh packages…" hang so we
     # fail fast instead of burning the full 30-minute job default.

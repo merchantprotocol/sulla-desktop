@@ -43,7 +43,7 @@ mac:
   entitlements: ./packaging/entitlements.mac.plist
   entitlementsInherit: ./packaging/entitlements.mac.plist
   notarize: true
-  artifactName: Sulla-Desktop-${version}-mac.${ext}
+  artifactName: Sulla-Desktop-${version}-${arch}-mac.${ext}
   extendInfo:
     NSMicrophoneUsageDescription: "Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio."
     NSCameraUsageDescription: "Sulla Desktop uses your camera for the capture studio face-cam overlay."
