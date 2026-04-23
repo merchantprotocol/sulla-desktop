@@ -654,7 +654,11 @@ export async function executeRoutine(
   state.metadata = state.metadata ?? {};
   state.metadata.scopedWorkflowId = workflowId;
 
-  const message = (triggerPayload ?? '').trim() || `Run routine ${ workflowId }`;
+  // Pass through the user payload as-is. When empty, the playbook's
+  // createPlaybookState will substitute the routine framing into the
+  // trigger node's output. Do NOT synthesize a "Run routine X" string —
+  // LLMs misread that as an imperative and trigger recursive workflow calls.
+  const message = (triggerPayload ?? '').trim();
 
   const activation = await activateWorkflowOnState(state as any, {
     workflowId,

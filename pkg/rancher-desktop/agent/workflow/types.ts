@@ -44,6 +44,13 @@ export interface WorkflowPlaybookState {
   };
   /** Active loop iteration state, keyed by loop nodeId */
   loopState?:   Record<string, LoopIterationState>;
+  /**
+   * Raw user payload passed to the trigger when the routine was activated.
+   * Distinct from the trigger node's `result` (which is the routine framing).
+   * Used by `{{trigger}}` template substitution so node configs still resolve
+   * to the user's input rather than to the framing preamble.
+   */
+  triggerInput?: unknown;
   startedAt:    string;
   completedAt?: string;
   error?:       string;

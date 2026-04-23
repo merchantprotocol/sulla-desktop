@@ -3,9 +3,25 @@
     class="marketplace"
     :class="{ 'is-detail': showingDetail }"
   >
+    <!-- Auth check still in flight — brief placeholder so the panel
+         doesn't flicker into view before we know the user's state. -->
+    <div
+      v-if="signedIn === null"
+      class="full-loading"
+    >
+      Checking Sulla Cloud session…
+    </div>
+
+    <!-- Not signed in — show the login/register panel; the marketplace
+         needs a Cloud session to push and pull items. -->
+    <MarketplaceSignIn
+      v-else-if="!signedIn"
+      @signed-in="onSignedIn"
+    />
+
     <!-- Full-page detail takes over when open; list is hidden. -->
     <MarketplaceDetail
-      v-if="mp.detail.value"
+      v-else-if="mp.detail.value"
       :row="mp.detail.value.row"
       :manifest="mp.detail.value.manifest"
       :installing="mp.installing.value === mp.detail.value.row.id"
@@ -368,6 +384,7 @@
 import { computed, onMounted, ref } from 'vue';
 
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
+import MarketplaceSignIn from '@pkg/components/routines/MarketplaceSignIn.vue';
 import MarketplaceStrip from '@pkg/components/routines/MarketplaceStrip.vue';
 import type { KindFilter, MarketplaceSort } from '@pkg/composables/useMarketplace';
 import { useMarketplace } from '@pkg/composables/useMarketplace';
@@ -415,6 +432,25 @@ interface SubmissionRow {
 }
 
 const mp = useMarketplace();
+
+// Auth gate — the marketplace is Cloud-backed, so without a Sulla Cloud
+// session the browse + submissions endpoints return "Sign in" errors.
+// Check once on mount and whenever load() reports an auth error; show
+// the sign-in panel in place of the marketplace content when unauthed.
+const signedIn = ref<boolean | null>(null); // null = still checking
+async function refreshAuthStatus(): Promise<boolean> {
+  try {
+    const status = await ipcRenderer.invoke('sulla-cloud:get-status' as any) as { signedIn?: boolean };
+    signedIn.value = !!status?.signedIn;
+  } catch {
+    signedIn.value = false;
+  }
+  return !!signedIn.value;
+}
+async function onSignedIn() {
+  signedIn.value = true;
+  await mp.load();
+}
 const searchDraft = ref('');
 
 // ── My Submissions state ──
@@ -452,7 +488,10 @@ const installedForOpenDrawer = computed(() => {
   return mp.lastInstalled.value;
 });
 
-onMounted(() => { void mp.load() });
+onMounted(async() => {
+  const authed = await refreshAuthStatus();
+  if (authed) void mp.load();
+});
 
 function onKind(k: KindFilter) {
   void mp.setKind(k);
@@ -476,7 +515,14 @@ async function onInstall(id: string) {
   const result = await mp.install(id);
   if (result) {
     emit('installed', result);
+    window.alert(
+      `Installed ${ result.name } (${ result.kind }) → ${ result.path }`,
+    );
+
+    return;
   }
+  const err = mp.installError.value;
+  window.alert(`Install failed${ err ? `: ${ err }` : '.' }`);
 }
 
 // ── My Submissions ──

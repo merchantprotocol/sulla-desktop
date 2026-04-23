@@ -16,13 +16,7 @@ export interface NodeTypeDefinition {
 
 // SVG icons — all stroke-based, 20x20 viewBox, matching TriggerNodePanel.vue pattern
 const ICONS = {
-  calendar: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
-
-  chatApp: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
-
-  heartbeat: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
-
-  sullaDesktop: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+  manual: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
 
   schedule: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/><path d="M17.7 17.7l2.8 2.8"/></svg>',
 
@@ -57,32 +51,18 @@ const ICONS = {
 
 export const NODE_REGISTRY: NodeTypeDefinition[] = [
   // ── Triggers ──
+  // The palette only exposes `manual` and `schedule`. The legacy subtypes
+  // (calendar, chat-app, heartbeat, sulla-desktop, workbench, chat-completions)
+  // are subsumed by `manual` — any external invocation (UI, chat, calendar
+  // event, API call, heartbeat tick) routes through the manual trigger now.
   {
-    subtype:       'calendar',
+    subtype:       'manual',
     category:      'trigger',
-    label:         'Calendar Event',
-    description:   'Triggered by a calendar event or schedule',
-    iconSvg:       ICONS.calendar,
-    defaultLabel:  'Calendar Trigger',
-    defaultConfig: () => ({ triggerType: 'calendar', triggerDescription: '' }),
-  },
-  {
-    subtype:       'chat-app',
-    category:      'trigger',
-    label:         'Chat App',
-    description:   'Slack, Telegram, or other messaging',
-    iconSvg:       ICONS.chatApp,
-    defaultLabel:  'Chat App Trigger',
-    defaultConfig: () => ({ triggerType: 'chat-app', triggerDescription: '' }),
-  },
-  {
-    subtype:       'heartbeat',
-    category:      'trigger',
-    label:         'Heartbeat',
-    description:   'Periodic interval trigger',
-    iconSvg:       ICONS.heartbeat,
-    defaultLabel:  'Heartbeat Trigger',
-    defaultConfig: () => ({ triggerType: 'heartbeat', triggerDescription: '' }),
+    label:         'Manual',
+    description:   'Run on demand — from chat, the UI, calendar events, or any external signal',
+    iconSvg:       ICONS.manual,
+    defaultLabel:  'Manual Trigger',
+    defaultConfig: () => ({ triggerType: 'manual', triggerDescription: '' }),
   },
   {
     subtype:       'schedule',
@@ -92,33 +72,6 @@ export const NODE_REGISTRY: NodeTypeDefinition[] = [
     iconSvg:       ICONS.schedule,
     defaultLabel:  'Schedule Trigger',
     defaultConfig: () => ({ triggerType: 'schedule', triggerDescription: '', frequency: 'daily', intervalMinutes: 15, hour: 9, minute: 0, dayOfWeek: 1, dayOfMonth: 1, timezone: '' }),
-  },
-  {
-    subtype:       'sulla-desktop',
-    category:      'trigger',
-    label:         'Sulla Desktop',
-    description:   'Direct chat in the desktop app',
-    iconSvg:       ICONS.sullaDesktop,
-    defaultLabel:  'Desktop Trigger',
-    defaultConfig: () => ({ triggerType: 'sulla-desktop', triggerDescription: '' }),
-  },
-  {
-    subtype:       'workbench',
-    category:      'trigger',
-    label:         'Workbench',
-    description:   'Chat from the workbench editor',
-    iconSvg:       ICONS.sullaDesktop,
-    defaultLabel:  'Workbench Trigger',
-    defaultConfig: () => ({ triggerType: 'workbench', triggerDescription: '' }),
-  },
-  {
-    subtype:       'chat-completions',
-    category:      'trigger',
-    label:         'Chat Completions API',
-    description:   'OpenAI-compatible endpoint',
-    iconSvg:       ICONS.chatCompletions,
-    defaultLabel:  'API Trigger',
-    defaultConfig: () => ({ triggerType: 'chat-completions', triggerDescription: '' }),
   },
 
   // ── Agent ──
