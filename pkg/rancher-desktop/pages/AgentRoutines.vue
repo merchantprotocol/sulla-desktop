@@ -12,8 +12,6 @@
       :default-viewport="{ zoom: 1 }"
       :default-edge-options="{ type: 'routine' }"
       :delete-key-code="null"
-      :selection-key-code="null"
-      :multi-selection-key-code="null"
       fit-view-on-init
       class="routines-flow"
       :class="{ locked }"
