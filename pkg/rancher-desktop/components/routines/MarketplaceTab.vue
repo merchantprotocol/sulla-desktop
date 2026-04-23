@@ -12,12 +12,18 @@
       Checking Sulla Cloud session…
     </div>
 
-    <!-- Not signed in — show the login/register panel; the marketplace
-         needs a Cloud session to push and pull items. -->
-    <MarketplaceSignIn
+    <!-- Not signed in — reuse the exact Sulla Cloud card from My Profile
+         so the two surfaces show the same state + flows. -->
+    <div
       v-else-if="!signedIn"
-      @signed-in="onSignedIn"
-    />
+      class="signin-gate"
+    >
+      <SullaCloudCard
+        rationale="You need a Sulla Cloud account to install routines, skills, functions, and recipes from the marketplace — and to publish your own."
+        @signed-in="onSignedIn"
+        @signed-out="onSignedOut"
+      />
+    </div>
 
     <!-- Full-page detail takes over when open; list is hidden. -->
     <MarketplaceDetail
@@ -383,8 +389,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 
+import SullaCloudCard from '@pkg/components/account/SullaCloudCard.vue';
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
-import MarketplaceSignIn from '@pkg/components/routines/MarketplaceSignIn.vue';
 import MarketplaceStrip from '@pkg/components/routines/MarketplaceStrip.vue';
 import type { KindFilter, MarketplaceSort } from '@pkg/composables/useMarketplace';
 import { useMarketplace } from '@pkg/composables/useMarketplace';
@@ -435,21 +441,30 @@ const mp = useMarketplace();
 
 // Auth gate — the marketplace is Cloud-backed, so without a Sulla Cloud
 // session the browse + submissions endpoints return "Sign in" errors.
-// Check once on mount and whenever load() reports an auth error; show
-// the sign-in panel in place of the marketplace content when unauthed.
+// The SullaCloudCard component is the source of truth: it fetches
+// status on mount and emits 'signed-in' / 'signed-out'. The parent's
+// own check is a best-effort first guess so we skip rendering the card
+// when we're already sure the user is signed in, avoiding a flash.
 const signedIn = ref<boolean | null>(null); // null = still checking
 async function refreshAuthStatus(): Promise<boolean> {
   try {
-    const status = await ipcRenderer.invoke('sulla-cloud:get-status' as any) as { signedIn?: boolean };
+    const status = await ipcRenderer.invoke('sulla-cloud:get-status');
     signedIn.value = !!status?.signedIn;
-  } catch {
-    signedIn.value = false;
+  } catch (err) {
+    // Don't assume signed-out on failure — the card will query again
+    // on mount and emit the real state. Leaving this null shows the
+    // card while it resolves the truth.
+    console.error('[MarketplaceTab] get-status failed:', err);
+    signedIn.value = null;
   }
   return !!signedIn.value;
 }
 async function onSignedIn() {
   signedIn.value = true;
   await mp.load();
+}
+function onSignedOut() {
+  signedIn.value = false;
 }
 const searchDraft = ref('');
 
@@ -840,6 +855,9 @@ function formatRelative(iso: string): string {
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .full-loading {
+  /* Parent grid is `220px 1fr`; without spanning, the placeholder lands
+     in the rail column and shows up as a sliver. */
+  grid-column: 1 / -1;
   padding: 80px 20px;
   text-align: center;
   font-family: var(--mono);
@@ -847,6 +865,22 @@ function formatRelative(iso: string): string {
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--steel-300);
+}
+
+.signin-gate {
+  /* Span the whole marketplace grid + center the Sulla Cloud card. The
+     card is a bounded box, so we just pad + cap width around it. */
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 48px 32px;
+  overflow-y: auto;
+}
+
+.signin-gate > :deep(.account-card) {
+  width: 100%;
+  max-width: 480px;
 }
 
 // ── My Submissions list ──
