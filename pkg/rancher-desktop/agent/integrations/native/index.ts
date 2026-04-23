@@ -8,16 +8,16 @@ import { nativeCustomerSupportIntegrations } from './customer_support';
 import { nativeDatabaseIntegrations } from './database';
 import { nativeDesignIntegrations } from './design';
 import { nativeGitHubIntegration } from './developer_tools';
+import { nativeEcommerceIntegrations } from './ecommerce';
+import { nativeFileStorageIntegrations } from './file_storage';
+import { nativeFinanceIntegrations } from './finance';
+import { nativeHrRecruitingIntegrations } from './hr_recruiting';
 import { nativeMarketingIntegrations } from './marketing';
+import { nativePaidAdsIntegrations } from './paid_ads';
 import { nativeProductivityIntegrations } from './productivity';
 import { nativeProjectManagementIntegrations } from './project_management';
-import { nativeFinanceIntegrations } from './finance';
-import { nativeFileStorageIntegrations } from './file_storage';
 import { nativeSecurityIntegrations } from './security';
 import { nativeSocialMediaIntegrations } from './social_media';
-import { nativeEcommerceIntegrations } from './ecommerce';
-import { nativeHrRecruitingIntegrations } from './hr_recruiting';
-import { nativePaidAdsIntegrations } from './paid_ads';
 
 import type { Integration } from '../types';
 

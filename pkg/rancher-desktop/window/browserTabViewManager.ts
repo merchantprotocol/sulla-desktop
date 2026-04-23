@@ -204,11 +204,12 @@ export class BrowserTabViewManager {
       console.error(`[BrowserTabView] Failed to load URL for tabId=${ tabId }:`, err);
     });
 
-    // If this tab was pre-selected as focused before its view existed,
-    // reconcile now so it becomes visible.
-    if (this.focusedTabId === tabId) {
-      this.reconcileVisibility();
-    }
+    // Run reconciliation unconditionally so the new view lands in the
+    // correct state: attached at top+real bounds if it's the focused tab,
+    // attached off-screen if not. Always attaching (even for background
+    // tabs) is what keeps the compositor alive so agent-initiated captures
+    // of never-viewed tabs still work.
+    this.reconcileVisibility();
 
     console.log(`[BrowserTabView] Created view tabId=${ tabId } url=${ url }`);
   }
@@ -314,32 +315,59 @@ export class BrowserTabViewManager {
    * `focusedTabId`:
    *   - The focused view is attached at the top of z-order at its latest
    *     bounds (so it overlays the Vue chat renderer).
-   *   - Every other view is detached from the window (not just hidden,
-   *     physically removed from the child-view list). The webContents
-   *     stays alive so screenshots via incrementCapturerCount still work.
+   *   - Every other view stays attached but parked off-screen at
+   *     negative x-coordinates, with a valid non-zero size so the
+   *     compositor keeps producing frames. This combines with
+   *     `capturePage({stayHidden: true})` in GuestBridge to guarantee
+   *     screenshots work regardless of focus — `stayHidden` forces paint,
+   *     off-screen bounds hide it from the user, and the view never
+   *     leaves the window's view tree (which is what was breaking
+   *     capture for fully-detached views).
    *
    * This is the ONLY place in the codebase that mutates
-   * contentView.addChildView / removeChildView for tab views.
+   * contentView.addChildView / removeChildView / setBounds for tab views.
    */
   private reconcileVisibility(): void {
     const mainWindow = getWindow('main-agent');
     if (!mainWindow) return;
+
+    // Park rectangle for unfocused views: far off-screen to the left,
+    // but with the view's last-known size so the compositor has a real
+    // viewport to paint into. Capturer/stayHidden keeps frames flowing;
+    // negative-x keeps anything that does render invisible to the user.
+    const PARK_X = -100_000;
 
     for (const [tabId, view] of this.views) {
       if (tabId === this.focusedTabId) {
         const bounds = this.latestBounds.get(tabId);
         if (bounds) view.setBounds(bounds);
         try {
-          // addChildView on an already-attached view promotes it to top;
+          // addChildView on an attached view promotes it to top of z-order;
           // on a detached view, re-attaches at top. Either way: top.
           mainWindow.contentView.addChildView(view);
         } catch (err) {
           console.warn(`[BrowserTabView] reconcile attach failed tabId=${ tabId }:`, err);
         }
       } else {
+        // Park off-screen. Keep the view attached so its compositor stays
+        // alive — detached WebContentsViews stop painting in Electron 40
+        // even with stayHidden, which breaks capturePage.
+        const last = this.latestBounds.get(tabId);
+        const parked: Electron.Rectangle = {
+          x:      PARK_X,
+          y:      last?.y ?? 0,
+          // Keep real width/height so the viewport has area to paint into.
+          width:  Math.max(last?.width ?? 1280, 1),
+          height: Math.max(last?.height ?? 800, 1),
+        };
+        view.setBounds(parked);
         try {
-          mainWindow.contentView.removeChildView(view);
-        } catch { /* already detached, fine */ }
+          // Ensure still attached (no-op if already attached). Index 0 puts
+          // it at the bottom of z-order so focused tab overlays cleanly.
+          mainWindow.contentView.addChildView(view, 0);
+        } catch (err) {
+          console.warn(`[BrowserTabView] reconcile park failed tabId=${ tabId }:`, err);
+        }
       }
     }
   }

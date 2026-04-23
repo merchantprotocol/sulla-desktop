@@ -15,8 +15,29 @@ import * as fsSync from 'fs';
 import * as osUtil from 'os';
 import * as pathUtil from 'path';
 
-// Per-sub-agent execution timeout. Override with SULLA_SUB_AGENT_TIMEOUT_MS env var.
-const SUB_AGENT_TIMEOUT_MS = parseInt(process.env.SULLA_SUB_AGENT_TIMEOUT_MS || '300000', 10);
+// Sub-agent durability. The legacy `SULLA_SUB_AGENT_TIMEOUT_MS` was a flat
+// wall-clock kill — it killed agents that were actively producing tokens
+// and tool calls just because they'd been running a while. That's wrong:
+// research/scraping/LLM-heavy work can legitimately take 10+ minutes and
+// we own the graph, so we know when the agent is actually idle.
+//
+// New model: watchdog the *activity* signal (`state.metadata.
+// lastActivityMs`, bumped on every LLM token, tool call, and thinking
+// event). If the agent goes silent for `INACTIVITY_MS`, don't kill it —
+// inject a "[bump]" user message to nudge it forward and reset the
+// clock. If it ignores bumps `MAX_BUMPS` times, THEN fail. The absolute
+// `MAX_MS` cap is the final belt-and-suspenders safety so a runaway
+// agent can't burn compute forever.
+const SUB_AGENT_INACTIVITY_MS = parseInt(
+  process.env.SULLA_SUB_AGENT_INACTIVITY_MS || '120000', 10, // 2 min silence → bump
+);
+const SUB_AGENT_MAX_BUMPS = parseInt(
+  process.env.SULLA_SUB_AGENT_MAX_BUMPS || '3', 10, // 3 unanswered bumps → fail
+);
+const SUB_AGENT_MAX_MS = parseInt(
+  process.env.SULLA_SUB_AGENT_MAX_MS || process.env.SULLA_SUB_AGENT_TIMEOUT_MS || '1800000', 10, // 30 min hard cap
+);
+const SUB_AGENT_WATCHDOG_INTERVAL_MS = 5000;
 
 import { throwIfAborted } from '../services/AbortService';
 import { getConversationLogger } from '../services/ConversationLogger';
@@ -2025,17 +2046,62 @@ export class PlaybookController<TState = any> {
     subState.metadata.workflowNodeId = nodeId;
     subState.metadata.workflowParentChannel = parentChannel;
 
+    // Seed the activity clock so the first watchdog tick doesn't fire on
+    // a not-yet-started agent. Bumpers in BaseNode.onToken / onActivity
+    // and ToolExecutor.executeToolCalls update this as work happens.
+    const startedAt = Date.now();
+    subState.metadata.lastActivityMs = startedAt;
+    let unansweredBumps = 0;
+
     let finalState: any;
-    let subAgentTimeoutId: NodeJS.Timeout | null = null;
+    let watchdogId: NodeJS.Timeout | null = null;
     try {
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        subAgentTimeoutId = setTimeout(() => {
-          reject(new Error(`Sub-agent "${agentId || nodeId}" timed out after ${SUB_AGENT_TIMEOUT_MS / 1000}s`));
-        }, SUB_AGENT_TIMEOUT_MS);
+      const watchdogPromise = new Promise<never>((_, reject) => {
+        watchdogId = setInterval(() => {
+          const now = Date.now();
+          const lastActivity = subState.metadata.lastActivityMs ?? startedAt;
+          const sinceActivity = now - lastActivity;
+          const elapsed = now - startedAt;
+
+          // Absolute cap — a runaway agent can't burn forever.
+          if (elapsed >= SUB_AGENT_MAX_MS) {
+            reject(new Error(
+              `Sub-agent "${ agentId || nodeId }" hit absolute max runtime of ${ Math.round(SUB_AGENT_MAX_MS / 1000) }s`,
+            ));
+            return;
+          }
+
+          if (sinceActivity < SUB_AGENT_INACTIVITY_MS) return;
+
+          // Bump budget exhausted — the agent had multiple chances to
+          // respond and didn't. Now it's a real stall, fail the sub.
+          if (unansweredBumps >= SUB_AGENT_MAX_BUMPS) {
+            reject(new Error(
+              `Sub-agent "${ agentId || nodeId }" ignored ${ SUB_AGENT_MAX_BUMPS } activity bumps — truly stalled`,
+            ));
+            return;
+          }
+
+          // Durable path: nudge the agent, don't kill it. Push a user
+          // message into the sub-agent's conversation and reset the
+          // activity clock. When the in-flight LLM / tool call returns
+          // (or if the graph is between cycles) the next turn picks up
+          // the bump as the latest user turn and the agent can continue
+          // where it left off. If the agent is hung on a provider that
+          // never returns, the bump sits unread until MAX_MS fires.
+          unansweredBumps++;
+          subState.metadata.lastActivityMs = now;
+          const nudge = unansweredBumps === 1
+            ? `[bump] You've been silent for ${ Math.round(sinceActivity / 1000) }s. Are you still working? If yes, continue where you left off. If the task is complete, emit <AGENT_DONE>…</AGENT_DONE>. If you're blocked, emit <AGENT_BLOCKED>…</AGENT_BLOCKED> with the reason.`
+            : `[bump ${ unansweredBumps }/${ SUB_AGENT_MAX_BUMPS }] Still no activity. State what you're doing or waiting on. If stuck, emit <AGENT_BLOCKED>…</AGENT_BLOCKED> so the orchestrator can recover.`;
+          if (!Array.isArray(subState.messages)) subState.messages = [];
+          subState.messages.push({ role: 'user', content: nudge });
+          console.warn(`[PlaybookController] Bumping idle sub-agent "${ agentId || nodeId }" (bump ${ unansweredBumps }/${ SUB_AGENT_MAX_BUMPS }, idle ${ Math.round(sinceActivity / 1000) }s)`);
+        }, SUB_AGENT_WATCHDOG_INTERVAL_MS);
       });
-      finalState = await Promise.race([graph.execute(subState), timeoutPromise]);
+      finalState = await Promise.race([graph.execute(subState), watchdogPromise]);
     } finally {
-      if (subAgentTimeoutId !== null) clearTimeout(subAgentTimeoutId);
+      if (watchdogId !== null) clearInterval(watchdogId);
       // Deregister from the parent's active-sub-agents list. Must run on
       // every exit path — success, contract-violation, or thrown error —
       // so an abort that fans out to stale threadIds doesn't see zombies.

@@ -1455,7 +1455,12 @@ function handleWorkflowEvent(event: any) {
     // `thk` line in place instead of pushing a new one — otherwise
     // every token renders as a separate message.
     if (!event.content) break;
-    const text = stripXml(String(event.content)).slice(0, 220);
+    // No truncation — thinking streams are cumulative, so capping here
+    // froze the visible bubble partway through a long thought. The CSS
+    // already handles layout for long text; if this ever becomes a DOM
+    // cost problem, truncate at render time (CSS line-clamp or a
+    // collapsible "show more") instead of discarding the content.
+    const text = stripXml(String(event.content));
     if (!text) break;
     const badge = (typeof event.thinkingLabel === 'string' && event.thinkingLabel.trim())
       ? event.thinkingLabel.trim()
@@ -1485,6 +1490,43 @@ function handleWorkflowEvent(event: any) {
       }
     } else {
       pushLine('thk', text, event.timestamp, badge, nodeId);
+    }
+    break;
+  }
+
+  case 'node_tool_call': {
+    // A sub-agent running inside this workflow node just dispatched a
+    // tool call. ToolExecutor mirrors these to the orchestrator's
+    // channel so the user can see what the sub-agent is actually doing
+    // during a long research/scraping run — otherwise the card goes
+    // silent between thinking bubbles. Seal any open thk bubble first
+    // so the next thought renders as a fresh line after the tool.
+    sealThinkingFor(nodeId);
+    const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool';
+    // Compact one-line arg preview — enough to identify the call
+    // without flooding the stream with a full JSON dump. The output
+    // drawer can show more if we want it later.
+    const argsPreview = (() => {
+      if (!event.args || typeof event.args !== 'object') return '';
+      try {
+        const keys = Object.keys(event.args as Record<string, unknown>);
+        if (!keys.length) return '';
+        const first = String((event.args as any)[keys[0]] ?? '').replace(/\s+/g, ' ').trim();
+        return first ? ` · ${ first.slice(0, 120) }` : '';
+      } catch { return '' }
+    })();
+    pushLine('tool', `${ toolName }${ argsPreview }`, event.timestamp, toolName, nodeId);
+    break;
+  }
+
+  case 'node_tool_result': {
+    const toolName = typeof event.toolName === 'string' ? event.toolName : 'tool';
+    const success = event.success !== false;
+    if (success) {
+      pushLine('obs', `${ toolName } · ok`, event.timestamp, toolName, nodeId);
+    } else {
+      const err = typeof event.error === 'string' ? event.error : 'failed';
+      pushLine('err', `${ toolName } · ${ stripXml(err).slice(0, 240) }`, event.timestamp, toolName, nodeId);
     }
     break;
   }

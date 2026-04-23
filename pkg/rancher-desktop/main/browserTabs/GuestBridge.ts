@@ -13,7 +13,7 @@
 // CDP-based methods (screenshot, trusted mouse/keyboard events) use
 // `webContents` APIs directly — no guest-side code needed.
 
-import type { WebContents } from 'electron';
+import type { WebContents, NativeImage } from 'electron';
 
 function jsArg(value: unknown): string {
   return JSON.stringify(value);
@@ -172,54 +172,51 @@ export class GuestBridge {
     await this.exec(`document.querySelectorAll('[data-sulla-annotation]').forEach(el => el.remove())`);
   }
 
-  // ── CDP / native input (screenshot, trusted events) ──────────────
+  // ── Native screenshot (Electron 40 webContents.capturePage) ───────
   async captureScreenshot(options: {
     format?: 'jpeg' | 'png'; quality?: number; clip?: { x: number; y: number; width: number; height: number };
   } = {}): Promise<{ base64: string; mediaType: string } | null> {
-    // Bracket the capture with incrementCapturerCount(stayHidden=true, stayAwake=true).
-    // Without this, the GPU stops generating frames the instant the WebContentsView
-    // isn't in a visible viewport, and Page.captureScreenshot hangs forever waiting
-    // for a frame that will never arrive. With stayHidden=true the view can be
-    // removed from the window or hidden via setVisible(false) and painting still
-    // survives for the duration of the capture. This is the *one* lever that lets
-    // us hide the view and still take screenshots — every other dodge (parking
-    // off-screen, zero-sized bounds, swapping z-order) was chasing the wrong cause.
-    let counterIncremented = false;
+    // Electron 40 REMOVED webContents.incrementCapturerCount / decrementCapturerCount.
+    // The replacement is webContents.capturePage(rect?, { stayHidden, stayAwake }) —
+    // same lifecycle semantics, different shape. `stayHidden: true` instructs the
+    // renderer to keep producing frames even when the WebContentsView is detached
+    // from the window's contentView, which is exactly our case: the single-source-
+    // of-truth manager fully detaches every non-focused tab, so without stayHidden
+    // the compositor produces no frames and any capture hangs indefinitely.
+    //
+    // Earlier versions of this method used `this.wc.debugger.sendCommand(
+    // 'Page.captureScreenshot', ...)` bracketed with incrementCapturerCount — that
+    // stack is completely broken on Electron 40 because incrementCapturerCount
+    // silently no-ops (the method doesn't exist on `this.wc`), so painting is
+    // never forced and the CDP call waits forever for a frame. Using the typed
+    // Electron API here avoids that trap.
+    const format = options.format === 'png' ? 'png' : 'jpeg';
+    const quality = typeof options.quality === 'number' ? options.quality : 80;
+    const rect = options.clip
+      ? { x: options.clip.x, y: options.clip.y, width: options.clip.width, height: options.clip.height }
+      : undefined;
+
     try {
-      if (!this.wc.debugger.isAttached()) {
-        this.wc.debugger.attach('1.3');
-      }
-      try {
-        (this.wc as any).incrementCapturerCount(undefined, true, true);
-        counterIncremented = true;
-      } catch { /* older Electron — best effort, continue */ }
-
-      const format = options.format === 'png' ? 'png' : 'jpeg';
-      const quality = typeof options.quality === 'number' ? options.quality : 80;
-      const cdpParams: Record<string, unknown> = { format, quality, captureBeyondViewport: false };
-      if (options.clip) {
-        cdpParams.clip = { x: options.clip.x, y: options.clip.y, width: options.clip.width, height: options.clip.height, scale: 1 };
-      }
-
-      // 10s timeout — if CDP wedges (missing capturer count on an older Electron,
-      // detached debugger, whatever), surface it to the agent instead of stalling
-      // the agent loop indefinitely. The browser tool can retry cheaper than a hang.
-      const result = await Promise.race([
-        this.wc.debugger.sendCommand('Page.captureScreenshot', cdpParams),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Page.captureScreenshot timed out after 10s')), 10_000),
+      // 10s timeout is a safety net, not the happy path — capturePage with
+      // stayHidden resolves in a few hundred ms under normal conditions.
+      const image = await Promise.race([
+        this.wc.capturePage(rect, { stayHidden: true, stayAwake: true }),
+        new Promise<NativeImage>((_, reject) =>
+          setTimeout(() => reject(new Error('capturePage timed out after 10s')), 10_000),
         ),
       ]);
-      return { base64: (result as any).data as string, mediaType: `image/${ format }` };
+      if (!image || image.isEmpty()) {
+        console.warn('[GuestBridge] capturePage returned empty NativeImage');
+        return null;
+      }
+      const buffer = format === 'png' ? image.toPNG() : image.toJPEG(quality);
+      return {
+        base64:    buffer.toString('base64'),
+        mediaType: `image/${ format }`,
+      };
     } catch (err) {
       console.warn('[GuestBridge] captureScreenshot failed:', err instanceof Error ? err.message : err);
       return null;
-    } finally {
-      if (counterIncremented) {
-        try {
-          (this.wc as any).decrementCapturerCount(undefined, true, true);
-        } catch { /* swallow — no use throwing from a finally */ }
-      }
     }
   }
 

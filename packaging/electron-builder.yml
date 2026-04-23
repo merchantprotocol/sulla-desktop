@@ -23,6 +23,15 @@ extraResources:
 files:
   - dist/app/**/*
   - '!**/node_modules/*/prebuilds/!(${platform}*)/*.node'
+# Register the sulla:// custom URL scheme so the OS hands off deep
+# links (e.g. the "Open in Sulla Desktop" CTA on sulladesktop.com)
+# to this app. electron-builder writes CFBundleURLTypes into the
+# signed Info.plist on macOS and the per-user registry keys on Win.
+# Linux registration still requires app.setAsDefaultProtocolClient()
+# at runtime — handled in background.ts.
+protocols:
+  - name: Sulla Desktop
+    schemes: [ sulla ]
 mac:
   darkModeSupport: true
   hardenedRuntime: true

@@ -100,10 +100,11 @@ defineEmits<{
 }>();
 
 const KIND_LABELS: Record<LibraryArtifactKind, string> = {
-  routines:  'Routine',
-  skills:    'Skill',
-  functions: 'Function',
-  recipes:   'Recipe',
+  routines:     'Routine',
+  skills:       'Skill',
+  functions:    'Function',
+  recipes:      'Recipe',
+  integrations: 'Integration',
 };
 
 const kindLabel = computed(() => KIND_LABELS[props.kind]);

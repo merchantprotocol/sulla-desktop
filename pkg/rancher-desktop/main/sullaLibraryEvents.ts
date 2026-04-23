@@ -167,9 +167,9 @@ function readComposeImage(recipeDir: string): string | undefined {
 
   try {
     const doc = yaml.parse(text);
-    const services = (doc as any)?.services;
+    const services = (doc)?.services;
     if (!services || typeof services !== 'object') return undefined;
-    for (const service of Object.values(services) as any[]) {
+    for (const service of Object.values(services)) {
       if (service && typeof service.image === 'string') return service.image;
     }
   } catch {
@@ -217,20 +217,85 @@ function scanRecipes(): RecipeRow[] {
   return rows;
 }
 
+// ─── Integrations ────────────────────────────────────────────────
+
+interface IntegrationRow {
+  slug:              string;
+  name:              string;
+  description:       string;
+  version:           string;
+  category:          string;
+  authType?:         string;
+  /** 'resources' for builtin defaults, 'user' for marketplace installs. */
+  source:            'resources' | 'user';
+  /** Count of bundled functions/skills, for at-a-glance strip meta. */
+  bundledFunctions?: number;
+  bundledSkills?:    number;
+  updatedAt:         string;
+}
+
+function scanIntegrations(): IntegrationRow[] {
+  // The loader scans both ~/sulla/resources/integrations/ (builtin) and
+  // ~/sulla/integrations/ (marketplace installs), validates each manifest,
+  // and merges with user-dir-wins. We reuse it verbatim so the Library view
+  // is always a faithful mirror of what the catalog actually loads.
+  const { loadCatalog } = require('@pkg/agent/integrations/loader');
+  const { manifests, sources } = loadCatalog();
+
+  const {
+    resolveSullaIntegrationsDir,
+    resolveSullaUserIntegrationsDir,
+  } = require('@pkg/agent/utils/sullaPaths');
+
+  const rootFor = (source: 'resources' | 'user'): string =>
+    (source === 'resources'
+      ? resolveSullaIntegrationsDir()
+      : resolveSullaUserIntegrationsDir());
+
+  const rows: IntegrationRow[] = [];
+
+  for (const [slug, manifest] of Object.entries(manifests)) {
+    const source = (sources[slug] ?? 'resources') as 'resources' | 'user';
+    const manifestPath = path.join(rootFor(source), slug, 'integration.yaml');
+
+    rows.push({
+      slug,
+      name:             manifest.name,
+      description:      manifest.description,
+      version:          manifest.version,
+      category:         manifest.category,
+      authType:         manifest.authType,
+      source,
+      bundledFunctions: manifest.bundled?.functions?.length,
+      bundledSkills:    manifest.bundled?.skills?.length,
+      updatedAt:        mtimeIso(manifestPath),
+    });
+  }
+
+  rows.sort((a, b) => {
+    // Group builtins first, then alphabetical within group.
+    if (a.source !== b.source) return a.source === 'resources' ? -1 : 1;
+
+    return a.name.localeCompare(b.name);
+  });
+
+  return rows;
+}
+
 // ─── Manifest builder ───────────────────────────────────────────
 // Re-constructs a sulla/v3-shaped manifest from what's on disk so the
 // detail drawer can render a local library item with the same component
 // used for marketplace entries. We don't try to recover what wasn't
 // there in the first place — missing sections render as empty in the UI.
 
-type KindPlural = 'routines' | 'skills' | 'functions' | 'recipes';
-type KindSingular = 'routine' | 'skill' | 'function' | 'recipe';
+type KindPlural = 'routines' | 'skills' | 'functions' | 'recipes' | 'integrations';
+type KindSingular = 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
 
 const KIND_TO_PLURAL: Record<KindSingular, KindPlural> = {
-  routine: 'routines', skill: 'skills', function: 'functions', recipe: 'recipes',
+  routine: 'routines', skill: 'skills', function: 'functions', recipe: 'recipes', integration: 'integrations',
 };
 const KIND_TO_SINGULAR: Record<KindPlural, KindSingular> = {
-  routines: 'routine', skills: 'skill', functions: 'function', recipes: 'recipe',
+  routines: 'routine', skills: 'skill', functions: 'function', recipes: 'recipe', integrations: 'integration',
 };
 
 function kindBaseDir(pluralKind: KindPlural): string {
@@ -239,13 +304,15 @@ function kindBaseDir(pluralKind: KindPlural): string {
     resolveSullaFunctionsDir,
     resolveSullaUserSkillsDir,
     resolveSullaRecipesDir,
+    resolveSullaUserIntegrationsDir,
   } = require('@pkg/agent/utils/sullaPaths');
 
   switch (pluralKind) {
-  case 'routines':  return resolveSullaRoutinesDir();
-  case 'skills':    return resolveSullaUserSkillsDir();
+  case 'routines': return resolveSullaRoutinesDir();
+  case 'skills': return resolveSullaUserSkillsDir();
   case 'functions': return resolveSullaFunctionsDir();
-  case 'recipes':   return resolveSullaRecipesDir();
+  case 'recipes': return resolveSullaRecipesDir();
+  case 'integrations': return resolveSullaUserIntegrationsDir();
   }
 }
 
@@ -298,10 +365,10 @@ function walkBundleFiles(root: string, slug: string): BundleFileEntry[] {
 
 function coreDocFor(kind: KindSingular): string {
   switch (kind) {
-  case 'routine':  return 'routine.yaml';
-  case 'skill':    return 'SKILL.md';
+  case 'routine': return 'routine.yaml';
+  case 'skill': return 'SKILL.md';
   case 'function': return 'function.yaml';
-  case 'recipe':   return 'manifest.yaml';
+  case 'recipe': return 'manifest.yaml';
   }
 }
 
@@ -334,24 +401,24 @@ function capitaliseKind(kind: KindSingular): BuiltManifest['kind'] {
 
 interface BuiltPayload {
   template: {
-    id:                    string;
-    kind:                  KindSingular;
-    slug:                  string;
-    name:                  string;
-    description:           string | null;
-    tagline:               string | null;
-    version:               string;
-    category:              string | null;
-    author_contractor_id:  string;
-    author_display:        string | null;
-    tags:                  string[];
-    featured:              boolean;
-    hero_media:            null;
-    bundle_size:           number;
-    download_count:        number;
-    created_at:            string;
-    updated_at:            string;
-    manifest:              Record<string, unknown>;
+    id:                   string;
+    kind:                 KindSingular;
+    slug:                 string;
+    name:                 string;
+    description:          string | null;
+    tagline:              string | null;
+    version:              string;
+    category:             string | null;
+    author_contractor_id: string;
+    author_display:       string | null;
+    tags:                 string[];
+    featured:             boolean;
+    hero_media:           null;
+    bundle_size:          number;
+    download_count:       number;
+    created_at:           string;
+    updated_at:           string;
+    manifest:             Record<string, unknown>;
   };
 }
 
@@ -367,7 +434,7 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
   const coreDocName = coreDocFor(kind);
   const coreDocPath = path.join(itemDir, coreDocName);
   const coreDocText = readTextSafe(coreDocPath);
-  const readmeText  = readTextSafe(path.join(itemDir, 'README.md'));
+  const readmeText = readTextSafe(path.join(itemDir, 'README.md'));
 
   // Gather metadata per kind — same source files the scanners already use.
   let name: string = slug;
@@ -381,10 +448,10 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
   case 'skill': {
     if (coreDocText != null) {
       const fm = parseFrontmatter(coreDocText);
-      name        = pickString(fm, 'name') ?? slug;
+      name = pickString(fm, 'name') ?? slug;
       description = pickString(fm, 'description') ?? '';
-      version     = pickString(fm, 'version') ?? '1.0.0';
-      category    = pickString(fm, 'category') ?? null;
+      version = pickString(fm, 'version') ?? '1.0.0';
+      category = pickString(fm, 'category') ?? null;
       const tagsArr = fm?.tags;
       if (Array.isArray(tagsArr)) tags = tagsArr.map(String);
       const body = coreDocText.startsWith('---')
@@ -397,7 +464,7 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
           condition:            pickString(fm, 'condition') ?? '',
           promptLength:         body.trim().length,
           requiredIntegrations: Array.isArray(fm?.required_integrations)
-            ? (fm!.required_integrations as unknown[]).map(String)
+            ? (fm.required_integrations as unknown[]).map(String)
             : [],
         },
       };
@@ -409,20 +476,20 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
       try {
         const doc = yaml.parse(coreDocText) as Record<string, unknown> | null;
         if (doc) {
-          name        = pickString(doc, 'name') ?? slug;
+          name = pickString(doc, 'name') ?? slug;
           description = pickString(doc, 'description') ?? '';
-          version     = pickString(doc, 'version') ?? '1.0.0';
-          category    = pickString(doc, 'category') ?? null;
+          version = pickString(doc, 'version') ?? '1.0.0';
+          category = pickString(doc, 'category') ?? null;
           const runtime = (pickString(doc, 'runtime') ?? 'python') as 'python' | 'node' | 'shell';
-          const inputs  = doc.inputs  && typeof doc.inputs  === 'object' ? doc.inputs  as Record<string, unknown> : {};
+          const inputs = doc.inputs && typeof doc.inputs === 'object' ? doc.inputs as Record<string, unknown> : {};
           const outputs = doc.outputs && typeof doc.outputs === 'object' ? doc.outputs as Record<string, unknown> : {};
           const entrypoint = detectFunctionEntrypoint(itemDir, runtime);
           summaryBlock = {
             functionSummary: {
-              functionName: name,
+              functionName:          name,
               runtime,
-              inputs:       Object.entries(inputs).map(([k, v]) => ({ name: k, type: typeof (v as any)?.type === 'string' ? (v as any).type : 'string' })),
-              outputs:      Object.entries(outputs).map(([k, v]) => ({ name: k, type: typeof (v as any)?.type === 'string' ? (v as any).type : 'string' })),
+              inputs:                Object.entries(inputs).map(([k, v]) => ({ name: k, type: typeof (v as any)?.type === 'string' ? (v as any).type : 'string' })),
+              outputs:               Object.entries(outputs).map(([k, v]) => ({ name: k, type: typeof (v as any)?.type === 'string' ? (v as any).type : 'string' })),
               entrypoint,
               requiredVaultAccounts: [],
             },
@@ -439,10 +506,10 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
       try {
         const doc = yaml.parse(coreDocText) as Record<string, unknown> | null;
         if (doc) {
-          name        = pickString(doc, 'name') ?? slug;
+          name = pickString(doc, 'name') ?? slug;
           description = pickString(doc, 'description') ?? '';
-          version     = pickString(doc, 'version') ?? '1.0.0';
-          category    = pickString(doc, 'category') ?? null;
+          version = pickString(doc, 'version') ?? '1.0.0';
+          category = pickString(doc, 'category') ?? null;
           const image = readComposeImage(itemDir);
           summaryBlock = {
             recipeSummary: {
@@ -467,10 +534,10 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
       try {
         const doc = yaml.parse(coreDocText) as Record<string, unknown> | null;
         if (doc) {
-          name        = pickString(doc, 'name') ?? slug;
+          name = pickString(doc, 'name') ?? slug;
           description = pickString(doc, 'description') ?? '';
-          version     = pickString(doc, 'version') ?? '1.0.0';
-          category    = pickString(doc, 'category') ?? null;
+          version = pickString(doc, 'version') ?? '1.0.0';
+          category = pickString(doc, 'category') ?? null;
           const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
           const edges = Array.isArray(doc.edges) ? doc.edges : [];
           const triggerTypes = Array.from(new Set(
@@ -506,7 +573,7 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
     apiVersion:      'sulla/v3',
     kind:            capitaliseKind(kind),
     manifestVersion: 1,
-    metadata: {
+    metadata:        {
       name,
       description,
       version,
@@ -519,7 +586,7 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
       files,
     },
     previews: {
-      ...(readmeText  ? { readme:  readmeText }  : {}),
+      ...(readmeText ? { readme: readmeText } : {}),
       ...(coreDocText ? { coreDoc: coreDocText } : {}),
     },
     ...(summaryBlock ?? {}),
@@ -569,7 +636,7 @@ function readComposePorts(recipeDir: string): number[] {
     const services = (doc as any)?.services;
     if (!services || typeof services !== 'object') return [];
     const ports = new Set<number>();
-    for (const service of Object.values(services) as any[]) {
+    for (const service of Object.values(services)) {
       const arr = service?.ports;
       if (!Array.isArray(arr)) continue;
       for (const p of arr) {
@@ -577,7 +644,7 @@ function readComposePorts(recipeDir: string): number[] {
           ports.add(p);
         } else if (typeof p === 'string') {
           // "80", "80:80", "127.0.0.1:80:80"
-          const match = p.match(/(\d+)(?:\s*$|\s*\/)/);
+          const match = /(\d+)(?:\s*$|\s*\/)/.exec(p);
           if (match) ports.add(Number(match[1]));
           else {
             const parts = p.split(':');
@@ -618,22 +685,125 @@ export function initSullaLibraryEvents(): void {
     }
   });
 
+  ipcMainProxy.handle('library-list-integrations', async() => {
+    try {
+      return scanIntegrations();
+    } catch (err) {
+      console.error('[Sulla] library-list-integrations failed:', err);
+
+      return [];
+    }
+  });
+
+  /**
+   * Uninstall a marketplace-installed integration.
+   *
+   * Removes the integration dir at `~/sulla/integrations/<slug>/` plus any
+   * companion functions/skills declared in `integration.yaml`'s `bundled`
+   * block (at `~/sulla/functions/<slug>-<name>/` and `~/sulla/skills/<slug>-<name>/`).
+   *
+   * Refuses to uninstall builtins (`source === 'resources'`) — those are
+   * shipped with Sulla Desktop via sulla-resources and the user should not
+   * be able to delete them through the UI.
+   *
+   * Does NOT touch vault credentials — those are purged separately through
+   * the integration detail drawer, where the user can see which accounts
+   * they'd be blowing away.
+   */
+  ipcMainProxy.handle('library-uninstall-integration', async(_event, slug: string) => {
+    try {
+      if (!slug || typeof slug !== 'string') {
+        return { uninstalled: false, error: 'library-uninstall-integration requires a slug' };
+      }
+
+      const {
+        resolveSullaUserIntegrationsDir,
+        resolveSullaFunctionsDir,
+        resolveSullaUserSkillsDir,
+      } = require('@pkg/agent/utils/sullaPaths');
+
+      const integrationDir = path.join(resolveSullaUserIntegrationsDir(), slug);
+
+      if (!fs.existsSync(integrationDir)) {
+        return { uninstalled: false, error: `No marketplace integration installed at ${ integrationDir }. Builtins cannot be uninstalled.` };
+      }
+
+      // Read the manifest to learn what was fanned out at install time.
+      // Missing or malformed manifest is non-fatal — we still remove the dir
+      // itself; bundled artifacts would be orphans in that case, which we log.
+      const manifestPath = path.join(integrationDir, 'integration.yaml');
+      const removed: { functions: string[]; skills: string[] } = { functions: [], skills: [] };
+      let bundled: { functions?: string[]; skills?: string[] } | null = null;
+
+      const manifestText = readTextSafe(manifestPath);
+
+      if (manifestText != null) {
+        try {
+          const parsed = yaml.parse(manifestText) as { bundled?: { functions?: string[]; skills?: string[] } } | null;
+
+          bundled = parsed?.bundled ?? null;
+        } catch (err) {
+          console.warn(`[Sulla] integration ${ slug } has unparseable integration.yaml — bundled artifacts may be orphaned:`, err);
+        }
+      }
+
+      for (const name of bundled?.functions ?? []) {
+        const target = path.join(resolveSullaFunctionsDir(), `${ slug }-${ name }`);
+
+        if (fs.existsSync(target)) {
+          fs.rmSync(target, { recursive: true, force: true });
+          removed.functions.push(`${ slug }-${ name }`);
+        }
+      }
+      for (const name of bundled?.skills ?? []) {
+        const target = path.join(resolveSullaUserSkillsDir(), `${ slug }-${ name }`);
+
+        if (fs.existsSync(target)) {
+          fs.rmSync(target, { recursive: true, force: true });
+          removed.skills.push(`${ slug }-${ name }`);
+        }
+      }
+
+      fs.rmSync(integrationDir, { recursive: true, force: true });
+
+      console.log(`[Sulla] Uninstalled integration "${ slug }" (+${ removed.functions.length } function(s), +${ removed.skills.length } skill(s))`);
+
+      return {
+        uninstalled:      true,
+        slug,
+        removedFunctions: removed.functions,
+        removedSkills:    removed.skills,
+      };
+    } catch (err) {
+      console.error('[Sulla] library-uninstall-integration failed:', err);
+
+      return { uninstalled: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMainProxy.handle('library-reveal', async(_event, kind, slug) => {
     try {
-      const base = (() => {
+      // Integrations live in two locations — prefer user (marketplace install
+      // or fork) over resources (builtin) so "reveal" surfaces the file the
+      // user is actually editing.
+      const candidates: string[] = (() => {
+        const paths = require('@pkg/agent/utils/sullaPaths');
+
         switch (kind) {
-        case 'routines':  return require('@pkg/agent/utils/sullaPaths').resolveSullaRoutinesDir();
-        case 'skills':    return require('@pkg/agent/utils/sullaPaths').resolveSullaUserSkillsDir();
-        case 'functions': return require('@pkg/agent/utils/sullaPaths').resolveSullaFunctionsDir();
-        case 'recipes':   return require('@pkg/agent/utils/sullaPaths').resolveSullaRecipesDir();
-        default: return null;
+        case 'routines': return [paths.resolveSullaRoutinesDir()];
+        case 'skills': return [paths.resolveSullaUserSkillsDir()];
+        case 'functions': return [paths.resolveSullaFunctionsDir()];
+        case 'recipes': return [paths.resolveSullaRecipesDir()];
+        case 'integrations': return [paths.resolveSullaUserIntegrationsDir(), paths.resolveSullaIntegrationsDir()];
+        default: return [];
         }
       })();
-      if (!base) return { revealed: false, error: `unknown kind "${ kind }"` };
+      if (candidates.length === 0) return { revealed: false, error: `unknown kind "${ kind }"` };
 
-      const target = path.join(base, slug);
-      if (!fs.existsSync(target)) {
-        return { revealed: false, error: `path does not exist: ${ target }` };
+      const target = candidates.map(base => path.join(base, slug)).find(fs.existsSync);
+
+      if (!target) {
+        return { revealed: false, error: `path does not exist: ${ candidates.map(b => path.join(b, slug)).join(' or ') }` };
       }
       // openPath opens the folder itself; showItemInFolder selects it in the parent.
       // We want the former — the user is navigating into the item.

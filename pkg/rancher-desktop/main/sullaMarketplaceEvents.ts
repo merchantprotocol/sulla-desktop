@@ -35,6 +35,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
+import yaml from 'yaml';
 import * as yauzl from 'yauzl';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -55,7 +56,7 @@ const MAX_ENTRIES = 10_000;              // zip-bomb sanity cap
 // already a sign something's wrong on the way out of R2.
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 
-type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe';
+type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
 
 function kindTargetDir(kind: MarketplaceKind): string {
   // Require via `require` to match the pattern used across main/ — keeps
@@ -65,6 +66,7 @@ function kindTargetDir(kind: MarketplaceKind): string {
     resolveSullaFunctionsDir,
     resolveSullaUserSkillsDir,
     resolveSullaRecipesDir,
+    resolveSullaUserIntegrationsDir,
   } = require('@pkg/agent/utils/sullaPaths');
 
   switch (kind) {
@@ -72,6 +74,7 @@ function kindTargetDir(kind: MarketplaceKind): string {
   case 'function': return resolveSullaFunctionsDir();
   case 'skill': return resolveSullaUserSkillsDir();
   case 'recipe': return resolveSullaRecipesDir();
+  case 'integration': return resolveSullaUserIntegrationsDir();
   default:
     throw new Error(`no install target for kind "${ kind }"`);
   }
@@ -237,6 +240,119 @@ function rmrfSync(target: string): void {
   }
 }
 
+// ─── Integration bundled artifact fan-out ──────────────────────────
+//
+// An integration package may ship companion functions and skills:
+//
+//   <integration-slug>/
+//     integration.yaml
+//     functions/<name>/function.yaml
+//     skills/<name>/SKILL.md
+//
+// After the integration lands at its target dir, bundled subdirectories
+// are MOVED (not copied) into their respective runtime locations with a
+// `<integration-slug>-` prefix so loaders find them and uninstall can
+// clean them up via the integration's manifest.
+
+interface BundledMoves {
+  functions: { src: string; dst: string }[];
+  skills:    { src: string; dst: string }[];
+}
+
+function fanOutBundledArtifacts(integrationPath: string, integrationSlug: string): BundledMoves {
+  const manifestPath = path.join(integrationPath, 'integration.yaml');
+  const text = fs.readFileSync(manifestPath, 'utf8');
+  const manifest = yaml.parse(text) as { bundled?: { functions?: string[]; skills?: string[] } } | null;
+  const bundled = manifest?.bundled;
+
+  if (!bundled) return { functions: [], skills: [] };
+
+  const {
+    resolveSullaFunctionsDir,
+    resolveSullaUserSkillsDir,
+  } = require('@pkg/agent/utils/sullaPaths');
+
+  const moves: BundledMoves = { functions: [], skills: [] };
+  const planned = {
+    functions: (bundled.functions ?? []).map(name => ({
+      src: path.join(integrationPath, 'functions', name),
+      dst: path.join(resolveSullaFunctionsDir(), `${ integrationSlug }-${ name }`),
+    })),
+    skills: (bundled.skills ?? []).map(name => ({
+      src: path.join(integrationPath, 'skills', name),
+      dst: path.join(resolveSullaUserSkillsDir(), `${ integrationSlug }-${ name }`),
+    })),
+  };
+
+  // Pre-flight all destinations before touching disk. If ANY collides, fail
+  // the whole install — the integration slug itself was already collision-
+  // resolved, so a collision here means a prior unrelated artifact. Clean
+  // rollback keeps the rest of the user's library intact.
+  for (const kind of ['functions', 'skills'] as const) {
+    for (const { src, dst } of planned[kind]) {
+      if (!fs.existsSync(src)) {
+        throw new Error(`bundled ${ kind.slice(0, -1) } declared in manifest but missing on disk: ${ path.basename(src) }`);
+      }
+      if (fs.existsSync(dst)) {
+        throw new Error(`bundled ${ kind.slice(0, -1) } collides with existing artifact: ${ dst }`);
+      }
+    }
+  }
+
+  // All pre-flights passed — perform moves. fs.renameSync is a rename
+  // within the same filesystem; fall back to copy+rm for cross-FS cases
+  // (same EXDEV handling used for the integration dir itself).
+  const tryMove = (src: string, dst: string) => {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    try {
+      fs.renameSync(src, dst);
+    } catch (err: any) {
+      if (err?.code === 'EXDEV') {
+        safeCopyTree(src, dst);
+        rmrfSync(src);
+      } else {
+        throw err;
+      }
+    }
+  };
+
+  for (const entry of planned.functions) {
+    tryMove(entry.src, entry.dst);
+    moves.functions.push(entry);
+  }
+  for (const entry of planned.skills) {
+    tryMove(entry.src, entry.dst);
+    moves.skills.push(entry);
+  }
+
+  // Remove the now-empty bundled/ subdirs from the integration package so
+  // the on-disk shape matches "source of truth = manifest.bundled[]".
+  rmrfSync(path.join(integrationPath, 'functions'));
+  rmrfSync(path.join(integrationPath, 'skills'));
+
+  return moves;
+}
+
+/** Rollback bundled moves on failure — best-effort, log but don't throw. */
+function rollbackBundledMoves(moves: BundledMoves): void {
+  for (const { dst } of [...moves.functions, ...moves.skills]) {
+    rmrfSync(dst);
+  }
+}
+
+/**
+ * Rewrite the `id` field of an integration.yaml file to match a new slug.
+ * Parses, mutates, and re-serialises so comments and formatting are preserved
+ * where possible (yaml lib keeps anchors/style for round-trip).
+ */
+function rewriteIntegrationId(manifestPath: string, newId: string): void {
+  const text = fs.readFileSync(manifestPath, 'utf8');
+  const doc = yaml.parseDocument(text);
+
+  doc.set('id', newId);
+  fs.writeFileSync(manifestPath, doc.toString(), 'utf8');
+}
+
 // ─── HTTP helpers ───────────────────────────────────────────────
 
 async function authHeaders(): Promise<{ Authorization: string } | null> {
@@ -393,7 +509,7 @@ export function initSullaMarketplaceEvents(): void {
     }
 
     const kind = detail.template?.kind;
-    if (kind !== 'routine' && kind !== 'skill' && kind !== 'function' && kind !== 'recipe') {
+    if (kind !== 'routine' && kind !== 'skill' && kind !== 'function' && kind !== 'recipe' && kind !== 'integration') {
       return { error: `Unknown marketplace kind "${ kind }"` };
     }
 
@@ -431,7 +547,33 @@ export function initSullaMarketplaceEvents(): void {
         }
       }
 
+      // Collision rename cascade: if pickAvailableSlug picked a different
+      // slug than the bundle's preferred name, the integration.yaml's `id`
+      // field is now stale. Rewrite it so loader validation (which checks
+      // that manifest.id matches the directory name) accepts it.
+      if (kind === 'integration' && slug !== dirName) {
+        rewriteIntegrationId(path.join(targetPath, 'integration.yaml'), slug);
+      }
+
+      // For integrations, fan out bundled functions/skills to their runtime
+      // locations. On failure, roll back BOTH the fan-out moves and the
+      // integration dir so the install is atomic from the user's POV.
+      let bundledMoves: BundledMoves = { functions: [], skills: [] };
+
+      if (kind === 'integration') {
+        try {
+          bundledMoves = fanOutBundledArtifacts(targetPath, slug);
+        } catch (fanOutErr) {
+          rollbackBundledMoves(bundledMoves);
+          rmrfSync(targetPath);
+          throw fanOutErr;
+        }
+      }
+
       console.log(`[Sulla] Installed marketplace ${ kind } → ${ targetPath }`);
+      if (kind === 'integration' && (bundledMoves.functions.length || bundledMoves.skills.length)) {
+        console.log(`[Sulla]   + bundled ${ bundledMoves.functions.length } function(s), ${ bundledMoves.skills.length } skill(s)`);
+      }
 
       return {
         kind,

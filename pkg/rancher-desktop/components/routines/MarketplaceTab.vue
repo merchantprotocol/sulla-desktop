@@ -404,6 +404,7 @@ const KIND_OPTIONS: { value: KindFilter; label: string }[] = [
   { value: 'skill', label: 'Skills' },
   { value: 'function', label: 'Functions' },
   { value: 'recipe', label: 'Recipes' },
+  { value: 'integration', label: 'Integrations' },
 ];
 
 const SORT_OPTIONS: { value: SortValue; label: string }[] = [
@@ -423,7 +424,7 @@ const STATUS_LABELS: Record<'pending' | 'approved' | 'rejected', string> = {
 
 interface SubmissionRow {
   id:              string;
-  kind:            'routine' | 'skill' | 'function' | 'recipe';
+  kind:            'routine' | 'skill' | 'function' | 'recipe' | 'integration';
   slug:            string;
   name:            string;
   description?:    string | null;

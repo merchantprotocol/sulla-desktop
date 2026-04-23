@@ -17,7 +17,7 @@ import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
  */
 export interface MarketplaceBrowseRow {
   id:                   string;
-  kind:                 'routine' | 'skill' | 'function' | 'recipe';
+  kind:                 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
   slug:                 string;
   name:                 string;
   description?:         string | null;
@@ -426,7 +426,7 @@ export interface IpcMainInvokeEvents {
   // install pipeline against local assets. Does NOT auto-start recipes —
   // the user clicks Launch separately from the library UI.
   'bundles-install-from-marketplace': (templateId: string) => {
-    kind:        'routine' | 'skill' | 'function' | 'recipe';
+    kind:        'routine' | 'skill' | 'function' | 'recipe' | 'integration';
     slug:        string;
     templateId:  string;
     name:        string;
@@ -436,7 +436,7 @@ export interface IpcMainInvokeEvents {
   // Publish: build a sulla/v3 manifest from a local bundle folder, then
   // two-step submit (POST /submit-manifest → PUT /bundle).
   'bundles-publish': (args: {
-    kind:         'routine' | 'skill' | 'function' | 'recipe';
+    kind:         'routine' | 'skill' | 'function' | 'recipe' | 'integration';
     slug?:        string;
     extensionId?: string;
     overrides?:   { name?: string; description?: string; version?: string; tags?: string[] };
@@ -453,7 +453,7 @@ export interface IpcMainInvokeEvents {
   // individual errors; per-folder results + summary counts come back.
   'bundles-publish-bulk-from-dir': (args: {
     sourceDir: string;
-    kind:      'routine' | 'skill' | 'function' | 'recipe';
+    kind:      'routine' | 'skill' | 'function' | 'recipe' | 'integration';
     filter?:   string[];
     dryRun?:   boolean;
   }) => {
@@ -472,7 +472,7 @@ export interface IpcMainInvokeEvents {
   // back when the caller isn't signed in, the network fails, or the server
   // returns a non-2xx.
   'marketplace-browse':  (opts?: {
-    kind?:  'routine' | 'skill' | 'function' | 'recipe';
+    kind?:  'routine' | 'skill' | 'function' | 'recipe' | 'integration';
     q?:     string;
     sort?:  'popular' | 'newest' | 'featured';
     page?:  number;
@@ -487,7 +487,7 @@ export interface IpcMainInvokeEvents {
     template: MarketplaceBrowseRow & { manifest: Record<string, unknown> };
   } | { error: string };
   'marketplace-install': (id: string) => {
-    kind: 'routine' | 'skill' | 'function' | 'recipe';
+    kind: 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
     slug: string;
     path: string;
     name: string;
@@ -532,8 +532,32 @@ export interface IpcMainInvokeEvents {
     extension?:  string;
     updatedAt:   string;
   }[];
+  'library-list-integrations': () => {
+    slug:              string;
+    name:              string;
+    description:       string;
+    version:           string;
+    category:          string;
+    authType?:         string;
+    source:            'resources' | 'user';
+    bundledFunctions?: number;
+    bundledSkills?:    number;
+    updatedAt:         string;
+  }[];
+  /**
+   * Uninstall a marketplace-installed integration. Removes the integration
+   * directory plus any companion functions/skills declared in `integration.yaml`'s
+   * `bundled` block. Refuses builtins. Does NOT touch vault credentials.
+   */
+  'library-uninstall-integration': (slug: string) => {
+    uninstalled:       boolean;
+    slug?:             string;
+    removedFunctions?: string[];
+    removedSkills?:    string[];
+    error?:            string;
+  };
   /** Reveal a library item on disk in the OS file manager. */
-  'library-reveal':        (kind: 'routines' | 'skills' | 'functions' | 'recipes', slug: string) => { revealed: boolean; path?: string; error?: string };
+  'library-reveal':        (kind: 'routines' | 'skills' | 'functions' | 'recipes' | 'integrations', slug: string) => { revealed: boolean; path?: string; error?: string };
   /**
    * Build a sulla/v3-shaped `{ template, manifest }` payload for a local
    * library item so the detail drawer can render it with the same component
@@ -541,7 +565,7 @@ export interface IpcMainInvokeEvents {
    * directly from disk; does NOT hit the network.
    */
   'library-read-manifest': (
-    kind: 'routines' | 'skills' | 'functions' | 'recipes',
+    kind: 'routines' | 'skills' | 'functions' | 'recipes' | 'integrations',
     slug: string,
   ) => {
     template: MarketplaceBrowseRow & { manifest: Record<string, unknown> };

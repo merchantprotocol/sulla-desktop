@@ -32,240 +32,239 @@
 
     <!-- Normal library view: left rail + list. -->
     <template v-else>
-    <!-- Left rail: kind selector + drafts shortcut -->
-    <aside class="rail">
-      <div class="rail-head">
-        Library
-      </div>
-      <nav class="rail-nav">
-        <button
-          v-for="k in KINDS"
-          :key="k.kind"
-          type="button"
-          class="rail-item"
-          :class="[
-            { on: activeView === 'kind' && lib.activeKind.value === k.kind },
-            `kind-${ k.kind }`,
-          ]"
-          @click="onSelectKind(k.kind)"
-        >
-          <span class="dot" />
-          <span class="label">{{ k.label }}</span>
-          <span class="count">{{ countFor(k.kind) }}</span>
-        </button>
-      </nav>
-      <div class="rail-divider" />
-      <nav class="rail-nav">
-        <button
-          type="button"
-          class="rail-item kind-drafts"
-          :class="{ on: activeView === 'drafts' }"
-          @click="onShowDrafts"
-        >
-          <span class="dot" />
-          <span class="label">Drafts</span>
-          <span class="count">{{ drafts.drafts.value.length }}</span>
-        </button>
-      </nav>
-      <div class="rail-footer">
-        <p>{{ footerHint }}</p>
-      </div>
-    </aside>
-
-    <!-- Main column -->
-    <section
-      v-if="activeView === 'kind'"
-      class="content"
-    >
-      <div class="content-head">
-        <h3>{{ currentKindLabel }}</h3>
-        <div class="search-box">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
+      <!-- Left rail: kind selector + drafts shortcut -->
+      <aside class="rail">
+        <div class="rail-head">
+          Library
+        </div>
+        <nav class="rail-nav">
+          <button
+            v-for="k in KINDS"
+            :key="k.kind"
+            type="button"
+            class="rail-item"
+            :class="[
+              { on: activeView === 'kind' && lib.activeKind.value === k.kind },
+              `kind-${k.kind}`,
+            ]"
+            @click="onSelectKind(k.kind)"
           >
-            <circle
-              cx="11"
-              cy="11"
-              r="8"
-            />
-            <line
-              x1="21"
-              y1="21"
-              x2="16.65"
-              y2="16.65"
-            />
-          </svg>
-          <input
-            v-model="lib.search.value"
-            type="text"
-            :placeholder="`Search ${ currentKindLabel.toLowerCase() }…`"
-          >
-          <span
-            v-if="lib.activeState.value.items.length > 0"
-            class="count"
-          >
-            {{ lib.filteredItems.value.length }} of {{ lib.activeState.value.items.length }}
-          </span>
-        </div>
-      </div>
-
-      <div
-        v-if="lib.activeState.value.error"
-        class="banner err"
-      >
-        <strong>Couldn't load your {{ currentKindLabel.toLowerCase() }}</strong>
-        <p>{{ lib.activeState.value.error }}</p>
-        <button
-          type="button"
-          class="btn ghost"
-          @click="reload"
-        >
-          Try again
-        </button>
-      </div>
-
-      <!-- Stats tiles — shown only on the All view. Quick at-a-glance
-           breakdown across the four artifact kinds; clicking a tile
-           drills into that kind's filter. -->
-      <div
-        v-if="lib.activeKind.value === 'all' && !lib.activeState.value.error && lib.activeState.value.items.length > 0"
-        class="stats"
-      >
-        <button
-          v-for="tile in STAT_TILES"
-          :key="tile.kind"
-          type="button"
-          class="stat-tile"
-          :class="`kind-${ tile.kind }`"
-          @click="onSelectKind(tile.kind)"
-        >
-          <span class="stat-value">{{ lib.kindCounts.value[tile.kind] }}</span>
-          <span class="stat-label">{{ tile.label }}</span>
-        </button>
-      </div>
-
-      <div
-        v-else-if="lib.activeState.value.isLoading && lib.activeState.value.items.length === 0"
-        class="status"
-      >
-        Scanning your {{ currentKindLabel.toLowerCase() }}…
-      </div>
-
-      <div
-        v-else-if="lib.activeState.value.items.length === 0"
-        class="status"
-      >
-        <p><strong>Nothing here yet.</strong></p>
-        <p>{{ emptyHint }}</p>
-      </div>
-
-      <div
-        v-else-if="lib.filteredItems.value.length === 0"
-        class="status"
-      >
-        No matches for "{{ lib.search.value }}".
-      </div>
-
-      <template v-else>
-        <LibraryItemStrip
-          v-for="item in lib.filteredItems.value"
-          :key="`${ resolveItemKind(item) }:${ item.slug }`"
-          :kind="resolveItemKind(item)"
-          :item="item"
-          :primary-label="resolveItemKind(item) === 'routines' ? 'Use Template' : primaryLabel"
-          @primary="onPrimary(item)"
-          @view="onView(item)"
-          @reveal="onReveal(item)"
-          @publish="onPublish(item)"
-        />
-      </template>
-    </section>
-
-    <!-- Drafts list -->
-    <section
-      v-else-if="activeView === 'drafts'"
-      class="content"
-    >
-      <div class="content-head">
-        <h3>Drafts</h3>
-        <div
-          v-if="drafts.drafts.value.length > 0"
-          class="count-pill"
-        >
-          {{ drafts.drafts.value.length }} in progress
-        </div>
-      </div>
-
-      <div
-        v-if="drafts.loadError.value"
-        class="banner err"
-      >
-        <strong>Couldn't load drafts</strong>
-        <p>{{ drafts.loadError.value }}</p>
-      </div>
-
-      <div
-        v-else-if="drafts.isLoading.value && drafts.drafts.value.length === 0"
-        class="status"
-      >
-        Loading drafts…
-      </div>
-
-      <div
-        v-else-if="drafts.drafts.value.length === 0"
-        class="status"
-      >
-        <p><strong>No drafts yet.</strong></p>
-        <p>Open any skill, function, or recipe and click "Fork" to start editing it here.</p>
-      </div>
-
-      <div
-        v-for="d in drafts.drafts.value"
-        v-else
-        :key="d.id"
-        class="draft-row"
-        @click="onOpenDraft(d.id)"
-      >
-        <div
-          class="icon"
-          :class="`kind-${ d.kind }`"
-        >
-          {{ initials(d.name, d.slug) }}
-        </div>
-        <div class="body">
-          <div class="top">
-            <span
-              class="kind-badge"
-              :class="`kind-${ d.kind }`"
-            >{{ d.kind }}</span>
-            <span
-              v-if="d.base_slug"
-              class="chip"
-            >forked from {{ d.base_slug }}</span>
-            <span class="chip">{{ d.slug }}</span>
-          </div>
-          <div class="title">
-            {{ d.name || d.slug }}
-          </div>
-          <div class="meta">
-            Updated {{ formatRelative(d.updated_at) }}
-          </div>
-        </div>
-        <div class="cta">
+            <span class="dot" />
+            <span class="label">{{ k.label }}</span>
+            <span class="count">{{ countFor(k.kind) }}</span>
+          </button>
+        </nav>
+        <div class="rail-divider" />
+        <nav class="rail-nav">
           <button
             type="button"
-            class="btn primary"
-            @click.stop="onOpenDraft(d.id)"
+            class="rail-item kind-drafts"
+            :class="{ on: activeView === 'drafts' }"
+            @click="onShowDrafts"
           >
-            Edit
+            <span class="dot" />
+            <span class="label">Drafts</span>
+            <span class="count">{{ drafts.drafts.value.length }}</span>
+          </button>
+        </nav>
+        <div class="rail-footer">
+          <p>{{ footerHint }}</p>
+        </div>
+      </aside>
+
+      <!-- Main column -->
+      <section
+        v-if="activeView === 'kind'"
+        class="content"
+      >
+        <div class="content-head">
+          <h3>{{ currentKindLabel }}</h3>
+          <div class="search-box">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+            >
+              <circle
+                cx="11"
+                cy="11"
+                r="8"
+              />
+              <line
+                x1="21"
+                y1="21"
+                x2="16.65"
+                y2="16.65"
+              />
+            </svg>
+            <input
+              v-model="lib.search.value"
+              type="text"
+              :placeholder="`Search ${currentKindLabel.toLowerCase()}…`"
+            >
+            <span
+              v-if="lib.activeState.value.items.length > 0"
+              class="count"
+            >
+              {{ lib.filteredItems.value.length }} of {{ lib.activeState.value.items.length }}
+            </span>
+          </div>
+        </div>
+
+        <div
+          v-if="lib.activeState.value.error"
+          class="banner err"
+        >
+          <strong>Couldn't load your {{ currentKindLabel.toLowerCase() }}</strong>
+          <p>{{ lib.activeState.value.error }}</p>
+          <button
+            type="button"
+            class="btn ghost"
+            @click="reload"
+          >
+            Try again
           </button>
         </div>
-      </div>
-    </section>
 
+        <!-- Stats tiles — shown only on the All view. Quick at-a-glance
+           breakdown across the four artifact kinds; clicking a tile
+           drills into that kind's filter. -->
+        <div
+          v-if="lib.activeKind.value === 'all' && !lib.activeState.value.error && lib.activeState.value.items.length > 0"
+          class="stats"
+        >
+          <button
+            v-for="tile in STAT_TILES"
+            :key="tile.kind"
+            type="button"
+            class="stat-tile"
+            :class="`kind-${tile.kind}`"
+            @click="onSelectKind(tile.kind)"
+          >
+            <span class="stat-value">{{ lib.kindCounts.value[tile.kind] }}</span>
+            <span class="stat-label">{{ tile.label }}</span>
+          </button>
+        </div>
+
+        <div
+          v-else-if="lib.activeState.value.isLoading && lib.activeState.value.items.length === 0"
+          class="status"
+        >
+          Scanning your {{ currentKindLabel.toLowerCase() }}…
+        </div>
+
+        <div
+          v-else-if="lib.activeState.value.items.length === 0"
+          class="status"
+        >
+          <p><strong>Nothing here yet.</strong></p>
+          <p>{{ emptyHint }}</p>
+        </div>
+
+        <div
+          v-else-if="lib.filteredItems.value.length === 0"
+          class="status"
+        >
+          No matches for "{{ lib.search.value }}".
+        </div>
+
+        <template v-else>
+          <LibraryItemStrip
+            v-for="item in lib.filteredItems.value"
+            :key="`${resolveItemKind(item)}:${item.slug}`"
+            :kind="resolveItemKind(item)"
+            :item="item"
+            :primary-label="resolveItemKind(item) === 'routines' ? 'Use Template' : primaryLabel"
+            @primary="onPrimary(item)"
+            @view="onView(item)"
+            @reveal="onReveal(item)"
+            @publish="onPublish(item)"
+          />
+        </template>
+      </section>
+
+      <!-- Drafts list -->
+      <section
+        v-else-if="activeView === 'drafts'"
+        class="content"
+      >
+        <div class="content-head">
+          <h3>Drafts</h3>
+          <div
+            v-if="drafts.drafts.value.length > 0"
+            class="count-pill"
+          >
+            {{ drafts.drafts.value.length }} in progress
+          </div>
+        </div>
+
+        <div
+          v-if="drafts.loadError.value"
+          class="banner err"
+        >
+          <strong>Couldn't load drafts</strong>
+          <p>{{ drafts.loadError.value }}</p>
+        </div>
+
+        <div
+          v-else-if="drafts.isLoading.value && drafts.drafts.value.length === 0"
+          class="status"
+        >
+          Loading drafts…
+        </div>
+
+        <div
+          v-else-if="drafts.drafts.value.length === 0"
+          class="status"
+        >
+          <p><strong>No drafts yet.</strong></p>
+          <p>Open any skill, function, or recipe and click "Fork" to start editing it here.</p>
+        </div>
+
+        <div
+          v-for="d in drafts.drafts.value"
+          v-else
+          :key="d.id"
+          class="draft-row"
+          @click="onOpenDraft(d.id)"
+        >
+          <div
+            class="icon"
+            :class="`kind-${d.kind}`"
+          >
+            {{ initials(d.name, d.slug) }}
+          </div>
+          <div class="body">
+            <div class="top">
+              <span
+                class="kind-badge"
+                :class="`kind-${d.kind}`"
+              >{{ d.kind }}</span>
+              <span
+                v-if="d.base_slug"
+                class="chip"
+              >forked from {{ d.base_slug }}</span>
+              <span class="chip">{{ d.slug }}</span>
+            </div>
+            <div class="title">
+              {{ d.name || d.slug }}
+            </div>
+            <div class="meta">
+              Updated {{ formatRelative(d.updated_at) }}
+            </div>
+          </div>
+          <div class="cta">
+            <button
+              type="button"
+              class="btn primary"
+              @click.stop="onOpenDraft(d.id)"
+            >
+              Edit
+            </button>
+          </div>
+        </div>
+      </section>
     </template>
   </div>
 </template>
@@ -282,25 +281,25 @@ import { useLibraryDrafts } from '@pkg/composables/useLibraryDrafts';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-const emit = defineEmits<{
-  (e: 'use-template', slug: string): void;
-}>();
+const emit = defineEmits<(e: 'use-template', slug: string) => void>();
 
 type ActiveView = 'kind' | 'drafts';
 
 const KINDS: { kind: LibraryKind; label: string }[] = [
-  { kind: 'all',       label: 'All' },
-  { kind: 'routines',  label: 'Routines' },
-  { kind: 'skills',    label: 'Skills' },
+  { kind: 'all', label: 'All' },
+  { kind: 'routines', label: 'Routines' },
+  { kind: 'skills', label: 'Skills' },
   { kind: 'functions', label: 'Functions' },
-  { kind: 'recipes',   label: 'Recipes' },
+  { kind: 'recipes', label: 'Recipes' },
+  { kind: 'integrations', label: 'Integrations' },
 ];
 
 const STAT_TILES: { kind: LibraryArtifactKind; label: string }[] = [
-  { kind: 'routines',  label: 'Routines' },
-  { kind: 'skills',    label: 'Skills' },
+  { kind: 'routines', label: 'Routines' },
+  { kind: 'skills', label: 'Skills' },
   { kind: 'functions', label: 'Functions' },
-  { kind: 'recipes',   label: 'Recipes' },
+  { kind: 'recipes', label: 'Recipes' },
+  { kind: 'integrations', label: 'Integrations' },
 ];
 
 /** Per-kind row count for the All-view stats tiles + left-rail counts.
@@ -331,8 +330,8 @@ interface LocalDetail {
 }
 const detailPayload = ref<LocalDetail | null>(null);
 const detailLoading = ref(false);
-const forking       = ref(false);
-const forkError     = ref<string | null>(null);
+const forking = ref(false);
+const forkError = ref<string | null>(null);
 
 onMounted(() => {
   void lib.loadAll();
@@ -460,11 +459,12 @@ function onCloseDetail() {
 // keeps the flow bounded; auth failures bubble up from the worker as
 // {error: "..."} with 401-ish strings we surface verbatim.
 async function onPublish(item: LibraryItem) {
-  const pluralToSingular: Record<LibraryArtifactKind, 'routine' | 'skill' | 'function' | 'recipe'> = {
-    routines:  'routine',
-    skills:    'skill',
-    functions: 'function',
-    recipes:   'recipe',
+  const pluralToSingular: Record<LibraryArtifactKind, 'routine' | 'skill' | 'function' | 'recipe' | 'integration'> = {
+    routines:     'routine',
+    skills:       'skill',
+    functions:    'function',
+    recipes:      'recipe',
+    integrations: 'integration',
   };
   const resolvedKind = resolveItemKind(item);
   const kind = pluralToSingular[resolvedKind];
@@ -546,9 +546,9 @@ function formatRelative(ts: string): string {
   const t = Date.parse(ts);
   if (!Number.isFinite(t)) return ts;
   const diff = Math.floor((Date.now() - t) / 1000);
-  if (diff < 60)      return 'just now';
-  if (diff < 3600)    return `${ Math.floor(diff / 60) }m ago`;
-  if (diff < 86400)   return `${ Math.floor(diff / 3600) }h ago`;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${ Math.floor(diff / 60) }m ago`;
+  if (diff < 86400) return `${ Math.floor(diff / 3600) }h ago`;
   if (diff < 2592000) return `${ Math.floor(diff / 86400) }d ago`;
 
   return new Date(t).toISOString().slice(0, 10);
