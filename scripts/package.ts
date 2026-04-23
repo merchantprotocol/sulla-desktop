@@ -5,7 +5,6 @@
 
 'use strict';
 
-import childProcess from 'child_process';
 import fs from 'fs';
 import * as path from 'path';
 
@@ -155,16 +154,15 @@ class Builder {
   async package(): Promise<CliOptions> {
     log.info('Packaging...');
 
-    // Build the electron builder configuration to include the version data
+    // Build the electron builder configuration to include the version data.
+    // The version is sourced from package.json, which the CI workflow stamps
+    // before packaging (tag pushes → clean semver; non-tag builds →
+    // `<last-tag>-dev.<short-sha>`). Local dev builds use whatever is
+    // committed in package.json.
     const config: ReadWrite<Configuration> = yaml.parse(await fs.promises.readFile('packaging/electron-builder.yml', 'utf-8'));
     const configPath = path.join(buildUtils.distDir, 'electron-builder.yaml');
-    let fullBuildVersion: string;
-    try {
-      fullBuildVersion = childProcess.execFileSync('git', ['describe', '--tags']).toString().trim();
-    } catch {
-      fullBuildVersion = 'unknown';
-    }
-    const finalBuildVersion = fullBuildVersion.replace(/^v/, '');
+    const pkgJson = JSON.parse(await fs.promises.readFile('package.json', 'utf-8'));
+    const finalBuildVersion: string = pkgJson.version;
     const distDir = path.join(process.cwd(), 'dist');
     const electronPlatform = ({
       darwin: 'mac',
