@@ -241,7 +241,7 @@
           v-if="submissionsError"
           class="banner err"
         >
-          <strong>Couldn't load your submissions</strong>
+          <strong>{{ submissionsErrorTitle }}</strong>
           <p>{{ submissionsError }}</p>
           <button
             type="button"
@@ -425,6 +425,10 @@ const submissionsPage = ref(1);
 const SUBMISSIONS_LIMIT = 25;
 const submissionsLoading = ref(false);
 const submissionsError = ref<string | null>(null);
+// Banner copy differs depending on which call failed — the error body is
+// the same slot, but "Couldn't load your submissions" is wrong when the
+// failure came from a takedown (row list loaded fine).
+const submissionsErrorTitle = ref('Couldn\'t load your submissions');
 const takingDownId = ref<string | null>(null);
 
 const submissionsTotalPages = computed(() => {
@@ -483,6 +487,7 @@ async function onInstall(id: string) {
 async function loadSubmissions() {
   submissionsLoading.value = true;
   submissionsError.value = null;
+  submissionsErrorTitle.value = 'Couldn\'t load your submissions';
   try {
     const res = await ipcRenderer.invoke('marketplace-my-submissions', {
       page:  submissionsPage.value,
@@ -544,6 +549,7 @@ async function confirmTakedown(s: SubmissionRow) {
       | { error: string };
 
     if ('error' in res) {
+      submissionsErrorTitle.value = 'Couldn\'t take down that submission';
       submissionsError.value = res.error;
       return;
     }
@@ -556,6 +562,7 @@ async function confirmTakedown(s: SubmissionRow) {
     }
     await loadSubmissions();
   } catch (err) {
+    submissionsErrorTitle.value = 'Couldn\'t take down that submission';
     submissionsError.value = err instanceof Error ? err.message : String(err);
   } finally {
     takingDownId.value = null;
