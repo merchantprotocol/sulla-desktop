@@ -904,6 +904,13 @@ interface StreamLine {
   /** Emitting node, when the event is node-attributed. Lets the run-mode
       output drawer filter the global stream down to one card's turns. */
   nodeId?: string;
+  /** Marks a `thk` line as closed so the next chunk starts a fresh bubble.
+      Sealed when a non-thinking event arrives for the same node, or the
+      badge changes mid-stream. Until then, each `node_thinking` chunk
+      updates the line in place rather than appending — streams are
+      cumulative (each payload is the full accumulated text), so without
+      this flag every token would render as a new message. */
+  sealed?: boolean;
 }
 const liveEvents = ref<StreamLine[]>([]);
 
@@ -1243,6 +1250,43 @@ function appendNodeTurn(nodeId: string, turn: NodeTurn) {
   };
 }
 
+// Replace the most recent turn for a node — used by the thinking
+// accumulator so the per-node drawer mirrors the growing bubble
+// instead of stacking a new turn per streamed chunk.
+function replaceLastNodeTurn(nodeId: string, turn: NodeTurn) {
+  const node = resolveCanvasNode(nodeId);
+  if (!node) return;
+  const prevExec = (node.data?.execution as { turns?: NodeTurn[] } & Record<string, unknown> | undefined) ?? {};
+  const prevTurns: NodeTurn[] = Array.isArray(prevExec.turns) ? prevExec.turns : [];
+  if (prevTurns.length === 0) {
+    node.data = { ...node.data, execution: { ...prevExec, turns: [turn] } };
+    return;
+  }
+  const nextTurns = [...prevTurns.slice(0, -1), turn];
+  node.data = { ...node.data, execution: { ...prevExec, turns: nextTurns } };
+}
+
+// Close any open (unsealed) `thk` line for this node so the next
+// `node_thinking` chunk starts a fresh bubble instead of overwriting.
+// Called when a different event (tool call, completion, failure) fires
+// for the same node — that's the signal the thinking round ended.
+function sealThinkingFor(nodeId: string | undefined) {
+  if (!nodeId) return;
+  const lines = liveEvents.value;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (line.nodeId !== nodeId) continue;
+    if (line.k === 'thk' && !line.sealed) {
+      liveEvents.value = [
+        ...lines.slice(0, i),
+        { ...line, sealed: true },
+        ...lines.slice(i + 1),
+      ];
+    }
+    break;
+  }
+}
+
 // ── Event handler ──
 // Maps a single PlaybookController event to (a) a node.data.state
 // change, (b) a stream line, or (c) both. Event shape mirrors what
@@ -1366,6 +1410,7 @@ function handleWorkflowEvent(event: any) {
     if (nodeId) {
       setNodeState(nodeId, 'running', tsMs);
       focusOnRunningNode(nodeId);
+      sealThinkingFor(nodeId);
     }
     pushLine('tool', who, event.timestamp, undefined, nodeId);
     break;
@@ -1381,32 +1426,68 @@ function handleWorkflowEvent(event: any) {
         next.add(nodeId);
         runCompletedNodeIds.value = next;
       }
+      sealThinkingFor(nodeId);
     }
     pushLine('obs', `${ who } · done`, event.timestamp, undefined, nodeId);
     break;
 
   case 'node_failed': {
-    if (nodeId) setNodeState(nodeId, 'failed', tsMs);
+    if (nodeId) {
+      setNodeState(nodeId, 'failed', tsMs);
+      sealThinkingFor(nodeId);
+    }
     const raw = typeof event.error === 'string' ? event.error : JSON.stringify(event.error ?? 'failed');
     const err = stripXml(raw).slice(0, 240);
     pushLine('err', `${ who } · ${ err }`, event.timestamp, undefined, nodeId);
     break;
   }
 
-  case 'node_thinking':
+  case 'node_thinking': {
     // All agent thinking surfaces in the top-left stream. The chip
     // prefers the event's `thinkingLabel` when set — subconscious
     // subagents (memory-recall, observation, summarizer) use it so
     // their work is visibly attributed instead of silently running
     // under the orchestrator's name for 30+ seconds.
-    if (event.content) {
-      const text = stripXml(String(event.content)).slice(0, 220);
-      const badge = (typeof event.thinkingLabel === 'string' && event.thinkingLabel.trim())
-        ? event.thinkingLabel.trim()
-        : who;
-      if (text) pushLine('thk', text, event.timestamp, badge, nodeId);
+    //
+    // Streaming note: BaseNode.wsChatMessage re-emits the FULL
+    // accumulated thinking text on every chunk (see BaseNode.ts:1542
+    // — `content: content.trim()`). So we update the last unsealed
+    // `thk` line in place instead of pushing a new one — otherwise
+    // every token renders as a separate message.
+    if (!event.content) break;
+    const text = stripXml(String(event.content)).slice(0, 220);
+    if (!text) break;
+    const badge = (typeof event.thinkingLabel === 'string' && event.thinkingLabel.trim())
+      ? event.thinkingLabel.trim()
+      : who;
+    const lines = liveEvents.value;
+    let openIdx = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (line.nodeId !== nodeId) continue;
+      // Only the most recent event for this node matters. If it's an
+      // open thinking line with the same badge, we're still in the
+      // same bubble. Anything else means the bubble is already sealed
+      // (or a label flipped), so a fresh line starts.
+      if (line.k === 'thk' && !line.sealed && line.badge === badge) {
+        openIdx = i;
+      }
+      break;
+    }
+    if (openIdx !== -1) {
+      const existing = lines[openIdx];
+      const updated: StreamLine = { ...existing, msg: text, t: stamp(event.timestamp) };
+      liveEvents.value = [...lines.slice(0, openIdx), updated, ...lines.slice(openIdx + 1)];
+      if (nodeId) {
+        const turn: NodeTurn = { t: updated.t, k: 'thk', msg: text };
+        if (badge) turn.badge = badge;
+        replaceLastNodeTurn(nodeId, turn);
+      }
+    } else {
+      pushLine('thk', text, event.timestamp, badge, nodeId);
     }
     break;
+  }
 
   case 'edge_activated':
     // Kept silent in the stream — the node-level events already tell

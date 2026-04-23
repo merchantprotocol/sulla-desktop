@@ -452,6 +452,12 @@ export class ClaudeCodeService extends BaseLanguageModel {
           env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
         });
 
+      // Emit immediately on spawn so the renderer sets graphRunning=true
+      // without waiting for the first token (Claude startup can take seconds).
+      proc.once('spawn', () => {
+        try { callbacks.onActivity?.('Starting Claude…') } catch { /* ignore */ }
+      });
+
       let stdoutBuffer = '';
       let stderrBuffer = '';
       let textCollected = '';

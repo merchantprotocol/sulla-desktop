@@ -15,6 +15,9 @@ import * as fsSync from 'fs';
 import * as osUtil from 'os';
 import * as pathUtil from 'path';
 
+// Per-sub-agent execution timeout. Override with SULLA_SUB_AGENT_TIMEOUT_MS env var.
+const SUB_AGENT_TIMEOUT_MS = parseInt(process.env.SULLA_SUB_AGENT_TIMEOUT_MS || '300000', 10);
+
 import { throwIfAborted } from '../services/AbortService';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -1026,7 +1029,10 @@ export class PlaybookController<TState = any> {
         }
 
         case 'spawn_parallel_agents': {
-          const parallelNodes = step.nodes;
+          const parallelNodes = step.nodes.slice(0, 10);
+          if (step.nodes.length > 10) {
+            console.warn(`[PlaybookController] spawn_parallel_agents: capped at 10 nodes (${step.nodes.length} requested)`);
+          }
           const nodeLabels = parallelNodes.map(n => this.getPlaybookNodeLabel(currentPlaybook, n.nodeId));
 
           for (let i = 0; i < parallelNodes.length; i++) {
@@ -1813,7 +1819,9 @@ export class PlaybookController<TState = any> {
         },
         timestamp: Date.now(),
       });
-    } catch { /* best-effort */ }
+    } catch (e) {
+      playbookLog('ws_emit_failed', { eventType: type, error: String(e) });
+    }
   }
 
   private emitEdgeActivations(
@@ -2018,9 +2026,16 @@ export class PlaybookController<TState = any> {
     subState.metadata.workflowParentChannel = parentChannel;
 
     let finalState: any;
+    let subAgentTimeoutId: NodeJS.Timeout | null = null;
     try {
-      finalState = await graph.execute(subState);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        subAgentTimeoutId = setTimeout(() => {
+          reject(new Error(`Sub-agent "${agentId || nodeId}" timed out after ${SUB_AGENT_TIMEOUT_MS / 1000}s`));
+        }, SUB_AGENT_TIMEOUT_MS);
+      });
+      finalState = await Promise.race([graph.execute(subState), timeoutPromise]);
     } finally {
+      if (subAgentTimeoutId !== null) clearTimeout(subAgentTimeoutId);
       // Deregister from the parent's active-sub-agents list. Must run on
       // every exit path — success, contract-violation, or thrown error —
       // so an abort that fans out to stale threadIds doesn't see zombies.
@@ -2093,8 +2108,17 @@ export class PlaybookController<TState = any> {
           if (escExecId) {
             import('../database/models/WorkflowPendingCompletionModel').then(({ WorkflowPendingCompletionModel }) => {
               WorkflowPendingCompletionModel.saveEscalation({ executionId: escExecId, nodeId, nodeLabel, agentId, prompt, config, question: resultText, threadId: result.threadId })
-                .catch(e => console.warn('[PlaybookController] Failed to persist escalation to DB:', e));
-            }).catch(() => { /* best-effort */ });
+                .catch(e => {
+                  console.error('[PlaybookController] CHECKPOINT FAILED — escalation not persisted. Recovery after crash will lose this node:', e);
+                  playbookLog('checkpoint_failed', { kind: 'escalation', executionId: escExecId, nodeId, error: String(e) });
+                  try {
+                    getWebSocketClientService().send((state as any).metadata?.wsChannel || 'workbench', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'escalation', timestamp: new Date().toISOString() }, timestamp: Date.now() });
+                  } catch { /* WS down — already degraded */ }
+                });
+            }).catch(e => {
+              console.error('[PlaybookController] CHECKPOINT FAILED — could not import DB model for escalation:', e);
+              playbookLog('checkpoint_failed', { kind: 'escalation_import', executionId: escExecId, nodeId, error: String(e) });
+            });
           }
 
           try {
@@ -2111,7 +2135,7 @@ export class PlaybookController<TState = any> {
               },
               timestamp: Date.now(),
             });
-          } catch { /* best-effort */ }
+          } catch (e) { playbookLog('ws_send_failed', { nodeId, error: String(e) }); }
 
           this.triggerPlaybookContinuation(state);
           return;
@@ -2130,8 +2154,17 @@ export class PlaybookController<TState = any> {
           if (execId) {
             import('../database/models/WorkflowPendingCompletionModel').then(({ WorkflowPendingCompletionModel }) => {
               WorkflowPendingCompletionModel.saveCompletion({ executionId: execId, nodeId, nodeLabel, output: result.output, threadId: result.threadId })
-                .catch(e => console.warn('[PlaybookController] Failed to persist completion to DB:', e));
-            }).catch(() => { /* best-effort */ });
+                .catch(e => {
+                  console.error('[PlaybookController] CHECKPOINT FAILED — completion not persisted. Recovery after crash will re-run this node:', e);
+                  playbookLog('checkpoint_failed', { kind: 'completion', executionId: execId, nodeId, error: String(e) });
+                  try {
+                    getWebSocketClientService().send((state as any).metadata?.wsChannel || 'workbench', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'completion', timestamp: new Date().toISOString() }, timestamp: Date.now() });
+                  } catch { /* WS down — already degraded */ }
+                });
+            }).catch(e => {
+              console.error('[PlaybookController] CHECKPOINT FAILED — could not import DB model for completion:', e);
+              playbookLog('checkpoint_failed', { kind: 'completion_import', executionId: execId, nodeId, error: String(e) });
+            });
           }
 
           try {
@@ -2149,7 +2182,7 @@ export class PlaybookController<TState = any> {
               },
               timestamp: Date.now(),
             });
-          } catch { /* best-effort */ }
+          } catch (e) { playbookLog('ws_send_failed', { nodeId, error: String(e) }); }
 
           this.triggerPlaybookContinuation(state);
         }
@@ -2168,8 +2201,17 @@ export class PlaybookController<TState = any> {
         if (failExecId) {
           import('../database/models/WorkflowPendingCompletionModel').then(({ WorkflowPendingCompletionModel }) => {
             WorkflowPendingCompletionModel.saveFailure({ executionId: failExecId, nodeId, nodeLabel, error: errorMsg })
-              .catch(e => console.warn('[PlaybookController] Failed to persist failure to DB:', e));
-          }).catch(() => { /* best-effort */ });
+              .catch(e => {
+                console.error('[PlaybookController] CHECKPOINT FAILED — failure record not persisted:', e);
+                playbookLog('checkpoint_failed', { kind: 'failure', executionId: failExecId, nodeId, error: String(e) });
+                try {
+                  getWebSocketClientService().send((state as any).metadata?.wsChannel || 'workbench', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'failure', timestamp: new Date().toISOString() }, timestamp: Date.now() });
+                } catch { /* WS down — already degraded */ }
+              });
+          }).catch(e => {
+            console.error('[PlaybookController] CHECKPOINT FAILED — could not import DB model for failure:', e);
+            playbookLog('checkpoint_failed', { kind: 'failure_import', executionId: failExecId, nodeId, error: String(e) });
+          });
         }
 
         try {

@@ -15,6 +15,10 @@
  * state.metadata.activeWorkflow. No live objects are stored.
  */
 
+import * as fsSync from 'fs';
+import * as osUtil from 'os';
+import * as pathUtil from 'path';
+
 import type {
   WorkflowDefinition,
   WorkflowNodeSerialized,
@@ -26,6 +30,14 @@ import type {
   PlaybookNodeOutput,
   LoopIterationState,
 } from './types';
+
+const PLAYBOOK_LOG_PATH = pathUtil.join(osUtil.homedir(), 'sulla', 'logs', 'playbook-debug.log');
+function playbookLog(tag: string, data: Record<string, unknown> = {}): void {
+  try {
+    const line = JSON.stringify({ ts: new Date().toISOString(), tag, ...data });
+    fsSync.appendFileSync(PLAYBOOK_LOG_PATH, line + '\n');
+  } catch { /* never break execution over logging */ }
+}
 
 // Completion contract is now handled exclusively by AgentNode.ts system prompt.
 // No duplicate contract appended here — single source of truth.
@@ -1679,17 +1691,48 @@ export function resolveDecision(
     const failedResult = result as { matched: false; reason: string; scores: { label: string; score: number }[] };
 
     if (retryCount >= 1) {
+      // After one retry, rather than killing the workflow, pick the highest-scoring
+      // route as a soft fallback. If all scores are 0 (no overlap at all) we truly
+      // cannot proceed and fail explicitly.
+      const bestFallback = failedResult.scores[0];
       const scoreDetail = failedResult.scores
         .map(s => `"${ s.label }": ${ s.score.toFixed(2) }`)
         .join(', ');
 
-      return {
-        action:          'workflow_failed',
-        error:           `Router node "${ decision.nodeId }" failed after retry. ` +
-                       `Agent response "${ response }" did not match any route. ` +
-                       `Reason: ${ failedResult.reason }. Scores: [${ scoreDetail }]`,
-        updatedPlaybook: { ...playbook, pendingDecision: undefined },
-      };
+      if (!bestFallback || bestFallback.score <= 0) {
+        return {
+          action:          'workflow_failed',
+          error:           `Router node "${ decision.nodeId }" failed after retry — no route overlap at all. ` +
+                         `Agent response: "${ response }". Scores: [${ scoreDetail }]`,
+          updatedPlaybook: { ...playbook, pendingDecision: undefined },
+        };
+      }
+
+      const fallbackRoute = routes.find(r => r.label === bestFallback.label);
+      if (!fallbackRoute) {
+        return {
+          action:          'workflow_failed',
+          error:           `Router node "${ decision.nodeId }" failed after retry — best route label not found. Scores: [${ scoreDetail }]`,
+          updatedPlaybook: { ...playbook, pendingDecision: undefined },
+        };
+      }
+
+      playbookLog('router_soft_fallback', {
+        nodeId:       decision.nodeId,
+        response,
+        chosen:       fallbackRoute.label,
+        score:        bestFallback.score,
+        reason:       failedResult.reason,
+        scoreDetail,
+      });
+
+      return completeNodeAndAdvance(
+        { ...playbook, pendingDecision: undefined },
+        decision.nodeId,
+        node,
+        `[soft-fallback] ${ response }`,
+        fallbackRoute.handleId,
+      );
     }
 
     // Build retry prompt with explicit route labels

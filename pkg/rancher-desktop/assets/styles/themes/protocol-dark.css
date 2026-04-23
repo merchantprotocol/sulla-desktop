@@ -531,7 +531,7 @@
 
 /* ── Assistant messages: prose with steel blue accents ── */
 .theme-protocol-dark .prose {
-  color: rgb(139, 148, 158) !important;
+  color: #c9d1d9 !important;
   font-family: var(--font-mono) !important;
   font-size: var(--fs-body) !important;
   font-weight: 400;
@@ -574,7 +574,7 @@
   font-family: var(--font-mono);
   font-size: var(--fs-body-sm);
   line-height: 1.8;
-  color: #8b949e;
+  color: #c9d1d9;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
@@ -593,7 +593,7 @@
   border-left: 3px solid var(--accent-primary);
   padding: 1.5rem 0 1.5rem 1.5rem;
   font-style: italic;
-  color: #8b949e;
+  color: #b1bac4;
   box-shadow: -4px 0 20px rgba(80, 150, 179, 0.15);
 }
 
@@ -612,7 +612,7 @@
 }
 
 .theme-protocol-dark .prose table td {
-  color: #8b949e;
+  color: #c9d1d9;
   border-color: var(--border-default);
 }
 
@@ -663,9 +663,9 @@
   font-size: var(--fs-body-sm) !important;
 }
 
-/* Override the Tailwind dark:prose-invert slate coloring */
-.theme-protocol-dark .dark\:text-slate-400 {
-  color: #8b949e !important;
+/* Override the Tailwind dark:prose-invert slate coloring — two-class specificity beats dark:text-slate-400 */
+.theme-protocol-dark .prose.prose-slate {
+  color: #c9d1d9 !important;
 }
 
 /* ── Sulla assistant avatar & name ── */
@@ -691,6 +691,23 @@
   font-size: var(--fs-body-sm);
   font-weight: 600;
   margin-bottom: 6px;
+}
+
+/* ── Assistant message: VS Code-style left accent strip on prose content ── */
+.theme-protocol-dark .sulla-name + .prose {
+  border-left: 2px solid rgba(80, 150, 179, 0.3);
+  padding-left: 14px;
+  margin-left: 2px;
+}
+
+/* ── Message row separator — subtle divider between turns ── */
+.theme-protocol-dark .mb-8 {
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.6);
+}
+
+.theme-protocol-dark .mb-8:last-child {
+  border-bottom: none;
 }
 
 /* ── Tool cards: terminal aesthetic ── */
@@ -1183,7 +1200,7 @@
 }
 
 .theme-protocol-dark .dark\:text-slate-400 {
-  color: #6e7681 !important;
+  color: #8b949e !important;
 }
 
 .theme-protocol-dark .dark\:text-slate-200 {

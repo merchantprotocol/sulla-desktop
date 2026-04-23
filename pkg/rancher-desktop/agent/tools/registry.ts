@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -78,6 +78,7 @@ export class ToolRegistry {
     n8n:                'n8n workflow automation — list, execute, create, and manage n8n workflows and their executions.',
     notify:             'Send desktop notifications to alert the user when async work completes or needs attention.',
     vault:              'Credential vault — list saved credentials, check integration connection status, read secrets, and autofill login forms.',
+    function:           'Custom function runner — list installed functions and invoke them by slug across python, shell, and node runtimes. Returns full execution trace in one call.',
     workflow:           'Workflow management — execute, validate, and manage Sulla workflow definitions.',
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
     projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',

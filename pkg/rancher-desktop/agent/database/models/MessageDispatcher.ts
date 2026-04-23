@@ -658,10 +658,12 @@ function handleTransferData(ctx: DispatchContext, agentId: string, _threadId: st
   if (data === 'graph_execution_complete' || data?.content === 'graph_execution_complete') {
     // Only react to completion events for the active thread — subconscious
     // agents can complete on the same channel and must not poison main UI state.
+    // If activeThreadId is set we require an exact match; a missing eventThreadId
+    // (e.g. from a heartbeat/subconscious graph) must also be ignored.
     const eventThreadId = data?.thread_id || data?.threadId;
     const activeThreadId = ctx.getThreadId();
-    if (eventThreadId && activeThreadId && eventThreadId !== activeThreadId) {
-      console.log('[MessageDispatcher] Ignoring graph_execution_complete for non-active thread:', eventThreadId, '(active:', activeThreadId, ')');
+    if (activeThreadId && (!eventThreadId || eventThreadId !== activeThreadId)) {
+      console.log('[MessageDispatcher] Ignoring graph_execution_complete: thread mismatch (event:', eventThreadId, ', active:', activeThreadId, ')');
       return;
     }
 

@@ -162,6 +162,16 @@ export async function instantiateSullaStart(): Promise<void> {
     }).catch(() => {});
   });
 
+  process.on('uncaughtException', (err: Error) => {
+    console.error('[Uncaught Exception]', err);
+    submitErrorReport({
+      error_type:    err.name || 'uncaughtException',
+      error_message: err.message,
+      stack_trace:   err.stack || '',
+      user_context:  'uncaughtException in sulla.ts (Sulla services)',
+    }).catch(() => {});
+  });
+
   const lifecycle = getServiceLifecycleManager();
 
   // ── Independent services (no DB/Redis dependency) ──────────────────────
