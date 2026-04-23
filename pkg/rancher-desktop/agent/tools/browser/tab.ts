@@ -118,7 +118,7 @@ export class BrowserTabWorker extends BaseTool {
       parts.push('**How to interact with this page:**');
       parts.push('Handle-based (preferred): `browser/click` with @btn-/@link- handles, `browser/fill` with @field- handles.');
       parts.push('Pixel-based: `browser/screenshot` to identify coords, then `browser/click_at` / `browser/type_at`.');
-      parts.push('Escape hatch: `browser/exec` runs arbitrary JS with `window.__sulla` helpers.');
+      parts.push('Escape hatch: `eval_js` runs arbitrary JS with `window.__sulla` helpers.');
 
       return { successBoolean: true, responseString: parts.join('\n') };
     } catch (err) {

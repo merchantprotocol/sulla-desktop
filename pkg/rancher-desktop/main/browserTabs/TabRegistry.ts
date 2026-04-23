@@ -78,8 +78,10 @@ class TabRegistryImpl {
     }
 
     // Create a new WebContentsView keyed by the SAME assetId as the map.
-    // Bounds are set later when the UI decides where to render it.
-    BrowserTabViewManager.getInstance().createView(input.assetId, input.url, { x: 0, y: 0, width: 0, height: 0 });
+    // Default to 1280×800 so window.innerWidth/innerHeight are non-zero and
+    // screenshots + getBoundingClientRect() work immediately. The UI overrides
+    // these bounds via setBounds() when it actually displays the tab.
+    BrowserTabViewManager.getInstance().createView(input.assetId, input.url, { x: 0, y: 0, width: 1280, height: 800 });
 
     const record: TabRecord = {
       assetId:        input.assetId,

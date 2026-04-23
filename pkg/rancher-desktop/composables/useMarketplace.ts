@@ -19,7 +19,7 @@ import { computed, ref } from 'vue';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe';
+export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
 export type MarketplaceSort = 'popular' | 'newest' | 'featured';
 export type KindFilter = MarketplaceKind | 'all';
 
@@ -29,7 +29,7 @@ export interface MarketplaceDetail {
 }
 
 export interface InstallResult {
-  kind: 'routine' | 'skill' | 'function' | 'recipe';
+  kind: 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
   slug: string;
   path: string;
   name: string;
@@ -37,24 +37,24 @@ export interface InstallResult {
 
 export function useMarketplace() {
   const templates = ref<MarketplaceBrowseRow[]>([]);
-  const total     = ref(0);
-  const page      = ref(1);
-  const limit     = ref(25);
+  const total = ref(0);
+  const page = ref(1);
+  const limit = ref(25);
 
-  const kind   = ref<KindFilter>('all');
-  const sort   = ref<MarketplaceSort>('popular');
+  const kind = ref<KindFilter>('all');
+  const sort = ref<MarketplaceSort>('popular');
   const search = ref('');
 
   const isLoading = ref(false);
-  const error     = ref<string | null>(null);
+  const error = ref<string | null>(null);
 
-  const detail          = ref<MarketplaceDetail | null>(null);
-  const detailLoading   = ref(false);
-  const detailError     = ref<string | null>(null);
+  const detail = ref<MarketplaceDetail | null>(null);
+  const detailLoading = ref(false);
+  const detailError = ref<string | null>(null);
 
-  const installing      = ref<string | null>(null); // id currently being installed
-  const lastInstalled   = ref<InstallResult | null>(null);
-  const installError    = ref<string | null>(null);
+  const installing = ref<string | null>(null); // id currently being installed
+  const lastInstalled = ref<InstallResult | null>(null);
+  const installError = ref<string | null>(null);
 
   async function load(): Promise<void> {
     isLoading.value = true;
@@ -82,8 +82,16 @@ export function useMarketplace() {
 
         return;
       }
-      templates.value = res.templates ?? [];
-      total.value = res.total ?? 0;
+      // Defensive client-side kind filter. The Cloudflare worker's browse
+      // endpoint may not yet recognise newer kinds (e.g. 'integration'), in
+      // which case it ignores the filter and returns mixed results. Post-
+      // filtering ensures a selected kind never shows foreign items, even
+      // before the worker ships an updated enum.
+      const rows = res.templates ?? [];
+      const filtered = kind.value === 'all' ? rows : rows.filter((t: { kind?: string }) => t.kind === kind.value);
+
+      templates.value = filtered;
+      total.value = kind.value === 'all' ? (res.total ?? 0) : filtered.length;
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
       templates.value = [];

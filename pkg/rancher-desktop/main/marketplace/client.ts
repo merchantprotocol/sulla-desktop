@@ -41,7 +41,7 @@ const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
 // Kept minimal — we only type what our callers consume. The marketplace
 // agent is authoritative for the full schemas (see docs/marketplace/).
 
-export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe';
+export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe' | 'integration';
 
 export interface MarketplaceTemplateDetail {
   id:                   string;

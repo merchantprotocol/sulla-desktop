@@ -92,9 +92,25 @@ export async function activateWorkflowOnState(
   }
 
   if (!definition) {
+    let available = '';
+    try {
+      const { WorkflowModel } = await import('../../database/models/WorkflowModel');
+      const rows = await WorkflowModel.listByStatus('production');
+      const slugs = rows
+        .map((row) => {
+          const def = row.attributes.definition as (WorkflowDefinition & { slug?: string; _slug?: string }) | undefined;
+          return def?.slug ?? def?._slug ?? row.attributes.id;
+        })
+        .filter(Boolean);
+      if (slugs.length > 0) {
+        available = ` Available production workflow slugs: ${ slugs.join(', ') }.`;
+      } else {
+        available = ' No production workflows are currently registered — do not keep guessing slugs; tell the user there is nothing to run.';
+      }
+    } catch { /* if the list lookup fails, fall through with the base message */ }
     return {
       ok:             false,
-      responseString: `Workflow "${ workflowId }" not found. Use the slug shown in your system prompt.`,
+      responseString: `Workflow "${ workflowId }" not found.${ available } Do NOT retry with a different guess — either pick one of the slugs above exactly, or stop and ask the user.`,
     };
   }
 

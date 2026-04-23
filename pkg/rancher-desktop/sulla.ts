@@ -162,6 +162,16 @@ export async function instantiateSullaStart(): Promise<void> {
     }).catch(() => {});
   });
 
+  process.on('uncaughtException', (err: Error) => {
+    console.error('[Uncaught Exception]', err);
+    submitErrorReport({
+      error_type:    err.name || 'uncaughtException',
+      error_message: err.message,
+      stack_trace:   err.stack || '',
+      user_context:  'uncaughtException in sulla.ts (Sulla services)',
+    }).catch(() => {});
+  });
+
   const lifecycle = getServiceLifecycleManager();
 
   // ── Independent services (no DB/Redis dependency) ──────────────────────
@@ -654,12 +664,12 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     tabViewManager.setBounds(tabId, bounds);
   });
 
-  ipcMainProxy.handle('browser-tab-view:show', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
-    tabViewManager.showView(tabId);
-  });
-
-  ipcMainProxy.handle('browser-tab-view:hide', async(_event: Electron.IpcMainInvokeEvent, tabId: string) => {
-    tabViewManager.hideView(tabId);
+  // Single authoritative visibility channel. Renderer emits one event
+  // whenever its computed "which tab should be visible right now" changes,
+  // with `null` meaning "no browser tab should be visible" (chat mode,
+  // login overlay, etc.). The manager reconciles attach/detach + bounds.
+  ipcMainProxy.handle('browser-tab-view:focus', async(_event: Electron.IpcMainInvokeEvent, tabId: string | null) => {
+    tabViewManager.setFocusedTab(tabId);
   });
 
   ipcMainProxy.handle('browser-tab-view:exec-js', async(_event: Electron.IpcMainInvokeEvent, tabId: string, code: string) => {
@@ -722,8 +732,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     // UI logout only — do NOT zero the VMK so the agent can keep working
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(false);
-    // Hide native browser tab views so the login screen is visible
-    tabViewManager.hideAllViews();
+    // Clear focus so every native browser tab detaches and the login
+    // screen is the topmost thing in the window.
+    tabViewManager.setFocusedTab(null);
     return true;
   });
 
@@ -732,8 +743,9 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
     vaultKey.lock();
     const { setUserLoggedIn } = await import('@pkg/main/mainmenu');
     setUserLoggedIn(false);
-    // Hide native browser tab views so the login screen is visible
-    tabViewManager.hideAllViews();
+    // Clear focus so every native browser tab detaches and the login
+    // screen is the topmost thing in the window.
+    tabViewManager.setFocusedTab(null);
     return true;
   });
 

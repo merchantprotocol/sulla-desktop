@@ -143,6 +143,12 @@ export interface BaseThreadState {
     hadToolCalls?:      boolean;
     hadUserMessages?:   boolean;
 
+    /** Wall-clock timestamp (ms) of the most recent real signal from the
+     *  agent — an LLM token, a tool call dispatch/return, or a thinking
+     *  event. Read by PlaybookController's sub-agent inactivity watchdog
+     *  to decide whether to bump an idle agent with a user nudge. */
+    lastActivityMs?: number;
+
     /** When set, workflow tools (list/execute) are scoped to only this workflow */
     scopedWorkflowId?: string;
 
@@ -701,6 +707,15 @@ export function createHeartbeatGraph(): Graph<AgentGraphState> {
     if (agentStatus === 'in_progress' && (state.metadata as any).hadToolCalls) {
       const newLoopCount = ((state.metadata as any).agentLoopCount || 0) + 1;
       (state.metadata as any).agentLoopCount = newLoopCount;
+      // Consume the flag — it describes "this cycle had tool calls". Once
+      // we've used it to route the next step, clear it so a later cycle
+      // that emits pure text (no wrapper, no tools) falls through to the
+      // DONE path instead of looping forever on the stale signal. The
+      // agent node resets this at the top of each LLM turn anyway, but
+      // the assistant-already-responded short-circuit in normalizedChat
+      // bypasses that reset — leading to a 4ms-per-cycle runaway where
+      // the LLM never fires.
+      state.metadata.hadToolCalls = false;
       console.log(`[HeartbeatGraph] Tool calls without wrapper — implicit continue (cycle ${ newLoopCount })`);
       return 'heartbeat';
     }
@@ -786,6 +801,14 @@ export function createAgentGraph(): Graph<AgentGraphState> {
       const currentLoopCount = (state.metadata as any).agentLoopCount || 0;
       const newLoopCount = currentLoopCount + 1;
       (state.metadata as any).agentLoopCount = newLoopCount;
+      // Consume the flag so this decision is not sticky. normalizedChat
+      // resets hadToolCalls at the top of each LLM turn, but its
+      // last-message-is-assistant short-circuit returns BEFORE that reset
+      // — leaving the flag stuck true and looping this branch forever
+      // with no LLM activity (observed at ~4ms per cycle, thousands of
+      // iterations). If the next cycle really does run tools, ToolExecutor
+      // sets the flag back to true at the top of executeToolCalls.
+      state.metadata.hadToolCalls = false;
       console.log(`[AgentGraph] Agent made tool calls without wrapper — implicit continue (cycle ${ newLoopCount })`);
       return 'agent';
     }
@@ -833,7 +856,11 @@ export function createSubconsciousGraph(): Graph<BaseThreadState> {
 
     if (agentStatus === 'done') return 'end';
     if (agentStatus === 'continue') return 'subconscious';
-    if (agentStatus === 'in_progress' && state.metadata.hadToolCalls) return 'subconscious';
+    if (agentStatus === 'in_progress' && state.metadata.hadToolCalls) {
+      // Consume — see AgentGraph branch above for rationale.
+      state.metadata.hadToolCalls = false;
+      return 'subconscious';
+    }
 
     // Default: done
     return 'end';

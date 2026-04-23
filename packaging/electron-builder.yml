@@ -23,6 +23,15 @@ extraResources:
 files:
   - dist/app/**/*
   - '!**/node_modules/*/prebuilds/!(${platform}*)/*.node'
+# Register the sulla:// custom URL scheme so the OS hands off deep
+# links (e.g. the "Open in Sulla Desktop" CTA on sulladesktop.com)
+# to this app. electron-builder writes CFBundleURLTypes into the
+# signed Info.plist on macOS and the per-user registry keys on Win.
+# Linux registration still requires app.setAsDefaultProtocolClient()
+# at runtime — handled in background.ts.
+protocols:
+  - name: Sulla Desktop
+    schemes: [ sulla ]
 mac:
   darkModeSupport: true
   hardenedRuntime: true
@@ -47,6 +56,7 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: "Sulla Desktop needs microphone access for voice features including chat, transcription, and capture studio."
     NSCameraUsageDescription: "Sulla Desktop uses your camera for the capture studio face-cam overlay."
+    NSCameraUseContinuityCameraDeviceType: true
     NSScreenCaptureUsageDescription: "Sulla Desktop needs screen recording access for the capture studio to record your screen."
     NSAppleEventsUsageDescription: "Sulla uses automation to interact with apps on your Mac — like managing your calendar, creating reminders, or controlling music playback. You choose which apps to enable."
   # extraFiles dropped the mac-only signing-config + electron-builder.yml

@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -78,6 +78,7 @@ export class ToolRegistry {
     n8n:                'n8n workflow automation — list, execute, create, and manage n8n workflows and their executions.',
     notify:             'Send desktop notifications to alert the user when async work completes or needs attention.',
     vault:              'Credential vault — list saved credentials, check integration connection status, read secrets, and autofill login forms.',
+    function:           'Custom function runner — list installed functions and invoke them by slug across python, shell, and node runtimes. Returns full execution trace in one call.',
     workflow:           'Workflow management — execute, validate, and manage Sulla workflow definitions.',
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
     projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',
@@ -319,6 +320,63 @@ export class ToolRegistry {
 
   getToolNames(): string[] {
     return Array.from(this.loaders.keys());
+  }
+
+  /**
+   * Rank registered tool names by similarity to a query string. Used to
+   * generate "Did you mean?" hints when the LLM invents a tool name — the
+   * most common failure mode when an agent pattern-matches from training
+   * data instead of the real catalog. Falls back to Levenshtein distance
+   * when no substring or category hit is found.
+   *
+   * Scoring (lower is better):
+   *   0  — exact match
+   *   1  — candidate contains query (e.g. "action" → "browser_action_fill")
+   *   2  — query contains candidate
+   *   +bonus — category prefix match (e.g. "browser_X" query favors other browser_*)
+   *   +levenshtein — fallback
+   */
+  findSimilarToolNames(query: string, limit = 3): string[] {
+    if (!query) return [];
+    const q = query.toLowerCase();
+    const qPrefix = q.split(/[_/]/)[0];
+    const candidates = Array.from(this.loaders.keys());
+
+    const levenshtein = (a: string, b: string): number => {
+      if (a === b) return 0;
+      if (!a.length) return b.length;
+      if (!b.length) return a.length;
+      const prev = new Array(b.length + 1).fill(0).map((_, i) => i);
+      const curr = new Array(b.length + 1).fill(0);
+      for (let i = 1; i <= a.length; i++) {
+        curr[0] = i;
+        for (let j = 1; j <= b.length; j++) {
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+        }
+        for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+      }
+      return curr[b.length];
+    };
+
+    const scored = candidates.map((name) => {
+      const lc = name.toLowerCase();
+      if (lc === q) return { name, score: 0 };
+      if (lc.includes(q)) return { name, score: 1 };
+      if (q.includes(lc)) return { name, score: 2 };
+      const cPrefix = lc.split(/[_/]/)[0];
+      const prefixBonus = qPrefix && cPrefix === qPrefix ? 0 : 3;
+      return { name, score: levenshtein(q, lc) + prefixBonus };
+    });
+
+    // Drop obviously-unrelated suggestions — anything scoring worse than
+    // the query length is probably noise.
+    const cutoff = Math.max(q.length, 6);
+    return scored
+      .filter(s => s.score <= cutoff)
+      .sort((a, b) => a.score - b.score)
+      .slice(0, limit)
+      .map(s => s.name);
   }
 
   /** Get native tool definitions that should be passed directly to the provider (not converted). */

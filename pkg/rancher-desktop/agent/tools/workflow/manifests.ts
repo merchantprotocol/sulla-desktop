@@ -3,7 +3,7 @@ import type { ToolManifest } from '../registry';
 export const workflowToolManifests: ToolManifest[] = [
   {
     name:        'execute_workflow',
-    description: 'Execute a workflow by its slug (the filename without extension, e.g. "ask-date-time"). Available workflows and their slugs are listed in your system prompt.',
+    description: 'Execute a pre-registered workflow by its EXACT slug. Only call this when the slug appears verbatim in the "Available workflows" section of your system prompt — never guess a slug from the user request (e.g. do NOT invent slugs like "browser-tab-open" or "ask-date-time" unless they are explicitly listed). If no workflow matches the user intent, use exec({ command: "sulla <category>/<tool> \'...\'\" }) instead — NOT this tool. This tool CANNOT open browser tabs, run shell commands, or call sulla CLI tools.',
     category:    'meta',
     schemaDef:   {
       workflowId: { type: 'string', description: 'The workflow slug to execute. This is the filename without extension (e.g. "ask-date-time", "blog-production-pipeline"). See your system prompt for available slugs.' },

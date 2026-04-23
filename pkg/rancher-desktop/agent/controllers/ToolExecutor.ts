@@ -121,6 +121,7 @@ export class ToolExecutor {
     if (!toolCalls?.length) return [];
 
     state.metadata.hadToolCalls = true;
+    state.metadata.lastActivityMs = Date.now();
     if (this.ctx.currentNodeRunContext) {
       this.ctx.currentNodeRunContext.hadToolCalls = true;
     }
@@ -219,6 +220,10 @@ export class ToolExecutor {
           }
 
           const result = await tool.invoke(args);
+          // Long-running tools (scrape, LLM-heavy sub-calls) can take a
+          // while — bump activity on return so the watchdog doesn't
+          // mistake legitimate tool wait for an idle agent.
+          state.metadata.lastActivityMs = Date.now();
           const toolSuccess = result?.success === true;
           const toolError = typeof result?.error === 'string'
             ? result.error
@@ -233,6 +238,8 @@ export class ToolExecutor {
           });
           results.push({ toolName, success: toolSuccess, result, error: toolError });
           this.pushToTranscript(toolName, toolSuccess, toolError, result);
+
+          this.trackFailureSignature(state, toolName, toolSuccess, toolError, result);
 
           // Conversation logging
           const convIdSuccess = (state.metadata as any).conversationId;
@@ -252,6 +259,8 @@ export class ToolExecutor {
             toolName, toolRunId, args, success: false, error,
           });
           results.push({ toolName, success: false, error });
+
+          this.trackFailureSignature(state, toolName, false, error, null);
 
           // Conversation logging for failed tool calls
           const convIdFail = (state.metadata as any).conversationId;
@@ -423,6 +432,28 @@ export class ToolExecutor {
       });
     }
 
+    // Mirror to the workflow's orchestrator channel as a workflow_execution_
+    // event so the routine canvas (AgentRoutines.vue) can render tool calls
+    // on the emitting node's card, next to its thinking bubbles. Without
+    // this a sub-agent would go "quiet" in the routine console during tool
+    // work — visible only on its own (unsubscribed) channel.
+    const workflowParentChannel = (state.metadata as any).workflowParentChannel;
+    const workflowNodeId = (state.metadata as any).workflowNodeId;
+    if (workflowParentChannel && workflowNodeId) {
+      await this.dispatchToWebSocket(workflowParentChannel, {
+        type: 'workflow_execution_event',
+        data: {
+          type:      'node_tool_call',
+          nodeId:    workflowNodeId,
+          toolRunId,
+          toolName,
+          args,
+          timestamp: new Date().toISOString(),
+        },
+        timestamp: Date.now(),
+      });
+    }
+
     return sent;
   }
 
@@ -461,6 +492,29 @@ export class ToolExecutor {
           error,
           result:    cappedResult,
           thread_id: parentThreadId,
+        },
+        timestamp: Date.now(),
+      });
+
+    }
+
+    // Workflow-orchestrator mirror — pairs with the tool_call emit above.
+    // AgentRoutines.vue renders these as stream lines and pushes them into
+    // the node's turn log for the output drawer. Keep the payload slim:
+    // the full result already went through the sub-agent's own channel and
+    // state.messages; the routine view just needs enough to label the card.
+    const workflowParentChannel = (state.metadata as any).workflowParentChannel;
+    const workflowNodeId = (state.metadata as any).workflowNodeId;
+    if (workflowParentChannel && workflowNodeId) {
+      await this.dispatchToWebSocket(workflowParentChannel, {
+        type: 'workflow_execution_event',
+        data: {
+          type:      'node_tool_result',
+          nodeId:    workflowNodeId,
+          toolRunId,
+          success,
+          error,
+          timestamp: new Date().toISOString(),
         },
         timestamp: Date.now(),
       });
@@ -657,6 +711,135 @@ export class ToolExecutor {
 
   private buildToolRunDedupeKey(toolName: string, args: unknown): string {
     return `${ toolName }:${ this.stableStringify(args ?? {}) }`;
+  }
+
+  /**
+   * Track repeated failure signatures across tool calls and inject a
+   * forceful course-correction message when the same error hits 3×
+   * consecutively.
+   *
+   * Why: pure same-tool-same-args dedupe (LOOP_THRESHOLD above) misses the
+   * common failure where the LLM invents a CLI subcommand name (e.g.
+   * `sulla browser/action`) and retries it via `exec` with different
+   * selectors/payloads every time — the args differ so the dedupe doesn't
+   * fire, but the inner error is identical on every attempt. This tracker
+   * looks at the ERROR shape of the last N results, catches the loop, and
+   * drops a directive hint into the conversation with "Did you mean?"
+   * suggestions pulled from the real registry. Fires once per thread to
+   * avoid spamming the transcript when the model already got the message.
+   */
+  private trackFailureSignature(
+    state: BaseThreadState,
+    toolName: string,
+    success: boolean,
+    error: string | undefined,
+    result: unknown,
+  ): void {
+    const THRESHOLD = 3;
+    const metadataAny = state.metadata as any;
+
+    const signature = this.extractFailureSignature(success, error, result);
+    if (!signature) {
+      // A successful call clears the streak — otherwise a mix of successes
+      // and the same intermittent failure would eventually look like a
+      // loop to this tracker.
+      metadataAny.__lastFailureSignatures = [];
+      return;
+    }
+
+    const sigs: string[] = Array.isArray(metadataAny.__lastFailureSignatures)
+      ? metadataAny.__lastFailureSignatures
+      : (metadataAny.__lastFailureSignatures = []);
+    sigs.push(signature);
+    if (sigs.length > 5) sigs.shift();
+
+    if (sigs.length < THRESHOLD) return;
+    const tail = sigs.slice(-THRESHOLD);
+    if (!tail.every(s => s === signature)) return;
+
+    // Fire at most once per signature per thread — if the agent hits a new
+    // distinct failure loop later with a different signature, it still
+    // gets a hint. Without this scope the flag would mask later loops.
+    const fired: Record<string, boolean> = metadataAny.__loopBreakerFired &&
+      typeof metadataAny.__loopBreakerFired === 'object'
+      ? metadataAny.__loopBreakerFired
+      : (metadataAny.__loopBreakerFired = {});
+    if (fired[signature]) return;
+    fired[signature] = true;
+
+    this.injectLoopBreakerHint(state, toolName, signature);
+  }
+
+  /**
+   * Extract a normalized failure "shape" from a tool result so repeated
+   * failures cluster to the same signature. Two layers:
+   *   1. Direct tool failure — `result.error` or `toolError`
+   *   2. `exec`-style wrapper — the command succeeded shelling out, but
+   *      stdout contains `{"success":false,"error":"..."}`; the real
+   *      failure is inside that JSON string.
+   * Returns null for anything that can't be interpreted as a failure.
+   */
+  private extractFailureSignature(
+    success: boolean,
+    error: string | undefined,
+    result: unknown,
+  ): string | null {
+    const normalize = (err: string): string => {
+      // "Internal tool \"X\" or \"Y\" not found" → not_found:X — collapses
+      // every variation of the fake-name attempt into one bucket.
+      const m = err.match(/Internal tool "([^"]+)"(?:\s+or\s+"[^"]+")?\s+not found/);
+      if (m) return `not_found:${ m[1] }`;
+      return err.trim().slice(0, 120);
+    };
+
+    if (!success && error) return normalize(error);
+
+    if (success && result && typeof result === 'object') {
+      const r = result as { result?: unknown };
+      const inner = typeof r.result === 'string' ? r.result : null;
+      if (inner && inner.includes('"success":false')) {
+        try {
+          const parsed = JSON.parse(inner);
+          if (parsed && parsed.success === false && typeof parsed.error === 'string') {
+            return normalize(parsed.error);
+          }
+        } catch { /* not JSON — fall through */ }
+        // Even without clean JSON, a substring match on the not-found
+        // pattern is worth catching.
+        const m = inner.match(/Internal tool \\?"([^"\\]+)\\?"(?:\s+or\s+\\?"[^"\\]+\\?")?\s+not found/);
+        if (m) return `not_found:${ m[1] }`;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Append a directive message nudging the agent out of a failure loop.
+   * When the signature is `not_found:X`, ask the registry for the closest
+   * real tool names so the hint carries concrete alternatives rather than
+   * a generic "try something else". For non-not-found loops, tell the
+   * agent to stop and call `browse_tools`.
+   */
+  private injectLoopBreakerHint(
+    state: BaseThreadState,
+    toolName: string,
+    signature: string,
+  ): void {
+    let content: string;
+    if (signature.startsWith('not_found:')) {
+      const fakeName = signature.slice('not_found:'.length);
+      const suggestions = toolRegistry.findSimilarToolNames(fakeName, 3);
+      const didYouMean = suggestions.length
+        ? ` Did you mean: ${ suggestions.join(', ') }?`
+        : '';
+      content = `[loop breaker] You've tried \`${ fakeName }\` three times and it doesn't exist — the Sulla CLI has no such tool.${ didYouMean } Stop retrying \`${ fakeName }\`. If you need the full catalog, call \`browse_tools\` (or \`sulla meta/browse_tools\`) and pick an actual entry from the returned list. Do not invent tool names.`;
+    } else {
+      content = `[loop breaker] The last three \`${ toolName }\` calls have all failed with the same error. Stop retrying — the repeated attempt will not succeed. Call \`browse_tools\` to review the real tool catalog, then try a different approach. If the task cannot be accomplished with the available tools, report that back and stop.`;
+    }
+
+    state.messages.push({ role: 'user', content });
+    console.warn(`[ToolExecutor] Loop breaker fired — signature="${ signature }", tool="${ toolName }"`);
   }
 
   private stableStringify(value: unknown): string {

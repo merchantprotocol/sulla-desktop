@@ -18,7 +18,7 @@ import { computed, ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 /** Real on-disk kinds. These are what loaders actually fetch. */
-export type LibraryArtifactKind = 'routines' | 'skills' | 'functions' | 'recipes';
+export type LibraryArtifactKind = 'routines' | 'skills' | 'functions' | 'recipes' | 'integrations';
 
 /** Selectable views in the Library left rail. `all` is synthetic — it
  *  flattens every artifact kind into one list with a `kind` tag on each
@@ -26,7 +26,7 @@ export type LibraryArtifactKind = 'routines' | 'skills' | 'functions' | 'recipes
  *  everything they own at once. */
 export type LibraryKind = 'all' | LibraryArtifactKind;
 
-const ARTIFACT_KINDS: LibraryArtifactKind[] = ['routines', 'skills', 'functions', 'recipes'];
+const ARTIFACT_KINDS: LibraryArtifactKind[] = ['routines', 'skills', 'functions', 'recipes', 'integrations'];
 
 export interface LibraryItem {
   /** Stable directory name on disk — also the primary key within a kind. */
@@ -36,7 +36,7 @@ export interface LibraryItem {
   version?:    string;
   updatedAt?:  string;
   /** Kind-specific key/value pairs rendered as chips on the strip. */
-  meta:        Array<{ label: string; value: string }>;
+  meta:        { label: string; value: string }[];
   /** Artifact kind. Always populated by the loaders so the "All" view
    *  can render a kind pill on mixed rows; kind-specific views ignore it. */
   kind?:       LibraryArtifactKind;
@@ -144,11 +144,36 @@ async function loadRecipes(): Promise<LibraryItem[]> {
   });
 }
 
+async function loadIntegrations(): Promise<LibraryItem[]> {
+  const rows = await ipcRenderer.invoke('library-list-integrations');
+
+  return rows.map((r) => {
+    const meta: LibraryItem['meta'] = [
+      { label: 'Category', value: r.category },
+    ];
+    if (r.authType) meta.push({ label: 'Auth', value: r.authType });
+    if (r.source === 'resources') meta.push({ label: 'Source', value: 'Builtin' });
+    if (r.bundledFunctions) meta.push({ label: 'Bundled functions', value: String(r.bundledFunctions) });
+    if (r.bundledSkills) meta.push({ label: 'Bundled skills', value: String(r.bundledSkills) });
+
+    return {
+      slug:        r.slug,
+      name:        r.name,
+      description: r.description,
+      version:     r.version,
+      updatedAt:   r.updatedAt,
+      meta,
+      kind:        'integrations' as const,
+    };
+  });
+}
+
 const LOADERS: Record<LibraryArtifactKind, () => Promise<LibraryItem[]>> = {
-  routines:  loadRoutines,
-  skills:    loadSkills,
-  functions: loadFunctions,
-  recipes:   loadRecipes,
+  routines:     loadRoutines,
+  skills:       loadSkills,
+  functions:    loadFunctions,
+  recipes:      loadRecipes,
+  integrations: loadIntegrations,
 };
 
 // ── Singleton state ──
@@ -157,13 +182,14 @@ const LOADERS: Record<LibraryArtifactKind, () => Promise<LibraryItem[]>> = {
 // scope and `useLibrary()` just returns bindings onto it. First caller to
 // mount triggers loadAll(); later callers see the cached state instantly.
 const activeKind = ref<LibraryKind>('all');
-const search     = ref('');
+const search = ref('');
 
 const states = ref<Record<LibraryArtifactKind, LibraryKindState>>({
-  routines:  emptyKindState(),
-  skills:    emptyKindState(),
-  functions: emptyKindState(),
-  recipes:   emptyKindState(),
+  routines:     emptyKindState(),
+  skills:       emptyKindState(),
+  functions:    emptyKindState(),
+  recipes:      emptyKindState(),
+  integrations: emptyKindState(),
 });
 
 // Tracks whether a full cross-kind load has ever been requested, so
@@ -246,15 +272,17 @@ const filteredItems = computed<LibraryItem[]>(() => {
 });
 
 const kindCounts = computed<Record<LibraryArtifactKind, number>>(() => ({
-  routines:  states.value.routines.items.length,
-  skills:    states.value.skills.items.length,
-  functions: states.value.functions.items.length,
-  recipes:   states.value.recipes.items.length,
+  routines:     states.value.routines.items.length,
+  skills:       states.value.skills.items.length,
+  functions:    states.value.functions.items.length,
+  recipes:      states.value.recipes.items.length,
+  integrations: states.value.integrations.items.length,
 }));
 
 const totalCount = computed<number>(() => {
   const c = kindCounts.value;
-  return c.routines + c.skills + c.functions + c.recipes;
+
+  return c.routines + c.skills + c.functions + c.recipes + c.integrations;
 });
 
 export function useLibrary() {

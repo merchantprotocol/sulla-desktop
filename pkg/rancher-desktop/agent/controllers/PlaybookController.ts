@@ -15,6 +15,30 @@ import * as fsSync from 'fs';
 import * as osUtil from 'os';
 import * as pathUtil from 'path';
 
+// Sub-agent durability. The legacy `SULLA_SUB_AGENT_TIMEOUT_MS` was a flat
+// wall-clock kill — it killed agents that were actively producing tokens
+// and tool calls just because they'd been running a while. That's wrong:
+// research/scraping/LLM-heavy work can legitimately take 10+ minutes and
+// we own the graph, so we know when the agent is actually idle.
+//
+// New model: watchdog the *activity* signal (`state.metadata.
+// lastActivityMs`, bumped on every LLM token, tool call, and thinking
+// event). If the agent goes silent for `INACTIVITY_MS`, don't kill it —
+// inject a "[bump]" user message to nudge it forward and reset the
+// clock. If it ignores bumps `MAX_BUMPS` times, THEN fail. The absolute
+// `MAX_MS` cap is the final belt-and-suspenders safety so a runaway
+// agent can't burn compute forever.
+const SUB_AGENT_INACTIVITY_MS = parseInt(
+  process.env.SULLA_SUB_AGENT_INACTIVITY_MS || '120000', 10, // 2 min silence → bump
+);
+const SUB_AGENT_MAX_BUMPS = parseInt(
+  process.env.SULLA_SUB_AGENT_MAX_BUMPS || '3', 10, // 3 unanswered bumps → fail
+);
+const SUB_AGENT_MAX_MS = parseInt(
+  process.env.SULLA_SUB_AGENT_MAX_MS || process.env.SULLA_SUB_AGENT_TIMEOUT_MS || '1800000', 10, // 30 min hard cap
+);
+const SUB_AGENT_WATCHDOG_INTERVAL_MS = 5000;
+
 import { throwIfAborted } from '../services/AbortService';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -1026,7 +1050,10 @@ export class PlaybookController<TState = any> {
         }
 
         case 'spawn_parallel_agents': {
-          const parallelNodes = step.nodes;
+          const parallelNodes = step.nodes.slice(0, 10);
+          if (step.nodes.length > 10) {
+            console.warn(`[PlaybookController] spawn_parallel_agents: capped at 10 nodes (${step.nodes.length} requested)`);
+          }
           const nodeLabels = parallelNodes.map(n => this.getPlaybookNodeLabel(currentPlaybook, n.nodeId));
 
           for (let i = 0; i < parallelNodes.length; i++) {
@@ -1813,7 +1840,9 @@ export class PlaybookController<TState = any> {
         },
         timestamp: Date.now(),
       });
-    } catch { /* best-effort */ }
+    } catch (e) {
+      playbookLog('ws_emit_failed', { eventType: type, error: String(e) });
+    }
   }
 
   private emitEdgeActivations(
@@ -2017,10 +2046,62 @@ export class PlaybookController<TState = any> {
     subState.metadata.workflowNodeId = nodeId;
     subState.metadata.workflowParentChannel = parentChannel;
 
+    // Seed the activity clock so the first watchdog tick doesn't fire on
+    // a not-yet-started agent. Bumpers in BaseNode.onToken / onActivity
+    // and ToolExecutor.executeToolCalls update this as work happens.
+    const startedAt = Date.now();
+    subState.metadata.lastActivityMs = startedAt;
+    let unansweredBumps = 0;
+
     let finalState: any;
+    let watchdogId: NodeJS.Timeout | null = null;
     try {
-      finalState = await graph.execute(subState);
+      const watchdogPromise = new Promise<never>((_, reject) => {
+        watchdogId = setInterval(() => {
+          const now = Date.now();
+          const lastActivity = subState.metadata.lastActivityMs ?? startedAt;
+          const sinceActivity = now - lastActivity;
+          const elapsed = now - startedAt;
+
+          // Absolute cap — a runaway agent can't burn forever.
+          if (elapsed >= SUB_AGENT_MAX_MS) {
+            reject(new Error(
+              `Sub-agent "${ agentId || nodeId }" hit absolute max runtime of ${ Math.round(SUB_AGENT_MAX_MS / 1000) }s`,
+            ));
+            return;
+          }
+
+          if (sinceActivity < SUB_AGENT_INACTIVITY_MS) return;
+
+          // Bump budget exhausted — the agent had multiple chances to
+          // respond and didn't. Now it's a real stall, fail the sub.
+          if (unansweredBumps >= SUB_AGENT_MAX_BUMPS) {
+            reject(new Error(
+              `Sub-agent "${ agentId || nodeId }" ignored ${ SUB_AGENT_MAX_BUMPS } activity bumps — truly stalled`,
+            ));
+            return;
+          }
+
+          // Durable path: nudge the agent, don't kill it. Push a user
+          // message into the sub-agent's conversation and reset the
+          // activity clock. When the in-flight LLM / tool call returns
+          // (or if the graph is between cycles) the next turn picks up
+          // the bump as the latest user turn and the agent can continue
+          // where it left off. If the agent is hung on a provider that
+          // never returns, the bump sits unread until MAX_MS fires.
+          unansweredBumps++;
+          subState.metadata.lastActivityMs = now;
+          const nudge = unansweredBumps === 1
+            ? `[bump] You've been silent for ${ Math.round(sinceActivity / 1000) }s. Are you still working? If yes, continue where you left off. If the task is complete, emit <AGENT_DONE>…</AGENT_DONE>. If you're blocked, emit <AGENT_BLOCKED>…</AGENT_BLOCKED> with the reason.`
+            : `[bump ${ unansweredBumps }/${ SUB_AGENT_MAX_BUMPS }] Still no activity. State what you're doing or waiting on. If stuck, emit <AGENT_BLOCKED>…</AGENT_BLOCKED> so the orchestrator can recover.`;
+          if (!Array.isArray(subState.messages)) subState.messages = [];
+          subState.messages.push({ role: 'user', content: nudge });
+          console.warn(`[PlaybookController] Bumping idle sub-agent "${ agentId || nodeId }" (bump ${ unansweredBumps }/${ SUB_AGENT_MAX_BUMPS }, idle ${ Math.round(sinceActivity / 1000) }s)`);
+        }, SUB_AGENT_WATCHDOG_INTERVAL_MS);
+      });
+      finalState = await Promise.race([graph.execute(subState), watchdogPromise]);
     } finally {
+      if (watchdogId !== null) clearInterval(watchdogId);
       // Deregister from the parent's active-sub-agents list. Must run on
       // every exit path — success, contract-violation, or thrown error —
       // so an abort that fans out to stale threadIds doesn't see zombies.
@@ -2093,8 +2174,17 @@ export class PlaybookController<TState = any> {
           if (escExecId) {
             import('../database/models/WorkflowPendingCompletionModel').then(({ WorkflowPendingCompletionModel }) => {
               WorkflowPendingCompletionModel.saveEscalation({ executionId: escExecId, nodeId, nodeLabel, agentId, prompt, config, question: resultText, threadId: result.threadId })
-                .catch(e => console.warn('[PlaybookController] Failed to persist escalation to DB:', e));
-            }).catch(() => { /* best-effort */ });
+                .catch(e => {
+                  console.error('[PlaybookController] CHECKPOINT FAILED — escalation not persisted. Recovery after crash will lose this node:', e);
+                  playbookLog('checkpoint_failed', { kind: 'escalation', executionId: escExecId, nodeId, error: String(e) });
+                  try {
+                    getWebSocketClientService().send((state as any).metadata?.wsChannel || 'workbench', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'escalation', timestamp: new Date().toISOString() }, timestamp: Date.now() });
+                  } catch { /* WS down — already degraded */ }
+                });
+            }).catch(e => {
+              console.error('[PlaybookController] CHECKPOINT FAILED — could not import DB model for escalation:', e);
+              playbookLog('checkpoint_failed', { kind: 'escalation_import', executionId: escExecId, nodeId, error: String(e) });
+            });
           }
 
           try {
@@ -2111,7 +2201,7 @@ export class PlaybookController<TState = any> {
               },
               timestamp: Date.now(),
             });
-          } catch { /* best-effort */ }
+          } catch (e) { playbookLog('ws_send_failed', { nodeId, error: String(e) }); }
 
           this.triggerPlaybookContinuation(state);
           return;
@@ -2130,8 +2220,17 @@ export class PlaybookController<TState = any> {
           if (execId) {
             import('../database/models/WorkflowPendingCompletionModel').then(({ WorkflowPendingCompletionModel }) => {
               WorkflowPendingCompletionModel.saveCompletion({ executionId: execId, nodeId, nodeLabel, output: result.output, threadId: result.threadId })
-                .catch(e => console.warn('[PlaybookController] Failed to persist completion to DB:', e));
-            }).catch(() => { /* best-effort */ });
+                .catch(e => {
+                  console.error('[PlaybookController] CHECKPOINT FAILED — completion not persisted. Recovery after crash will re-run this node:', e);
+                  playbookLog('checkpoint_failed', { kind: 'completion', executionId: execId, nodeId, error: String(e) });
+                  try {
+                    getWebSocketClientService().send((state as any).metadata?.wsChannel || 'workbench', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'completion', timestamp: new Date().toISOString() }, timestamp: Date.now() });
+                  } catch { /* WS down — already degraded */ }
+                });
+            }).catch(e => {
+              console.error('[PlaybookController] CHECKPOINT FAILED — could not import DB model for completion:', e);
+              playbookLog('checkpoint_failed', { kind: 'completion_import', executionId: execId, nodeId, error: String(e) });
+            });
           }
 
           try {
@@ -2149,7 +2248,7 @@ export class PlaybookController<TState = any> {
               },
               timestamp: Date.now(),
             });
-          } catch { /* best-effort */ }
+          } catch (e) { playbookLog('ws_send_failed', { nodeId, error: String(e) }); }
 
           this.triggerPlaybookContinuation(state);
         }
@@ -2168,8 +2267,17 @@ export class PlaybookController<TState = any> {
         if (failExecId) {
           import('../database/models/WorkflowPendingCompletionModel').then(({ WorkflowPendingCompletionModel }) => {
             WorkflowPendingCompletionModel.saveFailure({ executionId: failExecId, nodeId, nodeLabel, error: errorMsg })
-              .catch(e => console.warn('[PlaybookController] Failed to persist failure to DB:', e));
-          }).catch(() => { /* best-effort */ });
+              .catch(e => {
+                console.error('[PlaybookController] CHECKPOINT FAILED — failure record not persisted:', e);
+                playbookLog('checkpoint_failed', { kind: 'failure', executionId: failExecId, nodeId, error: String(e) });
+                try {
+                  getWebSocketClientService().send((state as any).metadata?.wsChannel || 'workbench', { type: 'workflow_execution_event', data: { type: 'checkpoint_degraded', nodeId, kind: 'failure', timestamp: new Date().toISOString() }, timestamp: Date.now() });
+                } catch { /* WS down — already degraded */ }
+              });
+          }).catch(e => {
+            console.error('[PlaybookController] CHECKPOINT FAILED — could not import DB model for failure:', e);
+            playbookLog('checkpoint_failed', { kind: 'failure_import', executionId: failExecId, nodeId, error: String(e) });
+          });
         }
 
         try {

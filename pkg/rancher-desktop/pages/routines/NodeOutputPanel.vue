@@ -47,7 +47,10 @@
       </div>
     </div>
 
-    <div class="op-body">
+    <div
+      ref="bodyRef"
+      class="op-body"
+    >
       <!-- Turns timeline — conversation log filtered to this node. Only
            rendered when we've actually captured lines for this node; an
            empty list would just add a header with nothing under it. -->
@@ -185,7 +188,7 @@
 <script setup lang="ts">
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
 // Marked setup — GitHub-flavored is already the default in v17, but
 // turn off header-id generation since the drawer can mount multiple
@@ -262,6 +265,44 @@ defineEmits<{
 const turns = computed<NodeTurnShape[]>(() => {
   return props.node?.data?.execution?.turns ?? [];
 });
+
+// Auto-scroll the drawer body to the bottom as new turns arrive —
+// mirrors the global live-stream's stick-to-bottom behavior. The panel
+// is the scroll container (.op-body has overflow-y: auto). If the user
+// has scrolled up to read an older turn, STICK_THRESHOLD_PX leaves them
+// there; when they scroll back near the bottom, the next new turn snaps
+// the view to the latest again.
+const bodyRef = ref<HTMLElement | null>(null);
+const STICK_THRESHOLD_PX = 40;
+
+function scrollDrawerToBottom(force = false) {
+  const el = bodyRef.value;
+  if (!el) return;
+  if (!force) {
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom >= STICK_THRESHOLD_PX) return;
+  }
+  // nextTick so the newly rendered turn is in the DOM — otherwise we
+  // snap to the pre-render bottom and the newest line lands out of sight.
+  void nextTick(() => {
+    const node = bodyRef.value;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  });
+}
+
+// New turn arrives → soft snap (respects the user's scroll position).
+watch(() => turns.value.length, () => scrollDrawerToBottom(false));
+// Streaming updates the last turn in place (loop-breaker accumulator
+// pattern). Length doesn't change, but content grows, so watch the last
+// message too.
+watch(() => turns.value[turns.value.length - 1]?.msg ?? '', () => scrollDrawerToBottom(false));
+// Drawer just opened or the user clicked a different card → hard snap
+// regardless of current scroll position, since they're arriving fresh
+// and want to see the latest state of this card.
+watch(() => [props.open, props.node?.id], () => {
+  if (props.open) scrollDrawerToBottom(true);
+}, { flush: 'post' });
 
 const statusLabel = computed(() => {
   switch (props.node?.data?.state) {

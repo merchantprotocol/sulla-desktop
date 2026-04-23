@@ -385,7 +385,7 @@ export class ChromeApiService implements ChromeApi {
         this.tabViewManager.createView(tabId, props.url, bounds);
 
         if (props.active !== false) {
-          this.tabViewManager.showView(tabId);
+          this.tabViewManager.setFocusedTab(tabId);
         }
       }
 
@@ -426,9 +426,13 @@ export class ChromeApiService implements ChromeApi {
       }
 
       if (props.active === true && !this.hiddenViews.has(tabId)) {
-        this.tabViewManager.showView(tabId);
+        this.tabViewManager.setFocusedTab(tabId);
       } else if (props.active === false && !this.hiddenViews.has(tabId)) {
-        this.tabViewManager.hideView(tabId);
+        // Only clear focus if this tab currently holds it. Otherwise we'd
+        // yank a sibling tab offscreen when deactivating a background tab.
+        if (this.tabViewManager.getFocusedTab() === tabId) {
+          this.tabViewManager.setFocusedTab(null);
+        }
       }
 
       const tab = await this.buildTabInfo(tabId);

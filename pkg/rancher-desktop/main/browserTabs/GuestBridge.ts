@@ -13,7 +13,7 @@
 // CDP-based methods (screenshot, trusted mouse/keyboard events) use
 // `webContents` APIs directly — no guest-side code needed.
 
-import type { WebContents } from 'electron';
+import type { WebContents, NativeImage } from 'electron';
 
 function jsArg(value: unknown): string {
   return JSON.stringify(value);
@@ -172,19 +172,72 @@ export class GuestBridge {
     await this.exec(`document.querySelectorAll('[data-sulla-annotation]').forEach(el => el.remove())`);
   }
 
-  // ── CDP / native input (screenshot, trusted events) ──────────────
+  // ── Native screenshot (Electron 40 webContents.capturePage) ───────
   async captureScreenshot(options: {
     format?: 'jpeg' | 'png'; quality?: number; clip?: { x: number; y: number; width: number; height: number };
   } = {}): Promise<{ base64: string; mediaType: string } | null> {
+    // Electron 40 REMOVED webContents.incrementCapturerCount / decrementCapturerCount.
+    // The replacement is webContents.capturePage(rect?, { stayHidden, stayAwake }) —
+    // same lifecycle semantics, different shape. `stayHidden: true` instructs the
+    // renderer to keep producing frames even when the WebContentsView is detached
+    // from the window's contentView, which is exactly our case: the single-source-
+    // of-truth manager fully detaches every non-focused tab, so without stayHidden
+    // the compositor produces no frames and any capture hangs indefinitely.
+    //
+    // Earlier versions of this method used `this.wc.debugger.sendCommand(
+    // 'Page.captureScreenshot', ...)` bracketed with incrementCapturerCount — that
+    // stack is completely broken on Electron 40 because incrementCapturerCount
+    // silently no-ops (the method doesn't exist on `this.wc`), so painting is
+    // never forced and the CDP call waits forever for a frame. Using the typed
+    // Electron API here avoids that trap.
+    const format = options.format === 'png' ? 'png' : 'jpeg';
+    const quality = typeof options.quality === 'number' ? options.quality : 80;
+    const rect = options.clip
+      ? { x: options.clip.x, y: options.clip.y, width: options.clip.width, height: options.clip.height }
+      : undefined;
+
+    // Diagnostic entry log — searchable string so we can confirm the code
+    // path is reached post-rebuild. If captures are failing and NO line
+    // matching `[GuestBridge] capture start` shows up in the Electron
+    // console, the request is being routed somewhere else entirely.
+    const wcDestroyed = this.wc.isDestroyed();
+    const wcUrl = wcDestroyed ? '(destroyed)' : (() => { try { return this.wc.getURL(); } catch { return '(unknown)'; } })();
+    console.log(`[GuestBridge] capture start assetId=${ this.assetId } wcDestroyed=${ wcDestroyed } url=${ wcUrl } rect=${ rect ? JSON.stringify(rect) : '(full)' }`);
+
+    if (wcDestroyed) {
+      console.warn(`[GuestBridge] capture abort — webContents destroyed assetId=${ this.assetId }`);
+      return null;
+    }
+
     try {
-      const image = options.clip
-        ? await this.wc.capturePage(options.clip)
-        : await this.wc.capturePage();
-      const format = options.format === 'png' ? 'png' : 'jpeg';
-      const quality = typeof options.quality === 'number' ? options.quality : 80;
-      const buf = format === 'png' ? image.toPNG() : image.toJPEG(quality);
-      return { base64: buf.toString('base64'), mediaType: `image/${ format }` };
-    } catch {
+      // 10s timeout is a safety net, not the happy path — capturePage with
+      // stayHidden resolves in a few hundred ms under normal conditions.
+      const image = await Promise.race([
+        this.wc.capturePage(rect, { stayHidden: true, stayAwake: true }),
+        new Promise<NativeImage>((_, reject) =>
+          setTimeout(() => reject(new Error('capturePage timed out after 10s')), 10_000),
+        ),
+      ]);
+      if (!image) {
+        console.warn(`[GuestBridge] capturePage returned null/undefined assetId=${ this.assetId }`);
+        return null;
+      }
+      if (image.isEmpty()) {
+        const size = image.getSize();
+        console.warn(`[GuestBridge] capturePage returned empty NativeImage assetId=${ this.assetId } size=${ JSON.stringify(size) }`);
+        return null;
+      }
+      const size = image.getSize();
+      const buffer = format === 'png' ? image.toPNG() : image.toJPEG(quality);
+      console.log(`[GuestBridge] capture ok assetId=${ this.assetId } size=${ JSON.stringify(size) } bytes=${ buffer.length }`);
+      return {
+        base64:    buffer.toString('base64'),
+        mediaType: `image/${ format }`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : '';
+      console.warn(`[GuestBridge] captureScreenshot failed assetId=${ this.assetId }: ${ msg }\n${ stack }`);
       return null;
     }
   }

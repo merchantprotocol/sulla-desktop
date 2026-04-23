@@ -38,10 +38,16 @@ export function buildSullaRuntimeScript(): string {
 
   function isVisible(el) {
     if (!el) return false;
-    var s = getComputedStyle(el);
-    if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
-    var r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    // Walk up the DOM checking computed styles only — avoids getBoundingClientRect()
+    // which returns 0×0 when the WebContentsView viewport has no size set, causing
+    // dehydrate() to report 0 tokens on pages like Google Maps.
+    var cur = el;
+    while (cur && cur !== document.documentElement) {
+      var s = getComputedStyle(cur);
+      if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
+      cur = cur.parentElement;
+    }
+    return true;
   }
 
   function plainRect(el) {

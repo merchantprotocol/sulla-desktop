@@ -1292,6 +1292,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const onToken = (token: string): void => {
       contentBuffer += token;
 
+      // Sub-agent inactivity watchdog in PlaybookController reads this —
+      // every token proves the LLM is generating, not hung.
+      state.metadata.lastActivityMs = Date.now();
+
       // Run token through all active extractors (speak extraction, etc.)
       const cleaned = controller.processChunk(token, ctx);
 
@@ -1322,6 +1326,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const onActivity = (message: string): void => {
       if (!message || message === lastActivity) return;
       lastActivity = message;
+
+      // Provider is emitting thinking/tool_use blocks — clear proof work
+      // is happening even if raw tokens are sparse (long Claude Code turns).
+      state.metadata.lastActivityMs = Date.now();
 
       if (!isVoiceMode && contentBuffer.trim()) {
         const stripped = stripProtocolTags(contentBuffer);

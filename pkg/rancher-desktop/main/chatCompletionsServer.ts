@@ -169,8 +169,39 @@ export class ChatCompletionsServer {
       credentials: true,
     }));
 
-    // Parse JSON bodies
-    this.app.use(express.json({ limit: '10mb' }));
+    // Parse JSON bodies. The `verify` hook stashes the raw buffer on the
+    // request so the malformed-body handler below can echo it back — LLM-
+    // generated tool args are the #1 source of body-parser SyntaxErrors
+    // (unescaped quotes, trailing commas, missing braces), and the agent
+    // can only fix its own output if it sees what it actually sent.
+    this.app.use(express.json({
+      limit:  '10mb',
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf?.length ? buf.toString('utf8') : '';
+      },
+    }));
+
+    // Intercept body-parser SyntaxError before it reaches Express's
+    // default HTML error page. Returns a structured 400 with the bad body
+    // and a position pointer so the calling agent gets actionable signal
+    // instead of a stack trace in the console.
+    this.app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+      if (err && err.type === 'entity.parse.failed') {
+        const raw = (req as any).rawBody ?? '';
+        const pos = typeof err.body === 'string' ? err.body.length : raw.length;
+        const pointer = raw.length > 0
+          ? raw.slice(Math.max(0, pos - 40), pos + 40)
+          : '';
+        console.warn(`[ChatCompletionsAPI] Malformed JSON body on ${ req.method } ${ req.path } — ${ err.message }. Body (first 500 chars): ${ raw.slice(0, 500) }`);
+        res.status(400).json({
+          success: false,
+          error:   `Malformed JSON in request body: ${ err.message }. Check your tool call arguments — this usually means unescaped quotes, a trailing comma, or a missing brace. Near position: "${ pointer }"`,
+          rawBody: raw.slice(0, 2000),
+        });
+        return;
+      }
+      next(err);
+    });
 
     // Add request logging
     this.app.use((req: Request, res: Response, next: NextFunction) => {
@@ -1085,7 +1116,30 @@ export class ChatCompletionsServer {
           tool = await toolRegistry.getTool(endpoint).catch(() => null);
         }
         if (!tool) {
-          return res.status(404).json({ success: false, error: `Internal tool "${ prefixed }" or "${ endpoint }" not found` });
+          // Fuzzy-suggest the closest real tool names. Score both candidate
+          // keys (prefixed + bare) and dedupe — agents hallucinate CLI
+          // subcommands like `browser/action` and need a concrete nudge
+          // toward the real names (`browser/fill`, `browser/click`, …).
+          const ranked = [
+            ...toolRegistry.findSimilarToolNames(prefixed, 5),
+            ...toolRegistry.findSimilarToolNames(endpoint, 5),
+          ];
+          const seen = new Set<string>();
+          const suggestions: string[] = [];
+          for (const name of ranked) {
+            if (seen.has(name)) continue;
+            seen.add(name);
+            suggestions.push(name);
+            if (suggestions.length >= 3) break;
+          }
+          const hint = suggestions.length
+            ? ` Did you mean: ${ suggestions.join(', ') }?`
+            : '';
+          return res.status(404).json({
+            success: false,
+            error:   `Internal tool "${ prefixed }" or "${ endpoint }" not found.${ hint }`,
+            suggestions,
+          });
         }
         // Accept both { params: { ... } } and flat { action: "upsert", ... } formats
         const body = req.body || {};

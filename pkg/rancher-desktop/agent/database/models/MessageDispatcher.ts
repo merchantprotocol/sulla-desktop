@@ -438,6 +438,20 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
 
     ctx.currentActivity.value = toolNameToVerb(toolName);
 
+    // Seal any open streaming bubble. The backend doesn't always emit a
+    // `streaming_complete` sentinel at text→tool_use transitions, so without
+    // this the next narration segment finds this bubble still "open" and
+    // the `streaming` handler overwrites its content in-place (line ~236),
+    // clobbering every prior narration in the same slot.
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.role !== 'assistant') break;
+      if (m.kind === 'streaming' && !(m as any)._completed) {
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
+    }
+
     // Skip chat-only tools
     if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image') {
       return;
@@ -644,10 +658,12 @@ function handleTransferData(ctx: DispatchContext, agentId: string, _threadId: st
   if (data === 'graph_execution_complete' || data?.content === 'graph_execution_complete') {
     // Only react to completion events for the active thread — subconscious
     // agents can complete on the same channel and must not poison main UI state.
+    // If activeThreadId is set we require an exact match; a missing eventThreadId
+    // (e.g. from a heartbeat/subconscious graph) must also be ignored.
     const eventThreadId = data?.thread_id || data?.threadId;
     const activeThreadId = ctx.getThreadId();
-    if (eventThreadId && activeThreadId && eventThreadId !== activeThreadId) {
-      console.log('[MessageDispatcher] Ignoring graph_execution_complete for non-active thread:', eventThreadId, '(active:', activeThreadId, ')');
+    if (activeThreadId && (!eventThreadId || eventThreadId !== activeThreadId)) {
+      console.log('[MessageDispatcher] Ignoring graph_execution_complete: thread mismatch (event:', eventThreadId, ', active:', activeThreadId, ')');
       return;
     }
 
