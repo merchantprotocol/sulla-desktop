@@ -59,7 +59,10 @@ export async function activateWorkflowOnState(
     }
   }
 
-  // Resolve the trigger message from input or last user message
+  // Resolve the trigger message from input or last user message. Empty is OK —
+  // the playbook will substitute the routine framing into the trigger node's
+  // output. Routines fired with no user payload (e.g. Desktop "Run" button)
+  // rely on this path.
   let message = input.message || '';
 
   if (!message) {
@@ -72,13 +75,6 @@ export async function activateWorkflowOnState(
         }
       }
     }
-  }
-
-  if (!message) {
-    return {
-      ok:             false,
-      responseString: 'No message available. Provide a message parameter or ensure there is a user message in the conversation.',
-    };
   }
 
   // Load the workflow definition via the registry (DB-backed).

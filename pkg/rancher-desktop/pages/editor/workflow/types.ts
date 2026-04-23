@@ -2,7 +2,10 @@
 
 export type WorkflowNodeCategory = 'trigger' | 'agent' | 'routing' | 'flow-control' | 'io';
 
-export type TriggerNodeSubtype = 'calendar' | 'chat-app' | 'heartbeat' | 'schedule' | 'sulla-desktop' | 'workbench' | 'chat-completions';
+// `manual` and `schedule` are the only subtypes available from the palette.
+// The remaining values are kept for back-compat — older saved routines still
+// validate, but new ones can no longer pick them.
+export type TriggerNodeSubtype = 'manual' | 'schedule' | 'chat-completions' | 'calendar' | 'chat-app' | 'heartbeat' | 'sulla-desktop' | 'workbench';
 export type AgentNodeSubtype = 'agent' | 'integration-call' | 'tool-call' | 'orchestrator-prompt' | 'function';
 export type RoutingNodeSubtype = 'router' | 'condition';
 export type FlowControlNodeSubtype = 'wait' | 'loop' | 'parallel' | 'merge' | 'sub-workflow';

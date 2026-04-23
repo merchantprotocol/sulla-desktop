@@ -84,10 +84,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import type { LibraryItem, LibraryKind } from '@pkg/composables/useLibrary';
+import type { LibraryArtifactKind, LibraryItem } from '@pkg/composables/useLibrary';
 
 const props = defineProps<{
-  kind:          LibraryKind;
+  kind:          LibraryArtifactKind;
   item:          LibraryItem;
   primaryLabel?: string;
 }>();
@@ -99,7 +99,7 @@ defineEmits<{
   (e: 'publish'): void;
 }>();
 
-const KIND_LABELS: Record<LibraryKind, string> = {
+const KIND_LABELS: Record<LibraryArtifactKind, string> = {
   routines:  'Routine',
   skills:    'Skill',
   functions: 'Function',

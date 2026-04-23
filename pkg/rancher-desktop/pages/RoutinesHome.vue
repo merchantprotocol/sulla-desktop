@@ -1,5 +1,30 @@
 <template>
   <div class="routines-home">
+    <!-- Inline action feedback. Fixed to viewport so it's visible from
+         any scroll position. Success/info auto-fade after 3.2s; errors
+         stick until dismissed or replaced by the next action. -->
+    <Transition name="feedback">
+      <div
+        v-if="feedback"
+        :key="feedback.id"
+        class="feedback-toast"
+        :class="`feedback-${feedback.kind}`"
+        role="status"
+      >
+        <span class="feedback-dot" />
+        <span class="feedback-msg">{{ feedback.message }}</span>
+        <button
+          v-if="feedback.kind === 'error'"
+          type="button"
+          class="feedback-close"
+          aria-label="Dismiss"
+          @click="dismissFeedback"
+        >
+          ×
+        </button>
+      </div>
+    </Transition>
+
     <!-- Scrollable canvas — atmosphere and ribbon live INSIDE this
          container so they scroll with the page. Blue glow sits at the
          top of the document, violet at the bottom; brackets frame the
@@ -165,6 +190,10 @@
               @primary="onOpenRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
               @publish="onPublishRoutine(r)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @export="onExport(r.id)"
+              @delete="onDelete(r)"
             />
           </ActSection>
 
@@ -183,6 +212,10 @@
               @primary="onOpenRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
               @publish="onPublishRoutine(r)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @export="onExport(r.id)"
+              @delete="onDelete(r)"
             />
           </ActSection>
 
@@ -202,6 +235,10 @@
               @secondary="onEditRoutine(r.id)"
               @open="onOpenRoutine(r.id)"
               @publish="onPublishRoutine(r)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @export="onExport(r.id)"
+              @delete="onDelete(r)"
             />
           </ActSection>
 
@@ -253,6 +290,10 @@
               @secondary="onEditRoutine(r.id)"
               @open="onEditRoutine(r.id)"
               @publish="onPublishRoutine(r)"
+              @duplicate="onDuplicate(r.id)"
+              @archive="onToggleArchive(r.id)"
+              @export="onExport(r.id)"
+              @delete="onDelete(r)"
             />
           </ActSection>
 
@@ -311,6 +352,7 @@ import EmptyState from '@pkg/components/routines/EmptyState.vue';
 import LibraryTab from '@pkg/components/routines/LibraryTab.vue';
 import MarketplaceTab from '@pkg/components/routines/MarketplaceTab.vue';
 import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
+import { useLibrary } from '@pkg/composables/useLibrary';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -340,10 +382,12 @@ const routinesController = useRoutines();
 const templatesController = useTemplates();
 
 // Total count across all four library kinds — shown on the Library tab button.
-// We reuse `templatesController.templates` for routines (already loaded) and
-// let the Library tab component hydrate the rest lazily; this is a rough
-// lower bound until the user opens the Library tab.
-const totalLibraryCount = computed(() => templatesController.templates.value.length);
+// `useLibrary()` is a module-scoped singleton; calling it here mounts the
+// same store the Library tab uses, and `loadAll()` hydrates all four kinds
+// so the badge reflects reality even before the user ever clicks in. The
+// call is idempotent — if the Library tab already loaded, this is a no-op.
+const libraryStore = useLibrary();
+const totalLibraryCount = computed(() => libraryStore.totalCount.value);
 
 // The playbill can't query Postgres until the backend has booted — the
 // tab is restored from localStorage on first paint, which regularly
@@ -356,6 +400,11 @@ async function loadAll() {
   await Promise.all([
     routinesController.load(),
     templatesController.load(),
+    // Hydrate every library kind so the Studio tab badge shows the true
+    // total across routines/skills/functions/recipes without waiting for
+    // the user to open the Library tab first. Singleton store — second
+    // caller (LibraryTab) gets the same cached counts.
+    libraryStore.loadAll(),
   ]);
 }
 
@@ -451,6 +500,37 @@ const ribbonStatusLabel = computed(() => {
 
 const todayStr = new Date().toISOString().slice(0, 10);
 
+// ── Inline feedback toast ───────────────────────────────────────────
+// Replaces native alerts for action outcomes. Success/info fade after
+// ~3s; errors stick until dismissed or replaced so the user actually
+// reads them. One toast at a time — a new one overwrites the previous.
+type FeedbackKind = 'success' | 'error' | 'info';
+const feedback = ref<{ kind: FeedbackKind; message: string; id: number } | null>(null);
+let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+let feedbackIdSeq = 0;
+
+function showFeedback(kind: FeedbackKind, message: string) {
+  if (feedbackTimer) {
+    clearTimeout(feedbackTimer);
+    feedbackTimer = null;
+  }
+  feedback.value = { kind, message, id: ++feedbackIdSeq };
+  if (kind !== 'error') {
+    feedbackTimer = setTimeout(() => {
+      feedback.value = null;
+      feedbackTimer = null;
+    }, 3200);
+  }
+}
+
+function dismissFeedback() {
+  if (feedbackTimer) {
+    clearTimeout(feedbackTimer);
+    feedbackTimer = null;
+  }
+  feedback.value = null;
+}
+
 function onOpenRoutine(id: string) {
   emit('open-workflow', id, 'run');
 }
@@ -488,7 +568,13 @@ async function onDelete(routine: { id: string; name: string }) {
     `Delete "${ routine.name }" permanently? This can't be undone.`,
   );
   if (!ok) return;
-  await routinesController.remove(routine.id);
+  const removed = await routinesController.remove(routine.id);
+  if (removed) {
+    showFeedback('success', `Deleted "${ routine.name }".`);
+  } else {
+    const err = routinesController.error.value;
+    showFeedback('error', `Couldn't delete "${ routine.name }"${ err ? `: ${ err }` : '.' }`);
+  }
 }
 
 // Publish a routine to the marketplace. The main process checks the user's
@@ -503,19 +589,20 @@ async function onPublishRoutine(routine: { id: string; name: string }) {
   try {
     const result = await ipcRenderer.invoke('routines-publish-to-marketplace' as any, routine.id);
     if (result?.needs_auth) {
-      window.alert('You need to sign in to Sulla Cloud first. Open My Account → Sign in, then try again.');
+      showFeedback('error', 'Sign in to Sulla Cloud first (My Account → Sign in), then try again.');
       return;
     }
     if (result?.error) {
-      window.alert(`Publish failed: ${ result.error }`);
+      showFeedback('error', `Publish failed: ${ result.error }`);
       return;
     }
-    window.alert(
-      `"${ routine.name }" submitted to the marketplace as ${ result.templateId }. Status: ${ result.status ?? 'pending' }.`,
+    showFeedback(
+      'success',
+      `"${ routine.name }" submitted for review (status: ${ result.status ?? 'pending' }).`,
     );
   } catch (err) {
     console.error('[RoutinesHome] publish failed:', err);
-    window.alert(`Publish failed: ${ err instanceof Error ? err.message : String(err) }`);
+    showFeedback('error', `Publish failed: ${ err instanceof Error ? err.message : String(err) }`);
   }
 }
 
@@ -538,15 +625,15 @@ async function onMarketplaceInstalled(info: { kind: string; slug: string; path: 
 
 async function onExport(id: string) {
   // Fires the native save dialog in the main process; surfaces any
-  // failure through the routines controller's existing error channel
-  // so the view layer stays consistent with other IPC failure paths.
+  // failure through the inline toast so the view stays consistent with
+  // other IPC failure paths.
   try {
     await ipcRenderer.invoke('routines-export', id);
+    showFeedback('success', 'Export saved.');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // error is a readonly ref on the controller; mirror via console.
     console.error('[Routines] Export failed:', err);
-    window.alert(`Export failed: ${ msg }`);
+    showFeedback('error', `Export failed: ${ msg }`);
   }
 }
 
@@ -913,4 +1000,101 @@ async function onImport() {
   margin-top: 4px; line-height: 1.2;
 }
 .ribbon .c .sig b { color: var(--violet-300); font-weight: 700; }
+
+// ── Inline feedback toast ─────────────────────────────────────────
+// Fixed to viewport so users see it from any scroll position. Sits
+// above the ribbon but below modals. Width scales with content up to
+// a readable cap.
+.feedback-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 280px;
+  max-width: 560px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  border: 1px solid rgba(168, 192, 220, 0.25);
+  background: rgba(12, 18, 32, 0.92);
+  color: white;
+  font-family: var(--sans);
+  font-size: 13.5px;
+  line-height: 1.4;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55),
+              0 0 0 1px rgba(0, 0, 0, 0.2) inset;
+  backdrop-filter: blur(8px);
+}
+
+.feedback-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.feedback-msg {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.feedback-close {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 4px;
+}
+.feedback-close:hover { color: white; }
+
+.feedback-success {
+  border-color: rgba(63, 185, 80, 0.55);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5),
+              0 0 18px rgba(63, 185, 80, 0.2);
+}
+.feedback-success .feedback-dot {
+  background: #3fb950;
+  box-shadow: 0 0 8px rgba(63, 185, 80, 0.6);
+}
+
+.feedback-error {
+  border-color: rgba(248, 113, 113, 0.6);
+  background: rgba(40, 14, 14, 0.92);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55),
+              0 0 18px rgba(248, 113, 113, 0.22);
+}
+.feedback-error .feedback-dot {
+  background: #f87171;
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.6);
+}
+
+.feedback-info {
+  border-color: rgba(140, 172, 201, 0.5);
+}
+.feedback-info .feedback-dot {
+  background: #8cacc9;
+  box-shadow: 0 0 8px rgba(140, 172, 201, 0.55);
+}
+
+// Slide up + fade on enter; fade out on leave. Paired with the Vue
+// Transition wrapper around the toast in the template.
+.feedback-enter-active,
+.feedback-leave-active {
+  transition: opacity 0.24s ease, transform 0.24s ease;
+}
+.feedback-enter-from {
+  opacity: 0;
+  transform: translate(-50%, 10px);
+}
+.feedback-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -4px);
+}
 </style>

@@ -3,9 +3,31 @@
     class="marketplace"
     :class="{ 'is-detail': showingDetail }"
   >
+    <!-- Auth check still in flight — brief placeholder so the panel
+         doesn't flicker into view before we know the user's state. -->
+    <div
+      v-if="signedIn === null"
+      class="full-loading"
+    >
+      Checking Sulla Cloud session…
+    </div>
+
+    <!-- Not signed in — reuse the exact Sulla Cloud card from My Profile
+         so the two surfaces show the same state + flows. -->
+    <div
+      v-else-if="!signedIn"
+      class="signin-gate"
+    >
+      <SullaCloudCard
+        rationale="You need a Sulla Cloud account to install routines, skills, functions, and recipes from the marketplace — and to publish your own."
+        @signed-in="onSignedIn"
+        @signed-out="onSignedOut"
+      />
+    </div>
+
     <!-- Full-page detail takes over when open; list is hidden. -->
     <MarketplaceDetail
-      v-if="mp.detail.value"
+      v-else-if="mp.detail.value"
       :row="mp.detail.value.row"
       :manifest="mp.detail.value.manifest"
       :installing="mp.installing.value === mp.detail.value.row.id"
@@ -367,6 +389,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 
+import SullaCloudCard from '@pkg/components/account/SullaCloudCard.vue';
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
 import MarketplaceStrip from '@pkg/components/routines/MarketplaceStrip.vue';
 import type { KindFilter, MarketplaceSort } from '@pkg/composables/useMarketplace';
@@ -415,6 +438,34 @@ interface SubmissionRow {
 }
 
 const mp = useMarketplace();
+
+// Auth gate — the marketplace is Cloud-backed, so without a Sulla Cloud
+// session the browse + submissions endpoints return "Sign in" errors.
+// The SullaCloudCard component is the source of truth: it fetches
+// status on mount and emits 'signed-in' / 'signed-out'. The parent's
+// own check is a best-effort first guess so we skip rendering the card
+// when we're already sure the user is signed in, avoiding a flash.
+const signedIn = ref<boolean | null>(null); // null = still checking
+async function refreshAuthStatus(): Promise<boolean> {
+  try {
+    const status = await ipcRenderer.invoke('sulla-cloud:get-status');
+    signedIn.value = !!status?.signedIn;
+  } catch (err) {
+    // Don't assume signed-out on failure — the card will query again
+    // on mount and emit the real state. Leaving this null shows the
+    // card while it resolves the truth.
+    console.error('[MarketplaceTab] get-status failed:', err);
+    signedIn.value = null;
+  }
+  return !!signedIn.value;
+}
+async function onSignedIn() {
+  signedIn.value = true;
+  await mp.load();
+}
+function onSignedOut() {
+  signedIn.value = false;
+}
 const searchDraft = ref('');
 
 // ── My Submissions state ──
@@ -452,7 +503,10 @@ const installedForOpenDrawer = computed(() => {
   return mp.lastInstalled.value;
 });
 
-onMounted(() => { void mp.load() });
+onMounted(async() => {
+  const authed = await refreshAuthStatus();
+  if (authed) void mp.load();
+});
 
 function onKind(k: KindFilter) {
   void mp.setKind(k);
@@ -476,7 +530,14 @@ async function onInstall(id: string) {
   const result = await mp.install(id);
   if (result) {
     emit('installed', result);
+    window.alert(
+      `Installed ${ result.name } (${ result.kind }) → ${ result.path }`,
+    );
+
+    return;
   }
+  const err = mp.installError.value;
+  window.alert(`Install failed${ err ? `: ${ err }` : '.' }`);
 }
 
 // ── My Submissions ──
@@ -794,6 +855,9 @@ function formatRelative(iso: string): string {
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .full-loading {
+  /* Parent grid is `220px 1fr`; without spanning, the placeholder lands
+     in the rail column and shows up as a sliver. */
+  grid-column: 1 / -1;
   padding: 80px 20px;
   text-align: center;
   font-family: var(--mono);
@@ -801,6 +865,22 @@ function formatRelative(iso: string): string {
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--steel-300);
+}
+
+.signin-gate {
+  /* Span the whole marketplace grid + center the Sulla Cloud card. The
+     card is a bounded box, so we just pad + cap width around it. */
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 48px 32px;
+  overflow-y: auto;
+}
+
+.signin-gate > :deep(.account-card) {
+  width: 100%;
+  max-width: 480px;
 }
 
 // ── My Submissions list ──
@@ -941,6 +1021,9 @@ function formatRelative(iso: string): string {
   font-size: 12px;
   color: var(--steel-100);
   line-height: 1.5;
+  // admin_notes accumulates one line per review / unpublish action, so
+  // preserve the newlines instead of collapsing them into a single blob.
+  white-space: pre-wrap;
 }
 .sub-notes strong { color: #fbbf24; font-weight: 600; }
 

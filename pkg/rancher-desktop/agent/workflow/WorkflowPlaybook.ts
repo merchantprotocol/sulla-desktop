@@ -30,6 +30,60 @@ import type {
 // Completion contract is now handled exclusively by AgentNode.ts system prompt.
 // No duplicate contract appended here — single source of truth.
 
+// ── Trigger framing ──
+
+/**
+ * Build the trigger framing message that becomes the trigger node's output.
+ *
+ * Replaces the old "Run routine X" payload that LLMs misread as an imperative
+ * to call execute_workflow recursively. The framing tells the orchestrator
+ * it is inside a routine, lists the steps for awareness only, and instructs
+ * it to wait for the walker rather than work ahead.
+ */
+export function buildRoutineFraming(definition: WorkflowDefinition): string {
+  const title = definition.name || 'Untitled Routine';
+  const description = (definition.description || '').trim();
+
+  // Steps = nodes the orchestrator will be invoked for. Excludes triggers
+  // (start signal) and routing/condition nodes (mechanical, no LLM invocation).
+  const stepNodes = (definition.nodes || []).filter((n) => {
+    const cat = n.data?.category;
+    return cat !== 'trigger' && cat !== 'routing';
+  });
+
+  // Final node = a step node with no outgoing edges. Prefer io/response if
+  // multiple terminals exist. Falls back to last step in the list.
+  const outgoing = new Map<string, number>();
+  for (const node of definition.nodes || []) outgoing.set(node.id, 0);
+  for (const edge of definition.edges || []) {
+    outgoing.set(edge.source, (outgoing.get(edge.source) || 0) + 1);
+  }
+  const terminals = stepNodes.filter((n) => (outgoing.get(n.id) || 0) === 0);
+  const finalNode = terminals.find((n) => n.data?.category === 'io')
+    ?? terminals[terminals.length - 1]
+    ?? stepNodes[stepNodes.length - 1];
+  const finalLabel = finalNode?.data?.label || 'final step';
+
+  const stepList = stepNodes.map((n) => `  • ${ n.data?.label || n.id }`).join('\n');
+
+  const lines = [
+    `You are the orchestrating agent inside the routine: "${ title }"`,
+  ];
+  if (description) lines.push(description);
+  lines.push('');
+  lines.push(`This routine has ${ stepNodes.length } steps, ending at: "${ finalLabel }"`);
+  lines.push(`You will be given instructions every step of the way. When you're completed with the instructions be done with processing and the routine walker will instruct you on your next instructions.`);
+  lines.push('');
+  lines.push(`Step sequence (for your awareness only — you do NOT execute these yourself):`);
+  lines.push(stepList);
+  lines.push('');
+  lines.push(`The walker (playbook engine) is in control. It will invoke you per step with`);
+  lines.push(`specific instructions. Wait for each instruction. Do not attempt to run the`);
+  lines.push(`routine, do not call execute_workflow, do not work ahead.`);
+
+  return lines.join('\n');
+}
+
 // ── Playbook initialization ──
 
 /**
@@ -51,9 +105,20 @@ export function createPlaybookState(
     throw new Error(`Workflow "${ definition.id }" has no trigger nodes`);
   }
 
-  // Auto-complete trigger nodes (they just pass through the payload)
+  // Auto-complete trigger nodes. Their output is the routine framing — a
+  // static preamble that tells the orchestrator it is inside a routine and
+  // must wait for the walker's per-step instructions. If the caller passed
+  // a meaningful user payload, append it so downstream nodes still see it
+  // in their upstream context.
   const nodeOutputs: Record<string, PlaybookNodeOutput> = {};
   const now = new Date().toISOString();
+  const framing = buildRoutineFraming(definition);
+  const rawPayload = typeof triggerPayload === 'string' ? triggerPayload.trim() : '';
+  // Suppress the legacy "Run routine <id>" fallback so it never reaches the LLM.
+  const meaningfulPayload = rawPayload && !/^Run routine\s+\S+$/i.test(rawPayload) ? rawPayload : '';
+  const triggerResult = meaningfulPayload
+    ? `${ framing }\n\n---\nUser input:\n${ meaningfulPayload }`
+    : framing;
 
   for (const triggerId of triggerNodeIds) {
     const node = definition.nodes.find(n => n.id === triggerId)!;
@@ -62,7 +127,7 @@ export function createPlaybookState(
       label:       node.data.label,
       subtype:     node.data.subtype,
       category:    node.data.category,
-      result:      triggerPayload,
+      result:      triggerResult,
       completedAt: now,
     };
   }
@@ -82,6 +147,7 @@ export function createPlaybookState(
     currentNodeIds:   nextNodeIds,
     completedNodeIds: [...triggerNodeIds],
     nodeOutputs,
+    triggerInput:     meaningfulPayload || triggerPayload,
     status:           'running',
     startedAt:        now,
   };
@@ -554,7 +620,8 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
 
     // Only batch if we have 2+ nodes from a parallel parent
     if (parallelParentChildren.length > 1) {
-      const triggerPayload = Object.values(nodeOutputs).find(o => o.category === 'trigger')?.result;
+      const triggerPayload = playbook.triggerInput
+        ?? Object.values(nodeOutputs).find(o => o.category === 'trigger')?.result;
       const spawns: ParallelNodeSpawn[] = [];
 
       for (const { nodeId: pNodeId, node: pNode } of parallelParentChildren) {
@@ -601,7 +668,8 @@ export function processNextStep(playbook: WorkflowPlaybookState): PlaybookStepRe
   const subtype = node.data.subtype;
   const config = node.data.config || {};
   const upstreamOutputs = getUpstreamOutputs(definition, nodeId, nodeOutputs);
-  const triggerPayload = Object.values(nodeOutputs).find(o => o.category === 'trigger')?.result;
+  const triggerPayload = playbook.triggerInput
+    ?? Object.values(nodeOutputs).find(o => o.category === 'trigger')?.result;
 
   return processNode(playbook, node, subtype, config, upstreamOutputs, triggerPayload);
 }

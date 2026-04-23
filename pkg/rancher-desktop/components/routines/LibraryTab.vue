@@ -45,13 +45,13 @@
           class="rail-item"
           :class="[
             { on: activeView === 'kind' && lib.activeKind.value === k.kind },
-            `kind-${ k.kind }`
+            `kind-${ k.kind }`,
           ]"
           @click="onSelectKind(k.kind)"
         >
           <span class="dot" />
           <span class="label">{{ k.label }}</span>
-          <span class="count">{{ lib.kindCounts.value[k.kind] }}</span>
+          <span class="count">{{ countFor(k.kind) }}</span>
         </button>
       </nav>
       <div class="rail-divider" />
@@ -127,6 +127,26 @@
         </button>
       </div>
 
+      <!-- Stats tiles — shown only on the All view. Quick at-a-glance
+           breakdown across the four artifact kinds; clicking a tile
+           drills into that kind's filter. -->
+      <div
+        v-if="lib.activeKind.value === 'all' && !lib.activeState.value.error && lib.activeState.value.items.length > 0"
+        class="stats"
+      >
+        <button
+          v-for="tile in STAT_TILES"
+          :key="tile.kind"
+          type="button"
+          class="stat-tile"
+          :class="`kind-${ tile.kind }`"
+          @click="onSelectKind(tile.kind)"
+        >
+          <span class="stat-value">{{ lib.kindCounts.value[tile.kind] }}</span>
+          <span class="stat-label">{{ tile.label }}</span>
+        </button>
+      </div>
+
       <div
         v-else-if="lib.activeState.value.isLoading && lib.activeState.value.items.length === 0"
         class="status"
@@ -152,13 +172,13 @@
       <template v-else>
         <LibraryItemStrip
           v-for="item in lib.filteredItems.value"
-          :key="`${ lib.activeKind.value }:${ item.slug }`"
-          :kind="lib.activeKind.value"
+          :key="`${ resolveItemKind(item) }:${ item.slug }`"
+          :kind="resolveItemKind(item)"
           :item="item"
-          :primary-label="primaryLabel"
-          @primary="onPrimary(item.slug)"
-          @view="onView(item.slug)"
-          @reveal="onReveal(item.slug)"
+          :primary-label="resolveItemKind(item) === 'routines' ? 'Use Template' : primaryLabel"
+          @primary="onPrimary(item)"
+          @view="onView(item)"
+          @reveal="onReveal(item)"
           @publish="onPublish(item)"
         />
       </template>
@@ -256,7 +276,7 @@ import { computed, onMounted, ref } from 'vue';
 import LibraryDraftDetail from '@pkg/components/routines/LibraryDraftDetail.vue';
 import LibraryItemStrip from '@pkg/components/routines/LibraryItemStrip.vue';
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
-import type { LibraryItem, LibraryKind } from '@pkg/composables/useLibrary';
+import type { LibraryArtifactKind, LibraryItem, LibraryKind } from '@pkg/composables/useLibrary';
 import { useLibrary } from '@pkg/composables/useLibrary';
 import { useLibraryDrafts } from '@pkg/composables/useLibraryDrafts';
 import type { MarketplaceBrowseRow } from '@pkg/typings/electron-ipc';
@@ -269,11 +289,36 @@ const emit = defineEmits<{
 type ActiveView = 'kind' | 'drafts';
 
 const KINDS: { kind: LibraryKind; label: string }[] = [
+  { kind: 'all',       label: 'All' },
   { kind: 'routines',  label: 'Routines' },
   { kind: 'skills',    label: 'Skills' },
   { kind: 'functions', label: 'Functions' },
   { kind: 'recipes',   label: 'Recipes' },
 ];
+
+const STAT_TILES: { kind: LibraryArtifactKind; label: string }[] = [
+  { kind: 'routines',  label: 'Routines' },
+  { kind: 'skills',    label: 'Skills' },
+  { kind: 'functions', label: 'Functions' },
+  { kind: 'recipes',   label: 'Recipes' },
+];
+
+/** Per-kind row count for the All-view stats tiles + left-rail counts.
+ *  `all` is a derived total; the four artifact kinds pass through. */
+function countFor(kind: LibraryKind): number {
+  if (kind === 'all') return lib.totalCount.value;
+  return lib.kindCounts.value[kind];
+}
+
+/** Resolve an item's artifact kind. In kind-specific views the item
+ *  matches the active kind; in the All view items carry their own
+ *  `kind` tag set by the loaders. Defensive fallback to 'routines'
+ *  handles legacy rows that predate the kind-stamping. */
+function resolveItemKind(item: LibraryItem): LibraryArtifactKind {
+  if (item.kind) return item.kind;
+  if (lib.activeKind.value !== 'all') return lib.activeKind.value;
+  return 'routines';
+}
 
 const lib = useLibrary();
 const drafts = useLibraryDrafts();
@@ -303,6 +348,8 @@ const footerHint = computed(() => {
     return 'Drafts live in the database. Publish them to disk or submit to the marketplace from the draft detail drawer.';
   }
   switch (lib.activeKind.value) {
+  case 'all':
+    return 'Every artifact installed on this machine — routines, skills, functions, and recipes.';
   case 'routines':
     return 'Routine templates in ~/sulla/routines/. Use one to drop a fresh copy onto your canvas.';
   case 'skills':
@@ -318,6 +365,8 @@ const footerHint = computed(() => {
 
 const emptyHint = computed(() => {
   switch (lib.activeKind.value) {
+  case 'all':
+    return 'Install anything from the Marketplace tab, or drop a folder into ~/sulla/<kind>/ to see it here.';
   case 'routines':
     return 'Install a routine from the Marketplace tab, or import one from disk to see it here.';
   case 'skills':
@@ -332,6 +381,10 @@ const emptyHint = computed(() => {
 });
 
 const primaryLabel = computed<string | undefined>(() => {
+  // Only routine rows can "Use Template" — in the All view the label
+  // would be wrong for non-routine rows, so suppress it there and fall
+  // back to "View" + "Reveal" for everyone. Per-kind views still get
+  // the primary button on routines.
   return lib.activeKind.value === 'routines' ? 'Use Template' : undefined;
 });
 
@@ -346,18 +399,25 @@ function onShowDrafts() {
 }
 
 function reload() {
+  if (lib.activeKind.value === 'all') {
+    void lib.loadAll();
+    return;
+  }
   void lib.loadKind(lib.activeKind.value);
 }
 
-async function onPrimary(slug: string) {
-  if (lib.activeKind.value === 'routines') {
-    emit('use-template', slug);
+async function onPrimary(item: LibraryItem) {
+  // Only routines have a "use template" flow — on other kinds the
+  // primary button is suppressed, so this path is a no-op for them.
+  if (resolveItemKind(item) === 'routines') {
+    emit('use-template', item.slug);
   }
 }
 
-async function onReveal(slug: string) {
+async function onReveal(item: LibraryItem) {
+  const kind = resolveItemKind(item);
   try {
-    const result = await ipcRenderer.invoke('library-reveal', lib.activeKind.value, slug);
+    const result = await ipcRenderer.invoke('library-reveal', kind, item.slug);
     if (!result.revealed && result.error) {
       console.warn(`[Library] reveal failed: ${ result.error }`);
     }
@@ -366,11 +426,12 @@ async function onReveal(slug: string) {
   }
 }
 
-async function onView(slug: string) {
+async function onView(item: LibraryItem) {
+  const kind = resolveItemKind(item);
   detailLoading.value = true;
   forkError.value = null;
   try {
-    const res = await ipcRenderer.invoke('library-read-manifest', lib.activeKind.value, slug);
+    const res = await ipcRenderer.invoke('library-read-manifest', kind, item.slug);
     if ('error' in res) {
       console.warn('[Library] read-manifest failed:', res.error);
       window.alert(`Couldn't load details: ${ res.error }`);
@@ -399,14 +460,15 @@ function onCloseDetail() {
 // keeps the flow bounded; auth failures bubble up from the worker as
 // {error: "..."} with 401-ish strings we surface verbatim.
 async function onPublish(item: LibraryItem) {
-  const pluralToSingular: Record<LibraryKind, 'routine' | 'skill' | 'function' | 'recipe'> = {
+  const pluralToSingular: Record<LibraryArtifactKind, 'routine' | 'skill' | 'function' | 'recipe'> = {
     routines:  'routine',
     skills:    'skill',
     functions: 'function',
     recipes:   'recipe',
   };
-  const kind = pluralToSingular[lib.activeKind.value];
-  const label = lib.activeKind.value.slice(0, -1);
+  const resolvedKind = resolveItemKind(item);
+  const kind = pluralToSingular[resolvedKind];
+  const label = resolvedKind.slice(0, -1);
 
   const ok = window.confirm(
     `Publish ${ label } "${ item.name || item.slug }" to the Sulla Marketplace? It'll land in review as a pending submission.`,
@@ -561,6 +623,7 @@ function formatRelative(ts: string): string {
   width: 8px; height: 8px;
   border-radius: 50%;
 }
+.rail-item.kind-all       .dot { background: linear-gradient(135deg, #4a6fa5, #c026d3); }
 .rail-item.kind-routines  .dot { background: #4a6fa5; }
 .rail-item.kind-skills    .dot { background: #f59e0b; }
 .rail-item.kind-functions .dot { background: #06b6d4; }
@@ -780,4 +843,50 @@ function formatRelative(ts: string): string {
   text-transform: uppercase;
   color: var(--steel-300);
 }
+
+// ── Stats tiles (All view) ──
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.stat-tile {
+  padding: 14px 12px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 6px;
+  background: rgba(10, 18, 36, 0.5);
+  display: grid;
+  grid-template-rows: auto auto;
+  gap: 4px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--steel-200);
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.stat-tile:hover {
+  background: rgba(26, 40, 66, 0.55);
+  border-color: rgba(140, 172, 201, 0.55);
+  color: white;
+  transform: translateY(-1px);
+}
+.stat-tile .stat-value {
+  font-family: var(--display, var(--sans));
+  font-size: 28px;
+  font-weight: 600;
+  color: white;
+  letter-spacing: -0.02em;
+}
+.stat-tile .stat-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--steel-400);
+}
+.stat-tile.kind-routines  { border-left-color: #4a6fa5; }
+.stat-tile.kind-skills    { border-left-color: #f59e0b; }
+.stat-tile.kind-functions { border-left-color: #06b6d4; }
+.stat-tile.kind-recipes   { border-left-color: #c026d3; }
 </style>

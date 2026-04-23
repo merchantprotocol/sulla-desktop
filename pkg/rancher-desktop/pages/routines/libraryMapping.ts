@@ -418,24 +418,17 @@ export interface FunctionInfo {
   integrations: { slug: string; env: Record<string, string> }[];
 }
 
-let functionsCache: FunctionInfo[] | null = null;
-
-/** Lazy-load all installed functions via the main-process IPC. Results are
- *  cached for the session; the drawer calls loadFunctions() when the user
- *  opens the Functions category, so a fresh install during the session
- *  requires a drawer re-open to pick up new entries. */
 export async function loadFunctions(): Promise<FunctionInfo[]> {
-  if (functionsCache) return functionsCache;
   try {
     const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
     const list = await ipcRenderer.invoke('functions-list') as FunctionInfo[];
-    functionsCache = Array.isArray(list) ? list : [];
+
+    return Array.isArray(list) ? list : [];
   } catch (err) {
     console.warn('[libraryMapping] functions-list failed:', err);
-    functionsCache = [];
-  }
 
-  return functionsCache;
+    return [];
+  }
 }
 
 /**

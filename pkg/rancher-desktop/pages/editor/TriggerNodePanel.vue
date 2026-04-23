@@ -45,42 +45,21 @@ const emit = defineEmits<{
 
 const selectedTrigger = ref<string | null>(null);
 
+// Only `manual` and `schedule` are user-selectable. Older trigger subtypes
+// (calendar, chat-app, heartbeat, sulla-desktop, workbench, chat-completions)
+// are subsumed by `manual` — any external invocation routes through it.
 const triggers = [
   {
-    id:          'calendar',
-    name:        'Calendar Event',
-    description: 'Triggered by a calendar event or schedule',
-    icon:        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
-  },
-  {
-    id:          'chat-app',
-    name:        'Chat App',
-    description: 'Slack, Telegram, or other messaging platforms',
-    icon:        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
-  },
-  {
-    id:          'heartbeat',
-    name:        'Heartbeat',
-    description: 'Periodic interval that triggers the agent',
-    icon:        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+    id:          'manual',
+    name:        'Manual',
+    description: 'Run on demand — from chat, the UI, calendar events, or any external signal',
+    icon:        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
   },
   {
     id:          'schedule',
     name:        'Schedule',
     description: 'Cron-based recurring schedule trigger',
     icon:        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/><path d="M17.7 17.7l2.8 2.8"/></svg>',
-  },
-  {
-    id:          'sulla-desktop',
-    name:        'Sulla Desktop',
-    description: 'User chatting directly in the desktop app',
-    icon:        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
-  },
-  {
-    id:          'chat-completions',
-    name:        'Chat Completions API',
-    description: 'OpenAI-compatible /v1/chat/completions endpoint',
-    icon:        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
   },
 ];
 
