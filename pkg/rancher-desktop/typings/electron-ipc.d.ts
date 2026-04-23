@@ -251,8 +251,7 @@ export interface IpcMainInvokeEvents {
   'browser-tab-view:reload':        (tabId: string) => void;
   'browser-tab-view:stop':          (tabId: string) => void;
   'browser-tab-view:set-bounds':    (tabId: string, bounds: Electron.Rectangle) => void;
-  'browser-tab-view:show':          (tabId: string) => void;
-  'browser-tab-view:hide':          (tabId: string) => void;
+  'browser-tab-view:focus':         (tabId: string | null) => void;
   'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
   'browser-tab:exec-in-frame':      (code: string, targetUrl?: string) => unknown;
   'browser-tab:send-input-event':   (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;

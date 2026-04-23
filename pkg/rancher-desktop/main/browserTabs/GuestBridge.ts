@@ -176,16 +176,50 @@ export class GuestBridge {
   async captureScreenshot(options: {
     format?: 'jpeg' | 'png'; quality?: number; clip?: { x: number; y: number; width: number; height: number };
   } = {}): Promise<{ base64: string; mediaType: string } | null> {
+    // Bracket the capture with incrementCapturerCount(stayHidden=true, stayAwake=true).
+    // Without this, the GPU stops generating frames the instant the WebContentsView
+    // isn't in a visible viewport, and Page.captureScreenshot hangs forever waiting
+    // for a frame that will never arrive. With stayHidden=true the view can be
+    // removed from the window or hidden via setVisible(false) and painting still
+    // survives for the duration of the capture. This is the *one* lever that lets
+    // us hide the view and still take screenshots — every other dodge (parking
+    // off-screen, zero-sized bounds, swapping z-order) was chasing the wrong cause.
+    let counterIncremented = false;
     try {
-      const image = options.clip
-        ? await this.wc.capturePage(options.clip)
-        : await this.wc.capturePage();
+      if (!this.wc.debugger.isAttached()) {
+        this.wc.debugger.attach('1.3');
+      }
+      try {
+        (this.wc as any).incrementCapturerCount(undefined, true, true);
+        counterIncremented = true;
+      } catch { /* older Electron — best effort, continue */ }
+
       const format = options.format === 'png' ? 'png' : 'jpeg';
       const quality = typeof options.quality === 'number' ? options.quality : 80;
-      const buf = format === 'png' ? image.toPNG() : image.toJPEG(quality);
-      return { base64: buf.toString('base64'), mediaType: `image/${ format }` };
-    } catch {
+      const cdpParams: Record<string, unknown> = { format, quality, captureBeyondViewport: false };
+      if (options.clip) {
+        cdpParams.clip = { x: options.clip.x, y: options.clip.y, width: options.clip.width, height: options.clip.height, scale: 1 };
+      }
+
+      // 10s timeout — if CDP wedges (missing capturer count on an older Electron,
+      // detached debugger, whatever), surface it to the agent instead of stalling
+      // the agent loop indefinitely. The browser tool can retry cheaper than a hang.
+      const result = await Promise.race([
+        this.wc.debugger.sendCommand('Page.captureScreenshot', cdpParams),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Page.captureScreenshot timed out after 10s')), 10_000),
+        ),
+      ]);
+      return { base64: (result as any).data as string, mediaType: `image/${ format }` };
+    } catch (err) {
+      console.warn('[GuestBridge] captureScreenshot failed:', err instanceof Error ? err.message : err);
       return null;
+    } finally {
+      if (counterIncremented) {
+        try {
+          (this.wc as any).decrementCapturerCount(undefined, true, true);
+        } catch { /* swallow — no use throwing from a finally */ }
+      }
     }
   }
 

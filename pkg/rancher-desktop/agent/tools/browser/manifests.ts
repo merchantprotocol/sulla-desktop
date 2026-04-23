@@ -195,8 +195,8 @@ export const browserToolManifests: ToolManifest[] = [
   // ── Escape hatch ─────────────────────────────────────────────────
 
   {
-    name:        'exec',
-    description: 'Execute arbitrary JavaScript in the page context with enhanced diagnostics. Returns result, console logs, timing, DOM mutation count, navigation detection, and page state. Captures window.__sulla.__log entries (cleared before execution). Use window.__sulla.waitFor(selector) and window.__sulla.waitForIdle() helpers for post-execution synchronization. Optionally capture a screenshot after. Use for anything the other browser tools cannot do.',
+    name:        'eval_js',
+    description: 'Evaluate arbitrary JavaScript in the active browser tab with enhanced diagnostics. Returns result, console logs, timing, DOM mutation count, navigation detection, and page state. Captures window.__sulla.__log entries (cleared before execution). Use window.__sulla.waitFor(selector) and window.__sulla.waitForIdle() helpers for post-execution synchronization. Optionally capture a screenshot after. Use for anything the other browser tools cannot do.',
     category:    'browser',
     schemaDef:   {
       code:        { type: 'string', description: 'JavaScript code to execute in the page. The return value is sent back.' },

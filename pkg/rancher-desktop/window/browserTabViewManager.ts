@@ -28,6 +28,27 @@ export class BrowserTabViewManager {
   private static instance: BrowserTabViewManager | undefined;
 
   private views = new Map<string, WebContentsView>();
+  /**
+   * SINGLE SOURCE OF TRUTH: the tabId of the view currently focused by the
+   * user, or `null` when no browser tab should be visible (chat mode, login
+   * overlay, etc.). Everything else reconciles to this value via
+   * `reconcileVisibility()`. Callers NEVER mutate child-view attachments
+   * directly — they set `focusedTabId` through `setFocusedTab()` and the
+   * manager reconciles. The renderer funnels every visibility decision
+   * through the `browser-tab-view:focus` IPC, which maps 1:1 to
+   * `setFocusedTab`. ChromeApiService does the same for programmatic
+   * tab activation.
+   */
+  private focusedTabId: string | null = null;
+  /**
+   * Latest bounds the renderer has reported for each tab. Always current —
+   * the renderer's ResizeObserver updates this continuously regardless of
+   * focus state. Only the focused tab's bounds are actually pushed to the
+   * native view (in `reconcileVisibility`); the rest are cached so that
+   * when focus shifts, we know exactly where to place the newly-focused
+   * view without a flash of stale coordinates.
+   */
+  private latestBounds = new Map<string, Electron.Rectangle>();
   private failedUrls = new Map<string, string>(); // tabId → original URL that failed
   private retryTimers = new Map<string, ReturnType<typeof setInterval>>();
   private acceptedCertHosts = new Set<string>(); // hosts where user clicked "Proceed"
@@ -122,16 +143,21 @@ export class BrowserTabViewManager {
   // Lifecycle
   // ---------------------------------------------------------------------------
 
+
+
   createView(tabId: string, url: string, bounds: Electron.Rectangle): void {
     // Idempotent: if the view already exists, just navigate (if URL changed)
-    // and update bounds. Previously this destroyed and recreated, which
-    // nuked in-flight bridge calls when the agent and UI raced on creation.
+    // and cache the new bounds. Actual attach/visibility state is driven
+    // exclusively by `focusedTabId` via reconcileVisibility.
     const existing = this.views.get(tabId);
     if (existing) {
       if (existing.webContents.getURL() !== url) {
         existing.webContents.loadURL(url).catch(() => {});
       }
-      existing.setBounds(bounds);
+      this.latestBounds.set(tabId, bounds);
+      if (this.focusedTabId === tabId) {
+        existing.setBounds(bounds);
+      }
       return;
     }
 
@@ -153,10 +179,15 @@ export class BrowserTabViewManager {
       },
     });
 
+    // Do NOT attach to the window here. Creation is just allocation —
+    // the view only becomes attached when setFocusedTab() decides it
+    // should be. This is what makes "single source of truth" actually true:
+    // no code path outside reconcileVisibility ever mutates the native
+    // child-view list. Screenshot flows use incrementCapturerCount to paint
+    // without ever being attached; user interaction flows call setFocusedTab.
     view.setBounds(bounds);
-    // Do NOT add to window yet — the view stays hidden until showView() is
-    // called.  This prevents new tabs from overlaying the current screen.
     this.views.set(tabId, view);
+    this.latestBounds.set(tabId, bounds);
 
     // Forward guest console output to main log so we can see errors from the
     // preload / guest bridge script. Without this, guest-side exceptions are
@@ -172,6 +203,12 @@ export class BrowserTabViewManager {
     view.webContents.loadURL(url).catch((err) => {
       console.error(`[BrowserTabView] Failed to load URL for tabId=${ tabId }:`, err);
     });
+
+    // If this tab was pre-selected as focused before its view existed,
+    // reconcile now so it becomes visible.
+    if (this.focusedTabId === tabId) {
+      this.reconcileVisibility();
+    }
 
     console.log(`[BrowserTabView] Created view tabId=${ tabId } url=${ url }`);
   }
@@ -191,12 +228,16 @@ export class BrowserTabViewManager {
       } catch { /* view may already be detached */ }
     }
 
-    // Destroy the underlying webContents
     this.stopRetry(tabId);
     (view.webContents as any).close?.();
     this.views.delete(tabId);
+    this.latestBounds.delete(tabId);
     this.failedUrls.delete(tabId);
     this.clearPendingCredentials(tabId);
+    if (this.focusedTabId === tabId) {
+      this.focusedTabId = null;
+      // No reconcile needed — the view is gone; detach already happened above.
+    }
     console.log(`[BrowserTabView] Destroyed view tabId=${ tabId }`);
   }
 
@@ -234,48 +275,72 @@ export class BrowserTabViewManager {
   // Layout
   // ---------------------------------------------------------------------------
 
+  /**
+   * Cache the renderer's latest layout rectangle for a tab. Bounds are
+   * tracked for every tab whether focused or not — the renderer's
+   * ResizeObserver streams them continuously. Only the focused tab's
+   * bounds get pushed to the native view; unfocused tabs have no
+   * on-screen presence to position.
+   */
   setBounds(tabId: string, bounds: Electron.Rectangle): void {
     const view = this.views.get(tabId);
-
-    if (view) {
+    if (!view) return;
+    this.latestBounds.set(tabId, bounds);
+    if (this.focusedTabId === tabId) {
       view.setBounds(bounds);
     }
   }
 
-  showView(tabId: string): void {
-    const view = this.views.get(tabId);
-    const mainWindow = getWindow('main-agent');
-
-    if (!view || !mainWindow) {
-      return;
-    }
-
-    // addChildView is safe to call even if already added — Electron deduplicates
-    mainWindow.contentView.addChildView(view);
+  /**
+   * THE authoritative visibility mutator. Pass `tabId` to make that tab
+   * the focused (visible) one, or `null` to detach all browser tabs
+   * (e.g. when the user switches to chat mode or the login overlay
+   * comes up). Every caller — renderer, chrome-api, login overlay —
+   * funnels through here. `reconcileVisibility` does the mechanical work.
+   */
+  setFocusedTab(tabId: string | null): void {
+    if (this.focusedTabId === tabId) return;
+    console.log(`[BrowserTabView] setFocusedTab ${ this.focusedTabId ?? '(none)' } → ${ tabId ?? '(none)' }`);
+    this.focusedTabId = tabId;
+    this.reconcileVisibility();
   }
 
-  hideView(tabId: string): void {
-    const view = this.views.get(tabId);
-    const mainWindow = getWindow('main-agent');
-
-    if (!view || !mainWindow) {
-      return;
-    }
-
-    try {
-      mainWindow.contentView.removeChildView(view);
-    } catch { /* may already be removed */ }
+  getFocusedTab(): string | null {
+    return this.focusedTabId;
   }
 
-  /** Hide all browser tab views — used when the login screen needs to be on top */
-  hideAllViews(): void {
+  /**
+   * Bring the window's child-view list into agreement with
+   * `focusedTabId`:
+   *   - The focused view is attached at the top of z-order at its latest
+   *     bounds (so it overlays the Vue chat renderer).
+   *   - Every other view is detached from the window (not just hidden,
+   *     physically removed from the child-view list). The webContents
+   *     stays alive so screenshots via incrementCapturerCount still work.
+   *
+   * This is the ONLY place in the codebase that mutates
+   * contentView.addChildView / removeChildView for tab views.
+   */
+  private reconcileVisibility(): void {
     const mainWindow = getWindow('main-agent');
     if (!mainWindow) return;
 
-    for (const [, view] of this.views) {
-      try {
-        mainWindow.contentView.removeChildView(view);
-      } catch { /* may already be removed */ }
+    for (const [tabId, view] of this.views) {
+      if (tabId === this.focusedTabId) {
+        const bounds = this.latestBounds.get(tabId);
+        if (bounds) view.setBounds(bounds);
+        try {
+          // addChildView on an already-attached view promotes it to top;
+          // on a detached view, re-attaches at top. Either way: top.
+          mainWindow.contentView.addChildView(view);
+        } catch (err) {
+          console.warn(`[BrowserTabView] reconcile attach failed tabId=${ tabId }:`, err);
+        }
+      } else {
+        try {
+          mainWindow.contentView.removeChildView(view);
+        } catch { /* already detached, fine */ }
+      }
     }
   }
 
@@ -744,8 +809,8 @@ export class BrowserTabViewManager {
         tabId,
         url:          displayUrl,
         title:        wc.getTitle(),
-        canGoBack:    wc.canGoBack(),
-        canGoForward: wc.canGoForward(),
+        canGoBack:    wc.navigationHistory.canGoBack(),
+        canGoForward: wc.navigationHistory.canGoForward(),
         isLoading:    wc.isLoading(),
       });
     };
@@ -773,8 +838,8 @@ export class BrowserTabViewManager {
         isEditable:            params.isEditable,
         misspelledWord:        params.misspelledWord || '',
         dictionarySuggestions: params.dictionarySuggestions || [],
-        canGoBack:             wc.canGoBack(),
-        canGoForward:          wc.canGoForward(),
+        canGoBack:             wc.navigationHistory.canGoBack(),
+        canGoForward:          wc.navigationHistory.canGoForward(),
         pageURL:               wc.getURL(),
       };
 

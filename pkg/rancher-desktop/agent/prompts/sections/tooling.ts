@@ -64,6 +64,10 @@ sulla <category>/<tool> '{"param":"value"}'
 sulla <account_id>/mcp/<tool> '{"param":"value"}'
 \`\`\`
 
+**CRITICAL — tool dispatch rule:**
+- ✅ ALWAYS use \`exec({ command: "sulla <category>/<tool> '...'" })\` to run CLI tools
+- ❌ NEVER use \`execute_workflow\` for CLI tools — it only handles named n8n/Sulla workflows and will always fail otherwise
+
 Make parallel tool calls when possible.`;
 
   return {

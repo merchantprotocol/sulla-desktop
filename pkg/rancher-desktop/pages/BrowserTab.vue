@@ -580,7 +580,7 @@ const addressBarUrl = ref('');
 const loading = ref(false);
 const canGoBack = ref(false);
 const canGoForward = ref(false);
-let viewCreated = false;
+const viewCreated = ref(false);
 
 // Vault save/autofill is now handled entirely in-page via GuestBridgePreload
 // (injected dropdown + save toast). No renderer-side banners needed.
@@ -650,8 +650,8 @@ function sendBounds() {
  * Must be called after the viewContainerRef div is in the DOM (browser mode).
  */
 function ensureView(url: string) {
-  if (viewCreated) return;
-  viewCreated = true;
+  if (viewCreated.value) return;
+  viewCreated.value = true;
 
   nextTick(() => {
     const el = viewContainerRef.value;
@@ -674,17 +674,17 @@ function ensureView(url: string) {
     ipcRenderer.invoke('browser-tab-view:create', props.tabId, url, bounds);
     ipcRenderer.invoke('browser-tab-view:set-bounds', props.tabId, bounds);
 
-    if (props.isVisible) {
-      ipcRenderer.invoke('browser-tab-view:show', props.tabId);
-    }
+    // Do NOT call browser-tab-view:focus here. The `shouldShowView`
+    // computed + watch below is the single source of truth; flipping
+    // viewCreated.value = true (done above) will trigger the watcher
+    // reactively if all other focus conditions are already met.
 
-    // Set up ResizeObserver to track bounds changes
+    // Set up ResizeObserver to track bounds changes. Bounds flow
+    // continuously regardless of focus state — the main process caches
+    // them and only applies them to the native view when the tab is
+    // the focused one.
     if (el) {
-      resizeObserver = new ResizeObserver(() => {
-        if (props.isVisible) {
-          sendBounds();
-        }
-      });
+      resizeObserver = new ResizeObserver(() => sendBounds());
       resizeObserver.observe(el);
     }
   });
@@ -705,7 +705,7 @@ function navigate() {
     addressBarUrl.value = url;
     loading.value = true;
 
-    if (!viewCreated) {
+    if (!viewCreated.value) {
       ensureView(url);
     } else {
       ipcRenderer.invoke('browser-tab-view:navigate', props.tabId, url);
@@ -769,27 +769,42 @@ function onStateUpdate(_event: unknown, state: { tabId: string; url: string; tit
 let resizeObserver: ResizeObserver | null = null;
 
 // ── Visibility management ──
-// This component is rendered with v-show (never removed from DOM).
-// We watch the isVisible prop to manage event listeners and view visibility.
-
-// Should the native view be visible right now?
+// SINGLE SOURCE OF TRUTH on the renderer side. This component is rendered
+// with v-show (never removed from DOM), so visibility of the underlying
+// native WebContentsView must be driven by reactive state, not lifecycle
+// hooks. `shouldShowView` depends on ALL inputs that gate visibility, so
+// a change to any of them fires the watcher. The watcher then sends ONE
+// event to the main process — `browser-tab-view:focus` with the tabId
+// when this view should be visible, or `null` when it shouldn't. The
+// main-process BrowserTabViewManager is the authoritative reconciler.
 const { loggedIn } = useVaultUnlock();
-const shouldShowView = () => props.isVisible && !showOverlay.value && loggedIn.value && viewCreated && tabMode.value === 'browser';
+const shouldShowView = computed(() =>
+  props.isVisible
+  && !showOverlay.value
+  && loggedIn.value
+  && viewCreated.value
+  && tabMode.value === 'browser',
+);
 
-watch([() => props.isVisible, showOverlay], ([visible]) => {
+watch(shouldShowView, (visible) => {
   if (visible) {
     window.addEventListener('keydown', onKeydown);
-  } else {
-    window.removeEventListener('keydown', onKeydown);
-  }
-
-  if (shouldShowView()) {
-    ipcRenderer.invoke('browser-tab-view:show', props.tabId);
+    ipcRenderer.invoke('browser-tab-view:focus', props.tabId);
     nextTick(() => sendBounds());
     // Show this tab's side panel (if it has one) when tab becomes visible
     ipcRenderer.invoke('chrome-api:sidePanel:switchTab' as any, props.tabId);
-  } else if (viewCreated) {
-    ipcRenderer.invoke('browser-tab-view:hide', props.tabId);
+  } else {
+    window.removeEventListener('keydown', onKeydown);
+    // Tell main process this tab is no longer the focused one. It won't
+    // clobber focus that belongs to a sibling tab — setFocusedTab only
+    // acts on transitions where focusedTabId currently equals props.tabId.
+    // But to be safe (two tabs racing), we pass the tabId rather than null
+    // below — no, that's wrong. We genuinely want "nothing from this
+    // component is focused right now." If another BrowserTab.vue instance
+    // is visible, ITS watcher will have fired with `visible=true` and
+    // claimed focus. Race-safe because main process dedupes via
+    // `if (focusedTabId === tabId) return;` at the top of setFocusedTab.
+    ipcRenderer.invoke('browser-tab-view:focus', null);
   }
 }, { immediate: true });
 
