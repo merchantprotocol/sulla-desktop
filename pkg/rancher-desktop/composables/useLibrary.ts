@@ -17,7 +17,16 @@ import { computed, ref } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type LibraryKind = 'routines' | 'skills' | 'functions' | 'recipes';
+/** Real on-disk kinds. These are what loaders actually fetch. */
+export type LibraryArtifactKind = 'routines' | 'skills' | 'functions' | 'recipes';
+
+/** Selectable views in the Library left rail. `all` is synthetic — it
+ *  flattens every artifact kind into one list with a `kind` tag on each
+ *  item so the UI can show kind pills and the user can scan across
+ *  everything they own at once. */
+export type LibraryKind = 'all' | LibraryArtifactKind;
+
+const ARTIFACT_KINDS: LibraryArtifactKind[] = ['routines', 'skills', 'functions', 'recipes'];
 
 export interface LibraryItem {
   /** Stable directory name on disk — also the primary key within a kind. */
@@ -28,6 +37,9 @@ export interface LibraryItem {
   updatedAt?:  string;
   /** Kind-specific key/value pairs rendered as chips on the strip. */
   meta:        Array<{ label: string; value: string }>;
+  /** Artifact kind. Always populated by the loaders so the "All" view
+   *  can render a kind pill on mixed rows; kind-specific views ignore it. */
+  kind?:       LibraryArtifactKind;
 }
 
 export interface LibraryKindState {
@@ -63,6 +75,7 @@ async function loadRoutines(): Promise<LibraryItem[]> {
       version:     r.version,
       updatedAt:   r.updatedAt,
       meta,
+      kind:        'routines' as const,
     };
   });
 }
@@ -83,6 +96,7 @@ async function loadSkills(): Promise<LibraryItem[]> {
       description: r.description,
       updatedAt:   r.updatedAt,
       meta,
+      kind:        'skills' as const,
     };
   });
 }
@@ -105,6 +119,7 @@ async function loadFunctions(): Promise<LibraryItem[]> {
       name:        r.name,
       description: r.description,
       meta,
+      kind:        'functions' as const,
     };
   });
 }
@@ -124,75 +139,125 @@ async function loadRecipes(): Promise<LibraryItem[]> {
       version:     r.version,
       updatedAt:   r.updatedAt,
       meta,
+      kind:        'recipes' as const,
     };
   });
 }
 
-const LOADERS: Record<LibraryKind, () => Promise<LibraryItem[]>> = {
+const LOADERS: Record<LibraryArtifactKind, () => Promise<LibraryItem[]>> = {
   routines:  loadRoutines,
   skills:    loadSkills,
   functions: loadFunctions,
   recipes:   loadRecipes,
 };
 
+// ── Singleton state ──
+// The Library tab and RoutinesHome both need the same counts. Rather than
+// make each caller maintain its own copy, everything lives at module
+// scope and `useLibrary()` just returns bindings onto it. First caller to
+// mount triggers loadAll(); later callers see the cached state instantly.
+const activeKind = ref<LibraryKind>('all');
+const search     = ref('');
+
+const states = ref<Record<LibraryArtifactKind, LibraryKindState>>({
+  routines:  emptyKindState(),
+  skills:    emptyKindState(),
+  functions: emptyKindState(),
+  recipes:   emptyKindState(),
+});
+
+// Tracks whether a full cross-kind load has ever been requested, so
+// RoutinesHome's badge hydration doesn't fire N redundant parallel loads.
+let loadAllPromise: Promise<void> | null = null;
+
+async function loadKind(kind: LibraryArtifactKind): Promise<void> {
+  const st = states.value[kind];
+  st.isLoading = true;
+  st.error = null;
+  try {
+    st.items = await LOADERS[kind]();
+  } catch (err) {
+    st.error = msgOf(err);
+    st.items = [];
+  } finally {
+    st.isLoading = false;
+  }
+}
+
+async function loadAll(): Promise<void> {
+  if (loadAllPromise) return loadAllPromise;
+  loadAllPromise = Promise.all(ARTIFACT_KINDS.map(loadKind)).then(() => {});
+  try {
+    await loadAllPromise;
+  } finally {
+    // Allow a fresh reload later (e.g. after user publishes) by clearing
+    // the cache. The individual `states[kind].items` arrays stay warm in
+    // the meantime.
+    loadAllPromise = null;
+  }
+}
+
+async function setKind(kind: LibraryKind): Promise<void> {
+  activeKind.value = kind;
+  if (kind === 'all') {
+    // All-view aggregates every kind; kick the loader when any of them
+    // are still empty. Idempotent thanks to `loadAllPromise`.
+    if (ARTIFACT_KINDS.some(k => states.value[k].items.length === 0 && !states.value[k].error)) {
+      await loadAll();
+    }
+    return;
+  }
+  if (states.value[kind].items.length === 0 && !states.value[kind].error) {
+    await loadKind(kind);
+  }
+}
+
+// ── Derived views ──
+
+// Aggregated state used by the "All" view. Loading is the union of
+// per-kind loaders; error surfaces the first kind that broke so the user
+// gets actionable feedback instead of a silent partial list.
+const allItems = computed<LibraryItem[]>(() => {
+  const out: LibraryItem[] = [];
+  for (const k of ARTIFACT_KINDS) out.push(...states.value[k].items);
+  return out;
+});
+
+const allState = computed<LibraryKindState>(() => ({
+  items:     allItems.value,
+  isLoading: ARTIFACT_KINDS.some(k => states.value[k].isLoading),
+  error:     ARTIFACT_KINDS.map(k => states.value[k].error).find(Boolean) ?? null,
+}));
+
+const activeState = computed<LibraryKindState>(() => {
+  return activeKind.value === 'all' ? allState.value : states.value[activeKind.value];
+});
+
+const filteredItems = computed<LibraryItem[]>(() => {
+  const q = search.value.trim().toLowerCase();
+  const items = activeState.value.items;
+  if (!q) return items;
+
+  return items.filter(it =>
+    it.name.toLowerCase().includes(q) ||
+    it.description.toLowerCase().includes(q) ||
+    it.slug.toLowerCase().includes(q) ||
+    it.meta.some(m => m.value.toLowerCase().includes(q)));
+});
+
+const kindCounts = computed<Record<LibraryArtifactKind, number>>(() => ({
+  routines:  states.value.routines.items.length,
+  skills:    states.value.skills.items.length,
+  functions: states.value.functions.items.length,
+  recipes:   states.value.recipes.items.length,
+}));
+
+const totalCount = computed<number>(() => {
+  const c = kindCounts.value;
+  return c.routines + c.skills + c.functions + c.recipes;
+});
+
 export function useLibrary() {
-  const activeKind = ref<LibraryKind>('routines');
-  const search     = ref('');
-
-  const states = ref<Record<LibraryKind, LibraryKindState>>({
-    routines:  emptyKindState(),
-    skills:    emptyKindState(),
-    functions: emptyKindState(),
-    recipes:   emptyKindState(),
-  });
-
-  async function loadKind(kind: LibraryKind): Promise<void> {
-    const st = states.value[kind];
-    st.isLoading = true;
-    st.error = null;
-    try {
-      st.items = await LOADERS[kind]();
-    } catch (err) {
-      st.error = msgOf(err);
-      st.items = [];
-    } finally {
-      st.isLoading = false;
-    }
-  }
-
-  async function loadAll(): Promise<void> {
-    await Promise.all((Object.keys(LOADERS) as LibraryKind[]).map(loadKind));
-  }
-
-  async function setKind(kind: LibraryKind): Promise<void> {
-    activeKind.value = kind;
-    // Lazy-refresh if this kind has never been loaded — keeps tab switches snappy.
-    if (states.value[kind].items.length === 0 && !states.value[kind].error) {
-      await loadKind(kind);
-    }
-  }
-
-  const activeState = computed<LibraryKindState>(() => states.value[activeKind.value]);
-
-  const filteredItems = computed<LibraryItem[]>(() => {
-    const q = search.value.trim().toLowerCase();
-    const items = activeState.value.items;
-    if (!q) return items;
-
-    return items.filter(it =>
-      it.name.toLowerCase().includes(q) ||
-      it.description.toLowerCase().includes(q) ||
-      it.slug.toLowerCase().includes(q) ||
-      it.meta.some(m => m.value.toLowerCase().includes(q)));
-  });
-
-  const kindCounts = computed<Record<LibraryKind, number>>(() => ({
-    routines:  states.value.routines.items.length,
-    skills:    states.value.skills.items.length,
-    functions: states.value.functions.items.length,
-    recipes:   states.value.recipes.items.length,
-  }));
-
   return {
     // state
     activeKind,
@@ -201,6 +266,7 @@ export function useLibrary() {
     activeState,
     filteredItems,
     kindCounts,
+    totalCount,
 
     // actions
     loadAll,

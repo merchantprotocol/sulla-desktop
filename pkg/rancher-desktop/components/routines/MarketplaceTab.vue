@@ -941,6 +941,9 @@ function formatRelative(iso: string): string {
   font-size: 12px;
   color: var(--steel-100);
   line-height: 1.5;
+  // admin_notes accumulates one line per review / unpublish action, so
+  // preserve the newlines instead of collapsing them into a single blob.
+  white-space: pre-wrap;
 }
 .sub-notes strong { color: #fbbf24; font-weight: 600; }
 

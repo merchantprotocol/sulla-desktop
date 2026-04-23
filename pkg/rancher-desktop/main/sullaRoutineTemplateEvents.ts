@@ -260,76 +260,82 @@ function toSummary(slug: string, doc: RoutineDocument, templateDir: string): Tem
   return row;
 }
 
-// ─── Workflow wrapping ────────────────────────────────────────────
-// When a template is instantiated, we scaffold a minimal workflow
-// graph around it: one manual trigger + one routine node executing
-// the template. The user can then extend the graph in the editor.
+// ─── Workflow instantiation ───────────────────────────────────────
+// A template's routine.yaml is itself a full DAG (nodes/edges/viewport).
+// Instantiating = cloning that DAG into a fresh workflow row the user
+// can edit. We re-ID every node and rewrite every edge's source/target
+// to the new ids so two instantiations of the same template never
+// collide, while preserving positions, data, and viewport verbatim.
+//
+// A template with zero nodes is a hard error — we throw instead of
+// silently scaffolding a stub. The user installed a specific template
+// and expects its graph, not a surprise two-node placeholder.
 
 interface WrapOptions {
   slug:     string;
   manifest: TemplateManifest;
+  doc:      RoutineDocument;
 }
 
 function newId(prefix: string): string {
   return `${ prefix }-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
 }
 
-function buildWorkflowFromTemplate({ slug, manifest }: WrapOptions): Record<string, unknown> {
+function buildWorkflowFromTemplate({ slug, manifest, doc }: WrapOptions): Record<string, unknown> {
   const workflowId = newId(`workflow-${ slug }`);
-  const triggerId = newId('trigger');
-  const routineId = newId('routine');
   const now = new Date().toISOString();
+  const name = manifest.name ?? doc.name ?? slug;
+  const description = manifest.description ?? doc.description ?? `Workflow based on the ${ slug } template.`;
+  const viewport = doc.viewport ?? { x: 0, y: 0, zoom: 1 };
+
+  const srcNodes = Array.isArray(doc.nodes) ? doc.nodes : [];
+  const srcEdges = Array.isArray(doc.edges) ? doc.edges : [];
+
+  if (srcNodes.length === 0) {
+    throw new Error(
+      `Template "${ slug }" has no nodes in routine.yaml — refusing to instantiate an empty graph.`,
+    );
+  }
+
+  // Re-ID every node, keep a remap so edges point at the new ids.
+  const idMap = new Map<string, string>();
+  const nodes = srcNodes.map((n) => {
+    const oldId = typeof n.id === 'string' && n.id ? n.id : newId('node');
+    const freshId = newId('node');
+    idMap.set(oldId, freshId);
+
+    return {
+      ...n,
+      id:       freshId,
+      // Spread preserves type/position/data/style/measured/etc. — anything
+      // the template author included on the node carries through.
+    };
+  });
+
+  const edges = srcEdges
+    .map((e) => {
+      const src = typeof e.source === 'string' ? idMap.get(e.source) : undefined;
+      const tgt = typeof e.target === 'string' ? idMap.get(e.target) : undefined;
+      // Drop dangling edges (source or target missing from the remap) —
+      // better than a React Flow render crash on unknown node ids.
+      if (!src || !tgt) return null;
+
+      return { ...e, id: newId('edge'), source: src, target: tgt };
+    })
+    .filter((e): e is NonNullable<typeof e> => e !== null);
 
   return {
     id:          workflowId,
-    name:        `${ manifest.name ?? slug } · new routine`,
-    description: manifest.description ?? `Workflow based on the ${ slug } template.`,
+    name:        `${ name } · new routine`,
+    description,
     version:     '0.1.0',
     enabled:     true,
     createdAt:   now,
     updatedAt:   now,
     _status:     'draft',
-    nodes: [
-      {
-        id:       triggerId,
-        type:     'routine',
-        position: { x: 80, y: 140 },
-        data:     {
-          subtype:  'manual-trigger',
-          category: 'trigger',
-          title:    'Manual Trigger',
-          kicker:   'Trigger',
-        },
-      },
-      {
-        id:       routineId,
-        type:     'routine',
-        position: { x: 400, y: 140 },
-        data:     {
-          // Category is 'agent' because that's the canonical type for
-          // "something that does work" in the workflow runtime — lets
-          // the display pipeline assign proper avatar colors + code
-          // letters. The `subtype` + `kicker` preserve the "routine"
-          // identity at the display layer.
-          subtype:      'template-routine',
-          category:     'agent',
-          title:        manifest.name ?? slug,
-          kicker:       'Routine',
-          templateSlug: slug,
-          templateId:   manifest.id ?? null,
-          config:       {}, // user fills in required inputs via the config panel
-        },
-      },
-    ],
-    edges: [
-      {
-        id:     newId('edge'),
-        source: triggerId,
-        target: routineId,
-        type:   'smoothstep',
-      },
-    ],
-    viewport: { x: 0, y: 0, zoom: 1 },
+    nodes,
+    edges,
+    viewport,
   };
 }
 
@@ -406,7 +412,15 @@ export function initSullaRoutineTemplateEvents(): void {
       throw new Error(`Template manifest is unreadable: ${ slug }`);
     }
 
-    const workflow = buildWorkflowFromTemplate({ slug, manifest });
+    // Same file, read twice — once as a typed manifest (metadata) and
+    // once as a RoutineDocument (full DAG). Cheap (tiny YAML) and keeps
+    // the two code paths type-distinct.
+    const doc = readRoutineDoc(manifestPath);
+    if (!doc) {
+      throw new Error(`Template routine document is unreadable: ${ slug }`);
+    }
+
+    const workflow = buildWorkflowFromTemplate({ slug, manifest, doc });
 
     // DB-first write. The runtime still scans disk for execution, so a
     // YAML materialization will happen when the user hits save in the

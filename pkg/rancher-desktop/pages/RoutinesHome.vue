@@ -311,6 +311,7 @@ import EmptyState from '@pkg/components/routines/EmptyState.vue';
 import LibraryTab from '@pkg/components/routines/LibraryTab.vue';
 import MarketplaceTab from '@pkg/components/routines/MarketplaceTab.vue';
 import RoutineStrip from '@pkg/components/routines/RoutineStrip.vue';
+import { useLibrary } from '@pkg/composables/useLibrary';
 import { useRoutines } from '@pkg/composables/useRoutines';
 import { useTemplates } from '@pkg/composables/useTemplates';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -340,10 +341,12 @@ const routinesController = useRoutines();
 const templatesController = useTemplates();
 
 // Total count across all four library kinds — shown on the Library tab button.
-// We reuse `templatesController.templates` for routines (already loaded) and
-// let the Library tab component hydrate the rest lazily; this is a rough
-// lower bound until the user opens the Library tab.
-const totalLibraryCount = computed(() => templatesController.templates.value.length);
+// `useLibrary()` is a module-scoped singleton; calling it here mounts the
+// same store the Library tab uses, and `loadAll()` hydrates all four kinds
+// so the badge reflects reality even before the user ever clicks in. The
+// call is idempotent — if the Library tab already loaded, this is a no-op.
+const libraryStore = useLibrary();
+const totalLibraryCount = computed(() => libraryStore.totalCount.value);
 
 // The playbill can't query Postgres until the backend has booted — the
 // tab is restored from localStorage on first paint, which regularly
@@ -356,6 +359,11 @@ async function loadAll() {
   await Promise.all([
     routinesController.load(),
     templatesController.load(),
+    // Hydrate every library kind so the Studio tab badge shows the true
+    // total across routines/skills/functions/recipes without waiting for
+    // the user to open the Library tab first. Singleton store — second
+    // caller (LibraryTab) gets the same cached counts.
+    libraryStore.loadAll(),
   ]);
 }
 
