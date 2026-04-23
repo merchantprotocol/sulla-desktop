@@ -3003,10 +3003,10 @@
   resolved "https://registry.yarnpkg.com/@schedule-x/events-service/-/events-service-4.2.0.tgz#1e8926edf2b964bb11078de9472bd395b353dbd0"
   integrity sha512-IeJdb3mvIGZFP5V399T+JyR2GnlRj4ZtsNt3d2yM5mGnXZDdyL7hcxyFD8UQ37+TUDW8/OBkH24WNSk2Gl7ynQ==
 
-"@schedule-x/theme-default@4.2.0":
-  version "4.2.0"
-  resolved "https://registry.yarnpkg.com/@schedule-x/theme-default/-/theme-default-4.2.0.tgz#fab57c7a958eb70a9907416c53e88c83fb4b5c4d"
-  integrity sha512-CtcnyTwoMNsLsikLJIlRquJoWVfx1G7LFc2GYEseGEIOzX8jQ63lCd1vZ9eMrlr0Sw9TiqX5Bn/pkvAmYolbyQ==
+"@schedule-x/theme-default@4.3.1":
+  version "4.3.1"
+  resolved "https://registry.yarnpkg.com/@schedule-x/theme-default/-/theme-default-4.3.1.tgz#d09798c5ac536426370888c6bf52abcce10d0609"
+  integrity sha512-EVJulV9e3DH91j6Hfw8ZIh2kfqi1Juc1155LSz+9BO7S9K1GLaVBZqO413FCI/pPP+rHRE0nuhB/3iS+BidUUA==
 
 "@schedule-x/vue@4.0.0":
   version "4.0.0"
