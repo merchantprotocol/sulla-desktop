@@ -2,7 +2,7 @@
  * Model Discovery Service
  *
  * Dynamically fetches available models from LLM provider APIs
- * Supports: OpenAI, Anthropic, Google, Grok, Kimi, NVIDIA
+ * Supports: OpenAI, Anthropic, Google, Grok, Kimi, NVIDIA, Alibaba, Cohere
  * Features: Caching, error handling, provider-specific endpoint mapping
  */
 
@@ -139,6 +139,51 @@ export class ModelDiscoveryService {
         { id: 'qwen3-coder-next', name: 'Qwen 3 Coder Next', provider: 'alibaba' },
         { id: 'qwen3-max-2026-01-23', name: 'Qwen 3 Max', provider: 'alibaba' },
         { id: 'glm-4.7', name: 'GLM 4.7', provider: 'alibaba' },
+      ],
+    },
+
+    cohere: {
+      // Chat uses compatibility API, models use v2 API
+      baseUrl:        'https://api.cohere.ai/compatibility/v1',
+      modelsEndpoint: 'https://api.cohere.com/v2/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => {
+        // Parse Cohere models API response - filter to tool-capable Command models only
+        if (data && Array.isArray(data.models)) {
+          return data.models
+            .filter((model: any) => {
+              const name = (model.name || '').toLowerCase();
+              // Only Command models support tool use
+              // Exclude: Aya, Tiny Aya, transcribe, embed, rerank
+              return name.startsWith('command') && !name.includes('transcribe');
+            })
+            .map((model: any) => ({
+              id:          model.name,
+              name:        model.name,
+              provider:    'cohere',
+              description: model.description || `${ model.name } model`,
+            }));
+        }
+        return [];
+      },
+      // Fallback static list - only Command models (support tool use)
+      staticModels: [
+        // Command A - Latest flagship
+        { id: 'command-a-03-2025', name: 'Command A', provider: 'cohere', description: 'Latest flagship - tool use, RAG, agents' },
+        { id: 'command-a-reasoning-08-2025', name: 'Command A Reasoning', provider: 'cohere', description: 'Advanced reasoning - tool use, complex reasoning' },
+        { id: 'command-a-translate-08-2025', name: 'Command A Translate', provider: 'cohere', description: 'Translation optimized - tool use, multilingual' },
+        { id: 'command-a-vision-07-2025', name: 'Command A Vision', provider: 'cohere', description: 'Multimodal vision - tool use, image + text' },
+        // Command R7B - Fast lightweight
+        { id: 'command-r7b-12-2024', name: 'Command R7B', provider: 'cohere', description: 'Fast, lightweight - tool use, RAG, everyday tasks' },
+        { id: 'command-r7b-arabic-02-2025', name: 'Command R7B Arabic', provider: 'cohere', description: 'Arabic optimized - tool use, fast, lightweight' },
+        // Command R - Balanced
+        { id: 'command-r-08-2024', name: 'Command R (08-2024)', provider: 'cohere', description: 'Balanced - tool use, conversation, RAG' },
+        { id: 'command-r-03-2024', name: 'Command R (03-2024)', provider: 'cohere', description: 'Earlier Command R - tool use, conversation' },
+        { id: 'command-r', name: 'Command R', provider: 'cohere', description: 'Balanced - tool use, everyday tasks' },
+        // Command R+ - Advanced reasoning
+        { id: 'command-r-plus-08-2024', name: 'Command R+ (08-2024)', provider: 'cohere', description: 'Advanced reasoning - tool use, complex tasks' },
+        { id: 'command-r-plus-04-2024', name: 'Command R+ (04-2024)', provider: 'cohere', description: 'Earlier Command R+ - tool use, reasoning' },
+        { id: 'command-r-plus', name: 'Command R+', provider: 'cohere', description: 'Advanced reasoning - tool use, complex tasks' },
       ],
     },
   };

@@ -305,6 +305,43 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
+  cohere: {
+    id:          'cohere',
+    sort:        8,
+    paid:        false,
+    beta:        true,
+    comingSoon:  false,
+    name:        'Cohere',
+    description: 'Connect to Cohere\'s free tier for Command A, Command A Reasoning, Command A Translate, Command A Vision, Command R, Command R+, Command R7B, and Command R7B Arabic. All models support tool use. 1,000 API calls/month (non-commercial use).',
+    category:    'AI Infrastructure',
+    icon:        'cohere.svg',
+    connected:   false,
+    version:     '1.0.0',
+    lastUpdated: '2026-04-22 00:00:00',
+    developer:   'Cohere',
+    formGuide:   'Get your free trial API key from dashboard.cohere.com/api-keys. Free tier is limited to non-commercial use with 1,000 API calls per month. Only Command family models support tool use (Aya models do not).',
+    properties:  [
+      {
+        key:         'api_key',
+        title:       'Cohere API Key',
+        hint:        'Free trial key from dashboard.cohere.com/api-keys',
+        type:        'password',
+        required:    true,
+        placeholder: '...',
+      },
+      {
+        key:             'model',
+        title:           'Model',
+        hint:            'Select a Cohere model to use.',
+        type:            'select',
+        required:        true,
+        placeholder:     'Select a model...',
+        selectBoxId:     'cohere_models',
+        selectDependsOn: ['api_key'],
+      },
+    ],
+  },
+
   enterprise_gateway: {
     id:          'enterprise_gateway',
     sort:        9,
