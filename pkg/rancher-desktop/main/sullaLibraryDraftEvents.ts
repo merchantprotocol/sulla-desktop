@@ -33,27 +33,56 @@ const ipcMainProxy = getIpcMainProxy(console);
 
 const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
 const MAX_TEXT_FILE_BYTES = 1 * 1024 * 1024;   // 1 MB per file on fork
-const MAX_FILES_ON_FORK   = 2_000;
+const MAX_FILES_ON_FORK = 2_000;
 
-type DraftKind = 'skill' | 'function' | 'recipe';
-type KindPlural = 'routines' | 'skills' | 'functions' | 'recipes';
+type DraftKind = 'skill' | 'function' | 'recipe' | 'integration';
+type KindPlural = 'routines' | 'skills' | 'functions' | 'recipes' | 'integrations';
 
 function kindPlural(k: DraftKind): KindPlural {
-  return ({ skill: 'skills', function: 'functions', recipe: 'recipes' } as const)[k];
+  return ({
+    skill: 'skills', function: 'functions', recipe: 'recipes', integration: 'integrations',
+  } as const)[k];
 }
 
+/**
+ * Publish target for a draft. For integrations this is the USER dir — we
+ * never publish back to resources/integrations/ (that's the sulla-resources
+ * clone; it should stay git-managed).
+ */
 function kindBaseDir(k: DraftKind): string {
   const p = require('@pkg/agent/utils/sullaPaths');
 
   switch (k) {
-  case 'skill':    return p.resolveSullaUserSkillsDir();
+  case 'skill': return p.resolveSullaUserSkillsDir();
   case 'function': return p.resolveSullaFunctionsDir();
-  case 'recipe':   return p.resolveSullaRecipesDir();
+  case 'recipe': return p.resolveSullaRecipesDir();
+  case 'integration': return p.resolveSullaUserIntegrationsDir();
+  }
+}
+
+/**
+ * Source-lookup candidates for a draft at fork time. Integrations can live
+ * in either resources/ (builtin) or the user dir (marketplace/local fork);
+ * the others have a single canonical location.
+ */
+function kindSourceDirs(k: DraftKind): string[] {
+  const p = require('@pkg/agent/utils/sullaPaths');
+
+  switch (k) {
+  case 'skill': return [p.resolveSullaUserSkillsDir()];
+  case 'function': return [p.resolveSullaFunctionsDir()];
+  case 'recipe': return [p.resolveSullaRecipesDir()];
+  case 'integration': return [p.resolveSullaUserIntegrationsDir(), p.resolveSullaIntegrationsDir()];
   }
 }
 
 function coreDocFor(kind: DraftKind): string {
-  return ({ skill: 'SKILL.md', function: 'function.yaml', recipe: 'manifest.yaml' } as const)[kind];
+  return ({
+    skill:       'SKILL.md',
+    function:    'function.yaml',
+    recipe:      'manifest.yaml',
+    integration: 'integration.yaml',
+  } as const)[kind];
 }
 
 /**
@@ -80,8 +109,8 @@ function isUtf8Text(buf: Buffer): boolean {
  * Walk a directory recursively, returning every file's path relative to
  * `root` along with its Buffer contents.
  */
-function walkFiles(root: string): Array<{ relPath: string; buffer: Buffer }> {
-  const results: Array<{ relPath: string; buffer: Buffer }> = [];
+function walkFiles(root: string): { relPath: string; buffer: Buffer }[] {
+  const results: { relPath: string; buffer: Buffer }[] = [];
 
   const walk = (abs: string, rel: string) => {
     let entries: fs.Dirent[];
@@ -138,12 +167,18 @@ async function readLocalManifest(
 export function initSullaLibraryDraftEvents(): void {
   ipcMainProxy.handle('library-fork', async(_event, kind: DraftKind, slug: string) => {
     try {
-      if (kind !== 'skill' && kind !== 'function' && kind !== 'recipe') {
-        return { error: `kind must be one of skill | function | recipe (got "${ kind }")` };
+      if (kind !== 'skill' && kind !== 'function' && kind !== 'recipe' && kind !== 'integration') {
+        return { error: `kind must be one of skill | function | recipe | integration (got "${ kind }")` };
       }
 
-      const base = path.join(kindBaseDir(kind), slug);
-      if (!fs.existsSync(base)) {
+      // Integrations have two possible source dirs (builtin + user); the
+      // others have one. kindSourceDirs encapsulates that so the rest of
+      // the flow stays uniform.
+      const base = kindSourceDirs(kind)
+        .map(root => path.join(root, slug))
+        .find(fs.existsSync);
+
+      if (!base) {
         return { error: `no library item at ${ kindPlural(kind) }/${ slug }` };
       }
 
@@ -269,8 +304,16 @@ export function initSullaLibraryDraftEvents(): void {
 
       // Merge with base_slug contents when the draft only carries text
       // files — binary assets from the original bundle survive the fork.
+      // For integrations, base_slug may be a builtin (resources/) or a
+      // marketplace install (user/); kindSourceDirs covers both.
       const fromBase = draft.base_slug
-        ? walkFiles(path.join(baseDir, draft.base_slug))
+        ? (() => {
+          const resolved = kindSourceDirs(draft.kind as DraftKind)
+            .map(root => path.join(root, draft.base_slug!))
+            .find(fs.existsSync);
+
+          return resolved ? walkFiles(resolved) : [];
+        })()
         : [];
       const baseMap = new Map(fromBase.map(f => [f.relPath, f.buffer]));
 
@@ -322,7 +365,7 @@ export function initSullaLibraryDraftEvents(): void {
       if (!draft) return { error: 'draft not found' };
 
       // Build the zip contents: draft text files + base-slug binary files.
-      const entries: Array<{ zipPath: string; buffer: Buffer }> = [];
+      const entries: { zipPath: string; buffer: Buffer }[] = [];
       for (const [relPath, content] of Object.entries(draft.files_json)) {
         entries.push({
           zipPath: `${ draft.slug }/${ relPath }`,
@@ -330,12 +373,19 @@ export function initSullaLibraryDraftEvents(): void {
         });
       }
       if (draft.base_slug) {
-        const baseDir = path.join(kindBaseDir(draft.kind as DraftKind), draft.base_slug);
-        const existingPaths = new Set(entries.map(e => e.zipPath));
-        for (const { relPath, buffer } of walkFiles(baseDir)) {
-          const zipPath = `${ draft.slug }/${ relPath }`;
-          if (!existingPaths.has(zipPath) && !isUtf8Text(buffer)) {
-            entries.push({ zipPath, buffer });
+        const baseDir = kindSourceDirs(draft.kind as DraftKind)
+          .map(root => path.join(root, draft.base_slug!))
+          .find(fs.existsSync);
+
+        if (baseDir) {
+          const existingPaths = new Set(entries.map(e => e.zipPath));
+
+          for (const { relPath, buffer } of walkFiles(baseDir)) {
+            const zipPath = `${ draft.slug }/${ relPath }`;
+
+            if (!existingPaths.has(zipPath) && !isUtf8Text(buffer)) {
+              entries.push({ zipPath, buffer });
+            }
           }
         }
       }
@@ -348,7 +398,7 @@ export function initSullaLibraryDraftEvents(): void {
         const submitRes = await fetch(`${ API_BASE }/marketplace/submit-manifest`, {
           method:  'POST',
           headers: {
-            'Authorization': `Bearer ${ token }`,
+            Authorization:  `Bearer ${ token }`,
             'Content-Type':  'application/json',
           },
           body: JSON.stringify({
@@ -373,7 +423,7 @@ export function initSullaLibraryDraftEvents(): void {
         const putRes = await fetch(`${ API_BASE }${ submitJson.template.bundle_upload_url }`, {
           method:  'PUT',
           headers: {
-            'Authorization':  `Bearer ${ token }`,
+            Authorization:    `Bearer ${ token }`,
             'Content-Type':   'application/zip',
             'Content-Length': String(zipBytes.byteLength),
           },
@@ -395,7 +445,7 @@ export function initSullaLibraryDraftEvents(): void {
           bundleStatus: putJson.template.bundle_status,
         };
       } finally {
-        try { fs.unlinkSync(zipPath); } catch { /* best effort */ }
+        try { fs.unlinkSync(zipPath) } catch { /* best effort */ }
       }
     } catch (err) {
       console.error('[Sulla] library-draft-publish-marketplace failed:', err);
@@ -411,7 +461,7 @@ export function initSullaLibraryDraftEvents(): void {
 // Uses yazl (already a dep, used by the export handler). Writes to a
 // tmp file so we can pass its path to readFileSync for the HTTP body.
 
-async function writeZip(entries: Array<{ zipPath: string; buffer: Buffer }>): Promise<string> {
+async function writeZip(entries: { zipPath: string; buffer: Buffer }[]): Promise<string> {
   const tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), 'sulla-draft-zip-'));
   const outPath = path.join(tmpdir, 'bundle.zip');
   const zip = new yazl.ZipFile();

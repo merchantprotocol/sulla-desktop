@@ -62,6 +62,7 @@ import Logging, { clearLoggingDirectory, setLogLevel } from '@pkg/utils/logging'
 import { fetchMacOsVersion, getMacOsVersion } from '@pkg/utils/osVersion';
 import paths from '@pkg/utils/paths';
 import { protocolsRegistered, setupProtocolHandlers } from '@pkg/utils/protocols';
+import { handleDeepLink, findDeepLinkInArgv } from '@pkg/main/deepLink';
 import { executable } from '@pkg/utils/resources';
 import { jsonStringifyWithWhiteSpace } from '@pkg/utils/stringify';
 import { sullaLog } from '@pkg/utils/sullaLog';
@@ -99,6 +100,25 @@ if (settingsImpl.runInDebugMode(false)) {
 if (!Electron.app.requestSingleInstanceLock()) {
   process.exit(201);
 }
+
+// Register the `sulla://` custom URL scheme with the OS.
+//
+// On macOS and Windows this is primarily declared via Info.plist /
+// registry entries written by electron-builder (see packaging/
+// electron-builder.yml → protocols). Calling it at runtime covers
+// Linux and dev builds where the installer step doesn't apply; it
+// is a no-op when the scheme is already registered.
+//
+// MUST be called before 'will-finish-launching' / the first 'open-url'
+// event can fire, otherwise cold-launch deep links on macOS are lost.
+Electron.app.setAsDefaultProtocolClient('sulla');
+
+// macOS: cold-launch deep links arrive via 'open-url' (NOT argv).
+// Registering before app-ready is required to catch the earliest one.
+Electron.app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleDeepLink(url);
+});
 
 clearLoggingDirectory();
 
@@ -181,11 +201,19 @@ process.on('uncaughtException', (err: Error) => {
   }).catch(() => {});
 });
 
-Electron.app.on('second-instance', async() => {
+Electron.app.on('second-instance', async(_event, argv) => {
   await protocolsRegistered;
   console.warn('A second instance was started');
   if (firstRunDialogComplete) {
     window.openMain();
+  }
+
+  // Linux/Windows deliver sulla:// URLs by appending them to the
+  // secondary process's argv. macOS never arrives here with a URL —
+  // it uses the 'open-url' event registered above.
+  const deepLink = findDeepLinkInArgv(argv);
+  if (deepLink) {
+    handleDeepLink(deepLink);
   }
 });
 
@@ -437,6 +465,14 @@ Electron.app.whenReady().then(async() => {
     // containerd namespace called "--no-modal-dialogs"?
     noModalDialogs = commandLineArgs.includes('--no-modal-dialogs');
     setupProtocolHandlers();
+
+    // Linux/Windows cold-launch: the sulla:// URL the user clicked is
+    // appended to our own process.argv. macOS delivers it through the
+    // 'open-url' event registered earlier, so this is a no-op there.
+    const coldLaunchDeepLink = findDeepLinkInArgv(process.argv);
+    if (coldLaunchDeepLink) {
+      handleDeepLink(coldLaunchDeepLink);
+    }
 
     // make sure we have the macOS version cached before calling getMacOsVersion()
     if (os.platform() === 'darwin') {

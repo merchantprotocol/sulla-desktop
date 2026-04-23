@@ -12,7 +12,7 @@
       <div class="kicker">
         <span
           class="kind-badge"
-          :class="`kind-${ draft.kind }`"
+          :class="`kind-${draft.kind}`"
         >{{ draft.kind }}</span>
         <span class="chip">draft</span>
         <span
@@ -46,115 +46,120 @@
       v-if="tab === 'form'"
       class="panel"
     >
-        <SkillManifestForm
-          v-if="draft.kind === 'skill'"
-          :model-value="editState"
-          @update:model-value="onFormChange"
-        />
-        <FunctionManifestForm
-          v-else-if="draft.kind === 'function'"
-          :model-value="editState"
-          @update:model-value="onFormChange"
-        />
-        <RecipeManifestForm
-          v-else-if="draft.kind === 'recipe'"
-          :model-value="editState"
-          @update:model-value="onFormChange"
-        />
-      </section>
+      <SkillManifestForm
+        v-if="draft.kind === 'skill'"
+        :model-value="editState"
+        @update:model-value="onFormChange"
+      />
+      <FunctionManifestForm
+        v-else-if="draft.kind === 'function'"
+        :model-value="editState"
+        @update:model-value="onFormChange"
+      />
+      <RecipeManifestForm
+        v-else-if="draft.kind === 'recipe'"
+        :model-value="editState"
+        @update:model-value="onFormChange"
+      />
+      <IntegrationManifestForm
+        v-else-if="draft.kind === 'integration'"
+        :model-value="editState"
+        @update:model-value="onFormChange"
+      />
+    </section>
 
-      <section
-        v-else-if="tab === 'publish'"
-        class="panel"
+    <section
+      v-else-if="tab === 'publish'"
+      class="panel"
+    >
+      <p class="hint">
+        Publishing writes the draft somewhere permanent. Editing here stays in the database until you take one of these actions.
+      </p>
+
+      <div class="publish-card">
+        <h4>Publish locally</h4>
+        <p>Materialise this draft to <code>~/sulla/{{ kindPluralLabel }}/</code> so Sulla's runtime picks it up.</p>
+        <label class="f">
+          <span class="l">Target slug</span>
+          <input
+            v-model="localSlug"
+            type="text"
+          >
+        </label>
+        <button
+          type="button"
+          class="btn primary"
+          :disabled="!!drafts.publishing.value || !localSlug.trim()"
+          @click="doPublishLocal"
+        >
+          {{ drafts.publishing.value === 'local' ? 'Publishing…' : 'Publish to disk' }}
+        </button>
+      </div>
+
+      <div class="publish-card">
+        <h4>Publish to Marketplace</h4>
+        <p>Upload this draft to Sulla Cloud for admin review. Approved submissions appear in the public marketplace for others to install.</p>
+        <button
+          type="button"
+          class="btn primary"
+          :disabled="!!drafts.publishing.value"
+          @click="doPublishMarketplace"
+        >
+          {{ drafts.publishing.value === 'marketplace' ? 'Uploading…' : 'Publish to Marketplace' }}
+        </button>
+      </div>
+
+      <div
+        v-if="drafts.publishError.value"
+        class="banner err"
       >
-        <p class="hint">
-          Publishing writes the draft somewhere permanent. Editing here stays in the database until you take one of these actions.
-        </p>
+        {{ drafts.publishError.value }}
+      </div>
+      <div
+        v-if="drafts.publishResult.value?.type === 'local'"
+        class="banner ok"
+      >
+        Written → <code>{{ drafts.publishResult.value.path }}</code>
+      </div>
+      <div
+        v-else-if="drafts.publishResult.value?.type === 'marketplace'"
+        class="banner ok"
+      >
+        Submitted. Template ID: <code>{{ drafts.publishResult.value.templateId }}</code> (bundle {{ drafts.publishResult.value.bundleStatus }})
+      </div>
+    </section>
 
-        <div class="publish-card">
-          <h4>Publish locally</h4>
-          <p>Materialise this draft to <code>~/sulla/{{ kindPluralLabel }}/</code> so Sulla's runtime picks it up.</p>
-          <label class="f">
-            <span class="l">Target slug</span>
-            <input
-              v-model="localSlug"
-              type="text"
-            >
-          </label>
-          <button
-            type="button"
-            class="btn primary"
-            :disabled="!!drafts.publishing.value || !localSlug.trim()"
-            @click="doPublishLocal"
-          >
-            {{ drafts.publishing.value === 'local' ? 'Publishing…' : 'Publish to disk' }}
-          </button>
-        </div>
-
-        <div class="publish-card">
-          <h4>Publish to Marketplace</h4>
-          <p>Upload this draft to Sulla Cloud for admin review. Approved submissions appear in the public marketplace for others to install.</p>
-          <button
-            type="button"
-            class="btn primary"
-            :disabled="!!drafts.publishing.value"
-            @click="doPublishMarketplace"
-          >
-            {{ drafts.publishing.value === 'marketplace' ? 'Uploading…' : 'Publish to Marketplace' }}
-          </button>
-        </div>
-
-        <div
-          v-if="drafts.publishError.value"
-          class="banner err"
+    <footer>
+      <div
+        v-if="drafts.saveError.value"
+        class="err-small"
+      >
+        {{ drafts.saveError.value }}
+      </div>
+      <div class="actions">
+        <button
+          type="button"
+          class="btn ghost"
+          @click="$emit('close')"
         >
-          {{ drafts.publishError.value }}
-        </div>
-        <div
-          v-if="drafts.publishResult.value?.type === 'local'"
-          class="banner ok"
+          Close
+        </button>
+        <button
+          type="button"
+          class="btn ghost danger"
+          @click="onDelete"
         >
-          Written → <code>{{ drafts.publishResult.value.path }}</code>
-        </div>
-        <div
-          v-else-if="drafts.publishResult.value?.type === 'marketplace'"
-          class="banner ok"
+          Delete draft
+        </button>
+        <button
+          type="button"
+          class="btn primary"
+          :disabled="!dirty || drafts.saving.value"
+          @click="doSave"
         >
-          Submitted. Template ID: <code>{{ drafts.publishResult.value.templateId }}</code> (bundle {{ drafts.publishResult.value.bundleStatus }})
-        </div>
-      </section>
-
-      <footer>
-        <div
-          v-if="drafts.saveError.value"
-          class="err-small"
-        >
-          {{ drafts.saveError.value }}
-        </div>
-        <div class="actions">
-          <button
-            type="button"
-            class="btn ghost"
-            @click="$emit('close')"
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            class="btn ghost danger"
-            @click="onDelete"
-          >
-            Delete draft
-          </button>
-          <button
-            type="button"
-            class="btn primary"
-            :disabled="!dirty || drafts.saving.value"
-            @click="doSave"
-          >
-            {{ drafts.saving.value ? 'Saving…' : (dirty ? 'Save draft' : 'Saved') }}
-          </button>
-        </div>
+          {{ drafts.saving.value ? 'Saving…' : (dirty ? 'Save draft' : 'Saved') }}
+        </button>
+      </div>
     </footer>
   </div>
 </template>
@@ -163,6 +168,7 @@
 import { computed, ref, watch } from 'vue';
 
 import FunctionManifestForm from '@pkg/components/routines/forms/FunctionManifestForm.vue';
+import IntegrationManifestForm from '@pkg/components/routines/forms/IntegrationManifestForm.vue';
 import RecipeManifestForm from '@pkg/components/routines/forms/RecipeManifestForm.vue';
 import SkillManifestForm from '@pkg/components/routines/forms/SkillManifestForm.vue';
 import type { DraftDetail } from '@pkg/composables/useLibraryDrafts';
@@ -209,10 +215,12 @@ const currentName = computed(() => {
   return (m?.metadata?.name as string | undefined) ?? '';
 });
 
-const kindPluralLabel = computed(() => ({ skill: 'skills', function: 'functions', recipe: 'recipes' } as const)[props.draft.kind]);
+const kindPluralLabel = computed(() => ({
+  skill: 'skills', function: 'functions', recipe: 'recipes', integration: 'integrations',
+} as const)[props.draft.kind]);
 
 const localSlug = ref(props.draft.slug);
-watch(() => props.draft.id, () => { localSlug.value = props.draft.slug; });
+watch(() => props.draft.id, () => { localSlug.value = props.draft.slug });
 
 function onFormChange(next: EditState) {
   editState.value = next;
@@ -311,9 +319,10 @@ h2 {
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: white;
 }
-.kind-badge.kind-skill    { background: rgba(245, 158, 11, 0.35); border-color: rgba(245, 158, 11, 0.6); }
-.kind-badge.kind-function { background: rgba(6, 182, 212, 0.35);  border-color: rgba(6, 182, 212, 0.6); }
-.kind-badge.kind-recipe   { background: rgba(192, 38, 211, 0.35); border-color: rgba(192, 38, 211, 0.6); }
+.kind-badge.kind-skill       { background: rgba(245, 158, 11, 0.35); border-color: rgba(245, 158, 11, 0.6); }
+.kind-badge.kind-function    { background: rgba(6, 182, 212, 0.35);  border-color: rgba(6, 182, 212, 0.6); }
+.kind-badge.kind-recipe      { background: rgba(192, 38, 211, 0.35); border-color: rgba(192, 38, 211, 0.6); }
+.kind-badge.kind-integration { background: rgba(96, 165, 250, 0.35); border-color: rgba(96, 165, 250, 0.6); }
 
 .tabs {
   display: flex;

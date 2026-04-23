@@ -387,7 +387,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 import SullaCloudCard from '@pkg/components/account/SullaCloudCard.vue';
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
@@ -504,9 +504,27 @@ const installedForOpenDrawer = computed(() => {
   return mp.lastInstalled.value;
 });
 
+// Deep-link receiver: AgentRouter dispatches this CustomEvent after
+// the sulla://marketplace/install?id=<id> handler focuses (or creates)
+// the marketplace tab. We load the detail view for the requested
+// template so the user lands on the correct page without an extra
+// click. The 100ms retry window covers the case where this component
+// hasn't finished mounting when the event fires on a brand-new tab.
+function onOpenDetailEvent(ev: Event) {
+  const id = (ev as CustomEvent<{ id?: string }>).detail?.id;
+  if (!id) return;
+  mp.clearInstallResult();
+  void mp.loadDetail(id);
+}
+
 onMounted(async() => {
+  window.addEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
   const authed = await refreshAuthStatus();
   if (authed) void mp.load();
+});
+
+onUnmounted(() => {
+  window.removeEventListener('sulla:marketplace-open-detail', onOpenDetailEvent);
 });
 
 function onKind(k: KindFilter) {

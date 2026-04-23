@@ -196,6 +196,19 @@ export class GuestBridge {
       ? { x: options.clip.x, y: options.clip.y, width: options.clip.width, height: options.clip.height }
       : undefined;
 
+    // Diagnostic entry log — searchable string so we can confirm the code
+    // path is reached post-rebuild. If captures are failing and NO line
+    // matching `[GuestBridge] capture start` shows up in the Electron
+    // console, the request is being routed somewhere else entirely.
+    const wcDestroyed = this.wc.isDestroyed();
+    const wcUrl = wcDestroyed ? '(destroyed)' : (() => { try { return this.wc.getURL(); } catch { return '(unknown)'; } })();
+    console.log(`[GuestBridge] capture start assetId=${ this.assetId } wcDestroyed=${ wcDestroyed } url=${ wcUrl } rect=${ rect ? JSON.stringify(rect) : '(full)' }`);
+
+    if (wcDestroyed) {
+      console.warn(`[GuestBridge] capture abort — webContents destroyed assetId=${ this.assetId }`);
+      return null;
+    }
+
     try {
       // 10s timeout is a safety net, not the happy path — capturePage with
       // stayHidden resolves in a few hundred ms under normal conditions.
@@ -205,17 +218,26 @@ export class GuestBridge {
           setTimeout(() => reject(new Error('capturePage timed out after 10s')), 10_000),
         ),
       ]);
-      if (!image || image.isEmpty()) {
-        console.warn('[GuestBridge] capturePage returned empty NativeImage');
+      if (!image) {
+        console.warn(`[GuestBridge] capturePage returned null/undefined assetId=${ this.assetId }`);
         return null;
       }
+      if (image.isEmpty()) {
+        const size = image.getSize();
+        console.warn(`[GuestBridge] capturePage returned empty NativeImage assetId=${ this.assetId } size=${ JSON.stringify(size) }`);
+        return null;
+      }
+      const size = image.getSize();
       const buffer = format === 'png' ? image.toPNG() : image.toJPEG(quality);
+      console.log(`[GuestBridge] capture ok assetId=${ this.assetId } size=${ JSON.stringify(size) } bytes=${ buffer.length }`);
       return {
         base64:    buffer.toString('base64'),
         mediaType: `image/${ format }`,
       };
     } catch (err) {
-      console.warn('[GuestBridge] captureScreenshot failed:', err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : '';
+      console.warn(`[GuestBridge] captureScreenshot failed assetId=${ this.assetId }: ${ msg }\n${ stack }`);
       return null;
     }
   }

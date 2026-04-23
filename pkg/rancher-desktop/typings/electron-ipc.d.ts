@@ -575,10 +575,10 @@ export interface IpcMainInvokeEvents {
   // Library items can be "forked" into an editable DB row (the draft).
   // Edits live in the draft until the user Publishes, at which point the
   // draft materialises back to ~/sulla/<kind>s/<slug>/ or to the marketplace.
-  'library-fork':        (kind: 'skill' | 'function' | 'recipe', slug: string) => { id: string } | { error: string };
-  'library-drafts-list':    (kind?: 'skill' | 'function' | 'recipe') => {
+  'library-fork':        (kind: 'skill' | 'function' | 'recipe' | 'integration', slug: string) => { id: string } | { error: string };
+  'library-drafts-list':    (kind?: 'skill' | 'function' | 'recipe' | 'integration') => {
     id:         string;
-    kind:       'skill' | 'function' | 'recipe';
+    kind:       'skill' | 'function' | 'recipe' | 'integration';
     slug:       string;
     base_slug:  string | null;
     name:       string;
@@ -586,7 +586,7 @@ export interface IpcMainInvokeEvents {
   }[];
   'library-draft-get':      (id: string) => {
     id:            string;
-    kind:          'skill' | 'function' | 'recipe';
+    kind:          'skill' | 'function' | 'recipe' | 'integration';
     slug:          string;
     base_slug:     string | null;
     manifest_json: Record<string, unknown>;

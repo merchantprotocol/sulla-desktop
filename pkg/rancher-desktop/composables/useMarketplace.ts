@@ -82,8 +82,16 @@ export function useMarketplace() {
 
         return;
       }
-      templates.value = res.templates ?? [];
-      total.value = res.total ?? 0;
+      // Defensive client-side kind filter. The Cloudflare worker's browse
+      // endpoint may not yet recognise newer kinds (e.g. 'integration'), in
+      // which case it ignores the filter and returns mixed results. Post-
+      // filtering ensures a selected kind never shows foreign items, even
+      // before the worker ships an updated enum.
+      const rows = res.templates ?? [];
+      const filtered = kind.value === 'all' ? rows : rows.filter((t: { kind?: string }) => t.kind === kind.value);
+
+      templates.value = filtered;
+      total.value = kind.value === 'all' ? (res.total ?? 0) : filtered.length;
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
       templates.value = [];

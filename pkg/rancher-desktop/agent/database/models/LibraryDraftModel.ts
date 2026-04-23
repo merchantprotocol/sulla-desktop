@@ -17,18 +17,18 @@
 
 import { postgresClient } from '../PostgresClient';
 
-export type LibraryDraftKind = 'skill' | 'function' | 'recipe';
+export type LibraryDraftKind = 'skill' | 'function' | 'recipe' | 'integration';
 
 export interface LibraryDraft {
-  id:             string;
-  kind:           LibraryDraftKind;
-  slug:           string;
-  base_slug:      string | null;
-  name:           string;
-  manifest_json:  Record<string, unknown>;
-  files_json:     Record<string, string>;
-  created_at:     string;
-  updated_at:     string;
+  id:            string;
+  kind:          LibraryDraftKind;
+  slug:          string;
+  base_slug:     string | null;
+  name:          string;
+  manifest_json: Record<string, unknown>;
+  files_json:    Record<string, string>;
+  created_at:    string;
+  updated_at:    string;
 }
 
 export interface LibraryDraftSummary {
@@ -155,10 +155,10 @@ export class LibraryDraftModel {
     const params: unknown[] = [];
     let i = 1;
 
-    if (patch.slug !== undefined)          { sets.push(`slug = $${ i++ }`);               params.push(patch.slug); }
-    if (patch.name !== undefined)          { sets.push(`name = $${ i++ }`);               params.push(patch.name); }
-    if (patch.manifest_json !== undefined) { sets.push(`manifest_json = $${ i++ }::jsonb`); params.push(JSON.stringify(patch.manifest_json)); }
-    if (patch.files_json !== undefined)    { sets.push(`files_json = $${ i++ }::jsonb`);    params.push(JSON.stringify(patch.files_json)); }
+    if (patch.slug !== undefined) { sets.push(`slug = $${ i++ }`); params.push(patch.slug) }
+    if (patch.name !== undefined) { sets.push(`name = $${ i++ }`); params.push(patch.name) }
+    if (patch.manifest_json !== undefined) { sets.push(`manifest_json = $${ i++ }::jsonb`); params.push(JSON.stringify(patch.manifest_json)) }
+    if (patch.files_json !== undefined) { sets.push(`files_json = $${ i++ }::jsonb`); params.push(JSON.stringify(patch.files_json)) }
 
     if (sets.length === 0) {
       return LibraryDraftModel.findById(id);

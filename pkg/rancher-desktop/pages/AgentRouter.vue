@@ -274,6 +274,30 @@ function onAgentCommand(_event: any, args: any) {
     router.push(`/Browser/${ tab.id }`);
     break;
   }
+  case 'marketplace:open-detail': {
+    // Fired by the main-process deep-link handler when the user clicks
+    // "Open in Sulla Desktop" on sulladesktop.com (sulla://marketplace/
+    // install?id=<id>). Focus an existing marketplace tab if we have
+    // one; otherwise spin up a fresh one. Either way, broadcast a
+    // window event so the mounted MarketplaceTab can auto-load the
+    // detail view for the requested template.
+    const templateId = args.templateId;
+    if (!templateId) break;
+
+    const existing = browserTabs.find(t => t.mode === 'marketplace');
+    const targetTab = existing ?? createTab('about:blank', { mode: 'marketplace' });
+
+    router.push(`/Browser/${ targetTab.id }`);
+
+    // MarketplaceTab listens for this; we fire after a tick so the
+    // component has a chance to mount on a fresh tab.
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('sulla:marketplace-open-detail', {
+        detail: { id: templateId },
+      }));
+    }, 50);
+    break;
+  }
   case 'routines:import': {
     // Fire IPC. On success the routines tab scanner picks up the new
     // folder on its next refresh — we open the tab to trigger that.

@@ -29,6 +29,9 @@ import yaml from 'yaml';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
+import type { IntegrationManifest } from '@pkg/agent/integrations/schema';
+import type { ManifestSource } from '@pkg/agent/integrations/loader';
+
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
@@ -166,8 +169,8 @@ function readComposeImage(recipeDir: string): string | undefined {
   if (!text) return undefined;
 
   try {
-    const doc = yaml.parse(text);
-    const services = (doc)?.services;
+    const doc = yaml.parse(text) as { services?: Record<string, { image?: unknown } | undefined> } | null;
+    const services = doc?.services;
     if (!services || typeof services !== 'object') return undefined;
     for (const service of Object.values(services)) {
       if (service && typeof service.image === 'string') return service.image;
@@ -240,7 +243,10 @@ function scanIntegrations(): IntegrationRow[] {
   // and merges with user-dir-wins. We reuse it verbatim so the Library view
   // is always a faithful mirror of what the catalog actually loads.
   const { loadCatalog } = require('@pkg/agent/integrations/loader');
-  const { manifests, sources } = loadCatalog();
+  const { manifests, sources } = loadCatalog() as {
+    manifests: Record<string, IntegrationManifest>;
+    sources:   Record<string, ManifestSource>;
+  };
 
   const {
     resolveSullaIntegrationsDir,
@@ -316,6 +322,36 @@ function kindBaseDir(pluralKind: KindPlural): string {
   }
 }
 
+/**
+ * Resolve an item's on-disk directory, searching every location where
+ * items of that kind can live. Integrations are the only kind with two
+ * possible homes (resources/builtin vs user/marketplace); the others
+ * have a single canonical base dir so `kindBaseDir` suffices there.
+ */
+function findItemDir(kind: KindSingular, slug: string): string | null {
+  const paths = require('@pkg/agent/utils/sullaPaths');
+
+  const candidates: string[] = (() => {
+    switch (kind) {
+    case 'routine': return [paths.resolveSullaRoutinesDir()];
+    case 'skill': return [paths.resolveSullaUserSkillsDir()];
+    case 'function': return [paths.resolveSullaFunctionsDir()];
+    case 'recipe': return [paths.resolveSullaRecipesDir()];
+    case 'integration': return [paths.resolveSullaUserIntegrationsDir(), paths.resolveSullaIntegrationsDir()];
+    }
+  })();
+
+  for (const base of candidates) {
+    const candidate = path.join(base, slug);
+
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 interface BundleFileEntry {
   path: string;
   size: number;
@@ -369,12 +405,13 @@ function coreDocFor(kind: KindSingular): string {
   case 'skill': return 'SKILL.md';
   case 'function': return 'function.yaml';
   case 'recipe': return 'manifest.yaml';
+  case 'integration': return 'integration.yaml';
   }
 }
 
 interface BuiltManifest {
   apiVersion:      'sulla/v3';
-  kind:            'Routine' | 'Skill' | 'Function' | 'Recipe';
+  kind:            'Routine' | 'Skill' | 'Function' | 'Recipe' | 'Integration';
   manifestVersion: 1;
   metadata: {
     name:        string;
@@ -423,13 +460,9 @@ interface BuiltPayload {
 }
 
 export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPayload | null {
-  const pluralKind = KIND_TO_PLURAL[kind];
-  const baseDir = kindBaseDir(pluralKind);
-  const itemDir = path.join(baseDir, slug);
+  const itemDir = findItemDir(kind, slug);
 
-  if (!fs.existsSync(itemDir) || !fs.statSync(itemDir).isDirectory()) {
-    return null;
-  }
+  if (!itemDir) return null;
 
   const coreDocName = coreDocFor(kind);
   const coreDocPath = path.join(itemDir, coreDocName);
@@ -564,6 +597,41 @@ export function buildLocalManifest(kind: KindSingular, slug: string): BuiltPaylo
     }
     break;
   }
+  case 'integration': {
+    if (coreDocText != null) {
+      try {
+        const doc = yaml.parse(coreDocText) as Record<string, unknown> | null;
+
+        if (doc) {
+          name = pickString(doc, 'name') ?? slug;
+          description = pickString(doc, 'description') ?? '';
+          version = pickString(doc, 'version') ?? '1.0.0';
+          category = pickString(doc, 'category') ?? null;
+
+          const bundled = (doc.bundled && typeof doc.bundled === 'object')
+            ? doc.bundled as { functions?: unknown; skills?: unknown }
+            : null;
+          const bundledFunctions = Array.isArray(bundled?.functions) ? bundled.functions.map(String) : [];
+          const bundledSkills = Array.isArray(bundled?.skills) ? bundled.skills.map(String) : [];
+          const properties = Array.isArray(doc.properties) ? doc.properties : [];
+
+          summaryBlock = {
+            integrationSummary: {
+              authType:         pickString(doc, 'authType') ?? 'credentials',
+              oauthProviderId:  pickString(doc, 'oauthProviderId') ?? null,
+              propertyCount:    properties.length,
+              bundledFunctions,
+              bundledSkills,
+              builtin:          doc.builtin === true,
+            },
+          };
+        }
+      } catch (err) {
+        console.warn(`[Sulla] integration ${ slug } has unparseable integration.yaml:`, err);
+      }
+    }
+    break;
+  }
   }
 
   const files = walkBundleFiles(itemDir, slug);
@@ -632,8 +700,8 @@ function readComposePorts(recipeDir: string): number[] {
   const text = readTextSafe(composePath);
   if (!text) return [];
   try {
-    const doc = yaml.parse(text) as Record<string, unknown> | null;
-    const services = (doc as any)?.services;
+    const doc = yaml.parse(text) as { services?: Record<string, { ports?: unknown } | undefined> } | null;
+    const services = doc?.services;
     if (!services || typeof services !== 'object') return [];
     const ports = new Set<number>();
     for (const service of Object.values(services)) {
