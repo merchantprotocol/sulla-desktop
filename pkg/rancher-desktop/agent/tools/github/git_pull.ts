@@ -1,3 +1,4 @@
+import { getIntegrationService } from '../../services/IntegrationService';
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
 
@@ -26,8 +27,34 @@ export class GitPullWorker extends BaseTool {
 
       const repoRoot = rootResult.stdout.trim();
 
+      // Fetch PAT from vault and build authenticated pull target for GitHub remotes
+      let pullRemote = remote;
+      const integrationService = getIntegrationService();
+      const tokenValue = await integrationService.getIntegrationValue('github', 'token');
+      const token = tokenValue?.value;
+
+      if (token) {
+        const remoteUrlResult = await runCommand(
+          `git -C "${ repoRoot }" remote get-url ${ remote }`,
+          [],
+          { runInLimaShell: true, timeoutMs: 10_000 },
+        );
+        const rawUrl = remoteUrlResult.stdout.trim();
+
+        if (rawUrl.includes('github.com')) {
+          let httpsUrl = rawUrl;
+          if (httpsUrl.startsWith('git@github.com:')) {
+            httpsUrl = `https://github.com/${ httpsUrl.slice('git@github.com:'.length) }`;
+          }
+          if (httpsUrl.startsWith('https://github.com/')) {
+            httpsUrl = `https://x-access-token:${ token }@github.com/${ httpsUrl.slice('https://github.com/'.length) }`;
+          }
+          pullRemote = `"${ httpsUrl }"`;
+        }
+      }
+
       // Build pull command
-      let cmd = `git -C "${ repoRoot }" pull ${ remote }`;
+      let cmd = `git -C "${ repoRoot }" pull ${ pullRemote }`;
       if (branch) {
         cmd += ` ${ branch }`;
       }
