@@ -99,4 +99,30 @@ export const REMOTE_PROVIDERS = [
       { id: 'glm-4.7', name: 'GLM 4.7', description: 'Zhipu GLM 4.7' },
     ],
   },
+  {
+    id:          'cohere',
+    name:        'Cohere',
+    description: 'Command A, Command R, Command R+, and Command R7B models - support tool use - 1,000 API calls/month free tier',
+    baseUrl:     'https://api.cohere.ai/compatibility/v1',
+    signupUrl:   'https://dashboard.cohere.com/api-keys',
+    signupText:  'Get free API key from Cohere',
+    models:      [
+      // Command A - Latest flagship (supports tool use)
+      { id: 'command-a-03-2025', name: 'Command A', description: 'Latest flagship - tool use, RAG, agents' },
+      { id: 'command-a-reasoning-08-2025', name: 'Command A Reasoning', description: 'Advanced reasoning - tool use, complex reasoning' },
+      { id: 'command-a-translate-08-2025', name: 'Command A Translate', description: 'Translation optimized - tool use, multilingual' },
+      { id: 'command-a-vision-07-2025', name: 'Command A Vision', description: 'Multimodal vision - tool use, image + text' },
+      // Command R7B - Fast lightweight (supports tool use)
+      { id: 'command-r7b-12-2024', name: 'Command R7B', description: 'Fast, lightweight - tool use, RAG, everyday tasks' },
+      { id: 'command-r7b-arabic-02-2025', name: 'Command R7B Arabic', description: 'Arabic optimized - tool use, fast, lightweight' },
+      // Command R - Balanced (supports tool use)
+      { id: 'command-r-08-2024', name: 'Command R (08-2024)', description: 'Balanced - tool use, conversation, RAG' },
+      { id: 'command-r-03-2024', name: 'Command R (03-2024)', description: 'Earlier Command R - tool use, conversation' },
+      { id: 'command-r', name: 'Command R', description: 'Balanced - tool use, everyday tasks' },
+      // Command R+ - Advanced reasoning (supports tool use)
+      { id: 'command-r-plus-08-2024', name: 'Command R+ (08-2024)', description: 'Advanced reasoning - tool use, complex tasks' },
+      { id: 'command-r-plus-04-2024', name: 'Command R+ (04-2024)', description: 'Earlier Command R+ - tool use, reasoning' },
+      { id: 'command-r-plus', name: 'Command R+', description: 'Advanced reasoning - tool use, complex tasks' },
+    ],
+  },
 ];

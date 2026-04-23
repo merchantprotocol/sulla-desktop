@@ -1,5 +1,6 @@
 import { AlibabaModels } from './AlibabaModels';
 import { AnthropicModels } from './AnthropicModels';
+import { CohereModels } from './CohereModels';
 import { CustomModels } from './CustomModels';
 import { ElevenLabsVoices } from './ElevenLabsVoices';
 import { GrokModels } from './GrokModels';
@@ -19,6 +20,7 @@ registerSelectBoxProvider(new OpenAIModels());
 registerSelectBoxProvider(new KimiModels());
 registerSelectBoxProvider(new AlibabaModels());
 registerSelectBoxProvider(new NvidiaModels());
+registerSelectBoxProvider(new CohereModels());
 registerSelectBoxProvider(new CustomModels());
 registerSelectBoxProvider(new ElevenLabsVoices());
 registerSelectBoxProvider(new VaultLlmAccess());
