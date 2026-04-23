@@ -16,23 +16,23 @@ import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
  * documented in docs/marketplace/api.md.
  */
 export interface MarketplaceBrowseRow {
-  id:                    string;
-  kind:                  'routine' | 'skill' | 'function' | 'recipe';
-  slug:                  string;
-  name:                  string;
-  description?:          string | null;
-  tagline?:              string | null;
-  version:               string;
-  category?:             string | null;
-  author_contractor_id:  string;
-  author_display?:       string | null;
-  tags:                  string[];
-  featured?:             boolean;
-  hero_media?:           { type: string; url: string; poster?: string } | null;
-  bundle_size:           number;
-  download_count:        number;
-  created_at:            string;
-  updated_at:            string;
+  id:                   string;
+  kind:                 'routine' | 'skill' | 'function' | 'recipe';
+  slug:                 string;
+  name:                 string;
+  description?:         string | null;
+  tagline?:             string | null;
+  version:              string;
+  category?:            string | null;
+  author_contractor_id: string;
+  author_display?:      string | null;
+  tags:                 string[];
+  featured?:            boolean;
+  hero_media?:          { type: string; url: string; poster?: string } | null;
+  bundle_size:          number;
+  download_count:       number;
+  created_at:           string;
+  updated_at:           string;
 }
 /**
  * IpcMainEvents describes events the renderer can send to the main process,
@@ -164,7 +164,7 @@ export interface IpcMainEvents {
   // Pushed by RoutinesHome / AgentRoutines when the visible surface changes.
   // Drives enable/disable of File → Routines menu items.
   'app-state:set-routine-context': (ctx:
-    | { mode: 'routine';  id: string;   name: string }
+    | { mode: 'routine'; id: string; name: string }
     | { mode: 'template'; slug: string; name: string }
     | null
   ) => void;
@@ -279,14 +279,14 @@ export interface IpcMainInvokeEvents {
   'claude-oauth:cancel': () => void;
 
   /** Sulla Cloud account auth (phone OTP / email / Apple) */
-  'sulla-cloud:get-status':      () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
-  'sulla-cloud:send-otp':        (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
-  'sulla-cloud:verify-otp':      (phone: string, code: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
-  'sulla-cloud:email-login':     (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
-  'sulla-cloud:email-register':  (email: string, password: string, name?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
-  'sulla-cloud:apple-sign-in':   (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:get-status':            () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
+  'sulla-cloud:send-otp':              (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:verify-otp':            (phone: string, code: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-login':           (email: string, password: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:email-register':        (email: string, password: string, name?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
+  'sulla-cloud:apple-sign-in':         (identityToken: string, fullName?: string, email?: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
   'sulla-cloud:apple-sign-in-browser': () => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
-  'sulla-cloud:logout':          () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
+  'sulla-cloud:logout':                () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
 
   /** Desktop relay — pairing + status */
   'desktop-relay:get-status':         () => { pairedUserId: string; connected: boolean; lastError?: string };
@@ -395,27 +395,27 @@ export interface IpcMainInvokeEvents {
 
   // Routine template registry (scanned from ~/sulla/routines/<slug>/routine.yaml)
   'routines-template-list':        () => {
-    slug:                   string;
-    id:                     string;
-    name:                   string;
-    description:            string;
-    version:                string;
-    nodeCount:              number;
-    edgeCount:              number;
-    triggerTypes:           string[];
-    updatedAt:              string;
-    hasAgentMd?:            boolean;
-    summary?:               string;
-    requiredIntegrations?:  string[];
-    requiredFunctions?:     string[];
+    slug:                  string;
+    id:                    string;
+    name:                  string;
+    description:           string;
+    version:               string;
+    nodeCount:             number;
+    edgeCount:             number;
+    triggerTypes:          string[];
+    updatedAt:             string;
+    hasAgentMd?:           boolean;
+    summary?:              string;
+    requiredIntegrations?: string[];
+    requiredFunctions?:    string[];
   }[];
-  'routines-template-instantiate': (slug: string) => { id: string; name: string };
-  'routines-create-blank':         () => { id: string; name: string };
-  'routines-execute':              (workflowId: string, triggerPayload?: string) => { executionId: string; workflowId: string };
-  'routines-abort':                (executionId: string) => { aborted: boolean; reason?: string };
-  'routines-export':               (workflowId: string) => { path: string } | { canceled: true } | { error: string };
-  'routines-export-template':      (slug: string) => { path: string } | { canceled: true } | { error: string };
-  'routines-import':               () => { slug: string; id: string; name: string } | { canceled: true } | { error: string };
+  'routines-template-instantiate':   (slug: string) => { id: string; name: string };
+  'routines-create-blank':           () => { id: string; name: string };
+  'routines-execute':                (workflowId: string, triggerPayload?: string) => { executionId: string; workflowId: string };
+  'routines-abort':                  (executionId: string) => { aborted: boolean; reason?: string };
+  'routines-export':                 (workflowId: string) => { path: string } | { canceled: true } | { error: string };
+  'routines-export-template':        (slug: string) => { path: string } | { canceled: true } | { error: string };
+  'routines-import':                 () => { slug: string; id: string; name: string } | { canceled: true } | { error: string };
   'routines-publish-to-marketplace': (workflowId: string) =>
     | { templateId: string; slug: string; name: string; status: string; bundleSize: number }
     | { needs_auth: true }
@@ -458,12 +458,12 @@ export interface IpcMainInvokeEvents {
     filter?:   string[];
     dryRun?:   boolean;
   }) => {
-    results: Array<{
+    results: {
       slug:        string;
       status:      'ok' | 'skipped' | 'error';
       templateId?: string;
       message?:    string;
-    }>;
+    }[];
     summary: { ok: number; error: number; total: number };
   } | { error: string };
   // #endregion
@@ -479,7 +479,7 @@ export interface IpcMainInvokeEvents {
     page?:  number;
     limit?: number;
   }) => {
-    templates: Array<MarketplaceBrowseRow>;
+    templates: MarketplaceBrowseRow[];
     total:     number;
     page:      number;
     limit:     number;
@@ -488,16 +488,34 @@ export interface IpcMainInvokeEvents {
     template: MarketplaceBrowseRow & { manifest: Record<string, unknown> };
   } | { error: string };
   'marketplace-install': (id: string) => {
-    kind:      'routine' | 'skill' | 'function' | 'recipe';
-    slug:      string;
-    path:      string;
-    name:      string;
+    kind: 'routine' | 'skill' | 'function' | 'recipe';
+    slug: string;
+    path: string;
+    name: string;
+  } | { error: string };
+  'marketplace-my-submissions': (opts?: {
+    page?:  number;
+    limit?: number;
+  }) => {
+    templates: (MarketplaceBrowseRow & {
+      status:        'pending' | 'approved' | 'rejected';
+      bundle_status: 'pending' | 'uploaded' | 'missing';
+      admin_notes?:  string | null;
+      reviewed_at?:  string | null;
+    })[];
+    total: number;
+    page:  number;
+    limit: number;
+  } | { error: string };
+  'marketplace-takedown': (id: string) => {
+    success: true;
+    action:  'deleted' | 'withdrawn';
   } | { error: string };
 
   // Library — reads the local on-disk registries populated by marketplace installs
   // (plus manual folders). Each returns a flat list the Studio → Library tab
   // renders in its corresponding panel.
-  'library-list-skills':   () => Array<{
+  'library-list-skills':   () => {
     slug:         string;
     name:         string;
     description:  string;
@@ -505,18 +523,18 @@ export interface IpcMainInvokeEvents {
     condition?:   string;
     promptLength: number;
     updatedAt:    string;
-  }>;
-  'library-list-recipes':  () => Array<{
-    slug:         string;
-    name:         string;
-    description:  string;
-    version:      string;
-    image?:       string;
-    extension?:   string;
-    updatedAt:    string;
-  }>;
+  }[];
+  'library-list-recipes':  () => {
+    slug:        string;
+    name:        string;
+    description: string;
+    version:     string;
+    image?:      string;
+    extension?:  string;
+    updatedAt:   string;
+  }[];
   /** Reveal a library item on disk in the OS file manager. */
-  'library-reveal': (kind: 'routines' | 'skills' | 'functions' | 'recipes', slug: string) => { revealed: boolean; path?: string; error?: string };
+  'library-reveal':        (kind: 'routines' | 'skills' | 'functions' | 'recipes', slug: string) => { revealed: boolean; path?: string; error?: string };
   /**
    * Build a sulla/v3-shaped `{ template, manifest }` payload for a local
    * library item so the detail drawer can render it with the same component
@@ -534,15 +552,15 @@ export interface IpcMainInvokeEvents {
   // Library items can be "forked" into an editable DB row (the draft).
   // Edits live in the draft until the user Publishes, at which point the
   // draft materialises back to ~/sulla/<kind>s/<slug>/ or to the marketplace.
-  'library-fork':           (kind: 'skill' | 'function' | 'recipe', slug: string) => { id: string } | { error: string };
-  'library-drafts-list':    (kind?: 'skill' | 'function' | 'recipe') => Array<{
+  'library-fork':        (kind: 'skill' | 'function' | 'recipe', slug: string) => { id: string } | { error: string };
+  'library-drafts-list':    (kind?: 'skill' | 'function' | 'recipe') => {
     id:         string;
     kind:       'skill' | 'function' | 'recipe';
     slug:       string;
     base_slug:  string | null;
     name:       string;
     updated_at: string;
-  }>;
+  }[];
   'library-draft-get':      (id: string) => {
     id:            string;
     kind:          'skill' | 'function' | 'recipe';
@@ -554,18 +572,18 @@ export interface IpcMainInvokeEvents {
     updated_at:    string;
   } | { error: string };
   'library-draft-save':     (id: string, patch: {
-    slug?:         string;
+    slug?:          string;
     manifest_json?: Record<string, unknown>;
     files_json?:    Record<string, string>;
   }) => { ok: true } | { error: string };
-  'library-draft-delete':   (id: string) => { ok: true } | { error: string };
+  'library-draft-delete': (id: string) => { ok: true } | { error: string };
 
   // ── Publish (Phase 3) ──────────────────────────────────────
   /** Materialise a draft back to ~/sulla/<kind>s/<targetSlug>/. */
   'library-draft-publish-local':       (id: string, targetSlug?: string) => { path: string; slug: string } | { error: string };
   /** Submit the draft to the marketplace (v3 two-step). */
   'library-draft-publish-marketplace': (id: string) => { templateId: string; bundleStatus: string } | { error: string };
-  'routines-list-runs':            (workflowId: string, limit?: number) => Array<{
+  'routines-list-runs':            (workflowId: string, limit?: number) => {
     executionId:     string;
     workflowId:      string;
     workflowName:    string;
@@ -574,7 +592,7 @@ export interface IpcMainInvokeEvents {
     checkpointCount: number;
     startedAt:       string;
     endedAt:         string;
-  }>;
+  }[];
   'routines-load-run':             (executionId: string) => {
     executionId:     string;
     workflowId:      string;
@@ -583,14 +601,14 @@ export interface IpcMainInvokeEvents {
     endedAt:         string;
     checkpointCount: number;
     nodeOutputs:     Record<string, { nodeId: string; label: string; output: unknown; completedAt: string }>;
-    checkpoints:     Array<{
+    checkpoints:     {
       sequence:    number;
       nodeId:      string;
       nodeLabel:   string;
       nodeSubtype: string;
       nodeOutput:  unknown;
       createdAt:   string;
-    }>;
+    }[];
   } | null;
 
   // Workflow execution

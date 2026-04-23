@@ -44,21 +44,21 @@ const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
 export type MarketplaceKind = 'routine' | 'skill' | 'function' | 'recipe';
 
 export interface MarketplaceTemplateDetail {
-  id:                    string;
-  kind:                  MarketplaceKind;
-  slug:                  string;
-  name:                  string;
-  description?:          string | null;
-  version:               string;
-  author_contractor_id:  string;
-  tags?:                 string[];
-  status:                'pending' | 'approved' | 'rejected';
-  bundle_status:         'pending' | 'uploaded' | 'missing';
-  bundle_size?:          number;
-  download_count?:       number;
-  created_at:            string;
-  updated_at:            string;
-  manifest:              Record<string, unknown>;
+  id:                   string;
+  kind:                 MarketplaceKind;
+  slug:                 string;
+  name:                 string;
+  description?:         string | null;
+  version:              string;
+  author_contractor_id: string;
+  tags?:                string[];
+  status:               'pending' | 'approved' | 'rejected';
+  bundle_status:        'pending' | 'uploaded' | 'missing';
+  bundle_size?:         number;
+  download_count?:      number;
+  created_at:           string;
+  updated_at:           string;
+  manifest:             Record<string, unknown>;
 }
 
 export interface SubmitManifestResult {
@@ -79,25 +79,25 @@ export interface UploadBundleResult {
  *  /mine also surfaces admin_notes and reviewed_at because the author has
  *  legitimate reason to see review feedback on their own submissions. */
 export interface MySubmissionRow {
-  id:                    string;
-  kind:                  MarketplaceKind;
-  slug:                  string;
-  name:                  string;
-  description?:          string | null;
-  version:               string;
-  author_contractor_id:  string;
-  tags:                  string[];
-  status:                'pending' | 'approved' | 'rejected';
-  bundle_status:         'pending' | 'uploaded' | 'missing';
-  bundle_size?:          number | null;
-  download_count?:       number;
-  featured?:             boolean;
-  tagline?:              string | null;
-  category?:             string | null;
-  admin_notes?:          string | null;
-  reviewed_at?:          string | null;
-  created_at:            string;
-  updated_at:            string;
+  id:                   string;
+  kind:                 MarketplaceKind;
+  slug:                 string;
+  name:                 string;
+  description?:         string | null;
+  version:              string;
+  author_contractor_id: string;
+  tags:                 string[];
+  status:               'pending' | 'approved' | 'rejected';
+  bundle_status:        'pending' | 'uploaded' | 'missing';
+  bundle_size?:         number | null;
+  download_count?:      number;
+  featured?:            boolean;
+  tagline?:             string | null;
+  category?:            string | null;
+  admin_notes?:         string | null;
+  reviewed_at?:         string | null;
+  created_at:           string;
+  updated_at:           string;
 }
 
 export interface MySubmissionsPage {
@@ -214,7 +214,6 @@ export async function downloadBundleToFile(
   // needed.
   const out = fs.createWriteStream(destFile);
 
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Readable } = require('stream');
   const nodeStream = Readable.fromWeb(res.body as any);
   await pipeline(nodeStream, out);
@@ -232,12 +231,12 @@ export async function downloadBundleToFile(
  * review queue.
  */
 export async function submitManifest(payload: {
-  kind:        MarketplaceKind;
-  name:        string;
+  kind:         MarketplaceKind;
+  name:         string;
   description?: string;
-  version?:    string;
-  tags?:       string[];
-  manifest:    Record<string, unknown>;
+  version?:     string;
+  tags?:        string[];
+  manifest:     Record<string, unknown>;
 }): Promise<SubmitManifestResult> {
   const url = `${ API_BASE }/marketplace/submit-manifest`;
   const res = await fetchWithAuthRetry(url, {
@@ -273,7 +272,7 @@ export async function uploadBundle(
   // node-fetch / undici accept a web ReadableStream in body; building one
   // from a node stream keeps memory bounded for the 25 MB cap.
   const nodeStream = fs.createReadStream(zipPath);
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+
   const { Readable } = require('stream');
   const webStream = Readable.toWeb(nodeStream);
 
@@ -283,7 +282,7 @@ export async function uploadBundle(
       'Content-Type':   'application/zip',
       'Content-Length': String(stats.size),
     },
-    body:     webStream as any,
+    body:     webStream,
     // undici requires duplex:'half' for streaming request bodies.
     duplex:   'half',
   } as any);
@@ -296,4 +295,45 @@ export async function uploadBundle(
   console.log(`[marketplace] uploaded bundle tpl=${ templateId } → bundle_status=${ body.template.bundle_status } size=${ body.template.bundle_size }`);
 
   return body.template;
+}
+
+/**
+ * GET /marketplace/mine. Returns every submission authored by the signed-in
+ * user — pending / approved / rejected — so the desktop can render a
+ * "My Submissions" view without a second request per row.
+ *
+ * Pagination mirrors the server: 1-indexed pages, server clamps limit to
+ * [1, 100] regardless of what we ask for.
+ */
+export async function listMySubmissions(
+  page = 1,
+  limit = 50,
+): Promise<MySubmissionsPage> {
+  const qs = new URLSearchParams({ page: String(page), limit: String(limit) });
+  const url = `${ API_BASE }/marketplace/mine?${ qs.toString() }`;
+  const res = await fetchWithAuthRetry(url, { method: 'GET' });
+
+  return readJsonOrThrow<MySubmissionsPage>(res, 'listMySubmissions');
+}
+
+/**
+ * DELETE /marketplace/templates/:id. User-initiated takedown of their own
+ * submission. Server enforces author == caller; callers only need the id.
+ *
+ * Result shape tells the UI whether the row was hard-deleted (pending /
+ * rejected submissions — never publicly visible after this) or soft
+ * withdrawn (approved submissions — row stays so the author can see
+ * "I withdrew this" in /mine, but the bundle is gone and the browse
+ * feed won't serve it).
+ */
+export async function takedownTemplate(
+  templateId: string,
+): Promise<TakedownResult> {
+  const url = `${ API_BASE }/marketplace/templates/${ encodeURIComponent(templateId) }`;
+  const res = await fetchWithAuthRetry(url, { method: 'DELETE' });
+  const body = await readJsonOrThrow<TakedownResult>(res, 'takedownTemplate');
+
+  console.log(`[marketplace] takedown tpl=${ templateId } → ${ body.action }`);
+
+  return body;
 }

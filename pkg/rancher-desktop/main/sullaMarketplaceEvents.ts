@@ -4,10 +4,12 @@
  * Three channels, all routed through the Sulla Cloud marketplace API on
  * Cloudflare Workers:
  *
- *   marketplace-browse   → GET  /marketplace/browse
- *   marketplace-detail   → GET  /marketplace/templates/:id
- *   marketplace-install  → GET  /marketplace/templates/:id/download
- *                          + safe-unzip + install into the right local dir
+ *   marketplace-browse         → GET    /marketplace/browse
+ *   marketplace-detail         → GET    /marketplace/templates/:id
+ *   marketplace-install        → GET    /marketplace/templates/:id/download
+ *                                + safe-unzip + install into the right local dir
+ *   marketplace-my-submissions → GET    /marketplace/mine
+ *   marketplace-takedown       → DELETE /marketplace/templates/:id
  *
  * Installation targets (matches what the respective scanners already
  * look for on disk):
@@ -45,9 +47,9 @@ const ipcMainProxy = getIpcMainProxy(console);
 const API_BASE = 'https://sulla-workers.jonathon-44b.workers.dev';
 
 // ─── Security caps (mirror sullaRoutineImportEvents.ts) ──────────
-const MAX_FILE_BYTES  = 100 * 1024 * 1024;   // 100 MB per file
+const MAX_FILE_BYTES = 100 * 1024 * 1024;   // 100 MB per file
 const MAX_TOTAL_BYTES = 500 * 1024 * 1024;   // 500 MB total per bundle
-const MAX_ENTRIES     = 10_000;              // zip-bomb sanity cap
+const MAX_ENTRIES = 10_000;              // zip-bomb sanity cap
 
 // The server caps bundle uploads at 25 MB, so anything above that is
 // already a sign something's wrong on the way out of R2.
@@ -66,10 +68,10 @@ function kindTargetDir(kind: MarketplaceKind): string {
   } = require('@pkg/agent/utils/sullaPaths');
 
   switch (kind) {
-  case 'routine':  return resolveSullaRoutinesDir();
+  case 'routine': return resolveSullaRoutinesDir();
   case 'function': return resolveSullaFunctionsDir();
-  case 'skill':    return resolveSullaUserSkillsDir();
-  case 'recipe':   return resolveSullaRecipesDir();
+  case 'skill': return resolveSullaUserSkillsDir();
+  case 'recipe': return resolveSullaRecipesDir();
   default:
     throw new Error(`no install target for kind "${ kind }"`);
   }
@@ -87,8 +89,8 @@ function rejectUnsafePath(name: string): string | null {
 
 function rejectNonRegularEntry(entry: yauzl.Entry): string | null {
   const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
-  const S_IFMT   = 0o170000;
-  const S_IFLNK  = 0o120000;
+  const S_IFMT = 0o170000;
+  const S_IFLNK = 0o120000;
   if (unixMode && (unixMode & S_IFMT) === S_IFLNK) {
     return `symlink entries are not allowed: ${ entry.fileName }`;
   }
@@ -162,16 +164,16 @@ function extractZipSafely(zipPath: string, destDir: string): Promise<void> {
           return reject(new Error('bundle total size exceeds cap'));
         }
 
-        const outPath  = path.join(destDir, entry.fileName);
+        const outPath = path.join(destDir, entry.fileName);
         const resolved = path.resolve(outPath);
-        if (!resolved.startsWith(path.resolve(destDir) + path.sep)
-            && resolved !== path.resolve(destDir)) {
+        if (!resolved.startsWith(path.resolve(destDir) + path.sep) &&
+            resolved !== path.resolve(destDir)) {
           zip.close();
 
           return reject(new Error(`entry escapes destination: ${ entry.fileName }`));
         }
 
-        if (/\/$/.test(entry.fileName)) {
+        if (entry.fileName.endsWith('/')) {
           fs.mkdirSync(outPath, { recursive: true });
           zip.readEntry();
 
@@ -186,9 +188,9 @@ function extractZipSafely(zipPath: string, destDir: string): Promise<void> {
             return reject(streamErr ?? new Error('openReadStream failed'));
           }
           const writeStream = fs.createWriteStream(outPath);
-          writeStream.on('error', (e) => { zip.close(); reject(e); });
+          writeStream.on('error', (e) => { zip.close(); reject(e) });
           writeStream.on('close', () => zip.readEntry());
-          readStream.on('error', (e) => { zip.close(); reject(e); });
+          readStream.on('error', (e) => { zip.close(); reject(e) });
           readStream.pipe(writeStream);
         });
       });
@@ -200,7 +202,7 @@ function extractZipSafely(zipPath: string, destDir: string): Promise<void> {
 
 function resolveBundleRoot(tmpdir: string): { rootPath: string; dirName: string } {
   const entries = fs.readdirSync(tmpdir, { withFileTypes: true });
-  const dirs  = entries.filter(e => e.isDirectory());
+  const dirs = entries.filter(e => e.isDirectory());
   const loose = entries.filter(e => !e.isDirectory());
   if (loose.length > 0) {
     throw new Error(`bundle has loose files at the root: ${ loose.map(l => l.name).join(', ') }. All files must live under a single top-level directory.`);
@@ -215,7 +217,7 @@ function resolveBundleRoot(tmpdir: string): { rootPath: string; dirName: string 
 
 function pickAvailableSlug(targetDir: string, preferred: string): string {
   let candidate = preferred;
-  let counter   = 1;
+  let counter = 1;
   while (fs.existsSync(path.join(targetDir, candidate))) {
     counter++;
     candidate = `${ preferred }-${ counter }`;
@@ -309,10 +311,10 @@ export function initSullaMarketplaceEvents(): void {
       if (!headers) return { error: 'Sign in to Sulla Cloud to browse the marketplace.' };
 
       const params = new URLSearchParams();
-      if (opts.kind)  params.set('kind',  opts.kind);
-      if (opts.q)     params.set('q',     opts.q);
-      if (opts.sort)  params.set('sort',  opts.sort);
-      if (opts.page)  params.set('page',  String(opts.page));
+      if (opts.kind) params.set('kind', opts.kind);
+      if (opts.q) params.set('q', opts.q);
+      if (opts.sort) params.set('sort', opts.sort);
+      if (opts.page) params.set('page', String(opts.page));
       if (opts.limit) params.set('limit', String(opts.limit));
 
       const url = `${ API_BASE }/marketplace/browse${ params.toString() ? `?${ params }` : '' }`;
@@ -443,6 +445,48 @@ export function initSullaMarketplaceEvents(): void {
       return { error: err instanceof Error ? err.message : String(err) };
     } finally {
       rmrfSync(tmpdir);
+    }
+  });
+
+  // ── List the signed-in user's own submissions ──
+  // Returns every submission the caller authored, regardless of status —
+  // pending, approved, and rejected — so the "My Submissions" view can
+  // render the full history without a second round-trip per row.
+  ipcMainProxy.handle('marketplace-my-submissions', async(_event, opts: { page?: number; limit?: number } = {}) => {
+    try {
+      const { listMySubmissions } = await import('@pkg/main/marketplace/client');
+      const page = typeof opts.page === 'number' && opts.page > 0 ? opts.page : 1;
+      const limit = typeof opts.limit === 'number' && opts.limit > 0 ? opts.limit : 50;
+      const data = await listMySubmissions(page, limit);
+
+      return data as any;
+    } catch (err) {
+      console.error('[Sulla] marketplace-my-submissions failed:', err);
+
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // ── User-initiated takedown of their own submission ──
+  // Author-scoped (server enforces caller == author). Renderer already
+  // confirms with the user; main-process just calls through. Response's
+  // `action` field tells the UI whether the row was hard-deleted (pending
+  // or already-rejected submissions) or soft-withdrawn (approved → flips
+  // status to 'rejected', keeps the row so the author can see what they
+  // withdrew in /mine).
+  ipcMainProxy.handle('marketplace-takedown', async(_event, id: string) => {
+    try {
+      if (!id || typeof id !== 'string') {
+        return { error: 'marketplace-takedown requires a template id' };
+      }
+      const { takedownTemplate } = await import('@pkg/main/marketplace/client');
+      const result = await takedownTemplate(id);
+
+      return result as any;
+    } catch (err) {
+      console.error('[Sulla] marketplace-takedown failed:', err);
+
+      return { error: err instanceof Error ? err.message : String(err) };
     }
   });
 
