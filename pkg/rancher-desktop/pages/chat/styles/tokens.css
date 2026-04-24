@@ -1,0 +1,44 @@
+/* ═══════════════════════════════════════════════
+   Steel-blue palette + ink ramp + type tokens
+   Applied at the ChatPage root.
+   ═══════════════════════════════════════════════ */
+
+.chat-root {
+  --ink-0:     #01030a;
+  --ink-1:     #070d1a;
+  --ink-2:     #03060c;
+
+  --read-1:    #f3f5f8;
+  --read-2:    #dee4ec;
+  --read-3:    #a9b3c1;
+  --read-4:    #7a8291;
+  --read-5:    #484f5a;
+
+  --steel-050: #e8f0f7;
+  --steel-100: #c4d4e6;
+  --steel-200: #a8c0dc;
+  --steel-300: #8cacc9;
+  --steel-400: #6ab0cc;
+  --steel-500: #5096b3;
+  --steel-600: #4485a0;
+  --steel-700: #2c4871;
+
+  --accent-soft:   rgba(80, 150, 179, 0.12);
+  --accent-faint:  rgba(80, 150, 179, 0.06);
+  --accent-glow:   rgba(106, 176, 204, 0.45);
+  --accent-glow-2: rgba(80, 150, 179, 0.28);
+
+  --ok:   #86efac;
+  --warn: #fcd34d;
+  --err:  #fca5a5;
+
+  --mono:  ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --serif: "Iowan Old Style", "Palatino", "Charter", Georgia, serif;
+  --sans:  -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+}
+
+@keyframes chat-blink      { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes chat-pulse      { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes chat-pulse-glow { 0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); } 50% { box-shadow: 0 0 0 10px rgba(106,176,204,0); } }
+@keyframes chat-spin       { to { transform: rotate(360deg); } }
+@keyframes chat-fade-in    { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

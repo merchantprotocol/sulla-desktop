@@ -13,6 +13,7 @@
 // CDP-based methods (screenshot, trusted mouse/keyboard events) use
 // `webContents` APIs directly — no guest-side code needed.
 
+import fs from 'fs';
 import type { WebContents, NativeImage } from 'electron';
 
 function jsArg(value: unknown): string {
@@ -210,34 +211,70 @@ export class GuestBridge {
     }
 
     try {
-      // 10s timeout is a safety net, not the happy path — capturePage with
-      // stayHidden resolves in a few hundred ms under normal conditions.
-      const image = await Promise.race([
-        this.wc.capturePage(rect, { stayHidden: true, stayAwake: true }),
-        new Promise<NativeImage>((_, reject) =>
-          setTimeout(() => reject(new Error('capturePage timed out after 10s')), 10_000),
-        ),
-      ]);
-      if (!image) {
-        console.warn(`[GuestBridge] capturePage returned null/undefined assetId=${ this.assetId }`);
-        return null;
+      // Use CDP Page.captureScreenshot — works for offscreen/parked views where
+      // capturePage returns empty NativeImage because the compositor has no frame.
+      // CDP forces a render pass regardless of visibility.
+      const dbg = this.wc.debugger;
+      let attached = false;
+      try {
+        dbg.attach('1.3');
+        attached = true;
+        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] dbg.attach ok assetId=${ this.assetId }\n`);
+      } catch (attachErr) {
+        // Already attached by DevTools or a previous call — that's fine, we can still send commands.
+        attached = false;
+        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] dbg.attach threw assetId=${ this.assetId } err=${ attachErr }\n`);
       }
-      if (image.isEmpty()) {
-        const size = image.getSize();
-        console.warn(`[GuestBridge] capturePage returned empty NativeImage assetId=${ this.assetId } size=${ JSON.stringify(size) }`);
-        return null;
+
+      try {
+        // Ensure Page domain is enabled so captureScreenshot works.
+        await dbg.sendCommand('Page.enable');
+        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] Page.enable ok assetId=${ this.assetId }\n`);
+
+        const cdpParams: Record<string, unknown> = {
+          format,
+          fromSurface:           true,
+          captureBeyondViewport: true,
+        };
+        if (format === 'jpeg') cdpParams.quality = quality;
+        if (rect) {
+          cdpParams.clip = {
+            x:      rect.x,
+            y:      rect.y,
+            width:  rect.width,
+            height: rect.height,
+            scale:  1,
+          };
+        }
+
+        const result = await Promise.race([
+          dbg.sendCommand('Page.captureScreenshot', cdpParams),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('CDP captureScreenshot timed out after 10s')), 10_000),
+          ),
+        ]) as { data: string };
+
+        const base64 = result?.data;
+        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] Page.captureScreenshot returned dataLen=${ base64?.length ?? 'null' } assetId=${ this.assetId }\n`);
+        if (!base64) {
+          console.warn(`[GuestBridge] CDP captureScreenshot returned empty data assetId=${ this.assetId }`);
+          return null;
+        }
+
+        console.log(`[GuestBridge] CDP capture ok assetId=${ this.assetId } bytes=${ base64.length }`);
+        return { base64, mediaType: `image/${ format }` };
+      } finally {
+        if (attached) {
+          try { dbg.detach(); } catch { /* ignore */ }
+        }
       }
-      const size = image.getSize();
-      const buffer = format === 'png' ? image.toPNG() : image.toJPEG(quality);
-      console.log(`[GuestBridge] capture ok assetId=${ this.assetId } size=${ JSON.stringify(size) } bytes=${ buffer.length }`);
-      return {
-        base64:    buffer.toString('base64'),
-        mediaType: `image/${ format }`,
-      };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : '';
       console.warn(`[GuestBridge] captureScreenshot failed assetId=${ this.assetId }: ${ msg }\n${ stack }`);
+      try {
+        fs.appendFileSync('/tmp/sulla-screenshot-debug.log', `[${ new Date().toISOString() }] assetId=${ this.assetId } error=${ msg }\n${ stack }\n---\n`);
+      } catch { /* ignore */ }
       return null;
     }
   }

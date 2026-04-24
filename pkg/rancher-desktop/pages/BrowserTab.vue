@@ -272,7 +272,9 @@ import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
 import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
 import AgentRoutines from './AgentRoutines.vue';
-import BrowserTabChat from './BrowserTabChat.vue';
+// Swapped to the new componentized chat at ./chat/ChatPage.vue.
+// Old implementation at ./BrowserTabChat.vue is kept for rollback.
+import BrowserTabChat from './chat/ChatPage.vue';
 import HistoryTab from './HistoryTab.vue';
 import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';

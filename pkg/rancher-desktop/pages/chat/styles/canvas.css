@@ -1,0 +1,57 @@
+/* Deep-ocean background with breathing steel-blue glows + starfield. */
+
+.chat-canvas {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--ink-2) 0%, var(--ink-1) 60%, var(--ink-0) 100%);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.chat-glow {
+  position: absolute;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  transform: translate(-50%, -50%) scale(1);
+  z-index: 1;
+}
+.chat-glow.a {
+  width: 80vw; height: 80vw;
+  top: 16%; left: 22%;
+  background: radial-gradient(circle at center,
+    rgba(80,150,179,0.48) 0%, rgba(80,150,179,0.28) 14%, rgba(80,150,179,0.14) 28%,
+    rgba(80,150,179,0.06) 42%, rgba(80,150,179,0.024) 56%, transparent 78%);
+  animation: chat-breathe-a 26s ease-in-out infinite;
+}
+.chat-glow.b {
+  width: 70vw; height: 70vw;
+  top: 80%; left: 78%;
+  background: radial-gradient(circle at center,
+    rgba(106,176,204,0.40) 0%, rgba(106,176,204,0.22) 12%, rgba(106,176,204,0.11) 26%,
+    rgba(106,176,204,0.045) 42%, rgba(106,176,204,0.018) 58%, transparent 82%);
+  animation: chat-breathe-b 34s ease-in-out infinite;
+  animation-delay: -8s;
+}
+@keyframes chat-breathe-a {
+  0%,100% { top: 16%; left: 22%; opacity: 0.85; transform: translate(-50%,-50%) scale(1); }
+  50%     { top: 22%; left: 18%; opacity: 0.65; transform: translate(-50%,-50%) scale(0.94); }
+}
+@keyframes chat-breathe-b {
+  0%,100% { top: 80%; left: 78%; opacity: 0.78; transform: translate(-50%,-50%) scale(1); }
+  50%     { top: 86%; left: 72%; opacity: 0.60; transform: translate(-50%,-50%) scale(0.9); }
+}
+.chat-stars {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0.30; z-index: 1;
+  background-image:
+    radial-gradient(1px 1px at 15% 25%, white, transparent),
+    radial-gradient(1px 1px at 35% 70%, var(--steel-200), transparent),
+    radial-gradient(1px 1px at 55% 15%, white, transparent),
+    radial-gradient(1px 1px at 72% 55%, white, transparent),
+    radial-gradient(1px 1px at 88% 80%, var(--steel-200), transparent),
+    radial-gradient(1.5px 1.5px at 5% 65%, white, transparent),
+    radial-gradient(1px 1px at 62% 88%, white, transparent),
+    radial-gradient(1px 1px at 42% 42%, var(--steel-100), transparent),
+    radial-gradient(1px 1px at 28% 88%, white, transparent),
+    radial-gradient(1px 1px at 80% 20%, white, transparent),
+    radial-gradient(1px 1px at 8% 42%, var(--steel-200), transparent);
+}

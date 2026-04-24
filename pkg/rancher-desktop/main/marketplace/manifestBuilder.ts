@@ -31,7 +31,7 @@ import type { MarketplaceKind } from './client';
 const console = Logging.background;
 
 const MANIFEST_API_VERSION = 'sulla/v3';
-const MANIFEST_VERSION      = 1;
+const MANIFEST_VERSION = 1;
 const BUNDLE_SCHEMA_VERSION = 1;
 
 // ─── File walk + checksums ──────────────────────────────────────────
@@ -153,9 +153,9 @@ function readOptionalFile(filePath: string): string | null {
 
 interface BuildOptions {
   /** The slug the bundle lives under in the zip. */
-  slug:         string;
+  slug:       string;
   /** Absolute path to the bundle directory on disk. */
-  bundleRoot:   string;
+  bundleRoot: string;
   /** Optional overrides the user provided in the publish modal. */
   overrides?: {
     name?:        string;
@@ -173,7 +173,7 @@ function readAgentFrontmatter(bundleRoot: string): Record<string, any> | null {
   const agentPath = path.join(bundleRoot, 'AGENT.md');
   const raw = readOptionalFile(agentPath);
   if (!raw) return null;
-  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
   if (!match) return {};
   try {
     return yaml.parse(match[1]) as Record<string, any>;
@@ -191,7 +191,7 @@ function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
   const { slug, bundleRoot, overrides } = opts;
 
   const routineYamlPath = path.join(bundleRoot, 'routine.yaml');
-  const routineYamlRaw  = readOptionalFile(routineYamlPath);
+  const routineYamlRaw = readOptionalFile(routineYamlPath);
   if (!routineYamlRaw) {
     throw new Error(`routine.yaml not found at ${ routineYamlPath }`);
   }
@@ -214,32 +214,32 @@ function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
 
   const agent = readAgentFrontmatter(bundleRoot) ?? {};
 
-  const readmeRaw    = readOptionalFile(path.join(bundleRoot, 'README.md'));
+  const readmeRaw = readOptionalFile(path.join(bundleRoot, 'README.md'));
   const changelogRaw = readOptionalFile(path.join(bundleRoot, 'CHANGELOG.md'));
-  const agentRaw     = readOptionalFile(path.join(bundleRoot, 'AGENT.md'));
+  const agentRaw = readOptionalFile(path.join(bundleRoot, 'AGENT.md'));
 
   const bundle = describeBundleFiles(bundleRoot, slug);
 
   const metadata: Record<string, unknown> = {
-    name:        overrides?.name        ?? agent.name        ?? String(routineDoc?.name ?? slug),
+    name:        overrides?.name ?? agent.name ?? String(routineDoc?.name ?? slug),
     description: overrides?.description ?? String(routineDoc?.description ?? agent.summary ?? ''),
-    version:     overrides?.version     ?? String(routineDoc?.version ?? '1.0.0'),
-    tags:        overrides?.tags        ?? [],
+    version:     overrides?.version ?? String(routineDoc?.version ?? '1.0.0'),
+    tags:        overrides?.tags ?? [],
   };
 
-  if (agent.tagline)  metadata.tagline  = String(agent.tagline);
+  if (agent.tagline) metadata.tagline = String(agent.tagline);
   if (agent.category) metadata.category = String(agent.category);
-  if (agent.license)  metadata.license  = String(agent.license);
-  if (agent.media)    metadata.media    = agent.media;
-  if (agent.author)   metadata.author   = agent.author;
-  if (agent.stats)    metadata.stats    = agent.stats;
-  if (changelogRaw)   metadata.changelog = changelogRaw;
+  if (agent.license) metadata.license = String(agent.license);
+  if (agent.media) metadata.media = agent.media;
+  if (agent.author) metadata.author = agent.author;
+  if (agent.stats) metadata.stats = agent.stats;
+  if (changelogRaw) metadata.changelog = changelogRaw;
 
   const previews: Record<string, string> = {
     coreDoc: routineYamlRaw,
   };
   if (readmeRaw) previews.readme = readmeRaw;
-  if (agentRaw)  (previews as any).agent = agentRaw;
+  if (agentRaw) (previews as any).agent = agentRaw;
 
   const routineSummary: Record<string, unknown> = {
     nodeCount:             nodes.length,
@@ -265,7 +265,7 @@ function buildRoutineManifest(opts: BuildOptions): Record<string, unknown> {
   if (Array.isArray(agent.required_vault_accounts) && agent.required_vault_accounts.length > 0) {
     routineSummary.requiredVaultAccounts = agent.required_vault_accounts.map(String);
   }
-  if (agent.entry_node)                       routineSummary.entryNode = String(agent.entry_node);
+  if (agent.entry_node) routineSummary.entryNode = String(agent.entry_node);
   if (Array.isArray(agent.stages) && agent.stages.length > 0) routineSummary.stages = agent.stages;
 
   return {
@@ -291,29 +291,29 @@ function buildSkillManifest(opts: BuildOptions): Record<string, unknown> {
   const { slug, bundleRoot, overrides } = opts;
 
   const skillMdPath = path.join(bundleRoot, 'SKILL.md');
-  const skillMdRaw  = readOptionalFile(skillMdPath);
+  const skillMdRaw = readOptionalFile(skillMdPath);
   if (!skillMdRaw) {
     throw new Error(`SKILL.md not found at ${ skillMdPath }`);
   }
 
-  const match = skillMdRaw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/.exec(skillMdRaw);
   const frontmatter: any = match ? (yaml.parse(match[1]) ?? {}) : {};
-  const body        = match ? match[2] : skillMdRaw;
+  const body = match ? match[2] : skillMdRaw;
 
-  const readmeRaw    = readOptionalFile(path.join(bundleRoot, 'README.md'));
+  const readmeRaw = readOptionalFile(path.join(bundleRoot, 'README.md'));
   const changelogRaw = readOptionalFile(path.join(bundleRoot, 'CHANGELOG.md'));
-  const bundle       = describeBundleFiles(bundleRoot, slug);
+  const bundle = describeBundleFiles(bundleRoot, slug);
 
   const metadata: Record<string, unknown> = {
-    name:        overrides?.name        ?? frontmatter.name    ?? slug,
+    name:        overrides?.name ?? frontmatter.name ?? slug,
     description: overrides?.description ?? frontmatter.summary ?? '',
-    version:     overrides?.version     ?? String(frontmatter.version ?? '1.0.0'),
-    tags:        overrides?.tags        ?? (Array.isArray(frontmatter.tags) ? frontmatter.tags : []),
+    version:     overrides?.version ?? String(frontmatter.version ?? '1.0.0'),
+    tags:        overrides?.tags ?? (Array.isArray(frontmatter.tags) ? frontmatter.tags : []),
   };
   if (frontmatter.tagline) metadata.tagline = String(frontmatter.tagline);
   if (frontmatter.license) metadata.license = String(frontmatter.license);
-  if (frontmatter.author)  metadata.author  = frontmatter.author;
-  if (changelogRaw)        metadata.changelog = changelogRaw;
+  if (frontmatter.author) metadata.author = frontmatter.author;
+  if (changelogRaw) metadata.changelog = changelogRaw;
 
   const previews: Record<string, string> = { coreDoc: skillMdRaw };
   if (readmeRaw) previews.readme = readmeRaw;
@@ -322,7 +322,7 @@ function buildSkillManifest(opts: BuildOptions): Record<string, unknown> {
     skillKey:     String(frontmatter.skillKey ?? slug),
     promptLength: body.length,
   };
-  if (frontmatter.category)  skillSummary.category  = String(frontmatter.category);
+  if (frontmatter.category) skillSummary.category = String(frontmatter.category);
   if (frontmatter.condition) skillSummary.condition = String(frontmatter.condition);
   if (Array.isArray(frontmatter.required_integrations)) {
     skillSummary.requiredIntegrations = frontmatter.required_integrations.map(String);
@@ -349,7 +349,7 @@ function buildFunctionManifest(opts: BuildOptions): Record<string, unknown> {
   const { slug, bundleRoot, overrides } = opts;
 
   const functionYamlPath = path.join(bundleRoot, 'function.yaml');
-  const functionYamlRaw  = readOptionalFile(functionYamlPath);
+  const functionYamlRaw = readOptionalFile(functionYamlPath);
   if (!functionYamlRaw) {
     throw new Error(`function.yaml not found at ${ functionYamlPath }`);
   }
@@ -361,32 +361,32 @@ function buildFunctionManifest(opts: BuildOptions): Record<string, unknown> {
     throw new Error(`function.yaml is not valid YAML: ${ err instanceof Error ? err.message : String(err) }`);
   }
 
-  const readmeRaw    = readOptionalFile(path.join(bundleRoot, 'README.md'));
+  const readmeRaw = readOptionalFile(path.join(bundleRoot, 'README.md'));
   const changelogRaw = readOptionalFile(path.join(bundleRoot, 'CHANGELOG.md'));
-  const bundle       = describeBundleFiles(bundleRoot, slug);
+  const bundle = describeBundleFiles(bundleRoot, slug);
 
   const metadata: Record<string, unknown> = {
-    name:        overrides?.name        ?? String(functionDoc?.metadata?.name ?? functionDoc?.name ?? slug),
+    name:        overrides?.name ?? String(functionDoc?.metadata?.name ?? functionDoc?.name ?? slug),
     description: overrides?.description ?? String(functionDoc?.metadata?.description ?? functionDoc?.description ?? ''),
-    version:     overrides?.version     ?? String(functionDoc?.metadata?.version ?? functionDoc?.version ?? '1.0.0'),
-    tags:        overrides?.tags        ?? [],
+    version:     overrides?.version ?? String(functionDoc?.metadata?.version ?? functionDoc?.version ?? '1.0.0'),
+    tags:        overrides?.tags ?? [],
   };
   if (changelogRaw) metadata.changelog = changelogRaw;
 
   const previews: Record<string, string> = { coreDoc: functionYamlRaw };
   if (readmeRaw) previews.readme = readmeRaw;
 
-  const spec    = functionDoc?.spec ?? functionDoc ?? {};
-  const inputs  = Array.isArray(spec.inputs)  ? spec.inputs  : [];
+  const spec = functionDoc?.spec ?? functionDoc ?? {};
+  const inputs = Array.isArray(spec.inputs) ? spec.inputs : [];
   const outputs = Array.isArray(spec.outputs) ? spec.outputs : [];
 
   const functionSummary: Record<string, unknown> = {
     functionName: String(functionDoc?.metadata?.name ?? functionDoc?.name ?? slug),
     runtime:      String(spec.runtime ?? 'python'),
   };
-  if (inputs.length > 0)       functionSummary.inputs     = inputs;
-  if (outputs.length > 0)      functionSummary.outputs    = outputs;
-  if (spec.entrypoint)         functionSummary.entrypoint = String(spec.entrypoint);
+  if (inputs.length > 0) functionSummary.inputs = inputs;
+  if (outputs.length > 0) functionSummary.outputs = outputs;
+  if (spec.entrypoint) functionSummary.entrypoint = String(spec.entrypoint);
 
   return {
     ...baseEnvelope('function', metadata),
@@ -415,7 +415,7 @@ function buildRecipeManifest(opts: BuildOptions): Record<string, unknown> {
   const { slug, bundleRoot, overrides } = opts;
 
   const installationPath = path.join(bundleRoot, 'installation.yaml');
-  const installationRaw  = readOptionalFile(installationPath);
+  const installationRaw = readOptionalFile(installationPath);
   if (!installationRaw) {
     throw new Error(`installation.yaml not found at ${ installationPath }`);
   }
@@ -428,7 +428,7 @@ function buildRecipeManifest(opts: BuildOptions): Record<string, unknown> {
   }
 
   const composePath = path.join(bundleRoot, installationDoc?.compose?.composeFile ?? 'docker-compose.yml');
-  const composeRaw  = readOptionalFile(composePath);
+  const composeRaw = readOptionalFile(composePath);
   if (!composeRaw) {
     throw new Error(`docker-compose file not found at ${ composePath }`);
   }
@@ -442,20 +442,20 @@ function buildRecipeManifest(opts: BuildOptions): Record<string, unknown> {
 
   // Optional catalog manifest (some sulla-recipes authors ship this)
   const catalogRaw = readOptionalFile(path.join(bundleRoot, 'manifest.yaml'));
-  const readmeRaw    = readOptionalFile(path.join(bundleRoot, 'README.md'));
+  const readmeRaw = readOptionalFile(path.join(bundleRoot, 'README.md'));
   const changelogRaw = readOptionalFile(path.join(bundleRoot, 'CHANGELOG.md'));
-  const bundle       = describeBundleFiles(bundleRoot, slug);
+  const bundle = describeBundleFiles(bundleRoot, slug);
 
   // Derive image + ports from first compose service
   const services = (composeDoc?.services && typeof composeDoc.services === 'object')
     ? composeDoc.services as Record<string, any>
     : {};
-  const firstService = Object.values(services)[0] as any;
+  const firstService = Object.values(services)[0];
   const image: string | undefined = firstService?.image ? String(firstService.image) : undefined;
 
   const ports: number[] = [];
   for (const svc of Object.values(services)) {
-    const portList = Array.isArray((svc as any)?.ports) ? (svc as any).ports : [];
+    const portList = Array.isArray((svc)?.ports) ? (svc).ports : [];
     for (const p of portList) {
       const str = typeof p === 'string' ? p : typeof p === 'object' ? `${ p?.published ?? '' }` : String(p);
       const hostPort = parseInt(String(str).split(':')[0], 10);
@@ -465,7 +465,7 @@ function buildRecipeManifest(opts: BuildOptions): Record<string, unknown> {
 
   const configKeys: string[] = [];
   for (const svc of Object.values(services)) {
-    const env = (svc as any)?.environment;
+    const env = (svc)?.environment;
     if (Array.isArray(env)) {
       for (const e of env) configKeys.push(String(e).split('=')[0]);
     } else if (env && typeof env === 'object') {
@@ -474,10 +474,10 @@ function buildRecipeManifest(opts: BuildOptions): Record<string, unknown> {
   }
 
   const metadata: Record<string, unknown> = {
-    name:        overrides?.name        ?? String(installationDoc?.name ?? slug),
+    name:        overrides?.name ?? String(installationDoc?.name ?? slug),
     description: overrides?.description ?? String(installationDoc?.description ?? ''),
-    version:     overrides?.version     ?? String(installationDoc?.version ?? '1.0.0'),
-    tags:        overrides?.tags        ?? [],
+    version:     overrides?.version ?? String(installationDoc?.version ?? '1.0.0'),
+    tags:        overrides?.tags ?? [],
   };
   if (changelogRaw) metadata.changelog = changelogRaw;
 
@@ -486,15 +486,15 @@ function buildRecipeManifest(opts: BuildOptions): Record<string, unknown> {
     // in full on the detail page.
     coreDoc: installationRaw,
   };
-  if (readmeRaw)  previews.readme  = readmeRaw;
+  if (readmeRaw) previews.readme = readmeRaw;
   if (catalogRaw) (previews as any).catalogManifest = catalogRaw;
 
   const recipeSummary: Record<string, unknown> = {
     extension:        String(installationDoc?.id ?? slug),
     extensionVersion: String(installationDoc?.version ?? '1.0.0'),
   };
-  if (image)               recipeSummary.image      = image;
-  if (ports.length > 0)    recipeSummary.ports      = Array.from(new Set(ports));
+  if (image) recipeSummary.image = image;
+  if (ports.length > 0) recipeSummary.ports = Array.from(new Set(ports));
   if (configKeys.length > 0) recipeSummary.configKeys = Array.from(new Set(configKeys));
 
   return {
@@ -509,16 +509,89 @@ function buildRecipeManifest(opts: BuildOptions): Record<string, unknown> {
   };
 }
 
+/**
+ * Integration manifest builder. Reads integration.yaml (required) + README.md.
+ *
+ * The on-disk `integration.yaml` IS the runtime manifest (sulla/v1). Most of
+ * the integrationSummary fields are derivable from it — authType, OAuth
+ * provider, property count, and any bundled companion functions/skills
+ * (fanned out to `~/sulla/functions/<slug>-<name>/` + `~/sulla/skills/<slug>-<name>/`
+ * on install, per the bundled.{functions,skills} lists).
+ */
+function buildIntegrationManifest(opts: BuildOptions): Record<string, unknown> {
+  const { slug, bundleRoot, overrides } = opts;
+
+  const integrationYamlPath = path.join(bundleRoot, 'integration.yaml');
+  const integrationYamlRaw = readOptionalFile(integrationYamlPath);
+  if (!integrationYamlRaw) {
+    throw new Error(`integration.yaml not found at ${ integrationYamlPath }`);
+  }
+
+  let integrationDoc: any;
+  try {
+    integrationDoc = yaml.parse(integrationYamlRaw);
+  } catch (err) {
+    throw new Error(`integration.yaml is not valid YAML: ${ err instanceof Error ? err.message : String(err) }`);
+  }
+
+  const readmeRaw = readOptionalFile(path.join(bundleRoot, 'README.md'));
+  const changelogRaw = readOptionalFile(path.join(bundleRoot, 'CHANGELOG.md'));
+  const bundle = describeBundleFiles(bundleRoot, slug);
+
+  const bundled = (integrationDoc?.bundled && typeof integrationDoc.bundled === 'object')
+    ? integrationDoc.bundled as { functions?: unknown; skills?: unknown }
+    : null;
+  const bundledFunctions = Array.isArray(bundled?.functions) ? bundled.functions.map(String) : [];
+  const bundledSkills = Array.isArray(bundled?.skills) ? bundled.skills.map(String) : [];
+  const properties = Array.isArray(integrationDoc?.properties) ? integrationDoc.properties : [];
+
+  const metadata: Record<string, unknown> = {
+    name:        overrides?.name ?? String(integrationDoc?.name ?? slug),
+    description: overrides?.description ?? String(integrationDoc?.description ?? ''),
+    version:     overrides?.version ?? String(integrationDoc?.version ?? '1.0.0'),
+    tags:        overrides?.tags ?? [],
+  };
+  if (integrationDoc?.category) metadata.category = String(integrationDoc.category);
+  if (integrationDoc?.developer) metadata.author = { displayName: String(integrationDoc.developer) };
+  if (changelogRaw) metadata.changelog = changelogRaw;
+
+  const previews: Record<string, string> = { coreDoc: integrationYamlRaw };
+  if (readmeRaw) previews.readme = readmeRaw;
+
+  const integrationSummary: Record<string, unknown> = {
+    authType:      String(integrationDoc?.authType ?? 'credentials'),
+    propertyCount: properties.length,
+    builtin:       integrationDoc?.builtin === true,
+  };
+  if (integrationDoc?.oauthProviderId) integrationSummary.oauthProviderId = String(integrationDoc.oauthProviderId);
+  if (integrationDoc?.sullaManagedOAuth === true) integrationSummary.sullaManagedOAuth = true;
+  if (bundledFunctions.length > 0) integrationSummary.bundledFunctions = bundledFunctions;
+  if (bundledSkills.length > 0) integrationSummary.bundledSkills = bundledSkills;
+  if (integrationDoc?.icon) integrationSummary.icon = String(integrationDoc.icon);
+
+  return {
+    ...baseEnvelope('integration', metadata),
+    bundle: {
+      bundleSchemaVersion: BUNDLE_SCHEMA_VERSION,
+      totalSize:           bundle.totalSize,
+      files:               bundle.files,
+    },
+    previews,
+    integrationSummary,
+  };
+}
+
 // ─── Public dispatch ────────────────────────────────────────────────
 
 export function buildManifest(kind: MarketplaceKind, opts: BuildOptions): Record<string, unknown> {
   try {
     switch (kind) {
-    case 'routine':  return buildRoutineManifest(opts);
-    case 'skill':    return buildSkillManifest(opts);
+    case 'routine': return buildRoutineManifest(opts);
+    case 'skill': return buildSkillManifest(opts);
     case 'function': return buildFunctionManifest(opts);
-    case 'recipe':   return buildRecipeManifest(opts);
-    default:         throw new Error(`unsupported kind: ${ String(kind) }`);
+    case 'recipe': return buildRecipeManifest(opts);
+    case 'integration': return buildIntegrationManifest(opts);
+    default: throw new Error(`unsupported kind: ${ String(kind) }`);
     }
   } catch (err) {
     console.error(`[manifestBuilder] kind=${ kind } slug=${ opts.slug } failed:`, err);

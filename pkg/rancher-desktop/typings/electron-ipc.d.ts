@@ -58,6 +58,9 @@ export interface IpcMainEvents {
   'update-state': () => void;
   // Quit and apply the update.
   'update-apply': () => void;
+  // New centralized UpdateManager IPC. Fire-and-forget variants.
+  'updater:check':   (trigger?: 'manual' | 'auto' | 'startup') => void;
+  'updater:install': () => void;
   // #endregion
 
   // #region main/containerEvents
@@ -225,6 +228,12 @@ export interface IpcMainInvokeEvents {
   'show-message-box-rd':       (options: Electron.MessageBoxOptions, modal?: boolean) => any;
   'api-get-credentials':       () => { user: string, password: string, port: number };
   'k8s-progress':              () => Readonly<{ current: number, max: number, description?: string, transitionTime?: Date }>;
+
+  // #region main/update (centralized UpdateManager)
+  'updater:get-state': () => import('@pkg/main/update/UpdateManager').RichUpdateState;
+  'updater:check':     (trigger?: 'manual' | 'auto' | 'startup') => void;
+  'updater:install':   () => void;
+  // #endregion
 
   // #region Error Reporting
   'error-report/invoke': (report: {
@@ -410,7 +419,7 @@ export interface IpcMainInvokeEvents {
   }[];
   'routines-template-instantiate':   (slug: string) => { id: string; name: string };
   'routines-create-blank':           () => { id: string; name: string };
-  'routines-execute':                (workflowId: string, triggerPayload?: string) => { executionId: string; workflowId: string };
+  'routines-execute':                (workflowId: string, triggerPayload?: string, options?: { startNodeId?: string; resumeExecutionId?: string }) => { executionId: string; workflowId: string };
   'routines-abort':                  (executionId: string) => { aborted: boolean; reason?: string };
   'routines-export':                 (workflowId: string) => { path: string } | { canceled: true } | { error: string };
   'routines-export-template':        (slug: string) => { path: string } | { canceled: true } | { error: string };
@@ -836,6 +845,7 @@ export interface IpcRendererEvents {
   'settings-write-error': (error: any) => void;
   'get-app-version':      (version: string) => void;
   'update-state':         (state: import('@pkg/main/update').UpdateState) => void;
+  'updater:state':        (state: import('@pkg/main/update/UpdateManager').RichUpdateState) => void;
   'always-debugging':     (status: boolean) => void;
   'is-debugging':         (status: boolean) => void;
   'k8s-progress': (

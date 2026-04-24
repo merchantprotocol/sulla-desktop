@@ -16,6 +16,7 @@ import yaml from 'yaml';
 
 import LonghornProvider, { hasQueuedUpdate, LonghornUpdateInfo, setHasQueuedUpdate } from './LonghornProvider';
 import MsiUpdater from './MSIUpdater';
+import { updateEvents } from './UpdateManager';
 
 import { Settings } from '@pkg/config/settings';
 import mainEvent from '@pkg/main/mainEvents';
@@ -66,11 +67,21 @@ Electron.ipcMain.on('update-state', () => {
 });
 
 Electron.ipcMain.on('update-apply', () => {
+  installQueuedUpdate();
+});
+
+/**
+ * Quit the app and install a queued update.
+ * No-op if the updater isn't configured or updates are force-disabled.
+ */
+export function installQueuedUpdate(): void {
   if (!autoUpdater || process.env.RD_FORCE_UPDATES_ENABLED) {
+    console.warn('[update] installQueuedUpdate: updater not configured or disabled');
+
     return;
   }
   autoUpdater.quitAndInstall();
-});
+}
 
 function isLonghornUpdateInfo(info: UpdateInfo | LonghornUpdateInfo): info is LonghornUpdateInfo {
   return (info as LonghornUpdateInfo).nextUpdateTime !== undefined;
@@ -137,12 +148,14 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     updateState.error = error;
     updateState.downloaded = false;
     window.send('update-state', updateState);
+    updateEvents.emit('raw-state', updateState);
   });
   updater.on('checking-for-update', () => {
     console.debug('update: checking for update');
     updateState.available = false;
     updateState.downloaded = false;
     setHasQueuedUpdate(false);
+    updateEvents.emit('checking');
   });
   updater.on('update-available', (info) => {
     if (!isLonghornUpdateInfo(info)) {
@@ -153,6 +166,7 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     updateState.info = info;
     updateState.downloaded = state === State.UPDATE_PENDING;
     window.send('update-state', updateState);
+    updateEvents.emit('raw-state', updateState);
   });
   updater.on('update-not-available', (info) => {
     if (!isLonghornUpdateInfo(info)) {
@@ -164,6 +178,7 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     updateState.downloaded = false;
     setHasQueuedUpdate(false);
     window.send('update-state', updateState);
+    updateEvents.emit('raw-state', updateState);
   });
   updater.on('download-progress', (progress) => {
     if (state === State.CHECKED || state === State.UPDATE_PENDING) {
@@ -172,6 +187,7 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     updateState.progress = progress;
     updateState.downloaded = false;
     window.send('update-state', updateState);
+    updateEvents.emit('raw-state', updateState);
   });
   updater.on('update-downloaded', (info) => {
     if (!isLonghornUpdateInfo(info)) {
@@ -188,6 +204,7 @@ async function getUpdater(): Promise<AppUpdater | undefined> {
     updater.autoDownload = false;
     setHasQueuedUpdate(true);
     window.send('update-state', updateState);
+    updateEvents.emit('raw-state', updateState);
   });
 
   return updater;

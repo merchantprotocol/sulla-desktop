@@ -179,12 +179,12 @@ export class BrowserTabViewManager {
       },
     });
 
-    // Do NOT attach to the window here. Creation is just allocation —
-    // the view only becomes attached when setFocusedTab() decides it
-    // should be. This is what makes "single source of truth" actually true:
-    // no code path outside reconcileVisibility ever mutates the native
-    // child-view list. Screenshot flows use incrementCapturerCount to paint
-    // without ever being attached; user interaction flows call setFocusedTab.
+    // Disable background throttling so the Chromium renderer stays awake and
+    // the compositor keeps producing frames even when the view is parked
+    // off-screen. Without this, capturePage returns empty NativeImage on
+    // brand-new views that have never been in a visible position.
+    view.webContents.setBackgroundThrottling(false);
+
     view.setBounds(bounds);
     this.views.set(tabId, view);
     this.latestBounds.set(tabId, bounds);
@@ -331,11 +331,15 @@ export class BrowserTabViewManager {
     const mainWindow = getWindow('main-agent');
     if (!mainWindow) return;
 
-    // Park rectangle for unfocused views: far off-screen to the left,
-    // but with the view's last-known size so the compositor has a real
-    // viewport to paint into. Capturer/stayHidden keeps frames flowing;
-    // negative-x keeps anything that does render invisible to the user.
-    const PARK_X = -100_000;
+    // Park unfocused views just off-screen to the left: x = -(width + margin)
+    // so the right edge sits PARK_MARGIN pixels past the viewport's left edge.
+    // Must be dynamic — a hardcoded PARK_X (previously -1300) leaves the right
+    // portion of wide views visible on wide displays (e.g. 2958px wide screen,
+    // width≥1400px view → right edge at x ≥ 100, visibly bleeding through).
+    // Margin stays small so the view remains within Chromium's tile-cache
+    // buffer zone; -100_000 kills tile generation and capturePage returns
+    // empty NativeImages indefinitely.
+    const PARK_MARGIN = 100;
 
     for (const [tabId, view] of this.views) {
       if (tabId === this.focusedTabId) {
@@ -353,11 +357,11 @@ export class BrowserTabViewManager {
         // alive — detached WebContentsViews stop painting in Electron 40
         // even with stayHidden, which breaks capturePage.
         const last = this.latestBounds.get(tabId);
+        const width = Math.max(last?.width ?? 1280, 1);
         const parked: Electron.Rectangle = {
-          x:      PARK_X,
+          x:      -(width + PARK_MARGIN),
           y:      last?.y ?? 0,
-          // Keep real width/height so the viewport has area to paint into.
-          width:  Math.max(last?.width ?? 1280, 1),
+          width,
           height: Math.max(last?.height ?? 800, 1),
         };
         view.setBounds(parked);

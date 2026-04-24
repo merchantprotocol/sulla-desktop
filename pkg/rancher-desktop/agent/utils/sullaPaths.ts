@@ -17,6 +17,7 @@ const SULLA_ROUTINES_DIR_ENV = 'SULLA_ROUTINES_DIR';
 const SULLA_INTEGRATIONS_DIR_ENV = 'SULLA_INTEGRATIONS_DIR';
 const SULLA_FUNCTIONS_DIR_ENV = 'SULLA_FUNCTIONS_DIR';
 const SULLA_RESOURCES_DIR_ENV = 'SULLA_RESOURCES_DIR';
+const SULLA_DOCS_DIR_ENV = 'SULLA_DOCS_DIR';
 const SULLA_CODEBASE_DIR_ENV = 'SULLA_CODEBASE_DIR';
 
 export function resolveSullaHomeDir(): string {
@@ -35,6 +36,47 @@ export function resolveSullaResourcesDir(): string {
   }
 
   return path.join(resolveSullaHomeDir(), 'resources');
+}
+
+/**
+ * Resolve the path to the bundled `sulla-docs/` directory.
+ *
+ * Resolution order:
+ * 1. `SULLA_DOCS_DIR` env override.
+ * 2. Packaged app: `<resourcesPath>/resources/sulla-docs` (shipped via
+ *    electron-builder's `extraResources: - resources/`).
+ * 3. Dev: walk up from __dirname to find `sulla-desktop/resources/sulla-docs`.
+ * 4. Last resort: `<resolveSullaResourcesDir()>/sulla-docs` (user's ~/sulla/resources).
+ *
+ * Runs in the Electron main process (where the Tools API handlers live), so
+ * `fs.readFileSync` against this path works regardless of whether the agent
+ * is executing inside Lima — the file reads happen on the host.
+ */
+export function resolveSullaDocsDir(): string {
+  const envPath = String(process.env[SULLA_DOCS_DIR_ENV] || '').trim();
+  if (envPath) {
+    return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
+  }
+
+  // Packaged app: process.resourcesPath points at the .app bundle's Resources dir.
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  if (typeof resourcesPath === 'string' && resourcesPath.length > 0) {
+    const bundled = path.join(resourcesPath, 'resources', 'sulla-docs');
+    if (fs.existsSync(bundled)) return bundled;
+  }
+
+  // Dev: locate the sulla-desktop checkout by walking upward from __dirname.
+  let cursor = __dirname;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const candidate = path.join(cursor, 'resources', 'sulla-docs');
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+
+  // Last resort — agent's ~/sulla/resources/sulla-docs (set up at install).
+  return path.join(resolveSullaResourcesDir(), 'sulla-docs');
 }
 
 export function resolveSullaProjectsDir(): string {

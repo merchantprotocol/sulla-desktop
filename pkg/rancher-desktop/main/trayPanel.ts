@@ -10,7 +10,7 @@ import path from 'path';
 import { BrowserWindow, ipcMain, app } from 'electron';
 
 import mainEvents from '@pkg/main/mainEvents';
-import setupUpdate from '@pkg/main/update';
+import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { openMain, openDockerDashboard, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
@@ -238,7 +238,7 @@ function registerPanelIpc(): void {
 
   ipcMain.handle('tray-panel:check-updates', async() => {
     panelWindow?.hide();
-    await setupUpdate(true, false);
+    await updateManager.checkForUpdates('manual');
   });
 
   ipcMain.on('tray-panel:quit', async() => {

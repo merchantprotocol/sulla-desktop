@@ -50,6 +50,7 @@ import { Snapshots } from '@pkg/main/snapshots/snapshots';
 import { Snapshot, SnapshotDialog } from '@pkg/main/snapshots/types';
 import { Tray } from '@pkg/main/tray';
 import setupUpdate from '@pkg/main/update';
+import { updateManager } from '@pkg/main/update/UpdateManager';
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
@@ -566,7 +567,10 @@ Electron.app.whenReady().then(async() => {
     mainEvents.emit('settings-update', cfg);
 
     // Set up the updater; we may need to quit the app if an update is already
-    // queued.
+    // queued. Initialize UpdateManager first so it can bridge the state events
+    // to the new centralized IPC surface (and auto-open the Updates window
+    // when a background download completes).
+    updateManager.initialize(cfg.application.updater.enabled);
     if (await setupUpdate(cfg.application.updater.enabled, true)) {
       gone = true;
       // The update code will trigger a restart; don't do it here, as it may not

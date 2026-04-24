@@ -165,6 +165,98 @@ export function createPlaybookState(
   };
 }
 
+/**
+ * Create a WorkflowPlaybookState that starts executing at a specific node,
+ * skipping everything upstream. Every ancestor of `startNodeId` (including
+ * triggers) is marked completed with a placeholder output so downstream
+ * dependency checks pass and upstream-output templating still resolves to
+ * *something* readable rather than undefined.
+ *
+ * Callers have two options for what the placeholder output contains:
+ *
+ *  - `seedOutputs` (from a prior run's checkpoints) — real outputs are
+ *    pulled in, letting the walker truly resume. Ancestors without a seed
+ *    still get a skip-placeholder.
+ *  - Omitted — every ancestor gets a skip-placeholder. Use this for
+ *    "Run from here" where the user knowingly accepts missing upstream data.
+ */
+export function createPlaybookStateFromNode(
+  definition: WorkflowDefinition,
+  startNodeId: string,
+  seedOutputs?: Record<string, PlaybookNodeOutput>,
+): WorkflowPlaybookState {
+  const startNode = definition.nodes.find(n => n.id === startNodeId);
+  if (!startNode) {
+    throw new Error(`Workflow "${ definition.id }" has no node "${ startNodeId }" to start from`);
+  }
+
+  const executionId = `wfp-${ Date.now() }-${ Math.random().toString(36).slice(2, 8) }`;
+  const now = new Date().toISOString();
+  const reverse = buildReverseEdges(definition);
+
+  // BFS backward from startNode to find every ancestor. Mark them all
+  // completed so areUpstreamComplete() passes when the walker evaluates
+  // startNode's readiness.
+  const ancestors = new Set<string>();
+  const queue: string[] = [startNodeId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const edge of reverse.get(current) || []) {
+      if (!ancestors.has(edge.source) && edge.source !== startNodeId) {
+        ancestors.add(edge.source);
+        queue.push(edge.source);
+      }
+    }
+  }
+
+  const nodeOutputs: Record<string, PlaybookNodeOutput> = {};
+  const completedNodeIds: string[] = [];
+  for (const ancestorId of ancestors) {
+    const node = definition.nodes.find(n => n.id === ancestorId);
+    if (!node) continue;
+    completedNodeIds.push(ancestorId);
+
+    const seeded = seedOutputs?.[ancestorId];
+    if (seeded) {
+      nodeOutputs[ancestorId] = seeded;
+    } else if (node.data.category === 'trigger') {
+      // Triggers synthesize the routine framing so downstream LLM nodes
+      // still see the "you are inside a routine" preamble even when we
+      // skip past them.
+      nodeOutputs[ancestorId] = {
+        nodeId:      ancestorId,
+        label:       node.data.label,
+        subtype:     node.data.subtype,
+        category:    node.data.category,
+        result:      buildRoutineFraming(definition),
+        completedAt: now,
+      };
+    } else {
+      nodeOutputs[ancestorId] = {
+        nodeId:      ancestorId,
+        label:       node.data.label,
+        subtype:     node.data.subtype,
+        category:    node.data.category,
+        result:      `[skipped — partial run starting at "${ startNode.data.label || startNodeId }"]`,
+        completedAt: now,
+      };
+    }
+  }
+
+  console.log(`[Playbook:createPlaybookStateFromNode] start=${ startNodeId } ancestors=${ completedNodeIds.length } seeded=${ seedOutputs ? Object.keys(seedOutputs).length : 0 }`);
+
+  return {
+    workflowId:       definition.id,
+    executionId,
+    definition,
+    currentNodeIds:   [startNodeId],
+    completedNodeIds,
+    nodeOutputs,
+    status:           'running',
+    startedAt:        now,
+  };
+}
+
 // ── DAG helpers ──
 
 function buildForwardEdges(definition: WorkflowDefinition): Map<string, WorkflowEdgeSerialized[]> {

@@ -11,7 +11,7 @@ import { parseJson } from '../services/JsonParseService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
-import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir } from '../utils/sullaPaths';
+import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 
 import type { BaseThreadState, NodeResult } from './Graph';
@@ -274,6 +274,7 @@ export async function getTemplateVariables(): Promise<Record<string, string>> {
     '{{primaryUserName}}':      primaryUserName || '',
     '{{botName}}':              botName,
     '{{sulla_home}}':           resolveSullaHomeDir(),
+    '{{sulla_docs}}':           resolveSullaDocsDir(),
     '{{codebase_dir}}':         resolveSullaCodebaseDir(),
     '{{projects_dir}}':         projectsDir,
     '{{skills_dir}}':           skillsDir,
