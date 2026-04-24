@@ -18,6 +18,8 @@ Statuses on the DB row: `draft` | `production` | `archive`. Only `production` ge
 
 ## Build a workflow — full flow
 
+The canonical flow is **gather → draft → validate → save → test-run → done**. Validation is non-negotiable before save. See `agent-patterns/validation.md` for the overall policy this references.
+
 1. **Gather requirements in conversation.** Don't start writing YAML until the user has agreed on:
    - Trigger (manual? schedule? chat? calendar? heartbeat?)
    - Steps in plain English
@@ -30,11 +32,15 @@ Statuses on the DB row: `draft` | `production` | `archive`. Only `production` ge
    - Required config fields per subtype — `agent` subtype needs `agentId`, `agentName`, `additionalPrompt`, `orchestratorInstructions`, `successCriteria`, `completionContract`
    - Edges need `id`, `source`, `target`, `sourceHandle`, `targetHandle`, `label`, `animated`
    - At least one trigger node, all downstream nodes reachable
-4. **Validate** before saving (see next section)
+4. **Validate** — run BOTH validators (see next section). Fix errors, re-run until clean.
 5. **Save** to `~/sulla/routines/<slug>/routine.yaml` (template) or `~/sulla/workflows/<slug>.yaml` (flat-file)
-6. **Test** by activating it: `sulla meta/execute_workflow '{"workflowId":"<slug>"}'` — watch the playbook log
+6. **Test-run** the full graph: `sulla meta/execute_workflow '{"workflowId":"<slug>"}'` — watch the playbook log. A clean validator pass doesn't prove the nodes actually do the right thing; only a real run does.
 
 ## Validate
+
+Workflows get two passes — graph-level and kind-schema-level. **Run both.** Each catches things the other doesn't.
+
+### Pass 1 — graph validator (required)
 
 ```bash
 sulla meta/validate_sulla_workflow '{"filePath":"/Users/.../routine.yaml"}'
@@ -53,7 +59,26 @@ What it checks:
 - At least one trigger node
 - Reachability (no orphaned chains downstream of triggers)
 
-Returns `ValidationIssue[]` with `severity: "error"|"warning"`, `path`, `message`. **Always validate before reporting "done"** — silent schema bugs surface much later as runtime failures.
+### Pass 2 — kind-schema validator (required for routines)
+
+For workflows saved as routines under `~/sulla/routines/<slug>/`, also run the marketplace kind validator. It catches manifest-level issues the graph validator doesn't look at — slug/id mismatch with the directory, bad top-level YAML keys, required metadata absent.
+
+```bash
+sulla marketplace/validate '{"kind":"workflow","slug":"<slug>"}'
+```
+
+### Reading output
+
+Both return `ValidationIssue[]` with `severity: "error"|"warning"`, `path`, `message`. **Errors mean the workflow won't load or will load broken** — fix and re-run until clean before reporting done. Warnings are safe to surface; let the user decide (common ones: orphan branch that might be intentional, slug/filename mismatch in a flat-file workflow).
+
+Common fixable errors:
+- `subtype ↔ category mismatch` — pair is wrong (see node-types.md)
+- `missing required config field` — per-subtype list in node-types.md
+- `unreachable node` — an edge is missing
+- `no trigger node` — add a `manual` / `schedule` / `chat` / `calendar` / `heartbeat` trigger
+- `slug/id/directory disagreement` — these three must line up for routines
+
+Never skip validation with "it's a small change." A bad `sourceHandle` on a router edge will pass eyeball review and fail at the first fork.
 
 ## Run a workflow
 

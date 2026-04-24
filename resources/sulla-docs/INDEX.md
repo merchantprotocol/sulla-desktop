@@ -9,6 +9,9 @@ Search: `grep -r "keyword" <path-to-this-dir>/`
 - [`tools/inventory.md`](tools/inventory.md) — master list of every tool the agent can call (~140 tools, verified)
 - [`agent-patterns/user-stories.md`](agent-patterns/user-stories.md) — request → action playbook (covers all subsystems)
 - [`agent-patterns/known-gaps.md`](agent-patterns/known-gaps.md) — what the agent CAN'T do today (don't fake it)
+- [`agent-patterns/validation.md`](agent-patterns/validation.md) — never-ship-unverified contract; always validate artifacts before reporting done
+- [`agent-patterns/mentions.md`](agent-patterns/mentions.md) — how to interpret `@routine:…`, `@function:…`, `@project:…` tokens in user messages
+- [`agent-patterns/citations.md`](agent-patterns/citations.md) — how to emit `<citations>` blocks that render as source cards
 - [`verification-2026-04-23.md`](verification-2026-04-23.md) — what was verified live against the running system, what was wrong, what got fixed
 
 ## environment/
@@ -58,6 +61,9 @@ Search: `grep -r "keyword" <path-to-this-dir>/`
 - `channels.md` — Inter-agent messaging, fire-and-forget rules, notify human
 - `user-stories.md` — Common user requests → step-by-step plans (cross-domain playbook)
 - `known-gaps.md` — User requests with no tool today; don't fake them
+- `validation.md` — ⚠️ READ THIS: never-ship-unverified contract; which validator runs for which artifact; validate-before-save pattern
+- `citations.md` — The `<citations><source …/></citations>` XML protocol; when to emit, exact shape, rules against hallucinated sources
+- `mentions.md` — `@kind:slug` tokens in user messages (routine / skill / function / recipe / integration / workflow / project); how to resolve each
 
 ## marketplace/
 - `overview.md` — Recipes (Docker compose), catalog, install/uninstall, extension UIs

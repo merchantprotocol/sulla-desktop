@@ -8,9 +8,11 @@
  * `@` mention autocomplete so users can reference their own projects
  * without touching the filesystem directly.
  */
-import { ipcMainProxy } from '@pkg/main/ipcMain';
+import { getIpcMainProxy } from '@pkg/main/ipcMain';
 
 import { ProjectRegistry } from '@pkg/agent/database/registry/ProjectRegistry';
+
+const ipcMainProxy = getIpcMainProxy(console);
 
 export function initSullaProjectEvents(): void {
   ipcMainProxy.handle('projects-list', async() => {

@@ -1502,12 +1502,20 @@ useAgentBridge({
     mediaSources.releaseScreen();
     return { ok: true };
   },
-  'screen.quality': async(params) => {
+  'screen.quality': (params) => {
     const preset = String(params.preset || 'auto') as QualityPreset;
     if (!QUALITY_PRESETS.includes(preset)) {
       throw new Error(`preset must be one of: ${ QUALITY_PRESETS.join(', ') }`);
     }
     mediaSources.setScreenQuality(preset);
+    return { ok: true, preset };
+  },
+  'camera.quality': (params) => {
+    const preset = String(params.preset || 'auto') as QualityPreset;
+    if (!QUALITY_PRESETS.includes(preset)) {
+      throw new Error(`preset must be one of: ${ QUALITY_PRESETS.join(', ') }`);
+    }
+    mediaSources.setCameraQuality(preset);
     return { ok: true, preset };
   },
 

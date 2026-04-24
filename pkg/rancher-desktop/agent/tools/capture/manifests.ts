@@ -131,4 +131,82 @@ export const captureToolManifests: ToolManifest[] = [
     operationTypes: ['create'],
     loader:         () => import('./screenshot'),
   },
+
+  // ── Recorder (Phase 2 — requires CaptureStudio renderer) ───────
+
+  {
+    name:           'recorder_start',
+    description:    'Start a recording session with whatever streams are currently acquired in Capture Studio (screen + camera + mic + speaker). Auto-opens Capture Studio if closed. Fails if no sources are active — call capture/screen_set and/or capture/camera_set and/or capture/mic_start first.',
+    category:       'capture',
+    schemaDef:      {},
+    operationTypes: ['create'],
+    loader:         () => import('./recorder_start'),
+  },
+  {
+    name:           'recorder_stop',
+    description:    'Stop the active recording session. Writes manifest.json to the session directory. Returns the session path so you can Read the manifest or the output files.',
+    category:       'capture',
+    schemaDef:      {},
+    operationTypes: ['update'],
+    loader:         () => import('./recorder_stop'),
+  },
+  {
+    name:           'recorder_status',
+    description:    'Report whether a recording is active, along with elapsed seconds, bytes written, current session directory, and any last error. Does NOT open Capture Studio just to answer this query — returns "idle" when Capture Studio isn\'t running.',
+    category:       'capture',
+    schemaDef:      {},
+    operationTypes: ['read'],
+    loader:         () => import('./recorder_status'),
+  },
+
+  // ── Camera + screen streams (Phase 2) ─────────────────────────
+
+  {
+    name:           'camera_list',
+    description:    'Enumerate video input devices (webcams, capture cards) visible to the Capture Studio renderer. Returns { deviceId, label } pairs.',
+    category:       'capture',
+    schemaDef:      {},
+    operationTypes: ['read'],
+    loader:         () => import('./camera_list'),
+  },
+  {
+    name:        'camera_set',
+    description: 'Acquire a camera stream in Capture Studio. Without deviceId, uses the first available camera. Optionally set quality at the same time (480p | 720p | 1080p | 4k).',
+    category:    'capture',
+    schemaDef:   {
+      deviceId: { type: 'string', optional: true, description: 'deviceId from capture/camera_list.' },
+      quality:  { type: 'enum', optional: true, enum: ['auto', '480p', '720p', '1080p', '4k'], description: 'Recording quality preset.' },
+    },
+    operationTypes: ['create', 'update'],
+    loader:         () => import('./camera_set'),
+  },
+  {
+    name:           'camera_release',
+    description:    'Stop and release the current camera stream in Capture Studio.',
+    category:       'capture',
+    schemaDef:      {},
+    operationTypes: ['delete'],
+    loader:         () => import('./camera_release'),
+  },
+  {
+    name:        'screen_set',
+    description: 'Acquire a screen/window capture stream in Capture Studio by sourceId (from capture/list_screens). This is what the agent calls when it wants the recorder to include that display.',
+    category:    'capture',
+    schemaDef:   {
+      sourceId: { type: 'string', description: 'desktopCapturer source id from capture/list_screens.' },
+    },
+    operationTypes: ['create', 'update'],
+    loader:         () => import('./screen_set'),
+  },
+  {
+    name:        'quality_set',
+    description: 'Set the recording quality preset for either the screen or camera stream (480p | 720p | 1080p | 4k | auto). Affects bitrate on the next recorder_start.',
+    category:    'capture',
+    schemaDef:   {
+      target: { type: 'enum', enum: ['screen', 'camera'], description: 'Which stream to configure.' },
+      preset: { type: 'enum', enum: ['auto', '480p', '720p', '1080p', '4k'], description: 'Quality preset.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./quality_set'),
+  },
 ];

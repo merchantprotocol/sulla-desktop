@@ -19,34 +19,38 @@ export class ApplescriptExecuteWorker extends BaseTool {
       };
     }
 
-    // ── Check enabled apps ──────────────────────────────────────
+    // ── Verify the app is a known AppleScript target, auto-enabling
+    //    it if the user hasn't flipped it on yet. Agent-driven enable
+    //    reflects implicit consent — the user asked us to do the thing
+    //    ("connect to my mail"), so we enable and proceed. The toggle
+    //    stays on for subsequent calls. Unknown apps still hard-fail.
+    let autoEnabled = false;
     try {
       const { SullaSettingsModel } = await import('../../database/models/SullaSettingsModel');
-      const stored = await SullaSettingsModel.get('computerUse.enabledApps', '{}');
-      const enabledApps: Record<string, boolean> = typeof stored === 'string' ? JSON.parse(stored) : (stored || {});
-
       const { APP_REGISTRY } = await import('../../../main/computerUseSettings/appRegistry');
+
       const appEntry = APP_REGISTRY.find(
         (a) => a.name.toLowerCase() === target_app.toLowerCase(),
       );
-
       if (!appEntry) {
         return {
           successBoolean: false,
-          responseString:  `Unknown application: "${ target_app }". Check the app name and try again.`,
+          responseString:  `Unknown application: "${ target_app }". Known targets: ${ APP_REGISTRY.map(a => a.name).join(', ') }.`,
         };
       }
 
+      const stored = await SullaSettingsModel.get('computerUse.enabledApps', '{}');
+      const enabledApps: Record<string, boolean> = typeof stored === 'string' ? JSON.parse(stored) : (stored || {});
+
       if (!enabledApps[appEntry.bundleId]) {
-        return {
-          successBoolean: false,
-          responseString:  `"${ target_app }" is not enabled in Computer Use Settings. Ask the user to enable it first.`,
-        };
+        enabledApps[appEntry.bundleId] = true;
+        await SullaSettingsModel.set('computerUse.enabledApps', JSON.stringify(enabledApps), 'string');
+        autoEnabled = true;
       }
     } catch (error) {
       return {
         successBoolean: false,
-        responseString:  `Failed to check app permissions: ${ (error as Error).message }`,
+        responseString:  `Failed to resolve app permissions: ${ (error as Error).message }`,
       };
     }
 
@@ -84,9 +88,11 @@ export class ApplescriptExecuteWorker extends BaseTool {
         };
       }
 
+      const body = res.stdout.trim() || '(no output)';
+      const prefix = autoEnabled ? `[Auto-enabled "${ target_app }" in Computer Use Settings.]\n` : '';
       return {
         successBoolean: true,
-        responseString:  res.stdout.trim() || '(no output)',
+        responseString:  prefix + body,
       };
     } catch (error) {
       return {

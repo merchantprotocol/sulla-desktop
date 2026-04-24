@@ -28,9 +28,15 @@ Everything else (create, edit, delete, view source) is **file-based** — agent 
 
 ## Build a function
 
+The canonical flow is **draft → validate → test-run → done**. Skipping validation is the top cause of functions that "look fine" and then break the first time someone triggers them.
+
 1. **Gather:** what does the function take in, what does it return, what runtime is best (Python for data work, Node for HTTP/JS, Shell for system glue)?
 2. **Pick a slug** (kebab-case, no spaces, e.g., `csv-to-json`)
-3. **Create the dir:** `mkdir -p ~/sulla/functions/<slug>`
+3. **Create the dir:** `mkdir -p ~/sulla/functions/<slug>` — or let the scaffolder do it:
+   ```bash
+   sulla marketplace/scaffold '{"kind":"function","slug":"csv-to-json","name":"CSV to JSON","description":"…","runtime":"python"}'
+   ```
+   Scaffold produces a manifest + handler + deps file so you only fill in the body.
 4. **Write `function.yaml`** with the required fields:
    ```yaml
    apiVersion: sulla/v1
@@ -62,7 +68,29 @@ Everything else (create, edit, delete, view source) is **file-based** — agent 
    - Node: `export async function handler(inputs) { ... }` (ESM, `"type": "module"` in package.json)
    - Shell: read JSON from stdin, write JSON to stdout, exit 0 = success
 6. **Add deps** (only if needed): `requirements.txt`, `package.json`, or `packages.txt` (apk format)
-7. **Test:** `sulla function/function_run '{"slug":"<slug>"}'` (use defaults) or with explicit inputs
+7. **Validate** (see next section) — non-negotiable before step 8
+8. **Test-run:** `sulla function/function_run '{"slug":"<slug>"}'` (use defaults) or with explicit inputs. A clean validator pass doesn't prove the handler actually works — only a real invocation does.
+
+## Validate
+
+Every function the agent writes gets validated before the user is told it's ready. See `agent-patterns/validation.md` for the overall policy; this is the function-specific call.
+
+```bash
+sulla marketplace/validate '{"kind":"function","slug":"<slug>"}'
+```
+
+What it checks:
+- `function.yaml` exists and parses
+- `slug`, `id` (must be `function-<slug>`), and the directory name all agree
+- `spec.runtime` is one of `python` | `node` | `shell`
+- `spec.entrypoint` references a file that actually exists on disk
+- `spec.inputs` and `spec.outputs` have valid shapes
+- `spec.permissions.network` / `filesystem` / `env` follow the permission schema
+- Runtime-specific deps file is consistent with `spec.runtime` (e.g. Python needs no `package.json`; Node needs `"type": "module"`)
+
+Returns `{ errors: [], warnings: [] }`. **Errors mean the function won't load — fix and re-validate before telling the user it's done.** Warnings (e.g. missing `FUNCTION.md` doc) are safe to surface and defer.
+
+Validation is structural only. After the validator is clean, run `function_run` with a minimal input to prove the handler actually works and returns the shape declared in `spec.outputs`. The validator can't catch a missing `return` statement or a key typo in the output dict — only an invocation can.
 
 ## Run
 
