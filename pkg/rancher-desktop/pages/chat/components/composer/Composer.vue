@@ -38,6 +38,8 @@
         <ComposerVoicePanel
           v-else
           :started-at="recStartedAt"
+          :level="recLevel"
+          :speaking="recSpeaking"
           @stop="stopVoice(true)"
         />
 
@@ -97,6 +99,8 @@ const placeholder = computed(() => {
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
 const recStartedAt = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.startedAt : 0);
+const recLevel     = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.level    : 0);
+const recSpeaking  = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.speaking : false);
 
 // ─── Mention sources ───────────────────────────────────────────────
 // Static but realistic. Real IPC handlers (list-project-files, etc.)
@@ -213,18 +217,30 @@ function tryRunSlashAction(cmd: SlashCommand): boolean {
     case 'model':
       controller.openModal('model');
       return true;
+    case 'tokens':
+      controller.openModal('tokens');
+      return true;
     case 'help':
       controller.openModal('shortcuts');
       return true;
     case 'voice':
       window.dispatchEvent(new CustomEvent('chat:voice-toggle'));
       return true;
+    case 'pin': {
+      controller.pinLastReply();
+      return true;
+    }
+    case 'fork': {
+      // Fork off the last message; ChatPage listens and opens the snapshot.
+      const msgs = controller.messages.value;
+      const fromId = msgs.length > 0 ? msgs[msgs.length - 1].id : null;
+      window.dispatchEvent(new CustomEvent('chat:fork', { detail: { fromId } }));
+      return true;
+    }
     // Deliberately unhandled — these need backend / controller methods
     // that don't exist yet. Let them flow through as literal text.
     case 'loop':
     case 'schedule':
-    case 'pin':
-    case 'fork':
     default:
       return false;
   }

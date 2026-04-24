@@ -25,7 +25,9 @@
 <script setup lang="ts">
 const props = defineProps<{
   /** Currently active mode — we'll highlight it. */
-  active?: string;
+  active?:       string;
+  /** When `active === 'routines'`, disambiguates My Work vs Library. */
+  activeSubTab?: string;
 }>();
 
 defineEmits<{
@@ -40,13 +42,16 @@ interface ModeItem {
 }
 
 /**
- * Highlight the item whose mode matches `active`. Multiple items can
- * share the same `mode` (e.g. My Work + Library both map to 'routines');
- * in that case only the first matching entry lights up. Future work:
- * thread subTab state up so the rail can highlight the real tab.
+ * Highlight the item whose mode + subTab both match. Multiple items can
+ * share the same `mode` (My Work + Library both map to 'routines'); we
+ * use `activeSubTab` to pick between them. Falls back to the first match
+ * on the mode when no subTab is set.
  */
 function isActive(item: ModeItem, idx: number): boolean {
   if (item.mode !== props.active) return false;
+  if (item.subTab && props.activeSubTab) {
+    return item.subTab === props.activeSubTab;
+  }
   const firstIdx = items.findIndex(x => x.mode === props.active);
   return firstIdx === idx;
 }

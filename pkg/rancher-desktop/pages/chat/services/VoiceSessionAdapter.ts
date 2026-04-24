@@ -88,7 +88,8 @@ export class VoiceSessionAdapter {
     if (v.phase !== 'recording') return;
     this.controller.setVoice({
       ...v,
-      level: Math.max(0, Math.min(1, data.level)),
+      level:    Math.max(0, Math.min(1, data.level)),
+      speaking: !!data.speaking,
     });
   };
 
@@ -147,6 +148,7 @@ export class VoiceSessionAdapter {
       startedAt:        Date.now(),
       interimMessageId: interim.id,
       level:            0,
+      speaking:         false,
     });
 
     try {
@@ -278,6 +280,7 @@ export class VoiceSessionAdapter {
         startedAt:        Date.now(),
         interimMessageId: nextInterim.id,
         level:            0,
+        speaking:         false,
       });
     }
   }

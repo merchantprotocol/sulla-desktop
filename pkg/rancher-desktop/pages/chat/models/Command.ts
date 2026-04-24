@@ -4,7 +4,7 @@ export interface SlashCommand {
   name:   string;     // "/clear" (includes the slash)
   label:  string;     // Human description shown in the popover
   hint?:  string;     // Keyboard hint shown on the right
-  action?: 'clear' | 'new' | 'help' | 'model' | 'loop' | 'schedule' | 'voice' | 'pin' | 'fork';
+  action?: 'clear' | 'new' | 'help' | 'model' | 'tokens' | 'loop' | 'schedule' | 'voice' | 'pin' | 'fork';
 }
 
 export interface MentionTarget {
@@ -19,6 +19,7 @@ export const defaultSlashCommands: readonly SlashCommand[] = Object.freeze([
   { name: '/new',      label: 'start a new chat',               hint: '⌘N', action: 'new' },
   { name: '/help',     label: 'show keyboard shortcuts',        hint: '?',  action: 'help' },
   { name: '/model',    label: 'switch model',                   hint: '⌘K', action: 'model' },
+  { name: '/tokens',   label: 'view token usage & cost',         hint: '⌘I', action: 'tokens' },
   { name: '/loop',     label: 'run this prompt on an interval',             action: 'loop' },
   { name: '/schedule', label: 'schedule a remote agent',                    action: 'schedule' },
   { name: '/voice',    label: 'start voice input',              hint: '⌘/', action: 'voice' },

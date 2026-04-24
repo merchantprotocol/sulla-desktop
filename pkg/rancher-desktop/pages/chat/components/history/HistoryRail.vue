@@ -1,10 +1,33 @@
 <!--
-  Left-side history rail. Lists open + persisted threads grouped
-  by Today / Yesterday / This week.
-  Clicking a row activates that thread's controller.
+  Left-side history rail.
+    • Pinned messages (Pinboard) sit at the top — jump straight to the turn.
+    • Threads grouped by Today / Yesterday / This week / Earlier below.
+  Clicking a thread row activates that thread's controller; clicking a
+  pinned message emits `jump-to` with { threadId, messageId }.
 -->
 <template>
   <aside v-if="open" class="history">
+    <!-- ─── Pinboard ─── -->
+    <template v-if="pinned.length > 0">
+      <div class="history-head">Pinned</div>
+      <div class="history-list">
+        <div
+          v-for="p in pinned"
+          :key="p.messageId"
+          class="history-item pinned"
+          :title="p.preview"
+          @click="$emit('jump-to', { threadId: p.threadId, messageId: p.messageId })"
+        >
+          <span class="pin-icon">◈</span>
+          <span class="pin-body">
+            <span class="pin-text">{{ p.preview }}</span>
+            <span class="pin-origin">from {{ p.threadTitle || 'Untitled' }}</span>
+          </span>
+        </div>
+      </div>
+    </template>
+
+    <!-- ─── Recent threads ─── -->
     <div class="history-head">Recent</div>
     <div class="history-list">
       <template v-for="group in grouped" :key="group.label">
@@ -26,14 +49,29 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { Thread }    from '../../models/Thread';
-import type { ThreadId }  from '../../types/chat';
+import type { ThreadId, MessageId }  from '../../types/chat';
+
+export interface PinnedEntry {
+  threadId:    ThreadId;
+  threadTitle: string;
+  messageId:   MessageId;
+  preview:     string;
+}
 
 const props = defineProps<{
   open:     boolean;
   threads:  Thread[];
   activeId: ThreadId | null;
+  /** Pinned messages across all open/persisted threads. Rendered above the recent list. */
+  pinned?:  readonly PinnedEntry[];
 }>();
-defineEmits<{ (e: 'activate', id: ThreadId): void }>();
+defineEmits<{
+  (e: 'activate', id: ThreadId): void;
+  (e: 'jump-to', target: { threadId: ThreadId; messageId: MessageId }): void;
+}>();
+
+// Defaulted locally because readonly array defaults aren't friendly in props.
+const pinned = computed<readonly PinnedEntry[]>(() => props.pinned ?? []);
 
 function dayKey(t: number): string {
   const now = new Date();
@@ -85,7 +123,10 @@ const grouped = computed(() => {
 .history-head::before {
   content: ""; width: 18px; height: 1px; background: var(--steel-500); opacity: 0.6;
 }
-.history-list { flex: 1; overflow-y: auto; padding: 8px 10px 20px; }
+/* Recent-list uses flex:1; pinned list is compact and doesn't grow. */
+.history-list { overflow-y: auto; padding: 8px 10px 14px; }
+.history-list:last-of-type { flex: 1; padding-bottom: 20px; }
+
 .history-item {
   padding: 10px 12px; border-radius: 8px;
   font-family: var(--serif); font-style: italic;
@@ -98,6 +139,39 @@ const grouped = computed(() => {
 .history-item .date {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
   color: var(--read-5); font-style: normal; margin-left: auto;
+}
+
+/* ─── Pinned-message row ─── */
+.history-item.pinned {
+  align-items: flex-start; gap: 10px;
+  padding: 9px 12px;
+  border-left: 2px solid rgba(80, 150, 179, 0.35);
+  border-radius: 0 8px 8px 0;
+  background: rgba(80, 150, 179, 0.04);
+  font-style: normal;
+}
+.history-item.pinned:hover {
+  background: rgba(80, 150, 179, 0.12);
+  border-left-color: var(--steel-400);
+}
+.pin-icon {
+  color: var(--steel-400); font-size: 12px;
+  margin-top: 1px; flex-shrink: 0;
+}
+.pin-body {
+  display: flex; flex-direction: column;
+  gap: 2px; min-width: 0; flex: 1;
+}
+.pin-text {
+  font-family: var(--serif); font-style: italic;
+  font-size: 13px; color: var(--read-2);
+  overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  line-height: 1.35;
+}
+.pin-origin {
+  font-family: var(--mono); font-size: 9.5px;
+  letter-spacing: 0.1em; color: var(--read-5);
 }
 .history-day {
   padding: 14px 14px 6px;

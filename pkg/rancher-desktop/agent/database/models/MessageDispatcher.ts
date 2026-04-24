@@ -39,6 +39,21 @@ function capText(s: string, max: number): string {
   return s.length <= max ? s : s.slice(s.length - max);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function contentToString(content: any): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return String(content ?? '');
+  return content.map((b: any) => {
+    if (typeof b === 'string') return b;
+    if (b?.type === 'text' && typeof b.text === 'string') return b.text;
+    if (b?.type === 'tool_result') {
+      if (typeof b.content === 'string') return b.content;
+      if (Array.isArray(b.content)) return b.content.map((c: any) => (typeof c === 'string' ? c : (c?.text ?? ''))).filter(Boolean).join('\n');
+    }
+    return '';
+  }).filter(Boolean).join('\n');
+}
+
 // ─── Types ──────────────────────────────────────────────────────
 
 export type SpeakListener = (text: string, threadId: string, pipelineSequence: number | null) => void;
@@ -145,7 +160,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
-  const content = data?.content !== undefined ? String(data.content) : '';
+  const content = data?.content !== undefined ? contentToString(data.content) : '';
 
   // Segment-boundary sentinels: kind carries the meaning, content is empty
   // by design. Must be handled BEFORE the empty-content drop or the signal
@@ -706,7 +721,7 @@ function handleThreadRestored(ctx: DispatchContext, agentId: string, msgThreadId
     for (const m of restoredMessages) {
       if ((m.metadata)?._conversationSummary) continue;
       const role = m.role === 'user' ? 'user' : 'assistant';
-      const content = typeof m.content === 'string' ? m.content : '';
+      const content = contentToString(m.content);
       if (!content.trim()) continue;
       ctx.messages.push({
         id:        m.id || `restored_${ Date.now() }_${ Math.random().toString(36).slice(2, 6) }`,

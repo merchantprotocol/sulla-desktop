@@ -2,7 +2,7 @@ import type { MessageId } from '../types/chat';
 
 export type VoiceState =
   | { phase: 'idle' }
-  | { phase: 'recording'; startedAt: number; interimMessageId: MessageId; level: number }
+  | { phase: 'recording'; startedAt: number; interimMessageId: MessageId; level: number; speaking: boolean }
   | { phase: 'playing';   refId: MessageId; startedAt: number; endsAt?: number };
 
 export const voiceIdle = (): VoiceState => ({ phase: 'idle' });

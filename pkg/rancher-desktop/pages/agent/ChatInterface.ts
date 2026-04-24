@@ -168,6 +168,20 @@ export class ChatInterface {
     return this.persona.getThreadId();
   });
 
+  // ─── Token + cost tracking (read-only pass-through) ─────────────
+  // Surfaces are mirrored from AgentPersonaService.state so that
+  // renderer-side code (new chat's TokenUsageModal, any other consumer)
+  // can read without drilling into the private persona field.
+  readonly totalTokensUsed     = computed(() => this.persona.state.totalTokensUsed);
+  readonly totalPromptTokens   = computed(() => this.persona.state.totalPromptTokens);
+  readonly totalCompletionTokens = computed(() => this.persona.state.totalCompletionTokens);
+  readonly totalInputCost      = computed(() => this.persona.state.totalInputCost);
+  readonly totalOutputCost     = computed(() => this.persona.state.totalOutputCost);
+  readonly totalCost           = computed(() => this.persona.state.totalCost);
+  readonly responseCount       = computed(() => this.persona.state.responseCount);
+  readonly averageResponseTime = computed(() => this.persona.state.averageResponseTime);
+  readonly tokensPerSecond     = computed(() => this.persona.state.tokensPerSecond);
+
   // Track if user has ever sent a message (persisted in localStorage)
   private readonly hasSentMessageKey: string;
   private hasSentMessage:             ReturnType<typeof ref<boolean>>;

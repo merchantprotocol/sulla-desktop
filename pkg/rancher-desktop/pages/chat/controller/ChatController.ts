@@ -26,13 +26,14 @@ import type {
   PopoverState, SlashCommand, MentionTarget,
   QueuedMessage,
   RunState,
-  Thread, ThreadState,
+  Thread, ThreadState, TokenUsage,
   VoiceState,
 } from '../models';
 
 import { idle as runIdle, isRunning }   from '../models/RunState';
 import { popoverClosed, defaultSlashCommands } from '../models/Command';
 import { voiceIdle }                    from '../models/VoiceState';
+import { emptyTokenUsage }               from '../models/Thread';
 
 import {
   type MessageId, type ArtifactId, type AttachmentId, type QueuedId, type ThreadId,
@@ -93,6 +94,7 @@ export class ChatController {
   readonly sidebar:         Ref<SidebarState>;
   readonly connection:      Ref<ConnectionState>;
   readonly model:           Ref<ModelDescriptor>;
+  readonly usage:           Ref<TokenUsage>;
 
   // Derived views — read-only computed helpers components can consume.
   readonly messages:          ComputedRef<Message[]>;
@@ -135,6 +137,7 @@ export class ChatController {
     this.sidebar   = ref(initial.sidebar);
     this.connection = ref(initial.connection);
     this.model     = ref(initial.model);
+    this.usage     = ref(emptyTokenUsage());
 
     this.messages       = computed(() => this.thread.value.messages);
     this.isRunning      = computed(() => isRunning(this.runState.value));
@@ -339,6 +342,57 @@ export class ChatController {
     this.updateMessage(id, { pinned: !msg.pinned });
   }
 
+  /** Pin the last Sulla reply. No-op if there isn't one. */
+  pinLastReply(): MessageId | null {
+    const msgs = this.thread.value.messages;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].kind === 'sulla') {
+        this.togglePin(msgs[i].id);
+        return msgs[i].id;
+      }
+    }
+    return null;
+  }
+
+  /** Returns every pinned message in the current thread, newest first. */
+  pinnedMessages(): Message[] {
+    return this.thread.value.messages.filter(m => m.pinned);
+  }
+
+  /**
+   * Build a fresh ThreadState whose messages are a slice of this thread
+   * up to (and including) `fromId`. Used by /fork. The caller (typically
+   * the registry) is responsible for activating the new thread.
+   */
+  forkSnapshot(fromId?: MessageId): ThreadState {
+    const msgs = this.thread.value.messages;
+    const endIdx = fromId
+      ? msgs.findIndex(m => m.id === fromId)
+      : msgs.length - 1;
+    const slice = endIdx >= 0 ? msgs.slice(0, endIdx + 1) : [...msgs];
+
+    const forkedThread: Thread = {
+      id:        newThreadId(),
+      title:     `${ this.thread.value.title || 'Untitled' } · fork`,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages:  slice.map(m => ({ ...m })),  // defensive copy
+    };
+    const snap = this.serialize();
+    return {
+      ...snap,
+      thread:            forkedThread,
+      runState:          runIdle(),
+      queue:             [],
+      staged:            [],
+      voice:             voiceIdle(),
+      artifacts:         [],
+      activeArtifactId:  null,
+      popover:           popoverClosed(),
+      modals:            { which: null },
+    };
+  }
+
   // ─── Patch actions ──────────────────────────────────────────────
   applyPatch(id: MessageId): void {
     const msg = this.thread.value.messages.find(m => m.id === id);
@@ -475,6 +529,11 @@ export class ChatController {
   }
 
   // ─── Connection ─────────────────────────────────────────────────
+  /** Replace the usage snapshot. The adapter calls this when persona state changes. */
+  setUsage(u: Partial<TokenUsage>): void {
+    this.usage.value = { ...this.usage.value, ...u };
+  }
+
   setConnection(state: ConnectionState): void {
     if (this.connection.value === state) return;
     this.connection.value = state;

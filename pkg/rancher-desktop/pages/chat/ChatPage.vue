@@ -21,10 +21,19 @@
         :open="historyOpen"
         :threads="allThreads"
         :active-id="activeThreadId"
+        :pinned="pinnedEntries"
         @activate="onActivate"
+        @jump-to="onJumpTo"
       />
 
       <main class="main">
+        <!--
+          Header backdrop: blurred, dimmed bar behind StatusBadges +
+          SessionMark so transcript content scrolling up doesn't collide
+          with the header chrome. Sits below the badges (z-index) but
+          above the transcript.
+        -->
+        <div class="header-backdrop" aria-hidden="true" />
         <StatusBadges />
         <SessionMark editable />
         <SearchBar />
@@ -44,6 +53,7 @@
 
     <ModelSwitcherModal />
     <ShortcutsModal />
+    <TokenUsageModal />
     <DropOverlay :active="dragActive" />
   </div>
 </template>
@@ -57,6 +67,7 @@ import SessionMark        from './components/chrome/SessionMark.vue';
 import DropOverlay        from './components/chrome/DropOverlay.vue';
 import ModelSwitcherModal from './components/chrome/ModelSwitcherModal.vue';
 import ShortcutsModal     from './components/chrome/ShortcutsModal.vue';
+import TokenUsageModal    from './components/chrome/TokenUsageModal.vue';
 import SearchBar          from './components/chrome/SearchBar.vue';
 
 import Transcript        from './components/transcript/Transcript.vue';
@@ -205,6 +216,61 @@ function onActivate(id: ThreadId): void {
   if (state) registry.open(state, props.tabId);
 }
 
+// ─── Pinboard entries (top of history rail) ───────────────────────
+// Walks both live controllers and persisted threads so pins surface
+// even when the origin thread isn't currently active. The rail renders
+// these above the "Recent" group.
+const pinnedEntries = computed(() => {
+  const out: { threadId: ThreadId; threadTitle: string; messageId: any; preview: string }[] = [];
+
+  // Live controllers first (fresher state)
+  for (const ctrl of registry.all()) {
+    const t = ctrl.thread.value;
+    for (const m of t.messages) {
+      if (!m.pinned) continue;
+      const text = (m as any).text || (m as any).body || (m as any).content || '';
+      out.push({
+        threadId:    t.id,
+        threadTitle: t.title,
+        messageId:   m.id,
+        preview:     String(text).slice(0, 140).replace(/\s+/g, ' ').trim() || '(pinned message)',
+      });
+    }
+  }
+
+  // Persisted threads not currently in memory
+  const memIds = new Set(registry.all().map(c => c.thread.value.id));
+  for (const state of persister.list()) {
+    if (memIds.has(state.thread.id)) continue;
+    for (const m of state.thread.messages) {
+      if (!m.pinned) continue;
+      const text = (m as any).text || (m as any).body || (m as any).content || '';
+      out.push({
+        threadId:    state.thread.id,
+        threadTitle: state.thread.title,
+        messageId:   m.id,
+        preview:     String(text).slice(0, 140).replace(/\s+/g, ' ').trim() || '(pinned message)',
+      });
+    }
+  }
+  return out;
+});
+
+/**
+ * Activate the pin's thread, then fire a window event so the Transcript
+ * can scroll the target message into view. Transcript-side handler is
+ * a follow-up; for now the activate gets you there.
+ */
+function onJumpTo(target: { threadId: ThreadId; messageId: any }): void {
+  onActivate(target.threadId);
+  // Give the transcript a tick to mount, then nudge it.
+  setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('chat:jump-to-message', {
+      detail: { messageId: target.messageId },
+    }));
+  }, 50);
+}
+
 // ─── Composables ───────────────────────────────────────────────────
 // Pass the controller in explicitly because Vue doesn't let a component
 // inject its own provide(). Descendants can still just call useChatController().
@@ -251,11 +317,25 @@ function onNewChatEvent(): void {
   adapter.newChat();
   controller.newChat();
 }
+
+// ─── Fork listener — /fork ─────────────────────────────────────────
+// Snapshots the current thread up through the named message, then
+// persists it so it appears in the history rail. The active controller
+// stays on the original thread — user can click the fork in history to
+// open it. Saves the mess of swapping the adapter mid-tab.
+function onForkEvent(ev: Event): void {
+  const detail = (ev as CustomEvent<{ fromId?: string }>).detail ?? {};
+  const snapshot = controller.forkSnapshot(detail.fromId as any);
+  persister.save(snapshot);
+}
+
 onMounted(() => {
   window.addEventListener('chat:new-chat', onNewChatEvent);
+  window.addEventListener('chat:fork',     onForkEvent);
 });
 onBeforeUnmount(() => {
   window.removeEventListener('chat:new-chat', onNewChatEvent);
+  window.removeEventListener('chat:fork',     onForkEvent);
 });
 </script>
 
@@ -286,6 +366,40 @@ onBeforeUnmount(() => {
   left: 0; right: 0;
   overflow: hidden;
   transition: left 0.35s ease, right 0.35s ease;
+}
+
+/*
+ * Header backdrop — blurred, dimmed gradient behind SessionMark
+ * (z-12) and StatusBadges (z-21). Sits above the transcript so
+ * scrolled content fades out under the header chrome instead of
+ * colliding with it.
+ */
+.header-backdrop {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 78px;
+  z-index: 10;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(5, 8, 16, 0.92) 0%,
+    rgba(5, 8, 16, 0.78) 55%,
+    rgba(5, 8, 16, 0) 100%
+  );
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 1) 65%,
+    rgba(0, 0, 0, 0) 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 1) 65%,
+    rgba(0, 0, 0, 0) 100%
+  );
 }
 .chat-root.history-open  .main { left: 260px; }
 .chat-root.artifact-open .main { right: 560px; }

@@ -27,6 +27,10 @@ export function useKeyboardShortcuts(opts: KeyboardShortcutOptions = {}): void {
     if (metaish && e.key.toLowerCase() === 'k') {
       e.preventDefault(); c.openModal('model'); return;
     }
+    // ⌘I — token usage
+    if (metaish && e.key.toLowerCase() === 'i') {
+      e.preventDefault(); c.openModal('tokens'); return;
+    }
     // ⌘F — search
     if (metaish && e.key.toLowerCase() === 'f') {
       e.preventDefault(); c.openModal('search'); return;

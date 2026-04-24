@@ -48,10 +48,40 @@ function placeholderPayload(kind: Artifact['kind']): WorkflowPayload | HtmlPaylo
 </script>
 
 <style scoped>
-.artifact-body { flex: 1; overflow-y: auto; position: relative; }
-.artifact-body::-webkit-scrollbar { width: 6px; }
-.artifact-body::-webkit-scrollbar-track { background: transparent; }
-.artifact-body::-webkit-scrollbar-thumb { background: rgba(168, 192, 220, 0.2); border-radius: 3px; }
-.artifact-pane { height: 100%; padding: 24px 22px; }
+/*
+  Single scroller for the whole artifact content. The scrollbar sits on
+  the far right of the artifact area (below ArtifactTabs + ArtifactHeader,
+  above the composer). Horizontal scroll is disabled — anything wider
+  than the panel just wraps or hides.
+*/
+.artifact-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+}
+.artifact-body::-webkit-scrollbar { width: 10px; }
+.artifact-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.artifact-body::-webkit-scrollbar-thumb {
+  background: rgba(168, 192, 220, 0.18);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.artifact-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 192, 220, 0.32);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* Inner pane holds the inset padding so the scrollbar stays flush with
+   the right edge of the artifact area. */
+.artifact-pane {
+  padding: 24px 22px;
+  overflow-x: hidden;
+}
 .empty { color: var(--read-4); font-family: var(--mono); font-size: 12px; }
 </style>

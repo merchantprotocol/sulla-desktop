@@ -38,6 +38,7 @@
           v-for="(tab, index) in orderedTabs"
           :key="tab.id"
           :to="tab.route"
+          draggable="false"
           class="tab-item text-sm md:text-base"
           :class="[
             tab.mode ? `tab-mode-${ tab.mode }` : '',
@@ -50,6 +51,7 @@
             },
           ]"
           @pointerdown="onPointerDown($event, index)"
+          @dragstart.prevent
           @auxclick.prevent="onAuxClick($event, tab)"
           @contextmenu.prevent="onTabContextMenu($event, tab, index)"
         >
@@ -58,6 +60,7 @@
             <img
               v-if="tab.favicon"
               :src="tab.favicon"
+              draggable="false"
               class="tab-favicon-img"
               alt=""
             >
@@ -1090,8 +1093,11 @@ function handleTabContextMenuAction(
 .app-titlebar a,
 .app-titlebar button,
 .app-titlebar .tab-item,
+.app-titlebar .tab-item *,
 .app-titlebar input,
-.app-titlebar .tab-scroll-wrapper {
+.app-titlebar .tab-scroll-wrapper,
+.app-titlebar .tab-scroll-container,
+.app-titlebar .tab-scroll-container * {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }

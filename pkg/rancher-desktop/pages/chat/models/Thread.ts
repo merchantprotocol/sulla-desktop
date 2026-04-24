@@ -17,8 +17,36 @@ export interface ModelDescriptor {
 export type ConnectionState = 'online' | 'degraded' | 'offline';
 
 export interface ModalState {
-  which: 'model' | 'shortcuts' | 'search' | null;
+  which: 'model' | 'shortcuts' | 'search' | 'tokens' | null;
 }
+
+/**
+ * Aggregate token and cost metrics for the current thread/session.
+ * Mirrored from the backend's AgentPersonaService state via the adapter.
+ */
+export interface TokenUsage {
+  totalTokens:       number;
+  promptTokens:      number;
+  completionTokens:  number;
+  inputCost:         number;   // USD
+  outputCost:        number;   // USD
+  totalCost:         number;   // USD
+  responseCount:     number;
+  avgResponseMs:     number;
+  tokensPerSecond:   number;
+}
+
+export const emptyTokenUsage = (): TokenUsage => ({
+  totalTokens:      0,
+  promptTokens:     0,
+  completionTokens: 0,
+  inputCost:        0,
+  outputCost:       0,
+  totalCost:        0,
+  responseCount:    0,
+  avgResponseMs:    0,
+  tokensPerSecond:  0,
+});
 
 export interface SidebarState {
   historyOpen: boolean;

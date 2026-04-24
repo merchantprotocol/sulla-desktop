@@ -122,6 +122,40 @@ export class PersonaAdapter {
       window.dispatchEvent(new CustomEvent('chat:speak', { detail: text }));
     });
     this.stopWatchers.push(unsubscribeSpeak);
+
+    // Token + cost mirror — persona.state is reactive so the computeds on
+    // ChatInterface re-evaluate on every update. We watch the tuple and
+    // push it into ChatController.usage so the token modal + any other
+    // consumer reads a single source of truth.
+    this.stopWatchers.push(
+      watch(
+        () => [
+          this.ci.totalTokensUsed.value,
+          this.ci.totalPromptTokens.value,
+          this.ci.totalCompletionTokens.value,
+          this.ci.totalInputCost.value,
+          this.ci.totalOutputCost.value,
+          this.ci.totalCost.value,
+          this.ci.responseCount.value,
+          this.ci.averageResponseTime.value,
+          this.ci.tokensPerSecond.value,
+        ] as const,
+        ([total, prompt, completion, inputCost, outputCost, totalCost, count, avgMs, tps]) => {
+          this.controller.setUsage({
+            totalTokens:      total,
+            promptTokens:     prompt,
+            completionTokens: completion,
+            inputCost,
+            outputCost,
+            totalCost,
+            responseCount:    count,
+            avgResponseMs:    avgMs,
+            tokensPerSecond:  tps,
+          });
+        },
+        { immediate: true },
+      ),
+    );
   }
 
   // ─── Intents dispatched by the controller ──────────────────────────
@@ -275,12 +309,26 @@ export class PersonaAdapter {
       } satisfies ToolMessage;
     }
 
-    // Channel message (from Heartbeat/Workbench/Mobile)
+    // Channel message (from Heartbeat/Workbench/Mobile).
+    //
+    // Mobile-relay messages are intentionally NOT surfaced in the active
+    // transcript — the mobile chat has its own continuity and popping
+    // into the desktop conversation mid-thread is distracting. Instead,
+    // we persist the mobile conversation as its own thread so it shows
+    // up in the history rail and the user can pick it up there.
+    //
+    // Heartbeat and Workbench still render inline (they're ambient
+    // background agents that don't have their own chat surface).
     if (b.kind === 'channel_message') {
+      const channel = b.channelMeta?.senderChannel ?? '';
+      if (isMobileRelayChannel(channel)) {
+        // History-only — skip transcript render.
+        return null;
+      }
       return {
         id, kind: 'channel', createdAt,
         agent:   b.channelMeta?.senderId       || 'Agent',
-        channel: b.channelMeta?.senderChannel  || '',
+        channel,
         text:    b.content ?? '',
       } satisfies ChannelMessage;
     }
@@ -353,10 +401,14 @@ export class PersonaAdapter {
 
     // Find-or-reopen the artifact for this run. `openArtifact` on the
     // controller reuses an existing artifact with matching kind + name,
-    // or creates a new one if the previous was closed.
+    // or creates a new one if the previous was closed. We include a
+    // short slice of `runId` so two concurrent runs whose first node
+    // shares a label don't collide into the same artifact.
     let name = this.workflowNames.get(runId);
     if (!name) {
-      name = `Workflow • ${ node.nodeLabel || 'run' }`;
+      const label = node.nodeLabel || 'run';
+      const tag = runId ? ` · ${ String(runId).slice(0, 6) }` : '';
+      name = `Workflow • ${ label }${ tag }`;
       this.workflowNames.set(runId, name);
     }
 
@@ -468,6 +520,17 @@ export class PersonaAdapter {
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────
+/**
+ * Mobile-relay channels feed paired-phone conversations into the desktop.
+ * We want those to be pickup-able from history but not pop into the
+ * active chat — so the adapter drops them from transcript rendering
+ * when this predicate is true.
+ */
+function isMobileRelayChannel(channel: string): boolean {
+  const c = (channel || '').toLowerCase();
+  return c === 'mobile-relay' || c === 'mobile' || c.startsWith('mobile-');
+}
+
 function splitThoughts(content: string): string[] {
   return content
     .split(/\n+/)

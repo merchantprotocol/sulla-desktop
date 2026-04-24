@@ -31,10 +31,14 @@ function onExpand(): void {
 </script>
 
 <style scoped>
+/*
+  Sidebar sits a notch lighter than the chat background (#050810) so
+  the eye reads it as its own surface without needing an inner card.
+*/
 .artifact {
   overflow: hidden;
   border-left: 1px solid rgba(168, 192, 220, 0.1);
-  background: rgba(7, 13, 26, 0.55);
+  background: #0d131f;
   backdrop-filter: blur(10px);
   display: flex; flex-direction: column;
   height: 100%;

@@ -16,6 +16,7 @@
           <div>
             <div class="sec">Model &amp; voice</div>
             <div class="row"><span>Switch model</span><kbd>⌘K</kbd></div>
+            <div class="row"><span>Token usage</span><kbd>⌘I</kbd></div>
             <div class="row"><span>Voice toggle</span><kbd>⌘/</kbd></div>
             <div class="row"><span>Stop run</span><kbd>Esc</kbd></div>
             <div class="row"><span>Continue</span><kbd>⌘↵</kbd></div>
