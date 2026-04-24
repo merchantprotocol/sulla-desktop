@@ -213,6 +213,38 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  // Workflow document: the `workflow/display` tool published a routine
+  // for the artifact sidebar. Content is empty by design — the payload
+  // is the full routine doc under `data.workflow`. PersonaAdapter opens
+  // or updates a workflow artifact keyed by slug so repeat emits (after
+  // each import_workflow) update the same sidebar card in place.
+  if (kindRaw === 'workflow_document') {
+    const doc = data?.workflow && typeof data.workflow === 'object' ? (data.workflow as any) : null;
+    if (!doc || typeof doc.slug !== 'string' || !doc.slug.trim()) return;
+    const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
+    const edges = Array.isArray(doc.edges) ? doc.edges : [];
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_workflow_document_${ doc.slug }`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'workflow_document',
+      content:   '',
+      workflowDocument: {
+        slug:        String(doc.slug),
+        id:          typeof doc.id === 'string' ? doc.id : undefined,
+        name:        typeof doc.name === 'string' ? doc.name : undefined,
+        description: typeof doc.description === 'string' ? doc.description : undefined,
+        _status:     doc._status === 'draft' || doc._status === 'production' || doc._status === 'archive' ? doc._status : undefined,
+        viewport:    doc.viewport && typeof doc.viewport === 'object' ? doc.viewport : undefined,
+        nodes,
+        edges,
+      },
+    });
+    return;
+  }
+
   if (!content.trim()) {
     console.warn(`⚠️ [MessageDispatcher] EMPTY CONTENT assistant message dropped`, {
       msgType: msg.type, channel: agentId, threadId: msgThreadId,

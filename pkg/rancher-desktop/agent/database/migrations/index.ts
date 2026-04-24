@@ -18,6 +18,7 @@ import { up as up_0022, down as down_0022 } from './0022_create_sync_queue_table
 import { up as up_0023, down as down_0023 } from './0023_create_workflows_table';
 import { up as up_0024, down as down_0024 } from './0024_add_source_template_slug_to_workflows';
 import { up as up_0025, down as down_0025 } from './0025_create_library_drafts_table';
+import { up as up_0026, down as down_0026 } from './0026_create_workflow_executions_table';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -39,4 +40,5 @@ export const migrationsRegistry = [
   { name: '0023_create_workflows_table', up: up_0023, down: down_0023 },
   { name: '0024_add_source_template_slug_to_workflows', up: up_0024, down: down_0024 },
   { name: '0025_create_library_drafts_table', up: up_0025, down: down_0025 },
+  { name: '0026_create_workflow_executions_table', up: up_0026, down: down_0026 },
 ] as const;

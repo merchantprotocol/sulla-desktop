@@ -147,6 +147,25 @@ export async function activateWorkflowOnState(
     }
   }
 
+  // Concurrent-run guard: block if this workflow already has a running or
+  // suspended execution. Pass force=true to override (e.g. boot recovery).
+  const force = (input as any).force === true;
+  if (!force) {
+    try {
+      const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+      const active = await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
+      if (active) {
+        const a = active.attributes as any;
+        return {
+          ok:             false,
+          responseString: `Workflow "${ definition.name }" already has an active execution (${ a.execution_id }, status: ${ a.status }). Resume it with resumeExecutionId="${ a.execution_id }" or wait for it to complete.`,
+        };
+      }
+    } catch (err) {
+      console.warn('[ExecuteWorkflow] Concurrent-run guard check failed (continuing):', err);
+    }
+  }
+
   // Resume a specific prior execution (user clicked Resume on a row in the
   // Previous runs list). Walk every checkpoint for that executionId, seed
   // each completed node's output, and hand the walker a fresh frontier that
@@ -186,6 +205,16 @@ export async function activateWorkflowOnState(
 
         console.log(`[ExecuteWorkflow] Resuming execution ${ resumeExecutionId } → ${ resumedState.executionId }, completed=${ resumedState.completedNodeIds.length }, frontier=[${ resumedState.currentNodeIds.join(', ') }]`);
 
+        try {
+          const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+          await WorkflowExecutionModel.markRunning({
+            executionId:  resumedState.executionId,
+            workflowId:   definition.id,
+            workflowName: definition.name,
+            workflowSlug: workflowId,
+          });
+        } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
+
         return {
           ok:             true,
           responseString: JSON.stringify({
@@ -221,6 +250,16 @@ export async function activateWorkflowOnState(
       state.metadata.activeWorkflow = playbook;
 
       console.log(`[ExecuteWorkflow] Resumed execution ${ resumeExecutionId } via legacy seed-outputs path → ${ playbook.executionId }, restarting at ${ lastNodeId }`);
+
+      try {
+        const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+        await WorkflowExecutionModel.markRunning({
+          executionId:  playbook.executionId,
+          workflowId:   definition.id,
+          workflowName: definition.name,
+          workflowSlug: workflowId,
+        });
+      } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
 
       return {
         ok:             true,
@@ -297,6 +336,16 @@ export async function activateWorkflowOnState(
 
           console.log(`[ExecuteWorkflow] Resuming workflow "${ definition.name }" from checkpoint — original=${ savedState.executionId }, new=${ resumedState.executionId }, completed=${ resumedState.completedNodeIds.length } nodes, frontier=[${ resumedState.currentNodeIds.join(', ') }]`);
 
+          try {
+            const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+            await WorkflowExecutionModel.markRunning({
+              executionId:  resumedState.executionId,
+              workflowId:   definition.id,
+              workflowName: definition.name,
+              workflowSlug: workflowId,
+            });
+          } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
+
           return {
             ok:             true,
             responseString: JSON.stringify({
@@ -326,6 +375,19 @@ export async function activateWorkflowOnState(
     // Verify state propagation
     const verify = state.metadata.activeWorkflow;
     console.log(`[ExecuteWorkflow] Loaded workflow "${ definition.name }" (${ workflowId }) as playbook — executionId=${ playbook.executionId }, frontier=[${ playbook.currentNodeIds.join(', ') }], stateVerify=${ verify?.status }/${ verify?.currentNodeIds?.length ?? 0 }`);
+
+    try {
+      const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+      const autoRestart = (definition as any).auto_restart !== false;
+      await WorkflowExecutionModel.markRunning({
+        executionId:  playbook.executionId,
+        workflowId:   definition.id,
+        workflowName: definition.name,
+        workflowSlug: workflowId,
+        autoRestart,
+        triggerInput: input.message,
+      });
+    } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
 
     return {
       ok:             true,

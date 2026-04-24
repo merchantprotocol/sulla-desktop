@@ -9,7 +9,7 @@ export class MarketplaceSearchWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const kindRaw = typeof input.kind === 'string' ? input.kind.trim().toLowerCase() : '';
     if (kindRaw && !isArtifactKind(kindRaw)) {
-      return { successBoolean: false, responseString: `Invalid kind "${ kindRaw }". Must be one of: skill, function, workflow, agent, recipe.` };
+      return { successBoolean: false, responseString: `Invalid kind "${ kindRaw }". Must be one of: skill, function, workflow, agent, recipe, integration.` };
     }
 
     try {

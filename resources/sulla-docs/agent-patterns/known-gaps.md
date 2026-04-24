@@ -45,7 +45,7 @@ Last verified against the codebase: 2026-04-23.
 | Schedule this function to run daily | 🟡 | Wrap it in a workflow with a `schedule` trigger |
 | Run in the background / async | 🟡 | `function_run` blocks |
 | Stream the output | 🟡 | No streaming |
-| Scaffold a function from a template | 🟢 | No scaffolder; agent writes from scratch |
+| ✅ Scaffold a function from a template | `sulla marketplace/scaffold '{"kind":"function","slug":"..."}'` | shipped |
 
 ---
 
@@ -63,7 +63,7 @@ Last verified against the codebase: 2026-04-23.
 
 ## Marketplace / Extensions
 
-The `marketplace/*` (10 tools, generic across 5 kinds) and `extensions/{start,stop,get_status}_extension` shipped 2026-04-23.
+The `marketplace/*` (10 tools, generic across 6 kinds: skill / function / workflow / agent / recipe / integration) and `extensions/{start,stop,get_status}_extension` shipped.
 
 | Request | Severity | Status |
 |---------|----------|--------|
@@ -225,7 +225,7 @@ Secretary Mode itself is **shipped and works** — but it's user-controlled, not
 
 | Request | Severity | Status |
 |---------|----------|--------|
-| Merge this PR | 🟡 | Unclear if `github_merge_pr` exists; verify before claiming |
+| Merge this PR | 🔴 | `github_merge_pr` does not exist. Planned in Phase 3. |
 | Show CI status for this branch | 🟡 | No Checks API tool |
 | Trigger a GitHub Action | 🟡 | No |
 | AI-review this PR | 🟢 | No review tool — would have to spawn an agent against the diff manually |
@@ -249,7 +249,6 @@ Secretary Mode itself is **shipped and works** — but it's user-controlled, not
 
 | Thing | Status | What it means for the agent |
 |-------|--------|----------------------------|
-| **n8n** | 🔴 Not running | Tool surface (`sulla n8n/*`) exists, but there's no n8n container. Check `vault/vault_is_enabled '{"account_type":"n8n"}'` first. |
 | **Twenty CRM server** | 🟡 Broken | Container `twenty-crm-server` is in restart loop. Postgres for it (`twenty-crm-postgres`) is healthy on port 30208. |
 | **`workflows` table** | 🟡 Empty (of production) | Only 2 draft workflows exist. `status='production'` returns nothing. Don't assume workflows are already set up. |
 | **Heartbeat** | 🟡 Disabled by default | `heartbeatEnabled=false` in `sulla_settings`. Tell the user how to enable if they want autonomous runs. |

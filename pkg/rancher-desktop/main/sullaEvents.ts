@@ -62,6 +62,31 @@ export function initSullaEvents(): void {
   initSullaCloudAuthEvents();
 
   // ─────────────────────────────────────────────────────────────
+  // Workflow boot recovery
+  // ─────────────────────────────────────────────────────────────
+
+  // Kick off recovery after a short delay to let the DB finish its
+  // connection warm-up (migrations run on connect).
+  setTimeout(async() => {
+    try {
+      const { recoverOnBoot } = await import('@pkg/agent/workflow/WorkflowRecoveryService');
+      await recoverOnBoot();
+    } catch (err) {
+      console.error('[initSullaEvents] Workflow boot recovery failed:', err);
+    }
+  }, 5000);
+
+  // Renderer can poll this to display a "resume interrupted workflow?" prompt.
+  ipcMainProxy.handle('sulla-workflow-suspended-executions', async() => {
+    try {
+      const { getPendingSuspended } = await import('@pkg/agent/workflow/WorkflowRecoveryService');
+      return getPendingSuspended();
+    } catch {
+      return [];
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────
   // Settings handlers
   // ─────────────────────────────────────────────────────────────
 

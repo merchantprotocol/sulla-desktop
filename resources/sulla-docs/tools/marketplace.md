@@ -1,6 +1,6 @@
 # Marketplace Tools
 
-Generic artifact lifecycle for the Sulla marketplace. Works across **5 artifact kinds**: `skill`, `function`, `workflow`, `agent`, `recipe`.
+Generic artifact lifecycle for the Sulla marketplace. Works across **6 artifact kinds**: `skill`, `function`, `workflow`, `agent`, `recipe`, `integration`.
 
 ## How it talks to the cloud
 
@@ -22,6 +22,7 @@ The tools hit a Sulla Cloud marketplace API:
 | workflow | `~/sulla/routines/<slug>/` | `routine.yaml` | (single-file bundle) |
 | agent | `~/sulla/resources/agents/<slug>/` | `config.yaml` | `soul.md` |
 | recipe | `~/sulla/recipes/<slug>/` | `manifest.yaml` | `docker-compose.yml`, `installation.yaml`, icon |
+| integration | `~/sulla/integrations/<slug>/` | `<slug>.v<N>-auth.yaml` (dynamic filename) | `INTEGRATION.md`, `<endpoint>.v<N>.yaml` (one per endpoint) |
 
 `marketplace/download` materialises into the right dir automatically.
 
@@ -79,6 +80,7 @@ sulla marketplace/scaffold '{"kind":"skill","slug":"my-skill"}'
 sulla marketplace/scaffold '{"kind":"workflow","slug":"my-routine"}'
 sulla marketplace/scaffold '{"kind":"agent","slug":"my-agent"}'
 sulla marketplace/scaffold '{"kind":"recipe","slug":"my-recipe"}'
+sulla marketplace/scaffold '{"kind":"integration","slug":"my-service"}'
 ```
 
 Generates the directory + manifest + handler/companion files. Then iterate.

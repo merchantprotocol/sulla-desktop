@@ -18,7 +18,16 @@
     @contextmenu.prevent="onContextMenu"
   >
     <span class="chat-role">Sulla · {{ timeLabel }}</span>
-    <div class="chat-body" v-html="rendered" />
+    <IsolatedHtml
+      v-if="isHtmlDocument"
+      class="chat-body"
+      :html="msg.text"
+    />
+    <div
+      v-else
+      class="chat-body"
+      v-html="rendered"
+    />
     <TurnActions
       role="sulla"
       :pinned="msg.pinned"
@@ -40,8 +49,17 @@ import { marked } from 'marked';
 
 import type { SullaMessage } from '../../models/Message';
 import TurnActions from './TurnActions.vue';
+import IsolatedHtml from './IsolatedHtml.vue';
 import ChatContextMenu from '../../ChatContextMenu.vue';
 import { useChatController } from '../../controller/useChatController';
+
+/**
+ * Detect raw HTML-ish content. When the agent emits things like a bare
+ * `<style>…</style>` block or an unwrapped `<html>` document, those need
+ * Shadow DOM isolation so their CSS doesn't bleed into the host app.
+ * Everything else keeps going through the normal marked/DOMPurify pipe.
+ */
+const HTML_DOC_RE = /<style\b|<script\b|<!doctype|<html\b|<body\b|<head\b/i;
 
 const props = defineProps<{ msg: SullaMessage }>();
 // Kept for back-compat with any parents that still listen.
@@ -56,6 +74,8 @@ const timeLabel = computed(() => {
   const d = new Date(props.msg.createdAt);
   return `${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}`;
 });
+
+const isHtmlDocument = computed(() => HTML_DOC_RE.test(props.msg.text || ''));
 
 const rendered = computed(() => {
   const html = (marked(props.msg.text || '') as string) || '';

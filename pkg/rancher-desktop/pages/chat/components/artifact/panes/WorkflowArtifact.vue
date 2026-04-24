@@ -1,24 +1,27 @@
 <!--
-  Node-graph artifact. A simplified visualization of a running routine —
-  nodes + edges with state (idle / active / done / start / error). Active
-  edges get a traveling pulse.
+  Node-graph artifact. Consumes the routine.yaml shape directly — no field
+  mapping. Node coordinates come from `node.position.{x,y}`; labels and
+  category badges from `node.data.{label,subtype}`. Runtime state (active
+  / done / error) layers on via the optional `runtimeState` field, which
+  is absent during authoring and present during execution. Edges use the
+  same `source`/`target` field names the routine YAML uses.
 -->
 <template>
   <div class="wf-canvas">
     <div
       v-for="e in payload.edges"
-      :key="e.from + '-' + e.to"
-      :class="['wf-edge', e.state]"
+      :key="e.id"
+      :class="['wf-edge', e.runtimeState ?? 'idle']"
       :style="edgeStyle(e)"
     />
     <div
       v-for="n in payload.nodes"
       :key="n.id"
-      :class="['wf-node', n.state]"
-      :style="{ left: n.x + 'px', top: n.y + 'px' }"
+      :class="['wf-node', n.runtimeState ?? 'idle']"
+      :style="{ left: n.position.x + 'px', top: n.position.y + 'px' }"
     >
-      <div class="kicker">{{ n.kicker }}</div>
-      <div class="nm">{{ n.name }}</div>
+      <div class="kicker">{{ n.data.subtype }}</div>
+      <div class="nm">{{ n.data.label }}</div>
     </div>
   </div>
 </template>
@@ -29,11 +32,11 @@ import type { WorkflowPayload, WorkflowEdge } from '../../../models/Artifact';
 const props = defineProps<{ payload: WorkflowPayload }>();
 
 function edgeStyle(e: WorkflowEdge): Record<string, string> {
-  const a = props.payload.nodes.find(n => n.id === e.from);
-  const b = props.payload.nodes.find(n => n.id === e.to);
+  const a = props.payload.nodes.find(n => n.id === e.source);
+  const b = props.payload.nodes.find(n => n.id === e.target);
   if (!a || !b) return { display: 'none' };
-  const x1 = a.x + 140, y1 = a.y + 24;
-  const x2 = b.x,        y2 = b.y + 24;
+  const x1 = a.position.x + 140, y1 = a.position.y + 24;
+  const x2 = b.position.x,       y2 = b.position.y + 24;
   const dx = x2 - x1, dy = y2 - y1;
   const len = Math.hypot(dx, dy);
   const ang = Math.atan2(dy, dx) * 180 / Math.PI;

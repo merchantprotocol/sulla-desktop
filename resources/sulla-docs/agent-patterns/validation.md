@@ -20,7 +20,7 @@ No exceptions for "simple changes." The validators are fast (sub-second for ever
 | **Skill** | `sulla marketplace/validate '{"kind":"skill","slug":"…"}'` | `SKILL.md` frontmatter, required fields |
 | **Agent** | `sulla marketplace/validate '{"kind":"agent","slug":"…"}'` | `config.yaml` shape, soul.md present, integrations block |
 | **Recipe** | `sulla marketplace/validate '{"kind":"recipe","slug":"…"}'` | `manifest.yaml`, `docker-compose.yml` present, installation.yaml shape |
-| **Integration YAML** (e.g. `configapi` integrations) | `sulla configapi/configapi-validate '{"slug":"…"}'` | Integration spec shape, endpoint definitions |
+| **Integration** | `sulla marketplace/validate '{"kind":"integration","slug":"…"}'` | Auth YAML shape (`<slug>.v<N>-auth.yaml`), endpoint YAML shapes, slug ↔ filename agreement, warns if `INTEGRATION.md` missing |
 | **Goal / Identity file** | Structural only — it's markdown. Read back after write. | Format matches existing files; no tool enforcement. |
 
 When two validators apply (workflows, especially), run both. `meta/validate_sulla_workflow` catches graph-level bugs the kind schema doesn't see; `marketplace/validate` catches manifest-level bugs the graph validator doesn't know to look at.

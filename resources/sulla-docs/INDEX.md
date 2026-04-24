@@ -6,7 +6,7 @@ Searchable reference for agents running inside Lima. All files are at:
 Search: `grep -r "keyword" <path-to-this-dir>/`
 
 **Start here when a user request comes in:**
-- [`tools/inventory.md`](tools/inventory.md) — master list of every tool the agent can call (~140 tools, verified)
+- [`tools/inventory.md`](tools/inventory.md) — master list of every tool the agent can call (~162 tools, verified)
 - [`agent-patterns/user-stories.md`](agent-patterns/user-stories.md) — request → action playbook (covers all subsystems)
 - [`agent-patterns/known-gaps.md`](agent-patterns/known-gaps.md) — what the agent CAN'T do today (don't fake it)
 - [`agent-patterns/validation.md`](agent-patterns/validation.md) — never-ship-unverified contract; always validate artifacts before reporting done
@@ -35,19 +35,19 @@ Search: `grep -r "keyword" <path-to-this-dir>/`
 - `applescript.md` — Drive macOS apps via AppleScript; per-app allowlist + macOS Automation perms
 - `computer-use.md` — What's shipped (AppleScript + browser pixel control) vs what's planned (full OS pixel-level)
 - `ui.md` — Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat via `ui/open_tab`
-- `marketplace.md` — Search / download / scaffold / validate / publish / unpublish artifacts of all 5 kinds
+- `marketplace.md` — Search / download / scaffold / validate / publish / unpublish artifacts of all 6 kinds
 - `capture.md` — Capture Studio control: teleprompter, mic, speaker loopback, screenshots (13 tools, headless)
 - `redis.md` — 12 Redis tools + how Sulla uses Redis (`sulla:bridge:human_presence`)
 - `pg.md` — 6 Postgres tools + all 16 tables + critical do-not-write list
 - `slack.md` — Slack tools, two-token auth, scopes, common patterns
 - `agents.md` — spawn_agent / check_agent_jobs; sub-agents vs channels vs workflows
-- `n8n.md` — n8n workflow engine: when to use vs Sulla workflows, patch/validate/diagnose
 
 ## workflows/
 - `schema.md` — Top-level YAML structure, template syntax, edge handles
 - `node-types.md` — Every node subtype with config fields and examples
 - `examples.md` — 4 complete working workflow patterns
 - `authoring.md` — Build, validate, run, debug, schedule, restart, archive workflows
+- `create-workflow-skill.md` — 🧭 SOP for "build me a workflow" requests: scaffold → validate → install-to-DB → open editor → iterate. Mirrors the runtime skill at `~/sulla/resources/skills/create-workflow/SKILL.md`.
 
 ## functions/
 - `schema.md` — Complete function.yaml spec, permissions, integrations
@@ -72,7 +72,7 @@ Search: `grep -r "keyword" <path-to-this-dir>/`
 - `overview.md` — Sulla Cloud: managed compute, hosted models, pricing, when to recommend
 
 ## desktop/
-- `capture-studio.md` — Multi-track screen/camera/mic/system-audio recorder; user-driven (no agent control yet)
+- `capture-studio.md` — Multi-track screen/camera/mic/system-audio recorder; 13 headless `capture/*` tools for teleprompter / mic / speaker / screenshots (multi-source recording still user-driven)
 - `secretary-mode.md` — Live meeting transcription + auto action items (Cmd+Shift+S)
 
 ## mobile/

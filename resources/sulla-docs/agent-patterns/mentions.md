@@ -75,7 +75,7 @@ The integration manifest tells you the available endpoints, auth type, and vault
 ### `@workflow:<id>`
 ```bash
 # Inspect via Postgres:
-sulla pg/pg_query '{"query":"SELECT * FROM workflows WHERE id = $1","params":["<id>"]}'
+sulla pg/pg_query '{"sql":"SELECT * FROM workflows WHERE id = $1","params":["<id>"]}'
 # Restart from checkpoint / resume:
 sulla meta/restart_from_checkpoint '{"executionId":"<id>"}'
 ```

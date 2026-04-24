@@ -1,7 +1,8 @@
 import * as fs from 'fs';
+import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
-import { artifactDir, artifactManifestPath, isArtifactKind, KIND_LAYOUTS, ArtifactKind } from './types';
+import { ARTIFACT_KINDS, ArtifactKind, artifactDir, isArtifactKind, KIND_LAYOUTS, resolveArtifactManifestPath } from './types';
 
 export class MarketplaceValidateWorker extends BaseTool {
   name = '';
@@ -12,7 +13,7 @@ export class MarketplaceValidateWorker extends BaseTool {
     const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
 
     if (!isArtifactKind(kind)) {
-      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe.` };
+      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: ${ ARTIFACT_KINDS.join(', ') }.` };
     }
     if (!slug) {
       return { successBoolean: false, responseString: `Missing required field: slug.` };
@@ -23,9 +24,13 @@ export class MarketplaceValidateWorker extends BaseTool {
       return { successBoolean: false, responseString: `Not installed locally: ${ dir }` };
     }
 
-    const manifestPath = artifactManifestPath(kind, slug);
-    if (!fs.existsSync(manifestPath)) {
-      return { successBoolean: false, responseString: `Manifest missing: expected ${ manifestPath }` };
+    const manifestPath = resolveArtifactManifestPath(kind, slug);
+    if (!manifestPath) {
+      const layout = KIND_LAYOUTS[kind];
+      const hint = layout.manifest === 'dynamic'
+        ? `Expected a file matching ${ layout.manifestPattern } in ${ dir }`
+        : `Expected ${ path.join(dir, layout.manifest) }`;
+      return { successBoolean: false, responseString: `Manifest missing. ${ hint }` };
     }
 
     const issues: string[] = [];
@@ -36,7 +41,7 @@ export class MarketplaceValidateWorker extends BaseTool {
       return { successBoolean: false, responseString: `Could not read manifest: ${ (err as Error).message }` };
     }
 
-    const result = await validateByKind(kind, slug, dir, manifestRaw);
+    const result = await validateByKind(kind, slug, dir, manifestRaw, manifestPath);
     issues.push(...result);
 
     // Filter out advisory notes (they aren't failures, just guidance).
@@ -56,7 +61,13 @@ export class MarketplaceValidateWorker extends BaseTool {
   }
 }
 
-async function validateByKind(kind: ArtifactKind, slug: string, dir: string, manifestRaw: string): Promise<string[]> {
+async function validateByKind(
+  kind: ArtifactKind,
+  slug: string,
+  dir: string,
+  manifestRaw: string,
+  manifestPath: string,
+): Promise<string[]> {
   const issues: string[] = [];
 
   if (kind === 'skill') {
@@ -139,6 +150,97 @@ async function validateByKind(kind: ArtifactKind, slug: string, dir: string, man
     return issues;
   }
 
-  void KIND_LAYOUTS; // (silences "unused import" warnings if kinds change)
+  if (kind === 'integration') {
+    // 1. Validate the auth manifest (what IntegrationConfigLoader reads).
+    const authFilename = path.basename(manifestPath);
+    // Expect filename like "<slug>.v<N>-auth.yaml"
+    const filenameMatch = /^([a-z0-9][a-z0-9-]*)\.v(\d+)-auth\.yaml$/.exec(authFilename);
+    if (!filenameMatch) {
+      issues.push(`integration: auth manifest "${ authFilename }" must match <slug>.v<N>-auth.yaml`);
+    } else {
+      const fileSlug = filenameMatch[1];
+      if (fileSlug !== slug) {
+        issues.push(`integration: auth file slug "${ fileSlug }" must match directory name "${ slug }"`);
+      }
+    }
+
+    let parsed: any;
+    try {
+      const yaml = await import('yaml');
+      parsed = yaml.parse(manifestRaw);
+    } catch (err) {
+      issues.push(`integration auth yaml parse error: ${ (err as Error).message }`);
+      return issues;
+    }
+
+    // Required top-level shape per IntegrationAuthConfig.
+    if (!parsed?.api) issues.push('integration auth: missing required key "api"');
+    else {
+      if (!parsed.api.name)     issues.push('integration auth: missing "api.name"');
+      if (!parsed.api.version)  issues.push('integration auth: missing "api.version"');
+      if (!parsed.api.base_url) issues.push('integration auth: missing "api.base_url"');
+      const transport = parsed.api.transport ?? 'rest';
+      if (!['rest', 'mcp'].includes(transport)) issues.push(`integration auth: api.transport must be "rest" or "mcp" (got "${ transport }")`);
+    }
+    if (!parsed?.auth) issues.push('integration auth: missing required key "auth"');
+    else {
+      const authType = parsed.auth.type;
+      if (!['oauth2', 'apiKey', 'bearer'].includes(authType)) {
+        issues.push(`integration auth: auth.type must be one of oauth2|apiKey|bearer (got "${ authType }")`);
+      }
+      if (authType === 'oauth2') {
+        if (!parsed.auth.authorization_url) issues.push('integration auth: oauth2 requires auth.authorization_url');
+        if (!parsed.auth.token_url)          issues.push('integration auth: oauth2 requires auth.token_url');
+      }
+      if (authType === 'apiKey' && !parsed.auth.header) {
+        issues.push('integration auth: apiKey requires auth.header (e.g. "X-API-Key")');
+      }
+    }
+
+    // 2. Scan sibling *.v<N>.yaml endpoint files and validate their shape.
+    const endpointPattern = /^[a-z0-9][a-z0-9-]*\.v\d+\.yaml$/;
+    let entries: string[] = [];
+    try { entries = fs.readdirSync(dir); } catch { /* already checked existence above */ }
+    const endpointFiles = entries.filter(name => endpointPattern.test(name) && name !== authFilename);
+
+    if (endpointFiles.length === 0) {
+      issues.push('Note: no endpoint files found (pattern: <name>.v<N>.yaml). Integrations without endpoints are valid but rare.');
+    }
+
+    const yaml = await import('yaml');
+    for (const ep of endpointFiles) {
+      const epPath = path.join(dir, ep);
+      let epParsed: any;
+      try {
+        epParsed = yaml.parse(fs.readFileSync(epPath, 'utf-8'));
+      } catch (err) {
+        issues.push(`endpoint ${ ep }: yaml parse error: ${ (err as Error).message }`);
+        continue;
+      }
+      if (!epParsed?.endpoint) {
+        issues.push(`endpoint ${ ep }: missing required key "endpoint"`);
+        continue;
+      }
+      const ec = epParsed.endpoint;
+      for (const k of ['name', 'path', 'method', 'auth']) {
+        if (!ec[k]) issues.push(`endpoint ${ ep }: missing required key "endpoint.${ k }"`);
+      }
+      if (ec.method && !['GET', 'POST', 'PUT', 'DELETE', 'PATCH'].includes(ec.method)) {
+        issues.push(`endpoint ${ ep }: endpoint.method must be GET|POST|PUT|DELETE|PATCH (got "${ ec.method }")`);
+      }
+      if (ec.auth && !['required', 'optional', 'none'].includes(ec.auth)) {
+        issues.push(`endpoint ${ ep }: endpoint.auth must be required|optional|none (got "${ ec.auth }")`);
+      }
+    }
+
+    // 3. INTEGRATION.md is optional but recommended.
+    if (!fs.existsSync(path.join(dir, 'INTEGRATION.md'))) {
+      issues.push('Note: INTEGRATION.md is missing. Highly recommended — agents read it to understand what the integration does.');
+    }
+
+    return issues;
+  }
+
+  void KIND_LAYOUTS; // keeps the import referenced if all kinds short-circuit above
   return issues;
 }

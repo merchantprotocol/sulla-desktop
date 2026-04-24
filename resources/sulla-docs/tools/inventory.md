@@ -174,7 +174,7 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`marketplace/overview.md`](../marketplace/overview.md)
 
-## marketplace — generic artifact lifecycle (10 tools, all 5 kinds)
+## marketplace — generic artifact lifecycle (10 tools, all 6 kinds)
 - `sulla marketplace/search` — Search by query / kind / category (cloud + GitHub fallback for recipes)
 - `sulla marketplace/info` — Full metadata for `kind` + `slug`
 - `sulla marketplace/download` — Pull and materialise locally (`overwrite` flag)
@@ -218,15 +218,6 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 - `sulla slack/slack_connection_health` — Health check + auto-recovery
 
 → See [`tools/slack.md`](slack.md)
-
-## n8n — separate workflow engine (5 tools)
-- `sulla n8n/patch_workflow` — Atomic node/connection mutations
-- `sulla n8n/validate_workflow` — Graph health check
-- `sulla n8n/validate_workflow_payload` — Pre-create/update validation
-- `sulla n8n/diagnose_webhook` — Webhook readiness diagnosis
-- `sulla n8n/restart_n8n_container` — Restart + health poll
-
-⚠️ **n8n is not running today** (verified: no n8n container in `docker_ps -a`). Default fallback URL `http://127.0.0.1:30119` is actually shell_runtime. Recipe install should set a non-colliding port via vault's `BASE_URL` property. See [`tools/n8n.md`](n8n.md).
 
 ## agents — sub-agent jobs (1 tool)
 - `sulla agents/check_agent_jobs` — Poll for results of async spawn_agent calls
@@ -305,7 +296,7 @@ Account IDs are discoverable via `sulla vault/vault_list_accounts '{"account_typ
 
 Common integrations (as of verification):
 - `github` (user has `jonathonbyrdziaks_token` account connected)
-- `slack`, `n8n`, `twenty`, `intuit`, `openai`, `anthropic` (connect as needed)
+- `slack`, `twenty`, `intuit`, `openai`, `anthropic` (connect as needed). Third-party tools like n8n are installable as **recipes** (extensions) — hit them via the integration proxy pattern after install, no special tool category needed.
 
 ---
 
@@ -328,7 +319,6 @@ Common integrations (as of verification):
 | redis | 12 |
 | pg | 6 |
 | slack | 7 |
-| n8n | 5 |
 | agents | 1 |
 | bridge | 2 |
 | notify | 1 |
@@ -336,6 +326,6 @@ Common integrations (as of verification):
 | function | 2 |
 | ui | 1 |
 | capture | 13 |
-| **Total** | **~167** |
+| **Total** | **~162** |
 
 If a new category appears in `pkg/rancher-desktop/agent/tools/` or `sulla <cat> --help` that's not on this list, add it here AND write a doc.

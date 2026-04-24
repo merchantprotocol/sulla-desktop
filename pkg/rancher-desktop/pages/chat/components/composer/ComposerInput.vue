@@ -15,7 +15,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue';
+import { nextTick, onMounted, ref, watch } from 'vue';
 
 const props = defineProps<{
   modelValue: string;
@@ -30,7 +30,16 @@ const emit = defineEmits<{
 const taRef = ref<HTMLTextAreaElement | null>(null);
 const model = ref(props.modelValue);
 
-watch(() => props.modelValue, v => { if (v !== model.value) { model.value = v; autogrow(); } });
+// Defer autogrow to the next frame so the textarea has actually been
+// painted with the new value before we measure scrollHeight. Without
+// this, clearing the draft (after send) measures the pre-clear height
+// and leaves the textarea oversized.
+watch(() => props.modelValue, v => {
+  if (v !== model.value) {
+    model.value = v;
+    void nextTick(autogrow);
+  }
+});
 watch(model, v => emit('update:modelValue', v));
 
 onMounted(autogrow);

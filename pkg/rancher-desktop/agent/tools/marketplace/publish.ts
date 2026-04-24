@@ -3,7 +3,7 @@ import * as path from 'path';
 
 import { BaseTool, ToolResponse } from '../base';
 import { getMarketplaceClient } from './MarketplaceClient';
-import { artifactDir, artifactManifestPath, isArtifactKind, KIND_LAYOUTS, ArtifactKind } from './types';
+import { artifactDir, isArtifactKind, KIND_LAYOUTS, ArtifactKind, resolveArtifactManifestPath } from './types';
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5 MB per file safety cap
 const TEXT_EXTENSIONS = new Set(['.md', '.yaml', '.yml', '.json', '.py', '.js', '.ts', '.sh', '.txt', '.toml', '.html', '.css', '.svg']);
@@ -22,7 +22,7 @@ export class MarketplacePublishWorker extends BaseTool {
     const version = typeof input.version === 'string' ? input.version.trim() : undefined;
 
     if (!isArtifactKind(kind)) {
-      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe.` };
+      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe, integration.` };
     }
     if (!slug) {
       return { successBoolean: false, responseString: `Missing required field: slug.` };
@@ -33,13 +33,14 @@ export class MarketplacePublishWorker extends BaseTool {
       return { successBoolean: false, responseString: `Not installed locally: ${ dir }` };
     }
 
-    const manifestPath = artifactManifestPath(kind, slug);
-    if (!fs.existsSync(manifestPath)) {
-      return { successBoolean: false, responseString: `Manifest missing at ${ manifestPath } — cannot publish.` };
+    const manifestPath = resolveArtifactManifestPath(kind, slug);
+    if (!manifestPath) {
+      return { successBoolean: false, responseString: `Manifest missing in ${ dir } — cannot publish.` };
     }
 
     const manifest = fs.readFileSync(manifestPath, 'utf-8');
-    const files = collectFiles(kind, dir);
+    const manifestName = path.basename(manifestPath);
+    const files = collectFiles(kind, dir, manifestName);
 
     try {
       const result = await getMarketplaceClient().publish({ kind, slug, version, manifest, files });
@@ -60,10 +61,10 @@ export class MarketplacePublishWorker extends BaseTool {
   }
 }
 
-function collectFiles(kind: ArtifactKind, dir: string): Record<string, string> {
+function collectFiles(_kind: ArtifactKind, dir: string, manifestName: string): Record<string, string> {
+  void KIND_LAYOUTS;
   const out: Record<string, string> = {};
-  const layout = KIND_LAYOUTS[kind];
-  walk(dir, '', out, layout.manifest);
+  walk(dir, '', out, manifestName);
   return out;
 }
 

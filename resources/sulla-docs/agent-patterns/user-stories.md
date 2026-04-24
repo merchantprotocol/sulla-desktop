@@ -189,7 +189,7 @@ See: [`marketplace/overview.md`](../marketplace/overview.md)
 
 ---
 
-## Marketplace artifacts (5 kinds: skill / function / workflow / agent / recipe)
+## Marketplace artifacts (6 kinds: skill / function / workflow / agent / recipe / integration)
 
 The generic `marketplace/*` tools work for all 5 artifact kinds. See [`tools/marketplace.md`](../tools/marketplace.md).
 

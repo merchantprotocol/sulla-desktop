@@ -23,7 +23,7 @@ FIRST="$1"
 BODY="$2"
 
 # Known internal tool categories
-TOOL_CATEGORIES="meta|docker|github|browser|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|applescript|notify|ui|function|observation|marketplace|capture"
+TOOL_CATEGORIES="meta|docker|github|browser|rdctl|redis|pg|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|applescript|notify|ui|function|observation|marketplace|capture"
 
 # ── Help & discovery ─────────────────────────────────────────────
 # sulla --help | sulla -h | sulla help | sulla (no args)
@@ -52,7 +52,6 @@ Categories:
   github            GitHub repository management
   kubectl           Kubernetes cluster management
   lima              Lima VM instance management
-  n8n               n8n workflow automation
   notify            Send desktop notifications to alert the user
   pg                PostgreSQL database queries
   rdctl             Sulla Desktop / rdctl management commands

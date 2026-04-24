@@ -103,14 +103,13 @@ export class PersonaAdapter {
       }),
     );
 
-    // Connection state — the backend's "model is initializing/loading" flag
-    // degrades the connection indicator; idle/ready means online.
-    // graphRunning (Sulla thinking) does NOT affect connection state.
-    this.stopWatchers.push(
-      watch(() => this.ci.loading.value, (loading) => {
-        this.controller.setConnection(loading ? 'degraded' : 'online');
-      }, { immediate: true }),
-    );
+    // Connection state — default to online. We DON'T mirror
+    // `ci.loading.value` here: that flag is true for the entire duration
+    // of an awaiting agent response (set on user send, cleared on reply),
+    // which would make "Starting up…" stay lit the whole time Sulla is
+    // working. A real cold-start signal should come from the model
+    // selector (ChatPage owns that wiring); until then, hold online.
+    this.controller.setConnection('online');
 
     // Speak bridge — the low-latency speak listener on the persona is the
     // canonical path for TTS. We forward every speak payload to a window
@@ -292,6 +291,17 @@ export class PersonaAdapter {
       } satisfies ThinkingMessage;
     }
 
+    // Workflow document — `workflow/display` tool published a routine for
+    // the artifact sidebar. Open-or-update a workflow artifact with the
+    // routine shape (no field mapping). Artifact is deduped by name so
+    // re-emits for the same slug update the same sidebar card in place.
+    // Returns null: this message is a sidebar signal, not a transcript
+    // entry.
+    if (b.kind === 'workflow_document' && b.workflowDocument) {
+      this.applyWorkflowDocument(b.workflowDocument);
+      return null;
+    }
+
     // Citation card — source grid rendered by CitationRow.vue. Backend
     // populates `citations` via the CitationExtractor; we pass them
     // straight through unchanged. Sources must have title + origin (any
@@ -466,28 +476,112 @@ export class PersonaAdapter {
     return { nodes: [], edges: [], workflowRunId: runId };
   }
 
+  /**
+   * Open or update a workflow artifact from a `workflow_document` payload
+   * (the routine YAML itself). Keyed by slug — re-emits for the same
+   * workflow update the same sidebar card in place, so the user watches
+   * the routine take shape while the agent edits it.
+   *
+   * Preserves any `runtimeState` already on existing nodes/edges, so an
+   * in-flight execution artifact doesn't lose its coloring when the
+   * agent publishes an authoring snapshot for the same workflow.
+   */
+  private applyWorkflowDocument(doc: NonNullable<BackendMessage['workflowDocument']>): void {
+    const name = `Workflow • ${ doc.name || doc.slug }`;
+    const artifactId = this.controller.openArtifact('workflow', {
+      name,
+      payload: { nodes: [], edges: [] } satisfies WorkflowPayload,
+      status:  'viewing',
+    });
+    this.workflowArtifacts.set(`authoring-${ doc.slug }`, artifactId);
+
+    const current = this.controller.artifacts.value.list.find(a => a.id === artifactId);
+    const prev = (current?.payload as WorkflowPayload | undefined);
+    const prevNodeState = new Map<string, WorkflowNode['runtimeState']>();
+    const prevEdgeState = new Map<string, WorkflowEdge['runtimeState']>();
+    if (prev) {
+      for (const n of prev.nodes) {
+        if (n.runtimeState) prevNodeState.set(n.id, n.runtimeState);
+      }
+      for (const e of prev.edges) {
+        if (e.runtimeState) prevEdgeState.set(e.id, e.runtimeState);
+      }
+    }
+
+    const nextPayload: WorkflowPayload = {
+      id:          doc.id,
+      name:        doc.name,
+      description: doc.description,
+      _status:     doc._status,
+      viewport:    doc.viewport,
+      nodes:       doc.nodes.map(n => ({
+        id:       n.id,
+        type:     n.type,
+        position: n.position,
+        data:     n.data,
+        runtimeState: prevNodeState.get(n.id),
+      })),
+      edges: doc.edges.map(e => ({
+        id:           e.id,
+        source:       e.source,
+        target:       e.target,
+        sourceHandle: e.sourceHandle,
+        targetHandle: e.targetHandle,
+        label:        e.label,
+        animated:     e.animated,
+        runtimeState: prevEdgeState.get(e.id),
+      })),
+      workflowRunId: prev?.workflowRunId,
+      activeNodeId:  prev?.activeNodeId,
+    };
+
+    this.controller.updateArtifact(artifactId, {
+      payload: nextPayload,
+      status:  'viewing',
+    });
+  }
+
   private mergeWorkflowNode(
     prev: WorkflowPayload,
     node: NonNullable<BackendMessage['workflowNode']>,
   ): WorkflowPayload {
-    const state = mapWorkflowNodeState(node.status);
-    const x = 20 + node.nodeIndex * 220;
-    const y = 60 + (node.nodeIndex % 2) * 110;
+    const runtimeState = mapWorkflowNodeState(node.status);
 
-    const incoming: WorkflowNode = {
-      id:        node.nodeId,
-      x,
-      y,
-      kicker:    `#${ node.nodeIndex + 1 }`,
-      name:      node.nodeLabel || `Node ${ node.nodeIndex + 1 }`,
-      state,
-      nodeIndex: node.nodeIndex,
-    };
+    // Execution events don't carry editor coordinates — the backend
+    // only knows the linear firing order. Auto-layout in a two-row grid
+    // when the node was NOT already present in the artifact from a
+    // prior authoring emit. If the artifact was seeded with routine
+    // coordinates (workflow/display), the existing position is
+    // preserved and only the runtimeState overlay is updated.
+    const existingIdx = prev.nodes.findIndex(n => n.id === node.nodeId);
 
-    // Replace-or-append the node by id.
-    const existingIdx = prev.nodes.findIndex(n => n.id === incoming.id);
+    let incoming: WorkflowNode;
+    if (existingIdx >= 0) {
+      incoming = {
+        ...prev.nodes[existingIdx],
+        runtimeState,
+        nodeIndex: node.nodeIndex,
+      };
+    } else {
+      incoming = {
+        id:       node.nodeId,
+        type:     'workflow',
+        position: {
+          x: 20 + node.nodeIndex * 220,
+          y: 60 + (node.nodeIndex % 2) * 110,
+        },
+        data: {
+          subtype:  `#${ node.nodeIndex + 1 }`,
+          category: 'runtime',
+          label:    node.nodeLabel || `Node ${ node.nodeIndex + 1 }`,
+        },
+        runtimeState,
+        nodeIndex: node.nodeIndex,
+      };
+    }
+
     const nodes = existingIdx >= 0
-      ? prev.nodes.map((n, i) => (i === existingIdx ? { ...n, ...incoming } : n))
+      ? prev.nodes.map((n, i) => (i === existingIdx ? incoming : n))
       : [...prev.nodes, incoming];
 
     // Add an edge from the previous (by nodeIndex) node to this one.
@@ -495,26 +589,28 @@ export class PersonaAdapter {
     if (node.nodeIndex > 0) {
       const from = nodes.find(n => (n.nodeIndex ?? -1) === node.nodeIndex - 1);
       if (from && from.id !== incoming.id) {
-        const alreadyHasEdge = edges.some(e => e.from === from.id && e.to === incoming.id);
-        if (!alreadyHasEdge) {
-          const edge: WorkflowEdge = {
-            from:  from.id,
-            to:    incoming.id,
-            state: state === 'done' ? 'done' : (state === 'active' ? 'active' : 'idle'),
-          };
-          edges = [...edges, edge];
+        const edgeRuntime: 'active' | 'done' | 'idle' =
+          runtimeState === 'done' ? 'done' : runtimeState === 'active' ? 'active' : 'idle';
+        const existingEdge = edges.find(e => e.source === from.id && e.target === incoming.id);
+        if (!existingEdge) {
+          edges = [...edges, {
+            id:           `${ from.id }__${ incoming.id }`,
+            source:       from.id,
+            target:       incoming.id,
+            runtimeState: edgeRuntime,
+          }];
         } else {
           // Refresh edge state to reflect node progression.
           edges = edges.map(e =>
-            (e.from === from.id && e.to === incoming.id)
-              ? { ...e, state: state === 'done' ? 'done' : (state === 'active' ? 'active' : e.state) }
+            (e.source === from.id && e.target === incoming.id)
+              ? { ...e, runtimeState: runtimeState === 'done' ? 'done' : runtimeState === 'active' ? 'active' : (e.runtimeState ?? 'idle') }
               : e,
           );
         }
       }
     }
 
-    const activeNodeId = state === 'active' ? incoming.id : prev.activeNodeId;
+    const activeNodeId = runtimeState === 'active' ? incoming.id : prev.activeNodeId;
 
     return {
       ...prev,
@@ -526,8 +622,8 @@ export class PersonaAdapter {
 
   private deriveWorkflowStatus(nodes: WorkflowNode[]): ArtifactStatus {
     if (nodes.length === 0) return 'working';
-    if (nodes.some(n => n.state === 'error')) return 'error';
-    if (nodes.every(n => n.state === 'done')) return 'done';
+    if (nodes.some(n => n.runtimeState === 'error')) return 'error';
+    if (nodes.every(n => n.runtimeState === 'done')) return 'done';
     return 'working';
   }
 

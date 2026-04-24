@@ -250,6 +250,29 @@ export class PlaybookController<TState = any> {
       return state;
     }
 
+    // External stop request via `sulla workflow/stop_workflow`. Cooperative —
+    // we read a Redis flag keyed by executionId here, and if set, release the
+    // workflow as aborted. See tools/workflow/stop_workflow.ts.
+    if (playbook.executionId) {
+      try {
+        const { redisClient } = await import('../database/RedisClient');
+        const { stopKey } = await import('../tools/workflow/stop_workflow');
+        const reason = await redisClient.get(stopKey(playbook.executionId));
+        if (reason) {
+          console.log(`[PlaybookController] External stop requested for ${ playbook.executionId }: ${ reason }`);
+          playbookLog('external_stop', { reason, workflowId: playbook.workflowId, executionId: playbook.executionId });
+          this.emitPlaybookEvent(state, 'workflow_aborted', { reason });
+          this.pendingSubAgents.clear();
+          await redisClient.del(stopKey(playbook.executionId));
+          state = await this.releaseWorkflow(state, playbook, 'failed', `Stopped by user: ${ reason }`);
+          return state;
+        }
+      } catch (err) {
+        // Redis flakiness shouldn't crash the workflow — just log and continue.
+        console.warn('[PlaybookController] external-stop check failed:', err);
+      }
+    }
+
     // ── Drain persisted completions/failures/escalations from DB ──
     try {
       const { WorkflowPendingCompletionModel } = await import('../database/models/WorkflowPendingCompletionModel');
@@ -1979,6 +2002,18 @@ export class PlaybookController<TState = any> {
     };
 
     meta.activeWorkflow = undefined;
+
+    // Persist final execution status so boot recovery doesn't pick it up again.
+    try {
+      const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+      if (outcome === 'completed') {
+        await WorkflowExecutionModel.markCompleted(playbook.executionId);
+      } else {
+        await WorkflowExecutionModel.markFailed(playbook.executionId, error);
+      }
+    } catch (e) {
+      console.warn('[PlaybookController] Failed to update workflow execution status:', e);
+    }
 
     const nodeLines = nodeSummaries
       .filter(n => n.category !== 'trigger')

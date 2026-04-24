@@ -36,6 +36,16 @@ export const workflowToolManifests: ToolManifest[] = [
     loader:         () => import('./import_workflow'),
   },
   {
+    name:        'display_workflow',
+    description: 'Surface a saved routine as a workflow artifact in the chat sidebar. Reads ~/sulla/routines/<slug>/routine.yaml and publishes the full document so the frontend opens (or updates in place) a workflow artifact pane next to the conversation. Use this AFTER import_workflow whenever the user should see the routine being built, and re-run it after each material edit to keep the sidebar card in sync. Artifact is deduped by workflow name — repeat calls for the same slug update one card, not many.',
+    category:    'workflow',
+    schemaDef:   {
+      slug: { type: 'string', description: 'The routine slug — directory name under ~/sulla/routines/ containing a routine.yaml. Must match the slug used in marketplace/scaffold and workflow/import_workflow.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./display_workflow'),
+  },
+  {
     name:        'restart_from_checkpoint',
     description: 'Restart a workflow execution from a specific node checkpoint. Use workflowId alone to list recent executions, executionId alone to list checkpoints, or executionId + nodeId to restart from that node.',
     category:    'meta',
@@ -46,5 +56,16 @@ export const workflowToolManifests: ToolManifest[] = [
     },
     operationTypes: ['execute'],
     loader:         () => import('./restart_from_checkpoint'),
+  },
+  {
+    name:        'stop_workflow',
+    description: 'Request a running workflow to stop. Cooperative — writes a Redis flag the PlaybookController checks at each frontier tick, so the running orchestrator honors it on its next step. If the orchestrator is blocked on a long-running sub-agent or LLM call, the abort takes effect when that call returns. For immediate hard-kill, restart Sulla Desktop.',
+    category:    'meta',
+    schemaDef:   {
+      executionId: { type: 'string', description: 'The execution ID (wfp-... from execute_workflow) to stop.' },
+      reason:      { type: 'string', optional: true, description: 'Optional short reason shown in the abort event. Default: "Stopped by user request".' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./stop_workflow'),
   },
 ];

@@ -15,7 +15,7 @@ export class MarketplaceDownloadWorker extends BaseTool {
     const overwrite = input.overwrite === true;
 
     if (!isArtifactKind(kind)) {
-      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe.` };
+      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe, integration.` };
     }
     if (!slug) {
       return { successBoolean: false, responseString: `Missing required field: slug.` };
@@ -34,12 +34,29 @@ export class MarketplaceDownloadWorker extends BaseTool {
 
       fs.mkdirSync(targetDir, { recursive: true });
 
-      // Write the manifest
-      const manifestPath = path.join(targetDir, KIND_LAYOUTS[kind].manifest);
-      fs.writeFileSync(manifestPath, result.manifest, 'utf-8');
+      const layout = KIND_LAYOUTS[kind];
+      const written: string[] = [];
+
+      // Resolve the manifest filename. For static manifests, it's the layout
+      // value. For dynamic manifests (integration), the cloud response's
+      // `manifestFilename` tells us; falls back to `<slug>.v1-auth.yaml`.
+      let manifestFilename: string;
+      if (layout.manifest !== 'dynamic') {
+        manifestFilename = layout.manifest;
+      } else {
+        const anyResult = result as unknown as { manifestFilename?: string };
+        manifestFilename = anyResult.manifestFilename || `${ slug }.v1-auth.yaml`;
+      }
+
+      // Write the manifest (if the cloud actually returned one).
+      if (result.manifest) {
+        const manifestPath = path.join(targetDir, manifestFilename);
+        fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+        fs.writeFileSync(manifestPath, result.manifest, 'utf-8');
+        written.push(manifestFilename);
+      }
 
       // Write companion files. base64: prefix means binary.
-      const written: string[] = [KIND_LAYOUTS[kind].manifest];
       for (const [relPath, contents] of Object.entries(result.files || {})) {
         const filePath = path.join(targetDir, relPath);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });

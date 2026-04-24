@@ -1504,7 +1504,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // `extras` with intentionally empty content. Don't drop them here —
     // the renderer needs them to close bubbles or render cards.
     const isSentinelKind = kind === 'streaming_complete' || kind === 'thinking_complete';
-    const isStructuredKind = kind === 'citation';
+    const isStructuredKind = kind === 'citation' || kind === 'workflow_document';
     if (!content && !isSentinelKind && !isStructuredKind) {
       return false;
     }

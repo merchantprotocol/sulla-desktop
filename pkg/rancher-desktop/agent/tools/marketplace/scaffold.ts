@@ -20,7 +20,7 @@ export class MarketplaceScaffoldWorker extends BaseTool {
     const runtime = typeof input.runtime === 'string' ? input.runtime.trim().toLowerCase() : 'python'; // function-only
 
     if (!isArtifactKind(kind)) {
-      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe.` };
+      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe, integration.` };
     }
     if (!slug || !/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
       return { successBoolean: false, responseString: `Invalid "slug". Use kebab-case: ^[a-z0-9][a-z0-9-]*$` };
@@ -58,7 +58,7 @@ function generateSkeleton(
   switch (kind) {
   case 'skill':
     return {
-      [KIND_LAYOUTS.skill.manifest]: `# ${ ctx.name }\n\n${ ctx.description || 'One-line description of what this skill does.' }\n\n## When to use this skill\n\n- Trigger condition 1\n- Trigger condition 2\n\n## Instructions\n\nStep-by-step instructions the agent follows when this skill activates.\n`,
+      [KIND_LAYOUTS.skill.manifest as string]: `# ${ ctx.name }\n\n${ ctx.description || 'One-line description of what this skill does.' }\n\n## When to use this skill\n\n- Trigger condition 1\n- Trigger condition 2\n\n## Instructions\n\nStep-by-step instructions the agent follows when this skill activates.\n`,
     };
 
   case 'function': {
@@ -101,7 +101,7 @@ spec:
 
   case 'workflow':
     return {
-      [KIND_LAYOUTS.workflow.manifest]: `id: ${ ctx.slug }
+      [KIND_LAYOUTS.workflow.manifest as string]: `id: ${ ctx.slug }
 name: ${ ctx.name }
 description: ${ ctx.description || 'TODO: describe what this workflow does.' }
 version: "1"
@@ -145,7 +145,7 @@ viewport: { x: 0, y: 0, zoom: 1 }
 
   case 'agent':
     return {
-      [KIND_LAYOUTS.agent.manifest]: `id: ${ ctx.slug }
+      [KIND_LAYOUTS.agent.manifest as string]: `id: ${ ctx.slug }
 name: ${ ctx.name }
 description: ${ ctx.description || 'TODO: describe what this agent does.' }
 model: claude-sonnet-4-6
@@ -159,7 +159,7 @@ tools:
 
   case 'recipe':
     return {
-      [KIND_LAYOUTS.recipe.manifest]: `slug: ${ ctx.slug }
+      [KIND_LAYOUTS.recipe.manifest as string]: `slug: ${ ctx.slug }
 name: ${ ctx.name }
 description: ${ ctx.description || 'TODO: describe what this recipe does.' }
 version: "1.0.0"
@@ -171,6 +171,17 @@ extra_urls: []
       'docker-compose.yml': `version: "3.9"\nservices:\n  ${ ctx.slug }:\n    image: ghcr.io/your-org/${ ctx.slug }:latest\n    ports:\n      - "PORT:PORT"\n    restart: unless-stopped\n`,
       'installation.yaml': `pre_install: []\npost_install: []\n`,
     };
+
+  case 'integration': {
+    // Integration manifest filename is slug-dependent: <slug>.v1-auth.yaml
+    const authFilename = `${ ctx.slug }.v1-auth.yaml`;
+    const sampleEndpoint = `${ ctx.slug === 'example' ? 'items' : 'example' }.v1.yaml`;
+    return {
+      'INTEGRATION.md': `# ${ ctx.name }\n\n${ ctx.description || 'TODO: describe what this integration exposes and when the agent should reach for it.' }\n\n## Auth\n\nTODO: describe the auth model users should know about (OAuth app to create, API key to generate, etc.)\n\n## Endpoints\n\nTODO: list the main endpoints and when to use each.\n`,
+      [authFilename]: `api:\n  name: ${ ctx.slug }\n  version: "1"\n  provider: ""\n  base_url: https://api.example.com\n  transport: rest\n\nauth:\n  type: apiKey      # oauth2 | apiKey | bearer\n  header: X-API-Key\n  # For oauth2 instead, set:\n  #   type: oauth2\n  #   flow: authorization_code\n  #   authorization_url: https://.../oauth/authorize\n  #   token_url: https://.../oauth/token\n  #   scopes: ["read", "write"]\n  #   pkce: true\n`,
+      [sampleEndpoint]: `endpoint:\n  name: ${ sampleEndpoint.replace('.v1.yaml', '') }\n  description: TODO\n  path: /v1/${ sampleEndpoint.replace('.v1.yaml', '') }\n  method: GET\n  auth: required\n  # quota_cost: 1\n`,
+    };
+  }
   }
 }
 

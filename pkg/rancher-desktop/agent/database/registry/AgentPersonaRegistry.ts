@@ -10,7 +10,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
-  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak' | 'citation';
+  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak' | 'citation';
   image?: {
     dataUrl:      string;
     alt?:         string;
@@ -64,6 +64,40 @@ export interface ChatMessage {
     origin:  string;
     url?:    string;
   }[];
+  /**
+   * Full routine document published by the `workflow/display` tool to
+   * render the workflow in the chat artifact sidebar. The shape mirrors
+   * routine.yaml exactly — same field names, same nesting — so the
+   * frontend renderer consumes it with zero mapping.
+   */
+  workflowDocument?: {
+    slug:         string;
+    id?:          string;
+    name?:        string;
+    description?: string;
+    _status?:     'draft' | 'production' | 'archive';
+    viewport?:    { x: number; y: number; zoom: number };
+    nodes:        Array<{
+      id:       string;
+      type:     string;
+      position: { x: number; y: number };
+      data:     {
+        subtype:  string;
+        category: string;
+        label:    string;
+        config?:  Record<string, unknown>;
+      };
+    }>;
+    edges: Array<{
+      id:            string;
+      source:        string;
+      target:        string;
+      sourceHandle?: string | null;
+      targetHandle?: string | null;
+      label?:        string;
+      animated?:     boolean;
+    }>;
+  };
 }
 
 export interface AgentRegistryEntry {

@@ -22,7 +22,7 @@ exec({ command: "sulla slack/send_message '{\"channel\":\"C01234\",\"text\":\"he
 ## Anti-Patterns
 
 ### `execute_workflow` is for workflows, not CLI tools
-`execute_workflow` runs **named Sulla/n8n workflows** by ID. If your intent is to execute a workflow, that's the right tool — use it.
+`execute_workflow` runs **named Sulla workflows** by ID. If your intent is to execute a workflow, that's the right tool — use it.
 
 The mistake is reaching for `execute_workflow` when you actually want a CLI tool like `browser/tab` or `github/git_push`. CLI tools are not workflows and will fail under `execute_workflow`.
 
@@ -65,10 +65,9 @@ Always resolve from vault. Never put API keys in code or prompts.
 | `workflow` | execute_workflow, validate_sulla_workflow, restart_from_checkpoint | Workflow execution |
 | `vault` | vault_read_secrets, vault_is_enabled, vault_list_accounts, vault_set_credential, vault_list | Credentials |
 | `agents` | spawn_agent, check_agent_jobs | Sub-agent spawning |
-| `n8n` | patch_workflow, validate_workflow, diagnose_webhook, restart_n8n_container | n8n automation |
 | `applescript` | applescript_execute | macOS app automation |
 | `extensions` | list_extension_catalog, list_installed_extensions, install_extension, uninstall_extension, start_extension, stop_extension, get_extension_status | Recipe lifecycle |
-| `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update | Generic artifact lifecycle (5 kinds) |
+| `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update | Generic artifact lifecycle (6 kinds: skill / function / workflow / agent / recipe / integration) |
 | `bridge` | update_human_presence, get_human_presence | Agent presence/state |
 | `ui` | open_tab | Open Sulla Desktop views from chat |
 | `capture` | teleprompter_*, mic_start/stop, speaker_start/stop, audio_state, list_screens, screenshot | Capture Studio control (headless) |

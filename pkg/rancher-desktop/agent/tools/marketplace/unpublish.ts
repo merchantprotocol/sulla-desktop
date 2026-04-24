@@ -16,7 +16,7 @@ export class MarketplaceUnpublishWorker extends BaseTool {
     const confirm = input.confirm === true;
 
     if (!isArtifactKind(kind)) {
-      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe.` };
+      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe, integration.` };
     }
     if (!slug) {
       return { successBoolean: false, responseString: `Missing required field: slug.` };

@@ -17,7 +17,7 @@ export class MarketplaceUpdateWorker extends BaseTool {
     const slug = typeof input.slug === 'string' ? input.slug.trim() : '';
 
     if (!isArtifactKind(kind)) {
-      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe.` };
+      return { successBoolean: false, responseString: `Missing or invalid "kind". Must be one of: skill, function, workflow, agent, recipe, integration.` };
     }
     if (!slug) {
       return { successBoolean: false, responseString: `Missing required field: slug.` };
