@@ -22,7 +22,7 @@ import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/C
 import type { ChatController } from '../controller/ChatController';
 import type { Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
   ToolMessage, ToolApprovalMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
-  PatchMessage, PatchHunk,
+  PatchMessage, PatchHunk, ProactiveMessage,
 } from '../models/Message';
 import type { Attachment } from '../models/Attachment';
 import type {
@@ -415,13 +415,53 @@ export class PersonaAdapter {
       } satisfies ChannelMessage;
     }
 
-    // Sub-agent activity — phase-0: render as a compact bubble.
+    // Sub-agent activity — streams live from the backend.
+    //
+    // The backend (`workflow_execution_event` + `node_thinking`) pushes
+    // incremental `thinkingLines` into `subAgentActivity` as the sub-agent
+    // works, and flips `status` to completed/failed/blocked when it ends.
+    // We surface all of that here so SubAgentBubble's step list grows in
+    // real time and the spinner flips to the check/error state.
     if (b.kind === 'sub_agent_activity') {
+      const sa = b.subAgentActivity;
+      const backendStatus = sa?.status;
+      const status: SubAgentMessage['status'] =
+        backendStatus === 'completed' ? 'done'
+        : backendStatus === 'failed' ? 'error'
+        : backendStatus === 'blocked' ? 'error'
+        : 'running';
+
+      const rawLines = sa?.thinkingLines ?? [];
+      const steps = rawLines.map(line => {
+        const text = String(line ?? '').trim();
+        const match = /^\[([^\]]{1,32})\]\s*(.*)$/.exec(text);
+        if (match) return { tag: match[1], text: match[2] };
+        return { tag: 'thinking', text };
+      }).filter(s => s.text.length > 0);
+
+      const desc = sa?.output?.trim()
+        || sa?.error?.trim()
+        || sa?.latestThinking?.trim()
+        || (b.content ?? '').trim()
+        || (status === 'done' ? 'Completed' : status === 'error' ? 'Failed' : 'Working…');
+
       return {
         id, kind: 'subagent', createdAt,
-        name: 'sub-agent', desc: b.content ?? '',
-        status: 'running', steps: [],
+        name: sa?.nodeLabel || 'sub-agent',
+        desc,
+        status,
+        steps,
       } satisfies SubAgentMessage;
+    }
+
+    // Proactive card — backend (workflow completion, async sub-agent
+    // finish, heartbeat insight) is reaching out unprompted.
+    if (b.kind === 'proactive' && b.proactive) {
+      return {
+        id, kind: 'proactive', createdAt,
+        headline: b.proactive.headline,
+        body:     b.proactive.body,
+      } satisfies ProactiveMessage;
     }
 
     // Streaming assistant text. Backend sets `_completed` (via `as any`)

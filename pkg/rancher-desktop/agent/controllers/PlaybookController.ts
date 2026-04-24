@@ -2038,6 +2038,29 @@ export class PlaybookController<TState = any> {
 
     this.injectWorkflowMessage(state, summaryMsg);
 
+    // Proactive card to the user — surfaced as a ProactiveCard in chat.
+    // Fires on both success and failure; headline + short body only.
+    try {
+      const ws = getWebSocketClientService();
+      const notifyChannel = meta.workflowParentChannel || meta.wsChannel || 'sulla-desktop';
+      const nonTrigger = nodeSummaries.filter(n => n.category !== 'trigger');
+      const shortBody = outcome === 'completed'
+        ? `${ nonTrigger.length } node${ nonTrigger.length === 1 ? '' : 's' } finished in "${ playbook.definition.name }".`
+        : `"${ playbook.definition.name }" stopped: ${ (error || 'unknown error').slice(0, 200) }`;
+      ws.send(notifyChannel, {
+        type: 'chat_message',
+        data: {
+          kind:     'proactive',
+          role:     'assistant',
+          headline: outcome === 'completed' ? 'Workflow complete' : 'Workflow failed',
+          body:     shortBody,
+          content:  shortBody,
+        },
+      });
+    } catch (e) {
+      console.warn('[PlaybookController] proactive emit failed:', e);
+    }
+
     state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
     return state;

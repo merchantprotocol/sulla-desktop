@@ -243,6 +243,29 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  // Proactive card: a backend emitter (workflow completion, sub-agent
+  // async completion, heartbeat insight) is reaching out unprompted to
+  // the user. Content carries the body; `data.headline` carries the
+  // short title. Rendered as a ProactiveCard in the new chat UI.
+  if (kindRaw === 'proactive') {
+    const headline = typeof data?.headline === 'string' ? data.headline.trim() : '';
+    const body = typeof data?.body === 'string'
+      ? data.body.trim()
+      : (typeof data?.content === 'string' ? data.content.trim() : '');
+    if (!headline && !body) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_proactive`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'proactive',
+      content:   body,
+      proactive: { headline: headline || 'Sulla', body },
+    });
+    return;
+  }
+
   // File patch: ClaudeCodeService → BaseNode.onFilePatch emitted a unified
   // diff after an Edit/Write tool_use inside Claude's inner agent loop.
   // Content is empty by design — payload is on `data.filePatch`. PersonaAdapter

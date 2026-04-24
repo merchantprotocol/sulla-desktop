@@ -56,6 +56,19 @@ export interface ChatMessage {
     output?:         string;
     error?:          string;
   };
+  /**
+   * Proactive card — Sulla reaching out unprompted (workflow finished,
+   * sub-agent completed, heartbeat insight, etc.). Rendered as a
+   * cyan-bordered ProactiveCard in the chat. Emitters:
+   *   • PlaybookController.releaseWorkflow (workflow done)
+   *   • spawn_agent async completion (.then handler)
+   *   • HeartbeatNode (optional — when it wants a UI card instead of a
+   *     channel_message)
+   */
+  proactive?: {
+    headline: string;
+    body:     string;
+  };
   /** Source list surfaced as a CitationRow below the reply. Populated by the
    *  CitationExtractor when the model emits a `<citations>` block. */
   citations?: {
