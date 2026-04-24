@@ -387,6 +387,14 @@ export interface IpcMainInvokeEvents {
   'workflow-db-get':      (workflowId: string) => any;
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
 
+  // User-defined project catalog (scanned from ~/sulla/projects/ + DB)
+  'projects-list': () => {
+    slug:        string;
+    name:        string;
+    status:      string;
+    description: string;
+  }[];
+
   // User-defined function catalog (scanned from ~/sulla/functions/<slug>/function.yaml)
   'functions-list': () => {
     slug:         string;

@@ -9,9 +9,11 @@
  * without touching the filesystem directly.
  */
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import Logging from '@pkg/utils/logging';
 
 import { ProjectRegistry } from '@pkg/agent/database/registry/ProjectRegistry';
 
+const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
 export function initSullaProjectEvents(): void {
