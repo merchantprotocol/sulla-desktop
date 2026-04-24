@@ -3,7 +3,7 @@
   more artifacts are open. Tabs + header + body.
 -->
 <template>
-  <aside v-if="visible" class="artifact">
+  <aside v-if="visible" class="artifact" :class="{ expanded }">
     <ArtifactTabs />
     <template v-if="active">
       <ArtifactHeader :artifact="active" @expand="onExpand" />
@@ -13,7 +13,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import ArtifactTabs   from './ArtifactTabs.vue';
 import ArtifactHeader from './ArtifactHeader.vue';
@@ -22,11 +22,18 @@ import ArtifactBody   from './ArtifactBody.vue';
 import { useChatController } from '../../controller/useChatController';
 
 const controller = useChatController();
-const visible = computed(() => controller.artifacts.value.list.length > 0);
-const active  = computed(() => controller.activeArtifact.value);
+const visible  = computed(() => controller.artifacts.value.list.length > 0);
+const active   = computed(() => controller.activeArtifact.value);
+const expanded = ref(false);
+
+// Collapse when artifacts are all closed.
+watch(visible, v => { if (!v) expanded.value = false; });
 
 function onExpand(): void {
-  // Phase-3 hook — a future full-screen artifact viewer.
+  expanded.value = !expanded.value;
+  window.dispatchEvent(new CustomEvent('chat:artifact-expand', {
+    detail: { expanded: expanded.value },
+  }));
 }
 </script>
 
@@ -42,5 +49,9 @@ function onExpand(): void {
   backdrop-filter: blur(10px);
   display: flex; flex-direction: column;
   height: 100%;
+  transition: width 0.3s ease;
+}
+.artifact.expanded {
+  width: 70vw !important;
 }
 </style>

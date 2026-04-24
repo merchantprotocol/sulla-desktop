@@ -64,6 +64,8 @@ export class PersonaAdapter {
   private workflowNames = new Map<string, string>();
   /** Backend id → artifactId for html messages we've surfaced as artifacts. */
   private htmlArtifacts = new Map<string, ArtifactId>();
+  /** Backend id → artifactId for <workflow-artifact> blocks in text responses. */
+  private staticWorkflowArtifacts = new Map<string, ArtifactId>();
 
   constructor(
     private readonly controller: ChatController,
@@ -74,6 +76,7 @@ export class PersonaAdapter {
 
     // Tell the controller to delegate send/stop/continue to us.
     this.controller.setSendHandler((text, attachments) => this.send(text, attachments));
+    this.controller.setInjectHandler((text, attachments) => this.inject(text, attachments));
     this.controller.setRunHandlers({
       onStop:     () => this.ci.stop(),
       onContinue: () => this.ci.continueRun(),
@@ -185,6 +188,21 @@ export class PersonaAdapter {
     await this.ci.send(undefined, resolved.length ? resolved : undefined);
   }
 
+  /**
+   * Inject a queued message into the running graph. Routes to
+   * ChatInterface.injectMessage which either appends mid-run (if the
+   * graph is still running) or sends normally (if it finished between
+   * the user's click and this call).
+   */
+  async inject(text: string, attachments: Attachment[]): Promise<void> {
+    const mapped = attachments
+      .map(a => a.file ? fileToAttachmentInput(a.file) : null)
+      .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
+
+    const resolved = await Promise.all(mapped);
+    await this.ci.injectMessage(text, resolved.length ? resolved : undefined);
+  }
+
   stop(): void { this.ci.stop(); }
   continueRun(): void { this.ci.continueRun(); }
   newChat(): void {
@@ -196,6 +214,7 @@ export class PersonaAdapter {
     this.workflowArtifacts.clear();
     this.workflowNames.clear();
     this.htmlArtifacts.clear();
+    this.staticWorkflowArtifacts.clear();
   }
 
   dispose(): void {
@@ -207,6 +226,7 @@ export class PersonaAdapter {
     this.workflowArtifacts.clear();
     this.workflowNames.clear();
     this.htmlArtifacts.clear();
+    this.staticWorkflowArtifacts.clear();
     this.ci.dispose();
   }
 
@@ -480,6 +500,35 @@ export class PersonaAdapter {
         // into the transcript at the same time the html artifact appears
         // in the sidebar — the user sees the same content twice.
         const raw = b.content ?? '';
+
+        // <workflow-artifact id="slug" name="..."> or self-closing variant.
+        // Fetches workflow definition from main process by ID, renders canvas
+        // in the artifact sidebar, suppresses inline rendering entirely.
+        const wfMatch = /^\s*<workflow-artifact\b([^>]*?)\/?\s*>\s*(?:<\/workflow-artifact>)?\s*$/i.exec(raw);
+        if (wfMatch) {
+          const attrs = wfMatch[1];
+          const idAttr = /\bid="([^"]*)"/.exec(attrs);
+          const nameAttr = /\bname="([^"]*)"/.exec(attrs);
+          const wfId = idAttr?.[1] ?? '';
+          const wfName = nameAttr?.[1] ?? 'Workflow';
+          if (wfId) {
+            // Async — fire and forget; artifact opens once IPC resolves.
+            (async() => {
+              try {
+                const definition = await ipcRenderer.invoke('workflow-db-get', wfId) as Record<string, unknown> | null;
+                if (!definition) return;
+                const nodes = (definition.nodes ?? []) as WorkflowPayload['nodes'];
+                const edges = (definition.edges ?? []) as WorkflowPayload['edges'];
+                const payload: WorkflowPayload = { nodes, edges };
+                this.ensureWorkflowArtifact(b.id, payload, wfName || String(definition.name ?? wfId), createdAt);
+              } catch (err) {
+                console.warn('[PersonaAdapter] workflow-artifact IPC fetch failed:', err);
+              }
+            })();
+            return { id, kind: 'html', createdAt, html: '', artifactId: undefined } satisfies HtmlMessage;
+          }
+        }
+
         const htmlMatch = /^\s*<html\b[^>]*>([\s\S]*)<\/html>\s*$/i.exec(raw);
 
         if (htmlMatch) {
@@ -721,6 +770,28 @@ export class PersonaAdapter {
     if (nodes.some(n => n.runtimeState === 'error')) return 'error';
     if (nodes.every(n => n.runtimeState === 'done')) return 'done';
     return 'working';
+  }
+
+  // ─── Static workflow artifact driver (text-response driven) ──────
+  private ensureWorkflowArtifact(
+    backendId: string,
+    payload: WorkflowPayload,
+    name: string,
+    createdAt: number,
+  ): ArtifactId {
+    const existing = this.staticWorkflowArtifacts.get(backendId);
+    if (existing) {
+      this.controller.updateArtifact(existing, { payload, status: 'done' });
+      return existing;
+    }
+    const artifactName = name || `Workflow — ${shortStamp(createdAt)}`;
+    const artifactId = this.controller.openArtifact('workflow', {
+      name: artifactName,
+      payload,
+      status: 'done',
+    });
+    this.staticWorkflowArtifacts.set(backendId, artifactId);
+    return artifactId;
   }
 
   // ─── HTML artifact driver ─────────────────────────────────────────

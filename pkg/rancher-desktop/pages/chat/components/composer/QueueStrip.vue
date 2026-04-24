@@ -29,7 +29,7 @@
         type="button"
         title="Send now"
         @click="controller.injectQueuedMessage(q.id)"
-      >↡</button>
+      >▶</button>
       <button
         class="rm"
         type="button"
@@ -87,6 +87,7 @@ const queue = computed(() => controller.queue.value);
   transition: all 0.15s ease;
 }
 .qitem button:hover      { color: var(--steel-400); background: rgba(80, 150, 179, 0.1); }
+.qitem .inject           { color: var(--ok); font-size: 10px; }
 .qitem .inject:hover     { color: var(--ok);  background: rgba(134, 239, 172, 0.1); }
 .qitem .rm:hover         { color: var(--err); background: rgba(252, 165, 165, 0.1); }
 </style>

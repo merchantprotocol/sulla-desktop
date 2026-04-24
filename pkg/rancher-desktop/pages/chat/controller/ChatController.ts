@@ -73,6 +73,18 @@ export type SendHandler = (
   attachments: Attachment[],
 ) => void | Promise<void>;
 
+/**
+ * Inject a user message into an in-flight graph run without interrupting
+ * it. The message is appended to the agent's state.messages and picked up
+ * on the next loop iteration, so the user can "chat during a run" without
+ * stopping the graph. When the graph is idle, implementations should fall
+ * back to a normal send.
+ */
+export type InjectHandler = (
+  text: string,
+  attachments: Attachment[],
+) => void | Promise<void>;
+
 export interface ThreadPersister {
   save(state: ThreadState): void | Promise<void>;
   load(id: ThreadId): ThreadState | null | Promise<ThreadState | null>;
@@ -111,6 +123,7 @@ export class ChatController {
   private readonly channelId:  string;
   private readonly tabId?:     string;
   private sendHandler?:     SendHandler;
+  private injectHandler?:   InjectHandler;
   private stopHandler?:     () => void;
   private continueHandler?: () => void;
 
@@ -127,7 +140,10 @@ export class ChatController {
     const initial: ThreadState = opts.hydrateFrom ?? this.fresh();
 
     this.thread    = ref(initial.thread);
-    this.runState  = ref(initial.runState);
+    // Never resurrect a non-idle runState from a persisted snapshot (process
+    // restart left it stuck on 'thinking' etc.). The backend drives
+    // runState live; an idle start is always correct.
+    this.runState  = ref(runIdle());
     this.queue     = ref([...initial.queue]);
     this.staged    = ref([...initial.staged]);
     this.voice     = ref(initial.voice);
@@ -216,6 +232,14 @@ export class ChatController {
     this.sendHandler = h;
   }
 
+  /** Swap the inject handler after construction. Fires when the user
+   *  hits "Send now" (▶) on a queued message while the graph is running.
+   *  Adapters should route this to ChatInterface.injectMessage so the
+   *  message is appended to state.messages without starting a new run. */
+  setInjectHandler(h: InjectHandler | undefined): void {
+    this.injectHandler = h;
+  }
+
   queueMessage(text: string, attachments: Attachment[] = []): void {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
@@ -233,6 +257,20 @@ export class ChatController {
     const q = this.queue.value.find(m => m.id === id);
     if (!q) return;
     this.queue.value = this.queue.value.filter(m => m.id !== id);
+    this.persist();
+
+    // If the graph is running AND an adapter has registered an inject
+    // handler, route through it — the message is appended to the agent's
+    // state.messages mid-run and picked up on the next iteration without
+    // interrupting the current turn. Otherwise fall back to a normal
+    // send (which starts a fresh run if the graph is idle, or — if
+    // something raced into running between the click and here — the
+    // send path will just re-queue it cleanly).
+    if (this.injectHandler && isRunning(this.runState.value)) {
+      this.autoTitleFromFirstUserMessage(q.text);
+      void this.injectHandler(q.text, [...q.attachments]);
+      return;
+    }
     this.send(q.text, [...q.attachments]);
   }
 
@@ -617,7 +655,12 @@ export class ChatController {
 
   hydrate(state: ThreadState): void {
     this.thread.value = state.thread;
-    this.runState.value = state.runState;
+    // Never rehydrate a non-idle runState across a process restart.
+    // The backend (ci.graphRunning via PersonaAdapter.syncRunState) is the
+    // authoritative source for whether work is in flight; if we restored
+    // `thinking`/`streaming`/`tool` from localStorage the composer would
+    // show a stop button forever when the backend isn't actually running.
+    this.runState.value = runIdle();
     this.queue.value = [...state.queue];
     this.staged.value = [...state.staged];
     this.voice.value = state.voice;

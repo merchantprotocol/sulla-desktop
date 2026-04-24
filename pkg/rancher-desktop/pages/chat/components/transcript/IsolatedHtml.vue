@@ -12,10 +12,19 @@
     • DOMPurify still strips event handlers, iframes, object tags,
       and other dangerous attributes before insertion.
 
-  We keep <style> allowed (that's the point — we want the agent's
-  CSS to apply *within the shadow*). CSS custom properties defined
-  on :root (e.g. --read-1) inherit through the shadow boundary, so
-  the content picks up the chat theme tokens automatically.
+  Style access:
+    • We ADOPT every stylesheet from the host document into the
+      shadow root via `adoptedStyleSheets` (cached module-level so
+      the work runs once per session, not per bubble). That gives
+      the agent's HTML access to the full protocol-dark theme,
+      global typography, component classes, etc.
+    • We mirror the active `theme-*` class onto a wrapper div inside
+      the shadow so descendant selectors like
+      `.theme-protocol-dark .foo` still match.
+    • A small :host-scoped rule defines the agent-facing token
+      aliases (--bg, --surface-1..3, --text, --green, --font-*)
+      that the system prompt promises — these don't exist in
+      protocol-dark.css under those names.
 -->
 <template>
   <div ref="hostEl" class="iso-host" />
@@ -30,20 +39,92 @@ const props = defineProps<{ html: string }>();
 const hostEl = ref<HTMLDivElement | null>(null);
 let shadow: ShadowRoot | null = null;
 
+// Agent-facing token aliases. These names are what the system prompt
+// promises agents ( --bg, --surface-1..3, --text, --green, --font-* ) —
+// they don't exist under these names in protocol-dark.css, so we alias
+// them to the real theme tokens here. If the theme tokens resolve via
+// inheritance from the document root, great; otherwise fall back to the
+// hard-coded palette values.
 const BASE_STYLES = `
   :host {
     display: block;
-    color: var(--read-1, #d6dce4);
-    font-family: var(--sans, system-ui, -apple-system, sans-serif);
+    font-family: var(--font-body, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif);
     font-size: 14px;
     line-height: 1.55;
+    color-scheme: dark;
+
+    --bg: var(--bg-page, #0d1117);
+    --surface-1: var(--bg-surface, #161b22);
+    --surface-2: var(--bg-surface-alt, #1c2128);
+    --surface-3: var(--bg-surface-hover, #21262d);
+    --text: var(--text-primary, #e6edf3);
+    --text-muted: #8b949e;
+    --text-dim: #6e7681;
+    --green: #2ea043;
+    --green-bright: #3fb950;
+    --green-glow: rgba(46, 160, 67, 0.4);
+    --green-glow-soft: rgba(63, 185, 80, 0.15);
+    --green-glow-strong: rgba(63, 185, 80, 0.6);
+    --border: var(--border-default, #30363d);
+    --border-muted: var(--border-subtle, #21262d);
+    --info: var(--status-info, #58a6ff);
+    --success: var(--status-success, #3fb950);
+    --warning: var(--status-warning, #e3b341);
+    --danger: var(--status-error, #f85149);
+    --font-display: 'Playfair Display', Georgia, serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', 'Fira Code', 'Courier New', monospace;
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+    color: var(--text);
   }
   * { box-sizing: border-box; }
-  a { color: var(--steel-400, #6ab0cc); }
-  pre, code { font-family: var(--mono, ui-monospace, monospace); }
+  a { color: var(--accent-primary, #6ab0cc); }
+  pre, code { font-family: var(--font-mono); }
   img, svg, video { max-width: 100%; height: auto; }
   table { border-collapse: collapse; }
 `;
+
+// Collected once per session — adopting the main document's sheets
+// lets the agent's HTML use any class/selector the app exposes.
+// Cross-origin sheets (e.g. font CDNs) throw on .cssRules access and
+// are skipped.
+let cachedDocumentSheets: CSSStyleSheet[] | null = null;
+
+function collectDocumentSheets(): CSSStyleSheet[] {
+  if (cachedDocumentSheets) return cachedDocumentSheets;
+  const out: CSSStyleSheet[] = [];
+
+  for (const ss of Array.from(document.styleSheets)) {
+    try {
+      const rules = ss.cssRules;
+      const text = Array.from(rules).map(r => r.cssText).join('\n');
+      const sheet = new CSSStyleSheet();
+
+      sheet.replaceSync(text);
+      out.push(sheet);
+    } catch {
+      // Cross-origin sheet — skip.
+    }
+  }
+  cachedDocumentSheets = out;
+  return out;
+}
+
+let cachedBaseSheet: CSSStyleSheet | null = null;
+function getBaseSheet(): CSSStyleSheet {
+  if (cachedBaseSheet) return cachedBaseSheet;
+  cachedBaseSheet = new CSSStyleSheet();
+  cachedBaseSheet.replaceSync(BASE_STYLES);
+  return cachedBaseSheet;
+}
+
+// Mirror the active `theme-*` class from the document root so
+// descendant selectors like `.theme-protocol-dark .foo` resolve
+// inside the shadow tree.
+function activeThemeClass(): string {
+  return Array.from(document.documentElement.classList)
+    .find(c => c.startsWith('theme-')) ?? '';
+}
 
 function render(html: string): void {
   if (!shadow) return;
@@ -56,12 +137,19 @@ function render(html: string): void {
     FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'base'],
     FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
   });
-  shadow.innerHTML = `<style>${ BASE_STYLES }</style>${ safe }`;
+  const themeClass = activeThemeClass();
+
+  shadow.innerHTML = themeClass
+    ? `<div class="${ themeClass }">${ safe }</div>`
+    : safe;
 }
 
 onMounted(() => {
   if (!hostEl.value) return;
   shadow = hostEl.value.attachShadow({ mode: 'open' });
+  // Adopt all app stylesheets + our base layer. adoptedStyleSheets
+  // is shared by reference, so N bubbles = 1 copy in memory.
+  shadow.adoptedStyleSheets = [...collectDocumentSheets(), getBaseSheet()];
   render(props.html);
 });
 

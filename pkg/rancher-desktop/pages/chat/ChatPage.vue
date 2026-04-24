@@ -13,7 +13,7 @@
       messages. The transcript replaces it once a conversation begins.
 -->
 <template>
-  <div class="chat-root" :class="{ 'artifact-open': hasArtifact, 'history-open': historyOpen }">
+  <div class="chat-root" :class="{ 'artifact-open': hasArtifact, 'history-open': historyOpen, 'artifact-expanded': artifactExpanded }">
     <Canvas />
 
     <div class="shell">
@@ -215,7 +215,14 @@ onBeforeUnmount(() => {
 });
 
 // ─── Derived state ────────────────────────────────────────────────
-const hasArtifact    = computed(() => controller.artifacts.value.list.length > 0);
+const hasArtifact      = computed(() => controller.artifacts.value.list.length > 0);
+const artifactExpanded = ref(false);
+
+function onArtifactExpand(ev: Event): void {
+  artifactExpanded.value = (ev as CustomEvent<{ expanded: boolean }>).detail.expanded;
+}
+// Reset when all artifacts close.
+watch(hasArtifact, v => { if (!v) artifactExpanded.value = false; });
 const historyOpen    = computed(() => controller.sidebar.value.historyOpen);
 const activeThreadId = computed(() => controller.thread.value.id);
 // App-wide conversation history (Postgres-backed, shared across every
@@ -450,12 +457,14 @@ function onForkEvent(ev: Event): void {
 }
 
 onMounted(() => {
-  window.addEventListener('chat:new-chat', onNewChatEvent);
-  window.addEventListener('chat:fork',     onForkEvent);
+  window.addEventListener('chat:new-chat',       onNewChatEvent);
+  window.addEventListener('chat:fork',           onForkEvent);
+  window.addEventListener('chat:artifact-expand', onArtifactExpand);
 });
 onBeforeUnmount(() => {
-  window.removeEventListener('chat:new-chat', onNewChatEvent);
-  window.removeEventListener('chat:fork',     onForkEvent);
+  window.removeEventListener('chat:new-chat',       onNewChatEvent);
+  window.removeEventListener('chat:fork',           onForkEvent);
+  window.removeEventListener('chat:artifact-expand', onArtifactExpand);
 });
 </script>
 
@@ -560,6 +569,7 @@ onBeforeUnmount(() => {
 
 .chat-root.history-open  .main { left: 260px; }
 .chat-root.artifact-open .main { right: 560px; }
+.chat-root.artifact-open.artifact-expanded .main { right: 70vw; }
 
 /* Rails float over the left/right edges at fixed widths. */
 .shell :deep(.history) {

@@ -28,15 +28,15 @@ function placeholderPayload(kind: Artifact['kind']): WorkflowPayload | HtmlPaylo
   if (kind === 'workflow') {
     return {
       nodes: [
-        { id: 'n1', x: 20,  y: 60,  kicker: 'Start',    name: 'Trigger', state: 'start' },
-        { id: 'n2', x: 220, y: 60,  kicker: 'Fetch',    name: 'Fetch data', state: 'done' },
-        { id: 'n3', x: 430, y: 60,  kicker: 'Reason',   name: 'Draft reply', state: 'active' },
-        { id: 'n4', x: 640, y: 60,  kicker: 'Dispatch', name: 'Send', state: 'idle' },
+        { id: 'n1', type: 'workflow', position: { x: 20,  y: 60 }, data: { subtype: 'sulla-desktop', category: 'trigger',  label: 'Trigger' },    runtimeState: 'start' },
+        { id: 'n2', type: 'workflow', position: { x: 220, y: 60 }, data: { subtype: 'agent',         category: 'agent',    label: 'Fetch data' }, runtimeState: 'done' },
+        { id: 'n3', type: 'workflow', position: { x: 430, y: 60 }, data: { subtype: 'agent',         category: 'agent',    label: 'Draft reply' }, runtimeState: 'active' },
+        { id: 'n4', type: 'workflow', position: { x: 640, y: 60 }, data: { subtype: 'response',      category: 'output',   label: 'Send' },        runtimeState: 'idle' },
       ],
       edges: [
-        { from: 'n1', to: 'n2', state: 'done' },
-        { from: 'n2', to: 'n3', state: 'active' },
-        { from: 'n3', to: 'n4', state: 'idle' },
+        { id: 'e1', source: 'n1', target: 'n2', runtimeState: 'done' },
+        { id: 'e2', source: 'n2', target: 'n3', runtimeState: 'active' },
+        { id: 'e3', source: 'n3', target: 'n4', runtimeState: 'idle' },
       ],
     };
   }
@@ -82,6 +82,8 @@ function placeholderPayload(kind: Artifact['kind']): WorkflowPayload | HtmlPaylo
 .artifact-pane {
   padding: 24px 22px;
   overflow-x: hidden;
+  height: 100%;
+  box-sizing: border-box;
 }
 .empty { color: var(--read-4); font-family: var(--mono); font-size: 12px; }
 </style>
