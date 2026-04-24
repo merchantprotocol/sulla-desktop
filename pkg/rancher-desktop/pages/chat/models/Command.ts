@@ -8,10 +8,15 @@ export interface SlashCommand {
 }
 
 export interface MentionTarget {
-  /** The token inserted into the composer (e.g. "@file:GuestBridge.ts") */
+  /** The token inserted into the composer (e.g. "@routine:seo-blog-post") */
   token:  string;
-  label:  string;     // human-readable
-  kind:   'file' | 'memory' | 'agent' | 'thread';
+  label:  string;     // human-readable description shown in the popover
+  /**
+   * The class of artifact being referenced. Only things the user actually
+   * has on this machine in Library or My Work — no source files, no internal
+   * engine identifiers. Customers must never see raw codebase files here.
+   */
+  kind:   'routine' | 'skill' | 'function' | 'recipe' | 'integration' | 'workflow' | 'project';
 }
 
 export const defaultSlashCommands: readonly SlashCommand[] = Object.freeze([

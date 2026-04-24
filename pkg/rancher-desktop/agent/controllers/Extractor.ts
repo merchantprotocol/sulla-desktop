@@ -35,13 +35,16 @@ export type DispatchFn = (
 
 /**
  * Function that sends a chat message to the frontend UI.
- * Used by ThinkingExtractor to dispatch thinking bubbles.
+ * Used by ThinkingExtractor to dispatch thinking bubbles, and by
+ * CitationExtractor to attach a structured `citations` payload that
+ * rides alongside the usual content/role/kind fields on the WS event.
  */
 export type ChatMessageFn = (
-  state: BaseThreadState,
-  content: string,
-  role: 'assistant' | 'system',
-  kind: string,
+  state:    BaseThreadState,
+  content:  string,
+  role:     'assistant' | 'system',
+  kind:     string,
+  extras?:  Record<string, unknown>,
 ) => Promise<boolean>;
 
 /**

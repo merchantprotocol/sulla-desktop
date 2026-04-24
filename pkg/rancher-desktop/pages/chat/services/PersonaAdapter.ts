@@ -19,7 +19,7 @@ import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import type { ChatController } from '../controller/ChatController';
 import type { Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
-  ToolMessage, ChannelMessage, SubAgentMessage, ErrorMessage, HtmlMessage, InterimMessage,
+  ToolMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
 } from '../models/Message';
 import type { Attachment } from '../models/Attachment';
 import type {
@@ -292,6 +292,22 @@ export class PersonaAdapter {
       } satisfies ThinkingMessage;
     }
 
+    // Citation card — source grid rendered by CitationRow.vue. Backend
+    // populates `citations` via the CitationExtractor; we pass them
+    // straight through unchanged. Sources must have title + origin (any
+    // that don't were already dropped in MessageDispatcher).
+    if (b.kind === 'citation' && Array.isArray(b.citations) && b.citations.length > 0) {
+      return {
+        id, kind: 'citation', createdAt,
+        sources: b.citations.map(s => ({
+          num:    s.num,
+          title:  s.title,
+          origin: s.origin,
+          url:    s.url,
+        })),
+      } satisfies CitationMessage;
+    }
+
     // Tool card
     if (b.kind === 'tool' && b.toolCard) {
       const status: ToolMessage['status'] =
@@ -351,9 +367,24 @@ export class PersonaAdapter {
     if (b.kind === 'streaming') {
       const completed = (b as any)._completed === true || !this.ci.graphRunning.value;
       if (completed) {
+        // Mirror MessageDispatcher's auto-detect: if the finalized reply
+        // is pure <html>...</html>, surface it as an artifact and suppress
+        // the inline markdown render. Without this the completed stream
+        // hits TurnSulla (marked + DOMPurify) and paints the full page
+        // into the transcript at the same time the html artifact appears
+        // in the sidebar — the user sees the same content twice.
+        const raw = b.content ?? '';
+        const htmlMatch = /^\s*<html\b[^>]*>([\s\S]*)<\/html>\s*$/i.exec(raw);
+
+        if (htmlMatch) {
+          const html = htmlMatch[1].trim();
+          const artifactId = this.ensureHtmlArtifact(b.id, html, createdAt);
+
+          return { id, kind: 'html', createdAt, html, artifactId } satisfies HtmlMessage;
+        }
         return {
           id, kind: 'sulla', createdAt,
-          text: b.content ?? '',
+          text:  raw,
           model: this.controller.model.value.name,
         } satisfies SullaMessage;
       }

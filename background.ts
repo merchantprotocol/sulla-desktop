@@ -25,6 +25,7 @@ import { registerCaptureStudioTracking } from '@pkg/main/captureStudioTracking';
 import { registerMoreMenuIpc } from '@pkg/main/moreMenuWindow';
 import { registerTabContextMenuIpc } from '@pkg/main/tabContextMenuWindow';
 import { registerTeleprompterIpc } from '@pkg/main/teleprompterWindow';
+import { registerCaptureStudioRpc } from '@pkg/main/captureStudioRpc';
 import { registerTeleprompterTrackingIpc } from '@pkg/main/teleprompterTracking';
 
 import { Help } from '@pkg/config/help';
@@ -53,6 +54,7 @@ import setupUpdate from '@pkg/main/update';
 import { updateManager } from '@pkg/main/update/UpdateManager';
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { hookSullaEnd, sullaEnd, onMainProxyLoad } from '@pkg/sulla';
+import { initSecretaryModeStateIpc } from '@pkg/main/secretaryModeState';
 import { initSullaEvents } from '@pkg/main/sullaEvents';
 import { initChromeApiIpc } from '@pkg/main/chromeApi';
 import { spawnFile } from '@pkg/utils/childProcess';
@@ -548,6 +550,7 @@ Electron.app.whenReady().then(async() => {
     // Register Sulla IPC handlers before the UI opens so renderers
     // never invoke a handler that hasn't been registered yet.
     initSullaEvents();
+    initSecretaryModeStateIpc();
     initChromeApiIpc();
 
     // Start the capability-token-based secrets HTTP server for runtime
@@ -735,11 +738,12 @@ async function initUI() {
     audioDriver.initialize();
     console.log('[Audio Driver] Initialized');
     registerCaptureStudioTracking();
+    registerCaptureStudioRpc();
     registerTeleprompterIpc();
     registerTeleprompterTrackingIpc();
     registerTabContextMenuIpc();
     registerMoreMenuIpc();
-    console.log('[Capture Studio] Tracking + Teleprompter + TabContextMenu + MoreMenu IPC registered');
+    console.log('[Capture Studio] Tracking + RPC + Teleprompter + TabContextMenu + MoreMenu IPC registered');
   } catch (err) {
     console.error('[Audio Driver] Failed to initialize:', err);
   }

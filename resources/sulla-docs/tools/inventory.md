@@ -163,13 +163,30 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`tools/vault.md`](vault.md)
 
-## extensions — marketplace recipes (4 tools)
+## extensions — marketplace recipes (7 tools)
 - `sulla extensions/list_extension_catalog` — Browse marketplace
 - `sulla extensions/list_installed_extensions` — What's installed (with URLs)
 - `sulla extensions/install_extension` — Install by ID
 - `sulla extensions/uninstall_extension` — Uninstall (default preserves data)
+- `sulla extensions/start_extension` — Bring a stopped recipe back up
+- `sulla extensions/stop_extension` — Stop a running recipe (`confirm:true` required)
+- `sulla extensions/get_extension_status` — running / stopped / not_installed
 
 → See [`marketplace/overview.md`](../marketplace/overview.md)
+
+## marketplace — generic artifact lifecycle (10 tools, all 5 kinds)
+- `sulla marketplace/search` — Search by query / kind / category (cloud + GitHub fallback for recipes)
+- `sulla marketplace/info` — Full metadata for `kind` + `slug`
+- `sulla marketplace/download` — Pull and materialise locally (`overwrite` flag)
+- `sulla marketplace/scaffold` — Generate kind-appropriate skeleton dir
+- `sulla marketplace/validate` — Schema check against the kind's contract
+- `sulla marketplace/publish` — POST to Sulla Cloud marketplace
+- `sulla marketplace/unpublish` — DELETE published artifact (`confirm:true` required)
+- `sulla marketplace/list_local` — Locally-installed artifacts (filterable by kind)
+- `sulla marketplace/list_published` — Artifacts the current user has published
+- `sulla marketplace/update` — Pull latest version (overwrites local)
+
+→ See [`tools/marketplace.md`](marketplace.md)
 
 ## redis (12 tools)
 - `sulla redis/redis_get` / `redis_set` — String KV
@@ -232,6 +249,34 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`tools/applescript.md`](applescript.md), [`tools/computer-use.md`](computer-use.md)
 
+## ui — open Sulla Desktop views from chat (1 tool)
+- `sulla ui/open_tab` — Open / focus a built-in view (`mode`: marketplace, vault, integrations, routines, history, secretary, chat, document, browser, welcome) — or pass `url` to open a raw browser tab
+
+→ See [`tools/ui.md`](ui.md)
+
+## capture — Capture Studio control (13 tools)
+**Teleprompter:**
+- `sulla capture/teleprompter_open` — Open the floating script window
+- `sulla capture/teleprompter_close` — Close it
+- `sulla capture/teleprompter_status` — Is it open?
+- `sulla capture/teleprompter_script` — Push script text (auto-opens, sets `currentIndex`)
+- `sulla capture/teleprompter_style` — Update fontSize / highlightColor
+
+**Microphone (ref-counted):**
+- `sulla capture/mic_start` — Start mic capture (optional `formats: ["webm-opus","pcm-s16le"]`)
+- `sulla capture/mic_stop` — Release this agent's hold
+
+**Speaker / desktop audio loopback (ref-counted):**
+- `sulla capture/speaker_start` — Start system-audio capture
+- `sulla capture/speaker_stop` — Release hold
+
+**State + screens:**
+- `sulla capture/audio_state` — Are mic/speaker capturing? Which devices?
+- `sulla capture/list_screens` — Enumerate displays + windows (`kind: screen | window | all`)
+- `sulla capture/screenshot` — PNG of a screen/window → `~/sulla/captures/screenshots/YYYY-MM-DD/`
+
+→ See [`tools/capture.md`](capture.md)
+
 ---
 
 ## Categories visible in CLI --help but NOT in `sulla --help` output
@@ -278,7 +323,8 @@ Common integrations (as of verification):
 | rdctl | 10 |
 | calendar | 7 |
 | vault | 7 |
-| extensions | 4 |
+| extensions | 7 |
+| marketplace | 10 |
 | redis | 12 |
 | pg | 6 |
 | slack | 7 |
@@ -288,6 +334,8 @@ Common integrations (as of verification):
 | notify | 1 |
 | applescript | 1 |
 | function | 2 |
-| **Total** | **~140** |
+| ui | 1 |
+| capture | 13 |
+| **Total** | **~167** |
 
 If a new category appears in `pkg/rancher-desktop/agent/tools/` or `sulla <cat> --help` that's not on this list, add it here AND write a doc.

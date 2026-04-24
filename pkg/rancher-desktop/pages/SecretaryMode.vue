@@ -298,7 +298,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, onUnmounted, nextTick } from 'vue';
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
 import { ChatInterface } from './agent/ChatInterface';
 
@@ -572,7 +572,38 @@ async function sendChatMessage(): Promise<void> {
 
 // ── Lifecycle ──────────────────────────────────────────────────
 
+// Agent-tool bridge: the `sulla secretary/start` and `secretary/stop`
+// tools broadcast these window events via AgentRouter.vue. We honor
+// them only when this component is the one owning the secretary tab
+// named in detail.tabId (or when detail.tabId is absent — legacy).
+function onRemoteStart(e: Event) {
+  const detail = (e as CustomEvent<{ tabId?: string }>).detail;
+
+  if (detail?.tabId && detail.tabId !== props.tabId) return;
+  if (isListening.value) return;
+  void startSession();
+}
+function onRemoteStop() {
+  if (isListening.value) endSession();
+}
+
+// Mirror isListening into the main-process cache so agent tools
+// (sulla secretary/status) can see the current state.
+watch(isListening, (listening) => {
+  ipcRenderer.send('secretary-mode:state-changed' as any, {
+    listening,
+    tabId: listening ? props.tabId : null,
+  });
+});
+
+onMounted(() => {
+  window.addEventListener('sulla:secretary-start', onRemoteStart);
+  window.addEventListener('sulla:secretary-stop',  onRemoteStop);
+});
+
 onUnmounted(() => {
+  window.removeEventListener('sulla:secretary-start', onRemoteStart);
+  window.removeEventListener('sulla:secretary-stop',  onRemoteStop);
   if (isListening.value) endSession();
   controller.dispose();
   chatInterface?.dispose();

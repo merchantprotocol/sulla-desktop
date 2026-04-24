@@ -178,6 +178,41 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  // Citation cards: the model emitted a <citations> block. Content is empty
+  // by design — the renderer draws a card grid from the `citations` array
+  // on the message. Dropped silently if the payload is missing/malformed.
+  if (kindRaw === 'citation') {
+    const rawSources = Array.isArray(data?.citations) ? data.citations : [];
+    const citations = rawSources
+      .map((s: unknown) => {
+        if (!s || typeof s !== 'object') return null;
+        const r = s as Record<string, unknown>;
+        const title = typeof r.title === 'string' ? r.title.trim() : '';
+        const origin = typeof r.origin === 'string' ? r.origin.trim() : '';
+        if (!title || !origin) return null;
+        const numRaw = r.num;
+        const num = typeof numRaw === 'number' && Number.isFinite(numRaw)
+          ? numRaw
+          : Number.parseInt(String(numRaw ?? ''), 10);
+        const url = typeof r.url === 'string' && r.url.trim().length > 0 ? r.url.trim() : undefined;
+        return { num: Number.isFinite(num) ? num : 0, title, origin, url };
+      })
+      .filter(Boolean) as { num: number; title: string; origin: string; url?: string }[];
+
+    if (citations.length === 0) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_citation`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'citation',
+      content:   '',
+      citations,
+    });
+    return;
+  }
+
   if (!content.trim()) {
     console.warn(`⚠️ [MessageDispatcher] EMPTY CONTENT assistant message dropped`, {
       msgType: msg.type, channel: agentId, threadId: msgThreadId,

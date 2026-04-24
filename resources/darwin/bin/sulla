@@ -23,7 +23,7 @@ FIRST="$1"
 BODY="$2"
 
 # Known internal tool categories
-TOOL_CATEGORIES="meta|docker|github|browser|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|applescript|notify"
+TOOL_CATEGORIES="meta|docker|github|browser|rdctl|redis|pg|n8n|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|applescript|notify|ui|function|observation|marketplace|capture"
 
 # ── Help & discovery ─────────────────────────────────────────────
 # sulla --help | sulla -h | sulla help | sulla (no args)
@@ -59,6 +59,11 @@ Categories:
   redis             Redis key/value store operations
   slack             Slack messaging and reactions
   vault             Credential vault — list accounts, read/set secrets
+  ui                Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat
+  function          Custom function runner — list and invoke ~/sulla/functions/
+  observation       Observational memory + write_file to home
+  marketplace       Search / download / scaffold / validate / publish artifacts (skills, functions, workflows, agents, recipes)
+  capture           Capture Studio control: teleprompter, microphone, speaker loopback, screenshots
 
 Run "sulla <category> --help" to see tools in a category.
 Run "sulla vault/list_accounts '{}'" to discover proxy accounts.

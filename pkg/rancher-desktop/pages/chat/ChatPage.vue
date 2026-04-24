@@ -34,6 +34,13 @@
           above the transcript.
         -->
         <div class="header-backdrop" aria-hidden="true" />
+        <!--
+          Composer backdrop: same fade trick at the bottom so transcript
+          content scrolling up doesn't fight the composer. Masked on the
+          right so Canvas's bottom-right steel-blue glow (chat-glow.b)
+          keeps breathing through.
+        -->
+        <div class="composer-backdrop" aria-hidden="true" />
         <StatusBadges />
         <SessionMark editable />
         <SearchBar />
@@ -92,8 +99,26 @@ import { useDragDrop }           from './composables/useDragDrop';
 import { useKeyboardShortcuts }  from './composables/useKeyboardShortcuts';
 import { useResizeSync }         from './composables/useResizeSync';
 
+import { ipcRenderer }           from '@pkg/utils/ipcRenderer';
+
 import type { Thread }   from './models/Thread';
-import type { ThreadId } from './types/chat';
+import { asThreadId, type ThreadId } from './types/chat';
+
+/**
+ * Shape returned by `conversation-history:get-recent`. Defined locally
+ * because the renderer can't import the main-process model class.
+ */
+interface HistoryRecord {
+  id:             string;
+  type:           string;
+  title:          string;
+  thread_id?:     string;
+  status:         string;
+  created_at:     string;
+  last_active_at: string;
+  pinned:         boolean;
+  message_count:  number;
+}
 
 // ─── Props ────────────────────────────────────────────────────────
 const props = defineProps<{
@@ -187,21 +212,73 @@ onBeforeUnmount(() => {
 const hasArtifact    = computed(() => controller.artifacts.value.list.length > 0);
 const historyOpen    = computed(() => controller.sidebar.value.historyOpen);
 const activeThreadId = computed(() => controller.thread.value.id);
+// App-wide conversation history (Postgres-backed, shared across every
+// open chat). Fetched on mount via the main-process IPC. Merged into the
+// thread list below so the HistoryRail surfaces every past chat, not
+// just threads this renderer's LocalStoragePersister happens to hold.
+const recentHistory = ref<HistoryRecord[]>([]);
+
+async function loadRecentHistory(): Promise<void> {
+  try {
+    const rows = await ipcRenderer.invoke(
+      'conversation-history:get-recent' as any,
+      200,
+      'chat',
+    ) as HistoryRecord[] | undefined;
+    recentHistory.value = Array.isArray(rows) ? rows : [];
+  } catch {
+    recentHistory.value = [];
+  }
+}
+
+function historyToThread(h: HistoryRecord): Thread {
+  const id = asThreadId(h.thread_id || h.id);
+  const createdAt  = Date.parse(h.created_at)     || Date.now();
+  const updatedAt  = Date.parse(h.last_active_at) || createdAt;
+  return {
+    id,
+    title: h.title || 'Untitled',
+    createdAt,
+    updatedAt,
+    messages: [],
+  };
+}
+
 const allThreads = computed<Thread[]>(() => {
-  // Union of in-memory + persisted.
-  const memIds = new Set(registry.all().map(c => c.thread.value.id));
-  const fromMem = registry.all().map(c => c.thread.value);
-  const fromDisk = persister.list()
-    .filter(s => !memIds.has(s.thread.id))
-    .map(s => s.thread);
-  return [...fromMem, ...fromDisk];
+  // Priority order: live controllers (freshest) → LocalStoragePersister
+  // (per-tab snapshots) → app-wide conversation history (shared, may be
+  // from other tabs/sessions). Deduped by id.
+  const seen   = new Set<ThreadId>();
+  const out: Thread[] = [];
+
+  for (const ctrl of registry.all()) {
+    const t = ctrl.thread.value;
+    if (seen.has(t.id)) continue;
+    seen.add(t.id);
+    out.push(t);
+  }
+
+  for (const s of persister.list()) {
+    if (seen.has(s.thread.id)) continue;
+    seen.add(s.thread.id);
+    out.push(s.thread);
+  }
+
+  for (const h of recentHistory.value) {
+    const t = historyToThread(h);
+    if (seen.has(t.id)) continue;
+    seen.add(t.id);
+    out.push(t);
+  }
+
+  return out;
 });
 
 const suggestions = Object.freeze([
-  'Open GuestBridge.ts and show me the capture path',
-  'Build me a workflow that deploys to staging',
-  'What\'s on my calendar tomorrow?',
-  'Summarize yesterday\'s changes',
+  'What\'s on my calendar today?',
+  'Summarize my unread emails',
+  'Help me draft an email',
+  'What should I focus on today?',
 ]);
 
 function onSuggestion(text: string): void {
@@ -291,7 +368,21 @@ const composerRef = ref<HTMLElement | null>(null);
 onMounted(() => {
   mainRef.value     = document.querySelector('.chat-root .main');
   composerRef.value = document.querySelector('.chat-root .composer-wrap');
+  void loadRecentHistory();
 });
+
+// Refresh when the user clears history elsewhere, or when their own
+// sends land (last_active_at changes). We also refresh every time the
+// history rail opens so stale lists don't stick around between sessions.
+function onHistoryCleared(): void { void loadRecentHistory(); }
+onMounted(() => {
+  ipcRenderer.on('conversation-history:cleared' as any, onHistoryCleared);
+});
+onBeforeUnmount(() => {
+  ipcRenderer.removeListener('conversation-history:cleared' as any, onHistoryCleared);
+});
+watch(historyOpen, (open) => { if (open) void loadRecentHistory(); });
+watch(() => adapter.hasSentMessage.value, (sent) => { if (sent) void loadRecentHistory(); });
 
 useResizeSync(mainRef, composerRef);
 
@@ -401,6 +492,43 @@ onBeforeUnmount(() => {
     rgba(0, 0, 0, 0) 100%
   );
 }
+
+/*
+ * Composer backdrop — mirror of the header fade at the bottom of .main.
+ * Sits below the Composer (z-15) and above the Transcript so messages
+ * scrolling up fade out under the input row. Masked horizontally on
+ * the right so Canvas's bottom-right steel-blue glow (chat-glow.b) is
+ * preserved and still breathes through.
+ */
+.composer-backdrop {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 180px;
+  z-index: 10;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    rgba(5, 8, 16, 0.92) 0%,
+    rgba(5, 8, 16, 0.78) 45%,
+    rgba(5, 8, 16, 0) 100%
+  );
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  /* Two-axis mask:
+     - fade out toward the top so the transcript emerges smoothly into
+       the fade instead of ending at a hard line;
+     - fade out toward the RIGHT so chat-glow.b (around 78% x / 80% y)
+       keeps breathing through unmuted. */
+  mask-image:
+    linear-gradient(to top,   rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 100%),
+    linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 92%);
+  mask-composite: intersect;
+  -webkit-mask-image:
+    linear-gradient(to top,   rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 100%),
+    linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 55%, rgba(0,0,0,0) 92%);
+  -webkit-mask-composite: source-in;
+}
+
 .chat-root.history-open  .main { left: 260px; }
 .chat-root.artifact-open .main { right: 560px; }
 

@@ -77,6 +77,7 @@ import CommandPopover     from './CommandPopover.vue';
 
 import { useChatController } from '../../controller/useChatController';
 import { useCommandPopover } from '../../composables/useCommandPopover';
+import { useArtifactMentions } from '../../composables/useArtifactMentions';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
 
@@ -102,99 +103,16 @@ const recStartedAt = computed(() => controller.voice.value.phase === 'recording'
 const recLevel     = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.level    : 0);
 const recSpeaking  = computed(() => controller.voice.value.phase === 'recording' ? controller.voice.value.speaking : false);
 
-// ─── Mention sources ───────────────────────────────────────────────
-// Static but realistic. Real IPC handlers (list-project-files, etc.)
-// aren't wired yet; keeping the data here in one place makes it easy
-// to replace when they land.
-const FILE_NAMES = Object.freeze([
-  'ChatController.ts',
-  'PersonaAdapter.ts',
-  'VoiceSessionAdapter.ts',
-  'useVoiceSession.ts',
-  'TTSPlayerService.ts',
-  'ChatPage.vue',
-  'Composer.vue',
-  'CommandPopover.vue',
-  'Transcript.vue',
-  'MessageRouter.vue',
-  'BrowserTabChat.vue',
-  'GuestBridge.ts',
-  'ChatInterface.ts',
-  'MessageDispatcher.ts',
-  'AgentPersonaService.ts',
-  'AgentRoutines.vue',
-  'runStateMachine.ts',
-  'ThreadRegistry.ts',
-  'LocalStoragePersister.ts',
-  'AttachmentService.ts',
-  'ModelRegistry.ts',
-  'Transport.ts',
-  'protocol-dark.css',
-  'tokens.css',
-  'reading.css',
-  'canvas.css',
-]);
-
-const MEMORIES = Object.freeze([
-  { id: 'w9oK', summary: 'screenshot race fix' },
-  { id: 'z7kG', summary: 'stop button / graphRunning bug' },
-  { id: 's1yi', summary: 'function runtime system working' },
-  { id: 'TUoS', summary: 'rebuild workflow' },
-  { id: 'RYpe', summary: 'git_push/git_pull vault PAT' },
-  { id: 'tjAZ', summary: 'browser/tab upsert|remove actions' },
-  { id: 'rpEH', summary: 'window.__sulla injection confirmed' },
-  { id: '6TDf', summary: 'hallucinated browser/search tools' },
-  { id: 'jIxf', summary: 'CommandRunner PATH fix' },
-  { id: 'oOGe', summary: 'chat UI contrast fixes' },
-  { id: '8Da8', summary: 'browse_tools preamble update' },
-  { id: 'K9TK', summary: 'CLI tool dispatch pattern' },
-  { id: 'd203', summary: 'user prefers immediate execution' },
-  { id: 'AfKX', summary: 'merchant protocol blog criteria' },
-  { id: 'qSZM', summary: 'merchant protocol SEO pipeline' },
-]);
-
-const AGENTS = Object.freeze([
-  'Heartbeat',
-  'Workbench',
-  'Mobile',
-  'Sulla Mobile',
-  'code-researcher',
-  'thinker',
-  'thinker-worker',
-  'thinking-worker',
-  'observation-curator',
-  'dreaming-protocol',
-  'forecaster',
-  'goal-setter',
-  'observer',
-  'prompt-engineer',
-  'project-resource-document',
-]);
-
-const mentionSource = {
-  list(q: string): readonly MentionTarget[] {
-    const query = q.toLowerCase();
-    const out: MentionTarget[] = [];
-
-    for (const name of FILE_NAMES) {
-      if (!query || name.toLowerCase().includes(query)) {
-        out.push({ token: `@${ name }`, label: 'file', kind: 'file' });
-      }
-    }
-    for (const mem of MEMORIES) {
-      if (!query || mem.id.toLowerCase().includes(query) || mem.summary.toLowerCase().includes(query)) {
-        out.push({ token: `@mem:${ mem.id }`, label: mem.summary, kind: 'memory' });
-      }
-    }
-    for (const agent of AGENTS) {
-      const slug = agent.toLowerCase().replace(/\s+/g, '-');
-      if (!query || agent.toLowerCase().includes(query) || slug.includes(query)) {
-        out.push({ token: `@${ slug }`, label: 'agent', kind: 'agent' });
-      }
-    }
-    return out;
-  },
-};
+// ─── Mention source: artifacts in Library + My Work ───────────────
+// The popover used to include hardcoded source files, memory ids, and
+// agent names — which leaks engine internals to customers. The only
+// thing @-referenceable now is a real artifact the user has installed
+// or created locally (routines, skills, functions, recipes, integrations,
+// workflows). The composable lazy-loads on first use; `prefetch()` is
+// called in onMounted below so the first `@` keystroke already hits a
+// warm cache.
+const artifactMentions = useArtifactMentions();
+const mentionSource = { list: (q: string) => artifactMentions.list(q) };
 const taRef = computed(() => inputRef.value?.el ?? null);
 useCommandPopover(taRef, mentionSource);
 
@@ -380,6 +298,8 @@ function onQuoteFromTurn(ev: Event): void {
 }
 onMounted(() => {
   window.addEventListener('chat:quote', onQuoteFromTurn as EventListener);
+  // Warm the artifact mention cache so the first `@` keystroke has data.
+  artifactMentions.prefetch();
 });
 
 defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });

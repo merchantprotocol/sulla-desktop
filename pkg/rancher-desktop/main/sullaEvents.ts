@@ -18,6 +18,7 @@ import { initSullaFunctionEvents } from './sullaFunctionEvents';
 import { initSullaLibraryDraftEvents } from './sullaLibraryDraftEvents';
 import { initSullaLibraryEvents } from './sullaLibraryEvents';
 import { initSullaMarketplaceEvents } from './sullaMarketplaceEvents';
+import { initSullaProjectEvents } from './sullaProjectEvents';
 import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
 import { initSullaRoutineImportEvents } from './sullaRoutineImportEvents';
 import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
@@ -826,6 +827,7 @@ export function initSullaEvents(): void {
   initSullaLibraryDraftEvents();
   initSullaDebugEvents();
   initSullaFunctionEvents();
+  initSullaProjectEvents();
 
   // ── Integration Config API (YAML-defined integrations) ──────────
 

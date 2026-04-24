@@ -67,8 +67,12 @@ Always resolve from vault. Never put API keys in code or prompts.
 | `agents` | spawn_agent, check_agent_jobs | Sub-agent spawning |
 | `n8n` | patch_workflow, validate_workflow, diagnose_webhook, restart_n8n_container | n8n automation |
 | `applescript` | applescript_execute | macOS app automation |
-| `extensions` | list_extension_catalog, list_installed_extensions, install_extension, uninstall_extension | Marketplace |
+| `extensions` | list_extension_catalog, list_installed_extensions, install_extension, uninstall_extension, start_extension, stop_extension, get_extension_status | Recipe lifecycle |
+| `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update | Generic artifact lifecycle (5 kinds) |
 | `bridge` | update_human_presence, get_human_presence | Agent presence/state |
+| `ui` | open_tab | Open Sulla Desktop views from chat |
+| `capture` | teleprompter_*, mic_start/stop, speaker_start/stop, audio_state, list_screens, screenshot | Capture Studio control (headless) |
+| `observation` | add_observational_memory, remove_observational_memory, write_file | Long-term memory + file writes |
 
 ---
 

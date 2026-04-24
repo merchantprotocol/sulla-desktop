@@ -177,7 +177,81 @@ After locating its URL via `list_installed_extensions`:
 sulla browser/tab '{"action":"upsert","url":"http://localhost:30207"}'
 ```
 
+### "Is Twenty CRM running?" / "Start it" / "Stop it"
+```bash
+sulla extensions/get_extension_status '{"id":"docker.io/.../twenty:2.1.0"}'
+sulla extensions/start_extension '{"id":"docker.io/.../twenty:2.1.0"}'
+sulla extensions/stop_extension '{"id":"docker.io/.../twenty:2.1.0","confirm":true}'   # confirm:true required
+```
+Stopping kills the container stack and breaks dependent flows; data on disk is preserved.
+
 See: [`marketplace/overview.md`](../marketplace/overview.md)
+
+---
+
+## Marketplace artifacts (5 kinds: skill / function / workflow / agent / recipe)
+
+The generic `marketplace/*` tools work for all 5 artifact kinds. See [`tools/marketplace.md`](../tools/marketplace.md).
+
+### "Search the marketplace"
+```bash
+sulla marketplace/search '{"kind":"function","query":"pdf"}'
+sulla marketplace/search '{"category":"crm"}'
+sulla marketplace/search '{}'                                              # everything
+```
+
+### "Tell me about X"
+```bash
+sulla marketplace/info '{"kind":"function","slug":"pdf-extract-text"}'
+```
+
+### "Install / download X"
+```bash
+sulla marketplace/download '{"kind":"function","slug":"pdf-extract-text"}'
+```
+For recipes specifically, prefer `extensions/install_extension` — it handles compose lifecycle.
+
+### "Build me a new function / skill / workflow / agent / recipe"
+```bash
+sulla marketplace/scaffold '{"kind":"function","slug":"my-tool","runtime":"python"}'
+sulla marketplace/scaffold '{"kind":"skill","slug":"my-skill"}'
+sulla marketplace/scaffold '{"kind":"workflow","slug":"my-routine"}'
+sulla marketplace/scaffold '{"kind":"agent","slug":"my-agent"}'
+sulla marketplace/scaffold '{"kind":"recipe","slug":"my-recipe"}'
+```
+Generates the dir + manifest + handler skeleton.
+
+### "Validate this before I publish"
+```bash
+sulla marketplace/validate '{"kind":"function","slug":"my-tool"}'
+```
+
+### "Publish my function to the marketplace"
+```bash
+sulla marketplace/publish '{"kind":"function","slug":"my-tool","version":"1.0.0"}'
+```
+Requires Sulla Cloud token in vault under `sulla-cloud/api_token`.
+
+### "Take down my published artifact"
+```bash
+sulla marketplace/unpublish '{"kind":"function","slug":"my-tool","confirm":true}'
+```
+
+### "What artifacts do I have installed?"
+```bash
+sulla marketplace/list_local '{}'
+sulla marketplace/list_local '{"kind":"function"}'
+```
+
+### "What have I published?"
+```bash
+sulla marketplace/list_published '{}'
+```
+
+### "Update X to the latest version"
+```bash
+sulla marketplace/update '{"kind":"function","slug":"pdf-extract-text"}'
+```
 
 ---
 
@@ -477,48 +551,105 @@ Check the system prompt (always lists active agents and their status). Don't que
 
 ## UI Navigation (open windows / tabs in the app)
 
-**Big caveat:** the agent has **no tool today** to open Sulla Desktop UI tabs. The renderer accepts `agent-command` IPC with `mode` values (marketplace, integrations, vault, routines, history, secretary, document, chat) — but the agent can't send those IPC messages. See `agent-patterns/known-gaps.md`.
-
-What this means:
+The agent **CAN** open Sulla Desktop's built-in views via [`sulla ui/open_tab`](../tools/ui.md). Modes: `marketplace`, `vault`, `integrations`, `routines`, `history`, `secretary`, `chat`, `document`, `browser`, `welcome`.
 
 ### "Open the marketplace"
-No tool. Tell the user: "Click the Marketplace tab" (or wait for the `ui/open_tab` tool to ship).
+```bash
+sulla ui/open_tab '{"mode":"marketplace"}'
+```
 
-### "Show me the workflow you just created"
-No tool. The agent CAN tell them exactly where to look: "Open Routines, your new one is named X."
+### "Show me my workflows / open Routines"
+```bash
+sulla ui/open_tab '{"mode":"routines"}'
+```
+*Note: no per-routine deep-link yet — opens the index. Tell the user the name to look for.*
 
-### "Open settings / vault / integrations / routines / history"
-Same — no tool. Direct the user to the relevant tab.
+### "Open my vault / integrations / history"
+```bash
+sulla ui/open_tab '{"mode":"vault"}'
+sulla ui/open_tab '{"mode":"integrations"}'
+sulla ui/open_tab '{"mode":"history"}'
+```
+
+### "Open settings"
+Settings is a separate window, not a tab mode — no agent tool yet. Direct the user to click.
+
+### "Take notes for this meeting" / "Open Secretary Mode"
+```bash
+sulla ui/open_tab '{"mode":"secretary"}'
+```
 
 ### "Open Twenty CRM" (or any extension web UI)
-✅ This works — extension web UIs are external URLs:
+Extension UIs are external URLs — use `browser/tab`:
 ```bash
 sulla extensions/list_installed_extensions '{}'   # find the URL
 sulla browser/tab '{"action":"upsert","url":"http://localhost:30207"}'
 ```
 
 ### "Manage things in the marketplace" / "Find me X in the marketplace"
-The **list / search / install / uninstall** parts work via the extensions API:
+The list / search / install / uninstall parts already work via the extensions API:
 ```bash
 sulla extensions/list_extension_catalog '{"query":"X"}'
 sulla extensions/install_extension '{"id":"..."}'
 ```
-Just can't *open the UI* from the agent. So you can do everything *for* the user without making them switch tabs.
+And now you can also pop the visual marketplace tab if helpful:
+```bash
+sulla ui/open_tab '{"mode":"marketplace"}'
+```
 
 ---
 
 ## Capture Studio
 
-The agent **cannot start, stop, or open Capture Studio today** — it's user-driven. See `desktop/capture-studio.md` for what it does.
+The agent has **13 headless `capture/*` tools** (teleprompter, mic, speaker loopback, screenshots) that work without the user opening the Capture Studio window. Multi-source recording (the actual MediaRecorder session) is still user-driven. See [`tools/capture.md`](../tools/capture.md).
 
-### "Record this meeting / start a recording"
-No tool. Tell the user to open Capture Studio (menu / shortcut), pick sources, hit record.
+### "Take a screenshot of my screen"
+```bash
+sulla capture/screenshot '{}'                                              # primary display
+```
+Then read the returned path with `meta/read_file` for vision input.
+
+### "Take a screenshot of just <window>"
+```bash
+sulla capture/list_screens '{"kind":"window"}'                             # find the window id
+sulla capture/screenshot '{"sourceId":"window:1234:0"}'
+```
+
+### "Read this script aloud with the teleprompter"
+```bash
+sulla capture/teleprompter_script '{"text":"Welcome everyone, today we'\''ll cover..."}'
+sulla capture/teleprompter_style '{"fontSize":56}'                         # tune appearance
+sulla capture/teleprompter_close                                           # done
+```
+
+### "Listen to my mic for the next minute"
+```bash
+sulla capture/mic_start '{"formats":["pcm-s16le"]}'
+# ...do work...
+sulla capture/mic_stop
+```
+Always pair start with stop — the device hold is ref-counted and leaks pin the mic.
+
+### "Capture system audio"
+```bash
+sulla capture/speaker_start
+sulla capture/audio_state                                                  # confirm device
+sulla capture/speaker_stop
+```
+
+### "Is anything capturing audio right now?"
+```bash
+sulla capture/audio_state
+```
+
+### "Record this meeting / start a multi-source recording"
+**Still user-driven** — the renderer-side MediaRecorder isn't agent-controllable yet. Tell the user to open Capture Studio (menu / shortcut), pick sources, hit record.
 
 ### "Where are my recordings?"
-`~/sulla/captures/<sessionId>/` — agent can list and read `manifest.json`.
+`~/sulla/captures/<sessionId>/` for sessions, `~/sulla/captures/screenshots/YYYY-MM-DD/` for one-off screenshots. List with `meta/exec` and inspect `manifest.json`.
 
 ### "Transcribe this old recording"
-No built-in tool. Workaround: write a function that runs Whisper.cpp against the file.
+No built-in tool. Workaround: write a custom function that runs Whisper.cpp against the file.
 
 ### "Why is system audio not capturing?"
 Known: BlackHole is broken on macOS 15. Mic still works. Tell the user honestly.
@@ -527,10 +658,27 @@ Known: BlackHole is broken on macOS 15. Mic still works. Tell the user honestly.
 
 ## Secretary Mode
 
-Secretary Mode is **shipped** but agent control is partial. See `desktop/secretary-mode.md`.
+Secretary Mode is **shipped** and agent-controllable. See `desktop/secretary-mode.md`.
 
 ### "Take notes for this meeting" / "Start secretary mode"
-No tool to start it from the agent. Tell the user: `Cmd+Shift+S` (macOS) or `Ctrl+Shift+S` (Windows), or use the tray menu.
+```bash
+sulla secretary/start '{}'
+```
+Opens (or focuses) a Secretary tab and auto-starts the listening session — no user click required. Idempotent: if already listening, returns "already listening". The user must have previously granted microphone permission; if not, the OS prompt appears on first run.
+
+Fallback (if the agent window isn't up): tell the user `Cmd+Shift+S` (macOS) or `Ctrl+Shift+S` (Windows), or the tray menu.
+
+### "Stop taking notes" / "End secretary mode"
+```bash
+sulla secretary/stop '{}'
+```
+No-op if no session is active.
+
+### "Is secretary mode running?"
+```bash
+sulla secretary/status '{}'
+```
+Returns `{"listening":boolean,"tabId":string|null}`. Use before start/stop if you need to condition on current state.
 
 ### "Hey Sulla" (during a meeting)
 The wake word is detected by SecretaryModeController automatically. The agent receives the prompt with `inputSource: 'secretary-wake'` — just respond as you would to any chat.

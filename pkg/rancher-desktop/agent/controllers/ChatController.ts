@@ -18,6 +18,7 @@
  *   intake    → [ThinkingExtractor, IntakeExtractor]
  */
 
+import { CitationExtractor } from './CitationExtractor';
 import { IntakeExtractor } from './IntakeExtractor';
 import { SecretaryExtractor, type SecretaryResultFn } from './SecretaryExtractor';
 import { SpeakExtractor } from './SpeakExtractor';
@@ -58,6 +59,7 @@ export class ChatController {
 
   // Keep references to mode-specific extractors for reuse
   private thinkingExtractor:  ThinkingExtractor;
+  private citationExtractor:  CitationExtractor;
   private speakExtractor:     SpeakExtractor;
   private secretaryExtractor: SecretaryExtractor;
   private intakeExtractor:    IntakeExtractor;
@@ -70,12 +72,13 @@ export class ChatController {
 
     // Create extractor instances
     this.thinkingExtractor = new ThinkingExtractor(config.sendChatMessage);
+    this.citationExtractor = new CitationExtractor(config.sendChatMessage);
     this.speakExtractor = new SpeakExtractor(config.dispatch, config.voiceLog);
     this.secretaryExtractor = new SecretaryExtractor(config.onSecretaryResult ?? (() => {}));
     this.intakeExtractor = new IntakeExtractor();
 
-    // Default mode: text (ThinkingExtractor only)
-    this.extractors = [this.thinkingExtractor];
+    // Default mode: text (ThinkingExtractor + CitationExtractor — always on)
+    this.extractors = [this.thinkingExtractor, this.citationExtractor];
   }
 
   // ─── Mode Management ───────────────────────────────────────
@@ -88,19 +91,20 @@ export class ChatController {
     if (this.mode === mode) return;
     this.mode = mode;
 
+    // CitationExtractor is always on — citations are useful in every mode.
     switch (mode) {
     case 'voice':
-      this.extractors = [this.thinkingExtractor, this.speakExtractor];
+      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.speakExtractor];
       break;
     case 'secretary':
-      this.extractors = [this.thinkingExtractor, this.secretaryExtractor];
+      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.secretaryExtractor];
       break;
     case 'intake':
-      this.extractors = [this.thinkingExtractor, this.intakeExtractor];
+      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.intakeExtractor];
       break;
     case 'text':
     default:
-      this.extractors = [this.thinkingExtractor];
+      this.extractors = [this.thinkingExtractor, this.citationExtractor];
       break;
     }
   }

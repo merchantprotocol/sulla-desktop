@@ -311,6 +311,29 @@ function onAgentCommand(_event: any, args: any) {
     router.push(`/Browser/${ tab.id }`);
     break;
   }
+  case 'start-secretary': {
+    // Focus an existing secretary tab if we have one; otherwise open a
+    // fresh one. Either way, fire a window event after the tab has
+    // mounted so SecretaryMode.vue's listener can trigger startSession()
+    // without the user clicking START. See agent/tools/secretary/start.ts.
+    const existing = browserTabs.find(t => t.mode === 'secretary');
+    const targetTab = existing ?? createTab('about:blank', { mode: 'secretary' });
+
+    router.push(`/Browser/${ targetTab.id }`);
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('sulla:secretary-start', {
+        detail: { tabId: targetTab.id },
+      }));
+    }, existing ? 0 : 80);
+    break;
+  }
+  case 'stop-secretary': {
+    // Fire-and-forget — the active SecretaryMode component listens and
+    // calls its own endSession(). If no session is active, the event is
+    // a no-op.
+    window.dispatchEvent(new CustomEvent('sulla:secretary-stop'));
+    break;
+  }
   case 'open-tab': {
     const tab = createTab('about:blank', { mode: args.mode || 'welcome' });
 

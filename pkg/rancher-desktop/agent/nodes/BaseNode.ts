@@ -572,7 +572,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           state.metadata.wsChannel || 'workbench',
           { type, data },
         ),
-        sendChatMessage: (state, content, role, kind) => this.wsChatMessage(state, content, role, kind),
+        sendChatMessage: (state, content, role, kind, extras) => this.wsChatMessage(state, content, role, kind, extras),
         voiceLog:        (state, component, event, data) => this.voiceLog(state, component, event, data ?? {}),
       });
     }
@@ -1475,7 +1475,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   /**
      * Sends a chat message to the frontend via WebSocket as an
      * 'assistant_message' event. Used for progress updates, streaming tokens,
-     * thinking content, and error messages.
+     * thinking content, citation cards, and error messages.
      *
      * NEVER used for speak/TTS content — if `kind='speak'` leaks here, it is
      * redirected to `wsSpeakDispatch()` as a safety net (with a warning log).
@@ -1484,22 +1484,28 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
      * @param content Message content to display
      * @param role    'assistant' | 'system' - defaults to 'assistant'
      * @param kind    Optional UI kind tag - defaults to 'progress'
+     * @param extras  Optional structured payload merged into the WS event
+     *                `data`. Used by CitationExtractor to attach the
+     *                `citations` array; pass { citations: [...] } when
+     *                emitting a citation card.
      * @returns true if message was sent via WebSocket
      */
   protected async wsChatMessage(
-    state: BaseThreadState,
-    content: string,
-    role: 'assistant' | 'system' = 'assistant',
-    kind = 'progress',
+    state:    BaseThreadState,
+    content:  string,
+    role:     'assistant' | 'system' = 'assistant',
+    kind    = 'progress',
+    extras?: Record<string, unknown>,
   ): Promise<boolean> {
     // Defence-in-depth: strip agent protocol XML before any user-visible output
     content = stripProtocolTags(content);
     // Segment-boundary sentinels (streaming_complete, thinking_complete)
-    // carry meaning in `kind` with intentionally empty content. Don't drop
-    // them here — the renderer needs them to close the current bubble so
-    // the next segment starts a fresh one.
+    // and structured-payload kinds (citation) carry meaning in `kind`/
+    // `extras` with intentionally empty content. Don't drop them here —
+    // the renderer needs them to close bubbles or render cards.
     const isSentinelKind = kind === 'streaming_complete' || kind === 'thinking_complete';
-    if (!content && !isSentinelKind) {
+    const isStructuredKind = kind === 'citation';
+    if (!content && !isSentinelKind && !isStructuredKind) {
       return false;
     }
 
@@ -1540,7 +1546,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return this.wsSpeakDispatch(state, content);
     }
 
-    // Send via WebSocket
+    // Send via WebSocket. `extras` (e.g. `citations`) is merged into data
+    // so structured fields ride alongside the usual content/role/kind.
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'assistant_message',
       data: {
@@ -1549,6 +1556,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         kind,
         thread_id: threadId,
         timestamp: Date.now(),
+        ...(extras ?? {}),
       },
     });
 

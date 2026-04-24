@@ -10,20 +10,16 @@ Last verified against the codebase: 2026-04-23.
 
 ## UI Navigation (cross-cutting)
 
-**The big one.** The Vue renderer accepts an `agent-command` IPC with `mode` values: `chat`, `marketplace`, `integrations`, `vault`, `routines`, `history`, `secretary`, `document`, `browser`. **But no agent tool can send those IPC messages today.** Only keyboard shortcuts and the deep-link handler dispatch them.
+**Resolved (2026-04-23):** [`sulla ui/open_tab`](../tools/ui.md) now bridges the renderer's `agent-command` IPC. All built-in views are openable from chat.
 
-| Request | Status | Workaround |
-|---------|--------|-----------|
-| 🔴 "Open the marketplace" | No tool | Tell user to click Marketplace tab; or open the sulla:// deep-link via clipboard |
-| 🔴 "Open the workflow you just created (in the canvas)" | No tool | Tell user to open Routines and click the new entry |
-| 🔴 "Open settings" | No tool | Settings is a separate window; no IPC handler exists |
-| 🔴 "Open the routine editor" | No tool | IPC mode exists (`routines`), no agent-side bridge |
-| 🔴 "Open my vault" | No tool | IPC mode exists (`vault`), no agent-side bridge |
-| 🔴 "Open integrations" | No tool | IPC mode exists (`integrations`), no agent-side bridge |
-| 🔴 "Show me my history" | No tool | IPC mode exists (`history`), no agent-side bridge |
-| 🟢 "Open Twenty CRM" | ✅ Works | `sulla browser/tab '{"action":"upsert","url":"http://localhost:30207"}'` |
-
-**To fix:** add a `ui/open_tab` agent tool that wraps `webContents.send('agent-command', { command: 'open-tab', mode })`. Until then, tell users where to click.
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ "Open the marketplace" | `sulla ui/open_tab '{"mode":"marketplace"}'` | |
+| ✅ "Open my vault / integrations / routines / history / secretary" | `sulla ui/open_tab '{"mode":"<mode>"}'` | |
+| ✅ "Open Twenty CRM" | `sulla browser/tab '{"url":"..."}'` | extension web UIs use browser/tab |
+| 🟡 "Show me the specific workflow I just created" | `ui/open_tab '{"mode":"routines"}'` opens the index | per-item deep-link not exposed yet |
+| 🔴 "Open settings" | No tool | Settings is a separate window, not a tab mode |
+| 🔴 "Open Computer Use Settings" | No tool | Same |
 
 ---
 
@@ -67,13 +63,19 @@ Last verified against the codebase: 2026-04-23.
 
 ## Marketplace / Extensions
 
+The `marketplace/*` (10 tools, generic across 5 kinds) and `extensions/{start,stop,get_status}_extension` shipped 2026-04-23.
+
 | Request | Severity | Status |
 |---------|----------|--------|
-| Update Twenty CRM to the latest | 🔴 | No update tool. Reinstall with new tag |
-| Restart this extension container | 🔴 | No clean restart. `docker_stop`+`docker_run` confuses backend |
-| Build me a new recipe | 🟡 | No scaffolder. Manual files + PR to `merchantprotocol/sulla-recipes` |
-| Notify me when new recipes appear | 🟢 | No diff/watch |
-| Install from a private registry | 🟢 | Unclear if supported |
+| ✅ Update Twenty CRM to the latest | `sulla extensions/install_extension` with new tag, or `marketplace/update` for non-recipe artifacts | shipped |
+| ✅ Start / stop a recipe | `sulla extensions/start_extension` / `stop_extension '{"confirm":true}'` | shipped |
+| ✅ Build me a new recipe / skill / function / workflow / agent | `sulla marketplace/scaffold '{"kind":"...","slug":"..."}'` | shipped |
+| ✅ Validate before publishing | `sulla marketplace/validate '{"kind":"...","slug":"..."}'` | shipped |
+| ✅ Publish to marketplace | `sulla marketplace/publish` (cloud worker not yet deployed; tool returns clear error) | shipped (client side) |
+| 🟡 Restart in one call | No `restart` tool. Compose `stop_extension` + `start_extension`. |
+| 🟢 Notify me when new artifacts appear | No diff/watch |
+| 🟢 Install from a private registry | Unclear if supported |
+| 🔴 Cloud marketplace worker | `sulla-cloud/workers/marketplace` not yet deployed — writes return "not reachable" |
 
 ---
 
@@ -162,15 +164,23 @@ Last verified against the codebase: 2026-04-23.
 
 ## Capture Studio
 
+The `capture/*` category (13 tools) shipped 2026-04-23 and closes most of the headless control gaps. Multi-source recording is still renderer-side and not agent-controllable.
+
 | Request | Severity | Status |
 |---------|----------|--------|
-| Start / stop a recording for me | 🔴 | No agent control tools — Capture Studio is user-driven only |
-| Open Capture Studio | 🔴 | No agent tool to open the window (UI navigation gap) |
-| Add screen + camera to current scene | 🟡 | No tool |
-| Get the path of my last recording | 🟡 | Recordings live in `~/sulla/captures/{sessionId}/` — agent can list the dir but no dedicated query |
-| Transcribe this recording | 🟡 | Whisper is integrated for live transcription, not retroactive batch on saved files |
+| ✅ Take a screenshot | `sulla capture/screenshot '{}'` | shipped |
+| ✅ List screens / windows | `sulla capture/list_screens '{}'` | shipped |
+| ✅ Start / stop microphone capture | `sulla capture/mic_start` / `mic_stop` (ref-counted) | shipped |
+| ✅ Start / stop desktop-audio loopback | `sulla capture/speaker_start` / `speaker_stop` | shipped |
+| ✅ Drive the teleprompter | `sulla capture/teleprompter_*` (open/close/script/style/status) | shipped |
+| ✅ Check audio capture state | `sulla capture/audio_state` | shipped |
+| 🔴 Start / stop a multi-source recording session | Renderer-side MediaRecorder; needs renderer command bus that isn't built |
+| 🔴 Open the Capture Studio window | UI navigation gap — `ui/open_tab` doesn't have a `capture-studio` mode yet |
+| 🟡 Add screen + camera to current scene mid-session | Same renderer-side limitation |
+| 🟡 Get the path of my last recording session | No dedicated tool — `meta/exec` + `ls ~/sulla/captures/` works |
+| 🟡 Transcribe a saved recording | Whisper is wired for live, not retroactive batch — write a custom function |
 
-The infrastructure is there to wrap IPC handlers as agent tools — see `pkg/rancher-desktop/main/captureStudioTracking.ts`. Just hasn't shipped.
+⚠️ **BlackHole broken on macOS 15** — `speaker_start` won't actually capture system audio until alternative loopback ships. Mic and screenshots still work fine.
 
 ---
 
@@ -252,7 +262,7 @@ Secretary Mode itself is **shipped and works** — but it's user-controlled, not
 
 If we ship these, the gap surface shrinks dramatically:
 
-1. **`ui/open_tab`** — bridges the renderer's existing `agent-command` IPC; unlocks ~10 navigation requests at once
+1. ~~**`ui/open_tab`**~~ — ✅ shipped 2026-04-23
 2. **Workflow stop/cancel tool** — current state forces a Desktop restart
 3. **Function run history** — debugging is painful without it
 4. **Vault delete-credential tool** — UI-only today

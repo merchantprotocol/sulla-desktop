@@ -41,4 +41,35 @@ export const extensionsToolManifests: ToolManifest[] = [
     operationTypes: ['delete', 'execute'],
     loader:         () => import('./uninstall_extension'),
   },
+  {
+    name:        'start_extension',
+    description: 'Start a previously-installed extension (recipe). The container stack comes back up; web UIs and integrations become reachable again.',
+    category:    'extensions',
+    schemaDef:   {
+      id: { type: 'string', description: 'Extension ID to start.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./start_extension'),
+  },
+  {
+    name:        'stop_extension',
+    description: 'Stop a running extension (recipe). Container stack goes down — web UI and integrations stop responding. Data on disk is preserved. Refuses without {"confirm":true} since stopping breaks dependent flows.',
+    category:    'extensions',
+    schemaDef:   {
+      id:      { type: 'string', description: 'Extension ID to stop.' },
+      confirm: { type: 'boolean', description: 'Must be true to actually stop — guards against accidentally killing a CRM / project tracker / etc.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./stop_extension'),
+  },
+  {
+    name:        'get_extension_status',
+    description: 'Check whether an extension is running, stopped, or not installed. Use before start/stop to avoid surprises.',
+    category:    'extensions',
+    schemaDef:   {
+      id: { type: 'string', description: 'Extension ID to check.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./get_extension_status'),
+  },
 ];

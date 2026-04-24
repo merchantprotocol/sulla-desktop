@@ -65,23 +65,31 @@ When Capture Studio opens, it auto-starts the audio driver. When recording start
 6. **Voice memo / dictation** — mic-only with VAD
 7. **ASMR / music** — raw mic mode (unprocessed)
 
-## Agent control — currently NONE
+## Agent control — partial
 
-**The agent cannot control Capture Studio today.** No `capture-studio/*` tool category exists. Specifically:
+A `capture/` tool category now exists with **13 tools** for headless control of the Capture Studio components. See [`tools/capture.md`](../tools/capture.md) for the full reference.
 
-- No tool to open the Capture Studio window (UI navigation gap)
-- No tool to start / stop a recording
-- No tool to switch scene layout
-- No tool to add a source mid-recording
-- No tool to query the last session
+**What the agent CAN do today via `capture/*`:**
+- **Teleprompter:** open / close / status / push script with per-word highlight position / restyle
+  - `capture/teleprompter_open`, `_close`, `_status`, `_script`, `_style`
+- **Microphone:** start / stop capture (ref-counted, plays well with Secretary Mode), report state
+  - `capture/mic_start`, `mic_stop`, `audio_state`
+- **Desktop audio:** start / stop loopback capture (BlackHole-based on macOS, broken on macOS 15)
+  - `capture/speaker_start`, `speaker_stop`
+- **Screens:** enumerate displays + windows, capture full-resolution PNG screenshots to `~/sulla/captures/screenshots/YYYY-MM-DD/`
+  - `capture/list_screens`, `capture/screenshot`
 
-The IPC handlers are wrapped (with try/catch since v1.3.0), so adding agent tools would be straightforward — they just haven't shipped.
+**What the agent still CAN'T do:**
+- Open the Capture Studio window itself from chat (UI navigation — could pair with `ui/open_tab` once a Capture Studio mode is added)
+- Start / stop a multi-source MediaRecorder session (renderer-side; requires renderer command bus that isn't built yet)
+- Switch scene layout
+- Add a camera/screen source mid-recording
+- Query the last session via a dedicated tool (use `meta/exec` with `ls ~/sulla/captures/` and read `manifest.json`)
 
-## What the agent CAN do
-
+**File-side discovery still works the old way:**
 - Read recording files: `ls ~/sulla/captures/` to find sessions
-- Read `manifest.json` to inspect what's in a session
-- Use `function/function_run` with a Whisper-based function to transcribe a saved recording (no built-in batch transcription tool)
+- Read `manifest.json` to inspect a session
+- Pipe a saved recording through a Whisper-based custom function to transcribe (no built-in batch transcription tool yet)
 
 ## When users ask about Capture Studio
 

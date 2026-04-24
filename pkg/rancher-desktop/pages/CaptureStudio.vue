@@ -432,6 +432,7 @@ import { useDiskSpace } from './capture-studio/composables/useDiskSpace';
 import { useSpeakerCapture } from './capture-studio/composables/useSpeakerCapture';
 import { useMicRecording, type MicQualityMode } from './capture-studio/composables/useMicRecording';
 import { useInputEventTracker } from './capture-studio/composables/useInputEventTracker';
+import { useAgentBridge }       from './capture-studio/composables/useAgentBridge';
 
 
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
@@ -1445,6 +1446,106 @@ function onKeyDown(e: KeyboardEvent) {
     }
   }
 }
+
+// ─── Agent RPC bridge ──────────────────────────────────────────────
+// Exposes recorder/camera/screen-stream actions to main-process agent
+// tools via the captureStudioRpc bus. The bridge auto-registers this
+// WebContents on mount and dispatches each incoming command to the
+// matching handler below. Handlers reuse the same composable methods
+// the UI uses, so agent-driven recordings produce identical session
+// manifests.
+useAgentBridge({
+  // ── Recorder ──
+  'recorder.status': () => ({
+    recording:       recording.value,
+    elapsedSeconds:  recorder.elapsedSeconds.value,
+    bytesWritten:    recorder.bytesWritten.value,
+    sessionDir:      recording.value ? recorder.getSessionDir() : (lastSessionDir.value || null),
+    error:           recorder.error.value || null,
+  }),
+  'recorder.start': async() => {
+    if (recording.value) {
+      return { started: false, reason: 'already recording' };
+    }
+    // Reuse the same toggleRecord() the start button calls — same
+    // disk-space check, same stream-gathering, same session/manifest
+    // behavior. toggleRecord resolves statusMessage for errors.
+    await toggleRecord();
+    return {
+      started:    recording.value,
+      sessionDir: recording.value ? recorder.getSessionDir() : null,
+      reason:     recording.value ? null : (statusMessage.value || 'failed to start'),
+    };
+  },
+  'recorder.stop': async() => {
+    if (!recording.value) {
+      return { stopped: false, reason: 'not recording' };
+    }
+    await toggleRecord();
+    return {
+      stopped:    !recording.value,
+      sessionDir: lastSessionDir.value || null,
+    };
+  },
+
+  // ── Screen source ──
+  'screen.list': async() => {
+    return await mediaSources.listScreenSources();
+  },
+  'screen.set': async(params) => {
+    const sourceId = typeof params.sourceId === 'string' ? params.sourceId : '';
+    if (!sourceId) throw new Error('sourceId is required');
+    await mediaSources.switchScreen(sourceId);
+    return { ok: true, sourceId };
+  },
+  'screen.release': () => {
+    mediaSources.releaseScreen();
+    return { ok: true };
+  },
+  'screen.quality': async(params) => {
+    const preset = String(params.preset || 'auto') as QualityPreset;
+    if (!QUALITY_PRESETS.includes(preset)) {
+      throw new Error(`preset must be one of: ${ QUALITY_PRESETS.join(', ') }`);
+    }
+    mediaSources.setScreenQuality(preset);
+    return { ok: true, preset };
+  },
+
+  // ── Camera ──
+  'camera.list': async() => {
+    return await mediaSources.listVideoDevices();
+  },
+  'camera.set': async(params) => {
+    const deviceId = typeof params.deviceId === 'string' && params.deviceId ? params.deviceId : undefined;
+    const stream   = deviceId
+      ? await mediaSources.switchCamera(deviceId)
+      : await mediaSources.acquireCamera();
+    if (typeof params.quality === 'string') {
+      const preset = params.quality as QualityPreset;
+      if (QUALITY_PRESETS.includes(preset)) mediaSources.setCameraQuality(preset);
+    }
+    return { ok: !!stream, deviceId: deviceId || null };
+  },
+  'camera.release': async() => {
+    mediaSources.releaseCamera();
+    return { ok: true };
+  },
+
+  // ── Mic device selection ──
+  'mic.list': async() => {
+    return await listAudioDevices();
+  },
+
+  // ── Layout / shape ──
+  'layout.set': (params) => {
+    const layout = String(params.layout || '');
+    if (!['pip', 'camonly', 'sidebyside', 'teleprompter', 'screenonly'].includes(layout)) {
+      throw new Error('layout must be one of pip|camonly|sidebyside|teleprompter|screenonly');
+    }
+    selectLayout(layout);
+    return { ok: true, layout };
+  },
+});
 
 onMounted(async() => {
   document.addEventListener('keydown', onKeyDown);

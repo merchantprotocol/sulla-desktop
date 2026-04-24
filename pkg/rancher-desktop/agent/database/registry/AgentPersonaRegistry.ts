@@ -10,7 +10,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
-  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak';
+  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak' | 'citation';
   image?: {
     dataUrl:      string;
     alt?:         string;
@@ -56,6 +56,14 @@ export interface ChatMessage {
     output?:         string;
     error?:          string;
   };
+  /** Source list surfaced as a CitationRow below the reply. Populated by the
+   *  CitationExtractor when the model emits a `<citations>` block. */
+  citations?: {
+    num:     number;
+    title:   string;
+    origin:  string;
+    url?:    string;
+  }[];
 }
 
 export interface AgentRegistryEntry {

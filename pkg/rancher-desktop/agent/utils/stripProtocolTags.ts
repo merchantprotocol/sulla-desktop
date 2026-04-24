@@ -20,6 +20,10 @@ const SPEAK_RE = /<speak>([\s\S]*?)<\/speak>/gi;
 // Workflow abort signal
 const ABORT_WORKFLOW_RE = /<ABORT_WORKFLOW>([\s\S]*?)<\/ABORT_WORKFLOW>/gi;
 
+// Citations block — extracted separately by CitationExtractor and surfaced as
+// a CitationRow in the transcript; never shown as visible text.
+const CITATIONS_RE = /<citations>([\s\S]*?)<\/citations>/gi;
+
 // Inner tags (can appear standalone if the LLM partially formats)
 const KEY_RESULT_RE = /<\/?KEY_RESULT>/gi;
 const BLOCKER_REASON_RE = /<\/?BLOCKER_REASON>/gi;
@@ -38,6 +42,7 @@ export function stripProtocolTags(text: string | null | undefined): string {
     .replace(AGENT_BLOCKED_RE, '')
     .replace(AGENT_CONTINUE_RE, '')
     .replace(ABORT_WORKFLOW_RE, '')
+    .replace(CITATIONS_RE, '')
     .replace(SPEAK_RE, '')
     .replace(KEY_RESULT_RE, '')
     .replace(BLOCKER_REASON_RE, '')
@@ -51,7 +56,7 @@ export function stripProtocolTags(text: string | null | undefined): string {
  *  tag is an internal control payload the user must never see. The opening
  *  tag alone is a complete signal to stop rendering, even before the close
  *  arrives. */
-const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|speak)\b/i;
+const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|speak|citations)\b/i;
 
 /**
  * Streaming-aware strip. Runs the same pair-removal as `stripProtocolTags`
