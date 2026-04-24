@@ -13,7 +13,9 @@
  */
 import { ApprovalService } from '@pkg/agent/services/ApprovalService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import Logging from '@pkg/utils/logging';
 
+const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
 export function initSullaApprovalEvents(): void {

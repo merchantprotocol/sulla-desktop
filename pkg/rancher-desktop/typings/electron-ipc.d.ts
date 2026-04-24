@@ -671,6 +671,12 @@ export interface IpcMainInvokeEvents {
   'workflow-execution-status': (executionId: string) => { executionId: string; status: string; startedAt?: string; completedAt?: string; error?: string } | null;
   'workflow-execution-abort':  (executionId: string) => boolean;
   'workflow-execution-resume': (executionId: string, nodeId: string, userData: unknown) => boolean;
+  'workflow-active-execution': (workflowId: string) => { executionId: string; workflowId: string; workflowName: string; status: string; startedAt: string } | null;
+
+  // Boot-recovery: non-auto-restart executions that were suspended and are
+  // waiting for a user decision. Renderer polls after boot and shows a
+  // "resume or start fresh?" prompt. List is cleared server-side on read.
+  'sulla-workflow-suspended-executions': () => { executionId: string; workflowId: string; workflowName: string; workflowSlug: string; startedAt: string; autoRestart: boolean }[];
 
   // Workflow registry dispatch (used by external trigger sources)
   'workflow-dispatch': (triggerType: string, message: string, workflowId?: string) => { executionId: string; workflowId: string; workflowName: string } | null;

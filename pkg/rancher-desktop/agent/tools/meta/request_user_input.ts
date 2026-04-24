@@ -96,10 +96,6 @@ export class RequestUserInputWorker extends BaseTool {
         `decision: ${ decision.decision }`,
         decision.note ? `note: ${ decision.note }` : null,
       ].filter(Boolean).join('\n'),
-      result: {
-        decision: decision.decision,
-        note:     decision.note,
-      },
     };
   }
 }
