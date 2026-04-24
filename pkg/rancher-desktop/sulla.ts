@@ -180,17 +180,6 @@ export async function instantiateSullaStart(): Promise<void> {
 
   // ── Independent services (no DB/Redis dependency) ──────────────────────
 
-  // Terminal server was already started in onMainProxyLoad — register for shutdown only
-  lifecycle.register('terminal-server', [],
-    async() => { /* already started in onMainProxyLoad */ },
-    async() => {
-      const { getTerminalServer } = await import('@pkg/main/terminalServer');
-
-      await getTerminalServer().stop();
-    },
-    { alreadyStarted: true },
-  );
-
   lifecycle.register('backend-ws', [],
     async() => {
       getBackendGraphWebSocketService();
@@ -364,19 +353,6 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   const fallbackPath = path.join(app.getPath('userData'), 'sulla-settings-fallback.json');
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
   SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
-
-  // Start the terminal WebSocket server early (PTY into Lima VM).
-  // It has no DB/Redis dependencies. Shutdown is handled by lifecycle manager
-  // (registered in instantiateSullaStart).
-  try {
-    const { getTerminalServer } = await import('@pkg/main/terminalServer');
-    const termServer = getTerminalServer();
-
-    await termServer.start();
-    console.log('[Background] Terminal WebSocket server started on ws://127.0.0.1:6108');
-  } catch (error) {
-    console.error('[Background] Failed to start terminal WebSocket server:', error);
-  }
 
   // Sweep old browser screenshots. Non-blocking, best-effort.
   void import('@pkg/agent/tools/browser/screenshot_store')

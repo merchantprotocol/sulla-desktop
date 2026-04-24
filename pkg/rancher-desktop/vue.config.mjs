@@ -177,11 +177,6 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'lm-settings.html'),
       filename: 'lm-settings.html',
     },
-    editor: {
-      entry:    path.join(import.meta.dirname, 'entry', 'editor.ts'),
-      template: path.join(import.meta.dirname, 'public', 'editor.html'),
-      filename: 'editor.html',
-    },
     'audio-settings': {
       entry:    path.join(import.meta.dirname, 'entry', 'audio-settings.ts'),
       template: path.join(import.meta.dirname, 'public', 'audio-settings.html'),

@@ -445,6 +445,17 @@ export function initSullaRoutineTemplateEvents(): void {
   ipcMainProxy.handle('routines-abort', async(_event: unknown, executionId: string) => {
     if (!executionId) return { aborted: false, reason: 'missing-execution-id' };
 
+    // Always flip the DB row first, regardless of whether we find the cached
+    // graph state below. Otherwise a cache miss leaves workflow_executions at
+    // status='running' forever and the concurrent-run guard blocks every
+    // subsequent Play click. markFailed is a no-op for rows already terminal.
+    try {
+      const { WorkflowExecutionModel } = await import('@pkg/agent/database/models/WorkflowExecutionModel');
+      await WorkflowExecutionModel.markFailed(executionId, 'user_aborted');
+    } catch (err) {
+      console.warn(`[routines-abort] markFailed threw for executionId=${ executionId }:`, err);
+    }
+
     try {
       const { GraphRegistry }   = await import('@pkg/agent/services/GraphRegistry');
       const { abortPlaybook }   = await import('@pkg/agent/workflow/WorkflowPlaybook');
@@ -456,7 +467,7 @@ export function initSullaRoutineTemplateEvents(): void {
       if (!state) {
         console.warn(`[routines-abort] no cached state for executionId=${ executionId }`);
 
-        return { aborted: false, reason: 'not-found' };
+        return { aborted: true, reason: 'db-only' };
       }
 
       const meta = (state.metadata ??= {});
@@ -642,6 +653,12 @@ export interface RoutineExecutionOptions {
   startNodeId?:       string;
   /** Resume a specific prior execution from its stored checkpoints. */
   resumeExecutionId?: string;
+  /**
+   * Bypass the concurrent-run guard (UI "Start Fresh" choice). When true
+   * and an orphaned running/suspended row exists in workflow_executions,
+   * activation marks it failed and starts a new run anyway.
+   */
+  force?:             boolean;
 }
 
 export async function executeRoutine(
@@ -677,6 +694,7 @@ export async function executeRoutine(
     message,
     startNodeId:       options?.startNodeId,
     resumeExecutionId: options?.resumeExecutionId,
+    force:             options?.force,
   });
 
   if (!activation.ok) {
