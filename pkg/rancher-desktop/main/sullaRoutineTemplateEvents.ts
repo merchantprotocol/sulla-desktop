@@ -438,8 +438,8 @@ export function initSullaRoutineTemplateEvents(): void {
     return { id: workflow.id as string, name: workflow.name as string };
   });
 
-  ipcMainProxy.handle('routines-execute', async(_event: unknown, workflowId: string, triggerPayload?: string) => {
-    return await executeRoutine(workflowId, triggerPayload);
+  ipcMainProxy.handle('routines-execute', async(_event: unknown, workflowId: string, triggerPayload?: string, options?: RoutineExecutionOptions) => {
+    return await executeRoutine(workflowId, triggerPayload, options);
   });
 
   ipcMainProxy.handle('routines-abort', async(_event: unknown, executionId: string) => {
@@ -633,9 +633,21 @@ export interface RoutineExecutionResult {
   workflowId:  string;
 }
 
+/**
+ * Partial-run and resume controls for `executeRoutine`. Mutually exclusive
+ * with each other — if both are set, `resumeExecutionId` wins.
+ */
+export interface RoutineExecutionOptions {
+  /** Start the walker at this node, skipping everything upstream. */
+  startNodeId?:       string;
+  /** Resume a specific prior execution from its stored checkpoints. */
+  resumeExecutionId?: string;
+}
+
 export async function executeRoutine(
   workflowId: string,
   triggerPayload?: string,
+  options?: RoutineExecutionOptions,
 ): Promise<RoutineExecutionResult> {
   if (!workflowId) {
     throw new Error('executeRoutine: workflowId is required');
@@ -663,6 +675,8 @@ export async function executeRoutine(
   const activation = await activateWorkflowOnState(state as any, {
     workflowId,
     message,
+    startNodeId:       options?.startNodeId,
+    resumeExecutionId: options?.resumeExecutionId,
   });
 
   if (!activation.ok) {

@@ -513,5 +513,25 @@ export function initSullaWorkflowEvents(): void {
     }
   });
 
+  // Returns any active (running or suspended) execution for a workflow ID.
+  // Used by the editor Run button to offer a "resume or start fresh?" choice.
+  ipcMainProxy.handle('workflow-active-execution', async(_event: unknown, workflowId: string) => {
+    try {
+      const { WorkflowExecutionModel } = await import('@pkg/agent/database/models/WorkflowExecutionModel');
+      const active = await WorkflowExecutionModel.findActiveByWorkflow(workflowId);
+      if (!active) return null;
+      const a = active.attributes as any;
+      return {
+        executionId:  a.execution_id,
+        workflowId:   a.workflow_id,
+        workflowName: a.workflow_name,
+        status:       a.status,
+        startedAt:    a.started_at instanceof Date ? a.started_at.toISOString() : String(a.started_at),
+      };
+    } catch {
+      return null;
+    }
+  });
+
   console.log('[Sulla] Workflow IPC event handlers initialized');
 }

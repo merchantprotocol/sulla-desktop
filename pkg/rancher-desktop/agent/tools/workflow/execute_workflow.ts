@@ -1,15 +1,31 @@
-import { createPlaybookState } from '../../workflow/WorkflowPlaybook';
+import { createPlaybookState, createPlaybookStateFromNode } from '../../workflow/WorkflowPlaybook';
 import { BaseTool, ToolResponse } from '../base';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
 
-import type { WorkflowPlaybookState } from '../../workflow/types';
+import type { PlaybookNodeOutput, WorkflowPlaybookState } from '../../workflow/types';
 
 export interface ActivateWorkflowInput {
   workflowId: string;
   message?:   string;
+  /**
+   * True = resume the most recent checkpoint for this workflow. Mutually
+   * exclusive with `resumeExecutionId` (which targets a specific prior run).
+   */
   resume?:    boolean;
+  /**
+   * Resume a specific prior execution by its executionId. The walker seeds
+   * every completed node's output from that run's checkpoints and restarts
+   * at the first node past the last checkpoint.
+   */
+  resumeExecutionId?: string;
+  /**
+   * Start the walker at this node, skipping everything upstream. Used by
+   * the "Run from here" context menu. Ignored when `resume` /
+   * `resumeExecutionId` is set.
+   */
+  startNodeId?: string;
 }
 
 export interface ActivateWorkflowResult {
@@ -131,7 +147,170 @@ export async function activateWorkflowOnState(
     }
   }
 
-  // Only resume from checkpoint if explicitly requested
+  // Concurrent-run guard: block if this workflow already has a running or
+  // suspended execution. Pass force=true to override (e.g. boot recovery).
+  const force = (input as any).force === true;
+  if (!force) {
+    try {
+      const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+      const active = await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
+      if (active) {
+        const a = active.attributes as any;
+        return {
+          ok:             false,
+          responseString: `Workflow "${ definition.name }" already has an active execution (${ a.execution_id }, status: ${ a.status }). Resume it with resumeExecutionId="${ a.execution_id }" or wait for it to complete.`,
+        };
+      }
+    } catch (err) {
+      console.warn('[ExecuteWorkflow] Concurrent-run guard check failed (continuing):', err);
+    }
+  }
+
+  // Resume a specific prior execution (user clicked Resume on a row in the
+  // Previous runs list). Walk every checkpoint for that executionId, seed
+  // each completed node's output, and hand the walker a fresh frontier that
+  // sits just past the last checkpoint.
+  const resumeExecutionId = typeof input.resumeExecutionId === 'string' ? input.resumeExecutionId.trim() : '';
+  if (resumeExecutionId) {
+    try {
+      const { WorkflowCheckpointModel } = await import('../../database/models/WorkflowCheckpointModel');
+      const checkpoints = await WorkflowCheckpointModel.findByExecution(resumeExecutionId);
+
+      if (checkpoints.length === 0) {
+        return {
+          ok:             false,
+          responseString: `No checkpoints found for executionId "${ resumeExecutionId }" — cannot resume.`,
+        };
+      }
+
+      // Most recent checkpoint holds the full playbook_state at that
+      // moment. That's the cleanest restart point — everything the walker
+      // needs (completedNodeIds, currentNodeIds, nodeOutputs, loopState).
+      const latest = checkpoints[checkpoints.length - 1].attributes as any;
+      const savedState = latest.playbook_state as WorkflowPlaybookState | undefined;
+
+      if (savedState?.definition) {
+        const resumedState: WorkflowPlaybookState = {
+          ...savedState,
+          // Keep the old executionId visible in logs but generate a new one
+          // so new checkpoints don't stomp on the original run's history.
+          executionId:     `${ savedState.executionId }-resume-${ Date.now() }`,
+          status:          'running',
+          completedAt:     undefined,
+          error:           undefined,
+          pendingDecision: undefined,
+        };
+
+        state.metadata.activeWorkflow = resumedState;
+
+        console.log(`[ExecuteWorkflow] Resuming execution ${ resumeExecutionId } → ${ resumedState.executionId }, completed=${ resumedState.completedNodeIds.length }, frontier=[${ resumedState.currentNodeIds.join(', ') }]`);
+
+        try {
+          const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+          await WorkflowExecutionModel.markRunning({
+            executionId:  resumedState.executionId,
+            workflowId:   definition.id,
+            workflowName: definition.name,
+            workflowSlug: workflowId,
+          });
+        } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
+
+        return {
+          ok:             true,
+          responseString: JSON.stringify({
+            executionId:    resumedState.executionId,
+            originalExecId: resumeExecutionId,
+            workflowSlug:   workflowId,
+            workflowName:   definition.name,
+            status:         'resumed',
+            completedNodes: resumedState.completedNodeIds.length,
+            frontierNodes:  resumedState.currentNodeIds,
+            message:        `Workflow "${ definition.name }" resumed from execution ${ resumeExecutionId }. ${ resumedState.completedNodeIds.length } nodes already completed. Continuing from frontier: [${ resumedState.currentNodeIds.join(', ') }].`,
+          }, null, 2),
+        };
+      }
+
+      // Older checkpoints pre-date `playbook_state` or didn't persist it.
+      // Fall back to seeding node_output per checkpoint and restarting at
+      // the last recorded node — the walker will re-run it and advance.
+      const seedOutputs: Record<string, PlaybookNodeOutput> = {};
+      for (const cp of checkpoints) {
+        const a = cp.attributes as any;
+        seedOutputs[a.node_id] = {
+          nodeId:      a.node_id,
+          label:       a.node_label,
+          subtype:     a.node_subtype,
+          category:    ((definition.nodes.find((n: any) => n.id === a.node_id)?.data as any)?.category ?? 'agent'),
+          result:      a.node_output,
+          completedAt: a.created_at instanceof Date ? a.created_at.toISOString() : a.created_at,
+        };
+      }
+      const lastNodeId = (checkpoints[checkpoints.length - 1].attributes as any).node_id;
+      const playbook = createPlaybookStateFromNode(definition, lastNodeId, seedOutputs);
+      state.metadata.activeWorkflow = playbook;
+
+      console.log(`[ExecuteWorkflow] Resumed execution ${ resumeExecutionId } via legacy seed-outputs path → ${ playbook.executionId }, restarting at ${ lastNodeId }`);
+
+      try {
+        const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+        await WorkflowExecutionModel.markRunning({
+          executionId:  playbook.executionId,
+          workflowId:   definition.id,
+          workflowName: definition.name,
+          workflowSlug: workflowId,
+        });
+      } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
+
+      return {
+        ok:             true,
+        responseString: JSON.stringify({
+          executionId:    playbook.executionId,
+          originalExecId: resumeExecutionId,
+          workflowSlug:   workflowId,
+          workflowName:   definition.name,
+          status:         'resumed-legacy',
+          restartingAt:   lastNodeId,
+          message:        `Workflow "${ definition.name }" resumed from execution ${ resumeExecutionId } (legacy path). Restarting at node "${ lastNodeId }".`,
+        }, null, 2),
+      };
+    } catch (err) {
+      return {
+        ok:             false,
+        responseString: `Failed to resume execution "${ resumeExecutionId }": ${ err instanceof Error ? err.message : String(err) }`,
+      };
+    }
+  }
+
+  // Partial run: start the walker at a specific node, synthesising
+  // ancestor outputs so downstream dependency checks pass.
+  const startNodeId = typeof input.startNodeId === 'string' ? input.startNodeId.trim() : '';
+  if (startNodeId) {
+    try {
+      const playbook = createPlaybookStateFromNode(definition, startNodeId);
+      state.metadata.activeWorkflow = playbook;
+
+      console.log(`[ExecuteWorkflow] Partial run of "${ definition.name }" starting at ${ startNodeId } — executionId=${ playbook.executionId }`);
+
+      return {
+        ok:             true,
+        responseString: JSON.stringify({
+          executionId:  playbook.executionId,
+          workflowSlug: workflowId,
+          workflowName: definition.name,
+          status:       'activated-partial',
+          startNodeId,
+          message:      `Workflow "${ definition.name }" activated as a partial run starting at node "${ startNodeId }".`,
+        }, null, 2),
+      };
+    } catch (err) {
+      return {
+        ok:             false,
+        responseString: `Failed to start workflow "${ workflowId }" at node "${ startNodeId }": ${ err instanceof Error ? err.message : String(err) }`,
+      };
+    }
+  }
+
+  // Only resume from the most recent checkpoint if explicitly requested
   const resume = input.resume === true;
 
   if (resume) {
@@ -156,6 +335,16 @@ export async function activateWorkflowOnState(
           state.metadata.activeWorkflow = resumedState;
 
           console.log(`[ExecuteWorkflow] Resuming workflow "${ definition.name }" from checkpoint — original=${ savedState.executionId }, new=${ resumedState.executionId }, completed=${ resumedState.completedNodeIds.length } nodes, frontier=[${ resumedState.currentNodeIds.join(', ') }]`);
+
+          try {
+            const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+            await WorkflowExecutionModel.markRunning({
+              executionId:  resumedState.executionId,
+              workflowId:   definition.id,
+              workflowName: definition.name,
+              workflowSlug: workflowId,
+            });
+          } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
 
           return {
             ok:             true,
@@ -186,6 +375,19 @@ export async function activateWorkflowOnState(
     // Verify state propagation
     const verify = state.metadata.activeWorkflow;
     console.log(`[ExecuteWorkflow] Loaded workflow "${ definition.name }" (${ workflowId }) as playbook — executionId=${ playbook.executionId }, frontier=[${ playbook.currentNodeIds.join(', ') }], stateVerify=${ verify?.status }/${ verify?.currentNodeIds?.length ?? 0 }`);
+
+    try {
+      const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+      const autoRestart = (definition as any).auto_restart !== false;
+      await WorkflowExecutionModel.markRunning({
+        executionId:  playbook.executionId,
+        workflowId:   definition.id,
+        workflowName: definition.name,
+        workflowSlug: workflowId,
+        autoRestart,
+        triggerInput: input.message,
+      });
+    } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
 
     return {
       ok:             true,
@@ -218,9 +420,11 @@ export class ExecuteWorkflowWorker extends BaseTool {
     }
 
     const result = await activateWorkflowOnState(this.state as unknown as BaseThreadState, {
-      workflowId: input.workflowId,
-      message:    input.message,
-      resume:     input.resume,
+      workflowId:        input.workflowId,
+      message:           input.message,
+      resume:            input.resume,
+      resumeExecutionId: input.resumeExecutionId,
+      startNodeId:       input.startNodeId,
     });
 
     return {

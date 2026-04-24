@@ -120,6 +120,23 @@
           /></svg>
           Disconnect All
         </button>
+        <button
+          class="context-menu-item"
+          :class="{ dark: isDark }"
+          @click="ctxRunFromHere"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          ><polygon points="5 3 19 12 5 21 5 3" /></svg>
+          Run from here
+        </button>
         <div
           class="context-menu-divider"
           :class="{ dark: isDark }"
@@ -224,6 +241,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   'node-selected':    [node: { id: string; label: string; type?: string; data?: WorkflowNodeData } | null];
   'workflow-changed': [];
+  'run-from-node':    [nodeId: string];
 }>();
 
 const flowContainer = ref<HTMLElement | null>(null);
@@ -603,6 +621,11 @@ function ctxDisconnect() {
 function ctxDelete() {
   closeContextMenu();
   deleteNodeById(contextMenu.nodeId);
+}
+
+function ctxRunFromHere() {
+  emit('run-from-node', contextMenu.nodeId);
+  closeContextMenu();
 }
 
 function onPaneClick() {

@@ -7,6 +7,7 @@
 import { SystemPromptBuilder } from '../SystemPromptBuilder';
 import { buildAgentPromptSection } from './agentPrompt';
 import { buildChannelAwarenessSection } from './channelAwareness';
+import { buildCitationsSection } from './citations';
 import { buildCompletionWrappersSection } from './completionWrappers';
 import { buildEnvironmentSection } from './environment';
 import { buildHeartbeatSection } from './heartbeat';
@@ -41,6 +42,7 @@ SystemPromptBuilder.register('observational_memory', buildObservationalMemorySec
 SystemPromptBuilder.register('trust', buildTrustSection, ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('voice_mode', buildVoiceModeSection, ['full', 'local']);
 SystemPromptBuilder.register('completion_wrappers', buildCompletionWrappersSection, ['full', 'minimal', 'local']);
+SystemPromptBuilder.register('citations', buildCitationsSection, ['full', 'minimal']);
 SystemPromptBuilder.register('agent_prompt', buildAgentPromptSection, ['full', 'minimal', 'local']);
 
 // Dynamic sections (change per turn — after cache boundary)

@@ -38,24 +38,45 @@
           v-for="(tab, index) in orderedTabs"
           :key="tab.id"
           :to="tab.route"
+          draggable="false"
           class="tab-item text-sm md:text-base"
-          :class="{
-            'tab-native': tab.native,
-            'tab-active': tab.isActive && !tab.native,
-            'tab-active-native': tab.isActive && tab.native,
-            'tab-inactive': !tab.isActive,
-            'tab-pointer-dragging': dragState !== null && dragState.originIndex === index,
-          }"
+          :class="[
+            tab.mode ? `tab-mode-${ tab.mode }` : '',
+            {
+              'tab-native': tab.native,
+              'tab-active': tab.isActive && !tab.native,
+              'tab-active-native': tab.isActive && tab.native,
+              'tab-inactive': !tab.isActive,
+              'tab-pointer-dragging': dragState !== null && dragState.originIndex === index,
+            },
+          ]"
           @pointerdown="onPointerDown($event, index)"
+          @dragstart.prevent
           @auxclick.prevent="onAuxClick($event, tab)"
           @contextmenu.prevent="onTabContextMenu($event, tab, index)"
         >
-          <img
-            v-if="tab.favicon"
-            :src="tab.favicon"
-            class="h-3 w-3 md:h-3.5 md:w-3.5 rounded-sm flex-shrink-0"
-            alt=""
-          >
+          <span class="tab-accent-bar" />
+          <span class="tab-icon">
+            <img
+              v-if="tab.favicon"
+              :src="tab.favicon"
+              draggable="false"
+              class="tab-favicon-img"
+              alt=""
+            >
+            <svg
+              v-else-if="tab.iconPath"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="tab-favicon-svg"
+            >
+              <path :d="tab.iconPath" />
+            </svg>
+          </span>
           <span class="tab-label">{{ tab.label }}</span>
           <button
             v-if="tab.closeable"
@@ -670,9 +691,32 @@ interface HeaderTab {
   isActive:   boolean;
   native?:    boolean;
   favicon?:   string;
+  iconPath?:  string;
+  mode?:      BrowserTabMode;
   closeable?: boolean;
   browserId?: string;
 }
+
+/**
+ * Inline SVG path data for each tab mode. Used as the favicon when a tab has
+ * no real page-favicon (native tabs: chat, calendar, etc.) or as a fallback
+ * for browser tabs that haven't loaded one yet. Stroke-based icons rendered
+ * inline so they inherit `currentColor` and stay crisp at any DPI.
+ */
+const MODE_ICON_PATHS: Record<BrowserTabMode, string> = {
+  welcome:      'M3 12L12 3l9 9M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10',
+  browser:      'M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3a13.5 13.5 0 010 18M12 3a13.5 13.5 0 000 18',
+  chat:         'M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z',
+  calendar:     'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z',
+  integrations: 'M9 2v6M15 2v6M9 16v6M15 16v6M6 8h12a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4a2 2 0 012-2z',
+  document:     'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8',
+  secretary:    'M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16',
+  vault:        'M5 11a2 2 0 012-2h10a2 2 0 012 2v9a2 2 0 01-2 2H7a2 2 0 01-2-2v-9zM8 11V7a4 4 0 118 0v4M12 15v2',
+  account:      'M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z',
+  history:      'M12 3a9 9 0 109 9M3 3v6h6M12 7v5l3 2',
+  routines:     'M6 3h4v4H6zM14 3h4v4h-4zM6 17h4v4H6zM14 17h4v4h-4zM10 5h4M10 19h4M12 7v10M6 11h12',
+  marketplace:  'M3 9h18l-1 10a2 2 0 01-2 2H6a2 2 0 01-2-2L3 9zM3 9l2-5h14l2 5M9 13a3 3 0 006 0',
+};
 
 /** Build the unordered set of all tabs from their sources */
 const allTabsById = computed(() => {
@@ -700,6 +744,8 @@ const allTabsById = computed(() => {
       route:     `/Browser/${ bt.id }`,
       isActive:  route.path === `/Browser/${ bt.id }`,
       favicon:   bt.favicon,
+      iconPath:  MODE_ICON_PATHS[bt.mode],
+      mode:      bt.mode,
       closeable: true,
       browserId: bt.id,
       native:    isPill,
@@ -1047,8 +1093,11 @@ function handleTabContextMenuAction(
 .app-titlebar a,
 .app-titlebar button,
 .app-titlebar .tab-item,
+.app-titlebar .tab-item *,
 .app-titlebar input,
-.app-titlebar .tab-scroll-wrapper {
+.app-titlebar .tab-scroll-wrapper,
+.app-titlebar .tab-scroll-container,
+.app-titlebar .tab-scroll-container * {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -1103,128 +1152,251 @@ function handleTabContextMenuAction(
   background-color: var(--bg-surface-hover);
 }
 
-/* Phase 3: Adaptive tab widths */
+/*
+  Tab geometry + baseline styling.
+
+  Width: content-sized (flex-basis:auto) with a sensible cap so a page
+  titled "Extremely Long Article About Quantum Cryptography..." can't
+  hog the strip, and a small min so a blank "New Tab" still reads as a
+  tab. Previously every tab was pinned to 240px which made titles feel
+  forced and hid short labels behind padding.
+
+  --tab-bg + --tab-bg-hover are per-mode overrides set below. They give
+  each kind of tab the option to blend into the page beneath it instead
+  of every active tab using the same surface-alt tone.
+*/
 .tab-item {
+  --tab-bg: var(--bg-surface-alt);
+  --tab-bg-hover: color-mix(in srgb, var(--bg-surface-alt) 55%, transparent);
+  --tab-accent: var(--accent-primary);
+
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  padding: 0.5rem 1rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  border-radius: 8px;
+  gap: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1;
   border: 1px solid transparent;
   border-bottom: none;
+  border-radius: 10px 10px 0 0;
   cursor: pointer;
-  transition: color 150ms, background-color 150ms, border-color 150ms;
-  position: relative;
   text-decoration: none;
+  position: relative;
   z-index: 0;
-  /* Subtle inactive background — slightly lighter than the title bar */
-  background-color: color-mix(in srgb, var(--bg-surface) 25%, transparent);
-  /* Adaptive widths */
-  flex-shrink: 1;
-  flex-grow: 0;
-  flex-basis: 240px;
-  min-width: 60px;
-  max-width: 240px;
+  color: var(--text-secondary);
+  background-color: transparent;
+  transition: color 160ms, background-color 160ms, border-color 160ms, transform 160ms;
+  user-select: none;
+
+  flex: 0 1 auto;
+  min-width: 120px;
+  max-width: 220px;
 }
 
-/* Phase 3: Tab label truncation */
 .tab-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  letter-spacing: 0.01em;
 }
 
-/* Native tabs (Chat, Calendar, Integrations, Extensions): pill style */
+/* Icon well — consistent size across favicons (raster) and inline SVG fallbacks */
+.tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: currentColor;
+  opacity: 0.85;
+}
+
+.tab-favicon-img {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.tab-favicon-svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tab-item:hover .tab-icon,
+.tab-active .tab-icon,
+.tab-active-native .tab-icon {
+  opacity: 1;
+}
+
+/* Accent bar — painted only on the active tab. Sits flush with the top
+   edge and matches the tab's radius on the outer two corners so it
+   reads as part of the tab, not a separate line. */
+.tab-accent-bar {
+  position: absolute;
+  top: 0;
+  left: 1px;
+  right: 1px;
+  height: 2px;
+  background: var(--tab-accent);
+  border-radius: 2px 2px 0 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms;
+}
+
+.tab-active .tab-accent-bar,
+.tab-active-native .tab-accent-bar {
+  opacity: 1;
+}
+
+.tab-active-native .tab-accent-bar {
+  left: 10%;
+  right: 10%;
+  border-radius: 0 0 2px 2px;
+  top: 0;
+}
+
+/* Native / pill tabs: app-shortcut style, rounded all corners */
+.tab-native {
+  border-radius: 999px;
+}
+
 .tab-active-native {
-  background-color: var(--bg-surface-alt);
+  background-color: var(--tab-bg);
   color: var(--text-primary);
-  z-index: 2;
-  border-radius: 8px;
   border-color: var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+  border-radius: 999px;
+  font-weight: 600;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 2px 6px rgba(0, 0, 0, 0.35);
+  z-index: 2;
 }
 
-/* Dynamic tabs (extensions, browser): Chrome-style with bottom scoops */
+/* Chrome-style browser tabs: rounded top, outward bottom scoops that
+   merge seamlessly into the browser toolbar beneath (which paints
+   --bg-surface-alt). */
 .tab-active {
-  background-color: var(--bg-surface-alt);
+  background-color: var(--tab-bg);
   color: var(--text-primary);
-  z-index: 2;
-  border-radius: 8px 8px 0 0;
   border-color: var(--border-default);
+  border-radius: 10px 10px 0 0;
+  font-weight: 600;
+  z-index: 2;
 }
 
 .tab-active::before,
 .tab-active::after {
   content: '';
   position: absolute;
-  bottom: 0;
-  width: 8px;
-  height: 8px;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
   pointer-events: none;
 }
 
 .tab-active::before {
-  left: -8px;
-  background: radial-gradient(circle at 0 0, transparent 4.5px, var(--bg-surface-alt) 8px);
+  left: -10px;
+  background: radial-gradient(circle at 0 0, transparent 5.5px, var(--tab-bg) 10px);
 }
 
 .tab-active::after {
-  right: -8px;
-  background: radial-gradient(circle at 100% 0, transparent 4.5px, var(--bg-surface-alt) 8px);
+  right: -10px;
+  background: radial-gradient(circle at 100% 0, transparent 5.5px, var(--tab-bg) 10px);
 }
 
-/* Phase 5: Pointer drag styling */
 .tab-pointer-dragging {
   opacity: 0.7;
   z-index: 10;
+  transform: translateY(-1px);
 }
 
+/* Inactive: quiet by default, subtle lift on hover */
 .tab-inactive {
   color: var(--text-secondary);
-  border-color: color-mix(in srgb, var(--border-default) 50%, transparent);
 }
 
-/* Chrome-style separator pipe between inactive tabs */
+.tab-inactive:hover {
+  color: var(--text-primary);
+  background-color: var(--tab-bg-hover);
+  border-color: color-mix(in srgb, var(--border-default) 60%, transparent);
+}
+
+.tab-native.tab-inactive:hover {
+  border-radius: 999px;
+}
+
+/* Chrome-style separator pipes between inactive tabs */
 .tab-inactive::before {
   content: '';
   position: absolute;
   left: 0;
-  top: 25%;
-  height: 50%;
+  top: 28%;
+  height: 44%;
   width: 1px;
-  background: var(--border-default);
+  background: color-mix(in srgb, var(--border-default) 70%, transparent);
   pointer-events: none;
 }
 
-/* Hide separator next to active tab or on the first tab */
 .tab-active + .tab-inactive::before,
 .tab-active-native + .tab-inactive::before,
 .tab-item:first-child.tab-inactive::before {
   display: none;
 }
 
-/* Hide separator on the tab right before an active one */
 .tab-inactive:has(+ .tab-active)::before,
-.tab-inactive:has(+ .tab-active-native)::before {
-  display: none;
-}
-
-.tab-inactive:hover {
-  color: var(--text-primary);
-  background-color: var(--bg-surface-hover);
-  border-color: var(--border-default);
-}
-
-/* Native tabs hover as pill */
-.tab-native.tab-inactive:hover {
-  border-radius: 8px;
-}
-
-/* Hide separator on hovered tab and its neighbor */
+.tab-inactive:has(+ .tab-active-native)::before,
 .tab-inactive:hover::before {
   display: none;
+}
+
+/*
+  Per-mode tab blending. Each mode can set its own --tab-bg so the
+  active tab tint matches the page below it. Modes that live on the
+  routines/marketplace dark-steel gradient get a deeper, more saturated
+  fill; the rest stay on surface-alt (which already matches the
+  browser toolbar chrome).
+*/
+.tab-mode-routines,
+.tab-mode-marketplace {
+  --tab-bg: #0b1426;
+  --tab-bg-hover: rgba(74, 111, 165, 0.12);
+  --tab-accent: #7ea6d6;
+}
+
+.tab-mode-chat {
+  --tab-bg: var(--bg-surface-alt);
+  --tab-accent: var(--accent-primary);
+}
+
+.tab-mode-vault {
+  --tab-bg: var(--bg-surface-alt);
+  --tab-accent: #d97757;
+}
+
+.tab-mode-calendar {
+  --tab-accent: #8ab4f8;
+}
+
+.tab-mode-integrations {
+  --tab-accent: #7ecfa8;
+}
+
+.tab-mode-account {
+  --tab-accent: #c9a15c;
+}
+
+.tab-mode-secretary {
+  --tab-accent: #b98cf0;
+}
+
+.tab-mode-history {
+  --tab-accent: #8b949e;
 }
 
 .tab-new {
@@ -1292,12 +1464,12 @@ function handleTabContextMenuAction(
 
 .tab-anim-enter-to {
   opacity: 1;
-  max-width: 240px;
+  max-width: 220px;
 }
 
 .tab-anim-leave-from {
   opacity: 1;
-  max-width: 240px;
+  max-width: 220px;
 }
 
 .tab-anim-leave-active {

@@ -76,4 +76,17 @@ export const integrationsToolManifests: ToolManifest[] = [
     operationTypes: ['update'],
     loader:         () => import('./vault_autofill'),
   },
+  {
+    name:        'vault_delete_credential',
+    description: 'Delete a single credential property from the vault. Destructive — refuses without {"confirm":true}. Only removes the specified property on the specified account; other properties and other accounts on the same integration are untouched. Anything using that credential will stop working until it is re-entered.',
+    category:    'vault',
+    schemaDef:   {
+      account_type: { type: 'string', description: "The integration slug (e.g. 'github', 'slack')." },
+      property:     { type: 'string', description: "The credential key to delete (e.g. 'api_token', 'bot_token')." },
+      account_id:   { type: 'string', optional: true, description: 'Specific account to target. Defaults to the active account.' },
+      confirm:      { type: 'boolean', description: 'Must be true to actually delete — guards against accidents.' },
+    },
+    operationTypes: ['delete'],
+    loader:         () => import('./vault_delete_credential'),
+  },
 ];

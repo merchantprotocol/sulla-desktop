@@ -2,6 +2,7 @@ export { WorkflowRegistry, getWorkflowRegistry } from './WorkflowRegistry';
 export type { WorkflowDispatchOptions, WorkflowDispatchResult } from './WorkflowRegistry';
 export {
   createPlaybookState,
+  createPlaybookStateFromNode,
   processNextStep,
   resolveDecision,
   completeSubAgent,

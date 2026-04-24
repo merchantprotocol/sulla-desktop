@@ -12,12 +12,15 @@ import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
 import { initMessageBusIpc } from './messageBusIpc';
+import { initSullaApprovalEvents } from './sullaApprovalEvents';
 import { initSullaBundleEvents } from './sullaBundleEvents';
 import { initSullaDebugEvents } from './sullaDebugEvents';
 import { initSullaFunctionEvents } from './sullaFunctionEvents';
 import { initSullaLibraryDraftEvents } from './sullaLibraryDraftEvents';
 import { initSullaLibraryEvents } from './sullaLibraryEvents';
 import { initSullaMarketplaceEvents } from './sullaMarketplaceEvents';
+import { initSullaPatchEvents } from './sullaPatchEvents';
+import { initSullaProjectEvents } from './sullaProjectEvents';
 import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
 import { initSullaRoutineImportEvents } from './sullaRoutineImportEvents';
 import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
@@ -59,6 +62,31 @@ export function initSullaEvents(): void {
   initClaudeCodeTestEvents();
   initDesktopRelayEvents();
   initSullaCloudAuthEvents();
+
+  // ─────────────────────────────────────────────────────────────
+  // Workflow boot recovery
+  // ─────────────────────────────────────────────────────────────
+
+  // Kick off recovery after a short delay to let the DB finish its
+  // connection warm-up (migrations run on connect).
+  setTimeout(async() => {
+    try {
+      const { recoverOnBoot } = await import('@pkg/agent/workflow/WorkflowRecoveryService');
+      await recoverOnBoot();
+    } catch (err) {
+      console.error('[initSullaEvents] Workflow boot recovery failed:', err);
+    }
+  }, 5000);
+
+  // Renderer can poll this to display a "resume interrupted workflow?" prompt.
+  ipcMainProxy.handle('sulla-workflow-suspended-executions', async() => {
+    try {
+      const { getPendingSuspended } = await import('@pkg/agent/workflow/WorkflowRecoveryService');
+      return getPendingSuspended();
+    } catch {
+      return [];
+    }
+  });
 
   // ─────────────────────────────────────────────────────────────
   // Settings handlers
@@ -826,6 +854,9 @@ export function initSullaEvents(): void {
   initSullaLibraryDraftEvents();
   initSullaDebugEvents();
   initSullaFunctionEvents();
+  initSullaProjectEvents();
+  initSullaApprovalEvents();
+  initSullaPatchEvents();
 
   // ── Integration Config API (YAML-defined integrations) ──────────
 

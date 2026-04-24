@@ -121,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 
 import { SullaSettingsModel } from '../agent/database/models/SullaSettingsModel';
 import { useTheme } from '../composables/useTheme';
@@ -275,11 +275,23 @@ async function detectInstalledApps() {
 
 // ─── Lifecycle ─────────────────────────────────────────────────
 
+// Agent tools (applescript_execute auto-enable, computer_use_enable/disable)
+// broadcast `computer-use:settings-changed` whenever they flip a toggle on
+// behalf of the user. Reload the UI so the checkbox state matches disk.
+function onSettingsChanged(): void {
+  void loadSettings();
+}
+
 onMounted(async() => {
   await loadSettings();
   await detectInstalledApps();
   loading.value = false;
+  ipcRenderer.on('computer-use:settings-changed' as any, onSettingsChanged);
   ipcRenderer.send('dialog/ready');
+});
+
+onBeforeUnmount(() => {
+  ipcRenderer.removeListener('computer-use:settings-changed' as any, onSettingsChanged);
 });
 </script>
 

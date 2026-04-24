@@ -167,6 +167,7 @@
           :workflow-data="activeWorkflowData"
           @node-selected="onWorkflowNodeSelected"
           @workflow-changed="onWorkflowChanged"
+          @run-from-node="onRunFromNode"
         />
         <!-- Workflow save toolbar -->
         <div
@@ -1126,6 +1127,50 @@
   />
 
   <!-- Workflow file conflict dialog -->
+  <!-- Resume-or-fresh popup ─────────────────────────────────────── -->
+  <Teleport to="body">
+    <div
+      v-if="resumeModal.visible"
+      class="wf-conflict-overlay"
+      @click="resumeModal.visible = false"
+    >
+      <div
+        class="wf-conflict-dialog"
+        :class="{ dark: isDark }"
+        @click.stop
+      >
+        <p class="wf-conflict-title">
+          Previous run didn't finish
+        </p>
+        <p class="wf-conflict-text">
+          <strong>{{ resumeModal.name }}</strong> has an unfinished run from
+          {{ resumeModal.startedAt ? new Date(resumeModal.startedAt).toLocaleString() : 'earlier' }}.
+          Pick up where it left off, or start a brand new run?
+        </p>
+        <div class="wf-conflict-actions">
+          <button
+            class="wf-conflict-btn keep"
+            @click="resumeModal.visible = false"
+          >
+            Cancel
+          </button>
+          <button
+            class="wf-conflict-btn keep"
+            @click="resumeModalStartFresh"
+          >
+            Start fresh
+          </button>
+          <button
+            class="wf-conflict-btn reload"
+            @click="resumeModalResume"
+          >
+            Resume
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
   <Teleport to="body">
     <div
       v-if="workflowConflict.visible"
@@ -1713,6 +1758,14 @@ export default defineComponent({
     const workflowSaveStatus = ref<'idle' | 'unsaved' | 'saving' | 'saved'>('idle');
     const workflowSettingsOpen = ref(false);
     const workflowConflict = reactive({ visible: false, workflowId: '', name: '' });
+    const resumeModal = reactive({
+      visible:     false,
+      executionId: '',
+      workflowId:  '',
+      name:        '',
+      startedAt:   '',
+      startNodeId: '' as string | undefined,
+    });
     let workflowSaveTimer: ReturnType<typeof setTimeout> | null = null;
     let workflowSavedResetTimer: ReturnType<typeof setTimeout> | null = null;
     const searchQuery = ref('');
@@ -2174,15 +2227,34 @@ export default defineComponent({
       }
     }
 
-    async function runWorkflow() {
+    async function runWorkflow(opts: { startNodeId?: string; resumeExecutionId?: string } = {}) {
       if (!activeWorkflowData.value) return;
+
+      const wfId   = activeWorkflowData.value.id;
+      const wfName = activeWorkflowData.value.name || 'this workflow';
+
+      // If no explicit override, check for an unfinished previous run first.
+      if (!opts.startNodeId && !opts.resumeExecutionId) {
+        try {
+          const active = await ipcRenderer.invoke('workflow-active-execution', wfId);
+          if (active) {
+            resumeModal.executionId = active.executionId;
+            resumeModal.workflowId  = wfId;
+            resumeModal.name        = wfName;
+            resumeModal.startedAt   = active.startedAt;
+            resumeModal.startNodeId = undefined;
+            resumeModal.visible     = true;
+            return;
+          }
+        } catch { /* network/db error — proceed with fresh start */ }
+      }
 
       // Save first to ensure latest version is on disk
       saveWorkflowNow();
 
       // Scope the chat to this workflow so the agent only sees it
       if (activeChatInterface.value) {
-        activeChatInterface.value.activeWorkflowId.value = activeWorkflowData.value.id;
+        activeChatInterface.value.activeWorkflowId.value = wfId;
       }
 
       // Open the chat pane so the user can talk to the agent
@@ -2193,11 +2265,50 @@ export default defineComponent({
       // Clear previous execution state from nodes
       workflowEditorRef.value?.clearAllExecution();
 
-      // Auto-send the first message to immediately kick off the workflow
-      const workflowName = activeWorkflowData.value.name || 'this workflow';
+      if (activeChatInterface.value) {
+        if (opts.resumeExecutionId) {
+          activeChatInterface.value.query.value = `Resume workflow "${ wfName }" — use execute_workflow with resumeExecutionId="${ opts.resumeExecutionId }"`;
+        } else if (opts.startNodeId) {
+          activeChatInterface.value.query.value = `Run "${ wfName }" starting from node ${ opts.startNodeId } — use execute_workflow with startNodeId="${ opts.startNodeId }"`;
+        } else {
+          activeChatInterface.value.query.value = `Let's run ${ wfName }`;
+        }
+        await nextTick();
+        activeChatInterface.value.send();
+      }
+    }
+
+    function onRunFromNode(nodeId: string) {
+      runWorkflow({ startNodeId: nodeId });
+    }
+
+    function resumeModalResume() {
+      const execId = resumeModal.executionId;
+      resumeModal.visible = false;
+      runWorkflow({ resumeExecutionId: execId });
+    }
+
+    function resumeModalStartFresh() {
+      resumeModal.visible = false;
+      runWorkflowFresh();
+    }
+
+    async function runWorkflowFresh() {
+      if (!activeWorkflowData.value) return;
+      const wfId   = activeWorkflowData.value.id;
+      const wfName = activeWorkflowData.value.name || 'this workflow';
+
+      saveWorkflowNow();
+      if (activeChatInterface.value) {
+        activeChatInterface.value.activeWorkflowId.value = wfId;
+      }
+      selectedWorkflowNode.value = null;
+      workflowSettingsOpen.value = false;
+      rightPaneVisible.value = true;
+      workflowEditorRef.value?.clearAllExecution();
 
       if (activeChatInterface.value) {
-        activeChatInterface.value.query.value = `Let's run ${ workflowName }`;
+        activeChatInterface.value.query.value = `Start a fresh run of "${ wfName }" — use execute_workflow with force=true to bypass any existing execution`;
         await nextTick();
         activeChatInterface.value.send();
       }
@@ -3024,6 +3135,10 @@ export default defineComponent({
       deleteActiveWorkflow,
       workflowPaneRef,
       runWorkflow,
+      resumeModal,
+      resumeModalResume,
+      resumeModalStartFresh,
+      onRunFromNode,
       toggleAgent,
       toggleWorkflow,
       openContainerPort,

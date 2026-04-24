@@ -20,9 +20,22 @@ async function runtimePost(url: string, body: unknown): Promise<any> {
   return json;
 }
 
+interface RunRecord {
+  slug:        string;
+  version:     string;
+  runtime?:    string;
+  inputs:      Record<string, unknown>;
+  outputs?:    Record<string, unknown>;
+  success:     boolean;
+  errorStage?: 'locate' | 'parse' | 'runtime' | 'install' | 'load' | 'invoke';
+  error?:      string;
+  durationMs?: number;
+  startedAt:   Date;
+}
+
 export class FunctionRunWorker extends BaseTool {
   name = 'function_run';
-  description = 'Load and invoke a custom function by slug. Returns the function metadata, runtime details, load status, inputs used, and all outputs in one call.';
+  description = 'Load and invoke a custom function by slug. Returns the function metadata, runtime details, load status, inputs used, and all outputs in one call. Every invocation is logged to the `function_runs` table — query via function/runs.';
 
   schemaDef = {
     slug: {
@@ -46,11 +59,17 @@ export class FunctionRunWorker extends BaseTool {
     const inputs: Record<string, unknown> = (input.inputs && typeof input.inputs === 'object') ? input.inputs : {};
     const version: string = input.version || '1.0.0';
 
+    const record: RunRecord = { slug, version, inputs, success: false, startedAt: new Date() };
+
     const lines: string[] = [];
-    const fail = (msg: string): ToolResponse => ({
-      successBoolean: false,
-      responseString: lines.join('\n') + '\n\n❌ ' + msg,
-    });
+    const failAndRecord = async(stage: RunRecord['errorStage'], msg: string): Promise<ToolResponse> => {
+      record.errorStage = stage;
+      record.error = msg;
+      record.success = false;
+      record.durationMs = Date.now() - record.startedAt.getTime();
+      await writeRunHistory(record);
+      return { successBoolean: false, responseString: `${ lines.join('\n') }\n\n❌ ${ msg }` };
+    };
 
     // ── 1. Locate function ──
     const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
@@ -62,7 +81,7 @@ export class FunctionRunWorker extends BaseTool {
     lines.push(`Manifest: ${ yamlPath }`);
 
     if (!fs.existsSync(yamlPath)) {
-      return fail(`function.yaml not found at ${ yamlPath }. Run \`function_list\` to see available functions.`);
+      return failAndRecord('locate', `function.yaml not found at ${ yamlPath }. Run \`function_list\` to see available functions.`);
     }
 
     // ── 2. Parse manifest ──
@@ -70,7 +89,7 @@ export class FunctionRunWorker extends BaseTool {
     try {
       manifest = yaml.parse(fs.readFileSync(yamlPath, 'utf-8')) || {};
     } catch (err) {
-      return fail(`Failed to parse function.yaml: ${ (err as Error).message }`);
+      return failAndRecord('parse', `Failed to parse function.yaml: ${ (err as Error).message }`);
     }
 
     const spec = manifest.spec ?? {};
@@ -81,6 +100,8 @@ export class FunctionRunWorker extends BaseTool {
     const timeout: string = spec.timeout || '60s';
     const declaredInputs: Record<string, any> = spec.inputs || {};
     const declaredOutputs: Record<string, any> = spec.outputs || {};
+
+    record.runtime = runtime;
 
     lines.push(`Name:        ${ fnName }`);
     if (fnDescription) lines.push(`Description: ${ fnDescription.split('\n')[0] }`);
@@ -96,7 +117,7 @@ export class FunctionRunWorker extends BaseTool {
 
     const runtimeUrl = RUNTIME_URLS[runtime];
     if (!runtimeUrl) {
-      return fail(`Unknown runtime "${ runtime }". Must be one of: ${ Object.keys(RUNTIME_URLS).join(', ') }.`);
+      return failAndRecord('runtime', `Unknown runtime "${ runtime }". Must be one of: ${ Object.keys(RUNTIME_URLS).join(', ') }.`);
     }
 
     lines.push(`Runtime URL: ${ runtimeUrl }`);
@@ -118,7 +139,7 @@ export class FunctionRunWorker extends BaseTool {
           if (msg.startsWith('HTTP 404') || msg.startsWith('HTTP 405')) {
             lines.push(`⚠️  Runtime does not support /install — skipping (upgrade the runtime image to enable dependency installation)`);
           } else {
-            return fail(`Dependency installation failed: ${ msg }`);
+            return failAndRecord('install', `Dependency installation failed: ${ msg }`);
           }
         }
         lines.push('');
@@ -133,7 +154,7 @@ export class FunctionRunWorker extends BaseTool {
       loadResult = await runtimePost(`${ runtimeUrl }/load`, { name: slug, version });
       lines.push(`✓ Loaded — entrypoint: ${ loadResult.entrypoint }, version: ${ loadResult.version }`);
     } catch (err) {
-      return fail(`Load failed: ${ (err as Error).message }`);
+      return failAndRecord('load', `Load failed: ${ (err as Error).message }`);
     }
 
     lines.push('');
@@ -149,7 +170,7 @@ export class FunctionRunWorker extends BaseTool {
     try {
       invokeResult = await runtimePost(`${ runtimeUrl }/invoke`, { name: slug, version, inputs });
     } catch (err) {
-      return fail(`Invocation failed: ${ (err as Error).message }`);
+      return failAndRecord('invoke', `Invocation failed: ${ (err as Error).message }`);
     }
 
     const durationMs: number = invokeResult.duration_ms ?? 0;
@@ -169,6 +190,38 @@ export class FunctionRunWorker extends BaseTool {
       }
     }
 
+    record.success = true;
+    record.outputs = outputs;
+    record.durationMs = durationMs;
+    await writeRunHistory(record);
+
     return { successBoolean: true, responseString: lines.join('\n') };
+  }
+}
+
+async function writeRunHistory(record: RunRecord): Promise<void> {
+  try {
+    const { postgresClient } = await import('../../database/PostgresClient');
+    const completedAt = new Date();
+    await postgresClient.query(
+      `INSERT INTO function_runs
+         (slug, version, runtime, inputs, outputs, success, error_stage, error, duration_ms, started_at, completed_at)
+       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, $9, $10, $11)`,
+      [
+        record.slug,
+        record.version,
+        record.runtime ?? null,
+        JSON.stringify(record.inputs ?? {}),
+        JSON.stringify(record.outputs ?? null),
+        record.success,
+        record.errorStage ?? null,
+        record.error ?? null,
+        record.durationMs ?? null,
+        record.startedAt.toISOString(),
+        completedAt.toISOString(),
+      ],
+    );
+  } catch (err) {
+    console.warn('[function_run history] insert failed:', err);
   }
 }

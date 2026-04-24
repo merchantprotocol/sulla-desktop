@@ -145,6 +145,7 @@ const dockerDashboardUrl = `${ webRoot }/index.html`;
 const languageModelSettingsUrl = `${ webRoot }/lm-settings.html`;
 const audioSettingsUrl = `${ webRoot }/audio-settings.html`;
 const computerUseSettingsUrl = `${ webRoot }/computer-use-settings.html`;
+const updatesUrl = `${ webRoot }/updates.html`;
 const editorUrl = `${ webRoot }/editor.html`;
 const firstRunUrl = `${ webRoot }/first-run.html`;
 const captureStudioUrl = `${ webRoot }/capture-studio.html`;
@@ -488,6 +489,49 @@ export function openComputerUseSettings() {
 
   window.on('closed', () => {
     delete windowMapping['computer-use-settings'];
+  });
+
+  app.dock?.show();
+
+  return window;
+}
+
+/**
+ * Open the Updates window; if it is already open, focus it.
+ *
+ * This window is the single UI surface for all update operations:
+ * manual checks, live download progress, and the Install & Restart button.
+ */
+export function openUpdatesWindow() {
+  console.log('[openUpdatesWindow] Called.');
+
+  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
+
+  const defaultWidth = Math.min(Math.trunc(width * 0.55), 640);
+  const defaultHeight = Math.min(Math.trunc(height * 0.75), 620);
+
+  const window = createWindow(
+    'updates',
+    updatesUrl,
+    {
+      title:          'Sulla Desktop - Updates',
+      width:          defaultWidth,
+      height:         defaultHeight,
+      resizable:      true,
+      minimizable:    true,
+      maximizable:    false,
+      icon:           path.join(paths.resources, 'icons', 'sulla-app-icon.png'),
+      backgroundColor: '#0d1117',
+      webPreferences: {
+        devTools:         !app.isPackaged,
+        nodeIntegration:  true,
+        contextIsolation: false,
+        webSecurity:      false,
+      },
+    });
+
+  window.on('closed', () => {
+    delete windowMapping['updates'];
   });
 
   app.dock?.show();

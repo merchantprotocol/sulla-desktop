@@ -1,0 +1,103 @@
+/* ═══════════════════════════════════════════════
+   Reading tuning — serif body at 19.5px, 1.8 lh,
+   soft lavender-white ink on deep navy.
+   Tuned for long sessions.
+   ═══════════════════════════════════════════════ */
+
+.chat-root {
+  background: #050810;
+  color: var(--read-2);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.chat-dialogue {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex; flex-direction: column;
+  gap: 36px;
+}
+.chat-root.artifact-open .chat-dialogue { max-width: 720px; }
+
+/* ─── Role whisper label above each turn ─── */
+.chat-role {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.chat-turn.you   .chat-role { color: var(--steel-200); text-align: right; }
+.chat-turn.sulla .chat-role { color: var(--steel-400); }
+
+/* ─── User turn ─── */
+.chat-turn.you {
+  align-self: flex-end;
+  max-width: 680px;
+  text-align: right;
+  position: relative;
+}
+.chat-turn.you .chat-body {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 19px;
+  line-height: 1.65;
+  color: var(--steel-100);
+}
+
+/* ─── Sulla turn ─── */
+.chat-turn.sulla { position: relative; }
+.chat-turn.sulla .chat-body {
+  font-family: var(--serif);
+  font-size: 19.5px;
+  line-height: 1.8;
+  color: var(--read-2);
+  letter-spacing: 0.003em;
+}
+.chat-turn.sulla .chat-body p { margin: 0 0 22px; }
+.chat-turn.sulla .chat-body p:last-child { margin-bottom: 0; }
+.chat-turn.sulla .chat-body em     { font-style: italic; color: var(--read-1); }
+.chat-turn.sulla .chat-body strong { font-weight: 600; color: var(--read-1); font-style: italic; }
+.chat-turn.sulla .chat-body code,
+.chat-turn.sulla .chat-body .term {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-style: normal;
+  color: var(--steel-400);
+  background: var(--accent-soft);
+  padding: 1px 7px;
+  border-radius: 3px;
+  border: 1px solid rgba(80, 150, 179, 0.22);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+.chat-turn.sulla .chat-body h3 {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 600;
+  font-size: 22px;
+  color: white;
+  margin: 28px 0 14px;
+}
+.chat-turn.sulla .chat-body h3::before { content: "— "; color: var(--steel-500); font-style: normal; }
+.chat-turn.sulla .chat-body blockquote {
+  margin: 22px 0;
+  padding-left: 20px;
+  border-left: 2px solid rgba(80, 150, 179, 0.38);
+  color: var(--read-3);
+  font-style: italic;
+  font-size: 17px;
+}
+
+.chat-cursor {
+  display: inline-block;
+  width: 11px; height: 21px;
+  background: var(--steel-400);
+  vertical-align: -4px;
+  margin-left: 3px;
+  box-shadow: 0 0 14px var(--steel-400);
+  animation: chat-blink 0.9s step-end infinite;
+}
+
+.chat-fade-in { animation: chat-fade-in 0.45s ease forwards; }

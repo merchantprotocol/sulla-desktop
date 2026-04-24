@@ -18,6 +18,14 @@
       @enabled="onUpdateEnabled"
       @apply="onUpdateApply"
     />
+    <div class="check-now-row">
+      <button
+        class="btn role-secondary"
+        @click="onCheckNow"
+      >
+        Check for Updates Now
+      </button>
+    </div>
     <hr>
     <telemetry-opt-in
       :telemetry="settings.application.telemetry.enabled"
@@ -93,6 +101,9 @@ export default {
     },
     onUpdateApply() {
       ipcRenderer.send('update-apply');
+    },
+    onCheckNow() {
+      ipcRenderer.send('updater:check', 'manual');
     },
     onUpdateState(event, state) {
       this.$data.updateState = state;

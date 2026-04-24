@@ -17,7 +17,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import mainEvents from '@pkg/main/mainEvents';
 import { checkConnectivity } from '@pkg/main/networking';
 import { createTrayPanel, toggleTrayPanel, sendPanelState, sendAuthState, sendSettingsState, destroyTrayPanel } from '@pkg/main/trayPanel';
-import setupUpdate from '@pkg/main/update';
+import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { networkStatus } from '@pkg/utils/networks';
 import paths from '@pkg/utils/paths';
@@ -146,7 +146,7 @@ export class Tray {
           label: 'Check updates',
           icon:  path.join(paths.resources, 'icons', 'refresh-cw-16.png'),
           click: async() => {
-            await setupUpdate(true, false);
+            await updateManager.checkForUpdates('manual');
           },
         },
       ],

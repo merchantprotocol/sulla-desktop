@@ -2,6 +2,7 @@
 
 // Auto-register concrete providers on import
 import './providers/GoogleOAuth';
+import './providers/IntuitOAuth';
 import './providers/OpenAIOAuth';
 
 export { OAuthProvider, type OAuthProviderConfig, type OAuthTokenSet } from './OAuthProvider';

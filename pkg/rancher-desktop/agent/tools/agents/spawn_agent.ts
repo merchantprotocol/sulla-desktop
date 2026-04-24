@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { createJob, completeJob, failJob } from './jobRegistry';
+import { getWebSocketClientService } from '../../services/WebSocketClientService';
 
 import type { AgentJobResult } from './jobRegistry';
 
@@ -163,13 +164,15 @@ export class SpawnAgentWorker extends BaseTool {
 
       // Launch in background — do not await
       executeAll()
-        .then((results) => {
+        .then(async(results) => {
           completeJob(job.jobId, results);
           console.log(`[spawn_agent] Async job ${ job.jobId } completed — ${ results.length } result(s)`);
+          await emitProactiveCompletion(parentChannel, job.jobId, results);
         })
-        .catch((err) => {
+        .catch(async(err) => {
           failJob(job.jobId, (err as Error).message);
           console.error(`[spawn_agent] Async job ${ job.jobId } failed:`, err);
+          await emitProactiveCompletion(parentChannel, job.jobId, [], (err as Error).message);
         });
 
       return {
@@ -199,5 +202,52 @@ export class SpawnAgentWorker extends BaseTool {
         ? results[0].output
         : `${ results.length } sub-agent(s) completed.\n\n${ formatted }`,
     };
+  }
+}
+
+// ─── Proactive completion emitter ────────────────────────────────
+// Surfaces a ProactiveCard in the parent channel's chat when an async
+// spawn_agent job finishes. The parent agent will still poll via
+// check_agent_jobs to read the full results — this card is a user-
+// facing heads-up that the background work settled.
+async function emitProactiveCompletion(
+  parentChannel: string,
+  jobId: string,
+  results: AgentJobResult[],
+  failureReason?: string,
+): Promise<void> {
+  try {
+    const ws = getWebSocketClientService();
+
+    let headline: string;
+    let body: string;
+    if (failureReason) {
+      headline = 'Background agents failed';
+      body = `Job ${ jobId } errored: ${ failureReason.slice(0, 200) }`;
+    } else {
+      const done = results.filter(r => r.status === 'completed').length;
+      const blocked = results.filter(r => r.status === 'blocked').length;
+      const errored = results.filter(r => r.status === 'error').length;
+      const labels = results.map(r => r.label).slice(0, 3).join(', ');
+      headline = errored > 0 || blocked > 0
+        ? `Background agents finished — ${ done } done, ${ blocked } blocked, ${ errored } failed`
+        : `Background agents finished — ${ done }/${ results.length } complete`;
+      body = results.length === 1
+        ? `Task "${ results[0].label }" is ready. Check \`check_agent_jobs("${ jobId }")\` for the full result.`
+        : `Tasks: ${ labels }${ results.length > 3 ? `, +${ results.length - 3 } more` : '' }. Check \`check_agent_jobs("${ jobId }")\` for results.`;
+    }
+
+    ws.send(parentChannel, {
+      type: 'chat_message',
+      data: {
+        kind: 'proactive',
+        role: 'assistant',
+        headline,
+        body,
+        content: body,
+      },
+    });
+  } catch (e) {
+    console.warn('[spawn_agent] proactive emit failed:', e);
   }
 }

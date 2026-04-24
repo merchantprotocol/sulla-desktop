@@ -10,7 +10,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
-  kind?:     'text' | 'tool' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak';
+  kind?:     'text' | 'tool' | 'tool_approval' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive';
   image?: {
     dataUrl:      string;
     alt?:         string;
@@ -55,6 +55,93 @@ export interface ChatMessage {
     latestThinking?: string;
     output?:         string;
     error?:          string;
+  };
+  /**
+   * Proactive card — Sulla reaching out unprompted (workflow finished,
+   * sub-agent completed, heartbeat insight, etc.). Rendered as a
+   * cyan-bordered ProactiveCard in the chat. Emitters:
+   *   • PlaybookController.releaseWorkflow (workflow done)
+   *   • spawn_agent async completion (.then handler)
+   *   • HeartbeatNode (optional — when it wants a UI card instead of a
+   *     channel_message)
+   */
+  proactive?: {
+    headline: string;
+    body:     string;
+  };
+  /** Source list surfaced as a CitationRow below the reply. Populated by the
+   *  CitationExtractor when the model emits a `<citations>` block. */
+  citations?: {
+    num:     number;
+    title:   string;
+    origin:  string;
+    url?:    string;
+  }[];
+  /** User-approval request surfaced as a ToolApproval card in the chat
+   *  transcript. Populated when a backend tool (or any backend piece)
+   *  calls `ApprovalService.parkPending()` and needs the user to make a
+   *  decision before the tool's promise can settle. The `approvalId`
+   *  round-trips back via the `approval:resolve` IPC when the user
+   *  clicks approve/deny. */
+  toolApproval?: {
+    approvalId: string;
+    reason:     string;
+    command:    string;
+    origin?:    { kind: string; [field: string]: unknown };
+  };
+  /**
+   * Full routine document published by the `workflow/display` tool to
+   * render the workflow in the chat artifact sidebar. The shape mirrors
+   * routine.yaml exactly — same field names, same nesting — so the
+   * frontend renderer consumes it with zero mapping.
+   */
+  workflowDocument?: {
+    slug:         string;
+    id?:          string;
+    name?:        string;
+    description?: string;
+    _status?:     'draft' | 'production' | 'archive';
+    viewport?:    { x: number; y: number; zoom: number };
+    nodes:        Array<{
+      id:       string;
+      type:     string;
+      position: { x: number; y: number };
+      data:     {
+        subtype:  string;
+        category: string;
+        label:    string;
+        config?:  Record<string, unknown>;
+      };
+    }>;
+    edges: Array<{
+      id:            string;
+      source:        string;
+      target:        string;
+      sourceHandle?: string | null;
+      targetHandle?: string | null;
+      label?:        string;
+      animated?:     boolean;
+    }>;
+  };
+  /**
+   * Inline unified-diff surfaced as a PatchBlock in the transcript. Emitted
+   * by ClaudeCodeService → BaseNode.onFilePatch after an Edit/Write tool_use.
+   * Shape mirrors `FilePatchInfo` from `agent/util/linePatch.ts` — kept
+   * structural here to avoid a cross-layer import in the registry file.
+   */
+  filePatch?: {
+    path:  string;
+    stat:  { added: number; removed: number };
+    hunks: Array<{
+      lines: Array<{
+        n:    number;
+        text: string;
+        op:   'add' | 'remove' | 'context';
+      }>;
+    }>;
+    revertMeta?:
+      | { op: 'edit';  path: string; oldString: string; newString: string }
+      | { op: 'write'; path: string; oldContent: string };
   };
 }
 

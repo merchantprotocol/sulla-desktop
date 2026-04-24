@@ -58,6 +58,9 @@ export interface IpcMainEvents {
   'update-state': () => void;
   // Quit and apply the update.
   'update-apply': () => void;
+  // New centralized UpdateManager IPC. Fire-and-forget variants.
+  'updater:check':   (trigger?: 'manual' | 'auto' | 'startup') => void;
+  'updater:install': () => void;
   // #endregion
 
   // #region main/containerEvents
@@ -226,6 +229,12 @@ export interface IpcMainInvokeEvents {
   'api-get-credentials':       () => { user: string, password: string, port: number };
   'k8s-progress':              () => Readonly<{ current: number, max: number, description?: string, transitionTime?: Date }>;
 
+  // #region main/update (centralized UpdateManager)
+  'updater:get-state': () => import('@pkg/main/update/UpdateManager').RichUpdateState;
+  'updater:check':     (trigger?: 'manual' | 'auto' | 'startup') => void;
+  'updater:install':   () => void;
+  // #endregion
+
   // #region Error Reporting
   'error-report/invoke': (report: {
     error_type:    string;
@@ -241,6 +250,13 @@ export interface IpcMainInvokeEvents {
   'first-run-wizard-step':  (step: number) => void;
   'sulla-restart-ollama':   () => void;
   'app-quit':               () => void;
+
+  // Onboarding presence — BrowserTabChat + ChatPage call these on mount to
+  // decide whether to show the goals/business onboarding cards. Handlers
+  // live in sulla.ts:406-410. Return true when the matching identity file
+  // is missing (so the onboarding card should render).
+  'check-goals-onboarding':    () => boolean;
+  'check-business-onboarding': () => boolean;
 
   // Browser tab views (WebContentsView-based)
   'browser-tab-view:create':        (tabId: string, url: string, bounds: Electron.Rectangle) => void;
@@ -378,6 +394,22 @@ export interface IpcMainInvokeEvents {
   'workflow-db-get':      (workflowId: string) => any;
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
 
+  // User-defined project catalog (scanned from ~/sulla/projects/ + DB)
+  'projects-list': () => {
+    slug:        string;
+    name:        string;
+    status:      string;
+    description: string;
+  }[];
+
+  // Approval gate — renderer resolves a pending user-approval request
+  // that a backend tool parked via ApprovalService.
+  'approval:resolve': (payload: {
+    approvalId: string;
+    decision:   'approved' | 'denied';
+    note?:      string;
+  }) => { settled: boolean; reason?: string };
+
   // User-defined function catalog (scanned from ~/sulla/functions/<slug>/function.yaml)
   'functions-list': () => {
     slug:         string;
@@ -410,7 +442,7 @@ export interface IpcMainInvokeEvents {
   }[];
   'routines-template-instantiate':   (slug: string) => { id: string; name: string };
   'routines-create-blank':           () => { id: string; name: string };
-  'routines-execute':                (workflowId: string, triggerPayload?: string) => { executionId: string; workflowId: string };
+  'routines-execute':                (workflowId: string, triggerPayload?: string, options?: { startNodeId?: string; resumeExecutionId?: string }) => { executionId: string; workflowId: string };
   'routines-abort':                  (executionId: string) => { aborted: boolean; reason?: string };
   'routines-export':                 (workflowId: string) => { path: string } | { canceled: true } | { error: string };
   'routines-export-template':        (slug: string) => { path: string } | { canceled: true } | { error: string };
@@ -639,6 +671,12 @@ export interface IpcMainInvokeEvents {
   'workflow-execution-status': (executionId: string) => { executionId: string; status: string; startedAt?: string; completedAt?: string; error?: string } | null;
   'workflow-execution-abort':  (executionId: string) => boolean;
   'workflow-execution-resume': (executionId: string, nodeId: string, userData: unknown) => boolean;
+  'workflow-active-execution': (workflowId: string) => { executionId: string; workflowId: string; workflowName: string; status: string; startedAt: string } | null;
+
+  // Boot-recovery: non-auto-restart executions that were suspended and are
+  // waiting for a user decision. Renderer polls after boot and shows a
+  // "resume or start fresh?" prompt. List is cleared server-side on read.
+  'sulla-workflow-suspended-executions': () => { executionId: string; workflowId: string; workflowName: string; workflowSlug: string; startedAt: string; autoRestart: boolean }[];
 
   // Workflow registry dispatch (used by external trigger sources)
   'workflow-dispatch': (triggerType: string, message: string, workflowId?: string) => { executionId: string; workflowId: string; workflowName: string } | null;
@@ -836,6 +874,7 @@ export interface IpcRendererEvents {
   'settings-write-error': (error: any) => void;
   'get-app-version':      (version: string) => void;
   'update-state':         (state: import('@pkg/main/update').UpdateState) => void;
+  'updater:state':        (state: import('@pkg/main/update/UpdateManager').RichUpdateState) => void;
   'always-debugging':     (status: boolean) => void;
   'is-debugging':         (status: boolean) => void;
   'k8s-progress': (

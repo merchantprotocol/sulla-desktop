@@ -492,6 +492,15 @@
             <span class="runs-item-last">{{ run.lastNodeLabel || '—' }}</span>
             <span class="runs-item-meta">{{ run.checkpointCount }} steps · {{ formatRunSpan(run.startedAt, run.endedAt) }}</span>
           </span>
+          <button
+            type="button"
+            class="runs-item-resume"
+            :disabled="hasActiveExecution"
+            :title="hasActiveExecution ? 'A run is already in progress' : 'Resume this run — picks up past the last checkpoint'"
+            @click.stop="onResumeRun(run.executionId)"
+          >
+            Resume
+          </button>
         </li>
       </ul>
     </div>
@@ -1024,9 +1033,9 @@ function endRun(terminal: 'done' | 'failed' = 'failed') {
   clearStallTimer();
 }
 
-async function onRunClick() {
+async function launchRoutine(options?: { startNodeId?: string; resumeExecutionId?: string; label?: string }) {
   if (!props.workflowId) {
-    console.warn('[AgentRoutines] Run clicked with no workflowId — nothing to execute.');
+    console.warn('[AgentRoutines] Run requested with no workflowId — nothing to execute.');
 
     return;
   }
@@ -1035,9 +1044,17 @@ async function onRunClick() {
   beginRun();
 
   try {
-    const result = await ipcRenderer.invoke('routines-execute', props.workflowId);
+    const result = await ipcRenderer.invoke(
+      'routines-execute',
+      props.workflowId,
+      undefined,
+      options?.startNodeId || options?.resumeExecutionId
+        ? { startNodeId: options.startNodeId, resumeExecutionId: options.resumeExecutionId }
+        : undefined,
+    );
     lastExecutionId.value = result.executionId;
-    console.log(`[AgentRoutines] Routine launched — executionId=${ result.executionId }`);
+    const suffix = options?.label ? ` (${ options.label })` : '';
+    console.log(`[AgentRoutines] Routine launched${ suffix } — executionId=${ result.executionId }`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     runError.value = msg;
@@ -1048,6 +1065,10 @@ async function onRunClick() {
     console.error('[AgentRoutines] Failed to launch routine:', err);
     endRun();
   }
+}
+
+async function onRunClick() {
+  await launchRoutine();
 }
 
 async function onStopClick() {
@@ -1870,6 +1891,27 @@ function closeRunsFlyout() {
   runsFlyoutOpen.value = false;
 }
 
+// Relaunch a specific prior execution from its stored checkpoints. The
+// backend loads the saved playbook_state, clones it with a new executionId,
+// and the walker picks up past the last checkpoint.
+async function onResumeRun(executionId: string) {
+  if (!executionId) return;
+  if (hasActiveExecution.value) {
+    pushLine('err', 'A run is already in progress — stop it before resuming.');
+    return;
+  }
+  closeRunsFlyout();
+
+  // Mirror Run-from-here: the canvas needs run mode so the execution UI
+  // appears. openPastRun's view-mode state (if any) is cleared so we don't
+  // render history nodes alongside a live run.
+  viewingPastRun.value = null;
+  if (mode.value !== 'run') mode.value = 'run';
+
+  pushLine('dec', `resuming ${ executionId }`);
+  await launchRoutine({ resumeExecutionId: executionId, label: `resume ${ executionId.slice(-8) }` });
+}
+
 async function openPastRun(executionId: string) {
   closeRunsFlyout();
   try {
@@ -2132,13 +2174,24 @@ function onNodeCtxRemove() {
   requestDelete({ nodeIds: [id], edgeIds: [] });
 }
 
-// Partial-graph re-execution — stubbed until PlaybookController grows a
-// `start-from-node` entry point. Logging the target for now so at least
-// the click is observable in devtools.
-function onNodeCtxRunFromHere() {
+// Partial-graph re-execution. Ancestors of the target node are marked
+// completed in the playbook with placeholder outputs so downstream
+// dependency checks pass — see createPlaybookStateFromNode.
+async function onNodeCtxRunFromHere() {
   const id = nodeCtx.nodeId;
-  console.log('[AgentRoutines] Run from here (stub) — target node:', id);
   closeNodeCtx();
+  if (!id) return;
+
+  // The canvas needs to be in run mode for the execution UI (Stop button,
+  // cinema camera, live stream) to light up, same as pressing Play.
+  if (mode.value !== 'run') {
+    mode.value = 'run';
+  }
+
+  const target = nodes.value.find(n => n.id === id);
+  const label = target?.data?.label || target?.data?.title || id;
+  pushLine('dec', `run-from-here → ${ label }`);
+  await launchRoutine({ startNodeId: id, label: `from ${ label }` });
 }
 
 // Checkpoint inspection — needs an IPC that reads the stored output for
@@ -3440,9 +3493,9 @@ watch(
 }
 .runs-item {
   display: grid;
-  grid-template-columns: auto 1fr;
+  grid-template-columns: auto 1fr auto;
   gap: 10px;
-  align-items: start;
+  align-items: center;
   padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
@@ -3450,6 +3503,28 @@ watch(
 }
 .runs-item:hover { background: rgba(139, 92, 246, 0.1); color: white; }
 .runs-item.active { background: rgba(139, 92, 246, 0.18); color: white; }
+.runs-item-resume {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  background: rgba(139, 92, 246, 0.08);
+  color: var(--violet-300);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+.runs-item-resume:hover:not(:disabled) {
+  background: rgba(139, 92, 246, 0.2);
+  border-color: rgba(139, 92, 246, 0.6);
+  color: white;
+}
+.runs-item-resume:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 .runs-item-time {
   font-family: var(--mono);
   font-size: 10px;

@@ -5,39 +5,53 @@
       v-if="!loggedIn && vaultSetUp"
     />
 
-    <div class="agent-router-content flex flex-col">
+    <div class="agent-router-body">
       <!--
-        Non-browser routes use keep-alive normally.
-        Hidden when a browser tab is the active route.
+        Global ModeRail — lives at the window level so it stays visible
+        across every tab and every mode (chat, browser, secretary,
+        marketplace, my work, library). Clicks dispatch a window event
+        that the active BrowserTab listens for.
       -->
-      <router-view
-        v-show="!isBrowserRoute"
-        v-slot="{ Component }"
-      >
-        <keep-alive>
-          <component
-            :is="Component"
-            :key="route.path"
-          />
-        </keep-alive>
-      </router-view>
-
-      <!--
-        Browser tabs are rendered OUTSIDE of keep-alive so their iframes
-        are never removed from the DOM.  We avoid v-show (display:none)
-        because browsers tear down the iframe render tree when display
-        is none, causing a visible "blink" on re-show.  Instead we use
-        visibility:hidden + pointer-events:none so the iframe stays
-        fully rendered and composited in the background.
-      -->
-      <BrowserTab
-        v-for="tab in browserTabs"
-        :key="tab.id"
-        class="browser-tab-layer"
-        :class="{ 'browser-tab-hidden': route.path !== `/Browser/${tab.id}` }"
-        :tab-id="tab.id"
-        :is-visible="route.path === `/Browser/${tab.id}`"
+      <ModeRail
+        class="agent-router-rail"
+        :active="activeTabMode"
+        @set-mode="onModeRailSelect"
       />
+
+      <div class="agent-router-content flex flex-col">
+        <!--
+          Non-browser routes use keep-alive normally.
+          Hidden when a browser tab is the active route.
+        -->
+        <router-view
+          v-show="!isBrowserRoute"
+          v-slot="{ Component }"
+        >
+          <keep-alive>
+            <component
+              :is="Component"
+              :key="route.path"
+            />
+          </keep-alive>
+        </router-view>
+
+        <!--
+          Browser tabs are rendered OUTSIDE of keep-alive so their iframes
+          are never removed from the DOM.  We avoid v-show (display:none)
+          because browsers tear down the iframe render tree when display
+          is none, causing a visible "blink" on re-show.  Instead we use
+          visibility:hidden + pointer-events:none so the iframe stays
+          fully rendered and composited in the background.
+        -->
+        <BrowserTab
+          v-for="tab in browserTabs"
+          :key="tab.id"
+          class="browser-tab-layer"
+          :class="{ 'browser-tab-hidden': route.path !== `/Browser/${tab.id}` }"
+          :tab-id="tab.id"
+          :is-visible="route.path === `/Browser/${tab.id}`"
+        />
+      </div>
     </div>
 
     <!-- Startup progress overlay -->
@@ -123,6 +137,7 @@ import { computed, reactive, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import BrowserTab from './BrowserTab.vue';
+import ModeRail from './chat/components/chrome/ModeRail.vue';
 import StartupOverlay from './agent/StartupOverlay.vue';
 import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
@@ -147,6 +162,41 @@ watch(sidePanelBlocked, (blocked) => {
 });
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
+
+// ── Global ModeRail wiring ──
+// The rail lives here (outside the per-tab BrowserTab) so it stays
+// visible across every mode and tab. We derive the highlighted icon
+// from the active tab's mode, and broadcast clicks as a window event
+// the active BrowserTab listens for.
+const activeTabMode = computed(() => {
+  const match = route.path.match(/^\/Browser\/(.+)$/);
+  if (!match) return undefined;
+  const active = browserTabs.find(t => t.id === match[1]);
+
+  return active?.mode;
+});
+
+function onModeRailSelect(mode: string, subTab?: string) {
+  // Always spawn a new tab for the clicked mode instead of mutating the
+  // active one — rail clicks should behave like "open a new <mode> tab".
+  const url = mode === 'browser' ? 'https://www.google.com' : 'about:blank';
+  const tab = createTab(url, { mode: mode as any });
+
+  router.push(`/Browser/${ tab.id }`);
+
+  // Library lives inside the routines page as a sub-tab. The freshly
+  // created BrowserTab defaults its RoutinesHome landing tab to
+  // "mywork"/"marketplace" based on mode; to deep-link to "library"
+  // we fire the mode-rail-select event after the new tab has mounted
+  // so its handler can flip routinesLandingTab.
+  if (subTab === 'library' && mode === 'routines') {
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('sulla:mode-rail-select', {
+        detail: { mode, subTab },
+      }));
+    }, 50);
+  }
+}
 
 // ── App version ──
 const appVersion = ref('');
@@ -259,6 +309,29 @@ function onAgentCommand(_event: any, args: any) {
     const tab = createTab('about:blank', { mode: 'secretary' });
 
     router.push(`/Browser/${ tab.id }`);
+    break;
+  }
+  case 'start-secretary': {
+    // Focus an existing secretary tab if we have one; otherwise open a
+    // fresh one. Either way, fire a window event after the tab has
+    // mounted so SecretaryMode.vue's listener can trigger startSession()
+    // without the user clicking START. See agent/tools/secretary/start.ts.
+    const existing = browserTabs.find(t => t.mode === 'secretary');
+    const targetTab = existing ?? createTab('about:blank', { mode: 'secretary' });
+
+    router.push(`/Browser/${ targetTab.id }`);
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('sulla:secretary-start', {
+        detail: { tabId: targetTab.id },
+      }));
+    }, existing ? 0 : 80);
+    break;
+  }
+  case 'stop-secretary': {
+    // Fire-and-forget — the active SecretaryMode component listens and
+    // calls its own endSession(). If no session is active, the event is
+    // a no-op.
+    window.dispatchEvent(new CustomEvent('sulla:secretary-stop'));
     break;
   }
   case 'open-tab': {
@@ -438,9 +511,27 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+/*
+ * Body = horizontal row: global rail on the left, content area on the
+ * right. The rail spans from just below the vault/startup overlays down
+ * to the footer, beside the tab strip (VS Code activity-bar style).
+ */
+.agent-router-body {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.agent-router-rail {
+  flex-shrink: 0;
+}
+
 .agent-router-content {
   position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }

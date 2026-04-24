@@ -693,23 +693,6 @@
   margin-bottom: 6px;
 }
 
-/* ── Assistant message: VS Code-style left accent strip on prose content ── */
-.theme-protocol-dark .sulla-name + .prose {
-  border-left: 2px solid rgba(80, 150, 179, 0.3);
-  padding-left: 14px;
-  margin-left: 2px;
-}
-
-/* ── Message row separator — subtle divider between turns ── */
-.theme-protocol-dark .mb-8 {
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(48, 54, 61, 0.6);
-}
-
-.theme-protocol-dark .mb-8:last-child {
-  border-bottom: none;
-}
-
 /* ── Tool cards: terminal aesthetic ── */
 .theme-protocol-dark .tool-card-cc {
   background: #161b22;             /* Level 100 — visible on Level 0 page */

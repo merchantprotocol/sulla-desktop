@@ -250,6 +250,42 @@ export class PlaybookController<TState = any> {
       return state;
     }
 
+    // External stop/pause request via `sulla meta/stop_workflow` or
+    // `sulla meta/pause_workflow`. Cooperative — we read Redis flags
+    // keyed by executionId and honor them on each frontier tick.
+    if (playbook.executionId) {
+      try {
+        const { redisClient } = await import('../database/RedisClient');
+        const { stopKey }  = await import('../tools/workflow/stop_workflow');
+        const { pauseKey } = await import('../tools/workflow/pause_workflow');
+
+        const stopReason = await redisClient.get(stopKey(playbook.executionId));
+        if (stopReason) {
+          console.log(`[PlaybookController] External stop requested for ${ playbook.executionId }: ${ stopReason }`);
+          playbookLog('external_stop', { reason: stopReason, workflowId: playbook.workflowId, executionId: playbook.executionId });
+          this.emitPlaybookEvent(state, 'workflow_aborted', { reason: stopReason });
+          this.pendingSubAgents.clear();
+          await redisClient.del(stopKey(playbook.executionId));
+          state = await this.releaseWorkflow(state, playbook, 'failed', `Stopped by user: ${ stopReason }`);
+          return state;
+        }
+
+        const pauseReason = await redisClient.get(pauseKey(playbook.executionId));
+        if (pauseReason) {
+          console.log(`[PlaybookController] External pause requested for ${ playbook.executionId }: ${ pauseReason }`);
+          playbookLog('external_pause', { reason: pauseReason, workflowId: playbook.workflowId, executionId: playbook.executionId });
+          this.emitPlaybookEvent(state, 'workflow_paused', { reason: pauseReason });
+          // Do NOT release — just return without advancing the frontier.
+          // The next frontier tick will re-check and, once resume_workflow
+          // clears the flag, the walker resumes. In-flight work continues.
+          return state;
+        }
+      } catch (err) {
+        // Redis flakiness shouldn't crash the workflow — just log and continue.
+        console.warn('[PlaybookController] external stop/pause check failed:', err);
+      }
+    }
+
     // ── Drain persisted completions/failures/escalations from DB ──
     try {
       const { WorkflowPendingCompletionModel } = await import('../database/models/WorkflowPendingCompletionModel');
@@ -1980,6 +2016,18 @@ export class PlaybookController<TState = any> {
 
     meta.activeWorkflow = undefined;
 
+    // Persist final execution status so boot recovery doesn't pick it up again.
+    try {
+      const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+      if (outcome === 'completed') {
+        await WorkflowExecutionModel.markCompleted(playbook.executionId);
+      } else {
+        await WorkflowExecutionModel.markFailed(playbook.executionId, error);
+      }
+    } catch (e) {
+      console.warn('[PlaybookController] Failed to update workflow execution status:', e);
+    }
+
     const nodeLines = nodeSummaries
       .filter(n => n.category !== 'trigger')
       .map(n => `  • ${ n.label } (${ n.subtype }): ${ (n.result || '').substring(0, 200) }${ (n.result || '').length > 200 ? '...' : '' }`)
@@ -1989,6 +2037,29 @@ export class PlaybookController<TState = any> {
     const summaryMsg = `[Workflow Complete] The workflow "${ playbook.definition.name }" has ${ statusLabel }.\n\nNode results:\n${ nodeLines }\n\nYou are now free from the workflow. Continue the conversation naturally — you have full context of what was accomplished above. Respond to the user as needed.`;
 
     this.injectWorkflowMessage(state, summaryMsg);
+
+    // Proactive card to the user — surfaced as a ProactiveCard in chat.
+    // Fires on both success and failure; headline + short body only.
+    try {
+      const ws = getWebSocketClientService();
+      const notifyChannel = meta.workflowParentChannel || meta.wsChannel || 'sulla-desktop';
+      const nonTrigger = nodeSummaries.filter(n => n.category !== 'trigger');
+      const shortBody = outcome === 'completed'
+        ? `${ nonTrigger.length } node${ nonTrigger.length === 1 ? '' : 's' } finished in "${ playbook.definition.name }".`
+        : `"${ playbook.definition.name }" stopped: ${ (error || 'unknown error').slice(0, 200) }`;
+      ws.send(notifyChannel, {
+        type: 'chat_message',
+        data: {
+          kind:     'proactive',
+          role:     'assistant',
+          headline: outcome === 'completed' ? 'Workflow complete' : 'Workflow failed',
+          body:     shortBody,
+          content:  shortBody,
+        },
+      });
+    } catch (e) {
+      console.warn('[PlaybookController] proactive emit failed:', e);
+    }
 
     state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 

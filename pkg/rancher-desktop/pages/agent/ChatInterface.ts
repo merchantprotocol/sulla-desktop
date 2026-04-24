@@ -168,6 +168,20 @@ export class ChatInterface {
     return this.persona.getThreadId();
   });
 
+  // ─── Token + cost tracking (read-only pass-through) ─────────────
+  // Surfaces are mirrored from AgentPersonaService.state so that
+  // renderer-side code (new chat's TokenUsageModal, any other consumer)
+  // can read without drilling into the private persona field.
+  readonly totalTokensUsed     = computed(() => this.persona.state.totalTokensUsed);
+  readonly totalPromptTokens   = computed(() => this.persona.state.totalPromptTokens);
+  readonly totalCompletionTokens = computed(() => this.persona.state.totalCompletionTokens);
+  readonly totalInputCost      = computed(() => this.persona.state.totalInputCost);
+  readonly totalOutputCost     = computed(() => this.persona.state.totalOutputCost);
+  readonly totalCost           = computed(() => this.persona.state.totalCost);
+  readonly responseCount       = computed(() => this.persona.state.responseCount);
+  readonly averageResponseTime = computed(() => this.persona.state.averageResponseTime);
+  readonly tokensPerSecond     = computed(() => this.persona.state.tokensPerSecond);
+
   // Track if user has ever sent a message (persisted in localStorage)
   private readonly hasSentMessageKey: string;
   private hasSentMessage:             ReturnType<typeof ref<boolean>>;
@@ -230,9 +244,15 @@ export class ChatInterface {
 
     const text = this.query.value;
 
-    // If graph is running OR model is still loading/initializing, queue the message
-    if (this.persona.graphRunning.value || this.loading.value) {
-      console.log(`[ChatInterface:send] Busy (graphRunning=${ this.persona.graphRunning.value }, loading=${ this.loading.value }), queuing message: ${ text.slice(0, 50) }...`);
+    // If the graph for THIS tab is running, queue. We intentionally don't
+    // also gate on `this.loading.value` — `loading` lives on the shared
+    // registry agent entry (per channel, not per tab), so two tabs on the
+    // same channel would block each other: tab 2's first send silently
+    // queues until tab 1's reply arrives. `graphRunning` is per-tab (ref
+    // on AgentPersonaService, keyed per channel+tab), so this gate alone
+    // keeps per-tab queuing correct without cross-tab bleed.
+    if (this.persona.graphRunning.value) {
+      console.log(`[ChatInterface:send] Graph running, queuing message: ${ text.slice(0, 50) }...`);
       this.messageQueue.enqueue(text, attachments as PendingAttachment[], metadata);
       this.query.value = '';
       return;
@@ -338,6 +358,37 @@ export class ChatInterface {
       // Graph already finished (race condition) — fall back to normal send
       console.log(`[ChatInterface:injectQueuedMessage] Graph not running, falling back to normal send: ${ msg.content.slice(0, 50) }...`);
       await this.sendMessageInternal(msg.content, metadata, attachments);
+    }
+  }
+
+  /**
+   * Inject a raw user message into the graph with the smart route:
+   *   • graph running  → persona.injectMessage (WS `inject_message`)
+   *                      appends to state.messages without starting a new run;
+   *                      the graph picks it up on the next iteration.
+   *   • graph idle     → sendMessageInternal (normal user turn)
+   *
+   * Used by the new chat's `ChatController.injectQueuedMessage` — the
+   * queue lives client-side in the controller (not in messageQueue),
+   * so we take raw text + attachments + metadata instead of a queue id.
+   */
+  async injectMessage(
+    text: string,
+    attachments?: { mediaType: string; base64: string }[],
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    if (!text.trim() && !attachments?.length) return;
+
+    const fullMetadata = attachments?.length
+      ? { ...metadata, attachments: attachments.map(a => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: a.mediaType, data: a.base64 } })) }
+      : metadata;
+
+    if (this.persona.graphRunning.value) {
+      console.log(`[ChatInterface:injectMessage] Injecting into running graph: ${ text.slice(0, 50) }...`);
+      await this.persona.injectMessage(text, fullMetadata);
+    } else {
+      console.log(`[ChatInterface:injectMessage] Graph idle, sending normally: ${ text.slice(0, 50) }...`);
+      await this.sendMessageInternal(text, fullMetadata, attachments);
     }
   }
 

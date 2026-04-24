@@ -192,6 +192,11 @@ export default {
       template: path.join(import.meta.dirname, 'public', 'computer-use-settings.html'),
       filename: 'computer-use-settings.html',
     },
+    updates: {
+      entry:    path.join(import.meta.dirname, 'entry', 'updates.ts'),
+      template: path.join(import.meta.dirname, 'public', 'updates.html'),
+      filename: 'updates.html',
+    },
     'first-run': {
       entry:    path.join(import.meta.dirname, 'entry', 'first-run.ts'),
       template: path.join(import.meta.dirname, 'public', 'first-run.html'),

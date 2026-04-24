@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
+import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { resolveLimactlPath, resolveLimaHome } from '../tools/util/CommandRunner';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
@@ -452,10 +453,35 @@ export class ClaudeCodeService extends BaseLanguageModel {
           env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
         });
 
-      // Emit immediately on spawn so the renderer sets graphRunning=true
-      // without waiting for the first token (Claude startup can take seconds).
+      // Heartbeat ticker — keeps the renderer (and routine canvas) informed
+      // during the 60–120s cold-start gap between spawn and the first
+      // Anthropic token. Without this the UI looks dead. Cleared on first
+      // real stream event (token, tool_use, thinking) or close/error/abort.
+      let heartbeatTimer: NodeJS.Timeout | null = null;
+      const heartbeatStart = Date.now();
+      const directActivity = (msg: string) => {
+        if (!msg) return;
+        try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
+      };
+      const stopHeartbeat = () => {
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
+      };
+
       proc.once('spawn', () => {
-        try { callbacks.onActivity?.('Starting Claude…') } catch { /* ignore */ }
+        directActivity('Booting isolated environment…');
+        let tick = 0;
+        heartbeatTimer = setInterval(() => {
+          tick += 1;
+          const elapsed = Math.round((Date.now() - heartbeatStart) / 1000);
+          const msg = tick === 1 ? 'Claude binary starting'
+                    : tick === 2 ? 'Loading tools and context'
+                    : tick === 3 ? 'Calling model — waiting for first response'
+                    : `Still waiting on model (${ elapsed }s)`;
+          directActivity(msg);
+        }, 3000);
       });
 
       let stdoutBuffer = '';
@@ -467,6 +493,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       let sessionInUse = false;
 
       const onAbort = () => {
+        stopHeartbeat();
         // 1) Kill the host-side limactl process. This closes the SSH-style
         //    session to the VM. With `exec` in the inner shell (see above),
         //    the remote claude usually receives SIGHUP and dies.
@@ -541,6 +568,63 @@ export class ClaudeCodeService extends BaseLanguageModel {
         try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
       };
 
+      // File patches we've already surfaced this turn. Keyed by
+      // `${name}:${file_path}:${hash}` so the same edit fired via both
+      // content_block_stop and the whole-message assistant event only
+      // produces one PatchBlock in chat.
+      const emittedPatches = new Set<string>();
+
+      /**
+       * Attempt to surface a FilePatchInfo for an Edit/Write tool_use.
+       * Called at content_block_stop (best moment — full input, file not
+       * yet mutated for Writes). Safe to call twice; dedup via hash.
+       */
+      const emitFilePatch = (name: string, input: any) => {
+        if (!callbacks.onFilePatch) return;
+        if (!input || typeof input !== 'object') return;
+        const filePath = typeof input.file_path === 'string' ? input.file_path : '';
+        if (!filePath) return;
+
+        let info: FilePatchInfo | null = null;
+        try {
+          if (name === 'Edit') {
+            const oldString = typeof input.old_string === 'string' ? input.old_string : '';
+            const newString = typeof input.new_string === 'string' ? input.new_string : '';
+            if (!oldString && !newString) return;
+            info = buildEditPatch(filePath, oldString, newString);
+          } else if (name === 'Write') {
+            const newContent = typeof input.content === 'string' ? input.content : '';
+            // Best-effort snapshot of pre-write content. Read synchronously
+            // right now — Claude may or may not have hit disk yet; either
+            // outcome is informational.
+            let oldContent = '';
+            try {
+              oldContent = fs.readFileSync(filePath, 'utf-8');
+            } catch {
+              // File didn't exist → pure addition.
+              oldContent = '';
+            }
+            if (oldContent === newContent) return;   // no visible change
+            info = buildWritePatch(filePath, oldContent, newContent);
+          } else {
+            return;
+          }
+        } catch (err) {
+          log.warn(`[ClaudeCodeService] emitFilePatch failed for ${ name } ${ filePath }: ${ (err as Error)?.message ?? err }`);
+          return;
+        }
+
+        if (!info) return;
+        if (info.hunks.length === 0 && info.stat.added === 0 && info.stat.removed === 0) return;
+
+        const signature = info.hunks[0]?.lines.map(l => l.op[0] + l.text).join('|').slice(0, 200) ?? '';
+        const dedupeKey = `${ name }:${ filePath }:${ info.stat.added }+${ info.stat.removed }:${ signature }`;
+        if (emittedPatches.has(dedupeKey)) return;
+        emittedPatches.add(dedupeKey);
+
+        try { callbacks.onFilePatch(info) } catch { /* ignore */ }
+      };
+
       const processLine = (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) return;
@@ -553,12 +637,21 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
         if (parsed.session_id) capturedSessionId = parsed.session_id;
 
+        // System init — claude has booted, auth done, MCP tools loaded.
+        // Update the heartbeat phase but keep ticking because the model
+        // call itself can still add 20–60s.
+        if (parsed.type === 'system' && parsed.subtype === 'init') {
+          emitActivity('Tools connected — calling model');
+          return;
+        }
+
         // Stream-level events (wrapped in parsed.event) — text deltas,
         // tool_use block starts, thinking starts.
         const ev = parsed?.event;
         if (ev) {
           // Text chunks → stream to caller as content
           if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
+            stopHeartbeat();
             textCollected += ev.delta.text;
             try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
             return;
@@ -568,6 +661,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
           // isn't filled in yet here for partial streaming, so the message
           // starts generic and content_block_stop below refines it.
           if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
+            stopHeartbeat();
             const name = ev.content_block.name ?? 'tool';
             emitActivity(`Using ${ name }…`);
             return;
@@ -576,13 +670,16 @@ export class ClaudeCodeService extends BaseLanguageModel {
           // Tool use complete — input is fully populated now, emit the
           // refined "Running Bash: ls" style message.
           if (ev.type === 'content_block_stop' && ev.content_block?.type === 'tool_use') {
+            stopHeartbeat();
             const name = ev.content_block.name ?? 'tool';
             emitActivity(activityForToolUse(name, ev.content_block.input));
+            emitFilePatch(name, ev.content_block.input);
             return;
           }
 
           // Thinking block starting → indicate reasoning phase.
           if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') {
+            stopHeartbeat();
             emitActivity('Thinking…');
             return;
           }
@@ -596,6 +693,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
           for (const b of blocks) {
             if (b?.type === 'tool_use' && b.name) {
               emitActivity(activityForToolUse(b.name, b.input));
+              emitFilePatch(b.name, b.input);
             }
           }
         }
@@ -639,11 +737,13 @@ export class ClaudeCodeService extends BaseLanguageModel {
       });
 
       proc.on('error', (err) => {
+        stopHeartbeat();
         options.signal?.removeEventListener('abort', onAbort);
         reject(err);
       });
 
       proc.on('close', (code) => {
+        stopHeartbeat();
         options.signal?.removeEventListener('abort', onAbort);
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
 

@@ -73,8 +73,10 @@ export interface ToolExecutorContext {
   /** Current node run context (null when not inside an LLM call) */
   currentNodeRunContext: NodeRunContext | null;
 
-  /** Send a chat message over WebSocket */
-  wsChatMessage(state: BaseThreadState, content: string, role?: 'assistant' | 'system', kind?: string): Promise<boolean>;
+  /** Send a chat message over WebSocket. `extras` is merged into the WS
+   *  event `data` alongside content/role/kind — used to ride structured
+   *  payloads (citations, workflow documents) on the same event. */
+  wsChatMessage(state: BaseThreadState, content: string, role?: 'assistant' | 'system', kind?: string, extras?: Record<string, unknown>): Promise<boolean>;
 
   /** Bump state version (currently a no-op but part of the contract) */
   bumpStateVersion(state: BaseThreadState): void;
@@ -208,8 +210,8 @@ export class ToolExecutor {
           // Inject WebSocket capabilities into the tool
           if (tool instanceof BaseTool) {
             tool.setState(state);
-            tool.sendChatMessage = (content: string, kind = 'progress') =>
-              this.ctx.wsChatMessage(state, content, 'assistant', kind);
+            tool.sendChatMessage = (content: string, kind = 'progress', extras?: Record<string, unknown>) =>
+              this.ctx.wsChatMessage(state, content, 'assistant', kind, extras);
             tool.emitProgress = async(data: any) => {
               await this.dispatchToWebSocket(state.metadata.wsChannel || DEFAULT_WS_CHANNEL, {
                 type:      'progress_update',

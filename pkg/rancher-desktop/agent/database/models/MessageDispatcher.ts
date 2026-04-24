@@ -39,6 +39,21 @@ function capText(s: string, max: number): string {
   return s.length <= max ? s : s.slice(s.length - max);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function contentToString(content: any): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return String(content ?? '');
+  return content.map((b: any) => {
+    if (typeof b === 'string') return b;
+    if (b?.type === 'text' && typeof b.text === 'string') return b.text;
+    if (b?.type === 'tool_result') {
+      if (typeof b.content === 'string') return b.content;
+      if (Array.isArray(b.content)) return b.content.map((c: any) => (typeof c === 'string' ? c : (c?.text ?? ''))).filter(Boolean).join('\n');
+    }
+    return '';
+  }).filter(Boolean).join('\n');
+}
+
 // ─── Types ──────────────────────────────────────────────────────
 
 export type SpeakListener = (text: string, threadId: string, pipelineSequence: number | null) => void;
@@ -145,7 +160,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
-  const content = data?.content !== undefined ? String(data.content) : '';
+  const content = data?.content !== undefined ? contentToString(data.content) : '';
 
   // Segment-boundary sentinels: kind carries the meaning, content is empty
   // by design. Must be handled BEFORE the empty-content drop or the signal
@@ -160,6 +175,160 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         break;
       }
     }
+    return;
+  }
+
+  // Citation cards: the model emitted a <citations> block. Content is empty
+  // by design — the renderer draws a card grid from the `citations` array
+  // on the message. Dropped silently if the payload is missing/malformed.
+  if (kindRaw === 'citation') {
+    const rawSources = Array.isArray(data?.citations) ? data.citations : [];
+    const citations = rawSources
+      .map((s: unknown) => {
+        if (!s || typeof s !== 'object') return null;
+        const r = s as Record<string, unknown>;
+        const title = typeof r.title === 'string' ? r.title.trim() : '';
+        const origin = typeof r.origin === 'string' ? r.origin.trim() : '';
+        if (!title || !origin) return null;
+        const numRaw = r.num;
+        const num = typeof numRaw === 'number' && Number.isFinite(numRaw)
+          ? numRaw
+          : Number.parseInt(String(numRaw ?? ''), 10);
+        const url = typeof r.url === 'string' && r.url.trim().length > 0 ? r.url.trim() : undefined;
+        return { num: Number.isFinite(num) ? num : 0, title, origin, url };
+      })
+      .filter(Boolean) as { num: number; title: string; origin: string; url?: string }[];
+
+    if (citations.length === 0) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_citation`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'citation',
+      content:   '',
+      citations,
+    });
+    return;
+  }
+
+  // Tool approval: a backend tool parked a pending approval via
+  // ApprovalService and emitted this message so the user can decide.
+  // Content is empty by design — the reason/command live on `toolApproval`.
+  // When the user clicks approve/deny in the transcript, the renderer
+  // fires the `approval:resolve` IPC back to main, which settles the
+  // pending promise the tool is awaiting.
+  if (kindRaw === 'tool_approval') {
+    const ta = data?.toolApproval && typeof data.toolApproval === 'object' ? data.toolApproval as any : null;
+    const approvalId = typeof ta?.approvalId === 'string' ? ta.approvalId.trim() : '';
+    const reason = typeof ta?.reason === 'string' ? ta.reason.trim() : '';
+    const command = typeof ta?.command === 'string' ? ta.command.trim() : '';
+    if (!approvalId || !reason || !command) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_tool_approval_${ approvalId }`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'tool_approval',
+      content:   '',
+      toolApproval: {
+        approvalId,
+        reason,
+        command,
+        origin: ta?.origin && typeof ta.origin === 'object' ? ta.origin : undefined,
+      },
+    });
+    return;
+  }
+
+  // Proactive card: a backend emitter (workflow completion, sub-agent
+  // async completion, heartbeat insight) is reaching out unprompted to
+  // the user. Content carries the body; `data.headline` carries the
+  // short title. Rendered as a ProactiveCard in the new chat UI.
+  if (kindRaw === 'proactive') {
+    const headline = typeof data?.headline === 'string' ? data.headline.trim() : '';
+    const body = typeof data?.body === 'string'
+      ? data.body.trim()
+      : (typeof data?.content === 'string' ? data.content.trim() : '');
+    if (!headline && !body) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_proactive`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'proactive',
+      content:   body,
+      proactive: { headline: headline || 'Sulla', body },
+    });
+    return;
+  }
+
+  // File patch: ClaudeCodeService → BaseNode.onFilePatch emitted a unified
+  // diff after an Edit/Write tool_use inside Claude's inner agent loop.
+  // Content is empty by design — payload is on `data.filePatch`. PersonaAdapter
+  // maps this into a `kind:'patch'` message for the new chat's PatchBlock.vue.
+  if (kindRaw === 'file_patch') {
+    const fp = data?.filePatch && typeof data.filePatch === 'object' ? data.filePatch as any : null;
+    if (!fp || typeof fp.path !== 'string' || !Array.isArray(fp.hunks)) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_file_patch`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'file_patch',
+      content:   '',
+      filePatch: {
+        path:       String(fp.path),
+        stat:       {
+          added:   Number(fp.stat?.added ?? 0),
+          removed: Number(fp.stat?.removed ?? 0),
+        },
+        hunks:      fp.hunks.map((h: any) => ({
+          lines: Array.isArray(h?.lines) ? h.lines.map((l: any) => ({
+            n:    Number(l?.n ?? 0),
+            text: typeof l?.text === 'string' ? l.text : '',
+            op:   (l?.op === 'add' || l?.op === 'remove') ? l.op : 'context',
+          })) : [],
+        })),
+        revertMeta: fp.revertMeta && typeof fp.revertMeta === 'object' ? fp.revertMeta : undefined,
+      },
+    });
+    return;
+  }
+
+  // Workflow document: the `workflow/display` tool published a routine
+  // for the artifact sidebar. Content is empty by design — the payload
+  // is the full routine doc under `data.workflow`. PersonaAdapter opens
+  // or updates a workflow artifact keyed by slug so repeat emits (after
+  // each import_workflow) update the same sidebar card in place.
+  if (kindRaw === 'workflow_document') {
+    const doc = data?.workflow && typeof data.workflow === 'object' ? (data.workflow as any) : null;
+    if (!doc || typeof doc.slug !== 'string' || !doc.slug.trim()) return;
+    const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
+    const edges = Array.isArray(doc.edges) ? doc.edges : [];
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_workflow_document_${ doc.slug }`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'workflow_document',
+      content:   '',
+      workflowDocument: {
+        slug:        String(doc.slug),
+        id:          typeof doc.id === 'string' ? doc.id : undefined,
+        name:        typeof doc.name === 'string' ? doc.name : undefined,
+        description: typeof doc.description === 'string' ? doc.description : undefined,
+        _status:     doc._status === 'draft' || doc._status === 'production' || doc._status === 'archive' ? doc._status : undefined,
+        viewport:    doc.viewport && typeof doc.viewport === 'object' ? doc.viewport : undefined,
+        nodes,
+        edges,
+      },
+    });
     return;
   }
 
@@ -706,7 +875,7 @@ function handleThreadRestored(ctx: DispatchContext, agentId: string, msgThreadId
     for (const m of restoredMessages) {
       if ((m.metadata)?._conversationSummary) continue;
       const role = m.role === 'user' ? 'user' : 'assistant';
-      const content = typeof m.content === 'string' ? m.content : '';
+      const content = contentToString(m.content);
       if (!content.trim()) continue;
       ctx.messages.push({
         id:        m.id || `restored_${ Date.now() }_${ Math.random().toString(36).slice(2, 6) }`,

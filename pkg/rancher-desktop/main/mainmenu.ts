@@ -5,7 +5,7 @@ import type { ConversationHistoryRecord } from '@pkg/agent/database/models/Conve
 import { VMBackend } from '@pkg/backend/backend';
 import { State } from '@pkg/backend/k8s';
 import mainEvents from '@pkg/main/mainEvents';
-import setupUpdate from '@pkg/main/update';
+import { updateManager } from '@pkg/main/update/UpdateManager';
 import Logging from '@pkg/utils/logging';
 import { openDockerDashboard, openLanguageModelSettings, openAudioSettings, openComputerUseSettings, openMain, getWindow, openUrlInApp } from '@pkg/window';
 import { openDashboard } from '@pkg/window/dashboard';
@@ -690,7 +690,7 @@ function getMacApplicationMenu(): MenuItem[] {
         {
           label: 'Check for Updates…',
           async click() {
-            await setupUpdate(true, false);
+            await updateManager.checkForUpdates('manual');
           },
         },
         { type: 'separator' },

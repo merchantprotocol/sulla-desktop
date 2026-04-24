@@ -250,11 +250,11 @@ export abstract class BaseTool<TState = any> {
   // Existing helpers
   // ─────────────────────────────────────────────────────────────
 
-  public sendChatMessage?: (content: string, kind?: string) => Promise<boolean>;
+  public sendChatMessage?: (content: string, kind?: string, extras?: Record<string, unknown>) => Promise<boolean>;
   public emitProgress?:    (data: any) => Promise<void>;
 
-  protected async emitMessage(content: string, kind = 'progress') {
-    return this.sendChatMessage?.(content, kind) ?? false;
+  protected async emitMessage(content: string, kind = 'progress', extras?: Record<string, unknown>) {
+    return this.sendChatMessage?.(content, kind, extras) ?? false;
   }
 
   protected async emitProgressUpdate(data: any) {
