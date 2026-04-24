@@ -1463,10 +1463,34 @@ useAgentBridge({
     sessionDir:      recording.value ? recorder.getSessionDir() : (lastSessionDir.value || null),
     error:           recorder.error.value || null,
   }),
-  'recorder.start': async() => {
+  'recorder.start': async(params) => {
     if (recording.value) {
       return { started: false, reason: 'already recording' };
     }
+
+    // Auto-acquire sources the agent asked for. Accepts:
+    //   screen:  true (primary display) | "source-id" from desktopCapturer
+    //   camera:  true (first camera)    | "deviceId"
+    //   mic:     true — start mic via the driver
+    //   speaker: true — start speaker loopback
+    // Any existing acquired streams are left alone if params don't mention them.
+    const wantScreen = params.screen;
+    if (wantScreen) {
+      const sourceId = typeof wantScreen === 'string' ? wantScreen : undefined;
+      await mediaSources.acquireScreen(sourceId);
+    }
+    const wantCamera = params.camera;
+    if (wantCamera) {
+      const deviceId = typeof wantCamera === 'string' ? wantCamera : undefined;
+      await mediaSources.acquireCamera(deviceId);
+    }
+    if (params.mic === true && !audioDriver.micRunning.value) {
+      await audioDriver.startMic();
+    }
+    if (params.speaker === true && !audioDriver.speakerRunning.value) {
+      await audioDriver.startSpeaker();
+    }
+
     // Reuse the same toggleRecord() the start button calls — same
     // disk-space check, same stream-gathering, same session/manifest
     // behavior. toggleRecord resolves statusMessage for errors.

@@ -20,7 +20,7 @@ import type {
   Artifact, ArtifactKind, WorkflowPayload, HtmlPayload, CodePayload,
   Attachment,
   Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage, ToolMessage,
-  ToolApprovalMessage, PatchMessage, ChannelMessage, SubAgentMessage,
+  ToolApprovalMessage, PatchMessage, PatchRevertMeta, ChannelMessage, SubAgentMessage,
   CitationMessage, MemoryMessage, ProactiveMessage, HtmlMessage, ErrorMessage,
   ModalState, ModelDescriptor, SidebarState, ConnectionState,
   PopoverState, SlashCommand, MentionTarget,
@@ -405,15 +405,57 @@ export class ChatController {
     if (!msg || msg.kind !== 'patch') return;
     this.updateMessage<PatchMessage>(id, { state: 'rejected' });
   }
+  /**
+   * Ask the main process to revert a post-hoc patch (undo the Edit/Write that
+   * produced it) and flip the PatchMessage to 'rejected' on success.
+   * No-op for patches without `revertMeta`. Throws if the IPC call fails so
+   * the PatchBlock can restore its button state.
+   */
+  async revertPatch(id: MessageId, revertMeta: PatchRevertMeta): Promise<void> {
+    const msg = this.thread.value.messages.find(m => m.id === id);
+    if (!msg || msg.kind !== 'patch') return;
+
+    // Dynamic import avoids pulling electron/ipcRenderer into the main
+    // controller module — keeps the unit tests (which run without Electron)
+    // hermetic. The import only fires when a user actually clicks Revert.
+    const { ipcRenderer } = await import('@pkg/utils/ipcRenderer');
+    const result = await ipcRenderer.invoke('patch:revert' as any, revertMeta) as
+      | { ok: true }
+      | { ok: false; error: string };
+
+    if (!result?.ok) {
+      throw new Error(result?.error || 'revert failed');
+    }
+    this.updateMessage<PatchMessage>(id, { state: 'rejected' });
+  }
 
   // ─── Tool approval ──────────────────────────────────────────────
-  approveTool(id: MessageId): void {
-    this.updateMessage<ToolApprovalMessage>(id, { decision: 'approved' });
-    this.transitionRun({ type: 'approvalResolved' });
+  // Flips the transcript card's `decision` and fans out a bus event so
+  // the outer app can forward the resolution to whichever backend piece
+  // is awaiting it (via ipcRenderer.invoke('approval:resolve')). The
+  // controller itself stays transport-free.
+  approveTool(id: MessageId, note?: string): void {
+    this.resolveToolApproval(id, 'approved', note);
   }
-  denyTool(id: MessageId): void {
-    this.updateMessage<ToolApprovalMessage>(id, { decision: 'denied' });
+  denyTool(id: MessageId, note?: string): void {
+    this.resolveToolApproval(id, 'denied', note);
+  }
+  private resolveToolApproval(id: MessageId, decision: 'approved' | 'denied', note?: string): void {
+    const msg = this.thread.value.messages.find(m => m.id === id);
+    if (!msg || msg.kind !== 'tool_approval') return;
+    const approvalMsg = msg as ToolApprovalMessage;
+    this.updateMessage<ToolApprovalMessage>(id, { decision });
     this.transitionRun({ type: 'approvalResolved' });
+    if (approvalMsg.approvalId) {
+      this.bus.emit({
+        kind:       'toolApprovalResolved',
+        threadId:   this.thread.value.id,
+        messageId:  id,
+        approvalId: approvalMsg.approvalId,
+        decision,
+        note,
+      });
+    }
   }
 
   // ─── Attachments ────────────────────────────────────────────────

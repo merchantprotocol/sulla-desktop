@@ -250,26 +250,39 @@ export class PlaybookController<TState = any> {
       return state;
     }
 
-    // External stop request via `sulla workflow/stop_workflow`. Cooperative —
-    // we read a Redis flag keyed by executionId here, and if set, release the
-    // workflow as aborted. See tools/workflow/stop_workflow.ts.
+    // External stop/pause request via `sulla meta/stop_workflow` or
+    // `sulla meta/pause_workflow`. Cooperative — we read Redis flags
+    // keyed by executionId and honor them on each frontier tick.
     if (playbook.executionId) {
       try {
         const { redisClient } = await import('../database/RedisClient');
-        const { stopKey } = await import('../tools/workflow/stop_workflow');
-        const reason = await redisClient.get(stopKey(playbook.executionId));
-        if (reason) {
-          console.log(`[PlaybookController] External stop requested for ${ playbook.executionId }: ${ reason }`);
-          playbookLog('external_stop', { reason, workflowId: playbook.workflowId, executionId: playbook.executionId });
-          this.emitPlaybookEvent(state, 'workflow_aborted', { reason });
+        const { stopKey }  = await import('../tools/workflow/stop_workflow');
+        const { pauseKey } = await import('../tools/workflow/pause_workflow');
+
+        const stopReason = await redisClient.get(stopKey(playbook.executionId));
+        if (stopReason) {
+          console.log(`[PlaybookController] External stop requested for ${ playbook.executionId }: ${ stopReason }`);
+          playbookLog('external_stop', { reason: stopReason, workflowId: playbook.workflowId, executionId: playbook.executionId });
+          this.emitPlaybookEvent(state, 'workflow_aborted', { reason: stopReason });
           this.pendingSubAgents.clear();
           await redisClient.del(stopKey(playbook.executionId));
-          state = await this.releaseWorkflow(state, playbook, 'failed', `Stopped by user: ${ reason }`);
+          state = await this.releaseWorkflow(state, playbook, 'failed', `Stopped by user: ${ stopReason }`);
+          return state;
+        }
+
+        const pauseReason = await redisClient.get(pauseKey(playbook.executionId));
+        if (pauseReason) {
+          console.log(`[PlaybookController] External pause requested for ${ playbook.executionId }: ${ pauseReason }`);
+          playbookLog('external_pause', { reason: pauseReason, workflowId: playbook.workflowId, executionId: playbook.executionId });
+          this.emitPlaybookEvent(state, 'workflow_paused', { reason: pauseReason });
+          // Do NOT release — just return without advancing the frontier.
+          // The next frontier tick will re-check and, once resume_workflow
+          // clears the flag, the walker resumes. In-flight work continues.
           return state;
         }
       } catch (err) {
         // Redis flakiness shouldn't crash the workflow — just log and continue.
-        console.warn('[PlaybookController] external-stop check failed:', err);
+        console.warn('[PlaybookController] external stop/pause check failed:', err);
       }
     }
 

@@ -1347,7 +1347,25 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this.wsChatMessage(state, message, 'assistant', 'thinking');
     };
 
-    const reply = await this.llm!.chatStream(messages, { onToken, onActivity }, { ...options, state });
+    // File patch channel — ClaudeCodeService calls this when its inner agent
+    // loop performs an Edit/Write. We surface each as a 'file_patch' chat
+    // message so PatchBlock.vue renders an inline unified diff in the
+    // transcript. Flush the open streaming bubble first, same as onActivity,
+    // so the patch block lands between text segments rather than mid-stream.
+    const onFilePatch = (info: import('../util/linePatch').FilePatchInfo): void => {
+      state.metadata.lastActivityMs = Date.now();
+      if (!isVoiceMode && contentBuffer.trim()) {
+        const stripped = stripProtocolTagsStreaming(contentBuffer);
+        if (stripped.trim()) {
+          this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+        }
+        this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+        contentBuffer = '';
+      }
+      this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
+    };
+
+    const reply = await this.llm!.chatStream(messages, { onToken, onActivity, onFilePatch }, { ...options, state });
 
     // End-of-turn flush. `onActivity` only fires segment boundaries while
     // the model is still producing activity; a stream that ends naturally
@@ -1504,7 +1522,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // `extras` with intentionally empty content. Don't drop them here —
     // the renderer needs them to close bubbles or render cards.
     const isSentinelKind = kind === 'streaming_complete' || kind === 'thinking_complete';
-    const isStructuredKind = kind === 'citation' || kind === 'workflow_document';
+    const isStructuredKind = kind === 'citation' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'file_patch';
     if (!content && !isSentinelKind && !isStructuredKind) {
       return false;
     }

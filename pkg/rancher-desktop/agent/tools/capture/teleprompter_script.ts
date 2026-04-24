@@ -3,6 +3,7 @@ import {
   openTeleprompterWindow,
   sendPosition,
   sendScript,
+  whenTeleprompterReady,
 } from '@pkg/main/teleprompterWindow';
 
 import { BaseTool, ToolResponse } from '../base';
@@ -29,7 +30,12 @@ export class TeleprompterScriptWorker extends BaseTool {
       return { successBoolean: false, responseString: 'text contained no words.' };
     }
 
-    if (!isTeleprompterOpen()) openTeleprompterWindow();
+    const wasOpen = isTeleprompterOpen();
+    if (!wasOpen) openTeleprompterWindow();
+    // Wait for did-finish-load before sending the script — otherwise the
+    // renderer hasn't registered its IPC handlers yet and webContents.send
+    // is silently dropped.
+    if (!wasOpen) await whenTeleprompterReady();
     sendScript(words, Math.min(index, words.length - 1));
     if (index > 0) sendPosition(Math.min(index, words.length - 1));
 

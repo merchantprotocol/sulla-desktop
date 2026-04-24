@@ -58,13 +58,30 @@ Pairing lets Sulla Mobile send work to a paired Cloud (or Desktop) instance. The
 - User already has Anthropic/OpenAI keys
 - Cost-sensitive (Desktop is free)
 
+## Signup & account provisioning
+
+Shipped. The user signs up / signs in via the **SullaCloudCard** Vue component — surfaces in:
+- `pkg/rancher-desktop/components/account/SullaCloudCard.vue` — the card itself (sign-in / sign-out, displays tier + status)
+- `pkg/rancher-desktop/components/routines/MarketplaceTab.vue` — embeds the card at the top of Marketplace
+
+Once signed in, the card fetches status (tier, minutes, pairing) and keeps itself in sync. The agent can direct the user there via:
+```bash
+sulla ui/open_tab '{"mode":"marketplace"}'
+```
+(and the SullaCloudCard is visible on that tab).
+
+For settings-window scope:
+```bash
+sulla ui/open_tab '{"mode":"settings"}'
+```
+
 ## What the agent does NOT have
 
-- No tool to provision a Cloud account
-- No tool to upgrade tier from inside the app (sign-in / sign-out exists via SullaCloudCard UI in settings, but billing/tier change is out-of-band)
-- No live billing or usage telemetry tools
+- No agent-tool to perform the signup itself — the user clicks through the card
+- No live billing / usage API (Cloud backend doesn't expose one yet)
+- No tier-upgrade flow tool (user handles in the card UI)
 
-If a user wants to sign up, point them to the SullaCloudCard in settings (sign-in flow exists) and let Jonathon handle the rest.
+If a user asks about Cloud features, point them at the Marketplace tab — the card shows everything relevant.
 
 ## Hard "do nots"
 

@@ -37,6 +37,18 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./remove_observational_memory'),
   },
   {
+    name:        'request_user_input',
+    description: 'Pause and ask the user for an approve/deny decision before proceeding. Renders a prompt card in the chat transcript and BLOCKS until the user clicks Approve or Deny (or the timeout elapses — default 5 min). Returns {decision: "approved" | "denied" | "timed_out", note?}. Use whenever you need explicit consent for a risky or reversible action, or when the next step is ambiguous and you want the user to pick. This is a binary gate, not a free-form question-asker.',
+    category:    'meta',
+    schemaDef:   {
+      question:  { type: 'string', description: 'One-line user-facing summary of what you want approval for. Phrase it as a neutral summary, not a loaded yes/no.' },
+      command:   { type: 'string', optional: true, description: 'The exact action / command / payload being approved. Rendered in mono-font for transparency. Omit when the action is obvious from the question.' },
+      timeoutMs: { type: 'number', optional: true, description: 'Timeout in ms (min 5000, max 1800000, default 300000 = 5 min). On timeout resolves as "timed_out" — treat as soft deny.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./request_user_input'),
+  },
+  {
     name:        'file_search',
     description: 'Fast semantic search across any directory PLUS the bundled sulla-docs (agent + tool reference) by default. Faster and more comprehensive than find or grep — use this as your default search tool. Searches file contents and filenames using QMD vector indexing. Automatically indexes on first search. Pass includeSullaDocs:false to skip the sulla-docs second pass.',
     category:    'meta',

@@ -69,6 +69,12 @@ export class LocalStoragePersister implements ThreadPersister {
     } catch { return null; }
   }
 
+  /** Forget the tab→thread pointer. Used when the target thread is missing
+   *  so subsequent reopens don't keep chasing a stale id. */
+  clearTabThread(tabId: string): void {
+    try { localStorage.removeItem(TAB_KEY(tabId)); } catch { /* ignore */ }
+  }
+
   private readIndex(): ThreadId[] {
     try {
       const raw = localStorage.getItem(INDEX_KEY);

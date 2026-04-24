@@ -6,12 +6,13 @@ Searchable reference for agents running inside Lima. All files are at:
 Search: `grep -r "keyword" <path-to-this-dir>/`
 
 **Start here when a user request comes in:**
-- [`tools/inventory.md`](tools/inventory.md) — master list of every tool the agent can call (~162 tools, verified)
+- [`tools/inventory.md`](tools/inventory.md) — master list of every tool the agent can call (~183 tools)
 - [`agent-patterns/user-stories.md`](agent-patterns/user-stories.md) — request → action playbook (covers all subsystems)
 - [`agent-patterns/known-gaps.md`](agent-patterns/known-gaps.md) — what the agent CAN'T do today (don't fake it)
 - [`agent-patterns/validation.md`](agent-patterns/validation.md) — never-ship-unverified contract; always validate artifacts before reporting done
 - [`agent-patterns/mentions.md`](agent-patterns/mentions.md) — how to interpret `@routine:…`, `@function:…`, `@project:…` tokens in user messages
 - [`agent-patterns/citations.md`](agent-patterns/citations.md) — how to emit `<citations>` blocks that render as source cards
+- [`agent-patterns/user-consent.md`](agent-patterns/user-consent.md) — when to call `meta/request_user_input` to pause mid-turn and get explicit approve/deny from the user
 - [`verification-2026-04-23.md`](verification-2026-04-23.md) — what was verified live against the running system, what was wrong, what got fixed
 
 ## environment/
@@ -19,8 +20,9 @@ Search: `grep -r "keyword" <path-to-this-dir>/`
 - `paths.md` — ~/sulla/ tree, app resources path, Lima paths, DB ports
 - `communication.md` — WebSocket channels, IPC, exec tool, inter-agent messaging
 - `docker.md` — Lima vs host Docker, pre-installed containers, docker_* and lima_* tools
-- `heartbeat.md` — Autonomous heartbeat agent: cadence, tick lifecycle, status, history
+- `heartbeat.md` — Autonomous heartbeat agent: cadence, tick lifecycle, status, history, time-window config
 - `kubernetes.md` — k3s built into Lima, kubectl_* and rdctl_* tools, no safety rails
+- `updates.md` — In-app updater (electron-updater + Longhorn provider, release channels, dev-mode config)
 
 ## tools/
 - `inventory.md` — **MASTER LIST** of every tool, grouped by category, one-line each
@@ -64,6 +66,7 @@ Search: `grep -r "keyword" <path-to-this-dir>/`
 - `validation.md` — ⚠️ READ THIS: never-ship-unverified contract; which validator runs for which artifact; validate-before-save pattern
 - `citations.md` — The `<citations><source …/></citations>` XML protocol; when to emit, exact shape, rules against hallucinated sources
 - `mentions.md` — `@kind:slug` tokens in user messages (routine / skill / function / recipe / integration / workflow / project); how to resolve each
+- `user-consent.md` — 🚦 When to call `meta/request_user_input` vs when to charge ahead vs when to end the turn blocked; how to phrase the approval card
 
 ## marketplace/
 - `overview.md` — Recipes (Docker compose), catalog, install/uninstall, extension UIs

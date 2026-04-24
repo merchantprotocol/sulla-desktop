@@ -2,6 +2,7 @@ import { APP_REGISTRY } from '../../../main/computerUseSettings/appRegistry';
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 
 import { BaseTool, ToolResponse } from '../base';
+import { broadcastComputerUseSettingsChanged } from './_broadcast';
 
 /**
  * Flip on a Computer Use Settings target so subsequent applescript_execute
@@ -37,6 +38,7 @@ export class ComputerUseEnableWorker extends BaseTool {
 
     enabledApps[entry.bundleId] = true;
     await SullaSettingsModel.set('computerUse.enabledApps', JSON.stringify(enabledApps), 'string');
+    broadcastComputerUseSettingsChanged();
     return { successBoolean: true, responseString: `Enabled ${ entry.name } (${ entry.bundleId }).` };
   }
 }

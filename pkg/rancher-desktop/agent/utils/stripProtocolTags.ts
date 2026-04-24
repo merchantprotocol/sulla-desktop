@@ -24,6 +24,11 @@ const ABORT_WORKFLOW_RE = /<ABORT_WORKFLOW>([\s\S]*?)<\/ABORT_WORKFLOW>/gi;
 // a CitationRow in the transcript; never shown as visible text.
 const CITATIONS_RE = /<citations>([\s\S]*?)<\/citations>/gi;
 
+// Channel routing blocks — extracted by ChannelTagExtractor and dispatched
+// over IPC to the target agent. Defense-in-depth strip so a straggler
+// never leaks into user-visible content.
+const CHANNEL_RE = /<channel:[\w.-]+>([\s\S]*?)<\/channel:[\w.-]+>/gi;
+
 // Inner tags (can appear standalone if the LLM partially formats)
 const KEY_RESULT_RE = /<\/?KEY_RESULT>/gi;
 const BLOCKER_REASON_RE = /<\/?BLOCKER_REASON>/gi;
@@ -43,6 +48,7 @@ export function stripProtocolTags(text: string | null | undefined): string {
     .replace(AGENT_CONTINUE_RE, '')
     .replace(ABORT_WORKFLOW_RE, '')
     .replace(CITATIONS_RE, '')
+    .replace(CHANNEL_RE, '')
     .replace(SPEAK_RE, '')
     .replace(KEY_RESULT_RE, '')
     .replace(BLOCKER_REASON_RE, '')
@@ -56,7 +62,7 @@ export function stripProtocolTags(text: string | null | undefined): string {
  *  tag is an internal control payload the user must never see. The opening
  *  tag alone is a complete signal to stop rendering, even before the close
  *  arrives. */
-const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|speak|citations)\b/i;
+const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|speak|citations|channel:[\w.-]+)\b/i;
 
 /**
  * Streaming-aware strip. Runs the same pair-removal as `stripProtocolTags`

@@ -9,7 +9,7 @@ export const uiToolManifests: ToolManifest[] = [
       mode: {
         type:        'string',
         optional:    true,
-        description: 'Built-in view to open. One of: marketplace, vault, integrations, routines, history, secretary, chat, document, browser, welcome.',
+        description: 'Built-in view to open. One of: marketplace, vault, integrations, routines, history, secretary, chat, document, browser, welcome, settings. (settings opens the Preferences window, which lives outside the tab system.)',
       },
       url: {
         type:        'string',

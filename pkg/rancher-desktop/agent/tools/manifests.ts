@@ -18,6 +18,7 @@ import { kubectlToolManifests } from './kubectl/manifests';
 import { limaToolManifests } from './lima/manifests';
 import { marketplaceToolManifests } from './marketplace/manifests';
 import { metaToolManifests } from './meta/manifests';
+import { mobileToolManifests } from './mobile/manifests';
 import { notifyToolManifests } from './notify/manifests';
 import { pgToolManifests } from './pg/manifests';
 import { rdctlToolManifests } from './rdctl/manifests';
@@ -44,6 +45,7 @@ toolRegistry.registerManifests([
   ...limaToolManifests,
   ...marketplaceToolManifests,
   ...metaToolManifests,
+  ...mobileToolManifests,
   ...notifyToolManifests,
   ...pgToolManifests,
   ...rdctlToolManifests,

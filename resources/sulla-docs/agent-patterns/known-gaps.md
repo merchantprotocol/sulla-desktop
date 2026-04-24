@@ -10,54 +10,54 @@ Last verified against the codebase: 2026-04-23.
 
 ## UI Navigation (cross-cutting)
 
-**Resolved (2026-04-23):** [`sulla ui/open_tab`](../tools/ui.md) now bridges the renderer's `agent-command` IPC. All built-in views are openable from chat.
+**Resolved.** [`sulla ui/open_tab`](../tools/ui.md) bridges the renderer's `agent-command` IPC. All built-in views + the Settings window are openable from chat.
 
 | Request | Status | Notes |
 |---------|--------|-------|
-| ✅ "Open the marketplace" | `sulla ui/open_tab '{"mode":"marketplace"}'` | |
-| ✅ "Open my vault / integrations / routines / history / secretary" | `sulla ui/open_tab '{"mode":"<mode>"}'` | |
-| ✅ "Open Twenty CRM" | `sulla browser/tab '{"url":"..."}'` | extension web UIs use browser/tab |
-| 🟡 "Show me the specific workflow I just created" | `ui/open_tab '{"mode":"routines"}'` opens the index | per-item deep-link not exposed yet |
-| 🔴 "Open settings" | No tool | Settings is a separate window, not a tab mode |
-| 🔴 "Open Computer Use Settings" | No tool | Same |
+| ✅ Open the marketplace | `sulla ui/open_tab '{"mode":"marketplace"}'` | |
+| ✅ Open my vault / integrations / routines / history / secretary | `sulla ui/open_tab '{"mode":"<mode>"}'` | |
+| ✅ Open Settings | `sulla ui/open_tab '{"mode":"settings"}'` | Handled as the separate Preferences window |
+| ✅ Open Twenty CRM | `sulla browser/tab '{"url":"..."}'` | extension web UIs use browser/tab |
+| 🟡 Show me the specific workflow I just created | `ui/open_tab '{"mode":"routines"}'` opens the index | per-item deep-link not exposed yet |
+| 🟡 Open Computer Use Settings pane deep-link | `ui/open_tab '{"mode":"settings"}'` opens Settings | can't pre-select the Computer Use pane |
 
 ---
 
 ## Workflows
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Stop / cancel a running workflow | 🔴 | No public stop tool. Only the orchestrating agent can self-abort via `⛔ ABORT`. Hard kill = restart Desktop |
-| Show what my workflow is doing right now | 🔴 | Only post-hoc checkpoint trail; no live state inspection |
-| Pause this workflow, I'll resume later | 🟡 | No pause primitive |
-| Test a workflow without running it for real | 🟡 | No dry-run / mock mode |
-| Show me the workflow visually | 🟡 | No CLI graph rendering; must open canvas (which is its own gap above) |
-| List my workflows / what's scheduled | 🟢 | Works but requires direct model/service calls; no CLI tool |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Stop / cancel a running workflow | `sulla meta/stop_workflow '{"executionId":"..."}'` | Cooperative (Redis flag honored at next frontier tick) |
+| ✅ Pause this workflow, I'll resume later | `sulla meta/pause_workflow` + `sulla meta/resume_workflow` | Cooperative; in-flight work not cancelled |
+| ✅ Test a workflow without running it for real | `sulla meta/dry_run_workflow '{"slug":"..."}'` | Static walk; reports execution order, orphans, ambiguous router branches |
+| 🔴 Show what my workflow is doing right now | — | Still only post-hoc checkpoint trail; no live per-node state stream |
+| 🟡 Show me the workflow visually | — | Open the canvas via `ui/open_tab '{"mode":"routines"}'`; no CLI rendering |
+| 🟢 List my workflows / what's scheduled | — | Works but requires direct model/service calls; no CLI tool |
 
 ---
 
 ## Functions
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Show me past runs of function X | 🔴 | No persistent run history |
-| Why did my function fail yesterday? | 🔴 | Logs are ephemeral (HTTP response only) |
-| Schedule this function to run daily | 🟡 | Wrap it in a workflow with a `schedule` trigger |
-| Run in the background / async | 🟡 | `function_run` blocks |
-| Stream the output | 🟡 | No streaming |
-| ✅ Scaffold a function from a template | `sulla marketplace/scaffold '{"kind":"function","slug":"..."}'` | shipped |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Show me past runs of function X | `sulla function/function_runs '{"slug":"..."}'` | New `function_runs` table populated on every invocation |
+| ✅ Why did my function fail yesterday? | `sulla function/function_runs '{"slug":"...","only_failures":true,"verbose":true}'` | error_stage + error captured per run |
+| ✅ Scaffold a function from a template | `sulla marketplace/scaffold '{"kind":"function","slug":"..."}'` | |
+| 🟡 Schedule this function to run daily | — | Wrap in a workflow with a `schedule` trigger |
+| 🟡 Run in the background / async | — | `function_run` blocks synchronously |
+| 🟡 Stream the output | — | No streaming; full trace returned at completion |
 
 ---
 
 ## Vault
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Connect my Slack/etc via OAuth | 🔴 | Agent can't run OAuth. Direct user to Settings |
-| Delete this credential | 🔴 | No dedicated delete tool. Blank fields manually |
-| Rotate this API key | 🟡 | No rotation tool |
-| Import from 1Password / LastPass | 🟡 | No import |
-| Export all my credentials for backup | 🟢 | No export (defensible, but users will ask) |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Delete this credential | `sulla vault/vault_delete_credential '{"account_type":"...","property":"...","confirm":true}'` | Refuses without `confirm:true` |
+| 🔴 Connect my Slack/etc via OAuth | — | Agent can't run OAuth; direct user to Settings |
+| 🟡 Rotate this API key | — | No dedicated rotation tool |
+| 🟡 Import from 1Password / LastPass | — | No import |
+| 🟢 Export all my credentials for backup | — | No export (defensible) |
 
 ---
 
@@ -94,23 +94,23 @@ The `marketplace/*` (10 tools, generic across 6 kinds: skill / function / workfl
 
 ## Notifications
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Notify my phone too | 🔴 | `notify_user` is desktop-only. Mobile gets push from the receptionist backend, not from `notify_user` |
-| Reply directly from notification | 🔴 | No action buttons |
-| Send me a text / email when X | 🟡 | No SMS/email channel |
-| Show me missed notifications | 🟡 | No notification history |
-| Snooze | 🟢 | No primitive |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Notify my phone too | `sulla notify/notify_user '{"title":"...","message":"...","targets":["desktop","mobile"]}'` | Mobile leg calls `POST /push/{user_id}` on sulla-workers (route needs to be deployed on the backend) |
+| ✅ Show me missed notifications | `sulla notify/history '{"only_failures":true}'` | New `notifications` table records every call with delivery status |
+| 🔴 Reply directly from notification | — | No action buttons |
+| 🟡 Send me a text / email when X | — | No SMS/email channel |
+| 🟢 Snooze | — | No primitive |
 
 ---
 
 ## Heartbeat
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Only run between 9am–5pm weekdays | 🟡 | No time-window config; all-or-nothing |
-| Disable just one heartbeat behavior | 🟡 | No per-behavior toggle |
-| Standing goal that survives restart | 🟢 | Only via observational memory, not first-class |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Only run between 9am–5pm weekdays | Set `heartbeatWindow` setting: `{days:[1,2,3,4,5],startHour:9,endHour:17,tz:"America/Los_Angeles"}` | HeartbeatService respects days + hour range; wraps midnight if start > end |
+| 🟡 Disable just one heartbeat behavior | — | Still all-or-nothing; no per-behavior toggle |
+| 🟢 Standing goal that survives restart | — | Only via observational memory |
 
 ---
 
@@ -152,13 +152,13 @@ The `marketplace/*` (10 tools, generic across 6 kinds: skill / function / workfl
 
 ## AppleScript
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Run shell from inside AppleScript (`do shell script`) | 🔴 | **Blocked for security** — won't change |
-| Use `with administrator privileges` | 🔴 | **Blocked for security** — won't change |
-| AppleScript for an app not in the allowlist | 🟡 | Add the app to `pkg/rancher-desktop/main/computerUseSettings/appRegistry.ts` first |
-| Open Computer Use Settings UI from chat | 🟡 | UI navigation gap — same as marketplace/vault/etc. |
-| Audit log of past AppleScript executions | 🟢 | No log surface today |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Audit log of past AppleScript executions | `sulla applescript/audit_log '{"only_failures":true}'` | Every applescript_execute now writes a row to `applescript_audit` (target_app, script, success, duration, error) |
+| 🔴 Run shell from inside AppleScript (`do shell script`) | — | **Blocked for security** — won't change |
+| 🔴 Use `with administrator privileges` | — | **Blocked for security** — won't change |
+| 🟡 AppleScript for an app not in the allowlist | — | Add the app to `pkg/rancher-desktop/main/computerUseSettings/appRegistry.ts` first |
+| 🟡 Open Computer Use Settings UI from chat | — | Settings window opens via `ui/open_tab '{"mode":"settings"}'` but not deep-linked to the Computer Use pane |
 
 ---
 
@@ -199,49 +199,50 @@ Secretary Mode itself is **shipped and works** — but it's user-controlled, not
 
 ## Sulla Mobile (paired iOS app)
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Pair my phone via QR code | 🔴 | Phase 2, not yet. Manual: sign in on phone with the same account |
-| Send a file from desktop to phone | 🔴 | No transfer mechanism |
-| Sync calendar to mobile | 🔴 | Mobile has its own server-side data; no shared calendar today |
-| Send a notification to my phone | 🔴 | `notify_user` is desktop only. Mobile push comes from the receptionist backend, not the agent |
-| "Show me my last call from mobile" | 🟡 | Agent can hit the mobile API via the same Cloudflare Workers backend (auth needed) but no dedicated tool wraps it |
-| Take over a live call from desktop | 🟡 | Only the phone can. No desktop-side takeover |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Show me my last call from mobile | `sulla mobile/list_calls` + `sulla mobile/get_call '{"id":"..."}'` | Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token` |
+| ✅ Show me my leads | `sulla mobile/list_leads` | Inbox contents with urgency/qualified filters |
+| ✅ Show me my messages | `sulla mobile/list_messages` | SMS + voicemail transcripts |
+| ✅ Send a notification to my phone | `sulla notify/notify_user '{"targets":["mobile"]}'` | sulla-workers `/push/{user_id}` leg needed |
+| 🔴 Pair my phone via QR code | — | Phase 2 of pairing; manual (same account sign-in) today |
+| 🔴 Send a file from desktop to phone | — | No transfer mechanism |
+| 🔴 Sync calendar to mobile | — | Mobile has its own server-side data; no shared calendar today |
+| 🟡 Take over a live call from desktop | — | Only the phone can |
 
 ---
 
 ## Sulla Cloud
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Sign me up for Cloud / Enterprise Gateway | 🔴 | No provisioning tool. Out-of-band (Jonathon) |
-| Show me my Cloud usage / bill | 🔴 | No billing tool |
-| Pause / cancel my Cloud subscription | 🟡 | No |
-| Migrate my Desktop setup to Cloud | 🟡 | No migration tool |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Sign me up for Cloud | SullaCloudCard UI (Marketplace tab) | Point user with `sulla ui/open_tab '{"mode":"marketplace"}'` |
+| 🔴 Show me my Cloud usage / bill | — | Cloud doesn't expose a usage API yet |
+| 🟡 Pause / cancel my Cloud subscription | — | Tier changes happen in the card UI |
+| 🟡 Migrate my Desktop setup to Cloud | — | No migration tool |
 
 ---
 
 ## GitHub
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Merge this PR | 🔴 | `github_merge_pr` does not exist. Planned in Phase 3. |
-| Show CI status for this branch | 🟡 | No Checks API tool |
-| Trigger a GitHub Action | 🟡 | No |
-| AI-review this PR | 🟢 | No review tool — would have to spawn an agent against the diff manually |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Merge this PR | `sulla github/github_merge_pr '{"owner":"...","repo":"...","pull_number":N,"confirm":true}'` | merge / squash / rebase methods |
+| ✅ Show CI status for this branch | `sulla github/github_check_runs '{"owner":"...","repo":"...","ref":"..."}'` | Lists runs with status + conclusion + timing |
+| ✅ Trigger a GitHub Action | `sulla github/github_trigger_workflow_run '{"owner":"...","repo":"...","workflow_id":"ci.yml","inputs":{...}}'` | Requires workflow_dispatch trigger in the target workflow |
+| 🟢 AI-review this PR | — | No review tool; spawn an agent against the diff manually |
 
 ---
 
 ## General / Cross-cutting
 
-| Request | Severity | Status |
-|---------|----------|--------|
-| Update Sulla Desktop | 🔴 | Likely no in-app updater; download new DMG manually. Verify before claiming |
-| Backup my whole Sulla setup | 🔴 | No backup tool. `~/sulla/` + `~/.sulla/` + Postgres dump = manual |
-| Migrate to a new machine | 🔴 | No migration tool |
-| Why is Sulla slow / what's running? | 🟡 | No perf inspection beyond `docker_ps` |
-| Show me my full conversation history | 🟡 | `browser/search_conversations` exists but unclear scope |
-| Export my memory / observations | 🟢 | No export tool |
+| Request | Status | Notes |
+|---------|--------|-------|
+| ✅ Update Sulla Desktop | electron-updater + Longhorn provider | Runs automatically; see [`environment/updates.md`](../environment/updates.md). No agent tool yet — user controls install via the Updates UI. |
+| 🔴 Backup my whole Sulla setup | — | No backup tool. `~/sulla/` + `~/.sulla/` + Postgres dump = manual |
+| 🟡 Why is Sulla slow / what's running? | — | `docker_ps` + `rdctl_info` cover the basics |
+| 🟡 Show me my full conversation history | `browser/search_conversations` | Scope includes chats / browser visits / workflow executions |
+| 🟢 Export my memory / observations | — | No export tool |
 
 ---
 
@@ -257,15 +258,23 @@ Secretary Mode itself is **shipped and works** — but it's user-controlled, not
 
 ---
 
-## Top 5 highest-leverage tools to build
+## Top 5 highest-leverage tools (all shipped)
 
-If we ship these, the gap surface shrinks dramatically:
+All five closed:
 
-1. ~~**`ui/open_tab`**~~ — ✅ shipped 2026-04-23
-2. **Workflow stop/cancel tool** — current state forces a Desktop restart
-3. **Function run history** — debugging is painful without it
-4. **Vault delete-credential tool** — UI-only today
-5. **Mobile-routed `notify_user`** — extends notifications to the paired phone via the existing Cloudflare relay
+1. ~~`ui/open_tab`~~ — ✅ shipped
+2. ~~Workflow stop/cancel~~ — ✅ shipped (`meta/stop_workflow` + pause/resume/dry_run)
+3. ~~Function run history~~ — ✅ shipped (`function_runs` table + `function/function_runs` tool)
+4. ~~Vault delete-credential~~ — ✅ shipped (`vault/vault_delete_credential`)
+5. ~~Mobile-routed `notify_user`~~ — ✅ shipped (desktop leg + mobile leg; needs sulla-workers `/push/{user_id}` route deployed for the mobile leg to actually land)
+
+## Next batch — biggest real gaps still open
+
+1. **Live workflow state stream** — "what's the workflow doing right now?" (only post-hoc checkpoints today)
+2. **Per-behavior heartbeat toggles** — currently all-or-nothing
+3. **Marketplace cloud worker** (sulla-cloud) — so publish / unpublish actually work end-to-end
+4. **Mobile push relay** (sulla-workers) — the `/push/{user_id}` leg for targets:["mobile"]
+5. **OAuth-flow tooling for integrations** — "connect my Slack" without leaving chat
 
 ---
 

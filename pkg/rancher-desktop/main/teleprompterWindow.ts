@@ -98,6 +98,26 @@ export function openTeleprompterWindow(): BrowserWindow {
 }
 
 /**
+ * Resolve when the teleprompter's webContents has finished loading (or
+ * timed out). Callers that send IPC messages to the window immediately
+ * after opening it must await this first, otherwise did-finish-load
+ * hasn't fired yet and webContents.send() is dropped on the floor.
+ */
+export function whenTeleprompterReady(timeoutMs = 3_000): Promise<void> {
+  if (!prompterWindow || prompterWindow.isDestroyed()) {
+    return Promise.reject(new Error('Teleprompter is not open.'));
+  }
+  const wc = prompterWindow.webContents;
+  if (!wc.isLoading() && wc.getURL()) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = () => resolve();
+    wc.once('did-finish-load', done);
+    wc.once('did-fail-load', done);
+    setTimeout(done, timeoutMs);
+  });
+}
+
+/**
  * Close the floating teleprompter window.
  */
 export function closeTeleprompterWindow(): void {

@@ -35,10 +35,17 @@
         <div
           v-for="t in group.items"
           :key="t.id"
-          :class="['history-item', { active: t.id === activeId }]"
-          @click="$emit('activate', t.id)"
+          :class="['history-item', {
+            active:    t.id === activeId,
+            archived: !isRehydratable(t.id),
+          }]"
+          :title="isRehydratable(t.id) ? '' : 'Archived — conversation text not available in this session'"
+          @click="onRowClick(t.id)"
         >
-          <span>{{ t.title || 'Untitled' }}</span>
+          <span class="row-title">
+            <span v-if="!isRehydratable(t.id)" class="archived-mark" aria-hidden="true">◌</span>
+            {{ t.title || 'Untitled' }}
+          </span>
           <span class="date">{{ formatTime(t.updatedAt) }}</span>
         </div>
       </template>
@@ -64,14 +71,32 @@ const props = defineProps<{
   activeId: ThreadId | null;
   /** Pinned messages across all open/persisted threads. Rendered above the recent list. */
   pinned?:  readonly PinnedEntry[];
+  /**
+   * Ids that can be fully rehydrated (in-memory controllers + LocalStoragePersister
+   * snapshots). Threads sourced only from the Postgres conversation_history table
+   * aren't in this set and get rendered as archived / dim with a no-op click.
+   */
+  rehydratableIds?: ReadonlySet<ThreadId>;
 }>();
-defineEmits<{
+const emit = defineEmits<{
   (e: 'activate', id: ThreadId): void;
   (e: 'jump-to', target: { threadId: ThreadId; messageId: MessageId }): void;
+  (e: 'archived-click', id: ThreadId): void;
 }>();
 
 // Defaulted locally because readonly array defaults aren't friendly in props.
 const pinned = computed<readonly PinnedEntry[]>(() => props.pinned ?? []);
+
+function isRehydratable(id: ThreadId): boolean {
+  // When the parent didn't pass a set, assume everything is rehydratable
+  // so we don't regress existing behavior.
+  return !props.rehydratableIds || props.rehydratableIds.has(id);
+}
+
+function onRowClick(id: ThreadId): void {
+  if (isRehydratable(id)) emit('activate', id);
+  else emit('archived-click', id);
+}
 
 function dayKey(t: number): string {
   const now = new Date();
@@ -136,6 +161,22 @@ const grouped = computed(() => {
 }
 .history-item:hover { background: rgba(80, 150, 179, 0.08); color: var(--read-2); }
 .history-item.active { background: rgba(80, 150, 179, 0.14); color: var(--read-1); }
+.history-item.archived {
+  opacity: 0.55;
+  cursor: default;
+}
+.history-item.archived:hover {
+  background: transparent;
+  color: var(--read-3);
+}
+.archived-mark {
+  color: var(--read-5);
+  margin-right: 6px;
+  font-style: normal;
+  font-size: 10px;
+  vertical-align: 1px;
+}
+.row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .history-item .date {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em;
   color: var(--read-5); font-style: normal; margin-left: auto;

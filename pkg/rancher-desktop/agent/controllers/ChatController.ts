@@ -18,6 +18,7 @@
  *   intake    → [ThinkingExtractor, IntakeExtractor]
  */
 
+import { ChannelTagExtractor } from './ChannelTagExtractor';
 import { CitationExtractor } from './CitationExtractor';
 import { IntakeExtractor } from './IntakeExtractor';
 import { SecretaryExtractor, type SecretaryResultFn } from './SecretaryExtractor';
@@ -60,6 +61,7 @@ export class ChatController {
   // Keep references to mode-specific extractors for reuse
   private thinkingExtractor:  ThinkingExtractor;
   private citationExtractor:  CitationExtractor;
+  private channelExtractor:   ChannelTagExtractor;
   private speakExtractor:     SpeakExtractor;
   private secretaryExtractor: SecretaryExtractor;
   private intakeExtractor:    IntakeExtractor;
@@ -73,12 +75,15 @@ export class ChatController {
     // Create extractor instances
     this.thinkingExtractor = new ThinkingExtractor(config.sendChatMessage);
     this.citationExtractor = new CitationExtractor(config.sendChatMessage);
+    this.channelExtractor = new ChannelTagExtractor();
     this.speakExtractor = new SpeakExtractor(config.dispatch, config.voiceLog);
     this.secretaryExtractor = new SecretaryExtractor(config.onSecretaryResult ?? (() => {}));
     this.intakeExtractor = new IntakeExtractor();
 
-    // Default mode: text (ThinkingExtractor + CitationExtractor — always on)
-    this.extractors = [this.thinkingExtractor, this.citationExtractor];
+    // Default mode: text. Citation + Channel extractors are always on —
+    // citations are useful everywhere, and <channel:…> tags are how
+    // agents talk to each other (infrastructure, not a mode feature).
+    this.extractors = [this.thinkingExtractor, this.citationExtractor, this.channelExtractor];
   }
 
   // ─── Mode Management ───────────────────────────────────────
@@ -91,20 +96,22 @@ export class ChatController {
     if (this.mode === mode) return;
     this.mode = mode;
 
-    // CitationExtractor is always on — citations are useful in every mode.
+    // CitationExtractor + ChannelTagExtractor are always on — citations
+    // are useful in every mode, and channel routing is inter-agent
+    // infrastructure (not a mode feature).
     switch (mode) {
     case 'voice':
-      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.speakExtractor];
+      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.channelExtractor, this.speakExtractor];
       break;
     case 'secretary':
-      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.secretaryExtractor];
+      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.channelExtractor, this.secretaryExtractor];
       break;
     case 'intake':
-      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.intakeExtractor];
+      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.channelExtractor, this.intakeExtractor];
       break;
     case 'text':
     default:
-      this.extractors = [this.thinkingExtractor, this.citationExtractor];
+      this.extractors = [this.thinkingExtractor, this.citationExtractor, this.channelExtractor];
       break;
     }
   }

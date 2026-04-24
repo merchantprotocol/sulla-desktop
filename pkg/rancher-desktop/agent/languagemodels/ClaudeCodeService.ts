@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
+import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { resolveLimactlPath, resolveLimaHome } from '../tools/util/CommandRunner';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
@@ -541,6 +542,63 @@ export class ClaudeCodeService extends BaseLanguageModel {
         try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
       };
 
+      // File patches we've already surfaced this turn. Keyed by
+      // `${name}:${file_path}:${hash}` so the same edit fired via both
+      // content_block_stop and the whole-message assistant event only
+      // produces one PatchBlock in chat.
+      const emittedPatches = new Set<string>();
+
+      /**
+       * Attempt to surface a FilePatchInfo for an Edit/Write tool_use.
+       * Called at content_block_stop (best moment — full input, file not
+       * yet mutated for Writes). Safe to call twice; dedup via hash.
+       */
+      const emitFilePatch = (name: string, input: any) => {
+        if (!callbacks.onFilePatch) return;
+        if (!input || typeof input !== 'object') return;
+        const filePath = typeof input.file_path === 'string' ? input.file_path : '';
+        if (!filePath) return;
+
+        let info: FilePatchInfo | null = null;
+        try {
+          if (name === 'Edit') {
+            const oldString = typeof input.old_string === 'string' ? input.old_string : '';
+            const newString = typeof input.new_string === 'string' ? input.new_string : '';
+            if (!oldString && !newString) return;
+            info = buildEditPatch(filePath, oldString, newString);
+          } else if (name === 'Write') {
+            const newContent = typeof input.content === 'string' ? input.content : '';
+            // Best-effort snapshot of pre-write content. Read synchronously
+            // right now — Claude may or may not have hit disk yet; either
+            // outcome is informational.
+            let oldContent = '';
+            try {
+              oldContent = fs.readFileSync(filePath, 'utf-8');
+            } catch {
+              // File didn't exist → pure addition.
+              oldContent = '';
+            }
+            if (oldContent === newContent) return;   // no visible change
+            info = buildWritePatch(filePath, oldContent, newContent);
+          } else {
+            return;
+          }
+        } catch (err) {
+          log.warn(`[ClaudeCodeService] emitFilePatch failed for ${ name } ${ filePath }: ${ (err as Error)?.message ?? err }`);
+          return;
+        }
+
+        if (!info) return;
+        if (info.hunks.length === 0 && info.stat.added === 0 && info.stat.removed === 0) return;
+
+        const signature = info.hunks[0]?.lines.map(l => l.op[0] + l.text).join('|').slice(0, 200) ?? '';
+        const dedupeKey = `${ name }:${ filePath }:${ info.stat.added }+${ info.stat.removed }:${ signature }`;
+        if (emittedPatches.has(dedupeKey)) return;
+        emittedPatches.add(dedupeKey);
+
+        try { callbacks.onFilePatch(info) } catch { /* ignore */ }
+      };
+
       const processLine = (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) return;
@@ -578,6 +636,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
           if (ev.type === 'content_block_stop' && ev.content_block?.type === 'tool_use') {
             const name = ev.content_block.name ?? 'tool';
             emitActivity(activityForToolUse(name, ev.content_block.input));
+            emitFilePatch(name, ev.content_block.input);
             return;
           }
 
@@ -596,6 +655,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
           for (const b of blocks) {
             if (b?.type === 'tool_use' && b.name) {
               emitActivity(activityForToolUse(b.name, b.input));
+              emitFilePatch(b.name, b.input);
             }
           }
         }

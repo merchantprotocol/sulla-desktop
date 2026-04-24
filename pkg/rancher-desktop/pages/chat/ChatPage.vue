@@ -22,8 +22,10 @@
         :threads="allThreads"
         :active-id="activeThreadId"
         :pinned="pinnedEntries"
+        :rehydratable-ids="rehydratableThreadIds"
         @activate="onActivate"
         @jump-to="onJumpTo"
+        @archived-click="onArchivedClick"
       />
 
       <main class="main">
@@ -147,6 +149,10 @@ function initController(): ChatController {
     if (storedId) {
       const state = persister.load(storedId);
       if (state) return registry.open(state, props.tabId);
+      // Stale pointer — tab remembers a thread that was never persisted
+      // (or got removed). Drop the pointer so we don't keep pointing at
+      // a ghost on every reopen. Fresh thread gets created below.
+      persister.clearTabThread(props.tabId);
     }
   }
   return registry.create({ tabId: props.tabId });
@@ -242,6 +248,29 @@ function historyToThread(h: HistoryRecord): Thread {
     updatedAt,
     messages: [],
   };
+}
+
+/**
+ * Ids that can be fully rehydrated into a working ChatController — live
+ * controllers in the registry or persisted ThreadStates on disk. Entries
+ * outside this set (Postgres-only history rows) render as archived in the
+ * HistoryRail with a no-op click.
+ */
+const rehydratableThreadIds = computed<Set<ThreadId>>(() => {
+  const s = new Set<ThreadId>();
+  for (const ctrl of registry.all()) s.add(ctrl.thread.value.id);
+  for (const state of persister.list()) s.add(state.thread.id);
+  return s;
+});
+
+function onArchivedClick(_id: ThreadId): void {
+  // No hydration path yet for Postgres-only conversations — surface a
+  // transient status so the user isn't left wondering why nothing
+  // happened. Full rehydration would need an IPC to load the thread's
+  // turns from conversation_history, which isn't built yet.
+  window.dispatchEvent(new CustomEvent('chat:status', {
+    detail: 'That chat is archived — its transcript isn\'t available in this session yet.',
+  }));
 }
 
 const allThreads = computed<Thread[]>(() => {

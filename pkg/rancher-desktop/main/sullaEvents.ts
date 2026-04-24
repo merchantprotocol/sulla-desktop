@@ -12,12 +12,14 @@ import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
 import { initMessageBusIpc } from './messageBusIpc';
+import { initSullaApprovalEvents } from './sullaApprovalEvents';
 import { initSullaBundleEvents } from './sullaBundleEvents';
 import { initSullaDebugEvents } from './sullaDebugEvents';
 import { initSullaFunctionEvents } from './sullaFunctionEvents';
 import { initSullaLibraryDraftEvents } from './sullaLibraryDraftEvents';
 import { initSullaLibraryEvents } from './sullaLibraryEvents';
 import { initSullaMarketplaceEvents } from './sullaMarketplaceEvents';
+import { initSullaPatchEvents } from './sullaPatchEvents';
 import { initSullaProjectEvents } from './sullaProjectEvents';
 import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
 import { initSullaRoutineImportEvents } from './sullaRoutineImportEvents';
@@ -853,6 +855,8 @@ export function initSullaEvents(): void {
   initSullaDebugEvents();
   initSullaFunctionEvents();
   initSullaProjectEvents();
+  initSullaApprovalEvents();
+  initSullaPatchEvents();
 
   // ── Integration Config API (YAML-defined integrations) ──────────
 

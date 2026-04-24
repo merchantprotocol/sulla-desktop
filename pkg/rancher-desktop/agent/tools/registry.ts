@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'lima', 'memory', 'meta', 'n8n', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -75,13 +75,16 @@ export class ToolRegistry {
     agents:             'Sub-agent spawning and job management — run parallel background agents and check their results.',
     integrations:       'Tools for checking integration status and retrieving integration credentials.',
     lima:               'Lima VM instance management.',
-    n8n:                'n8n workflow automation — list, execute, create, and manage n8n workflows and their executions.',
+    mobile:             'Sulla Mobile companion — read calls, leads, and messages captured by the AI receptionist without picking up the phone.',
     notify:             'Send desktop notifications to alert the user when async work completes or needs attention.',
     vault:              'Credential vault — list saved credentials, check integration connection status, read secrets, and autofill login forms.',
     function:           'Custom function runner — list installed functions and invoke them by slug across python, shell, and node runtimes. Returns full execution trace in one call.',
-    workflow:           'Workflow management — execute, validate, and manage Sulla workflow definitions.',
+    workflow:           'Workflow management — execute, validate, import, and manage Sulla workflow definitions.',
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
     projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',
+    capture:            'Capture Studio control — teleprompter (open/close/script/style), microphone + speaker loopback lifecycle, screen/camera enumeration, screenshots, recorder start/stop/status with auto-acquire.',
+    marketplace:        'Marketplace for community artifacts (skills, functions, workflows, agents, recipes) — search, info, download, scaffold, validate, publish, update, unpublish.',
+    ui:                 'Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat so the user can inspect them directly.',
     // Integration catalog categories (tools executed via ActivePieces)
     communication:      'Email, messaging, SMS, and video conferencing tools — Gmail, Slack, Teams, Zoom, Discord, Telegram, Twilio, WhatsApp, and more.',
     developer_tools:    'DevOps, CI/CD, monitoring, hosting, CMS, and web scraping tools — GitHub, GitLab, Vercel, Sentry, Datadog, Jenkins, Webflow, and more.',

@@ -135,10 +135,15 @@ export const captureToolManifests: ToolManifest[] = [
   // ── Recorder (Phase 2 — requires CaptureStudio renderer) ───────
 
   {
-    name:           'recorder_start',
-    description:    'Start a recording session with whatever streams are currently acquired in Capture Studio (screen + camera + mic + speaker). Auto-opens Capture Studio if closed. Fails if no sources are active — call capture/screen_set and/or capture/camera_set and/or capture/mic_start first.',
-    category:       'capture',
-    schemaDef:      {},
+    name:        'recorder_start',
+    description: 'Start a recording session. Auto-opens Capture Studio and — when the streams aren\'t already acquired — auto-acquires whatever sources you ask for. Pass `screen: true` for the primary display, `screen: "source-id"` for a specific display/window (from list_screens), `camera: true` / `camera: "deviceId"`, and/or `mic: true` / `speaker: true`. Omit everything to record whatever sources the user already picked in the Capture Studio UI.',
+    category:    'capture',
+    schemaDef:   {
+      screen:  { type: 'string',  optional: true, description: 'Pass "auto" for the primary display, or a desktopCapturer source id (see capture/list_screens).' },
+      camera:  { type: 'string',  optional: true, description: 'Pass "auto" for the first camera, or a deviceId (see capture/camera_list).' },
+      mic:     { type: 'boolean', optional: true, description: 'Start mic capture before recording (ref-counted).' },
+      speaker: { type: 'boolean', optional: true, description: 'Start speaker-loopback capture before recording.' },
+    },
     operationTypes: ['create'],
     loader:         () => import('./recorder_start'),
   },

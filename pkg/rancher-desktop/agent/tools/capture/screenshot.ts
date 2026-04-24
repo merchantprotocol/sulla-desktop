@@ -69,15 +69,19 @@ export class ScreenshotWorker extends BaseTool {
     fs.writeFileSync(file, pngBuffer);
 
     const size = source.thumbnail.getSize();
+    const assetId = `capture_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`;
+    const ref = {
+      assetId,
+      path:   file,
+      width:  size.width,
+      height: size.height,
+      bytes:  pngBuffer.length,
+    };
     return {
       successBoolean: true,
-      responseString: [
-        `Screenshot saved.`,
-        `- path: ${ file }`,
-        `- source: ${ source.id } (${ source.name || kind })`,
-        `- dimensions: ${ size.width }×${ size.height }`,
-        `- bytes: ${ pngBuffer.length }`,
-      ].join('\n'),
-    };
+      responseString: `[${ assetId }] Screenshot captured: ${ source.name || kind } (${ source.id }) — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Use Read on that path to load the image into vision context.`,
+      // Attached as an out-of-band field, matching browser/screenshot shape.
+      screenshot: ref,
+    } as any;
   }
 }

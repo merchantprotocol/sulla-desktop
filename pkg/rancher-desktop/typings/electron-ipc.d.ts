@@ -251,6 +251,13 @@ export interface IpcMainInvokeEvents {
   'sulla-restart-ollama':   () => void;
   'app-quit':               () => void;
 
+  // Onboarding presence — BrowserTabChat + ChatPage call these on mount to
+  // decide whether to show the goals/business onboarding cards. Handlers
+  // live in sulla.ts:406-410. Return true when the matching identity file
+  // is missing (so the onboarding card should render).
+  'check-goals-onboarding':    () => boolean;
+  'check-business-onboarding': () => boolean;
+
   // Browser tab views (WebContentsView-based)
   'browser-tab-view:create':        (tabId: string, url: string, bounds: Electron.Rectangle) => void;
   'browser-tab-view:destroy':       (tabId: string) => void;
@@ -394,6 +401,14 @@ export interface IpcMainInvokeEvents {
     status:      string;
     description: string;
   }[];
+
+  // Approval gate — renderer resolves a pending user-approval request
+  // that a backend tool parked via ApprovalService.
+  'approval:resolve': (payload: {
+    approvalId: string;
+    decision:   'approved' | 'denied';
+    note?:      string;
+  }) => { settled: boolean; reason?: string };
 
   // User-defined function catalog (scanned from ~/sulla/functions/<slug>/function.yaml)
   'functions-list': () => {

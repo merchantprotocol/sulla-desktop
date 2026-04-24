@@ -12,17 +12,22 @@ sulla <category> --help
 
 ---
 
-## meta — system foundation (8 tools)
+## meta — system foundation + workflow execution (13 tools)
 - `sulla meta/exec` — Run shell commands inside the Lima VM (root, 2-min default timeout, 160KB output cap)
 - `sulla meta/browse_tools` — Discover tools by category or keyword (returns docs, not executions)
 - `sulla meta/file_search` — Semantic vector search across files
 - `sulla meta/read_file` — Read file with optional line range
+- `sulla meta/request_user_input` — Pause mid-turn and ask the user for an approve/deny decision (blocks until user clicks; 5 min default timeout)
 - `sulla meta/spawn_agent` — Launch sub-agents (canonical for spawn_agent; NOT under `agents/`)
-- `sulla meta/execute_workflow` — Run a named Sulla workflow by slug (NOT under `workflow/` — no such category)
+- `sulla meta/execute_workflow` — Run a named Sulla workflow by slug
 - `sulla meta/validate_sulla_workflow` — Validate workflow YAML
 - `sulla meta/restart_from_checkpoint` — Resume workflow from a specific node
+- `sulla meta/stop_workflow` — Request a running workflow to stop (cooperative — Redis flag, honored at next frontier tick)
+- `sulla meta/pause_workflow` — Pause without releasing (in-flight work continues)
+- `sulla meta/resume_workflow` — Resume a paused workflow
+- `sulla meta/dry_run_workflow` — Static walk from triggers — reports execution order, orphans, ambiguous branches (no side effects)
 
-→ See [`tools/meta.md`](meta.md)
+→ See [`tools/meta.md`](meta.md), [`workflows/authoring.md`](../workflows/authoring.md)
 
 ## observation — memory + file writes (3 tools)
 - `sulla observation/add_observational_memory` — Store an observation with priority
@@ -31,9 +36,10 @@ sulla <category> --help
 
 → See [`tools/meta.md`](meta.md) for the memory + write_file section
 
-## function — custom functions (2 tools)
-- `sulla function/function_list` — List functions in `~/sulla/functions/` (42 shipping today)
-- `sulla function/function_run` — Execute by slug
+## function — custom functions (3 tools)
+- `sulla function/function_list` — List functions in `~/sulla/functions/`
+- `sulla function/function_run` — Execute by slug (logs every call to `function_runs` table)
+- `sulla function/function_runs` — Query run history (filter by slug / only_failures / since; verbose for full inputs/outputs)
 
 **Note:** the host CLI script (`/Users/jonathonbyrdziak/.rd/bin/sulla`) has a stale category whitelist that may route `function/*` through the proxy path and fail. The agent inside the desktop calls tools via registry directly, so these work. From the host, use the direct backend URL form if the CLI fails.
 
@@ -66,7 +72,7 @@ sulla <category> --help
 
 → See [`tools/browser.md`](browser.md)
 
-## github (25 tools)
+## github (28 tools)
 - `sulla github/git_status` — Working tree status
 - `sulla github/git_add` — Stage files
 - `sulla github/git_commit` — Stage + commit
@@ -92,6 +98,9 @@ sulla <category> --help
 - `sulla github/github_close_issue` — Close with optional reason
 - `sulla github/github_comment_on_issue` — Add comment
 - `sulla github/github_create_pr` — Open PR
+- `sulla github/github_merge_pr` — Merge a PR (merge / squash / rebase; requires `confirm:true`)
+- `sulla github/github_check_runs` — List CI check runs for a ref (is CI green?)
+- `sulla github/github_trigger_workflow_run` — Dispatch a workflow manually (requires workflow_dispatch trigger)
 
 → See [`tools/github.md`](github.md)
 
@@ -152,7 +161,7 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`tools/calendar.md`](calendar.md)
 
-## vault — credentials (7 tools)
+## vault — credentials (8 tools)
 - `sulla vault/vault_is_enabled` — Is integration X connected?
 - `sulla vault/vault_list_accounts` — Accounts on integration X
 - `sulla vault/vault_read_secrets` — Read fields (masked per access level)
@@ -160,6 +169,7 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 - `sulla vault/vault_set_active_account` — Set default account
 - `sulla vault/vault_list` — List website credentials (no passwords)
 - `sulla vault/vault_autofill` — Inject credentials into active browser tab
+- `sulla vault/vault_delete_credential` — Delete a credential property (requires `confirm:true`)
 
 → See [`tools/vault.md`](vault.md)
 
@@ -174,7 +184,7 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`marketplace/overview.md`](../marketplace/overview.md)
 
-## marketplace — generic artifact lifecycle (10 tools, all 6 kinds)
+## marketplace — generic artifact lifecycle (11 tools, all 6 kinds)
 - `sulla marketplace/search` — Search by query / kind / category (cloud + GitHub fallback for recipes)
 - `sulla marketplace/info` — Full metadata for `kind` + `slug`
 - `sulla marketplace/download` — Pull and materialise locally (`overwrite` flag)
@@ -185,6 +195,7 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 - `sulla marketplace/list_local` — Locally-installed artifacts (filterable by kind)
 - `sulla marketplace/list_published` — Artifacts the current user has published
 - `sulla marketplace/update` — Pull latest version (overwrites local)
+- `sulla marketplace/diff` — Compare local artifact vs marketplace version (preview before update)
 
 → See [`tools/marketplace.md`](marketplace.md)
 
@@ -219,6 +230,14 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`tools/slack.md`](slack.md)
 
+## mobile — Sulla Mobile companion (4 tools)
+- `sulla mobile/list_calls` — Recent AI-receptionist calls (filter by status)
+- `sulla mobile/get_call` — Full call details (transcript, lead metadata, summary)
+- `sulla mobile/list_leads` — Inbox leads (filter by qualified_only / urgency)
+- `sulla mobile/list_messages` — SMS + voicemail transcripts (filter unread_only)
+
+Read-only. Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`.
+
 ## agents — sub-agent jobs (1 tool)
 - `sulla agents/check_agent_jobs` — Poll for results of async spawn_agent calls
 
@@ -230,18 +249,23 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`tools/notify.md`](notify.md)
 
-## notify — desktop notifications (1 tool)
-- `sulla notify/notify_user` — System notification (title + message)
+## notify — desktop + mobile notifications (2 tools)
+- `sulla notify/notify_user` — Desktop + mobile fan-out (`targets: ["desktop","mobile"]`; logged to `notifications` table)
+- `sulla notify/history` — Query the notification history (filter by target / only_failures / since)
 
 → See [`tools/notify.md`](notify.md)
 
-## applescript — macOS app automation (1 tool)
-- `sulla applescript/applescript_execute` — Drive a target_app via AppleScript (per-app allowlist)
+## applescript — macOS app automation (5 tools)
+- `sulla applescript/applescript_execute` — Drive a target_app via AppleScript (per-app allowlist); every call logged to `applescript_audit`
+- `sulla applescript/computer_use_list` — List allowlisted apps
+- `sulla applescript/computer_use_enable` — Toggle an app on
+- `sulla applescript/computer_use_disable` — Toggle an app off
+- `sulla applescript/audit_log` — Query applescript_audit (filter by target_app / only_failures / since)
 
 → See [`tools/applescript.md`](applescript.md), [`tools/computer-use.md`](computer-use.md)
 
 ## ui — open Sulla Desktop views from chat (1 tool)
-- `sulla ui/open_tab` — Open / focus a built-in view (`mode`: marketplace, vault, integrations, routines, history, secretary, chat, document, browser, welcome) — or pass `url` to open a raw browser tab
+- `sulla ui/open_tab` — Open / focus a built-in view (`mode`: marketplace, vault, integrations, routines, history, secretary, chat, document, browser, welcome, settings) — or pass `url` to open a raw browser tab
 
 → See [`tools/ui.md`](ui.md)
 
@@ -304,28 +328,29 @@ Common integrations (as of verification):
 
 | Category | Tool count |
 |----------|-----------|
-| meta | 8 |
+| meta | 12 |
 | observation | 3 |
 | browser | 23 |
-| github | 25 |
+| github | 28 |
 | docker | 9 |
 | lima | 6 |
 | kubectl | 3 |
 | rdctl | 10 |
 | calendar | 7 |
-| vault | 7 |
+| vault | 8 |
 | extensions | 7 |
-| marketplace | 10 |
+| marketplace | 11 |
 | redis | 12 |
 | pg | 6 |
 | slack | 7 |
+| mobile | 4 |
 | agents | 1 |
 | bridge | 2 |
-| notify | 1 |
-| applescript | 1 |
-| function | 2 |
+| notify | 2 |
+| applescript | 5 |
+| function | 3 |
 | ui | 1 |
 | capture | 13 |
-| **Total** | **~162** |
+| **Total** | **~183** |
 
 If a new category appears in `pkg/rancher-desktop/agent/tools/` or `sulla <cat> --help` that's not on this list, add it here AND write a doc.

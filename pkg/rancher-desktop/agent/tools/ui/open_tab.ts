@@ -1,6 +1,7 @@
 import { BaseTool, ToolResponse } from '../base';
 
 import { getWindow } from '@pkg/window';
+import { openPreferences } from '@pkg/window/preferences';
 
 /**
  * UI Open Tab — bridge between the agent and the renderer's `agent-command`
@@ -34,7 +35,23 @@ export class UiOpenTabWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const url = typeof input.url === 'string' ? input.url.trim() : '';
-    let mode = typeof input.mode === 'string' ? input.mode.trim().toLowerCase() : '';
+    const mode = typeof input.mode === 'string' ? input.mode.trim().toLowerCase() : '';
+
+    // `settings` is a separate Electron window, not a tab — handle it up front.
+    if (mode === 'settings') {
+      try {
+        await openPreferences();
+        return {
+          successBoolean: true,
+          responseString: 'Opened the Sulla Desktop Settings window.',
+        };
+      } catch (err) {
+        return {
+          successBoolean: false,
+          responseString: `Failed to open Settings: ${ (err as Error).message }`,
+        };
+      }
+    }
 
     // If only a URL is given, route as open-url (raw browser tab on that URL).
     if (url && !mode) {
@@ -54,14 +71,14 @@ export class UiOpenTabWorker extends BaseTool {
     if (!mode) {
       return {
         successBoolean: false,
-        responseString: `Missing required field: mode. Valid modes: ${ Array.from(VALID_MODES).join(', ') }. (Or pass a "url" to open a raw browser tab.)`,
+        responseString: `Missing required field: mode. Valid modes: ${ Array.from(VALID_MODES).join(', ') }, settings. (Or pass a "url" to open a raw browser tab.)`,
       };
     }
 
     if (!VALID_MODES.has(mode)) {
       return {
         successBoolean: false,
-        responseString: `Unknown tab mode "${ mode }". Valid modes: ${ Array.from(VALID_MODES).join(', ') }.`,
+        responseString: `Unknown tab mode "${ mode }". Valid modes: ${ Array.from(VALID_MODES).join(', ') }, settings.`,
       };
     }
 

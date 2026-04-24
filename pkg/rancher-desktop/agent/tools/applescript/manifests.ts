@@ -43,4 +43,17 @@ export const applescriptToolManifests: ToolManifest[] = [
     operationTypes: ['update'],
     loader:         () => import('./computer_use_disable'),
   },
+  {
+    name:        'audit_log',
+    description: 'Read the AppleScript execution audit log. Every applescript_execute call writes a row with target_app, script, success, duration, and error. Filter by target_app, only_failures, and/or since (ISO timestamp). Default: 50 most recent entries.',
+    category:    'applescript',
+    schemaDef:   {
+      limit:         { type: 'number',  optional: true, description: 'Max rows to return (default 50, cap 200).' },
+      target_app:    { type: 'string',  optional: true, description: 'Filter to one app (e.g. "Calendar").' },
+      only_failures: { type: 'boolean', optional: true, description: 'If true, return only executions where success=false.' },
+      since:         { type: 'string',  optional: true, description: 'ISO-8601 timestamp — return only executions at/after this time.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./applescript_audit_log'),
+  },
 ];

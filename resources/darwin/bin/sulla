@@ -22,17 +22,38 @@ SULLA_HOST="${SULLA_HOST:-host.lima.internal}"
 FIRST="$1"
 BODY="$2"
 
-# Known internal tool categories
-TOOL_CATEGORIES="meta|docker|github|browser|rdctl|redis|pg|slack|kubectl|lima|calendar|extensions|vault|agents|bridge|applescript|notify|ui|function|observation|marketplace|capture"
+# Known internal tool categories. Must stay in sync with agent/tools/registry.ts
+# `categoriesList` so `sulla <category>/<tool>` routes to /v1/tools/internal
+# instead of falling through as a proxy call.
+TOOL_CATEGORIES="agents|applescript|bridge|browser|calendar|capture|docker|extensions|fs|function|github|integrations|kubectl|lima|marketplace|memory|meta|mobile|notify|observation|pg|projects|rdctl|redis|skills|slack|ui|vault|workflow|workspace"
 
 # ── Help & discovery ─────────────────────────────────────────────
-# sulla --help | sulla -h | sulla help | sulla (no args)
+# sulla --help | sulla -h | sulla help | sulla (no args) — query the backend
+# for the live category list so new categories surface without needing a
+# CLI rebuild. Fall back to the hardcoded text below if the backend is
+# unreachable (e.g. during first-run or when Sulla Desktop isn't booted).
 if [ -z "$FIRST" ] || [ "$FIRST" = "--help" ] || [ "$FIRST" = "-h" ] || [ "$FIRST" = "help" ]; then
+  _help_url="/v1/tools/help"
+  if [ -S "$SOCKET" ]; then
+    _live=$(curl -s --max-time 2 --unix-socket "$SOCKET" \
+      ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} \
+      "http://localhost${_help_url}" 2>/dev/null)
+  else
+    _live=$(curl -s --max-time 2 \
+      ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} \
+      "http://${SULLA_HOST}:3000${_help_url}" 2>/dev/null)
+  fi
+  if [ -n "$_live" ] && printf '%s' "$_live" | grep -q "Categories"; then
+    printf '%s\n' "$_live"
+    printf '\nRun "sulla <category> --help" or "sulla <category>" to list tools in a category.\n'
+    exit 0
+  fi
   cat <<'HELP'
 sulla — unified CLI for Sulla Desktop
 
 Usage:
   sulla <category>/<tool> '<json>'           # tool call
+  sulla <category> --help                    # list tools in a category
   sulla <account_id>/<slug> '<json>'         # proxy call
   sulla <account>/mcp/<tool> '<json>'        # MCP tool
   sulla <tool_name> '<json>'                 # bare tool
@@ -40,29 +61,36 @@ Usage:
 Flags:
   --help, -h    Show this help or category-specific help
 
-Categories:
+Categories (live list unavailable — showing fallback):
   meta              Tools for browsing available tools, installing skills, and meta management
   agents            Sub-agent spawning and job management
   applescript       Execute AppleScript to control macOS apps (Calendar, Mail, Finder, etc.)
   bridge            Bidirectional communication bridge between heartbeat and frontend
-  browser           Open/close tabs, read page content, click + fill forms, screenshot, exec JS, cookies, history, notifications
+  browser           Open/close tabs, read page content, click + fill forms, screenshot, exec JS, cookies, history
   calendar          Calendar event management
+  capture           Capture Studio control: teleprompter, microphone, speaker loopback, screenshots, recorder
   docker            Docker container management
   extensions        Extension marketplace — browse, install, uninstall Docker Compose stacks
+  function          Custom function runner — list and invoke ~/sulla/functions/
   github            GitHub repository management
+  integrations      Check integration status + retrieve integration credentials
   kubectl           Kubernetes cluster management
   lima              Lima VM instance management
+  marketplace       Search / download / scaffold / validate / publish community artifacts
+  memory            Memory-recall tool discovery + catalog browsing
+  mobile            Sulla Mobile companion — read calls, leads, and messages from the AI receptionist
   notify            Send desktop notifications to alert the user
+  observation       Observational memory + write_file to home
   pg                PostgreSQL database queries
+  projects          Project PRDs — search, load, create, update, delete
   rdctl             Sulla Desktop / rdctl management commands
   redis             Redis key/value store operations
+  skills            Search, load, and create reusable skill files
   slack             Slack messaging and reactions
+  ui                Open Sulla Desktop views (marketplace, vault, routines) from chat
   vault             Credential vault — list accounts, read/set secrets
-  ui                Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat
-  function          Custom function runner — list and invoke ~/sulla/functions/
-  observation       Observational memory + write_file to home
-  marketplace       Search / download / scaffold / validate / publish artifacts (skills, functions, workflows, agents, recipes)
-  capture           Capture Studio control: teleprompter, microphone, speaker loopback, screenshots
+  workflow          Workflow management — execute, validate, import, manage definitions
+  workspace         Manage workspace folders in the Rancher Desktop data directory
 
 Run "sulla <category> --help" to see tools in a category.
 Run "sulla vault/list_accounts '{}'" to discover proxy accounts.

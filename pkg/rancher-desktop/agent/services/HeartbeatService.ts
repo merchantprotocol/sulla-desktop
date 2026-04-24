@@ -147,6 +147,22 @@ export class HeartbeatService {
         return;
       }
 
+      // ── Time-window gate ──
+      // Users who only want autonomous runs during certain hours (e.g.
+      // 9am–5pm weekdays) set heartbeatWindow. Format is permissive:
+      //   { days: [1,2,3,4,5], startHour: 9, endHour: 17, tz: "America/..." }
+      // Any of days / startHour / endHour may be omitted; omitted means
+      // "no restriction on that axis." tz defaults to the system tz.
+      const windowRaw = await SullaSettingsModel.get('heartbeatWindow', null);
+      if (windowRaw) {
+        const inside = isInsideWindow(windowRaw);
+        if (!inside) {
+          this.totalSkips++;
+          this.recordEvent('heartbeat_skipped', 'Outside configured time-window');
+          return;
+        }
+      }
+
       const delayMin = Math.max(1, await SullaSettingsModel.get('heartbeatDelayMinutes', 15));
       const delayMs = delayMin * 60_000;
 
@@ -302,4 +318,67 @@ Your active projects and goals have been loaded into your recall context. Review
       this.schedulerId = null;
     }
   }
+}
+
+/**
+ * Decide whether the current wall-clock time is inside the user-configured
+ * heartbeat window. Accepts the raw settings value (may be a JSON string
+ * from SullaSettingsModel or an already-parsed object).
+ *
+ * Shape:
+ *   { days?: number[], startHour?: number, endHour?: number, tz?: string }
+ * - days: 0–6 (Sun–Sat). Omit = any day.
+ * - startHour / endHour: 0–24. If start < end, window is same-day. If start
+ *   > end, window wraps midnight (e.g. 22→6). Omit both = any hour.
+ * - tz: IANA tz. Defaults to system tz.
+ *
+ * Permissive on malformed input — returns true so a bad config doesn't
+ * silently lock the heartbeat off forever.
+ */
+function isInsideWindow(raw: unknown): boolean {
+  try {
+    let cfg: any = raw;
+    if (typeof cfg === 'string') cfg = JSON.parse(cfg);
+    if (!cfg || typeof cfg !== 'object') return true;
+
+    const tz = typeof cfg.tz === 'string' && cfg.tz.length > 0 ? cfg.tz : undefined;
+    const now = tzPartsOf(new Date(), tz);
+
+    if (Array.isArray(cfg.days) && cfg.days.length > 0) {
+      if (!cfg.days.includes(now.day)) return false;
+    }
+
+    const start = typeof cfg.startHour === 'number' ? cfg.startHour : null;
+    const end   = typeof cfg.endHour === 'number' ? cfg.endHour : null;
+    if (start !== null && end !== null) {
+      const hr = now.hour;
+      if (start <= end) {
+        // Same-day: include start..end-1
+        if (hr < start || hr >= end) return false;
+      } else {
+        // Wraps midnight: e.g. 22..6 = 22, 23, 0..5
+        if (hr < start && hr >= end) return false;
+      }
+    }
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+function tzPartsOf(d: Date, tz?: string): { hour: number; day: number } {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    weekday:  'short',
+    hour:     '2-digit',
+    hour12:   false,
+  });
+  const parts = fmt.formatToParts(d);
+  const hourStr = parts.find(p => p.type === 'hour')?.value ?? String(d.getHours());
+  const wk      = parts.find(p => p.type === 'weekday')?.value ?? '';
+  const DAYMAP: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    hour: Math.max(0, Math.min(23, parseInt(hourStr, 10) || 0)),
+    day:  DAYMAP[wk] ?? d.getDay(),
+  };
 }

@@ -58,6 +58,15 @@ export interface StreamCallbacks {
    * simply never call this. Callers that don't care can omit it.
    */
   onActivity?: (message: string) => void;
+  /**
+   * Emitted when the provider's agent loop performs a file edit/write that
+   * the UI should surface as a post-hoc PatchBlock in chat. Currently only
+   * ClaudeCodeService fires this — it intercepts the Edit/Write tool_use
+   * blocks streaming out of `claude -p` and builds a FilePatchInfo.
+   *
+   * Providers with no built-in file tools simply never call it.
+   */
+  onFilePatch?: (info: import('../util/linePatch').FilePatchInfo) => void;
 }
 
 /**

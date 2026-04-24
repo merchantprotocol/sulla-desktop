@@ -68,4 +68,36 @@ export const workflowToolManifests: ToolManifest[] = [
     operationTypes: ['execute'],
     loader:         () => import('./stop_workflow'),
   },
+  {
+    name:        'pause_workflow',
+    description: 'Pause a running workflow without releasing it. Cooperative — PlaybookController checks a Redis flag at each frontier tick and halts frontier advance. In-flight sub-agent work is NOT cancelled. Resume with resume_workflow.',
+    category:    'meta',
+    schemaDef:   {
+      executionId: { type: 'string', description: 'Execution ID to pause.' },
+      reason:      { type: 'string', optional: true, description: 'Optional reason.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./pause_workflow'),
+  },
+  {
+    name:        'resume_workflow',
+    description: 'Resume a workflow paused with pause_workflow by clearing its pause flag. The orchestrator resumes frontier advance on its next tick.',
+    category:    'meta',
+    schemaDef:   {
+      executionId: { type: 'string', description: 'Execution ID to resume.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./resume_workflow'),
+  },
+  {
+    name:        'dry_run_workflow',
+    description: 'Walk a workflow statically — parse YAML, traverse from triggers, report execution order and any orphans or runtime-ambiguous branches. Does NOT execute any node (no side effects). Use to verify routing before committing to a live run.',
+    category:    'meta',
+    schemaDef:   {
+      slug:     { type: 'string', optional: true, description: 'Routine or flat-workflow slug. Exactly one of slug or filePath required.' },
+      filePath: { type: 'string', optional: true, description: 'Absolute path to a routine.yaml / workflow yaml.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./dry_run_workflow'),
+  },
 ];

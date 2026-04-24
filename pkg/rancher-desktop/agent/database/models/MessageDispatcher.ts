@@ -213,6 +213,70 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  // Tool approval: a backend tool parked a pending approval via
+  // ApprovalService and emitted this message so the user can decide.
+  // Content is empty by design — the reason/command live on `toolApproval`.
+  // When the user clicks approve/deny in the transcript, the renderer
+  // fires the `approval:resolve` IPC back to main, which settles the
+  // pending promise the tool is awaiting.
+  if (kindRaw === 'tool_approval') {
+    const ta = data?.toolApproval && typeof data.toolApproval === 'object' ? data.toolApproval as any : null;
+    const approvalId = typeof ta?.approvalId === 'string' ? ta.approvalId.trim() : '';
+    const reason = typeof ta?.reason === 'string' ? ta.reason.trim() : '';
+    const command = typeof ta?.command === 'string' ? ta.command.trim() : '';
+    if (!approvalId || !reason || !command) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_tool_approval_${ approvalId }`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'tool_approval',
+      content:   '',
+      toolApproval: {
+        approvalId,
+        reason,
+        command,
+        origin: ta?.origin && typeof ta.origin === 'object' ? ta.origin : undefined,
+      },
+    });
+    return;
+  }
+
+  // File patch: ClaudeCodeService → BaseNode.onFilePatch emitted a unified
+  // diff after an Edit/Write tool_use inside Claude's inner agent loop.
+  // Content is empty by design — payload is on `data.filePatch`. PersonaAdapter
+  // maps this into a `kind:'patch'` message for the new chat's PatchBlock.vue.
+  if (kindRaw === 'file_patch') {
+    const fp = data?.filePatch && typeof data.filePatch === 'object' ? data.filePatch as any : null;
+    if (!fp || typeof fp.path !== 'string' || !Array.isArray(fp.hunks)) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_file_patch`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'file_patch',
+      content:   '',
+      filePatch: {
+        path:       String(fp.path),
+        stat:       {
+          added:   Number(fp.stat?.added ?? 0),
+          removed: Number(fp.stat?.removed ?? 0),
+        },
+        hunks:      fp.hunks.map((h: any) => ({
+          lines: Array.isArray(h?.lines) ? h.lines.map((l: any) => ({
+            n:    Number(l?.n ?? 0),
+            text: typeof l?.text === 'string' ? l.text : '',
+            op:   (l?.op === 'add' || l?.op === 'remove') ? l.op : 'context',
+          })) : [],
+        })),
+        revertMeta: fp.revertMeta && typeof fp.revertMeta === 'object' ? fp.revertMeta : undefined,
+      },
+    });
+    return;
+  }
+
   // Workflow document: the `workflow/display` tool published a routine
   // for the artifact sidebar. Content is empty by design — the payload
   // is the full routine doc under `data.workflow`. PersonaAdapter opens

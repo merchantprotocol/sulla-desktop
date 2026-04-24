@@ -24,17 +24,31 @@
       </div>
     </div>
     <div class="patch-actions">
-      <button class="apply"  type="button" @click="apply">Apply</button>
-      <span class="sep">·</span>
-      <button class="open"   type="button" @click="open">Open File</button>
-      <span class="sep">·</span>
-      <button class="reject" type="button" @click="reject">Reject</button>
+      <template v-if="msg.state === 'proposed'">
+        <button class="apply"  type="button" @click="apply">Apply</button>
+        <span class="sep">·</span>
+        <button class="open"   type="button" @click="open">Open File</button>
+        <span class="sep">·</span>
+        <button class="reject" type="button" @click="reject">Reject</button>
+      </template>
+      <template v-else-if="msg.state === 'applied'">
+        <button class="open"   type="button" @click="open">Open File</button>
+        <template v-if="canRevert">
+          <span class="sep">·</span>
+          <button class="revert" type="button" :disabled="reverting" @click="revert">
+            {{ reverting ? 'Reverting…' : 'Revert' }}
+          </button>
+        </template>
+      </template>
+      <template v-else>
+        <button class="open"   type="button" @click="open">Open File</button>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { PatchMessage } from '../../models/Message';
 import type { CodePayload } from '../../models/Artifact';
 import { useChatController } from '../../controller/useChatController';
@@ -42,15 +56,27 @@ import { useChatController } from '../../controller/useChatController';
 const props = defineProps<{ msg: PatchMessage }>();
 const controller = useChatController();
 
+const reverting = ref(false);
+
 const flatLines = computed(() => props.msg.hunks.flatMap(h => h.lines));
 const stateClass = computed(() => props.msg.state === 'applied' ? 'applied'
   : props.msg.state === 'rejected' ? 'rejected' : '');
+const canRevert = computed(() => !!props.msg.revertMeta);
 
 function apply(): void {
   controller.applyPatch(props.msg.id);
 }
 function reject(): void {
   controller.rejectPatch(props.msg.id);
+}
+async function revert(): Promise<void> {
+  if (!props.msg.revertMeta || reverting.value) return;
+  reverting.value = true;
+  try {
+    await controller.revertPatch(props.msg.id, props.msg.revertMeta);
+  } finally {
+    reverting.value = false;
+  }
 }
 function open(): void {
   // Spawn a code artifact populated from the patch
@@ -120,6 +146,9 @@ function open(): void {
 .patch-actions .open:hover { color: white; }
 .patch-actions .reject { color: var(--read-4); }
 .patch-actions .reject:hover { color: var(--err); }
+.patch-actions .revert { color: var(--read-4); }
+.patch-actions .revert:hover { color: var(--err); }
+.patch-actions .revert:disabled { color: var(--read-5); cursor: wait; }
 .patch-actions .sep    { color: var(--read-5); }
 .patch.applied .patch-body { opacity: 0.55; }
 .patch.applied .patch-head::before { content: "◆ APPLIED · "; color: var(--ok); letter-spacing: 0.18em; }

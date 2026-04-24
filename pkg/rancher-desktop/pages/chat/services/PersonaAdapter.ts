@@ -16,10 +16,13 @@
 
 import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import type { ChatController } from '../controller/ChatController';
 import type { Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
-  ToolMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
+  ToolMessage, ToolApprovalMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
+  PatchMessage, PatchHunk,
 } from '../models/Message';
 import type { Attachment } from '../models/Attachment';
 import type {
@@ -110,6 +113,20 @@ export class PersonaAdapter {
     // working. A real cold-start signal should come from the model
     // selector (ChatPage owns that wiring); until then, hold online.
     this.controller.setConnection('online');
+
+    // Approval bridge — when the user clicks approve/deny on a
+    // ToolApproval card, the controller fires a `toolApprovalResolved`
+    // bus event. Forward it to main via the `approval:resolve` IPC so
+    // whichever backend tool is awaiting its decision unblocks. Keeps
+    // the controller transport-free; only the adapter knows about IPC.
+    const unsubscribeApproval = this.controller.on('toolApprovalResolved', (ev) => {
+      void ipcRenderer.invoke('approval:resolve', {
+        approvalId: ev.approvalId,
+        decision:   ev.decision,
+        note:       ev.note,
+      }).catch(err => console.warn('[PersonaAdapter] approval:resolve failed', err));
+    });
+    this.stopWatchers.push(unsubscribeApproval);
 
     // Speak bridge — the low-latency speak listener on the persona is the
     // canonical path for TTS. We forward every speak payload to a window
@@ -302,6 +319,27 @@ export class PersonaAdapter {
       return null;
     }
 
+    // File patch — post-hoc unified diff emitted by ClaudeCodeService after
+    // an Edit/Write tool_use. The edit has already been applied by the time
+    // the PatchBlock appears, so we surface it with state='applied'.
+    if (b.kind === 'file_patch' && b.filePatch) {
+      const hunks: readonly PatchHunk[] = b.filePatch.hunks.map(h => ({
+        lines: h.lines.map(l => ({
+          n:    l.n,
+          text: l.text,
+          op:   l.op,
+        })),
+      }));
+      return {
+        id, kind: 'patch', createdAt,
+        path:  b.filePatch.path,
+        stat:  b.filePatch.stat,
+        hunks,
+        state: 'applied',
+        revertMeta: b.filePatch.revertMeta,
+      } satisfies PatchMessage;
+    }
+
     // Citation card — source grid rendered by CitationRow.vue. Backend
     // populates `citations` via the CitationExtractor; we pass them
     // straight through unchanged. Sources must have title + origin (any
@@ -316,6 +354,24 @@ export class PersonaAdapter {
           url:    s.url,
         })),
       } satisfies CitationMessage;
+    }
+
+    // Tool approval — ApprovalService parked a pending approval on the
+    // backend and emitted this message. The user clicks approve/deny in
+    // the transcript card; ChatController.approveTool/denyTool fires
+    // the `approval:resolve` IPC with the `approvalId` so the backend
+    // tool's awaited promise settles. Decision starts as 'pending' on
+    // first seen; on re-syncs after the user's click we preserve
+    // whatever the controller updated it to.
+    if (b.kind === 'tool_approval' && b.toolApproval) {
+      return {
+        id, kind: 'tool_approval', createdAt,
+        reason:     b.toolApproval.reason,
+        command:    b.toolApproval.command,
+        decision:   'pending',
+        approvalId: b.toolApproval.approvalId,
+        origin:     b.toolApproval.origin,
+      } satisfies ToolApprovalMessage;
     }
 
     // Tool card

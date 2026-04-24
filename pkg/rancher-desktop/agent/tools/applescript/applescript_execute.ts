@@ -1,5 +1,6 @@
 import { BaseTool, ToolResponse } from '../base';
 import { runCommand } from '../util/CommandRunner';
+import { broadcastComputerUseSettingsChanged } from './_broadcast';
 
 /**
  * AppleScript Execute Tool — dynamically runs AppleScript to control
@@ -45,6 +46,7 @@ export class ApplescriptExecuteWorker extends BaseTool {
       if (!enabledApps[appEntry.bundleId]) {
         enabledApps[appEntry.bundleId] = true;
         await SullaSettingsModel.set('computerUse.enabledApps', JSON.stringify(enabledApps), 'string');
+        broadcastComputerUseSettingsChanged();
         autoEnabled = true;
       }
     } catch (error) {
@@ -75,6 +77,7 @@ export class ApplescriptExecuteWorker extends BaseTool {
     }
 
     // ── Execute ─────────────────────────────────────────────────
+    const startedMs = Date.now();
     try {
       const res = await runCommand('osascript', ['-e', script], {
         timeoutMs:      10000,
@@ -82,23 +85,52 @@ export class ApplescriptExecuteWorker extends BaseTool {
       });
 
       if (res.exitCode !== 0) {
+        const errBody = res.stderr || res.stdout;
+        await writeAuditRow({ target_app, script, action_type, success: false, durationMs: Date.now() - startedMs, error: errBody, responseChars: errBody?.length ?? 0 });
         return {
           successBoolean: false,
-          responseString:  `AppleScript error: ${ res.stderr || res.stdout }`,
+          responseString:  `AppleScript error: ${ errBody }`,
         };
       }
 
       const body = res.stdout.trim() || '(no output)';
+      await writeAuditRow({ target_app, script, action_type, success: true, durationMs: Date.now() - startedMs, responseChars: body.length });
       const prefix = autoEnabled ? `[Auto-enabled "${ target_app }" in Computer Use Settings.]\n` : '';
       return {
         successBoolean: true,
         responseString:  prefix + body,
       };
     } catch (error) {
+      const msg = (error as Error).message;
+      await writeAuditRow({ target_app, script, action_type, success: false, durationMs: Date.now() - startedMs, error: msg, responseChars: 0 });
       return {
         successBoolean: false,
-        responseString:  `Failed to execute AppleScript: ${ (error as Error).message }`,
+        responseString:  `Failed to execute AppleScript: ${ msg }`,
       };
     }
+  }
+}
+
+async function writeAuditRow(row: {
+  target_app:    string;
+  script:        string;
+  action_type?:  string;
+  success:       boolean;
+  durationMs:    number;
+  error?:        string;
+  responseChars: number;
+}): Promise<void> {
+  try {
+    const { postgresClient } = await import('../../database/PostgresClient');
+    const actionType = row.action_type === 'write' ? 'write' : 'read';
+    await postgresClient.query(
+      `INSERT INTO applescript_audit
+         (target_app, action_type, script, success, duration_ms, response_chars, error)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [row.target_app, actionType, row.script, row.success, row.durationMs, row.responseChars, row.error ?? null],
+    );
+  } catch (err) {
+    // Audit failures must not break the tool call — just log.
+    console.warn('[applescript audit] insert failed:', err);
   }
 }

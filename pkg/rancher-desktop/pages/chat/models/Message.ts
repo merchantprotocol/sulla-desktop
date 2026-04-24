@@ -88,10 +88,15 @@ export interface ToolMessage extends MessageBase {
 
 // ─── Tool approval ────────────────────────────────────────────────
 export interface ToolApprovalMessage extends MessageBase {
-  kind:     'tool_approval';
-  reason:   string;         // what Sulla wants to do & why
-  command:  string;         // the exact command/action
-  decision: 'pending' | 'approved' | 'denied';
+  kind:        'tool_approval';
+  reason:      string;         // what Sulla wants to do & why
+  command:     string;         // the exact command/action
+  decision:    'pending' | 'approved' | 'denied' | 'timed_out';
+  /** Round-trip id that the renderer sends back on approve/deny so the
+   *  backend's pending promise (parked in ApprovalService) can settle. */
+  approvalId?: string;
+  /** Optional origin tag — tool / workflow / vault / function / etc. */
+  origin?:     { kind: string; [field: string]: unknown };
 }
 
 // ─── Patch ────────────────────────────────────────────────────────
@@ -101,7 +106,13 @@ export interface PatchMessage extends MessageBase {
   stat:     { added: number; removed: number };
   hunks:    readonly PatchHunk[];
   state:    'proposed' | 'applied' | 'rejected';
+  /** Opaque payload used by the main-process revert handler. Only present
+   *  for patches emitted post-hoc after an agent Edit/Write tool_use. */
+  revertMeta?: PatchRevertMeta;
 }
+export type PatchRevertMeta =
+  | { op: 'edit';  path: string; oldString: string; newString: string }
+  | { op: 'write'; path: string; oldContent: string };
 export interface PatchHunk {
   lines: readonly PatchLine[];
 }

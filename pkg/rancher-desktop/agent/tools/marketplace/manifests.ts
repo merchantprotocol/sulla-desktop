@@ -117,4 +117,15 @@ export const marketplaceToolManifests: ToolManifest[] = [
     operationTypes: ['update'],
     loader:         () => import('./update'),
   },
+  {
+    name:        'diff',
+    description: 'Show files added / removed / changed between the local artifact and the marketplace version. Read-only — does NOT modify anything. Use before `marketplace/update` to preview what would overwrite.',
+    category:    'marketplace',
+    schemaDef:   {
+      kind: { type: 'string', description: KINDS_DESC },
+      slug: { type: 'string', description: 'Artifact slug.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./diff'),
+  },
 ];
