@@ -317,9 +317,24 @@ const { showOverlay } = useStartupProgress();
 const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
 const tabContent = computed(() => getTab(props.tabId)?.content || '');
 
-function onSetMode(mode: BrowserTabMode) {
-  updateTab(props.tabId, { mode, title: MODE_TITLES[mode] });
-  if (mode === 'browser') {
+function onSetMode(mode: BrowserTabMode | string, subTab?: 'mywork' | 'library' | 'marketplace' | string) {
+  // Narrow the mode string to a known BrowserTabMode. Unknown values
+  // are ignored — they can only arrive from ModeRail's emit, which is
+  // typed as `string` for flexibility.
+  if (!(mode in MODE_TITLES)) return;
+  const typedMode = mode as BrowserTabMode;
+
+  updateTab(props.tabId, { mode: typedMode, title: MODE_TITLES[typedMode] });
+
+  // Library/My Work both route to `routines` mode; a subTab arg lets
+  // ModeRail deep-link directly to the right tab inside RoutinesHome.
+  if (typedMode === 'routines' && subTab) {
+    if (subTab === 'mywork' || subTab === 'library' || subTab === 'marketplace') {
+      routinesLandingTab.value = subTab;
+    }
+  }
+
+  if (typedMode === 'browser') {
     const url = 'https://www.google.com';
     addressBarUrl.value = url;
     loading.value = true;
@@ -814,11 +829,22 @@ watch(shouldShowView, (visible) => {
 // onMounted: fires once when the tab is created. Sets URL and creates the WebContentsView.
 // onUnmounted: fires when the tab is closed (removed from the tab list).
 
+// Global ModeRail (lives in AgentRouter) dispatches this event when the
+// user clicks an icon. Only the visible tab should react — we compare
+// props.isVisible so hidden tabs don't fight for mode state.
+function onModeRailSelect(e: Event) {
+  if (!props.isVisible) return;
+  const detail = (e as CustomEvent<{ mode: string; subTab?: string }>).detail;
+  if (!detail?.mode) return;
+  onSetMode(detail.mode, detail.subTab);
+}
+
 onMounted(() => {
   // Listen for state updates from the main process
   ipcRenderer.on('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.on('browser-context-menu:ai-action' as any, onContextMenuAIAction);
   ipcRenderer.on('side-panel:state-changed' as any, onSidePanelStateChanged);
+  window.addEventListener('sulla:mode-rail-select', onModeRailSelect);
 
   // Read initial URL from the shared tab state
   const tab = getTab(props.tabId);
@@ -837,6 +863,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown);
+  window.removeEventListener('sulla:mode-rail-select', onModeRailSelect);
 
   ipcRenderer.removeListener('browser-tab-view:state-update' as any, onStateUpdate);
   ipcRenderer.removeListener('browser-context-menu:ai-action' as any, onContextMenuAIAction);

@@ -68,11 +68,12 @@ export interface StreamingMessage extends MessageBase {
 
 // ─── Thinking (live / settled / expanded rendered by Thinking.vue) ─
 export interface ThinkingMessage extends MessageBase {
-  kind:       'thinking';
-  thoughts:   readonly string[];  // appended to while live
-  startedAt:  number;
-  completed:  boolean;            // false = live streaming
-  summary?:   string;             // one-line summary when settled
+  kind:        'thinking';
+  thoughts:    readonly string[];  // appended to while live
+  startedAt:   number;
+  completed:   boolean;            // false = live streaming
+  completedAt?: number;            // wall-clock ms when completed flipped true — used to freeze the elapsed timer
+  summary?:    string;             // one-line summary when settled
 }
 
 // ─── Tool call ────────────────────────────────────────────────────

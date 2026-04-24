@@ -46,3 +46,29 @@ export function stripProtocolTags(text: string | null | undefined): string {
     .replace(STATUS_MESSAGE_RE, '')
     .trim();
 }
+
+/** Protocol tags that wrap the "end of turn" — everything after the opening
+ *  tag is an internal control payload the user must never see. The opening
+ *  tag alone is a complete signal to stop rendering, even before the close
+ *  arrives. */
+const PARTIAL_WRAPPER_START_RE = /<(AGENT_DONE|AGENT_BLOCKED|AGENT_CONTINUE|ABORT_WORKFLOW|speak)\b/i;
+
+/**
+ * Streaming-aware strip. Runs the same pair-removal as `stripProtocolTags`
+ * and additionally truncates the buffer at the first opening protocol tag,
+ * even if its closing tag hasn't arrived yet.
+ *
+ * Rationale: the pair regexes (`<FOO>...</FOO>`) can't match a half-streamed
+ * `<AGENT_DONE>\nsummary...` until the `</AGENT_DONE>` arrives. Without this
+ * truncation the partial wrapper leaks into the streaming bubble — the user
+ * sees `<AGENT_DONE` sitting below their response until the stream closes.
+ * Once we see the opening tag, the rest of the buffer is definitionally
+ * internal protocol; truncating it is safe and correct.
+ */
+export function stripProtocolTagsStreaming(text: string | null | undefined): string {
+  if (!text) return '';
+  const cleaned = stripProtocolTags(text);
+  const match = cleaned.match(PARTIAL_WRAPPER_START_RE);
+  if (!match) return cleaned;
+  return cleaned.slice(0, match.index).trim();
+}

@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import type { ThinkingMessage } from '../../models/Message';
 
 const props = defineProps<{ msg: ThinkingMessage }>();
@@ -63,20 +63,34 @@ function toggleOpen(): void {
 
 const visibleLive = computed(() => props.msg.thoughts.slice(-3));
 
-// Live elapsed counter
+// Live elapsed counter. The interval only runs while the bubble is live;
+// once `completed` flips true we stop ticking so the label reads the
+// final wall-clock duration (via `completedAt` — stamped once by the
+// PersonaAdapter) and never drifts.
 const tick = ref(0);
 let interval: ReturnType<typeof setInterval> | null = null;
+function startTicking(): void {
+  if (interval) return;
+  interval = setInterval(() => { tick.value++; }, 100);
+}
+function stopTicking(): void {
+  if (interval) { clearInterval(interval); interval = null; }
+}
 onMounted(() => {
-  if (!props.msg.completed) {
-    interval = setInterval(() => { tick.value++; }, 100);
-  }
+  if (!props.msg.completed) startTicking();
 });
-onBeforeUnmount(() => { if (interval) clearInterval(interval); });
+watch(() => props.msg.completed, (isDone) => {
+  if (isDone) stopTicking();
+  else startTicking();
+});
+onBeforeUnmount(stopTicking);
 
 const elapsedLabel = computed(() => {
-  const end = props.msg.completed ? (props.msg.thoughts.length > 0 ? props.msg.startedAt + props.msg.thoughts.length * 500 : Date.now()) : Date.now();
-  void tick.value;
-  const secs = (end - props.msg.startedAt) / 1000;
+  void tick.value;  // subscribe to the interval while live
+  const end = props.msg.completed
+    ? (props.msg.completedAt ?? props.msg.startedAt)
+    : Date.now();
+  const secs = Math.max(0, (end - props.msg.startedAt) / 1000);
   return `${ secs.toFixed(1) }s`;
 });
 </script>

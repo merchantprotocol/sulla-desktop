@@ -148,6 +148,25 @@ export class ChatController {
     if (opts.hydrateFrom) this.bus.emit({ kind: 'threadHydrated', threadId: this.thread.value.id });
   }
 
+  /**
+   * Reset this controller to a fresh thread in place. Used for /clear,
+   * /new, and the context menu's New Chat action. All controller-owned
+   * state is wiped; adapters/services should observe the reset via
+   * existing watchers or be notified separately.
+   */
+  newChat(): void {
+    const blank = this.fresh();
+    this.thread.value     = blank.thread;
+    this.runState.value   = blank.runState;
+    this.queue.value      = [];
+    this.staged.value     = [];
+    this.voice.value      = blank.voice;
+    this.artifacts.value  = { list: [], activeId: null };
+    this.popover.value    = blank.popover;
+    this.modals.value     = blank.modals;
+    this.bus.emit({ kind: 'threadHydrated', threadId: this.thread.value.id });
+  }
+
   // ─── Lifecycle ──────────────────────────────────────────────────
   dispose(): void {
     for (const t of this.timers) clearInterval(t);

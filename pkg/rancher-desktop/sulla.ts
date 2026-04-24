@@ -20,10 +20,14 @@ import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
 import * as path from 'path';
+import { fileURLToPath } from 'node:url';
 import { app, webContents } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
+
+// Package is `"type": "module"` — __dirname isn't defined in ESM scope.
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import Logging from '@pkg/utils/logging';
@@ -58,7 +62,7 @@ const checkDockerMode = async() => {
     let resourcesPath;
     if (process.resourcesPath.includes('node_modules/electron')) {
       // Development: use source resources
-      resourcesPath = path.join(__dirname, '../../../resources');
+      resourcesPath = path.join(MODULE_DIR, '../../../resources');
     } else {
       // Production: use app resources
       resourcesPath = process.resourcesPath;

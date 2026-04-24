@@ -2,9 +2,14 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+
+// Package is `"type": "module"` — __dirname isn't defined in ESM scope.
+// Derive this module's directory from import.meta.url for the dev walk-up.
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const SULLA_HOME_DIR_ENV = 'SULLA_HOME_DIR';
 const SULLA_PROJECTS_DIR_ENV = 'SULLA_PROJECTS_DIR';
@@ -42,15 +47,17 @@ export function resolveSullaResourcesDir(): string {
  * Resolve the path to the bundled `sulla-docs/` directory.
  *
  * Resolution order:
- * 1. `SULLA_DOCS_DIR` env override.
+ * 1. `SULLA_DOCS_DIR` env override (no existence check — caller's responsibility).
  * 2. Packaged app: `<resourcesPath>/resources/sulla-docs` (shipped via
  *    electron-builder's `extraResources: - resources/`).
  * 3. Dev: walk up from __dirname to find `sulla-desktop/resources/sulla-docs`.
- * 4. Last resort: `<resolveSullaResourcesDir()>/sulla-docs` (user's ~/sulla/resources).
+ *
+ * No fallback. If none of the above resolve, throws — sulla-docs is required
+ * for the agent's environment prompt and silent fallbacks mask packaging bugs.
  *
  * Runs in the Electron main process (where the Tools API handlers live), so
- * `fs.readFileSync` against this path works regardless of whether the agent
- * is executing inside Lima — the file reads happen on the host.
+ * `fs.readFileSync` against the returned path works regardless of whether the
+ * agent is executing inside Lima — the file reads happen on the host.
  */
 export function resolveSullaDocsDir(): string {
   const envPath = String(process.env[SULLA_DOCS_DIR_ENV] || '').trim();
@@ -65,8 +72,8 @@ export function resolveSullaDocsDir(): string {
     if (fs.existsSync(bundled)) return bundled;
   }
 
-  // Dev: locate the sulla-desktop checkout by walking upward from __dirname.
-  let cursor = __dirname;
+  // Dev: locate the sulla-desktop checkout by walking upward from this module's dir.
+  let cursor = MODULE_DIR;
   for (let depth = 0; depth < 8; depth += 1) {
     const candidate = path.join(cursor, 'resources', 'sulla-docs');
     if (fs.existsSync(candidate)) return candidate;
@@ -75,8 +82,11 @@ export function resolveSullaDocsDir(): string {
     cursor = parent;
   }
 
-  // Last resort — agent's ~/sulla/resources/sulla-docs (set up at install).
-  return path.join(resolveSullaResourcesDir(), 'sulla-docs');
+  throw new Error(
+    'resolveSullaDocsDir: sulla-docs not found. Checked SULLA_DOCS_DIR env, ' +
+    `process.resourcesPath (${ resourcesPath ?? 'unset' }), and dev walk-up from ${ MODULE_DIR }. ` +
+    'Ensure resources/sulla-docs/ exists in the dev checkout or that electron-builder packaged it.',
+  );
 }
 
 export function resolveSullaProjectsDir(): string {

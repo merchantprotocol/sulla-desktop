@@ -117,6 +117,16 @@ export class AgentModelSelectorController {
   }
 
   /**
+   * Fetch provider groups + their models without touching the legacy
+   * `showModelMenu` flag. New UIs that render the list in their own
+   * modal/dropdown (and so don't care about the flag) should call this
+   * when their surface becomes visible.
+   */
+  async refresh(): Promise<void> {
+    await this.refreshProviderGroups();
+  }
+
+  /**
    * Select a model — delegates to ModelProviderService via IPC.
    * The service writes to DB, manages llama-server, and broadcasts state-changed.
    */

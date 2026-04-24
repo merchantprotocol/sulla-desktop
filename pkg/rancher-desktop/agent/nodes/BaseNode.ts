@@ -10,7 +10,7 @@ import { throwIfAborted } from '../services/AbortService';
 import { parseJson } from '../services/JsonParseService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
-import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 
@@ -1300,12 +1300,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Run token through all active extractors (speak extraction, etc.)
       const cleaned = controller.processChunk(token, ctx);
 
-      // Non-voice mode: stream accumulated text to the UI progressively
+      // Non-voice mode: stream accumulated text to the UI progressively.
+      // Use the streaming-aware strip so a half-streamed opening wrapper
+      // like `<AGENT_DONE` (closing tag hasn't arrived yet) is truncated
+      // immediately instead of leaking into the bubble.
       if (!isVoiceMode && cleaned) {
         const now = Date.now();
         if (now - lastStreamFlush >= STREAM_THROTTLE_MS) {
           lastStreamFlush = now;
-          const stripped = stripProtocolTags(contentBuffer);
+          const stripped = stripProtocolTagsStreaming(contentBuffer);
           if (stripped.trim()) {
             this.wsChatMessage(state, stripped, 'assistant', 'streaming');
           }
@@ -1333,7 +1336,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       state.metadata.lastActivityMs = Date.now();
 
       if (!isVoiceMode && contentBuffer.trim()) {
-        const stripped = stripProtocolTags(contentBuffer);
+        const stripped = stripProtocolTagsStreaming(contentBuffer);
         if (stripped.trim()) {
           this.wsChatMessage(state, stripped, 'assistant', 'streaming');
         }
@@ -1345,6 +1348,28 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     };
 
     const reply = await this.llm!.chatStream(messages, { onToken, onActivity }, { ...options, state });
+
+    // End-of-turn flush. `onActivity` only fires segment boundaries while
+    // the model is still producing activity; a stream that ends naturally
+    // (just tokens → done, or thinking → done with no more segments)
+    // never hits those boundaries, so the last open streaming/thinking
+    // bubble stays stuck in "live" mode forever — blinking cursor, timer
+    // running, even though the graph has moved on or terminated.
+    //
+    // Emit both closing sentinels unconditionally here. The dispatcher
+    // only closes the MOST RECENT uncompleted bubble for each kind, so
+    // this is a no-op when nothing is open.
+    if (!isVoiceMode) {
+      if (contentBuffer.trim()) {
+        const stripped = stripProtocolTagsStreaming(contentBuffer);
+        if (stripped.trim()) {
+          this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+        }
+        contentBuffer = '';
+      }
+      this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
+      this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
+    }
 
     if (!reply) {
       return null;

@@ -12,7 +12,7 @@ import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
 export function buildWorkspaceSection(ctx: PromptBuildContext): PromptSection | null {
   const sullaHome = ctx.templateVars['{{sulla_home}}'] || '~/sulla';
-  const sullaDocs = ctx.templateVars['{{sulla_docs}}'] || `${ sullaHome }/resources/sulla-docs`;
+  const sullaDocs = ctx.templateVars['{{sulla_docs}}'] || '';
 
   if (ctx.mode === 'local') {
     const content = `## Environment

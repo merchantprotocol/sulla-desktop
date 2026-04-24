@@ -23,7 +23,8 @@ defineEmits<{ (e: 'pick'): void }>();
   transition: all 0.2s ease; padding: 0;
 }
 .attach-btn:hover {
-  background: rgba(80, 150, 179, 0.1);
-  border-color: var(--steel-400); color: var(--steel-200);
+  background: rgba(80, 150, 179, 0.18);
+  border-color: var(--steel-400); color: var(--steel-400);
+  box-shadow: 0 0 14px rgba(106, 176, 204, 0.3);
 }
 </style>

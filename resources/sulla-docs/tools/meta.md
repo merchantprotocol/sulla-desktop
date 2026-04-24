@@ -42,9 +42,13 @@ Returns ready-to-run command examples with parameter schemas + credential status
 ### `meta/file_search` — Semantic search over files
 ```bash
 sulla meta/file_search '{"query":"workflow scheduler","dirPath":"/Users/.../sulla","limit":20}'
+sulla meta/file_search '{"query":"how do I run a function"}'           # primary dir = home, sulla-docs auto-included
+sulla meta/file_search '{"query":"...","includeSullaDocs":false}'      # search only dirPath
 ```
 
 Vector-indexed semantic search across both filenames and contents. Faster and broader than `grep` for conceptual queries ("error handling for HTTP timeouts"). For exact strings use grep instead.
+
+**Always also searches the bundled `sulla-docs/` reference** (the docs you're reading right now) unless you pass `includeSullaDocs: false`. Results are grouped per directory so you can see which hits came from where. This means most "where do I do X?" queries get authoritative tool docs returned for free without remembering paths.
 
 First search in a dir triggers indexing — subsequent searches are fast.
 

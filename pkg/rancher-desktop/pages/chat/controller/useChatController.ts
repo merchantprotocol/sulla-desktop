@@ -14,11 +14,14 @@
 
 import { inject, provide, type InjectionKey } from 'vue';
 
+import type { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
+
 import type { ChatController }   from './ChatController';
 import type { ThreadRegistry }   from './ThreadRegistry';
 
-export const ChatControllerKey: InjectionKey<ChatController>   = Symbol('ChatController');
-export const ThreadRegistryKey: InjectionKey<ThreadRegistry>   = Symbol('ThreadRegistry');
+export const ChatControllerKey:  InjectionKey<ChatController>               = Symbol('ChatController');
+export const ThreadRegistryKey:  InjectionKey<ThreadRegistry>               = Symbol('ThreadRegistry');
+export const ModelSelectorKey:   InjectionKey<AgentModelSelectorController> = Symbol('ModelSelector');
 
 export function provideChatController(c: ChatController): void {
   provide(ChatControllerKey, c);
@@ -36,4 +39,13 @@ export function useThreadRegistry(): ThreadRegistry {
   const r = inject(ThreadRegistryKey);
   if (!r) throw new Error('[useThreadRegistry] no ThreadRegistry provided by a parent component.');
   return r;
+}
+
+export function provideModelSelector(s: AgentModelSelectorController): void {
+  provide(ModelSelectorKey, s);
+}
+export function useModelSelector(): AgentModelSelectorController {
+  const s = inject(ModelSelectorKey);
+  if (!s) throw new Error('[useModelSelector] no AgentModelSelectorController provided by a parent component.');
+  return s;
 }

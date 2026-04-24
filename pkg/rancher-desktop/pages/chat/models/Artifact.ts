@@ -21,14 +21,18 @@ export interface WorkflowPayload {
   nodes:  WorkflowNode[];
   edges:  WorkflowEdge[];
   activeNodeId?: string;
+  /** Backend workflow run correlation id, if this artifact is driven by a live run. */
+  workflowRunId?: string;
 }
 export interface WorkflowNode {
-  id:     string;
-  x:      number;
-  y:      number;
-  kicker: string;
-  name:   string;
-  state:  'idle' | 'active' | 'done' | 'error' | 'start';
+  id:          string;
+  x:           number;
+  y:           number;
+  kicker:      string;
+  name:        string;
+  state:       'idle' | 'active' | 'done' | 'error' | 'start';
+  /** Order the node appears in the workflow run (from backend). */
+  nodeIndex?:  number;
 }
 export interface WorkflowEdge {
   from:   string;

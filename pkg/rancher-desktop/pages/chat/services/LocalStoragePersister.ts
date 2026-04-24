@@ -5,6 +5,7 @@
   Keys:
     chat:index              → array of ThreadId
     chat:thread:<ThreadId>  → ThreadState JSON
+    chat:tab:<tabId>        → ThreadId (last active thread per tab)
 */
 
 import type { ThreadPersister } from '../controller/ChatController';
@@ -13,6 +14,7 @@ import type { ThreadId }        from '../types/chat';
 
 const INDEX_KEY = 'chat:index';
 const KEY = (id: ThreadId) => `chat:thread:${ id }`;
+const TAB_KEY = (tabId: string) => `chat:tab:${ tabId }`;
 
 export class LocalStoragePersister implements ThreadPersister {
   save(state: ThreadState): void {
@@ -50,6 +52,21 @@ export class LocalStoragePersister implements ThreadPersister {
       const index = this.readIndex().filter(x => x !== id);
       localStorage.setItem(INDEX_KEY, JSON.stringify(index));
     } catch {}
+  }
+
+  /** Remember which thread was last active in a given tab. */
+  setTabThread(tabId: string, threadId: ThreadId): void {
+    try {
+      localStorage.setItem(TAB_KEY(tabId), threadId);
+    } catch (e) { console.error('[LocalStoragePersister] setTabThread failed:', e); }
+  }
+
+  /** Look up the last active thread id for a tab, or null if none. */
+  getTabThread(tabId: string): ThreadId | null {
+    try {
+      const raw = localStorage.getItem(TAB_KEY(tabId));
+      return raw ? (raw as ThreadId) : null;
+    } catch { return null; }
   }
 
   private readIndex(): ThreadId[] {

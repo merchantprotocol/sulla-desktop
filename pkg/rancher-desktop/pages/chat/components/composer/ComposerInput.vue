@@ -54,14 +54,22 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
 </script>
 
 <style scoped>
+/* !important beats the global `.theme-protocol-dark textarea` rule
+   in assets/styles/themes/protocol-dark.css, which otherwise forces
+   mono font + bright white on every textarea in the app. */
 .input {
   flex: 1;
-  font-family: var(--serif); font-style: italic;
-  font-size: 18px; color: var(--read-1);
+  font-family: var(--serif) !important; font-style: italic !important;
+  font-size: 18px !important; color: var(--read-1) !important;
   background: transparent; border: none; outline: none;
   resize: none; min-height: 28px; max-height: 160px;
   padding: 0; width: 100%; line-height: 1.4;
   caret-color: var(--steel-400);
 }
-.input::placeholder { color: var(--read-4); font-style: italic; }
+.input::placeholder {
+  color: var(--read-4) !important;
+  font-family: var(--serif) !important;
+  font-style: italic !important;
+  font-size: 18px !important;
+}
 </style>
