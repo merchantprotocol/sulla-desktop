@@ -451,9 +451,8 @@ export class AgentPersonaService {
    * Route an incoming WebSocket message to the appropriate handler.
    *
    * This is the **chat-path** entry point for all WebSocket messages on this
-   * persona's channel. For `workflow_execution_event` messages specifically,
-   * this is one of TWO independent consumers (the other being the canvas path
-   * via `EditorChatInterface` → `AgentEditor.vue` → `WorkflowEditor.vue`).
+   * persona's channel. For `workflow_execution_event` messages the canvas path
+   * also consumes these directly inside `AgentRoutines.vue`.
    *
    * **Workflow events handled here** (creates/mutates `ChatMessage` objects
    * with `kind: 'workflow_node'`, rendered by `WorkflowNodeCard.vue`):
@@ -467,7 +466,7 @@ export class AgentPersonaService {
    *
    * The event payload originates from `Graph.emitPlaybookEvent()` in the main
    * process. Any changes to the payload shape must be reflected here AND in the
-   * canvas-path dispatcher in `AgentEditor.vue`.
+   * canvas-path dispatcher in `AgentRoutines.vue`.
    *
    * @param agentId The channel / agent ID this message arrived on
    * @param msg     The raw WebSocket message

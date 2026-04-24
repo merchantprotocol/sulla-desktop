@@ -163,7 +163,7 @@ const controller = initController();
 // ─── Shared model selector (source of truth for selected model) ───
 // AgentModelSelectorController talks to the main-process ModelProviderService
 // via IPC — that service owns the DB, llama-server, and broadcasts state
-// changes across every open chat (old BrowserTabChat, SidePanelChat, AgentEditor,
+// changes across every open chat (old BrowserTabChat, SidePanelChat,
 // and this new ChatPage). Without this, the new chat page had its own hardcoded
 // model list and picking one never reached the backend.
 const _modelSysReady  = ref(true);
