@@ -525,7 +525,7 @@ export class PersonaAdapter {
                 console.warn('[PersonaAdapter] workflow-artifact IPC fetch failed:', err);
               }
             })();
-            return { id, kind: 'html', createdAt, html: '', artifactId: undefined } satisfies HtmlMessage;
+            return null; // artifact opens in sidebar; no transcript entry needed
           }
         }
 

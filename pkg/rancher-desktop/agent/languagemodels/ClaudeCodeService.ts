@@ -453,10 +453,35 @@ export class ClaudeCodeService extends BaseLanguageModel {
           env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
         });
 
-      // Emit immediately on spawn so the renderer sets graphRunning=true
-      // without waiting for the first token (Claude startup can take seconds).
+      // Heartbeat ticker — keeps the renderer (and routine canvas) informed
+      // during the 60–120s cold-start gap between spawn and the first
+      // Anthropic token. Without this the UI looks dead. Cleared on first
+      // real stream event (token, tool_use, thinking) or close/error/abort.
+      let heartbeatTimer: NodeJS.Timeout | null = null;
+      const heartbeatStart = Date.now();
+      const directActivity = (msg: string) => {
+        if (!msg) return;
+        try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
+      };
+      const stopHeartbeat = () => {
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
+      };
+
       proc.once('spawn', () => {
-        try { callbacks.onActivity?.('Starting Claude…') } catch { /* ignore */ }
+        directActivity('Booting isolated environment…');
+        let tick = 0;
+        heartbeatTimer = setInterval(() => {
+          tick += 1;
+          const elapsed = Math.round((Date.now() - heartbeatStart) / 1000);
+          const msg = tick === 1 ? 'Claude binary starting'
+                    : tick === 2 ? 'Loading tools and context'
+                    : tick === 3 ? 'Calling model — waiting for first response'
+                    : `Still waiting on model (${ elapsed }s)`;
+          directActivity(msg);
+        }, 3000);
       });
 
       let stdoutBuffer = '';
@@ -468,6 +493,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       let sessionInUse = false;
 
       const onAbort = () => {
+        stopHeartbeat();
         // 1) Kill the host-side limactl process. This closes the SSH-style
         //    session to the VM. With `exec` in the inner shell (see above),
         //    the remote claude usually receives SIGHUP and dies.
@@ -611,12 +637,21 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
         if (parsed.session_id) capturedSessionId = parsed.session_id;
 
+        // System init — claude has booted, auth done, MCP tools loaded.
+        // Update the heartbeat phase but keep ticking because the model
+        // call itself can still add 20–60s.
+        if (parsed.type === 'system' && parsed.subtype === 'init') {
+          emitActivity('Tools connected — calling model');
+          return;
+        }
+
         // Stream-level events (wrapped in parsed.event) — text deltas,
         // tool_use block starts, thinking starts.
         const ev = parsed?.event;
         if (ev) {
           // Text chunks → stream to caller as content
           if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
+            stopHeartbeat();
             textCollected += ev.delta.text;
             try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
             return;
@@ -626,6 +661,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
           // isn't filled in yet here for partial streaming, so the message
           // starts generic and content_block_stop below refines it.
           if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
+            stopHeartbeat();
             const name = ev.content_block.name ?? 'tool';
             emitActivity(`Using ${ name }…`);
             return;
@@ -634,6 +670,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
           // Tool use complete — input is fully populated now, emit the
           // refined "Running Bash: ls" style message.
           if (ev.type === 'content_block_stop' && ev.content_block?.type === 'tool_use') {
+            stopHeartbeat();
             const name = ev.content_block.name ?? 'tool';
             emitActivity(activityForToolUse(name, ev.content_block.input));
             emitFilePatch(name, ev.content_block.input);
@@ -642,6 +679,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
           // Thinking block starting → indicate reasoning phase.
           if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') {
+            stopHeartbeat();
             emitActivity('Thinking…');
             return;
           }
@@ -699,11 +737,13 @@ export class ClaudeCodeService extends BaseLanguageModel {
       });
 
       proc.on('error', (err) => {
+        stopHeartbeat();
         options.signal?.removeEventListener('abort', onAbort);
         reject(err);
       });
 
       proc.on('close', (code) => {
+        stopHeartbeat();
         options.signal?.removeEventListener('abort', onAbort);
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
 
