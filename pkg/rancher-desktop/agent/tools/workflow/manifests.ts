@@ -25,6 +25,17 @@ export const workflowToolManifests: ToolManifest[] = [
     loader:         () => import('./validate_sulla_workflow'),
   },
   {
+    name:        'import_workflow',
+    description: 'Import a local routine.yaml file into the workflows database so it can be executed. Reads from ~/sulla/routines/<slug>/routine.yaml and upserts into the DB. Use this after writing or editing a workflow YAML to make it available to execute_workflow.',
+    category:    'workflow',
+    schemaDef:   {
+      slug:   { type: 'string', description: 'The workflow slug — directory name under ~/sulla/routines/ containing a routine.yaml.' },
+      status: { type: 'string', optional: true, description: 'Workflow status: draft | production | archive. Defaults to "production".' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./import_workflow'),
+  },
+  {
     name:        'restart_from_checkpoint',
     description: 'Restart a workflow execution from a specific node checkpoint. Use workflowId alone to list recent executions, executionId alone to list checkpoints, or executionId + nodeId to restart from that node.',
     category:    'meta',
