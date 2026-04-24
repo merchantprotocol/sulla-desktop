@@ -519,7 +519,15 @@ export class PersonaAdapter {
                 if (!definition) return;
                 const nodes = (definition.nodes ?? []) as WorkflowPayload['nodes'];
                 const edges = (definition.edges ?? []) as WorkflowPayload['edges'];
-                const payload: WorkflowPayload = { nodes, edges };
+                // `id` is load-bearing: WorkflowArtifact.vue reads it to mount
+                // the full AgentRoutines editor. Without it the pane renders
+                // an empty div.
+                const payload: WorkflowPayload = {
+                  id: wfId,
+                  name: wfName || String(definition.name ?? wfId),
+                  nodes,
+                  edges,
+                };
                 this.ensureWorkflowArtifact(b.id, payload, wfName || String(definition.name ?? wfId), createdAt);
               } catch (err) {
                 console.warn('[PersonaAdapter] workflow-artifact IPC fetch failed:', err);
