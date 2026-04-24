@@ -26,6 +26,12 @@ export interface ActivateWorkflowInput {
    * `resumeExecutionId` is set.
    */
   startNodeId?: string;
+  /**
+   * Bypass the concurrent-run guard. When true and an active row exists for
+   * this workflow, activation marks the stale row as failed and starts fresh.
+   * Used by the "Start Fresh" choice in the UI and by boot-time recovery.
+   */
+  force?: boolean;
 }
 
 export interface ActivateWorkflowResult {
@@ -148,22 +154,29 @@ export async function activateWorkflowOnState(
   }
 
   // Concurrent-run guard: block if this workflow already has a running or
-  // suspended execution. Pass force=true to override (e.g. boot recovery).
+  // suspended execution. Pass force=true to override (e.g. UI "Start Fresh"
+  // choice, boot recovery). When forcing, flip the stale row to failed so
+  // we don't leave two concurrent "running" rows behind.
   const force = (input as any).force === true;
-  if (!force) {
-    try {
-      const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-      const active = await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
-      if (active) {
-        const a = active.attributes as any;
+  try {
+    const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+    const active = await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
+    if (active) {
+      const a = active.attributes as any;
+      if (!force) {
         return {
           ok:             false,
           responseString: `Workflow "${ definition.name }" already has an active execution (${ a.execution_id }, status: ${ a.status }). Resume it with resumeExecutionId="${ a.execution_id }" or wait for it to complete.`,
         };
       }
-    } catch (err) {
-      console.warn('[ExecuteWorkflow] Concurrent-run guard check failed (continuing):', err);
+      try {
+        await WorkflowExecutionModel.markFailed(a.execution_id, 'superseded_by_force_restart');
+      } catch (err) {
+        console.warn(`[ExecuteWorkflow] Failed to mark superseded row ${ a.execution_id } as failed:`, err);
+      }
     }
+  } catch (err) {
+    console.warn('[ExecuteWorkflow] Concurrent-run guard check failed (continuing):', err);
   }
 
   // Resume a specific prior execution (user clicked Resume on a row in the

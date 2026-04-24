@@ -549,6 +549,61 @@
       </div>
     </div>
 
+    <!-- Resume-or-start-fresh modal — surfaced when Play is clicked and the
+         DB still shows a running/suspended row for this workflow (crash
+         leftover, or an abort that couldn't reach the row). Three choices:
+         Resume the stale run from its last checkpoint, Start Fresh (force
+         past the guard and mark the old row failed), or Cancel. -->
+    <div
+      v-if="resumeModal"
+      class="delete-confirm-backdrop"
+      @click="resumeModalCancel"
+    >
+      <div
+        class="delete-confirm"
+        role="dialog"
+        aria-labelledby="resume-modal-title"
+        @click.stop
+      >
+        <div
+          id="resume-modal-title"
+          class="dc-title"
+        >
+          Workflow already active
+        </div>
+        <div class="dc-body">
+          This routine has an <b>{{ resumeModal.status }}</b> execution
+          started {{ formatRunStamp(resumeModal.startedAt) }}
+          (<code>{{ resumeModal.executionId.slice(-8) }}</code>).
+          Resume it from the last checkpoint, or start fresh?
+        </div>
+        <div class="dc-actions">
+          <button
+            type="button"
+            class="dc-btn cancel"
+            @click="resumeModalCancel"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="dc-btn"
+            @click="resumeModalStartFresh"
+          >
+            Start Fresh
+          </button>
+          <button
+            type="button"
+            class="dc-btn danger"
+            autofocus
+            @click="resumeModalResume"
+          >
+            Resume
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Past-run banner — pinned at the top of the frame when the user is
          inspecting a historical run so the canvas can't be mistaken for a
          live one. Return-to-live clears node state and drops back to idle. -->
@@ -1033,7 +1088,7 @@ function endRun(terminal: 'done' | 'failed' = 'failed') {
   clearStallTimer();
 }
 
-async function launchRoutine(options?: { startNodeId?: string; resumeExecutionId?: string; label?: string }) {
+async function launchRoutine(options?: { startNodeId?: string; resumeExecutionId?: string; label?: string; force?: boolean }) {
   if (!props.workflowId) {
     console.warn('[AgentRoutines] Run requested with no workflowId — nothing to execute.');
 
@@ -1044,13 +1099,18 @@ async function launchRoutine(options?: { startNodeId?: string; resumeExecutionId
   beginRun();
 
   try {
+    const execOptions = options?.startNodeId || options?.resumeExecutionId || options?.force
+      ? {
+        startNodeId:       options.startNodeId,
+        resumeExecutionId: options.resumeExecutionId,
+        force:             options.force,
+      }
+      : undefined;
     const result = await ipcRenderer.invoke(
       'routines-execute',
       props.workflowId,
       undefined,
-      options?.startNodeId || options?.resumeExecutionId
-        ? { startNodeId: options.startNodeId, resumeExecutionId: options.resumeExecutionId }
-        : undefined,
+      execOptions,
     );
     lastExecutionId.value = result.executionId;
     const suffix = options?.label ? ` (${ options.label })` : '';
@@ -1067,8 +1127,58 @@ async function launchRoutine(options?: { startNodeId?: string; resumeExecutionId
   }
 }
 
+// Shape returned by the `workflow-active-execution` IPC when a stale row
+// exists (e.g. the app crashed mid-run, or an abort didn't clean up).
+// Drives the three-way Start Fresh / Resume / Cancel modal below.
+interface ActiveExecutionInfo {
+  executionId:  string;
+  workflowId:   string;
+  workflowName: string;
+  status:       string;
+  startedAt:    string;
+}
+
+const resumeModal = ref<ActiveExecutionInfo | null>(null);
+
 async function onRunClick() {
+  if (!props.workflowId || hasActiveExecution.value) return;
+
+  // Pre-flight: does the DB already think this workflow is running? If a
+  // prior run's row never got marked complete (crash, orphan, etc.), the
+  // concurrent-run guard will reject `routines-execute` with a raw error.
+  // Surface the three-way choice instead of letting that ugly error hit.
+  try {
+    const active = await ipcRenderer.invoke('workflow-active-execution', props.workflowId) as ActiveExecutionInfo | null;
+    if (active) {
+      resumeModal.value = active;
+      return;
+    }
+  } catch (err) {
+    // Pre-flight check failed; fall through to a plain launch and let the
+    // backend decide. Worst case we show the raw error we had before.
+    console.warn('[AgentRoutines] workflow-active-execution pre-flight failed:', err);
+  }
+
   await launchRoutine();
+}
+
+// Modal handlers
+async function resumeModalResume() {
+  const active = resumeModal.value;
+  resumeModal.value = null;
+  if (!active) return;
+  pushLine('dec', `resuming ${ active.executionId }`);
+  await launchRoutine({ resumeExecutionId: active.executionId, label: `resume ${ active.executionId.slice(-8) }` });
+}
+
+async function resumeModalStartFresh() {
+  resumeModal.value = null;
+  pushLine('dec', 'starting fresh (force)');
+  await launchRoutine({ force: true, label: 'force' });
+}
+
+function resumeModalCancel() {
+  resumeModal.value = null;
 }
 
 async function onStopClick() {
@@ -1310,8 +1420,7 @@ function sealThinkingFor(nodeId: string | undefined) {
 
 // ── Event handler ──
 // Maps a single PlaybookController event to (a) a node.data.state
-// change, (b) a stream line, or (c) both. Event shape mirrors what
-// EditorChatInterface / AgentEditor already consume elsewhere.
+// change, (b) a stream line, or (c) both.
 
 function stamp(ts?: number): string {
   const d = ts ? new Date(ts) : new Date();
