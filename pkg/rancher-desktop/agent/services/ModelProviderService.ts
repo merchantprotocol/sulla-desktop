@@ -142,7 +142,10 @@ class ModelProviderService {
     // UI decides whether to gate on connection or prompt the user to connect.
     const integrationService = getIntegrationService();
 
-    for (const integration of Object.values(integrations)) {
+    const allIntegrations = Object.values(integrations);
+    console.log(`[ModelProviderService] getAvailableProviders: ${ allIntegrations.length } total integrations loaded`);
+
+    for (const integration of allIntegrations) {
       if (integration.category !== 'AI Infrastructure') continue;
       if (EXCLUDED_PROVIDER_IDS.includes(integration.id)) continue;
 
@@ -162,6 +165,8 @@ class ModelProviderService {
 
       providers.push({ id: integration.id, name: integration.name, connected });
     }
+
+    console.log(`[ModelProviderService] getAvailableProviders: returning ${ providers.length } providers`);
 
     return providers;
   }

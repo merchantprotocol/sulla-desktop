@@ -28,7 +28,15 @@ if (loaded.errors.length > 0) {
 }
 
 // Merge native integrations as fallback if YAML catalog is empty (migration in progress)
-export const integrations: Record<string, Integration> = Object.keys(loaded.integrations).length > 0
+const hasYamlIntegrations = Object.keys(loaded.integrations).length > 0;
+
+if (hasYamlIntegrations) {
+  console.log(`[integrations] Loaded ${ Object.keys(loaded.integrations).length } integrations from YAML manifests`);
+} else {
+  console.log(`[integrations] No YAML manifests found, falling back to native catalog with ${ Object.keys(nativeAiInfrastructureIntegrations).length } integrations`);
+}
+
+export const integrations: Record<string, Integration> = hasYamlIntegrations
   ? loaded.integrations
   : nativeAiInfrastructureIntegrations;
 
