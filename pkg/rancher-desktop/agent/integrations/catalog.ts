@@ -11,6 +11,7 @@
  */
 
 import { loadCatalog } from './loader';
+import { nativeAiInfrastructureIntegrations } from './native/ai_infrastructure';
 
 import type { Integration } from './types';
 
@@ -26,7 +27,10 @@ if (loaded.errors.length > 0) {
   }
 }
 
-export const integrations: Record<string, Integration> = loaded.integrations;
+// Merge native integrations as fallback if YAML catalog is empty (migration in progress)
+export const integrations: Record<string, Integration> = Object.keys(loaded.integrations).length > 0
+  ? loaded.integrations
+  : nativeAiInfrastructureIntegrations;
 
 /** Access the raw manifests (for uninstall, bundled-artifact fan-out, UI). */
 export const integrationManifests = loaded.manifests;
