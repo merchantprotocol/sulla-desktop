@@ -33,6 +33,35 @@ interface RunRecord {
   startedAt:   Date;
 }
 
+/**
+ * Reads spec.integrations and fetches the declared env vars from vault.
+ * Returns a map of { ENV_VAR_NAME → value } ready to inject into the runtime subprocess.
+ */
+async function resolveIntegrationEnv(spec: any): Promise<Record<string, string>> {
+  const integrations: any[] = spec.integrations ?? [];
+  if (integrations.length === 0) return {};
+
+  const { getIntegrationService } = await import('../../services/IntegrationService');
+  const svc = getIntegrationService();
+  const env: Record<string, string> = {};
+
+  for (const entry of integrations) {
+    if (!entry || typeof entry !== 'object') continue;
+    const integrationId: string | undefined = typeof entry.slug === 'string' ? entry.slug : undefined;
+    if (!integrationId) continue;
+    const envMap: Record<string, string> = entry.env ?? {};
+    for (const [envVarName, vaultProperty] of Object.entries(envMap)) {
+      if (typeof vaultProperty !== 'string') continue;
+      const row = await svc.getIntegrationValue(integrationId, vaultProperty);
+      if (row?.value) {
+        env[envVarName] = row.value;
+      }
+    }
+  }
+
+  return env;
+}
+
 export class FunctionRunWorker extends BaseTool {
   name = 'function_run';
   description = 'Load and invoke a custom function by slug. Returns the function metadata, runtime details, load status, inputs used, and all outputs in one call. Every invocation is logged to the `function_runs` table — query via function/runs.';
@@ -159,8 +188,27 @@ export class FunctionRunWorker extends BaseTool {
 
     lines.push('');
 
-    // ── 5. Invoke ──
-    const invokeStep = loadStep + 1;
+    // ── 5. Resolve vault secrets for integrations ──
+    let integrationEnv: Record<string, string> = {};
+    const integrationDecls: any[] = spec.integrations ?? [];
+    if (integrationDecls.length > 0) {
+      lines.push(`Step ${ loadStep + 1 } — Resolving vault secrets...`);
+      try {
+        integrationEnv = await resolveIntegrationEnv(spec);
+        const resolved = Object.keys(integrationEnv);
+        if (resolved.length > 0) {
+          lines.push(`✓ Resolved: ${ resolved.join(', ') }`);
+        } else {
+          lines.push(`⚠️  No vault values found for declared integrations`);
+        }
+      } catch (err) {
+        return failAndRecord('invoke', `Vault lookup failed: ${ (err as Error).message }`);
+      }
+      lines.push('');
+    }
+
+    // ── 6. Invoke ──
+    const invokeStep = loadStep + (integrationDecls.length > 0 ? 2 : 1);
     const inputSummary = Object.keys(inputs).length
       ? JSON.stringify(inputs, null, 2)
       : '(none — using function defaults)';
@@ -168,7 +216,12 @@ export class FunctionRunWorker extends BaseTool {
 
     let invokeResult: any;
     try {
-      invokeResult = await runtimePost(`${ runtimeUrl }/invoke`, { name: slug, version, inputs });
+      invokeResult = await runtimePost(`${ runtimeUrl }/invoke`, {
+        name:    slug,
+        version,
+        inputs,
+        ...(Object.keys(integrationEnv).length > 0 ? { env: integrationEnv } : {}),
+      });
     } catch (err) {
       return failAndRecord('invoke', `Invocation failed: ${ (err as Error).message }`);
     }
@@ -179,7 +232,7 @@ export class FunctionRunWorker extends BaseTool {
     lines.push(`✓ Completed in ${ durationMs }ms`);
     lines.push('');
 
-    // ── 6. Format outputs ──
+    // ── 7. Format outputs ──
     lines.push('Outputs:');
     if (Object.keys(outputs).length === 0) {
       lines.push('  (none returned)');
