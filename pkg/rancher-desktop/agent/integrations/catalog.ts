@@ -11,6 +11,7 @@
  */
 
 import { loadCatalog } from './loader';
+import { nativeAiInfrastructureIntegrations } from './native/ai_infrastructure';
 
 import type { Integration } from './types';
 
@@ -26,7 +27,18 @@ if (loaded.errors.length > 0) {
   }
 }
 
-export const integrations: Record<string, Integration> = loaded.integrations;
+// Merge native integrations as fallback if YAML catalog is empty (migration in progress)
+const hasYamlIntegrations = Object.keys(loaded.integrations).length > 0;
+
+if (hasYamlIntegrations) {
+  console.log(`[integrations] Loaded ${ Object.keys(loaded.integrations).length } integrations from YAML manifests`);
+} else {
+  console.log(`[integrations] No YAML manifests found, falling back to native catalog with ${ Object.keys(nativeAiInfrastructureIntegrations).length } integrations`);
+}
+
+export const integrations: Record<string, Integration> = hasYamlIntegrations
+  ? loaded.integrations
+  : nativeAiInfrastructureIntegrations;
 
 /** Access the raw manifests (for uninstall, bundled-artifact fan-out, UI). */
 export const integrationManifests = loaded.manifests;
