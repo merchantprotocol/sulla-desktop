@@ -250,6 +250,17 @@ export class PersonaAdapter {
         this.lastMappedHash.set(b.id, hash);
         this.controller.updateMessage(mapped.id, mapped as Partial<Message>);
       } else {
+        // [DBLDBG] Doubling investigation — log every distinct chat bubble
+        // that gets appended. Hash the rendered text so we can match
+        // against the dispatcher push hashes (note: stableHash here is a
+        // Vue-side stableHash on the mapped Message; we also compute a
+        // content-only hash to pair with backend logs).
+        const txt = (mapped as any).text ?? (mapped as any).content ?? '';
+        const txtStr = typeof txt === 'string' ? txt : JSON.stringify(txt);
+        let h = 0;
+        for (let i = 0; i < txtStr.length; i++) h = ((h << 5) - h + txtStr.charCodeAt(i)) | 0;
+        const contentHash = (h >>> 0).toString(16).padStart(8, '0');
+        console.log(`[DBLDBG][PersonaAdapter:appendMessage] backendId="${ b.id }" mappedId="${ (mapped as any).id }" kind="${ (mapped as any).kind }" backendKind="${ (b as any).kind }" hash=${ contentHash } len=${ txtStr.length } preview="${ txtStr.slice(0, 80).replace(/\n/g, '\\n') }"`);
         this.seen.add(b.id);
         this.lastMappedHash.set(b.id, stableHash(mapped));
         this.controller.appendMessage(mapped);
