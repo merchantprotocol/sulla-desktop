@@ -64,7 +64,7 @@
                 :id="property.key"
                 v-model="formData[property.key]"
                 :disabled="selectOptionsLoading[property.key]"
-                class="flex-1 p-2 border rounded-md disabled:opacity-50 frm-input"
+                class="w-full flex-1 p-2 border rounded-md disabled:opacity-50 frm-input"
                 :class="{ 'frm-input-error': !!errors[property.key] }"
               >
                 <option
