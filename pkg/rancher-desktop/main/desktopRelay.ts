@@ -91,6 +91,18 @@ class DesktopRelayClient {
   // Guards against a stuck `new WebSocket()` that never resolves to `open`.
   private connectTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // ── Mobile keepalive + send queue ──────────────────────────
+  // During long tool-execution phases (e.g. ClaudeCode running) there may
+  // be 30–120 s of silence on the relay. Mobile clients typically have a
+  // shorter idle timeout that will fire and show a "timeout error" before
+  // the agent finishes. Per-conversation keepalive timers send a `keepalive`
+  // frame every 15 s so the Cloudflare relay keeps mobile's WS open.
+  // Keyed by conversationId (same value used as threadId in the agent).
+  private keepaliveTimers = new Map<string, ReturnType<typeof setInterval>>();
+  // Critical completion frames (done/stopped/error) that couldn't be sent
+  // because the socket was reconnecting. Flushed immediately on `open`.
+  private pendingFrames: string[] = [];
+
   async start(): Promise<void> {
     const paired = (await SullaSettingsModel.get('pairedMobileUserId', '')) ?? '';
     if (paired) {
@@ -142,6 +154,9 @@ class DesktopRelayClient {
       this.reconnectTimer = null;
     }
     this.teardownLiveness();
+    for (const t of this.keepaliveTimers.values()) clearInterval(t);
+    this.keepaliveTimers.clear();
+    this.pendingFrames = [];
     if (this.ws) {
       try { this.ws.close(); } catch { /* ignore */ }
       this.ws = null;
@@ -215,6 +230,14 @@ class DesktopRelayClient {
       this.lastInboundAt = Date.now();
       console.log(`[DesktopRelay] Connected — room=${ room }`);
       this.broadcastStatus();
+
+      // Flush frames queued while the socket was reconnecting. Critical for
+      // `done`/`stopped`/`error` frames that must reach mobile even if the
+      // desktop WS briefly dropped mid-response.
+      const pending = this.pendingFrames.splice(0);
+      for (const frame of pending) {
+        try { ws.send(frame); } catch (err) { console.warn('[DesktopRelay] Failed to flush pending frame:', err); }
+      }
 
       // Start heartbeat: send a ping every PING_INTERVAL_MS. The DO
       // auto-replies without waking, so this is cheap on the server.
@@ -327,6 +350,9 @@ class DesktopRelayClient {
         data:      { threadId: conversationId },
         timestamp: Date.now(),
       });
+      // Stop the keepalive — run is cancelled.
+      const kt = this.keepaliveTimers.get(conversationId);
+      if (kt) { clearInterval(kt); this.keepaliveTimers.delete(conversationId); }
       // Ack back to mobile so it knows the run ended without waiting for
       // `done` (which may never arrive after an abort). The mobile session
       // socket stays open — this is not a close signal.
@@ -416,6 +442,13 @@ class DesktopRelayClient {
     // agent loop is starting. Without this, mobile sits in silence until the
     // first streaming chunk arrives — which can look like a timeout.
     this.send({ type: 'ack' });
+
+    // Start a keepalive for this conversation so mobile's idle-timeout doesn't
+    // fire during long tool-execution phases (e.g. ClaudeCode running 60–120 s
+    // with no streaming). The timer sends a lightweight `keepalive` frame every
+    // 15 s and is cleared when the agent emits graph_execution_complete.
+    const convId = conversationId ?? '__default__';
+    this.startKeepalive(convId);
   }
 
   /**
@@ -506,6 +539,7 @@ class DesktopRelayClient {
           // to the thread and speak it without waiting for the full graph to
           // finish. Reset the streaming buffer so the next iteration starts
           // a fresh streaming bubble rather than accumulating onto this one.
+          finalTextByThread.set(threadId, stripped);
           streamedByThread.delete(threadId);
           this.send({ type: 'message', content: stripped });
           return;
@@ -531,6 +565,9 @@ class DesktopRelayClient {
         streamedByThread.delete(threadId);
         finalTextByThread.delete(threadId);
         lastActivity = '';
+        // Stop the keepalive — run is complete.
+        const t = this.keepaliveTimers.get(threadId);
+        if (t) { clearInterval(t); this.keepaliveTimers.delete(threadId); }
         this.send({ type: 'done', content: finalText });
         return;
       }
@@ -544,15 +581,39 @@ class DesktopRelayClient {
   }
 
   private send(payload: unknown) {
+    const json = JSON.stringify(payload);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('[DesktopRelay] Cannot send — socket not open');
+      // Queue completion/error frames so they're delivered after reconnect.
+      // Streaming/activity frames are ephemeral — dropping them is acceptable.
+      const type = (payload as any)?.type as string | undefined;
+      if (type === 'done' || type === 'stopped' || type === 'error') {
+        this.pendingFrames.push(json);
+        console.warn(`[DesktopRelay] Queued ${ type } frame — socket not open`);
+      } else {
+        console.warn('[DesktopRelay] Dropped frame — socket not open:', type);
+      }
       return;
     }
     try {
-      this.ws.send(JSON.stringify(payload));
+      this.ws.send(json);
     } catch (err) {
       console.warn('[DesktopRelay] Send failed:', err);
     }
+  }
+
+  private startKeepalive(conversationId: string) {
+    if (this.keepaliveTimers.has(conversationId)) return;
+    const timer = setInterval(() => {
+      if (!this.keepaliveTimers.has(conversationId)) return;
+      this.send({ type: 'keepalive' });
+    }, 15_000);
+    this.keepaliveTimers.set(conversationId, timer);
+    // Safety valve: clear after 10 min regardless — prevents leaks if the
+    // agent crashes without emitting graph_execution_complete.
+    setTimeout(() => {
+      const t = this.keepaliveTimers.get(conversationId);
+      if (t) { clearInterval(t); this.keepaliveTimers.delete(conversationId); }
+    }, 10 * 60 * 1_000);
   }
 
   private broadcastStatus() {
