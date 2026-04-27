@@ -341,3 +341,710 @@
   --outline: var(--accent-primary);
   --outline-width: 1px;
 }
+
+/* ═════════════════════════════════════════════════════════════════
+   Component Overrides for Ocean Light Theme — FORCE LIGHT MODE
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Chat Canvas — ocean light colors */
+.theme-ocean-light .chat-canvas {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0f9ff 100%) !important;
+}
+
+.theme-ocean-light .chat-stars,
+.theme-ocean-light .stars {
+  display: none !important;
+}
+
+.theme-ocean-light .chat-glow.a,
+.theme-ocean-light .chat-glow.b {
+  opacity: 0.2 !important;
+}
+
+/* Page root */
+.theme-ocean-light .chat-root,
+.theme-ocean-light .page-root,
+.theme-ocean-light [class*="page-root"] {
+  background: var(--bg-page, #f0f9ff) !important;
+  color: var(--text-primary, #0c4a6e) !important;
+}
+
+/* Empty State */
+.theme-ocean-light .empty h1,
+.theme-ocean-light h1:has(+ .lede) {
+  color: #0c4a6e !important;
+  text-shadow: none !important;
+}
+
+.theme-ocean-light .lede,
+.theme-ocean-light .hero .dek,
+.theme-ocean-light .empty p[class*="lede"] {
+  color: #075985 !important;
+}
+
+.theme-ocean-light .e-kicker,
+.theme-ocean-light .kicker {
+  color: #0369a1 !important;
+}
+
+.theme-ocean-light .e-kicker::before,
+.theme-ocean-light .e-kicker::after,
+.theme-ocean-light .kicker::before {
+  background: #38bdf8 !important;
+  opacity: 1 !important;
+}
+
+/* Suggestion buttons */
+.theme-ocean-light .sug,
+.theme-ocean-light .suggests button {
+  background: rgba(224, 242, 254, 0.9) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+  color: #075985 !important;
+  box-shadow: 0 1px 3px rgba(14, 165, 233, 0.15) !important;
+}
+
+.theme-ocean-light .sug:hover,
+.theme-ocean-light .suggests button:hover {
+  background: rgba(14, 165, 233, 0.2) !important;
+  border-color: rgba(14, 165, 233, 0.6) !important;
+  color: #0c4a6e !important;
+}
+
+/* Routines Home */
+.theme-ocean-light .routines-home {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 60%, #f0f9ff 100%) !important;
+  color: var(--text-primary, #0c4a6e) !important;
+}
+
+.theme-ocean-light .routines-home .canvas {
+  background: transparent !important;
+}
+
+/* Tabs */
+.theme-ocean-light .tab {
+  color: #0ea5e9 !important;
+  background: transparent !important;
+}
+
+.theme-ocean-light .tab:hover {
+  color: #0284c7 !important;
+  background: rgba(14, 165, 233, 0.1) !important;
+}
+
+.theme-ocean-light .tab.on {
+  color: #0c4a6e !important;
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+}
+
+/* Remove dark overlays */
+.theme-ocean-light::after,
+.theme-ocean-light::before,
+.theme-ocean-light .page-root::before {
+  display: none !important;
+}
+
+/* Force body/html background for light theme */
+.theme-ocean-light,
+.theme-ocean-light html,
+.theme-ocean-light body {
+  background: var(--bg-page, #f0f9ff) !important;
+  color: var(--body-text, #0c4a6e) !important;
+}
+
+/* Ribbon Footer — Light Mode */
+.theme-ocean-light .ribbon {
+  background: rgba(224, 242, 254, 0.85) !important;
+  border-top: 1px solid rgba(14, 165, 233, 0.3) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.theme-ocean-light .ribbon .l,
+.theme-ocean-light .ribbon .r {
+  color: #0ea5e9 !important;
+}
+
+.theme-ocean-light .ribbon .l .tc,
+.theme-ocean-light .ribbon .r b {
+  color: #0c4a6e !important;
+  font-weight: 600 !important;
+}
+
+.theme-ocean-light .ribbon .c .mark {
+  color: #38bdf8 !important;
+}
+
+.theme-ocean-light .ribbon .c .sig {
+  color: #075985 !important;
+}
+
+.theme-ocean-light .ribbon .c .sig b {
+  color: #0284c7 !important;
+}
+
+/* Hero Section — Light Mode */
+.theme-ocean-light .hero h1 {
+  color: #0c4a6e !important;
+  text-shadow: none !important;
+}
+
+.theme-ocean-light .hero .dek {
+  color: #0369a1 !important;
+}
+
+.theme-ocean-light .hero .kicker,
+.theme-ocean-light .kicker {
+  color: #0ea5e9 !important;
+}
+
+.theme-ocean-light .kicker .d,
+.theme-ocean-light .hero .kicker .d {
+  background: #38bdf8 !important;
+}
+
+/* Form Inputs & Selected Items — Light Mode */
+.theme-ocean-light input[type="text"],
+.theme-ocean-light input[type="password"],
+.theme-ocean-light input[type="email"],
+.theme-ocean-light input[type="number"],
+.theme-ocean-light input[type="search"],
+.theme-ocean-light input[type="url"],
+.theme-ocean-light textarea,
+.theme-ocean-light select,
+.theme-ocean-light .address-bar,
+.theme-ocean-light [class*="input"],
+.theme-ocean-light [class*="select"] {
+  background: var(--bg-input, #f0f9ff) !important;
+  color: var(--text-primary, #0c4a6e) !important;
+  border-color: var(--border-default, #bae6fd) !important;
+}
+
+/* Selected items, active dropdown options, tags/chips */
+.theme-ocean-light .selected-item,
+.theme-ocean-light [class*="selected"],
+.theme-ocean-light .dropdown-item.active,
+.theme-ocean-light .dropdown-item.selected,
+.theme-ocean-light [class*="chip"],
+.theme-ocean-light [class*="tag"],
+.theme-ocean-light .multiselect__option--highlight,
+.theme-ocean-light .multiselect__option--selected {
+  background: rgba(14, 165, 233, 0.2) !important;
+  color: #0c4a6e !important;
+}
+
+/* Account editor & password generator specific */
+.theme-ocean-light .editor-field input,
+.theme-ocean-light .editor-field select,
+.theme-ocean-light .editor-badge-type,
+.theme-ocean-light .pwgen-display,
+.theme-ocean-light .pwgen-password,
+.theme-ocean-light .pwgen-mode-toggle,
+.theme-ocean-light .pwgen-options,
+.theme-ocean-light .pwgen-num-input,
+.theme-ocean-light .pwgen-select {
+  background: var(--bg-input, #f0f9ff) !important;
+  color: var(--text-primary, #0c4a6e) !important;
+  border-color: var(--border-default, #bae6fd) !important;
+}
+
+/* Mode toggle active button */
+.theme-ocean-light .pwgen-mode-toggle button.active,
+.theme-ocean-light [class*="mode-toggle"] button.active {
+  background: var(--accent-primary, #0ea5e9) !important;
+  color: #ffffff !important;
+}
+
+/* Brand Header — Light Mode */
+.theme-ocean-light .brand-name {
+  color: #0c4a6e !important;
+}
+
+.theme-ocean-light .brand-sub {
+  color: #0ea5e9 !important;
+}
+
+.theme-ocean-light .brand-mark {
+  background: linear-gradient(135deg, #0ea5e9, #0284c7) !important;
+  color: #ffffff !important;
+}
+
+/* Sub-tabs — Light Mode */
+.theme-ocean-light .subtab {
+  color: #0ea5e9 !important;
+  background: transparent !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+}
+
+.theme-ocean-light .subtab:hover {
+  color: #0c4a6e !important;
+  border-color: #38bdf8 !important;
+}
+
+.theme-ocean-light .subtab.on {
+  color: #0c4a6e !important;
+  background: rgba(14, 165, 233, 0.2) !important;
+  border-color: rgba(14, 165, 233, 0.5) !important;
+}
+
+.theme-ocean-light .subtab .subtab-num {
+  background: rgba(14, 165, 233, 0.2) !important;
+  color: #0ea5e9 !important;
+}
+
+.theme-ocean-light .subtab.on .subtab-num {
+  background: rgba(14, 165, 233, 0.3) !important;
+  color: #0284c7 !important;
+}
+
+/* Empty State Card — Light Mode */
+.theme-ocean-light .empty-state {
+  background: rgba(224, 242, 254, 0.85) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.theme-ocean-light .empty-state .kicker,
+.theme-ocean-light .empty-state-kicker {
+  color: #0284c7 !important;
+}
+
+.theme-ocean-light .empty-state .title,
+.theme-ocean-light .empty-state-title,
+.theme-ocean-light .empty-state h2 {
+  color: #0c4a6e !important;
+  font-style: italic !important;
+}
+
+.theme-ocean-light .empty-state .message,
+.theme-ocean-light .empty-state-message,
+.theme-ocean-light .empty-state p {
+  color: #075985 !important;
+}
+
+/* ModeRail Sidebar — Light Mode */
+.theme-ocean-light .mode-rail {
+  background: rgba(224, 242, 254, 0.85) !important;
+  border-right-color: rgba(14, 165, 233, 0.2) !important;
+}
+
+.theme-ocean-light .mode-btn {
+  color: #0ea5e9 !important;
+}
+
+.theme-ocean-light .mode-btn:hover {
+  color: #0c4a6e !important;
+  background: rgba(14, 165, 233, 0.15) !important;
+}
+
+.theme-ocean-light .mode-btn.active {
+  color: #0284c7 !important;
+  background: rgba(14, 165, 233, 0.2) !important;
+}
+
+.theme-ocean-light .mode-btn.active::before {
+  background: #0284c7 !important;
+  box-shadow: 0 0 10px rgba(2, 132, 199, 0.5) !important;
+}
+
+.theme-ocean-light .mode-btn::after {
+  color: #0c4a6e !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Tab Mode Overrides — Light Mode */
+.theme-ocean-light .tab-mode-routines,
+.theme-ocean-light .tab-mode-marketplace {
+  --tab-bg: var(--bg-surface, #e0f2fe) !important;
+  --tab-bg-hover: rgba(14, 165, 233, 0.18) !important;
+  --tab-accent: #0284c7 !important;
+}
+
+.theme-ocean-light .tab-mode-routines .tab-item.active,
+.theme-ocean-light .tab-mode-marketplace .tab-item.active,
+.theme-ocean-light .tab-mode-routines .tab.on,
+.theme-ocean-light .tab-mode-marketplace .tab.on {
+  background: var(--bg-page, #f0f9ff) !important;
+  color: var(--text-primary, #0c4a6e) !important;
+}
+
+/* Library Page — Light Mode */
+.theme-ocean-light .library .rail {
+  background: rgba(224, 242, 254, 0.85) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+}
+
+.theme-ocean-light .library .rail-head { color: #0ea5e9 !important; }
+
+.theme-ocean-light .library .rail-item { color: #075985 !important; }
+.theme-ocean-light .library .rail-item:hover {
+  background: rgba(14, 165, 233, 0.15) !important;
+  color: #0c4a6e !important;
+}
+.theme-ocean-light .library .rail-item.on {
+  background: rgba(14, 165, 233, 0.2) !important;
+  border-color: rgba(14, 165, 233, 0.5) !important;
+  color: #0c4a6e !important;
+}
+
+.theme-ocean-light .library .rail-item .count {
+  color: #0ea5e9 !important;
+  background: rgba(14, 165, 233, 0.2) !important;
+}
+.theme-ocean-light .library .rail-item.on .count {
+  color: #0284c7 !important;
+  background: rgba(14, 165, 233, 0.3) !important;
+}
+
+.theme-ocean-light .library .rail-divider { background: rgba(14, 165, 233, 0.2) !important; }
+.theme-ocean-light .library .rail-footer p { color: #0ea5e9 !important; }
+
+.theme-ocean-light .library .content-head h3 { color: #0c4a6e !important; }
+
+.theme-ocean-light .library .count-pill {
+  color: #0ea5e9 !important;
+  background: rgba(14, 165, 233, 0.2) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+}
+
+.theme-ocean-light .library .search-box {
+  background: rgba(224, 242, 254, 0.85) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+}
+.theme-ocean-light .library .search-box input { color: #0c4a6e !important; }
+.theme-ocean-light .library .search-box svg { color: #38bdf8 !important; }
+
+.theme-ocean-light .library .status {
+  background: rgba(224, 242, 254, 0.6) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+  color: #0ea5e9 !important;
+}
+.theme-ocean-light .library .status p strong { color: #0c4a6e !important; }
+
+.theme-ocean-light .library .stat-tile {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+  color: #075985 !important;
+}
+.theme-ocean-light .library .stat-tile:hover {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(14, 165, 233, 0.5) !important;
+  color: #0c4a6e !important;
+}
+.theme-ocean-light .library .stat-tile .stat-value { color: #0c4a6e !important; }
+.theme-ocean-light .library .stat-tile .stat-label { color: #0ea5e9 !important; }
+
+.theme-ocean-light .library .draft-row {
+  background: linear-gradient(90deg, rgba(224, 242, 254, 0.9), rgba(255, 255, 255, 0.7)) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+}
+.theme-ocean-light .library .draft-row:hover {
+  background: linear-gradient(90deg, rgba(224, 242, 254, 1), rgba(255, 255, 255, 0.9)) !important;
+  border-color: rgba(14, 165, 233, 0.5) !important;
+}
+.theme-ocean-light .library .draft-row .title { color: #0c4a6e !important; }
+.theme-ocean-light .library .draft-row .meta { color: #0ea5e9 !important; }
+
+.theme-ocean-light .library .chip {
+  color: #075985 !important;
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: rgba(14, 165, 233, 0.25) !important;
+}
+
+/* Secretary Mode — Light Mode */
+.theme-ocean-light .flex.h-full.flex-col[style*="--bg"],
+.theme-ocean-light [style*="background: var(--bg, #0d1117)"] {
+  background: var(--bg-page, #f0f9ff) !important;
+}
+
+.theme-ocean-light .welcome-title { color: #0c4a6e !important; }
+.theme-ocean-light .welcome-subtitle { color: #0ea5e9 !important; }
+
+.theme-ocean-light .welcome-card {
+  background: var(--bg-surface, #e0f2fe) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+}
+.theme-ocean-light .welcome-card:hover {
+  border-color: rgba(14, 165, 233, 0.5) !important;
+  box-shadow: 0 0 15px rgba(14, 165, 233, 0.2), 0 0 30px rgba(14, 165, 233, 0.1) !important;
+}
+
+.theme-ocean-light .welcome-card-cta {
+  color: #0284c7 !important;
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-top-color: rgba(14, 165, 233, 0.2) !important;
+}
+
+.theme-ocean-light .dt-header {
+  background: rgba(224, 242, 254, 0.9) !important;
+  border-bottom-color: rgba(14, 165, 233, 0.2) !important;
+}
+.theme-ocean-light .dt-title { color: #0ea5e9 !important; }
+
+.theme-ocean-light .dt-pane-hdr {
+  background: rgba(224, 242, 254, 0.9) !important;
+  border-bottom-color: rgba(14, 165, 233, 0.2) !important;
+  color: #0ea5e9 !important;
+}
+
+.theme-ocean-light .dt-line { color: #075985 !important; }
+.theme-ocean-light .dt-ts { color: #38bdf8 !important; }
+
+.theme-ocean-light .dt-bubble-caller { background: rgba(14, 165, 233, 0.15) !important; }
+.theme-ocean-light .dt-bubble-you { background: rgba(2, 132, 199, 0.2) !important; }
+.theme-ocean-light .dt-bubble-text { color: #0c4a6e !important; }
+.theme-ocean-light .dt-bubble-speaker { color: #0ea5e9 !important; }
+.theme-ocean-light .dt-bubble-time { color: #38bdf8 !important; }
+
+.theme-ocean-light .dt-section-hdr {
+  color: #0ea5e9 !important;
+  border-bottom-color: rgba(14, 165, 233, 0.2) !important;
+}
+.theme-ocean-light .dt-item { color: #075985 !important; }
+.theme-ocean-light .dt-insight { color: #0ea5e9 !important; }
+
+.theme-ocean-light .dt-chat-input {
+  background: rgba(224, 242, 254, 0.9) !important;
+  border-top-color: rgba(14, 165, 233, 0.2) !important;
+}
+.theme-ocean-light .dt-chat-field {
+  color: #0c4a6e !important;
+  background: #ffffff !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+}
+.theme-ocean-light .dt-chat-field::placeholder { color: #38bdf8 !important; }
+
+.theme-ocean-light .dt-kbd {
+  background: rgba(14, 165, 233, 0.2) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+  color: #075985 !important;
+}
+
+.theme-ocean-light .dt-divider { background: rgba(14, 165, 233, 0.2) !important; }
+.theme-ocean-light .dt-empty { color: #38bdf8 !important; }
+
+/* Chat Page Gradients — Light Mode */
+.theme-ocean-light .chat-root { background: var(--bg-page, #f0f9ff) !important; }
+
+.theme-ocean-light .header-backdrop {
+  background: linear-gradient(
+    to bottom,
+    rgba(224, 242, 254, 0.95) 0%,
+    rgba(224, 242, 254, 0.85) 55%,
+    rgba(224, 242, 254, 0) 100%
+  ) !important;
+}
+
+.theme-ocean-light .composer-backdrop {
+  background: linear-gradient(
+    to top,
+    rgba(224, 242, 254, 0.95) 0%,
+    rgba(224, 242, 254, 0.85) 45%,
+    rgba(224, 242, 254, 0) 100%
+  ) !important;
+}
+
+/* Model Switcher Modal — Light Mode */
+.theme-ocean-light .modal-veil {
+  background: rgba(12, 74, 110, 0.35) !important;
+  backdrop-filter: blur(8px) !important;
+}
+.theme-ocean-light .modal {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(14, 165, 233, 0.1) !important;
+}
+.theme-ocean-light .mhead { color: #0ea5e9 !important; border-bottom-color: rgba(14, 165, 233, 0.2) !important; }
+.theme-ocean-light .mhead .x { color: #38bdf8 !important; }
+.theme-ocean-light .msearch { border-bottom-color: rgba(14, 165, 233, 0.15) !important; }
+.theme-ocean-light .msearch input { color: #0c4a6e !important; caret-color: #0284c7 !important; }
+.theme-ocean-light .msearch input::placeholder { color: #38bdf8 !important; }
+.theme-ocean-light .mgroup-head .provider { color: #0284c7 !important; }
+.theme-ocean-light .mgroup-head .primary-pill { color: #0284c7 !important; background: rgba(14, 165, 233, 0.15) !important; border-color: rgba(14, 165, 233, 0.3) !important; }
+.theme-ocean-light .mdivider { background: rgba(14, 165, 233, 0.15) !important; }
+.theme-ocean-light .mempty { color: #0ea5e9 !important; }
+.theme-ocean-light .mitem:hover { background: rgba(14, 165, 233, 0.12) !important; }
+.theme-ocean-light .mitem .name { color: #0c4a6e !important; }
+.theme-ocean-light .mitem .tier { color: #0ea5e9 !important; background: rgba(14, 165, 233, 0.15) !important; border-color: rgba(14, 165, 233, 0.25) !important; }
+.theme-ocean-light .mitem .tier.active { color: #059669 !important; background: rgba(16, 185, 129, 0.12) !important; border-color: rgba(16, 185, 129, 0.3) !important; }
+.theme-ocean-light .mitem.active { background: rgba(14, 165, 233, 0.15) !important; }
+.theme-ocean-light .mitem.active::before { color: #0284c7 !important; }
+
+/* Scrollbars — Light Mode */
+.theme-ocean-light ::-webkit-scrollbar { width: 8px !important; height: 8px !important; }
+.theme-ocean-light ::-webkit-scrollbar-track { background: rgba(14, 165, 233, 0.1) !important; }
+.theme-ocean-light ::-webkit-scrollbar-thumb { background: rgba(14, 165, 233, 0.4) !important; border-radius: 4px !important; }
+.theme-ocean-light ::-webkit-scrollbar-thumb:hover { background: rgba(14, 165, 233, 0.6) !important; }
+.theme-ocean-light * { scrollbar-width: thin !important; scrollbar-color: rgba(14, 165, 233, 0.4) rgba(14, 165, 233, 0.1) !important; }
+
+/* Empty State — Light Mode */
+.theme-ocean-light .empty h1 { color: #0c4a6e !important; }
+.theme-ocean-light .e-kicker { color: #0284c7 !important; }
+.theme-ocean-light .e-kicker::before,
+.theme-ocean-light .e-kicker::after { background: #0284c7 !important; }
+.theme-ocean-light .lede { color: #075985 !important; }
+.theme-ocean-light .sug {
+  background: rgba(255, 255, 255, 0.8) !important;
+  border-color: rgba(14, 165, 233, 0.35) !important;
+  color: #0c4a6e !important;
+}
+.theme-ocean-light .sug:hover {
+  background: rgba(14, 165, 233, 0.2) !important;
+  border-color: #0284c7 !important;
+  color: #0c4a6e !important;
+}
+
+/* Composer — Light Mode */
+.theme-ocean-light .composer { border-bottom-color: rgba(14, 165, 233, 0.4) !important; }
+.theme-ocean-light .composer:focus-within {
+  border-bottom-color: #0284c7 !important;
+  box-shadow: 0 14px 20px -14px rgba(14, 165, 233, 0.3) !important;
+}
+.theme-ocean-light .input,
+.theme-ocean-light textarea.input {
+  color: #0c4a6e !important;
+  caret-color: #0284c7 !important;
+  background: transparent !important;
+}
+.theme-ocean-light .input::placeholder,
+.theme-ocean-light textarea.input::placeholder {
+  color: #38bdf8 !important;
+}
+.theme-ocean-light .glyph { color: #38bdf8 !important; }
+.theme-ocean-light .hints { color: #0ea5e9 !important; }
+.theme-ocean-light .hints kbd {
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+  color: #0ea5e9 !important;
+}
+.theme-ocean-light .composer-inner { background: transparent !important; }
+.theme-ocean-light .composer-wrap { background: transparent !important; }
+
+/* RoutinesHome Tabs — Light Mode */
+.theme-ocean-light .tab { color: #0ea5e9 !important; background: transparent !important; border-color: transparent !important; }
+.theme-ocean-light .tab:hover { color: #0c4a6e !important; background: rgba(14, 165, 233, 0.12) !important; border-color: rgba(14, 165, 233, 0.25) !important; }
+.theme-ocean-light .tab.on { color: #0c4a6e !important; background: rgba(14, 165, 233, 0.2) !important; border-color: rgba(14, 165, 233, 0.5) !important; box-shadow: 0 6px 20px rgba(14, 165, 233, 0.2) !important; }
+.theme-ocean-light .tab-num { background: rgba(14, 165, 233, 0.2) !important; color: #0ea5e9 !important; }
+.theme-ocean-light .tab.on .tab-num { background: rgba(14, 165, 233, 0.3) !important; color: #0284c7 !important; }
+
+/* Chat Transcript — Light Mode */
+.theme-ocean-light .time-marker span { color: #0ea5e9 !important; }
+.theme-ocean-light .time-marker::before,
+.theme-ocean-light .time-marker::after { background: linear-gradient(90deg, transparent, rgba(14, 165, 233, 0.4), transparent) !important; }
+.theme-ocean-light .chat-role { color: #0ea5e9 !important; }
+.theme-ocean-light .chat-turn.sulla .chat-role { color: #0284c7 !important; }
+.theme-ocean-light .chat-turn.you .chat-body { color: #0c4a6e !important; }
+.theme-ocean-light .chat-turn.sulla .chat-body { color: #0c4a6e !important; }
+.theme-ocean-light .chat-turn.sulla .chat-body em { color: #075985 !important; }
+.theme-ocean-light .chat-turn.sulla .chat-body strong { color: #0c4a6e !important; }
+.theme-ocean-light .chat-turn.sulla .chat-body code,
+.theme-ocean-light .chat-turn.sulla .chat-body .term { color: #0ea5e9 !important; background: rgba(14, 165, 233, 0.15) !important; border-color: rgba(14, 165, 233, 0.3) !important; }
+.theme-ocean-light .chat-turn.sulla .chat-body h3 { color: #0c4a6e !important; }
+.theme-ocean-light .chat-turn.sulla .chat-body h3::before { color: #38bdf8 !important; }
+.theme-ocean-light .chat-turn.sulla .chat-body blockquote { color: #0ea5e9 !important; border-left-color: rgba(14, 165, 233, 0.5) !important; }
+.theme-ocean-light .chat-cursor { background: #38bdf8 !important; box-shadow: 0 0 14px #38bdf8 !important; }
+
+/* Thinking — Light Mode */
+.theme-ocean-light .thinking { border-left-color: rgba(14, 165, 233, 0.3) !important; }
+.theme-ocean-light .thinking:hover { border-left-color: rgba(14, 165, 233, 0.5) !important; }
+.theme-ocean-light .thinking::before { background: rgba(14, 165, 233, 0.5) !important; }
+.theme-ocean-light .thinking.live { border-left-color: rgba(14, 165, 233, 0.6) !important; }
+.theme-ocean-light .thinking.live::before { background: #0284c7 !important; box-shadow: 0 0 14px #0284c7 !important; }
+.theme-ocean-light .thinking .head { color: #0ea5e9 !important; }
+.theme-ocean-light .thinking .head .summary { color: #075985 !important; }
+.theme-ocean-light .thinking.settled:hover .head .summary { color: #0c4a6e !important; }
+.theme-ocean-light .thinking .head .elapsed { color: #38bdf8 !important; }
+.theme-ocean-light .thinking .head .chev { color: #38bdf8 !important; }
+.theme-ocean-light .thought { color: #0ea5e9 !important; }
+.theme-ocean-light .thought:nth-child(3) { color: #0c4a6e !important; }
+.theme-ocean-light .expanded li { color: #075985 !important; }
+.theme-ocean-light .expanded li::before { color: #38bdf8 !important; }
+
+/* Interim — Light Mode */
+.theme-ocean-light .chat-turn.interim .chat-role { color: #0ea5e9 !important; }
+.theme-ocean-light .chat-turn.interim .chat-role::before { background: #0284c7 !important; box-shadow: 0 0 10px #0284c7 !important; }
+.theme-ocean-light .chat-turn.interim .chat-body { color: #0ea5e9 !important; }
+.theme-ocean-light .chat-turn.interim .chat-body::after { background: #0284c7 !important; box-shadow: 0 0 12px #0284c7 !important; }
+
+/* Attachment chips */
+.theme-ocean-light .att-chip { background: rgba(224, 242, 254, 0.8) !important; border-color: rgba(14, 165, 233, 0.35) !important; color: #075985 !important; }
+.theme-ocean-light .att-chip .ic { color: #0284c7 !important; }
+.theme-ocean-light .att-chip .size { color: #38bdf8 !important; }
+
+/* ActSection & RoutineStrip — Light Mode */
+.theme-ocean-light .act .head { border-bottom-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .act .num { color: #38bdf8 !important; }
+.theme-ocean-light .act .title { color: #0c4a6e !important; }
+.theme-ocean-light .act .count { color: #0ea5e9 !important; }
+
+.theme-ocean-light .strip { background: linear-gradient(90deg, rgba(224, 242, 254, 0.8), rgba(186, 230, 253, 0.6)) !important; border-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .strip:hover { background: linear-gradient(90deg, rgba(186, 230, 253, 0.9), rgba(125, 211, 252, 0.7)) !important; border-color: rgba(2, 132, 199, 0.5) !important; }
+.theme-ocean-light .strip::before { background: linear-gradient(180deg, transparent, #38bdf8, transparent) !important; }
+.theme-ocean-light .strip.featured { border-color: rgba(139, 92, 246, 0.4) !important; background: linear-gradient(90deg, rgba(243, 232, 255, 0.5), rgba(224, 242, 254, 0.5)) !important; }
+
+.theme-ocean-light .strip .cat { color: #0ea5e9 !important; }
+.theme-ocean-light .strip .title { color: #0c4a6e !important; }
+.theme-ocean-light .strip .desc { color: #075985 !important; }
+
+.theme-ocean-light .strip .chip { background: rgba(224, 242, 254, 0.8) !important; border-color: rgba(14, 165, 233, 0.35) !important; color: #0ea5e9 !important; }
+.theme-ocean-light .strip .chip.blue { border-color: rgba(2, 132, 199, 0.45) !important; color: #0284c7 !important; background: rgba(186, 230, 253, 0.7) !important; }
+.theme-ocean-light .strip .chip.violet { border-color: rgba(139, 92, 246, 0.4) !important; color: #7c3aed !important; background: rgba(243, 232, 255, 0.7) !important; }
+.theme-ocean-light .strip .chip.warn { border-color: rgba(234, 179, 8, 0.45) !important; color: #a16207 !important; background: rgba(254, 249, 195, 0.7) !important; }
+.theme-ocean-light .strip .chip.live { border-color: rgba(239, 68, 68, 0.45) !important; color: #dc2626 !important; background: rgba(254, 226, 226, 0.7) !important; }
+.theme-ocean-light .strip .chip.live .d { background: #ef4444 !important; }
+
+.theme-ocean-light .strip .metrics { color: #0ea5e9 !important; border-left-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .strip .metrics .big { color: #0c4a6e !important; }
+.theme-ocean-light .strip .metrics .big small { color: #38bdf8 !important; }
+.theme-ocean-light .metrics .row span b { color: #0c4a6e !important; }
+
+.theme-ocean-light .strip .btn { background: rgba(224, 242, 254, 0.8) !important; border-color: rgba(14, 165, 233, 0.35) !important; color: #075985 !important; }
+.theme-ocean-light .strip .btn:hover { border-color: rgba(2, 132, 199, 0.5) !important; color: #0c4a6e !important; background: rgba(14, 165, 233, 0.15) !important; }
+.theme-ocean-light .strip .btn.primary { border-color: rgba(2, 132, 199, 0.65) !important; color: #ffffff !important; background: linear-gradient(135deg, rgba(14, 165, 233, 0.9), rgba(2, 132, 199, 0.95)) !important; box-shadow: 0 8px 22px rgba(14, 165, 233, 0.3), 0 0 14px rgba(14, 165, 233, 0.2) !important; }
+.theme-ocean-light .strip .btn.primary:hover { background: linear-gradient(135deg, rgba(14, 165, 233, 1), rgba(2, 132, 199, 1)) !important; }
+.theme-ocean-light .strip .btn.ghost { background: transparent !important; }
+
+.theme-ocean-light .strip .btn.kebab { color: #0ea5e9 !important; }
+.theme-ocean-light .strip .btn.kebab:hover, .theme-ocean-light .strip .btn.kebab.on { color: #0c4a6e !important; background: rgba(14, 165, 233, 0.2) !important; border-color: rgba(2, 132, 199, 0.5) !important; }
+
+.theme-ocean-light .strip .menu { background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98)) !important; border-color: rgba(14, 165, 233, 0.4) !important; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.12), 0 0 20px rgba(14, 165, 233, 0.15) !important; }
+.theme-ocean-light .strip .menu-item { color: #075985 !important; }
+.theme-ocean-light .strip .menu-item:hover { background: rgba(14, 165, 233, 0.15) !important; color: #0c4a6e !important; }
+.theme-ocean-light .strip .menu-item.danger { color: #ef4444 !important; }
+.theme-ocean-light .strip .menu-item.danger:hover { background: rgba(239, 68, 68, 0.1) !important; color: #dc2626 !important; }
+.theme-ocean-light .strip .menu-sep { background: rgba(14, 165, 233, 0.3) !important; }
+
+/* Hero & Rollup — Light Mode */
+.theme-ocean-light .hero { border-bottom-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .kicker { color: #0284c7 !important; }
+.theme-ocean-light .kicker::before { background: #38bdf8 !important; }
+.theme-ocean-light .kicker .d { background: #0284c7 !important; box-shadow: 0 0 8px #0284c7 !important; }
+.theme-ocean-light .hero h1 { color: #0c4a6e !important; }
+.theme-ocean-light .hero .dek { color: #075985 !important; }
+.theme-ocean-light .rollup-row { color: #0ea5e9 !important; }
+.theme-ocean-light .rollup-row > div { border-right-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .rollup-row b { color: #0c4a6e !important; }
+
+/* ModeRail scrollbar fix */
+.theme-ocean-light .mode-rail { overflow-x: hidden !important; overflow-y: auto !important; }
+.theme-ocean-light header, .theme-ocean-light .top-bar, .theme-ocean-light .app-header { z-index: 9999 !important; }
+
+/* SessionMark — Light Mode */
+.theme-ocean-light .session-mark { color: #38bdf8 !important; }
+.theme-ocean-light .session-mark::before,
+.theme-ocean-light .session-mark::after { background: #38bdf8 !important; }
+.theme-ocean-light .session-mark .dot { background: #0284c7 !important; box-shadow: 0 0 8px #0284c7 !important; }
+.theme-ocean-light .session-mark .title { color: #0c4a6e !important; }
+.theme-ocean-light .session-mark .title[contenteditable="true"]:focus { background: rgba(14, 165, 233, 0.15) !important; }
+
+/* StatusBadges — Light Mode */
+.theme-ocean-light .badge { background: rgba(224, 242, 254, 0.9) !important; border-color: rgba(14, 165, 233, 0.35) !important; color: #0ea5e9 !important; }
+.theme-ocean-light .badge.model { color: #0284c7 !important; }
+.theme-ocean-light .badge.model:hover { color: #0c4a6e !important; border-color: #0284c7 !important; }
+.theme-ocean-light .badge .dot { background: #10b981 !important; box-shadow: 0 0 8px #10b981 !important; }
+.theme-ocean-light .badge.model .dot { background: #0284c7 !important; box-shadow: 0 0 10px #0284c7 !important; }
+.theme-ocean-light .badge.degraded { border-color: rgba(234, 179, 8, 0.5) !important; }
+.theme-ocean-light .badge.degraded .dot { background: #eab308 !important; box-shadow: 0 0 8px #eab308 !important; }
+.theme-ocean-light .badge.offline { border-color: rgba(239, 68, 68, 0.5) !important; }
+.theme-ocean-light .badge.offline .dot { background: #ef4444 !important; box-shadow: 0 0 8px #ef4444 !important; }
