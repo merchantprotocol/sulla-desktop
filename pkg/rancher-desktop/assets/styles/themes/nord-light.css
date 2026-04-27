@@ -1015,6 +1015,21 @@
 .theme-nord-light .strip .menu-item.danger:hover { background: rgba(239, 68, 68, 0.1) !important; color: #dc2626 !important; }
 .theme-nord-light .strip .menu-sep { background: rgba(94, 129, 172, 0.3) !important; }
 
+/* Hero & Rollup — Light Mode */
+.theme-nord-light .hero { border-bottom-color: rgba(94, 129, 172, 0.35) !important; }
+.theme-nord-light .kicker { color: #5e81ac !important; }
+.theme-nord-light .kicker::before { background: #81a1c1 !important; }
+.theme-nord-light .kicker .d { background: #5e81ac !important; box-shadow: 0 0 8px #5e81ac !important; }
+.theme-nord-light .hero h1 { color: #2e3440 !important; }
+.theme-nord-light .hero .dek { color: #3b4252 !important; }
+.theme-nord-light .rollup-row { color: #5e81ac !important; }
+.theme-nord-light .rollup-row > div { border-right-color: rgba(94, 129, 172, 0.35) !important; }
+.theme-nord-light .rollup-row b { color: #2e3440 !important; }
+
+/* ModeRail scrollbar fix */
+.theme-nord-light .mode-rail { overflow-x: hidden !important; overflow-y: auto !important; }
+.theme-nord-light header, .theme-nord-light .top-bar, .theme-nord-light .app-header { z-index: 9999 !important; }
+
 /* SessionMark — Light Mode */
 .theme-nord-light .session-mark { color: #81a1c1 !important; }
 .theme-nord-light .session-mark::before,

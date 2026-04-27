@@ -1697,6 +1697,70 @@
 }
 
 /* ═════════════════════════════════════════════════════════════════
+   RoutinesHome Hero & Rollup Row — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Hero section border */
+.theme-default-light .hero {
+  border-bottom-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+/* Kicker (THE CAST) */
+.theme-default-light .kicker {
+  color: #0ea5e9 !important;
+}
+
+.theme-default-light .kicker::before {
+  background: #94a3b8 !important;
+}
+
+.theme-default-light .kicker .d {
+  background: #0ea5e9 !important;
+  box-shadow: 0 0 8px #0ea5e9 !important;
+}
+
+/* Hero title (My Work.) */
+.theme-default-light .hero h1 {
+  color: #0d0d0d !important;
+}
+
+/* Hero dek/description */
+.theme-default-light .hero .dek {
+  color: #475569 !important;
+}
+
+/* Rollup row stats (RUNS THIS WEEK, ARTIFACTS, etc.) */
+.theme-default-light .rollup-row {
+  color: #64748b !important;
+}
+
+.theme-default-light .rollup-row > div {
+  border-right-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+/* Big numbers in rollup */
+.theme-default-light .rollup-row b {
+  color: #0d0d0d !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   ModeRail (Left sidebar) — Light Mode Fixes
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Remove horizontal scrollbar */
+.theme-default-light .mode-rail {
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+/* Top bar must override left side - ensure header is above sidebar */
+.theme-default-light header,
+.theme-default-light .top-bar,
+.theme-default-light .app-header {
+  z-index: 9999 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
    SessionMark ("New chat" title) — Light Mode
    ═════════════════════════════════════════════════════════════════ */
 

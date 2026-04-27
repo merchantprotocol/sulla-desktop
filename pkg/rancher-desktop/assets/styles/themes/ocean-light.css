@@ -1015,6 +1015,21 @@
 .theme-ocean-light .strip .menu-item.danger:hover { background: rgba(239, 68, 68, 0.1) !important; color: #dc2626 !important; }
 .theme-ocean-light .strip .menu-sep { background: rgba(14, 165, 233, 0.3) !important; }
 
+/* Hero & Rollup — Light Mode */
+.theme-ocean-light .hero { border-bottom-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .kicker { color: #0284c7 !important; }
+.theme-ocean-light .kicker::before { background: #38bdf8 !important; }
+.theme-ocean-light .kicker .d { background: #0284c7 !important; box-shadow: 0 0 8px #0284c7 !important; }
+.theme-ocean-light .hero h1 { color: #0c4a6e !important; }
+.theme-ocean-light .hero .dek { color: #075985 !important; }
+.theme-ocean-light .rollup-row { color: #0ea5e9 !important; }
+.theme-ocean-light .rollup-row > div { border-right-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .rollup-row b { color: #0c4a6e !important; }
+
+/* ModeRail scrollbar fix */
+.theme-ocean-light .mode-rail { overflow-x: hidden !important; overflow-y: auto !important; }
+.theme-ocean-light header, .theme-ocean-light .top-bar, .theme-ocean-light .app-header { z-index: 9999 !important; }
+
 /* SessionMark — Light Mode */
 .theme-ocean-light .session-mark { color: #38bdf8 !important; }
 .theme-ocean-light .session-mark::before,
