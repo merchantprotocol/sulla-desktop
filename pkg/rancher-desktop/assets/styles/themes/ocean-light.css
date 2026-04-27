@@ -1026,6 +1026,13 @@
 .theme-ocean-light .rollup-row > div { border-right-color: rgba(14, 165, 233, 0.35) !important; }
 .theme-ocean-light .rollup-row b { color: #0c4a6e !important; }
 
+/* Library & Marketplace Search Box */
+.theme-ocean-light .search-box { background: rgba(224, 242, 254, 0.8) !important; border-color: rgba(14, 165, 233, 0.4) !important; }
+.theme-ocean-light .search-box svg { color: #38bdf8 !important; }
+.theme-ocean-light .search-box input { color: #0c4a6e !important; }
+.theme-ocean-light .search-box input::placeholder { color: #38bdf8 !important; }
+.theme-ocean-light .search-box .count { color: #0ea5e9 !important; }
+
 /* ModeRail scrollbar fix */
 .theme-ocean-light .mode-rail { overflow-x: hidden !important; overflow-y: auto !important; }
 .theme-ocean-light header, .theme-ocean-light .top-bar, .theme-ocean-light .app-header { z-index: 9999 !important; }

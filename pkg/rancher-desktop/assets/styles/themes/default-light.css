@@ -1207,7 +1207,7 @@
 
 /* Firefox scrollbars */
 .theme-default-light * {
-  scrollbar-width: thin !important;
+  scrollbar-width: thin;
   scrollbar-color: rgba(148, 163, 184, 0.4) rgba(148, 163, 184, 0.1) !important;
 }
 
@@ -1741,6 +1741,31 @@
 /* Big numbers in rollup */
 .theme-default-light .rollup-row b {
   color: #0d0d0d !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Library & Marketplace Search Box — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+.theme-default-light .search-box {
+  background: rgba(241, 245, 249, 0.8) !important;
+  border-color: rgba(148, 163, 184, 0.4) !important;
+}
+
+.theme-default-light .search-box svg {
+  color: #94a3b8 !important;
+}
+
+.theme-default-light .search-box input {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .search-box input::placeholder {
+  color: #94a3b8 !important;
+}
+
+.theme-default-light .search-box .count {
+  color: #64748b !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
