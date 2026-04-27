@@ -753,9 +753,8 @@
 }
 
 /* Secretary Mode — Light Mode */
-.theme-nord-light .secretary-mode,
-.theme-nord-light [class*="secretary"] {
-  --bg: var(--bg-page, #eceff4) !important;
+.theme-nord-light .flex.h-full.flex-col[style*="--bg"],
+.theme-nord-light [style*="background: var(--bg, #0d1117)"] {
   background: var(--bg-page, #eceff4) !important;
 }
 
@@ -824,3 +823,170 @@
 
 .theme-nord-light .dt-divider { background: rgba(94, 129, 172, 0.2) !important; }
 .theme-nord-light .dt-empty { color: #81a1c1 !important; }
+
+/* Chat Page Gradients — Light Mode */
+.theme-nord-light .chat-root { background: var(--bg-page, #eceff4) !important; }
+
+.theme-nord-light .header-backdrop {
+  background: linear-gradient(
+    to bottom,
+    rgba(216, 222, 233, 0.95) 0%,
+    rgba(216, 222, 233, 0.85) 55%,
+    rgba(216, 222, 233, 0) 100%
+  ) !important;
+}
+
+.theme-nord-light .composer-backdrop {
+  background: linear-gradient(
+    to top,
+    rgba(216, 222, 233, 0.95) 0%,
+    rgba(216, 222, 233, 0.85) 45%,
+    rgba(216, 222, 233, 0) 100%
+  ) !important;
+}
+
+/* Model Switcher Modal — Light Mode */
+.theme-nord-light .modal-veil {
+  background: rgba(46, 52, 64, 0.35) !important;
+  backdrop-filter: blur(8px) !important;
+}
+.theme-nord-light .modal {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border-color: rgba(94, 129, 172, 0.3) !important;
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(94, 129, 172, 0.1) !important;
+}
+.theme-nord-light .mhead { color: #5e81ac !important; border-bottom-color: rgba(94, 129, 172, 0.2) !important; }
+.theme-nord-light .mhead .x { color: #81a1c1 !important; }
+.theme-nord-light .msearch { border-bottom-color: rgba(94, 129, 172, 0.15) !important; }
+.theme-nord-light .msearch input { color: #2e3440 !important; caret-color: #5e81ac !important; }
+.theme-nord-light .msearch input::placeholder { color: #81a1c1 !important; }
+.theme-nord-light .mgroup-head .provider { color: #5e81ac !important; }
+.theme-nord-light .mgroup-head .primary-pill { color: #5e81ac !important; background: rgba(94, 129, 172, 0.15) !important; border-color: rgba(94, 129, 172, 0.3) !important; }
+.theme-nord-light .mdivider { background: rgba(94, 129, 172, 0.15) !important; }
+.theme-nord-light .mempty { color: #5e81ac !important; }
+.theme-nord-light .mitem:hover { background: rgba(94, 129, 172, 0.12) !important; }
+.theme-nord-light .mitem .name { color: #2e3440 !important; }
+.theme-nord-light .mitem .tier { color: #5e81ac !important; background: rgba(94, 129, 172, 0.15) !important; border-color: rgba(94, 129, 172, 0.25) !important; }
+.theme-nord-light .mitem .tier.active { color: #059669 !important; background: rgba(16, 185, 129, 0.12) !important; border-color: rgba(16, 185, 129, 0.3) !important; }
+.theme-nord-light .mitem.active { background: rgba(94, 129, 172, 0.15) !important; }
+.theme-nord-light .mitem.active::before { color: #5e81ac !important; }
+
+/* Scrollbars — Light Mode */
+.theme-nord-light ::-webkit-scrollbar { width: 8px !important; height: 8px !important; }
+.theme-nord-light ::-webkit-scrollbar-track { background: rgba(94, 129, 172, 0.1) !important; }
+.theme-nord-light ::-webkit-scrollbar-thumb { background: rgba(94, 129, 172, 0.4) !important; border-radius: 4px !important; }
+.theme-nord-light ::-webkit-scrollbar-thumb:hover { background: rgba(94, 129, 172, 0.6) !important; }
+.theme-nord-light * { scrollbar-width: thin !important; scrollbar-color: rgba(94, 129, 172, 0.4) rgba(94, 129, 172, 0.1) !important; }
+
+/* Empty State — Light Mode */
+.theme-nord-light .empty h1 { color: #2e3440 !important; }
+.theme-nord-light .e-kicker { color: #5e81ac !important; }
+.theme-nord-light .e-kicker::before,
+.theme-nord-light .e-kicker::after { background: #5e81ac !important; }
+.theme-nord-light .lede { color: #3b4252 !important; }
+.theme-nord-light .sug {
+  background: rgba(255, 255, 255, 0.8) !important;
+  border-color: rgba(94, 129, 172, 0.35) !important;
+  color: #2e3440 !important;
+}
+.theme-nord-light .sug:hover {
+  background: rgba(94, 129, 172, 0.2) !important;
+  border-color: #5e81ac !important;
+  color: #2e3440 !important;
+}
+
+/* Composer — Light Mode */
+.theme-nord-light .composer { border-bottom-color: rgba(94, 129, 172, 0.4) !important; }
+.theme-nord-light .composer:focus-within {
+  border-bottom-color: #5e81ac !important;
+  box-shadow: 0 14px 20px -14px rgba(94, 129, 172, 0.3) !important;
+}
+.theme-nord-light .input,
+.theme-nord-light textarea.input {
+  color: #2e3440 !important;
+  caret-color: #5e81ac !important;
+  background: transparent !important;
+}
+.theme-nord-light .input::placeholder,
+.theme-nord-light textarea.input::placeholder {
+  color: #81a1c1 !important;
+}
+.theme-nord-light .glyph { color: #81a1c1 !important; }
+.theme-nord-light .hints { color: #5e81ac !important; }
+.theme-nord-light .hints kbd {
+  background: rgba(94, 129, 172, 0.15) !important;
+  border-color: rgba(94, 129, 172, 0.3) !important;
+  color: #5e81ac !important;
+}
+.theme-nord-light .composer-inner { background: transparent !important; }
+.theme-nord-light .composer-wrap { background: transparent !important; }
+
+/* RoutinesHome Tabs — Light Mode */
+.theme-nord-light .tab { color: #5e81ac !important; background: transparent !important; border-color: transparent !important; }
+.theme-nord-light .tab:hover { color: #2e3440 !important; background: rgba(94, 129, 172, 0.12) !important; border-color: rgba(94, 129, 172, 0.25) !important; }
+.theme-nord-light .tab.on { color: #2e3440 !important; background: rgba(94, 129, 172, 0.2) !important; border-color: rgba(94, 129, 172, 0.5) !important; box-shadow: 0 6px 20px rgba(94, 129, 172, 0.2) !important; }
+.theme-nord-light .tab-num { background: rgba(94, 129, 172, 0.2) !important; color: #5e81ac !important; }
+.theme-nord-light .tab.on .tab-num { background: rgba(94, 129, 172, 0.3) !important; color: #5e81ac !important; }
+
+/* Chat Transcript — Light Mode */
+.theme-nord-light .time-marker span { color: #5e81ac !important; }
+.theme-nord-light .time-marker::before,
+.theme-nord-light .time-marker::after { background: linear-gradient(90deg, transparent, rgba(94, 129, 172, 0.4), transparent) !important; }
+.theme-nord-light .chat-role { color: #5e81ac !important; }
+.theme-nord-light .chat-turn.sulla .chat-role { color: #5e81ac !important; }
+.theme-nord-light .chat-turn.you .chat-body { color: #2e3440 !important; }
+.theme-nord-light .chat-turn.sulla .chat-body { color: #2e3440 !important; }
+.theme-nord-light .chat-turn.sulla .chat-body em { color: #3b4252 !important; }
+.theme-nord-light .chat-turn.sulla .chat-body strong { color: #2e3440 !important; }
+.theme-nord-light .chat-turn.sulla .chat-body code,
+.theme-nord-light .chat-turn.sulla .chat-body .term { color: #5e81ac !important; background: rgba(94, 129, 172, 0.15) !important; border-color: rgba(94, 129, 172, 0.3) !important; }
+.theme-nord-light .chat-turn.sulla .chat-body h3 { color: #2e3440 !important; }
+.theme-nord-light .chat-turn.sulla .chat-body h3::before { color: #81a1c1 !important; }
+.theme-nord-light .chat-turn.sulla .chat-body blockquote { color: #5e81ac !important; border-left-color: rgba(94, 129, 172, 0.5) !important; }
+.theme-nord-light .chat-cursor { background: #81a1c1 !important; box-shadow: 0 0 14px #81a1c1 !important; }
+
+/* Thinking — Light Mode */
+.theme-nord-light .thinking { border-left-color: rgba(94, 129, 172, 0.3) !important; }
+.theme-nord-light .thinking:hover { border-left-color: rgba(94, 129, 172, 0.5) !important; }
+.theme-nord-light .thinking::before { background: rgba(94, 129, 172, 0.5) !important; }
+.theme-nord-light .thinking.live { border-left-color: rgba(94, 129, 172, 0.6) !important; }
+.theme-nord-light .thinking.live::before { background: #5e81ac !important; box-shadow: 0 0 14px #5e81ac !important; }
+.theme-nord-light .thinking .head { color: #5e81ac !important; }
+.theme-nord-light .thinking .head .summary { color: #3b4252 !important; }
+.theme-nord-light .thinking.settled:hover .head .summary { color: #2e3440 !important; }
+.theme-nord-light .thinking .head .elapsed { color: #81a1c1 !important; }
+.theme-nord-light .thinking .head .chev { color: #81a1c1 !important; }
+.theme-nord-light .thought { color: #5e81ac !important; }
+.theme-nord-light .thought:nth-child(3) { color: #2e3440 !important; }
+.theme-nord-light .expanded li { color: #3b4252 !important; }
+.theme-nord-light .expanded li::before { color: #81a1c1 !important; }
+
+/* Interim — Light Mode */
+.theme-nord-light .chat-turn.interim .chat-role { color: #5e81ac !important; }
+.theme-nord-light .chat-turn.interim .chat-role::before { background: #5e81ac !important; box-shadow: 0 0 10px #5e81ac !important; }
+.theme-nord-light .chat-turn.interim .chat-body { color: #5e81ac !important; }
+.theme-nord-light .chat-turn.interim .chat-body::after { background: #5e81ac !important; box-shadow: 0 0 12px #5e81ac !important; }
+
+/* Attachment chips */
+.theme-nord-light .att-chip { background: rgba(216, 222, 233, 0.8) !important; border-color: rgba(94, 129, 172, 0.35) !important; color: #3b4252 !important; }
+.theme-nord-light .att-chip .ic { color: #5e81ac !important; }
+.theme-nord-light .att-chip .size { color: #81a1c1 !important; }
+
+/* SessionMark — Light Mode */
+.theme-nord-light .session-mark { color: #81a1c1 !important; }
+.theme-nord-light .session-mark::before,
+.theme-nord-light .session-mark::after { background: #81a1c1 !important; }
+.theme-nord-light .session-mark .dot { background: #5e81ac !important; box-shadow: 0 0 8px #5e81ac !important; }
+.theme-nord-light .session-mark .title { color: #2e3440 !important; }
+.theme-nord-light .session-mark .title[contenteditable="true"]:focus { background: rgba(94, 129, 172, 0.15) !important; }
+
+/* StatusBadges — Light Mode */
+.theme-nord-light .badge { background: rgba(216, 222, 233, 0.9) !important; border-color: rgba(94, 129, 172, 0.35) !important; color: #5e81ac !important; }
+.theme-nord-light .badge.model { color: #5e81ac !important; }
+.theme-nord-light .badge.model:hover { color: #2e3440 !important; border-color: #5e81ac !important; }
+.theme-nord-light .badge .dot { background: #10b981 !important; box-shadow: 0 0 8px #10b981 !important; }
+.theme-nord-light .badge.model .dot { background: #5e81ac !important; box-shadow: 0 0 10px #5e81ac !important; }
+.theme-nord-light .badge.degraded { border-color: rgba(234, 179, 8, 0.5) !important; }
+.theme-nord-light .badge.degraded .dot { background: #eab308 !important; box-shadow: 0 0 8px #eab308 !important; }
+.theme-nord-light .badge.offline { border-color: rgba(239, 68, 68, 0.5) !important; }
+.theme-nord-light .badge.offline .dot { background: #ef4444 !important; box-shadow: 0 0 8px #ef4444 !important; }

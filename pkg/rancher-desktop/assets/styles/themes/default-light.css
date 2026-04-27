@@ -918,10 +918,12 @@
    Secretary Mode — Light Mode
    ═════════════════════════════════════════════════════════════════ */
 
-/* Page background - override var(--bg, #0d1117) */
-.theme-default-light .secretary-mode,
-.theme-default-light [class*="secretary"] {
-  --bg: var(--bg-page, #ffffff) !important;
+/* Page background - override var(--bg, #0d1117) on Secretary page */
+.theme-default-light .flex.h-full.flex-col[style*="--bg"] {
+  background: var(--bg-page, #ffffff) !important;
+}
+/* Also target any element with inline --bg style in secretary context */
+.theme-default-light [style*="background: var(--bg, #0d1117)"] {
   background: var(--bg-page, #ffffff) !important;
 }
 
@@ -1052,4 +1054,547 @@
 /* Empty states */
 .theme-default-light .dt-empty {
   color: #94a3b8 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Chat Page Gradients — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Chat root background */
+.theme-default-light .chat-root {
+  background: var(--bg-page, #ffffff) !important;
+}
+
+/* Header backdrop gradient - light version */
+.theme-default-light .header-backdrop {
+  background: linear-gradient(
+    to bottom,
+    rgba(241, 245, 249, 0.95) 0%,
+    rgba(241, 245, 249, 0.85) 55%,
+    rgba(241, 245, 249, 0) 100%
+  ) !important;
+}
+
+/* Composer backdrop gradient - light version */
+.theme-default-light .composer-backdrop {
+  background: linear-gradient(
+    to top,
+    rgba(241, 245, 249, 0.95) 0%,
+    rgba(241, 245, 249, 0.85) 45%,
+    rgba(241, 245, 249, 0) 100%
+  ) !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Model Switcher Modal — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Modal veil (backdrop) */
+.theme-default-light .modal-veil {
+  background: rgba(15, 23, 42, 0.4) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* Modal container */
+.theme-default-light .modal {
+  background: rgba(255, 255, 255, 0.98) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(148, 163, 184, 0.1) !important;
+}
+
+/* Modal header */
+.theme-default-light .mhead {
+  color: #64748b !important;
+  border-bottom-color: rgba(148, 163, 184, 0.2) !important;
+}
+
+/* Close button */
+.theme-default-light .mhead .x {
+  color: #94a3b8 !important;
+}
+
+/* Search section */
+.theme-default-light .msearch {
+  border-bottom-color: rgba(148, 163, 184, 0.15) !important;
+}
+
+.theme-default-light .msearch input {
+  color: #0d0d0d !important;
+  caret-color: #0ea5e9 !important;
+}
+
+.theme-default-light .msearch input::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Group header (provider name) */
+.theme-default-light .mgroup-head .provider {
+  color: #0ea5e9 !important;
+}
+
+/* Primary pill */
+.theme-default-light .mgroup-head .primary-pill {
+  color: #0ea5e9 !important;
+  background: rgba(14, 165, 233, 0.1) !important;
+  border-color: rgba(14, 165, 233, 0.25) !important;
+}
+
+/* Divider between groups */
+.theme-default-light .mdivider {
+  background: rgba(148, 163, 184, 0.15) !important;
+}
+
+/* Empty/loading states */
+.theme-default-light .mempty {
+  color: #64748b !important;
+}
+
+/* Model items */
+.theme-default-light .mitem:hover {
+  background: rgba(14, 165, 233, 0.08) !important;
+}
+
+/* Model name */
+.theme-default-light .mitem .name {
+  color: #0d0d0d !important;
+}
+
+/* Provider tier badge */
+.theme-default-light .mitem .tier {
+  color: #64748b !important;
+  background: rgba(148, 163, 184, 0.15) !important;
+  border-color: rgba(148, 163, 184, 0.25) !important;
+}
+
+/* Active tier badge */
+.theme-default-light .mitem .tier.active {
+  color: #059669 !important;
+  background: rgba(16, 185, 129, 0.1) !important;
+  border-color: rgba(16, 185, 129, 0.25) !important;
+}
+
+/* Active model row */
+.theme-default-light .mitem.active {
+  background: rgba(14, 165, 233, 0.1) !important;
+}
+
+.theme-default-light .mitem.active::before {
+  color: #0ea5e9 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Scrollbars — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Webkit scrollbars (Chrome, Safari, Edge) */
+.theme-default-light ::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+.theme-default-light ::-webkit-scrollbar-track {
+  background: rgba(148, 163, 184, 0.1) !important;
+}
+
+.theme-default-light ::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4) !important;
+  border-radius: 4px !important;
+}
+
+.theme-default-light ::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.6) !important;
+}
+
+/* Firefox scrollbars */
+.theme-default-light * {
+  scrollbar-width: thin !important;
+  scrollbar-color: rgba(148, 163, 184, 0.4) rgba(148, 163, 184, 0.1) !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Empty State — Light Mode (high contrast fixes)
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Main heading "What shall we work on?" */
+.theme-default-light .empty h1 {
+  color: #0d0d0d !important;
+}
+
+/* Kicker "SULLA" */
+.theme-default-light .e-kicker {
+  color: #0ea5e9 !important;
+}
+.theme-default-light .e-kicker::before,
+.theme-default-light .e-kicker::after {
+  background: #0ea5e9 !important;
+}
+
+/* Lede/hero text */
+.theme-default-light .lede {
+  color: #475569 !important;
+}
+
+/* Suggestion buttons */
+.theme-default-light .sug {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .sug:hover {
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: #0ea5e9 !important;
+  color: #0d0d0d !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Composer — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Composer input area */
+.theme-default-light .composer {
+  border-bottom-color: rgba(14, 165, 233, 0.4) !important;
+}
+
+.theme-default-light .composer:focus-within {
+  border-bottom-color: #0ea5e9 !important;
+  box-shadow: 0 14px 20px -14px rgba(14, 165, 233, 0.25) !important;
+}
+
+/* Input text - target both class and textarea element */
+.theme-default-light .input,
+.theme-default-light textarea.input {
+  color: #0d0d0d !important;
+  caret-color: #0ea5e9 !important;
+  background: transparent !important;
+}
+
+/* Placeholder text */
+.theme-default-light .input::placeholder,
+.theme-default-light textarea.input::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Glyph (reply text) */
+.theme-default-light .glyph {
+  color: #94a3b8 !important;
+}
+
+/* Keyboard hints */
+.theme-default-light .hints {
+  color: #64748b !important;
+}
+
+.theme-default-light .hints kbd {
+  background: rgba(148, 163, 184, 0.15) !important;
+  border-color: rgba(148, 163, 184, 0.25) !important;
+  color: #64748b !important;
+}
+
+/* Composer inner wrapper background */
+.theme-default-light .composer-inner {
+  background: transparent !important;
+}
+
+/* Ensure composer-wrap doesn't have dark bg */
+.theme-default-light .composer-wrap {
+  background: transparent !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   RoutinesHome Tabs (MY WORK, LIBRARY, MARKETPLACE, + Import)
+   Match the Active/Archive subtab styling
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Default tab state */
+.theme-default-light .tab {
+  color: #64748b !important;
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+.theme-default-light .tab:hover {
+  color: #0d0d0d !important;
+  background: rgba(14, 165, 233, 0.08) !important;
+  border-color: rgba(14, 165, 233, 0.2) !important;
+}
+
+/* Active tab - match subtab.on style */
+.theme-default-light .tab.on {
+  color: #0d0d0d !important;
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+  box-shadow: 0 6px 20px rgba(14, 165, 233, 0.15) !important;
+}
+
+/* Tab numbers/badges */
+.theme-default-light .tab-num {
+  background: rgba(148, 163, 184, 0.2) !important;
+  color: #64748b !important;
+}
+
+/* Active tab badge */
+.theme-default-light .tab.on .tab-num {
+  background: rgba(14, 165, 233, 0.25) !important;
+  color: #0ea5e9 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Chat Transcript — Light Mode Text Colors
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Time marker "TODAY · 11:52 PM" */
+.theme-default-light .time-marker span {
+  color: #64748b !important;
+}
+
+.theme-default-light .time-marker::before,
+.theme-default-light .time-marker::after {
+  background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.4), transparent) !important;
+}
+
+/* Role labels "You · 11:52" and "SULLA · 11:53" */
+.theme-default-light .chat-role {
+  color: #64748b !important;
+}
+
+.theme-default-light .chat-turn.you .chat-role {
+  color: #64748b !important;
+}
+
+.theme-default-light .chat-turn.sulla .chat-role {
+  color: #0ea5e9 !important;
+}
+
+/* User message body */
+.theme-default-light .chat-turn.you .chat-body {
+  color: #0d0d0d !important;
+}
+
+/* Sulla message body */
+.theme-default-light .chat-turn.sulla .chat-body {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .chat-turn.sulla .chat-body em {
+  color: #475569 !important;
+}
+
+.theme-default-light .chat-turn.sulla .chat-body strong {
+  color: #0d0d0d !important;
+}
+
+/* Code/inline terms in messages */
+.theme-default-light .chat-turn.sulla .chat-body code,
+.theme-default-light .chat-turn.sulla .chat-body .term {
+  color: #64748b !important;
+  background: rgba(148, 163, 184, 0.15) !important;
+  border-color: rgba(148, 163, 184, 0.25) !important;
+}
+
+/* Headings in messages */
+.theme-default-light .chat-turn.sulla .chat-body h3 {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .chat-turn.sulla .chat-body h3::before {
+  color: #94a3b8 !important;
+}
+
+/* Blockquotes */
+.theme-default-light .chat-turn.sulla .chat-body blockquote {
+  color: #64748b !important;
+  border-left-color: rgba(14, 165, 233, 0.4) !important;
+}
+
+/* Chat cursor (blinking) */
+.theme-default-light .chat-cursor {
+  background: #94a3b8 !important;
+  box-shadow: 0 0 14px #94a3b8 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Thinking Component — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Thinking block container */
+.theme-default-light .thinking {
+  border-left-color: rgba(14, 165, 233, 0.3) !important;
+}
+
+.theme-default-light .thinking:hover {
+  border-left-color: rgba(14, 165, 233, 0.5) !important;
+}
+
+.theme-default-light .thinking::before {
+  background: rgba(14, 165, 233, 0.5) !important;
+}
+
+.theme-default-light .thinking.live {
+  border-left-color: rgba(14, 165, 233, 0.6) !important;
+}
+
+.theme-default-light .thinking.live::before {
+  background: #0ea5e9 !important;
+  box-shadow: 0 0 14px #0ea5e9 !important;
+}
+
+/* Head "Sulla is thinking" / "3 thoughts · 0.65s" */
+.theme-default-light .thinking .head {
+  color: #64748b !important;
+}
+
+.theme-default-light .thinking .head .summary {
+  color: #475569 !important;
+}
+
+.theme-default-light .thinking.settled:hover .head .summary {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .thinking .head .elapsed {
+  color: #94a3b8 !important;
+}
+
+.theme-default-light .thinking .head .chev {
+  color: #94a3b8 !important;
+}
+
+/* Thought stream (live thoughts) */
+.theme-default-light .thought {
+  color: #64748b !important;
+}
+
+.theme-default-light .thought:nth-child(3) {
+  color: #0d0d0d !important;
+}
+
+/* Expanded thoughts list */
+.theme-default-light .expanded li {
+  color: #475569 !important;
+}
+
+.theme-default-light .expanded li::before {
+  color: #94a3b8 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Interim (Listening) — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+.theme-default-light .chat-turn.interim .chat-role {
+  color: #64748b !important;
+}
+
+.theme-default-light .chat-turn.interim .chat-role::before {
+  background: #0ea5e9 !important;
+  box-shadow: 0 0 10px #0ea5e9 !important;
+}
+
+.theme-default-light .chat-turn.interim .chat-body {
+  color: #64748b !important;
+}
+
+.theme-default-light .chat-turn.interim .chat-body::after {
+  background: #0ea5e9 !important;
+  box-shadow: 0 0 12px #0ea5e9 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Attachment chips in messages
+   ═════════════════════════════════════════════════════════════════ */
+
+.theme-default-light .att-chip {
+  background: rgba(241, 245, 249, 0.8) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  color: #475569 !important;
+}
+
+.theme-default-light .att-chip .ic {
+  color: #0ea5e9 !important;
+}
+
+.theme-default-light .att-chip .size {
+  color: #94a3b8 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   SessionMark ("New chat" title) — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Container lines */
+.theme-default-light .session-mark {
+  color: #94a3b8 !important;
+}
+
+.theme-default-light .session-mark::before,
+.theme-default-light .session-mark::after {
+  background: #94a3b8 !important;
+}
+
+/* Pulsing dot */
+.theme-default-light .session-mark .dot {
+  background: #0ea5e9 !important;
+  box-shadow: 0 0 8px #0ea5e9 !important;
+}
+
+/* Editable title text */
+.theme-default-light .session-mark .title {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .session-mark .title[contenteditable="true"]:focus {
+  background: rgba(14, 165, 233, 0.1) !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   StatusBadges (ONLINE, model badge) — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Badge containers */
+.theme-default-light .badge {
+  background: rgba(241, 245, 249, 0.9) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  color: #64748b !important;
+}
+
+/* Model badge */
+.theme-default-light .badge.model {
+  color: #0ea5e9 !important;
+}
+
+.theme-default-light .badge.model:hover {
+  color: #0284c7 !important;
+  border-color: #0ea5e9 !important;
+}
+
+/* Dots in badges */
+.theme-default-light .badge .dot {
+  background: #10b981 !important;
+  box-shadow: 0 0 8px #10b981 !important;
+}
+
+.theme-default-light .badge.model .dot {
+  background: #0ea5e9 !important;
+  box-shadow: 0 0 10px #0ea5e9 !important;
+}
+
+/* Degraded state */
+.theme-default-light .badge.degraded {
+  border-color: rgba(234, 179, 8, 0.5) !important;
+}
+
+.theme-default-light .badge.degraded .dot {
+  background: #eab308 !important;
+  box-shadow: 0 0 8px #eab308 !important;
+}
+
+/* Offline state */
+.theme-default-light .badge.offline {
+  border-color: rgba(239, 68, 68, 0.5) !important;
+}
+
+.theme-default-light .badge.offline .dot {
+  background: #ef4444 !important;
+  box-shadow: 0 0 8px #ef4444 !important;
 }
