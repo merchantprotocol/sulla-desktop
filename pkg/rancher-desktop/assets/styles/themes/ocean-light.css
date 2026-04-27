@@ -972,6 +972,49 @@
 .theme-ocean-light .att-chip .ic { color: #0284c7 !important; }
 .theme-ocean-light .att-chip .size { color: #38bdf8 !important; }
 
+/* ActSection & RoutineStrip — Light Mode */
+.theme-ocean-light .act .head { border-bottom-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .act .num { color: #38bdf8 !important; }
+.theme-ocean-light .act .title { color: #0c4a6e !important; }
+.theme-ocean-light .act .count { color: #0ea5e9 !important; }
+
+.theme-ocean-light .strip { background: linear-gradient(90deg, rgba(224, 242, 254, 0.8), rgba(186, 230, 253, 0.6)) !important; border-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .strip:hover { background: linear-gradient(90deg, rgba(186, 230, 253, 0.9), rgba(125, 211, 252, 0.7)) !important; border-color: rgba(2, 132, 199, 0.5) !important; }
+.theme-ocean-light .strip::before { background: linear-gradient(180deg, transparent, #38bdf8, transparent) !important; }
+.theme-ocean-light .strip.featured { border-color: rgba(139, 92, 246, 0.4) !important; background: linear-gradient(90deg, rgba(243, 232, 255, 0.5), rgba(224, 242, 254, 0.5)) !important; }
+
+.theme-ocean-light .strip .cat { color: #0ea5e9 !important; }
+.theme-ocean-light .strip .title { color: #0c4a6e !important; }
+.theme-ocean-light .strip .desc { color: #075985 !important; }
+
+.theme-ocean-light .strip .chip { background: rgba(224, 242, 254, 0.8) !important; border-color: rgba(14, 165, 233, 0.35) !important; color: #0ea5e9 !important; }
+.theme-ocean-light .strip .chip.blue { border-color: rgba(2, 132, 199, 0.45) !important; color: #0284c7 !important; background: rgba(186, 230, 253, 0.7) !important; }
+.theme-ocean-light .strip .chip.violet { border-color: rgba(139, 92, 246, 0.4) !important; color: #7c3aed !important; background: rgba(243, 232, 255, 0.7) !important; }
+.theme-ocean-light .strip .chip.warn { border-color: rgba(234, 179, 8, 0.45) !important; color: #a16207 !important; background: rgba(254, 249, 195, 0.7) !important; }
+.theme-ocean-light .strip .chip.live { border-color: rgba(239, 68, 68, 0.45) !important; color: #dc2626 !important; background: rgba(254, 226, 226, 0.7) !important; }
+.theme-ocean-light .strip .chip.live .d { background: #ef4444 !important; }
+
+.theme-ocean-light .strip .metrics { color: #0ea5e9 !important; border-left-color: rgba(14, 165, 233, 0.35) !important; }
+.theme-ocean-light .strip .metrics .big { color: #0c4a6e !important; }
+.theme-ocean-light .strip .metrics .big small { color: #38bdf8 !important; }
+.theme-ocean-light .metrics .row span b { color: #0c4a6e !important; }
+
+.theme-ocean-light .strip .btn { background: rgba(224, 242, 254, 0.8) !important; border-color: rgba(14, 165, 233, 0.35) !important; color: #075985 !important; }
+.theme-ocean-light .strip .btn:hover { border-color: rgba(2, 132, 199, 0.5) !important; color: #0c4a6e !important; background: rgba(14, 165, 233, 0.15) !important; }
+.theme-ocean-light .strip .btn.primary { border-color: rgba(2, 132, 199, 0.65) !important; color: #ffffff !important; background: linear-gradient(135deg, rgba(14, 165, 233, 0.9), rgba(2, 132, 199, 0.95)) !important; box-shadow: 0 8px 22px rgba(14, 165, 233, 0.3), 0 0 14px rgba(14, 165, 233, 0.2) !important; }
+.theme-ocean-light .strip .btn.primary:hover { background: linear-gradient(135deg, rgba(14, 165, 233, 1), rgba(2, 132, 199, 1)) !important; }
+.theme-ocean-light .strip .btn.ghost { background: transparent !important; }
+
+.theme-ocean-light .strip .btn.kebab { color: #0ea5e9 !important; }
+.theme-ocean-light .strip .btn.kebab:hover, .theme-ocean-light .strip .btn.kebab.on { color: #0c4a6e !important; background: rgba(14, 165, 233, 0.2) !important; border-color: rgba(2, 132, 199, 0.5) !important; }
+
+.theme-ocean-light .strip .menu { background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98)) !important; border-color: rgba(14, 165, 233, 0.4) !important; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.12), 0 0 20px rgba(14, 165, 233, 0.15) !important; }
+.theme-ocean-light .strip .menu-item { color: #075985 !important; }
+.theme-ocean-light .strip .menu-item:hover { background: rgba(14, 165, 233, 0.15) !important; color: #0c4a6e !important; }
+.theme-ocean-light .strip .menu-item.danger { color: #ef4444 !important; }
+.theme-ocean-light .strip .menu-item.danger:hover { background: rgba(239, 68, 68, 0.1) !important; color: #dc2626 !important; }
+.theme-ocean-light .strip .menu-sep { background: rgba(14, 165, 233, 0.3) !important; }
+
 /* SessionMark — Light Mode */
 .theme-ocean-light .session-mark { color: #38bdf8 !important; }
 .theme-ocean-light .session-mark::before,

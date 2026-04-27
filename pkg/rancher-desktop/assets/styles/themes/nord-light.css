@@ -972,6 +972,49 @@
 .theme-nord-light .att-chip .ic { color: #5e81ac !important; }
 .theme-nord-light .att-chip .size { color: #81a1c1 !important; }
 
+/* ActSection & RoutineStrip — Light Mode */
+.theme-nord-light .act .head { border-bottom-color: rgba(94, 129, 172, 0.35) !important; }
+.theme-nord-light .act .num { color: #81a1c1 !important; }
+.theme-nord-light .act .title { color: #2e3440 !important; }
+.theme-nord-light .act .count { color: #5e81ac !important; }
+
+.theme-nord-light .strip { background: linear-gradient(90deg, rgba(216, 222, 233, 0.8), rgba(184, 192, 210, 0.6)) !important; border-color: rgba(94, 129, 172, 0.35) !important; }
+.theme-nord-light .strip:hover { background: linear-gradient(90deg, rgba(184, 192, 210, 0.9), rgba(143, 155, 183, 0.7)) !important; border-color: rgba(94, 129, 172, 0.5) !important; }
+.theme-nord-light .strip::before { background: linear-gradient(180deg, transparent, #81a1c1, transparent) !important; }
+.theme-nord-light .strip.featured { border-color: rgba(139, 92, 246, 0.4) !important; background: linear-gradient(90deg, rgba(243, 232, 255, 0.5), rgba(216, 222, 233, 0.5)) !important; }
+
+.theme-nord-light .strip .cat { color: #5e81ac !important; }
+.theme-nord-light .strip .title { color: #2e3440 !important; }
+.theme-nord-light .strip .desc { color: #3b4252 !important; }
+
+.theme-nord-light .strip .chip { background: rgba(216, 222, 233, 0.8) !important; border-color: rgba(94, 129, 172, 0.35) !important; color: #5e81ac !important; }
+.theme-nord-light .strip .chip.blue { border-color: rgba(94, 129, 172, 0.45) !important; color: #5e81ac !important; background: rgba(184, 192, 210, 0.7) !important; }
+.theme-nord-light .strip .chip.violet { border-color: rgba(139, 92, 246, 0.4) !important; color: #7c3aed !important; background: rgba(243, 232, 255, 0.7) !important; }
+.theme-nord-light .strip .chip.warn { border-color: rgba(234, 179, 8, 0.45) !important; color: #a16207 !important; background: rgba(254, 249, 195, 0.7) !important; }
+.theme-nord-light .strip .chip.live { border-color: rgba(239, 68, 68, 0.45) !important; color: #dc2626 !important; background: rgba(254, 226, 226, 0.7) !important; }
+.theme-nord-light .strip .chip.live .d { background: #ef4444 !important; }
+
+.theme-nord-light .strip .metrics { color: #5e81ac !important; border-left-color: rgba(94, 129, 172, 0.35) !important; }
+.theme-nord-light .strip .metrics .big { color: #2e3440 !important; }
+.theme-nord-light .strip .metrics .big small { color: #81a1c1 !important; }
+.theme-nord-light .metrics .row span b { color: #2e3440 !important; }
+
+.theme-nord-light .strip .btn { background: rgba(216, 222, 233, 0.8) !important; border-color: rgba(94, 129, 172, 0.35) !important; color: #3b4252 !important; }
+.theme-nord-light .strip .btn:hover { border-color: rgba(94, 129, 172, 0.5) !important; color: #2e3440 !important; background: rgba(94, 129, 172, 0.15) !important; }
+.theme-nord-light .strip .btn.primary { border-color: rgba(94, 129, 172, 0.65) !important; color: #ffffff !important; background: linear-gradient(135deg, rgba(94, 129, 172, 0.9), rgba(69, 98, 138, 0.95)) !important; box-shadow: 0 8px 22px rgba(94, 129, 172, 0.3), 0 0 14px rgba(94, 129, 172, 0.2) !important; }
+.theme-nord-light .strip .btn.primary:hover { background: linear-gradient(135deg, rgba(94, 129, 172, 1), rgba(69, 98, 138, 1)) !important; }
+.theme-nord-light .strip .btn.ghost { background: transparent !important; }
+
+.theme-nord-light .strip .btn.kebab { color: #5e81ac !important; }
+.theme-nord-light .strip .btn.kebab:hover, .theme-nord-light .strip .btn.kebab.on { color: #2e3440 !important; background: rgba(94, 129, 172, 0.2) !important; border-color: rgba(94, 129, 172, 0.5) !important; }
+
+.theme-nord-light .strip .menu { background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98)) !important; border-color: rgba(94, 129, 172, 0.4) !important; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.12), 0 0 20px rgba(94, 129, 172, 0.15) !important; }
+.theme-nord-light .strip .menu-item { color: #3b4252 !important; }
+.theme-nord-light .strip .menu-item:hover { background: rgba(94, 129, 172, 0.15) !important; color: #2e3440 !important; }
+.theme-nord-light .strip .menu-item.danger { color: #ef4444 !important; }
+.theme-nord-light .strip .menu-item.danger:hover { background: rgba(239, 68, 68, 0.1) !important; color: #dc2626 !important; }
+.theme-nord-light .strip .menu-sep { background: rgba(94, 129, 172, 0.3) !important; }
+
 /* SessionMark — Light Mode */
 .theme-nord-light .session-mark { color: #81a1c1 !important; }
 .theme-nord-light .session-mark::before,

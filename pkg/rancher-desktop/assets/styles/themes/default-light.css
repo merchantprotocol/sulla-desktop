@@ -1519,6 +1519,184 @@
 }
 
 /* ═════════════════════════════════════════════════════════════════
+   ActSection & RoutineStrip — Light Mode ("In the wings" area)
+   ═════════════════════════════════════════════════════════════════ */
+
+/* ActSection header - ACT III · In the wings · IDLE, DRAFTS, ARCHIVED */
+.theme-default-light .act .head {
+  border-bottom-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.theme-default-light .act .num {
+  color: #94a3b8 !important;
+}
+
+.theme-default-light .act .title {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .act .count {
+  color: #64748b !important;
+}
+
+/* RoutineStrip card container */
+.theme-default-light .strip {
+  background: linear-gradient(90deg, rgba(241, 245, 249, 0.8), rgba(226, 232, 240, 0.6)) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.theme-default-light .strip:hover {
+  background: linear-gradient(90deg, rgba(226, 232, 240, 0.9), rgba(203, 213, 225, 0.7)) !important;
+  border-color: rgba(14, 165, 233, 0.5) !important;
+}
+
+.theme-default-light .strip::before {
+  background: linear-gradient(180deg, transparent, #94a3b8, transparent) !important;
+}
+
+.theme-default-light .strip.featured {
+  border-color: rgba(139, 92, 246, 0.35) !important;
+  background: linear-gradient(90deg, rgba(243, 232, 255, 0.5), rgba(241, 245, 249, 0.5)) !important;
+}
+
+/* Category label (OPERATIONS) */
+.theme-default-light .strip .cat {
+  color: #64748b !important;
+}
+
+/* Routine title (Untitled Routine) */
+.theme-default-light .strip .title {
+  color: #0d0d0d !important;
+}
+
+/* Description text */
+.theme-default-light .strip .desc {
+  color: #475569 !important;
+}
+
+/* Chips (DRAFT, 0 AGENTS, etc.) */
+.theme-default-light .strip .chip {
+  background: rgba(241, 245, 249, 0.8) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  color: #64748b !important;
+}
+
+.theme-default-light .strip .chip.blue {
+  border-color: rgba(14, 165, 233, 0.4) !important;
+  color: #0284c7 !important;
+  background: rgba(224, 242, 254, 0.6) !important;
+}
+
+.theme-default-light .strip .chip.violet {
+  border-color: rgba(139, 92, 246, 0.4) !important;
+  color: #7c3aed !important;
+  background: rgba(243, 232, 255, 0.6) !important;
+}
+
+.theme-default-light .strip .chip.warn {
+  border-color: rgba(234, 179, 8, 0.4) !important;
+  color: #a16207 !important;
+  background: rgba(254, 249, 195, 0.6) !important;
+}
+
+.theme-default-light .strip .chip.live {
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  color: #dc2626 !important;
+  background: rgba(254, 226, 226, 0.6) !important;
+}
+
+.theme-default-light .strip .chip.live .d {
+  background: #ef4444 !important;
+}
+
+/* Metrics area */
+.theme-default-light .strip .metrics {
+  color: #64748b !important;
+  border-left-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.theme-default-light .strip .metrics .big {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .strip .metrics .big small {
+  color: #94a3b8 !important;
+}
+
+.theme-default-light .metrics .row span b {
+  color: #0d0d0d !important;
+}
+
+/* Buttons */
+.theme-default-light .strip .btn {
+  background: rgba(241, 245, 249, 0.8) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  color: #475569 !important;
+}
+
+.theme-default-light .strip .btn:hover {
+  border-color: rgba(14, 165, 233, 0.5) !important;
+  color: #0d0d0d !important;
+  background: rgba(14, 165, 233, 0.1) !important;
+}
+
+.theme-default-light .strip .btn.primary {
+  border-color: rgba(14, 165, 233, 0.6) !important;
+  color: #ffffff !important;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.85), rgba(2, 132, 199, 0.9)) !important;
+  box-shadow: 0 8px 22px rgba(14, 165, 233, 0.25), 0 0 14px rgba(14, 165, 233, 0.15) !important;
+}
+
+.theme-default-light .strip .btn.primary:hover {
+  background: linear-gradient(135deg, rgba(14, 165, 233, 1), rgba(2, 132, 199, 1)) !important;
+}
+
+.theme-default-light .strip .btn.ghost {
+  background: transparent !important;
+}
+
+/* Kebab menu button */
+.theme-default-light .strip .btn.kebab {
+  color: #64748b !important;
+}
+
+.theme-default-light .strip .btn.kebab:hover,
+.theme-default-light .strip .btn.kebab.on {
+  color: #0d0d0d !important;
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+}
+
+/* Dropdown menu */
+.theme-default-light .strip .menu {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98)) !important;
+  border-color: rgba(148, 163, 184, 0.35) !important;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.12), 0 0 20px rgba(148, 163, 184, 0.1) !important;
+}
+
+.theme-default-light .strip .menu-item {
+  color: #475569 !important;
+}
+
+.theme-default-light .strip .menu-item:hover {
+  background: rgba(14, 165, 233, 0.1) !important;
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .strip .menu-item.danger {
+  color: #ef4444 !important;
+}
+
+.theme-default-light .strip .menu-item.danger:hover {
+  background: rgba(239, 68, 68, 0.1) !important;
+  color: #dc2626 !important;
+}
+
+.theme-default-light .strip .menu-sep {
+  background: rgba(148, 163, 184, 0.25) !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
    SessionMark ("New chat" title) — Light Mode
    ═════════════════════════════════════════════════════════════════ */
 
