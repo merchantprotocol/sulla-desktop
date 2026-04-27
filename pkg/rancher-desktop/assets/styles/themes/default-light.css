@@ -342,3 +342,169 @@
   --outline: var(--accent-primary);
   --outline-width: 1px;
 }
+
+/* ═════════════════════════════════════════════════════════════════
+   Component Overrides for Light Theme — FORCE LIGHT MODE
+   These override any dark theme remnants with !important
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Chat Canvas — force light background, hide dark elements */
+.theme-default-light .chat-canvas {
+  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 50%, #f1f5f9 100%) !important;
+}
+
+.theme-default-light .chat-stars,
+.theme-default-light .stars {
+  display: none !important;
+}
+
+.theme-default-light .chat-glow.a,
+.theme-default-light .chat-glow.b {
+  opacity: 0.15 !important;
+}
+
+/* Page root backgrounds */
+.theme-default-light .chat-root,
+.theme-default-light .page-root,
+.theme-default-light [class*="page-root"] {
+  background: var(--bg-page, #ffffff) !important;
+  color: var(--text-primary, #0d0d0d) !important;
+}
+
+/* Empty State — High Contrast */
+.theme-default-light .empty h1,
+.theme-default-light h1:has(+ .lede) {
+  color: #0d0d0d !important;
+  text-shadow: none !important;
+}
+
+.theme-default-light .lede,
+.theme-default-light .hero .dek,
+.theme-default-light .empty p[class*="lede"] {
+  color: #334155 !important;
+}
+
+.theme-default-light .e-kicker,
+.theme-default-light .kicker {
+  color: #475569 !important;
+}
+
+.theme-default-light .e-kicker::before,
+.theme-default-light .e-kicker::after,
+.theme-default-light .kicker::before {
+  background: #94a3b8 !important;
+  opacity: 1 !important;
+}
+
+/* Suggestion buttons */
+.theme-default-light .sug,
+.theme-default-light .suggests button {
+  background: rgba(241, 245, 249, 0.9) !important;
+  border-color: rgba(148, 163, 184, 0.4) !important;
+  color: #334155 !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+}
+
+.theme-default-light .sug:hover,
+.theme-default-light .suggests button:hover {
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: rgba(14, 165, 233, 0.5) !important;
+  color: #0d0d0d !important;
+}
+
+/* Routines Home */
+.theme-default-light .routines-home {
+  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 60%, #f1f5f9 100%) !important;
+  color: var(--text-primary, #0d0d0d) !important;
+}
+
+.theme-default-light .routines-home .canvas {
+  background: transparent !important;
+}
+
+.theme-default-light .bracket {
+  border-color: rgba(100, 116, 139, 0.3) !important;
+}
+
+/* Tabs */
+.theme-default-light .tab {
+  color: #64748b !important;
+  background: transparent !important;
+}
+
+.theme-default-light .tab:hover {
+  color: #0d0d0d !important;
+  background: rgba(14, 165, 233, 0.08) !important;
+}
+
+.theme-default-light .tab.on {
+  color: #0ea5e9 !important;
+  background: rgba(14, 165, 233, 0.12) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+}
+
+.theme-default-light .tab-num {
+  background: rgba(148, 163, 184, 0.15) !important;
+  color: #64748b !important;
+}
+
+.theme-default-light .tab.on .tab-num {
+  background: rgba(14, 165, 233, 0.2) !important;
+  color: #0ea5e9 !important;
+}
+
+/* Sub-tabs */
+.theme-default-light .subtab {
+  color: #64748b !important;
+  background: transparent !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.theme-default-light .subtab:hover {
+  color: #0d0d0d !important;
+  border-color: #94a3b8 !important;
+}
+
+.theme-default-light .subtab.on {
+  color: #0ea5e9 !important;
+  background: rgba(14, 165, 233, 0.12) !important;
+  border-color: rgba(14, 165, 233, 0.3) !important;
+}
+
+/* Browser Tabs */
+.theme-default-light .tab-bar,
+.theme-default-light [class*="tab-bar"] {
+  background: var(--bg-surface, #f8fafc) !important;
+  border-bottom-color: var(--border-default, #e2e8f0) !important;
+}
+
+.theme-default-light .browser-tab,
+.theme-default-light .tab-item,
+.theme-default-light [class*="browser-tab"] {
+  background: transparent !important;
+  color: var(--text-secondary, #64748b) !important;
+}
+
+.theme-default-light .browser-tab.active,
+.theme-default-light .tab-item.active,
+.theme-default-light .tab-item.on,
+.theme-default-light [class*="browser-tab"][class*="active"] {
+  background: var(--bg-page, #ffffff) !important;
+  color: var(--text-primary, #0d0d0d) !important;
+  border-color: var(--border-default, #e2e8f0) !important;
+}
+
+/* Remove any dark overlays */
+.theme-default-light::after,
+.theme-default-light::before,
+.theme-default-light .page-root::before {
+  display: none !important;
+}
+
+/* Force body/html background for light theme */
+.theme-default-light,
+.theme-default-light html,
+.theme-default-light body {
+  background: var(--bg-page, #ffffff) !important;
+  color: var(--body-text, #0d0d0d) !important;
+}

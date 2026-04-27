@@ -341,3 +341,113 @@
   --outline: var(--accent-primary);
   --outline-width: 1px;
 }
+
+/* ═════════════════════════════════════════════════════════════════
+   Component Overrides for Ocean Light Theme — FORCE LIGHT MODE
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Chat Canvas — ocean light colors */
+.theme-ocean-light .chat-canvas {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0f9ff 100%) !important;
+}
+
+.theme-ocean-light .chat-stars,
+.theme-ocean-light .stars {
+  display: none !important;
+}
+
+.theme-ocean-light .chat-glow.a,
+.theme-ocean-light .chat-glow.b {
+  opacity: 0.2 !important;
+}
+
+/* Page root */
+.theme-ocean-light .chat-root,
+.theme-ocean-light .page-root,
+.theme-ocean-light [class*="page-root"] {
+  background: var(--bg-page, #f0f9ff) !important;
+  color: var(--text-primary, #0c4a6e) !important;
+}
+
+/* Empty State */
+.theme-ocean-light .empty h1,
+.theme-ocean-light h1:has(+ .lede) {
+  color: #0c4a6e !important;
+  text-shadow: none !important;
+}
+
+.theme-ocean-light .lede,
+.theme-ocean-light .hero .dek,
+.theme-ocean-light .empty p[class*="lede"] {
+  color: #075985 !important;
+}
+
+.theme-ocean-light .e-kicker,
+.theme-ocean-light .kicker {
+  color: #0369a1 !important;
+}
+
+.theme-ocean-light .e-kicker::before,
+.theme-ocean-light .e-kicker::after,
+.theme-ocean-light .kicker::before {
+  background: #38bdf8 !important;
+  opacity: 1 !important;
+}
+
+/* Suggestion buttons */
+.theme-ocean-light .sug,
+.theme-ocean-light .suggests button {
+  background: rgba(224, 242, 254, 0.9) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+  color: #075985 !important;
+  box-shadow: 0 1px 3px rgba(14, 165, 233, 0.15) !important;
+}
+
+.theme-ocean-light .sug:hover,
+.theme-ocean-light .suggests button:hover {
+  background: rgba(14, 165, 233, 0.2) !important;
+  border-color: rgba(14, 165, 233, 0.6) !important;
+  color: #0c4a6e !important;
+}
+
+/* Routines Home */
+.theme-ocean-light .routines-home {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 60%, #f0f9ff 100%) !important;
+  color: var(--text-primary, #0c4a6e) !important;
+}
+
+.theme-ocean-light .routines-home .canvas {
+  background: transparent !important;
+}
+
+/* Tabs */
+.theme-ocean-light .tab {
+  color: #0ea5e9 !important;
+  background: transparent !important;
+}
+
+.theme-ocean-light .tab:hover {
+  color: #0284c7 !important;
+  background: rgba(14, 165, 233, 0.1) !important;
+}
+
+.theme-ocean-light .tab.on {
+  color: #0c4a6e !important;
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+}
+
+/* Remove dark overlays */
+.theme-ocean-light::after,
+.theme-ocean-light::before,
+.theme-ocean-light .page-root::before {
+  display: none !important;
+}
+
+/* Force body/html background for light theme */
+.theme-ocean-light,
+.theme-ocean-light html,
+.theme-ocean-light body {
+  background: var(--bg-page, #f0f9ff) !important;
+  color: var(--body-text, #0c4a6e) !important;
+}

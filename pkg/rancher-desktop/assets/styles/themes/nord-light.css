@@ -341,3 +341,113 @@
   --outline: var(--accent-primary);
   --outline-width: 1px;
 }
+
+/* ═════════════════════════════════════════════════════════════════
+   Component Overrides for Nord Light Theme — FORCE LIGHT MODE
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Chat Canvas — nord light colors */
+.theme-nord-light .chat-canvas {
+  background: linear-gradient(135deg, #eceff4 0%, #e5e9f0 50%, #eceff4 100%) !important;
+}
+
+.theme-nord-light .chat-stars,
+.theme-nord-light .stars {
+  display: none !important;
+}
+
+.theme-nord-light .chat-glow.a,
+.theme-nord-light .chat-glow.b {
+  opacity: 0.15 !important;
+}
+
+/* Page root */
+.theme-nord-light .chat-root,
+.theme-nord-light .page-root,
+.theme-nord-light [class*="page-root"] {
+  background: var(--bg-page, #eceff4) !important;
+  color: var(--text-primary, #2e3440) !important;
+}
+
+/* Empty State */
+.theme-nord-light .empty h1,
+.theme-nord-light h1:has(+ .lede) {
+  color: #2e3440 !important;
+  text-shadow: none !important;
+}
+
+.theme-nord-light .lede,
+.theme-nord-light .hero .dek,
+.theme-nord-light .empty p[class*="lede"] {
+  color: #3b4252 !important;
+}
+
+.theme-nord-light .e-kicker,
+.theme-nord-light .kicker {
+  color: #5e81ac !important;
+}
+
+.theme-nord-light .e-kicker::before,
+.theme-nord-light .e-kicker::after,
+.theme-nord-light .kicker::before {
+  background: #81a1c1 !important;
+  opacity: 1 !important;
+}
+
+/* Suggestion buttons */
+.theme-nord-light .sug,
+.theme-nord-light .suggests button {
+  background: rgba(216, 222, 233, 0.9) !important;
+  border-color: rgba(94, 129, 172, 0.4) !important;
+  color: #3b4252 !important;
+  box-shadow: 0 1px 3px rgba(94, 129, 172, 0.15) !important;
+}
+
+.theme-nord-light .sug:hover,
+.theme-nord-light .suggests button:hover {
+  background: rgba(94, 129, 172, 0.2) !important;
+  border-color: rgba(94, 129, 172, 0.6) !important;
+  color: #2e3440 !important;
+}
+
+/* Routines Home */
+.theme-nord-light .routines-home {
+  background: linear-gradient(135deg, #eceff4 0%, #e5e9f0 60%, #eceff4 100%) !important;
+  color: var(--text-primary, #2e3440) !important;
+}
+
+.theme-nord-light .routines-home .canvas {
+  background: transparent !important;
+}
+
+/* Tabs */
+.theme-nord-light .tab {
+  color: #5e81ac !important;
+  background: transparent !important;
+}
+
+.theme-nord-light .tab:hover {
+  color: #2e3440 !important;
+  background: rgba(94, 129, 172, 0.1) !important;
+}
+
+.theme-nord-light .tab.on {
+  color: #2e3440 !important;
+  background: rgba(94, 129, 172, 0.15) !important;
+  border-color: rgba(94, 129, 172, 0.4) !important;
+}
+
+/* Remove dark overlays */
+.theme-nord-light::after,
+.theme-nord-light::before,
+.theme-nord-light .page-root::before {
+  display: none !important;
+}
+
+/* Force body/html background for light theme */
+.theme-nord-light,
+.theme-nord-light html,
+.theme-nord-light body {
+  background: var(--bg-page, #eceff4) !important;
+  color: var(--body-text, #2e3440) !important;
+}
