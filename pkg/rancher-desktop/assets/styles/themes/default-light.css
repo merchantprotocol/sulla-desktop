@@ -508,3 +508,548 @@
   background: var(--bg-page, #ffffff) !important;
   color: var(--body-text, #0d0d0d) !important;
 }
+
+/* ═════════════════════════════════════════════════════════════════
+   Ribbon Footer — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Ribbon container - light translucent background */
+.theme-default-light .ribbon {
+  background: rgba(241, 245, 249, 0.85) !important;
+  border-top: 1px solid rgba(148, 163, 184, 0.3) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* Ribbon left/right labels */
+.theme-default-light .ribbon .l,
+.theme-default-light .ribbon .r {
+  color: #64748b !important;
+}
+
+/* Ribbon status text (e.g., "Browsing Sulla Cloud") */
+.theme-default-light .ribbon .l .tc,
+.theme-default-light .ribbon .r b {
+  color: #0d0d0d !important;
+  font-weight: 600 !important;
+}
+
+/* Center mark ("A SULLA ORIGINAL") */
+.theme-default-light .ribbon .c .mark {
+  color: #94a3b8 !important;
+}
+
+/* Signature text ("Made entirely by agents.") */
+.theme-default-light .ribbon .c .sig {
+  color: #334155 !important;
+}
+
+.theme-default-light .ribbon .c .sig b {
+  color: #0ea5e9 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Hero Section — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Hero headline (e.g., "Marketplace.") - force dark text */
+.theme-default-light .hero h1 {
+  color: #0d0d0d !important;
+  text-shadow: none !important;
+}
+
+/* Hero subtitle/dek */
+.theme-default-light .hero .dek {
+  color: #475569 !important;
+}
+
+/* Kicker ("THE COMMONS") */
+.theme-default-light .hero .kicker,
+.theme-default-light .kicker {
+  color: #64748b !important;
+}
+
+.theme-default-light .kicker .d,
+.theme-default-light .hero .kicker .d {
+  background: #94a3b8 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Form Inputs & Selected Items — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Input fields - force light background */
+.theme-default-light input[type="text"],
+.theme-default-light input[type="password"],
+.theme-default-light input[type="email"],
+.theme-default-light input[type="number"],
+.theme-default-light input[type="search"],
+.theme-default-light input[type="url"],
+.theme-default-light textarea,
+.theme-default-light select,
+.theme-default-light .address-bar,
+.theme-default-light [class*="input"],
+.theme-default-light [class*="select"] {
+  background: var(--bg-input, #ffffff) !important;
+  color: var(--text-primary, #0d0d0d) !important;
+  border-color: var(--border-default, #e2e8f0) !important;
+}
+
+/* Selected items, active dropdown options, tags/chips */
+.theme-default-light .selected-item,
+.theme-default-light [class*="selected"],
+.theme-default-light .dropdown-item.active,
+.theme-default-light .dropdown-item.selected,
+.theme-default-light [class*="chip"],
+.theme-default-light [class*="tag"],
+.theme-default-light .multiselect__option--highlight,
+.theme-default-light .multiselect__option--selected {
+  background: rgba(14, 165, 233, 0.15) !important;
+  color: #0d0d0d !important;
+}
+
+/* Account editor specific */
+.theme-default-light .editor-field input,
+.theme-default-light .editor-field select,
+.theme-default-light .editor-badge-type,
+.theme-default-light .pwgen-display,
+.theme-default-light .pwgen-password,
+.theme-default-light .pwgen-mode-toggle,
+.theme-default-light .pwgen-options,
+.theme-default-light .pwgen-num-input,
+.theme-default-light .pwgen-select {
+  background: var(--bg-input, #ffffff) !important;
+  color: var(--text-primary, #0d0d0d) !important;
+  border-color: var(--border-default, #e2e8f0) !important;
+}
+
+/* Mode toggle active button */
+.theme-default-light .pwgen-mode-toggle button.active,
+.theme-default-light [class*="mode-toggle"] button.active,
+.theme-default-light [class*="toggle"] button.active {
+  background: var(--accent-primary, #0ea5e9) !important;
+  color: #ffffff !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Brand Header (Sulla Studio) — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Brand name "Sulla Studio" - force dark text */
+.theme-default-light .brand-name {
+  color: #0d0d0d !important;
+}
+
+/* Brand subtitle "Agent assets + marketplace" */
+.theme-default-light .brand-sub {
+  color: #64748b !important;
+}
+
+/* Brand mark (the "S" square) - keep visible */
+.theme-default-light .brand-mark {
+  background: linear-gradient(135deg, #64748b, #475569) !important;
+  color: #ffffff !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Sub-tabs (Active/Archive) — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Subtab default state */
+.theme-default-light .subtab {
+  color: #64748b !important;
+  background: transparent !important;
+  border-color: rgba(148, 163, 184, 0.4) !important;
+}
+
+.theme-default-light .subtab:hover {
+  color: #0d0d0d !important;
+  border-color: #94a3b8 !important;
+}
+
+/* Subtab active state */
+.theme-default-light .subtab.on {
+  color: #0d0d0d !important;
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+}
+
+/* Subtab number badge */
+.theme-default-light .subtab .subtab-num {
+  background: rgba(148, 163, 184, 0.2) !important;
+  color: #64748b !important;
+}
+
+.theme-default-light .subtab.on .subtab-num {
+  background: rgba(14, 165, 233, 0.25) !important;
+  color: #0ea5e9 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Empty State Card — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Empty state container - light background instead of dark */
+.theme-default-light .empty-state {
+  background: rgba(241, 245, 249, 0.85) !important;
+  border-color: rgba(148, 163, 184, 0.4) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+/* Empty state kicker (e.g., "No routines yet") */
+.theme-default-light .empty-state .kicker,
+.theme-default-light .empty-state-kicker {
+  color: #0ea5e9 !important;
+}
+
+/* Empty state title (e.g., "Your stage is empty.") */
+.theme-default-light .empty-state .title,
+.theme-default-light .empty-state-title,
+.theme-default-light .empty-state h2 {
+  color: #0d0d0d !important;
+  font-style: italic !important;
+}
+
+/* Empty state message/description */
+.theme-default-light .empty-state .message,
+.theme-default-light .empty-state-message,
+.theme-default-light .empty-state p {
+  color: #475569 !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   ModeRail Sidebar — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Sidebar rail background - light translucent */
+.theme-default-light .mode-rail {
+  background: rgba(241, 245, 249, 0.85) !important;
+  border-right-color: rgba(148, 163, 184, 0.2) !important;
+}
+
+/* Mode buttons - default state */
+.theme-default-light .mode-btn {
+  color: #64748b !important;
+}
+
+.theme-default-light .mode-btn:hover {
+  color: #0d0d0d !important;
+  background: rgba(14, 165, 233, 0.1) !important;
+}
+
+/* Mode buttons - active state */
+.theme-default-light .mode-btn.active {
+  color: #0ea5e9 !important;
+  background: rgba(14, 165, 233, 0.15) !important;
+}
+
+/* Active indicator bar */
+.theme-default-light .mode-btn.active::before {
+  background: #0ea5e9 !important;
+  box-shadow: 0 0 10px rgba(14, 165, 233, 0.5) !important;
+}
+
+/* Tooltip */
+.theme-default-light .mode-btn::after {
+  color: #0d0d0d !important;
+  background: rgba(255, 255, 255, 0.96) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Tab Mode Overrides (Routines/Marketplace) — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Override the hardcoded dark --tab-bg for routines/marketplace modes */
+.theme-default-light .tab-mode-routines,
+.theme-default-light .tab-mode-marketplace {
+  --tab-bg: var(--bg-surface, #f8fafc) !important;
+  --tab-bg-hover: rgba(14, 165, 233, 0.12) !important;
+  --tab-accent: #0ea5e9 !important;
+}
+
+/* Ensure active tab in these modes uses light colors */
+.theme-default-light .tab-mode-routines .tab-item.active,
+.theme-default-light .tab-mode-marketplace .tab-item.active,
+.theme-default-light .tab-mode-routines .tab.on,
+.theme-default-light .tab-mode-marketplace .tab.on {
+  background: var(--bg-page, #ffffff) !important;
+  color: var(--text-primary, #0d0d0d) !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Library Page — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Left sidebar rail */
+.theme-default-light .library .rail {
+  background: rgba(241, 245, 249, 0.85) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+/* Rail header "LIBRARY" */
+.theme-default-light .library .rail-head {
+  color: #64748b !important;
+}
+
+/* Rail items (All, Routines, Skills, etc.) */
+.theme-default-light .library .rail-item {
+  color: #475569 !important;
+}
+
+.theme-default-light .library .rail-item:hover {
+  background: rgba(14, 165, 233, 0.1) !important;
+  color: #0d0d0d !important;
+}
+
+/* Active rail item */
+.theme-default-light .library .rail-item.on {
+  background: rgba(14, 165, 233, 0.15) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+  color: #0d0d0d !important;
+}
+
+/* Count badges in rail */
+.theme-default-light .library .rail-item .count {
+  color: #64748b !important;
+  background: rgba(148, 163, 184, 0.2) !important;
+}
+
+.theme-default-light .library .rail-item.on .count {
+  color: #0ea5e9 !important;
+  background: rgba(14, 165, 233, 0.2) !important;
+}
+
+/* Rail divider */
+.theme-default-light .library .rail-divider {
+  background: rgba(148, 163, 184, 0.2) !important;
+}
+
+/* Rail footer text */
+.theme-default-light .library .rail-footer p {
+  color: #64748b !important;
+}
+
+/* Content header "All" */
+.theme-default-light .library .content-head h3 {
+  color: #0d0d0d !important;
+}
+
+/* Count pill */
+.theme-default-light .library .count-pill {
+  color: #64748b !important;
+  background: rgba(148, 163, 184, 0.2) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+/* Search box */
+.theme-default-light .library .search-box {
+  background: rgba(241, 245, 249, 0.85) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.theme-default-light .library .search-box input {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .library .search-box svg {
+  color: #94a3b8 !important;
+}
+
+/* Status/empty states */
+.theme-default-light .library .status {
+  background: rgba(241, 245, 249, 0.6) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  color: #64748b !important;
+}
+
+.theme-default-light .library .status p strong {
+  color: #0d0d0d !important;
+}
+
+/* Stats tiles (the cards with numbers) */
+.theme-default-light .library .stat-tile {
+  background: rgba(255, 255, 255, 0.7) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  color: #475569 !important;
+}
+
+.theme-default-light .library .stat-tile:hover {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .library .stat-tile .stat-value {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .library .stat-tile .stat-label {
+  color: #64748b !important;
+}
+
+/* Draft rows */
+.theme-default-light .library .draft-row {
+  background: linear-gradient(90deg, rgba(241, 245, 249, 0.9), rgba(255, 255, 255, 0.7)) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.theme-default-light .library .draft-row:hover {
+  background: linear-gradient(90deg, rgba(241, 245, 249, 1), rgba(255, 255, 255, 0.9)) !important;
+  border-color: rgba(14, 165, 233, 0.4) !important;
+}
+
+.theme-default-light .library .draft-row .title {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .library .draft-row .meta {
+  color: #64748b !important;
+}
+
+/* Chips */
+.theme-default-light .library .chip {
+  color: #64748b !important;
+  background: rgba(148, 163, 184, 0.15) !important;
+  border-color: rgba(148, 163, 184, 0.25) !important;
+}
+
+/* ═════════════════════════════════════════════════════════════════
+   Secretary Mode — Light Mode
+   ═════════════════════════════════════════════════════════════════ */
+
+/* Page background - override var(--bg, #0d1117) */
+.theme-default-light .secretary-mode,
+.theme-default-light [class*="secretary"] {
+  --bg: var(--bg-page, #ffffff) !important;
+  background: var(--bg-page, #ffffff) !important;
+}
+
+/* Welcome title */
+.theme-default-light .welcome-title {
+  color: #0d0d0d !important;
+}
+
+/* Welcome subtitle */
+.theme-default-light .welcome-subtitle {
+  color: #64748b !important;
+}
+
+/* Welcome card */
+.theme-default-light .welcome-card {
+  background: var(--bg-surface, #f8fafc) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.theme-default-light .welcome-card:hover {
+  border-color: rgba(14, 165, 233, 0.5) !important;
+  box-shadow: 0 0 15px rgba(14, 165, 233, 0.15), 0 0 30px rgba(14, 165, 233, 0.1) !important;
+}
+
+/* Welcome card CTA */
+.theme-default-light .welcome-card-cta {
+  color: #0ea5e9 !important;
+  background: rgba(14, 165, 233, 0.1) !important;
+  border-top-color: rgba(148, 163, 184, 0.2) !important;
+}
+
+/* Terminal header */
+.theme-default-light .dt-header {
+  background: rgba(241, 245, 249, 0.9) !important;
+  border-bottom-color: rgba(148, 163, 184, 0.2) !important;
+}
+
+/* Terminal title */
+.theme-default-light .dt-title {
+  color: #64748b !important;
+}
+
+/* Terminal body/panes */
+.theme-default-light .dt-pane-hdr {
+  background: rgba(241, 245, 249, 0.9) !important;
+  border-bottom-color: rgba(148, 163, 184, 0.2) !important;
+  color: #64748b !important;
+}
+
+/* Terminal lines and timestamps */
+.theme-default-light .dt-line {
+  color: #475569 !important;
+}
+
+.theme-default-light .dt-ts {
+  color: #94a3b8 !important;
+}
+
+/* Chat bubbles */
+.theme-default-light .dt-bubble-caller {
+  background: rgba(148, 163, 184, 0.15) !important;
+}
+
+.theme-default-light .dt-bubble-you {
+  background: rgba(14, 165, 233, 0.15) !important;
+}
+
+.theme-default-light .dt-bubble-text {
+  color: #0d0d0d !important;
+}
+
+.theme-default-light .dt-bubble-speaker {
+  color: #64748b !important;
+}
+
+.theme-default-light .dt-bubble-time {
+  color: #94a3b8 !important;
+}
+
+/* Section headers in right pane */
+.theme-default-light .dt-section-hdr {
+  color: #64748b !important;
+  border-bottom-color: rgba(148, 163, 184, 0.2) !important;
+}
+
+/* Items (action items, decisions, insights) */
+.theme-default-light .dt-item {
+  color: #475569 !important;
+}
+
+.theme-default-light .dt-insight {
+  color: #64748b !important;
+}
+
+/* Chat input area */
+.theme-default-light .dt-chat-input {
+  background: rgba(241, 245, 249, 0.9) !important;
+  border-top-color: rgba(148, 163, 184, 0.2) !important;
+}
+
+.theme-default-light .dt-chat-field {
+  color: #0d0d0d !important;
+  background: #ffffff !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+}
+
+.theme-default-light .dt-chat-field::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Keyboard shortcut styling */
+.theme-default-light .dt-kbd {
+  background: rgba(148, 163, 184, 0.2) !important;
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  color: #475569 !important;
+}
+
+/* Dividers */
+.theme-default-light .dt-divider {
+  background: rgba(148, 163, 184, 0.2) !important;
+}
+
+/* Pane scroll areas */
+.theme-default-light .dt-pane-scroll {
+  background: transparent !important;
+}
+
+/* Empty states */
+.theme-default-light .dt-empty {
+  color: #94a3b8 !important;
+}
