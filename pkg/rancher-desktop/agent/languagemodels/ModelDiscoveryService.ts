@@ -142,6 +142,96 @@ export class ModelDiscoveryService {
       ],
     },
 
+    groq: {
+      baseUrl:        'https://api.groq.com/openai/v1',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => data.data?.map((model: any) => ({
+        id:       model.id,
+        name:     model.id,
+        provider: 'groq',
+      })) || [],
+    },
+
+    mistral: {
+      baseUrl:        'https://api.mistral.ai/v1',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => data.data?.map((model: any) => ({
+        id:       model.id,
+        name:     model.id,
+        provider: 'mistral',
+      })) || [],
+      staticModels: [
+        { id: 'codestral-latest', name: 'Codestral (latest)', provider: 'mistral', description: 'Purpose-built for code — free for non-commercial use' },
+        { id: 'devstral-small-2505', name: 'Devstral Small', provider: 'mistral', description: 'Agentic coding model' },
+        { id: 'mistral-small-latest', name: 'Mistral Small (latest)', provider: 'mistral', description: 'Fast, cost-effective' },
+        { id: 'mistral-medium-latest', name: 'Mistral Medium (latest)', provider: 'mistral', description: 'Balanced performance' },
+        { id: 'mistral-large-latest', name: 'Mistral Large (latest)', provider: 'mistral', description: 'Most capable' },
+        { id: 'open-mistral-nemo', name: 'Mistral Nemo', provider: 'mistral', description: 'Open, 12B, multilingual' },
+      ],
+    },
+
+    cerebras: {
+      baseUrl:        'https://api.cerebras.ai/v1',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => data.data?.map((model: any) => ({
+        id:       model.id,
+        name:     model.id,
+        provider: 'cerebras',
+      })) || [],
+      staticModels: [
+        { id: 'llama-3.3-70b', name: 'Llama 3.3 70B', provider: 'cerebras', description: 'Most capable free model on Cerebras' },
+        { id: 'llama-3.1-8b', name: 'Llama 3.1 8B', provider: 'cerebras', description: 'Fast, lightweight — great for quick tasks' },
+        { id: 'qwen-3-32b', name: 'Qwen 3 32B', provider: 'cerebras', description: 'Strong reasoning and coding' },
+      ],
+    },
+
+    together: {
+      baseUrl:        'https://api.together.xyz/v1',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => {
+        const list = Array.isArray(data) ? data : (data.data || []);
+        return list.map((model: any) => ({
+          id:       model.id,
+          name:     model.display_name || model.id,
+          provider: 'together',
+        }));
+      },
+      staticModels: [
+        { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3', provider: 'together', description: 'Top open-source coding model' },
+        { id: 'Qwen/Qwen2.5-Coder-32B-Instruct', name: 'Qwen 2.5 Coder 32B', provider: 'together', description: 'Strong coding + instruction following' },
+        { id: 'meta-llama/Llama-4-Scout-17B-16E-Instruct', name: 'Llama 4 Scout', provider: 'together', description: 'Meta\'s latest — fast and capable' },
+        { id: 'meta-llama/Llama-4-Maverick-17B-128E-Instruct', name: 'Llama 4 Maverick', provider: 'together', description: 'Meta\'s latest — long context' },
+        { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B Turbo', provider: 'together', description: 'Fast 70B inference' },
+        { id: 'mistralai/Mixtral-8x7B-Instruct-v0.1', name: 'Mixtral 8x7B', provider: 'together', description: 'Efficient MoE model' },
+      ],
+    },
+
+    ollama: {
+      baseUrl:        'http://localhost:11434/v1',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => data.data?.map((model: any) => ({
+        id:       model.id,
+        name:     model.id,
+        provider: 'ollama',
+      })) || [],
+      staticModels: [
+        { id: 'llama3.2', name: 'Llama 3.2', provider: 'ollama', description: 'Meta Llama 3.2 — general purpose' },
+        { id: 'llama3.1', name: 'Llama 3.1', provider: 'ollama', description: 'Meta Llama 3.1 — general purpose' },
+        { id: 'codellama', name: 'Code Llama', provider: 'ollama', description: 'Meta Code Llama — code generation' },
+        { id: 'deepseek-coder-v2', name: 'DeepSeek Coder V2', provider: 'ollama', description: 'Strong open-source coding model' },
+        { id: 'qwen2.5-coder', name: 'Qwen 2.5 Coder', provider: 'ollama', description: 'Alibaba Qwen coding model' },
+        { id: 'qwen2.5-coder:32b', name: 'Qwen 2.5 Coder 32B', provider: 'ollama', description: 'Full-size Qwen coding model' },
+        { id: 'starcoder2', name: 'StarCoder2', provider: 'ollama', description: 'BigCode StarCoder2 — code completion' },
+        { id: 'mistral', name: 'Mistral 7B', provider: 'ollama', description: 'Fast, capable general model' },
+        { id: 'phi4', name: 'Phi-4', provider: 'ollama', description: 'Microsoft Phi-4 — efficient reasoning' },
+      ],
+    },
+
     cohere: {
       // Chat uses compatibility API, models use v2 API
       baseUrl:        'https://api.cohere.ai/compatibility/v1',

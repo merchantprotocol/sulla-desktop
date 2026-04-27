@@ -22,12 +22,17 @@ const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
   cohere:        async() => { const { getCohereService } = await import('./CohereService'); return getCohereService() },
   grok:          async() => { const { getGrokService } = await import('./GrokService'); return getGrokService() },
+  groq:          async() => { const { getGroqService } = await import('./GroqService'); return getGroqService() },
   openai:        async() => { const { getOpenAIService } = await import('./OpenAIService'); return getOpenAIService() },
   anthropic:     async() => { const { getAnthropicService } = await import('./AnthropicService'); return getAnthropicService() },
   google:        async() => { const { getGoogleService } = await import('./GoogleService'); return getGoogleService() },
   kimi:          async() => { const { getKimiService } = await import('./KimiService'); return getKimiService() },
   nvidia:        async() => { const { getNvidiaService } = await import('./NvidiaService'); return getNvidiaService() },
   alibaba:       async() => { const { getAlibabaService } = await import('./AlibabaService'); return getAlibabaService() },
+  mistral:       async() => { const { getMistralService } = await import('./MistralService'); return getMistralService() },
+  cerebras:      async() => { const { getCerebasService } = await import('./CerebasService'); return getCerebasService() },
+  together:      async() => { const { getTogetherService } = await import('./TogetherService'); return getTogetherService() },
+  ollama:        async() => { const { getOllamaService } = await import('./OllamaService'); return getOllamaService() },
   custom:        async() => { const { getCustomService } = await import('./CustomService'); return getCustomService() },
 };
 
