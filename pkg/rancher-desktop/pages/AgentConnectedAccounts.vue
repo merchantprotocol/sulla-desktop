@@ -10,7 +10,7 @@
         :toggle-theme="toggleTheme"
       />
 
-      <div class="flex w-full flex-col">
+      <div class="flex w-full flex-col flex-1 bg-white dark:bg-slate-900">
         <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
           <div class="py-16 sm:px-2 lg:relative lg:px-0 lg:py-20">
             <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
@@ -88,7 +88,7 @@
           </div>
         </div>
 
-        <div class="flex-1 overflow-auto">
+        <div class="flex-1 overflow-auto bg-slate-50 dark:bg-slate-900">
           <div class="mx-auto max-w-7xl px-4 py-6">
             <!-- Vault status + Export / Import bar -->
             <div class="flex items-center gap-2 mb-4">

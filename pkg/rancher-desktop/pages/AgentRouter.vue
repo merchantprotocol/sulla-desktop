@@ -15,6 +15,7 @@
       <ModeRail
         class="agent-router-rail"
         :active="activeTabMode"
+        :active-sub-tab="activeSubTab"
         @set-mode="onModeRailSelect"
       />
 
@@ -175,6 +176,18 @@ const activeTabMode = computed(() => {
 
   return active?.mode;
 });
+
+// Track active sub-tab for highlighting the correct ModeRail icon
+// (e.g., 'library' vs 'mywork' when mode is 'routines')
+const activeSubTab = ref<string | undefined>(undefined);
+
+// Listen for sub-tab changes from BrowserTab
+function onRoutinesSubTabChange(event: Event) {
+  const customEvent = event as CustomEvent;
+  if (customEvent.detail?.subTab) {
+    activeSubTab.value = customEvent.detail.subTab;
+  }
+}
 
 function onModeRailSelect(mode: string, subTab?: string) {
   // Always spawn a new tab for the clicked mode instead of mutating the
@@ -446,6 +459,9 @@ function onHistoryNavigate(_event: any, ...args: any[]) {
 const presenceTracker = getHumanPresenceTracker();
 
 onMounted(async() => {
+  // Register sub-tab change listener
+  window.addEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
+
   // Ensure at least one tab exists and navigate to it on fresh start
   const initialTab = ensureOneTab();
   if (!route.path.startsWith('/Browser/')) {
@@ -492,6 +508,7 @@ onUnmounted(() => {
   if (footerStatsTimer) {
     clearInterval(footerStatsTimer);
   }
+  window.removeEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
   ipcRenderer.removeListener('route' as any, onRoute);
   ipcRenderer.removeListener('agent-command' as any, onAgentCommand);
   ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);

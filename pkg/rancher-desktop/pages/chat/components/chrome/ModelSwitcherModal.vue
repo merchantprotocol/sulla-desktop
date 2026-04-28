@@ -142,6 +142,21 @@ async function pick(option: ModelOption): Promise<void> {
 .msearch input::placeholder { color: var(--read-4); }
 .mlist { padding: 6px 0; max-height: 360px; overflow-y: auto; }
 
+/* Themed scrollbar for the model list */
+.mlist::-webkit-scrollbar {
+  width: 8px;
+}
+.mlist::-webkit-scrollbar-track {
+  background: transparent;
+}
+.mlist::-webkit-scrollbar-thumb {
+  background: rgba(80, 150, 179, 0.3);
+  border-radius: 4px;
+}
+.mlist::-webkit-scrollbar-thumb:hover {
+  background: rgba(80, 150, 179, 0.5);
+}
+
 .mgroup-head {
   padding: 10px 18px 4px;
   display: flex; align-items: center; gap: 8px;

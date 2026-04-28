@@ -6,23 +6,49 @@
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
+      :root {
+        /* Dark theme (default) - matches 3-dots menu */
+        --menu-bg: rgba(30, 41, 59, 0.98);
+        --menu-border: rgba(51, 65, 85, 0.6);
+        --menu-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.3);
+        --text-primary: #f1f5f9;
+        --text-hover: #38bdf8;
+        --item-hover-bg: rgba(56, 189, 248, 0.1);
+        --icon-opacity: 0.6;
+        --separator-bg: rgba(71, 85, 105, 0.6);
+      }
+
+      /* OS preference fallback when IPC doesn't work */
+      @media (prefers-color-scheme: light) {
+        :root:not(.light-mode):not(.dark-mode) {
+          --menu-bg: rgba(255, 255, 255, 0.98);
+          --menu-border: rgba(148, 163, 184, 0.4);
+          --menu-shadow: 0 16px 48px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05);
+          --text-primary: #334155;
+          --text-hover: #0284c7;
+          --item-hover-bg: rgba(14, 165, 233, 0.1);
+          --icon-opacity: 0.7;
+          --separator-bg: rgba(148, 163, 184, 0.3);
+        }
+      }
+
       html, body {
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 13px;
         background: transparent;
-        color: #e0e0e0;
+        color: var(--text-primary);
         user-select: none;
         overflow: hidden;
       }
 
       .menu {
         min-width: 240px;
-        background: rgba(30, 30, 30, 0.96);
+        background: var(--menu-bg);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        border: 1px solid var(--menu-border);
         border-radius: 8px;
-        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 1px rgba(63, 185, 80, 0.15);
+        box-shadow: var(--menu-shadow);
         padding: 6px 0;
         animation: fadeIn 0.12s ease-out;
       }
@@ -40,28 +66,28 @@
         padding: 7px 14px;
         border: none;
         background: transparent;
-        color: #e0e0e0;
+        color: var(--text-primary);
         font-size: 13px;
         font-family: inherit;
         cursor: pointer;
         text-align: left;
-        transition: background 0.1s;
+        transition: background 0.1s, color 0.1s;
       }
 
       .menu-item:hover {
-        background: rgba(255, 255, 255, 0.08);
-        color: #3fb950;
+        background: var(--item-hover-bg);
+        color: var(--text-hover);
       }
 
       .menu-item:hover .menu-icon {
         opacity: 1;
-        stroke: #3fb950;
+        stroke: var(--text-hover);
       }
 
       .menu-icon {
         width: 14px;
         height: 14px;
-        opacity: 0.6;
+        opacity: var(--icon-opacity);
         flex-shrink: 0;
         stroke: currentColor;
         fill: none;
@@ -71,8 +97,53 @@
 
       .separator {
         height: 1px;
-        background: rgba(255, 255, 255, 0.08);
+        background: var(--separator-bg);
         margin: 4px 0;
+      }
+
+      /* Light mode override class (set by IPC) - uses !important to override media query */
+      html.light-mode {
+        --menu-bg: rgba(255, 255, 255, 0.98) !important;
+        --menu-border: rgba(148, 163, 184, 0.4) !important;
+        --menu-shadow: 0 16px 48px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05) !important;
+        --text-primary: #334155 !important;
+        --text-hover: #0284c7 !important;
+        --item-hover-bg: rgba(14, 165, 233, 0.1) !important;
+        --icon-opacity: 0.7 !important;
+        --separator-bg: rgba(148, 163, 184, 0.3) !important;
+      }
+
+      /* Dark mode explicit class (optional, for consistency) */
+      html.dark-mode {
+        --menu-bg: rgba(30, 41, 59, 0.98) !important;
+        --menu-border: rgba(51, 65, 85, 0.6) !important;
+        --menu-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.3) !important;
+        --text-primary: #f1f5f9 !important;
+        --text-hover: #38bdf8 !important;
+        --item-hover-bg: rgba(56, 189, 248, 0.1) !important;
+        --icon-opacity: 0.6 !important;
+        --separator-bg: rgba(71, 85, 105, 0.6) !important;
+      }
+
+      /* Remove browser default focus outline (orange border) */
+      .menu-item:focus {
+        outline: none !important;
+        box-shadow: none !important;
+        -webkit-focus-ring-color: transparent !important;
+      }
+
+      /* Optional: subtle focus indicator for accessibility */
+      .menu-item:focus-visible {
+        background: var(--item-hover-bg);
+        outline: none !important;
+        box-shadow: none !important;
+      }
+
+      /* First item focus state - prevent orange outline from autofocus */
+      .menu-item:first-child:focus {
+        outline: none !important;
+        box-shadow: none !important;
+        -webkit-focus-ring-color: transparent !important;
       }
     </style>
   </head>
@@ -174,6 +245,11 @@
 
       ipcRenderer.on("tab-context-menu:data", (_event, data) => {
         buildMenu(data.items || []);
+        if (data.theme === "light") {
+          document.documentElement.classList.add("light-mode");
+        } else {
+          document.documentElement.classList.remove("light-mode");
+        }
       });
 
       // Dismiss on Escape

@@ -19,10 +19,21 @@ import { BrowserWindow, ipcMain, app } from 'electron';
 
 import Logging from '@pkg/utils/logging';
 import { getWindow } from '@pkg/window';
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
 const console = Logging.background;
 
 let win: BrowserWindow | null = null;
+
+/** Check if current theme is light mode */
+async function isLightTheme(): Promise<boolean> {
+  try {
+    const theme = await SullaSettingsModel.get('theme', 'protocol-dark') as string;
+    return theme.includes('-light');
+  } catch {
+    return false;
+  }
+}
 
 /** Tab data forwarded back to the renderer with the selected action. */
 let pendingTabData: Record<string, unknown> | null = null;
@@ -43,13 +54,16 @@ export function registerTabContextMenuIpc(): void {
 
 // ─── IPC handlers ───────────────────────────────────────────────
 
-function onShow(
+async function onShow(
   _event: Electron.IpcMainEvent,
   payload: { screenX: number; screenY: number; items: string[]; tabData: Record<string, unknown> },
-): void {
+): Promise<void> {
   const { screenX, screenY, items, tabData } = payload;
 
   pendingTabData = tabData;
+
+  // Detect theme for proper styling
+  const theme = await isLightTheme() ? 'light' : 'dark';
 
   // Estimate height from item count
   const itemCount = items.filter(i => i !== '---').length;
@@ -60,7 +74,7 @@ function onShow(
     win.setBounds({
       x: screenX, y: screenY, width: MENU_WIDTH, height: estimatedHeight,
     });
-    win.webContents.send('tab-context-menu:data', { items });
+    win.webContents.send('tab-context-menu:data', { items, theme });
     win.showInactive();
     // Focus after a tick so the window can receive keyboard events
     setTimeout(() => {
@@ -101,7 +115,7 @@ function onShow(
 
   win.once('ready-to-show', () => {
     if (!win || win.isDestroyed()) return;
-    win.webContents.send('tab-context-menu:data', { items });
+    win.webContents.send('tab-context-menu:data', { items, theme });
     win.showInactive();
     setTimeout(() => {
       if (win && !win.isDestroyed()) {

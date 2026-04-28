@@ -376,6 +376,13 @@ const emit = defineEmits<{
 const activeTab = ref<Tab>(props.initialTab);
 const myWorkView = ref<MyWorkView>('active');
 
+// Watch for external navigation (e.g., clicking Library in ModeRail)
+watch(() => props.initialTab, (newTab) => {
+  if (newTab && newTab !== activeTab.value) {
+    activeTab.value = newTab;
+  }
+});
+
 // Composables = the controller layer. The view only reads their reactive
 // state and forwards user intents back to them or up to the parent.
 const routinesController = useRoutines();
@@ -1096,5 +1103,34 @@ async function onImport() {
 .feedback-leave-to {
   opacity: 0;
   transform: translate(-50%, -4px);
+}
+/* Ribbon Footer — Light Mode */
+.theme-nord-light .ribbon {
+  background: rgba(216, 222, 233, 0.85) !important;
+  border-top: 1px solid rgba(94, 129, 172, 0.3) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.theme-nord-light .ribbon .l,
+.theme-nord-light .ribbon .r {
+  color: #5e81ac !important;
+}
+
+.theme-nord-light .ribbon .l .tc,
+.theme-nord-light .ribbon .r b {
+  color: #2e3440 !important;
+  font-weight: 600 !important;
+}
+
+.theme-nord-light .ribbon .c .mark {
+  color: #81a1c1 !important;
+}
+
+.theme-nord-light .ribbon .c .sig {
+  color: #3b4252 !important;
+}
+
+.theme-nord-light .ribbon .c .sig b {
+  color: #5e81ac !important;
 }
 </style>

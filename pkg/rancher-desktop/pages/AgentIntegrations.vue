@@ -14,7 +14,7 @@
         <!-- Back to Vault button (only when embedded in vault flow) -->
         <div
           v-if="embedded"
-          class="flex items-center px-4 py-2 bg-slate-900 border-b border-slate-700/50"
+          class="flex items-center px-4 py-2 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700/50"
         >
           <button
             type="button"
@@ -76,7 +76,7 @@
           </div>
         </div>
 
-        <div class="flex-1 overflow-auto">
+        <div class="flex-1 overflow-auto bg-slate-50 dark:bg-slate-900">
           <div class="mx-auto max-w-7xl px-4 py-6">
             <div class="flex gap-6">
               <!-- Category Sidebar -->

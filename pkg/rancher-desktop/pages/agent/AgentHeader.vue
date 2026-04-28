@@ -1284,9 +1284,6 @@ function handleTabContextMenuAction(
   border-bottom: 1px solid var(--border-default);
   border-radius: 999px;
   font-weight: 600;
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.03) inset,
-    0 2px 6px rgba(0, 0, 0, 0.35);
   z-index: 2;
 }
 
