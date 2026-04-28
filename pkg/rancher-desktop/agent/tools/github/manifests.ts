@@ -183,6 +183,7 @@ export const githubToolManifests: ToolManifest[] = [
       absolutePath: { type: 'string', description: 'Absolute path to the git repository (or any path inside it)' },
       remote:       { type: 'string', optional: true, description: "Remote name (defaults to 'origin')" },
       branch:       { type: 'string', optional: true, description: 'Branch to push (defaults to current branch)' },
+      tags:         { type: 'boolean', optional: true, description: 'Push all local tags instead of a branch (git push --tags)' },
     },
     operationTypes: ['execute'],
     loader:         () => import('./git_push'),

@@ -85,18 +85,31 @@ class LLMRegistryImpl {
   }
 
   /**
-   * Get service by specific provider ID (e.g., 'anthropic', 'grok')
+   * Get service by specific provider ID (e.g., 'anthropic', 'grok').
+   * When modelOverride is provided, a separate cached instance is created with
+   * that model — allowing different slots (primary vs subconscious) to use the
+   * same provider at different model tiers.
    */
-  async getServiceByProvider(providerId: string): Promise<BaseLanguageModel> {
-    const key = `provider:${ providerId }`;
+  async getServiceByProvider(providerId: string, modelOverride?: string): Promise<BaseLanguageModel> {
+    const key = modelOverride ? `provider:${ providerId }:${ modelOverride }` : `provider:${ providerId }`;
     let svc = this.services.get(key);
 
     if (!svc) {
-      const factory = PROVIDER_FACTORIES[providerId];
-      if (!factory) {
-        throw new Error(`Unknown LLM provider: ${ providerId }`);
+      if (modelOverride && providerId === 'claude-code') {
+        // ClaudeCodeService is a singleton — create a fresh instance so the model
+        // override doesn't bleed into the primary orchestrator's instance.
+        const { createClaudeCodeService } = await import('./ClaudeCodeService');
+        svc = createClaudeCodeService(modelOverride);
+      } else {
+        const factory = PROVIDER_FACTORIES[providerId];
+        if (!factory) {
+          throw new Error(`Unknown LLM provider: ${ providerId }`);
+        }
+        svc = await factory();
+        if (modelOverride) {
+          svc.setModel(modelOverride);
+        }
       }
-      svc = await factory();
       this.services.set(key, svc);
       svc.initialize().catch(console.error);
     }
@@ -132,16 +145,24 @@ class LLMRegistryImpl {
   }
 
   /**
-   * Heartbeat-aware service.
+   * Heartbeat-aware service. Uses heartbeatModelId override (default: claude-haiku-4-5-20251001)
+   * so the background agent runs on Haiku independently of the primary model.
    */
   async getHeartbeatLLM(): Promise<BaseLanguageModel> {
     const mps = tryGetModelProviderService();
     const heartbeatProvider = mps
       ? mps.getHeartbeatProvider()
       : await SullaSettingsModel.get('heartbeatProvider', 'default');
+    const heartbeatModelId = mps?.getHeartbeatModelId?.() || await SullaSettingsModel.get('heartbeatModelId', 'claude-haiku-4-5-20251001');
+    const modelOverride = heartbeatModelId || undefined;
 
-    if (heartbeatProvider === 'default') return this.getPrimaryService();
-    return this.getServiceByProvider(heartbeatProvider);
+    if (heartbeatProvider === 'default') {
+      const primaryProvider = mps
+        ? mps.getPrimaryProvider()
+        : await SullaSettingsModel.get('primaryProvider', 'grok');
+      return this.getServiceByProvider(primaryProvider, modelOverride);
+    }
+    return this.getServiceByProvider(heartbeatProvider, modelOverride);
   }
 
   /**
@@ -155,22 +176,32 @@ class LLMRegistryImpl {
    *   2. Secondary provider (the existing fallback)
    *   3. Primary provider (last resort)
    */
+  /**
+   * Subconscious-aware service. Subconscious agents (memory-recall,
+   * observation, unstuck-research) and spawned sub-agents run here.
+   * Uses subconsciousModelId override (default: claude-haiku-4-5-20251001) so these
+   * agents run on Haiku regardless of the primary model selection.
+   *
+   * Resolution order:
+   *   1. Explicit subconsciousProvider setting (if not 'default')
+   *   2. Secondary provider (the existing fallback)
+   *   3. Primary provider (last resort)
+   * Model override is applied at every level of the fallback chain.
+   */
   async getSubconsciousLLM(): Promise<BaseLanguageModel> {
     const mps = tryGetModelProviderService();
     const subconsciousProvider = mps
       ? mps.getSubconsciousProvider()
       : await SullaSettingsModel.get('subconsciousProvider', 'default');
+    const subconsciousModelId = mps?.getSubconsciousModelId?.() || await SullaSettingsModel.get('subconsciousModelId', 'claude-haiku-4-5-20251001');
+    const modelOverride = subconsciousModelId || undefined;
 
-    // Each candidate only qualifies if it has a non-empty model id. Falling
-    // through to an unconfigured provider produces HTTP 400 "Model not found:
-    // " on every subconscious turn, which spams the logs. We silently try the
-    // next candidate in that case.
     const hasUsableModel = (svc: BaseLanguageModel | null | undefined): boolean => {
       try { return !!(svc?.getModel?.() || '').trim() } catch { return false }
     };
 
     if (subconsciousProvider && subconsciousProvider !== 'default') {
-      const svc = await this.getServiceByProvider(subconsciousProvider);
+      const svc = await this.getServiceByProvider(subconsciousProvider, modelOverride);
       if (hasUsableModel(svc)) return svc;
     }
 
@@ -179,7 +210,7 @@ class LLMRegistryImpl {
       : await SullaSettingsModel.get('secondaryProvider', 'grok');
 
     if (secondaryProvider) {
-      const svc = await this.getServiceByProvider(secondaryProvider);
+      const svc = await this.getServiceByProvider(secondaryProvider, modelOverride);
       if (hasUsableModel(svc)) return svc;
     }
 

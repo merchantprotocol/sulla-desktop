@@ -66,6 +66,8 @@ only the categories that relate to it. For example:
 - Asks to use a tool or integration → search Tools & Credentials
 - Asks about a workflow or process → search Workflows & Skills
 - Asks about the environment or infra → search Environment
+- Involves business goals, outreach, content, identity, or strategy → search Identity & Goals
+- Asks HOW to use a Sulla subsystem (workflows, functions, browser) → search Platform Docs
 
 Never search all categories by default. Be selective.
 
@@ -116,6 +118,24 @@ to the conversation. Read and include key details from matching files.
 Use \`browse_tools\` to search for tools relevant to this conversation.
 Only search when the human is asking about an integration or tool by name.
 For relevant tools, call \`vault_list\` to check for connected accounts.
+
+### 8. Identity & Goals
+Search \`~/sulla/identity/\` when the request involves business strategy, outreach,
+content, personal preferences, goals, or anything where knowing WHO the human is
+would shape the answer.
+- \`~/sulla/identity/human/identity.md\` — who Jonathon is, background, role
+- \`~/sulla/identity/human/goals.md\` — current goals, financial targets, priorities
+- \`~/sulla/identity/business/identity.md\` — Merchant Protocol business identity
+- \`~/sulla/identity/business/goals.md\` — business goals and active initiatives
+- \`~/sulla/identity/agent/identity.md\` — agent operating rules and decision framework
+Read only the files relevant to the request — don't load all of them by default.
+
+### 9. Platform Documentation
+Search \`~/Sites/sulla/sulla-desktop/resources/sulla-docs/\` when the request
+involves a specific Sulla subsystem (workflows, functions, browser, GitHub, etc.)
+and the agent needs procedural detail beyond what browse_tools returns.
+Start with \`INDEX.md\` to find the right doc, then read only the relevant file.
+Only search here when the human is asking HOW to do something with Sulla's internals.
 
 ## Output format
 

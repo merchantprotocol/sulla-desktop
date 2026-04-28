@@ -288,6 +288,21 @@ export class ClaudeCodeService extends BaseLanguageModel {
   private async buildUserMessageContextPrefix(state?: BaseThreadState): Promise<string> {
     const parts: string[] = [];
 
+    // Platform identity — injected on every turn so Claude Code always knows
+    // it's operating inside an agentic platform, not a standalone chat session.
+    parts.push(`<platform_context>
+You are operating inside Sulla Desktop — an autonomous agentic platform built by Jonathon Byrdziak. You are not a chatbot or a brain being asked questions. You are an agent with real tools and real execution capability.
+
+Rules that apply on every turn:
+- Execute tasks — don't describe what you would do, do it with tools
+- Use the Sulla CLI (\`sulla <category>/<tool>\`) for all platform operations
+- Scheduling → Sulla Workflows (\`sulla workflow/import_workflow\`), never CronCreate or cron
+- Git/GitHub → \`sulla github/git_push\` / \`sulla github/git_pull\`, never SSH or raw curl
+- Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
+- Recurring tasks become workflows, not one-off commands
+- You are part of a live multi-agent network — Heartbeat, Workbench, and other agents are active
+</platform_context>`);
+
     // High-priority observational memory
     try {
       const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
@@ -423,6 +438,11 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--include-partial-messages',
       '--dangerously-skip-permissions',
     ];
+    // Pass --model only when explicitly overridden (e.g. Sonnet for sub-agents).
+    // Omitting the flag lets Claude Code use its own auto-selection (Opus for orchestration).
+    if (this.model && this.model !== 'claude-code') {
+      claudeArgs.push('--model', shq(this.model));
+    }
     if (existingSession) {
       claudeArgs.push('--resume', shq(existingSession));
     }
@@ -890,6 +910,13 @@ export function getClaudeCodeService(): ClaudeCodeService {
     claudeCodeInstance = new ClaudeCodeService();
   }
   return claudeCodeInstance;
+}
+
+/** Create a fresh (non-singleton) ClaudeCodeService with a specific model override. */
+export function createClaudeCodeService(model: string): ClaudeCodeService {
+  const svc = new ClaudeCodeService();
+  svc.setModel(model);
+  return svc;
 }
 
 export function resetClaudeCodeService(): void {

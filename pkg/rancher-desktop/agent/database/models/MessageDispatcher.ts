@@ -116,22 +116,6 @@ export class MessageDispatcher {
 function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, msg: WebSocketMessage): void {
   ctx.graphRunning.value = true;
 
-  // [DBLDBG] Doubling investigation — log EVERY incoming chat-class message
-  // before any drop / dedup so we can match against [BaseNode:wsChatMessage]
-  // emits and renderer-side appends.
-  {
-    const dataObj = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
-    const rawContent = typeof msg.data === 'string'
-      ? msg.data
-      : (dataObj?.content !== undefined ? String(typeof dataObj.content === 'string' ? dataObj.content : JSON.stringify(dataObj.content)) : '');
-    const trimmed = rawContent.trim();
-    let h = 0;
-    for (let i = 0; i < trimmed.length; i++) h = ((h << 5) - h + trimmed.charCodeAt(i)) | 0;
-    const contentHash = (h >>> 0).toString(16).padStart(8, '0');
-    const kindStr = typeof dataObj?.kind === 'string' ? dataObj.kind : '(none)';
-    console.log(`[DBLDBG][MessageDispatcher:handleChatMessage] inbound type="${ msg.type }" channel="${ agentId }" thread="${ msgThreadId }" kind="${ kindStr }" hash=${ contentHash } len=${ trimmed.length } chatMsgsBefore=${ ctx.messages.length } preview="${ trimmed.slice(0, 80).replace(/\n/g, '\\n') }"`);
-  }
-
   // user_message: already pushed locally before send — skip
   if (msg.type === 'user_message') return;
 
@@ -156,14 +140,6 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       role:      msg.type === 'system_message' ? 'system' : 'assistant',
       content:   msg.data,
     };
-    // [DBLDBG] Hash the string payload so this string-push pairs against
-    // the corresponding INBOUND log line by hash.
-    {
-      let h = 0;
-      for (let i = 0; i < message.content.length; i++) h = ((h << 5) - h + message.content.charCodeAt(i)) | 0;
-      const contentHash = (h >>> 0).toString(16).padStart(8, '0');
-      console.log(`[DBLDBG][MessageDispatcher:push-string] type="${ msg.type }" id="${ message.id }" hash=${ contentHash } len=${ message.content.length } chatMsgsAfter=${ ctx.messages.length + 1 }`);
-    }
     console.log(`[MessageDispatcher] messages.push (string ${ msg.type })`, { role: message.role, contentChars: message.content.length, content: message.content.slice(0, 120) });
     ctx.messages.push(message);
     return;
@@ -580,14 +556,6 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     console.warn(`[MessageDispatcher] ⚠️ LEAKED <speak> tags in non-speak message! kind=${ kind }`);
   }
 
-  // [DBLDBG] Hash the final pushed content so we can grep-pair this
-  // PUSH against the corresponding INBOUND log line above.
-  {
-    let h = 0;
-    for (let i = 0; i < message.content.length; i++) h = ((h << 5) - h + message.content.charCodeAt(i)) | 0;
-    const contentHash = (h >>> 0).toString(16).padStart(8, '0');
-    console.log(`[DBLDBG][MessageDispatcher:push-structured] type="${ msg.type }" id="${ message.id }" kind="${ message.kind }" hash=${ contentHash } len=${ message.content.length } chatMsgsAfter=${ ctx.messages.length + 1 }`);
-  }
   console.log(`[MessageDispatcher] messages.push (structured ${ msg.type })`, {
     role: message.role, kind: message.kind, contentChars: message.content.length, content: message.content.slice(0, 120),
   });

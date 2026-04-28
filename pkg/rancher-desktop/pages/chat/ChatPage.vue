@@ -203,6 +203,10 @@ provide(ChatControllerKey, controller);
 provide(ThreadRegistryKey, registry);
 provide(ModelSelectorKey,  modelSelector);
 
+// Provide a navigate-url callback so Composer can open the browser when the
+// user types a bare URL. Injected by Composer; no-op if ChatPage is standalone.
+provide('chat:navigate-url', (url: string) => emit('navigate-url', url));
+
 // ─── Real backend bridge via the existing persona/ChatInterface ───
 // Each tab gets its own adapter+persona. The adapter registers itself
 // as the controller's sendHandler, so user sends flow through the

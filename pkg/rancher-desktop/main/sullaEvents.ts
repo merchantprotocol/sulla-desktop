@@ -24,6 +24,7 @@ import { initSullaRoutineExportEvents } from './sullaRoutineExportEvents';
 import { initSullaRoutineImportEvents } from './sullaRoutineImportEvents';
 import { initSullaRoutineTemplateEvents } from './sullaRoutineTemplateEvents';
 import { initSullaWorkflowEvents } from './sullaWorkflowEvents';
+import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -87,6 +88,15 @@ export function initSullaEvents(): void {
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
 
     await SullaSettingsModel.delete(property);
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // Labs — experimental feature launchers
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('open-capture-studio', async() => {
+    const { openCaptureStudio } = await import('@pkg/window');
+    openCaptureStudio();
   });
 
   // ─────────────────────────────────────────────────────────────
@@ -251,6 +261,7 @@ export function initSullaEvents(): void {
   initSullaProjectEvents();
   initSullaApprovalEvents();
   initSullaPatchEvents();
+  initSullaRecipeDockerEvents();
 
   // ── Integration Config API (YAML-defined integrations) ──────────
 

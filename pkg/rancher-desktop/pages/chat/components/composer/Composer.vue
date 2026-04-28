@@ -64,7 +64,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import ComposerInput      from './ComposerInput.vue';
 import ComposerMic        from './ComposerMic.vue';
@@ -84,6 +84,19 @@ import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
 import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
 
 const controller = useChatController();
+
+// Injected by ChatPage when nested inside a browser tab — lets us open the
+// browser directly when the user types a bare URL instead of a chat message.
+const navigateUrl = inject<((url: string) => void) | undefined>('chat:navigate-url', undefined);
+
+function looksLikeUrl(input: string): boolean {
+  if (/^https?:\/\//i.test(input)) return true;
+  if (/^localhost(:\d+)?(\/|$)/i.test(input)) return true;
+  if (/^127\.0\.0\.1(:\d+)?(\/|$)/.test(input)) return true;
+  // Match domain.tld and sub.domain.tld (including www.google.com)
+  if (/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}(\/|$)/.test(input)) return true;
+  return false;
+}
 
 const draft        = ref('');
 const inputRef     = ref<InstanceType<typeof ComposerInput> | null>(null);
@@ -204,6 +217,13 @@ function choosePopoverItem(idx: number): void {
 // ─── Send ──────────────────────────────────────────────────────────
 function onSend(text: string): void {
   const trimmed = text.trim();
+
+  // If the whole input is a bare URL and we have a browser context, open it.
+  if (navigateUrl && looksLikeUrl(trimmed) && !controller.staged.value.length) {
+    navigateUrl(trimmed);
+    draft.value = '';
+    return;
+  }
 
   // Intercept bare slash commands even when there's no open popover
   // (e.g. user typed "/help" and hit Enter immediately).

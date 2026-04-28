@@ -37,8 +37,9 @@ export class AnthropicModels extends SelectBoxProvider {
   private getStaticModels(): SelectOption[] {
     return [
       { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', description: 'Latest balanced model' },
+      { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', description: 'Fastest — ideal for background agents' },
       { value: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet', description: 'Extended thinking model' },
-      { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', description: 'Fast and lightweight' },
+      { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', description: 'Fast and lightweight (previous gen)' },
       { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', description: 'Previous generation balanced' },
       { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus', description: 'Most capable previous gen' },
     ];

@@ -32,6 +32,10 @@ export interface ModelProviderState {
   subconsciousProvider: string;
   activeModelId:       string;
   modelMode:           'remote';
+  /** Model ID override for heartbeat agent. '' = use provider's integration config. */
+  heartbeatModelId:    string;
+  /** Model ID override for subconscious agents and spawned sub-agents. '' = use provider's integration config. */
+  subconsciousModelId: string;
 }
 
 export interface ProviderInfo {
@@ -61,6 +65,8 @@ class ModelProviderService {
     subconsciousProvider: 'default',
     activeModelId:        '',
     modelMode:            'remote',
+    heartbeatModelId:     'claude-haiku-4-5-20251001',
+    subconsciousModelId:  'claude-haiku-4-5-20251001',
   };
 
   private initialized = false;
@@ -131,6 +137,14 @@ class ModelProviderService {
 
   getSubconsciousProvider(): string {
     return this.state.subconsciousProvider;
+  }
+
+  getHeartbeatModelId(): string {
+    return this.state.heartbeatModelId;
+  }
+
+  getSubconsciousModelId(): string {
+    return this.state.subconsciousModelId;
   }
 
   // ── Queries (async — may hit IntegrationService / DB) ──────────
@@ -250,6 +264,18 @@ class ModelProviderService {
     await this.broadcastChange();
   }
 
+  async setHeartbeatModelId(modelId: string): Promise<void> {
+    this.state.heartbeatModelId = modelId;
+    await SullaSettingsModel.set('heartbeatModelId', modelId, 'string');
+    await this.broadcastChange();
+  }
+
+  async setSubconsciousModelId(modelId: string): Promise<void> {
+    this.state.subconsciousModelId = modelId;
+    await SullaSettingsModel.set('subconsciousModelId', modelId, 'string');
+    await this.broadcastChange();
+  }
+
   async updateProviderConfig(providerId: string, config: Record<string, string>): Promise<void> {
     const integrationService = getIntegrationService();
     const accountId = await integrationService.getActiveAccountId(providerId);
@@ -280,7 +306,24 @@ class ModelProviderService {
     this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'grok');
     this.state.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
     this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
+    this.state.heartbeatModelId = await SullaSettingsModel.get('heartbeatModelId', 'claude-haiku-4-5-20251001');
+    this.state.subconsciousModelId = await SullaSettingsModel.get('subconsciousModelId', 'claude-haiku-4-5-20251001');
     this.state.modelMode = 'remote';
+
+    // One-time migration: upgrade installs that were initialized with the old Sonnet default.
+    // Only fires once (tracked by version flag) so user changes after this point are preserved.
+    const migrated = await SullaSettingsModel.get('modelDefaultsMigration', '');
+    if (migrated < 'v2') {
+      if (this.state.heartbeatModelId === 'claude-sonnet-4-6') {
+        this.state.heartbeatModelId = 'claude-haiku-4-5-20251001';
+        await SullaSettingsModel.set('heartbeatModelId', 'claude-haiku-4-5-20251001', 'string');
+      }
+      if (this.state.subconsciousModelId === 'claude-sonnet-4-6') {
+        this.state.subconsciousModelId = 'claude-haiku-4-5-20251001';
+        await SullaSettingsModel.set('subconsciousModelId', 'claude-haiku-4-5-20251001', 'string');
+      }
+      await SullaSettingsModel.set('modelDefaultsMigration', 'v2', 'string');
+    }
 
     // Load active model from the provider's integration form values
     try {
@@ -373,6 +416,14 @@ class ModelProviderService {
 
     ipcMain.handle('model-provider:set-subconscious', async(_event: unknown, providerId: string) => {
       return this.setSubconsciousProvider(providerId);
+    });
+
+    ipcMain.handle('model-provider:set-heartbeat-model', async(_event: unknown, modelId: string) => {
+      return this.setHeartbeatModelId(modelId);
+    });
+
+    ipcMain.handle('model-provider:set-subconscious-model', async(_event: unknown, modelId: string) => {
+      return this.setSubconsciousModelId(modelId);
     });
 
     ipcMain.handle('model-provider:get-provider-config', async(_event: unknown, providerId: string) => {

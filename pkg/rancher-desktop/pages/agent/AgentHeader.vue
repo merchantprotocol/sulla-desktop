@@ -377,7 +377,6 @@ import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { getExtensionService } from '@pkg/agent';
-import { getAgentPersonaRegistry } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -431,10 +430,6 @@ interface HistoryRecord {
 const extensionService = getExtensionService();
 const router = useRouter();
 const { tabs: browserTabs, closedTabs, tabOrder, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, reorderTabs } = useBrowserTabs();
-
-// Active assets from the agent persona service
-const personaRegistry = getAgentPersonaRegistry();
-const persona = personaRegistry.getOrCreatePersonaService('sulla-desktop');
 
 defineProps<{
   isDark:      boolean;
@@ -867,7 +862,9 @@ function onPointerDown(e: PointerEvent, index: number) {
   if ((e.target as HTMLElement).closest('.tab-close')) return;
 
   const tabEl = e.currentTarget as HTMLElement;
-  tabEl.setPointerCapture(e.pointerId);
+  // Do NOT call setPointerCapture — it conflicts with Electron's native
+  // window-drag region on the header and can leave the tab bar frozen after
+  // a drop. Window-level listeners cover everything we need.
 
   const state: DragState = {
     active:       false,
@@ -881,7 +878,7 @@ function onPointerDown(e: PointerEvent, index: number) {
   dragState.value = state;
 
   const onMove = (me: PointerEvent) => {
-    if (!dragState.value) return;
+    if (!dragState.value || me.pointerId !== dragState.value.pointerId) return;
 
     const dx = me.clientX - dragState.value.startX;
 
@@ -893,41 +890,55 @@ function onPointerDown(e: PointerEvent, index: number) {
       tabEl.style.pointerEvents = 'none';
     }
 
-    // Calculate which index the pointer is over based on sibling positions
     const container = getScrollEl();
     if (!container) return;
 
     const children = Array.from(container.children) as HTMLElement[];
-    let targetIndex = dragState.value.currentIndex;
 
+    // Find the dragged element's CURRENT index in the DOM after any previous
+    // reorders — don't trust the stored currentIndex which can be stale when
+    // multiple pointermove events fire before Vue flushes a re-render.
+    const fromIndex = children.indexOf(dragState.value.tabEl);
+    if (fromIndex === -1) return;
+
+    // Use offsetLeft (layout position) rather than getBoundingClientRect so
+    // hit-testing is stable during TransitionGroup FLIP animations, which
+    // temporarily offset elements via CSS transform and would otherwise
+    // cause rapid-fire phantom reorders after each swap.
+    const containerLeft = container.getBoundingClientRect().left;
+    const pointerX = me.clientX - containerLeft + container.scrollLeft;
+
+    let targetIndex = children.length - 1;
     for (let i = 0; i < children.length; i++) {
-      const rect = children[i].getBoundingClientRect();
-      const center = rect.left + rect.width / 2;
-
-      if (me.clientX < center) {
+      const center = (children[i] as HTMLElement).offsetLeft + (children[i] as HTMLElement).offsetWidth / 2;
+      if (pointerX < center) {
         targetIndex = i;
         break;
       }
-      targetIndex = i;
     }
 
     // Clamp to valid range
     targetIndex = Math.max(0, Math.min(targetIndex, children.length - 1));
 
     // Reorder in real-time if target changed
-    if (targetIndex !== dragState.value.currentIndex) {
-      reorderTabs(dragState.value.currentIndex, targetIndex);
+    if (targetIndex !== fromIndex) {
+      reorderTabs(fromIndex, targetIndex);
       dragState.value.currentIndex = targetIndex;
     }
   };
 
-  const onUp = () => {
-    tabEl.removeEventListener('pointermove', onMove);
-    tabEl.removeEventListener('pointerup', onUp);
-    tabEl.removeEventListener('pointercancel', onUp);
+  const onUp = (ue: PointerEvent) => {
+    if (ue.pointerId !== state.pointerId) return;
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
 
     const wasDragging = dragState.value?.active ?? false;
+    const draggedEl = dragState.value?.tabEl ?? tabEl;
     dragState.value = null;
+    // Always clear both references — belt-and-suspenders so a stale
+    // pointerEvents:none never leaves the bar frozen.
+    draggedEl.style.pointerEvents = '';
     tabEl.style.pointerEvents = '';
 
     // If we were dragging, prevent the click/navigation that follows pointerup
@@ -936,13 +947,14 @@ function onPointerDown(e: PointerEvent, index: number) {
         ce.preventDefault();
         ce.stopImmediatePropagation();
       };
-      tabEl.addEventListener('click', preventClick, { capture: true, once: true });
+      draggedEl.addEventListener('click', preventClick, { capture: true, once: true });
     }
   };
 
-  tabEl.addEventListener('pointermove', onMove);
-  tabEl.addEventListener('pointerup', onUp);
-  tabEl.addEventListener('pointercancel', onUp);
+  // Window-level listeners receive events regardless of where the pointer moves.
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
 }
 
 // ── Phase 6: Middle-click to close ──

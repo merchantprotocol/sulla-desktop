@@ -231,6 +231,13 @@ function registerPanelIpc(): void {
     panelWindow?.hide();
   });
 
+  ipcMain.on('tray-panel:open-capture-studio', async() => {
+    panelWindow?.hide();
+    const { openCaptureStudio } = await import('@pkg/window');
+
+    openCaptureStudio();
+  });
+
   ipcMain.on('tray-panel:open-url', (_event: Electron.IpcMainEvent, url: string) => {
     openUrlInApp(url);
     panelWindow?.hide();

@@ -11,7 +11,7 @@ export class GitPushWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { absolutePath, remote = 'origin', branch } = input;
+    const { absolutePath, remote = 'origin', branch, tags = false } = input;
 
     try {
       // Get repo root
@@ -64,7 +64,9 @@ export class GitPushWorker extends BaseTool {
         }
       }
 
-      const cmd = `git -C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }`;
+      const cmd = tags
+        ? `git -C "${ repoRoot }" push ${ pushTarget } --tags`
+        : `git -C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }`;
       const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
 
       if (result.exitCode !== 0) {

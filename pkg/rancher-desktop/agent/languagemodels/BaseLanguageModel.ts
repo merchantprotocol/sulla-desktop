@@ -243,6 +243,10 @@ export abstract class BaseLanguageModel {
     return this.model;
   }
 
+  setModel(model: string): void {
+    this.model = model;
+  }
+
   getBaseUrl(): string {
     return this.baseUrl;
   }

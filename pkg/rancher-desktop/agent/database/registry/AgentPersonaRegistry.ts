@@ -201,12 +201,7 @@ export class AgentPersonaRegistry {
     activeAgentId: 'sulla-desktop',
   });
 
-  constructor() {
-    // New — no need to call startListening anymore
-    this.state.agents.forEach(agent => {
-      this.getOrCreatePersonaService(agent.agentId);  // constructor already connects
-    });
-  }
+  constructor() {}
 
   /**
    * Get or create a persona service.

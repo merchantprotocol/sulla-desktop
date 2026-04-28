@@ -260,6 +260,13 @@
         </template>
       </div>
     </template>
+
+    <!-- Labs: experimental features panel -->
+    <template v-else-if="tabMode === 'labs'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <LabsPage />
+      </div>
+    </template>
   </div>
 </template>
 
@@ -279,6 +286,7 @@ import HistoryTab from './HistoryTab.vue';
 import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
 import PasswordGenerator from './PasswordGenerator.vue';
+import LabsPage from './LabsPage.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import AgentHeader from './agent/AgentHeader.vue';
@@ -303,6 +311,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   history:      'History',
   routines:     'Routines',
   marketplace:  'Sulla Studio',
+  labs:         'Labs',
 };
 
 const props = defineProps<{
@@ -711,28 +720,23 @@ function navigate() {
   const input = addressBarUrl.value.trim();
   if (!input) return;
 
-  // If input looks like a URL, navigate the browser
-  if (looksLikeUrl(input)) {
-    const url = normalizeUrl(input);
+  // Address bar always navigates — normalizeUrl falls back to Google search for non-URL input
+  const url = normalizeUrl(input);
 
-    if (tabMode.value !== 'browser') {
-      onSetMode('browser');
-    }
-
-    addressBarUrl.value = url;
-    loading.value = true;
-
-    if (!viewCreated.value) {
-      ensureView(url);
-    } else {
-      ipcRenderer.invoke('browser-tab-view:navigate', props.tabId, url);
-    }
-    return;
+  if (tabMode.value !== 'browser') {
+    // Update tab mode directly — skip onSetMode so it doesn't call ensureView('google')
+    // and set viewCreated=true before we can call ensureView with the real URL below.
+    updateTab(props.tabId, { mode: 'browser', title: MODE_TITLES['browser'] });
   }
 
-  // Otherwise treat it as a chat message — switch to chat mode
-  onStartChat(input);
-  addressBarUrl.value = '';
+  addressBarUrl.value = url;
+  loading.value = true;
+
+  if (!viewCreated.value) {
+    ensureView(url);
+  } else {
+    ipcRenderer.invoke('browser-tab-view:navigate', props.tabId, url);
+  }
 }
 
 function goBack() {

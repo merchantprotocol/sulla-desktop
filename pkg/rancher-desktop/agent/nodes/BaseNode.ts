@@ -1564,26 +1564,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       return this.wsSpeakDispatch(state, content);
     }
 
-    // [DBLDBG] Doubling investigation — log every assistant_message emit
-    // so we can correlate with renderer-side pushes. Hash so identical
-    // content is obviously identical without dumping whole bodies.
-    const trimmedContent = content.trim();
-    const contentHash = (() => {
-      let h = 0;
-      for (let i = 0; i < trimmedContent.length; i++) {
-        h = ((h << 5) - h + trimmedContent.charCodeAt(i)) | 0;
-      }
-      return (h >>> 0).toString(16).padStart(8, '0');
-    })();
-    const callerFrame = (new Error().stack?.split('\n')[2] || '').trim();
-    console.log(`[DBLDBG][BaseNode:wsChatMessage] emit channel="${ connectionId }" agent="${ this.name }" kind="${ kind }" hash=${ contentHash } len=${ trimmedContent.length } thread=${ threadId } caller="${ callerFrame.slice(0, 120) }" preview="${ trimmedContent.slice(0, 80).replace(/\n/g, '\\n') }"`);
-
     // Send via WebSocket. `extras` (e.g. `citations`) is merged into data
     // so structured fields ride alongside the usual content/role/kind.
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'assistant_message',
       data: {
-        content:   trimmedContent,
+        content,
         role,
         kind,
         thread_id: threadId,

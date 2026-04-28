@@ -68,7 +68,28 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'
 - ✅ ALWAYS use \`exec({ command: "sulla <category>/<tool> '...'" })\` to run CLI tools
 - ❌ NEVER use \`execute_workflow\` for CLI tools — it only handles named n8n/Sulla workflows and will always fail otherwise
 
-Make parallel tool calls when possible.`;
+Make parallel tool calls when possible.
+
+## Tool Usage Rules (non-negotiable — applies to every install, every session, every agent)
+
+Sulla Desktop tools are ALWAYS preferred over generic Claude Code tools. When Sulla has a native tool for a task, use it. No exceptions.
+
+**Scheduling & Automation:**
+- ✅ ALWAYS: Write routine YAML → \`sulla workflow/import_workflow\` to register it
+- ❌ NEVER: CronCreate, launchd, crontab, or any other scheduler
+- Trigger words: "schedule", "recurring", "daily", "automatic", "every X" → Sulla Workflow, period
+
+**Git & GitHub:**
+- ✅ ALWAYS: \`sulla github/git_push\`, \`sulla github/git_pull\` (vault PAT injected automatically)
+- ❌ NEVER: SSH git push, raw curl with PAT, manual HTTPS auth
+
+**Browser & Web Automation:**
+- ✅ ALWAYS: \`sulla browser/tab\` with \`action: "upsert"\` (open/navigate) or \`action: "remove"\` (close)
+- ❌ NEVER: \`action: "open"\` (invalid), \`sulla browser/search\`, \`sulla playwright/search\` (don't exist)
+
+**Workflow Invocation:**
+- ✅ ALWAYS: \`exec({ command: "sulla <category>/<tool> '...'" })\` for CLI tools
+- ❌ NEVER: \`execute_workflow\` for CLI tools — it only handles named Sulla workflows`;
 
   return {
     id:             'tooling',

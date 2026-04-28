@@ -286,6 +286,7 @@ export interface IpcMainInvokeEvents {
   'sulla-settings-get':    (property: string, defaultValue?: any) => any;
   'sulla-settings-set':    (property: string, value: any, cast?: string) => void;
   'sulla-settings-delete': (property: string) => void;
+  'open-capture-studio':   () => void;
   'sulla-settings:get':    (key: string) => any;
   'sulla-settings:set':    (key: string, value: any, cast?: string) => any;
 
@@ -833,6 +834,22 @@ export interface IpcMainInvokeEvents {
   } | null)[];
   'configapi-reload': () => string[];
   'configapi-call':   (slug: string, endpointName: string, params: Record<string, any>, options?: Record<string, any>) => any;
+  // #endregion
+
+  // #region Recipe Docker (recipe container status, log streaming, PTY shell)
+  'recipe-docker-status': (slug: string) => {
+    running:    boolean;
+    containers: { name: string; state: string; status: string; ports: string[] }[];
+    error?:     string;
+  };
+  'recipe-logs-start':   (slug: string) => { sessionId: string };
+  'recipe-logs-stop':    (sessionId: string) => { ok: boolean };
+  'recipe-shell-open':   (slug: string, containerName: string, cols?: number, rows?: number) => { sessionId?: string; error?: string };
+  'recipe-shell-input':  (sessionId: string, data: string) => { ok: boolean };
+  'recipe-shell-resize': (sessionId: string, cols: number, rows: number) => { ok: boolean };
+  'recipe-shell-close':  (sessionId: string) => { ok: boolean };
+  'recipe-start':        (slug: string) => { ok: boolean; stdout?: string; stderr?: string; error?: string };
+  'recipe-stop':         (slug: string) => { ok: boolean; stdout?: string; stderr?: string; error?: string };
   // #endregion
 }
 

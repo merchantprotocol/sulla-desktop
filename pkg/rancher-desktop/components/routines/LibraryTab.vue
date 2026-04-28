@@ -3,9 +3,18 @@
     class="library"
     :class="{ 'is-detail': showingDetail }"
   >
+    <!-- Recipe Docker management panel — replaces the read-only detail for recipes. -->
+    <RecipeDockerPanel
+      v-if="recipeDetail"
+      :slug="recipeDetail.slug"
+      :name="recipeDetail.name"
+      :description="recipeDetail.description"
+      @close="recipeDetail = null"
+    />
+
     <!-- Full-page read-only detail takes over the whole tab. -->
     <MarketplaceDetail
-      v-if="detailPayload"
+      v-else-if="detailPayload"
       :row="detailPayload.row"
       :manifest="detailPayload.manifest"
       source="local"
@@ -275,6 +284,7 @@ import { computed, onMounted, ref } from 'vue';
 import LibraryDraftDetail from '@pkg/components/routines/LibraryDraftDetail.vue';
 import LibraryItemStrip from '@pkg/components/routines/LibraryItemStrip.vue';
 import MarketplaceDetail from '@pkg/components/routines/MarketplaceDetail.vue';
+import RecipeDockerPanel from '@pkg/components/recipes/RecipeDockerPanel.vue';
 import type { LibraryArtifactKind, LibraryItem, LibraryKind } from '@pkg/composables/useLibrary';
 import { useLibrary } from '@pkg/composables/useLibrary';
 import { useLibraryDrafts } from '@pkg/composables/useLibraryDrafts';
@@ -323,6 +333,10 @@ const lib = useLibrary();
 const drafts = useLibraryDrafts();
 const activeView = ref<ActiveView>('kind');
 
+// Recipe Docker panel state — shown instead of MarketplaceDetail for recipe items.
+interface RecipeDetail { slug: string; name: string; description?: string }
+const recipeDetail = ref<RecipeDetail | null>(null);
+
 // Read-only detail drawer state — reuses MarketplaceDetail in local mode.
 interface LocalDetail {
   row:      MarketplaceBrowseRow;
@@ -338,7 +352,7 @@ onMounted(() => {
   void drafts.load();
 });
 
-const showingDetail = computed(() => !!detailPayload.value || detailLoading.value || !!drafts.active.value);
+const showingDetail = computed(() => !!recipeDetail.value || !!detailPayload.value || detailLoading.value || !!drafts.active.value);
 
 const currentKindLabel = computed(() => KINDS.find(k => k.kind === lib.activeKind.value)?.label ?? 'Library');
 
@@ -427,6 +441,17 @@ async function onReveal(item: LibraryItem) {
 
 async function onView(item: LibraryItem) {
   const kind = resolveItemKind(item);
+
+  // Recipes get the Docker management panel instead of the read-only detail drawer.
+  if (kind === 'recipes') {
+    recipeDetail.value = {
+      slug:        item.slug,
+      name:        item.name || item.slug,
+      description: (item as any).description as string | undefined,
+    };
+    return;
+  }
+
   detailLoading.value = true;
   forkError.value = null;
   try {
@@ -451,6 +476,7 @@ async function onView(item: LibraryItem) {
 
 function onCloseDetail() {
   detailPayload.value = null;
+  recipeDetail.value = null;
   forkError.value = null;
 }
 
