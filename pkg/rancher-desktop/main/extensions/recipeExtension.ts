@@ -220,8 +220,9 @@ export class RecipeExtensionImpl implements Extension {
 
       sullaLog({ topic: 'extensions', level: 'info', message: `Recipe assets saved to ${ this.dir }` });
 
-      // ── Phase 2b: Resolve {{variables}} in the compose file and write .env ──
-      await this.processComposeFile();
+      // ── Phase 2b: Write .env for non-compose manifest env vars ──
+      // NOTE: compose files are intentionally left as {{templates}} on disk.
+      // Variables are resolved in-memory at start() time so secrets never persist to disk.
       await this.writeEnvFile();
       sullaLog({ topic: 'extensions', level: 'info', message: `[install:${ this.id }] Phase 2/4 complete: assets + variable resolution done` });
 
@@ -372,8 +373,8 @@ export class RecipeExtensionImpl implements Extension {
         JSON.stringify(await this.labels, undefined, 2),
       );
 
-      // Phase 2b: resolve {{variables}} in compose + write .env
-      await this.processComposeFile();
+      // Phase 2b: write .env for non-compose manifest env vars.
+      // Compose files stay as {{templates}} — resolved in-memory at start() time.
       await this.writeEnvFile();
       sullaLog({ topic: 'extensions', level: 'info', message: `[install-local:${ this.id }] variable resolution done` });
 
@@ -832,6 +833,10 @@ export class RecipeExtensionImpl implements Extension {
    * every text file.  Binary files (images, archives, fonts, etc.) are skipped.
    */
   protected async processAllRecipeFiles(): Promise<void> {
+    // Compose files must NOT be processed here — secrets would be permanently written to disk.
+    // They are resolved in-memory at start() time via resolveComposeToTemp().
+    const composeFileName = this._manifest?.compose?.composeFile || 'docker-compose.yml';
+
     const walk = async(dir: string): Promise<void> => {
       let entries: fs.Dirent[];
 
@@ -850,6 +855,11 @@ export class RecipeExtensionImpl implements Extension {
         }
 
         if (!entry.isFile()) {
+          continue;
+        }
+
+        // Skip the compose file — secrets in it are handled at runtime, not install time.
+        if (entry.name === composeFileName) {
           continue;
         }
 
@@ -1009,6 +1019,37 @@ export class RecipeExtensionImpl implements Extension {
     return visible.join('\n');
   }
 
+  /**
+   * Resolve {{variables}} in the compose file in-memory and write to a short-lived
+   * temp file (mode 0o600). The caller MUST delete it after use.
+   * Returns the permanent compose path unchanged if there are no variables to resolve.
+   */
+  protected async resolveComposeToTemp(): Promise<string> {
+    const composeFile = this._manifest?.compose?.composeFile || 'docker-compose.yml';
+    const composePath = path.join(this.dir, composeFile);
+
+    let raw: string;
+
+    try {
+      raw = await fs.promises.readFile(composePath, 'utf-8');
+    } catch {
+      return composePath;
+    }
+
+    const resolved = await this.resolveVariables(raw);
+
+    if (resolved === raw) {
+      return composePath;
+    }
+
+    const tmpPath = path.join(os.tmpdir(), `sulla-compose-${ crypto.randomUUID() }.yml`);
+
+    await fs.promises.writeFile(tmpPath, resolved, { encoding: 'utf-8', mode: 0o600 });
+    sullaLog({ topic: 'extensions', level: 'debug', message: `[${ this.id }] compose resolved to temp (deleted after start)` });
+
+    return tmpPath;
+  }
+
   async start(): Promise<void> {
     const manifest = await this.getManifest();
     const cmd = manifest.commands?.start;
@@ -1022,9 +1063,19 @@ export class RecipeExtensionImpl implements Extension {
     // Refresh .env before starting so settings changes take effect
     await this.writeEnvFile();
 
-    const resolved = this.resolveCommand(cmd);
+    // Resolve {{secrets}} in the compose file in-memory — never written permanently to disk.
+    const composeFile = this._manifest?.compose?.composeFile || 'docker-compose.yml';
+    const permanentComposePath = path.join(this.dir, composeFile);
+    const tempComposePath = await this.resolveComposeToTemp();
+    const isTempFile = tempComposePath !== permanentComposePath;
 
-    sullaLog({ topic: 'extensions', level: 'info', message: `Starting ${ this.id }`, data: { command: resolved, cwd: this.dir } });
+    let resolved = this.resolveCommand(cmd);
+
+    if (isTempFile) {
+      resolved = resolved.replace(this.shellQuote(permanentComposePath), this.shellQuote(tempComposePath));
+    }
+
+    sullaLog({ topic: 'extensions', level: 'info', message: `Starting ${ this.id }`, data: { cwd: this.dir } });
 
     try {
       const { stdout, stderr } = await spawnFile('/bin/sh', ['-c', resolved], { stdio: 'pipe', cwd: this.dir, env: this.spawnEnv });
@@ -1047,6 +1098,10 @@ export class RecipeExtensionImpl implements Extension {
       const stderr = err?.stderr || '';
       sullaLog({ topic: 'extensions', level: 'error', message: `Failed to start ${ this.id }: ${ err.message || err }${ stderr ? `\n${ stderr }` : '' }` });
       throw err;
+    } finally {
+      if (isTempFile) {
+        await fs.promises.unlink(tempComposePath).catch(() => {});
+      }
     }
     sullaLog({ topic: 'extensions', level: 'info', message: `Started ${ this.id } successfully` });
 
