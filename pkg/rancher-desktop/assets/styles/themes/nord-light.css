@@ -876,7 +876,7 @@
 .theme-nord-light ::-webkit-scrollbar-track { background: rgba(94, 129, 172, 0.1) !important; }
 .theme-nord-light ::-webkit-scrollbar-thumb { background: rgba(94, 129, 172, 0.4) !important; border-radius: 4px !important; }
 .theme-nord-light ::-webkit-scrollbar-thumb:hover { background: rgba(94, 129, 172, 0.6) !important; }
-.theme-nord-light * { scrollbar-width: thin !important; scrollbar-color: rgba(94, 129, 172, 0.4) rgba(94, 129, 172, 0.1) !important; }
+.theme-nord-light * { scrollbar-width: thin; scrollbar-color: rgba(94, 129, 172, 0.4) rgba(94, 129, 172, 0.1) !important; }
 
 /* Empty State — Light Mode */
 .theme-nord-light .empty h1 { color: #2e3440 !important; }
@@ -1025,6 +1025,13 @@
 .theme-nord-light .rollup-row { color: #5e81ac !important; }
 .theme-nord-light .rollup-row > div { border-right-color: rgba(94, 129, 172, 0.35) !important; }
 .theme-nord-light .rollup-row b { color: #2e3440 !important; }
+
+/* Library & Marketplace Search Box */
+.theme-nord-light .search-box { background: rgba(216, 222, 233, 0.8) !important; border-color: rgba(94, 129, 172, 0.4) !important; }
+.theme-nord-light .search-box svg { color: #81a1c1 !important; }
+.theme-nord-light .search-box input { color: #2e3440 !important; }
+.theme-nord-light .search-box input::placeholder { color: #81a1c1 !important; }
+.theme-nord-light .search-box .count { color: #5e81ac !important; }
 
 /* ModeRail scrollbar fix */
 .theme-nord-light .mode-rail { overflow-x: hidden !important; overflow-y: auto !important; }

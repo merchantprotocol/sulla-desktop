@@ -353,6 +353,15 @@ const activeRoutineMode = ref<'edit' | 'run'>('edit');
 // or Library tab. Null means "defer to tabMode for initial tab".
 const routinesLandingTab = ref<'mywork' | 'library' | 'marketplace' | null>(null);
 
+// Notify ModeRail when sub-tab changes so it can highlight the correct icon
+watch(routinesLandingTab, (newTab) => {
+  if (newTab) {
+    window.dispatchEvent(new CustomEvent('sulla:routines-subtab-change', {
+      detail: { subTab: newTab },
+    }));
+  }
+}, { immediate: true });
+
 function onOpenRoutine(id: string, mode: 'edit' | 'run' = 'edit') {
   activeRoutineId.value = id;
   activeRoutineMode.value = mode;
