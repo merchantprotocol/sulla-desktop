@@ -127,12 +127,23 @@
 
       /* Remove browser default focus outline (orange border) */
       .menu-item:focus {
-        outline: none;
+        outline: none !important;
+        box-shadow: none !important;
+        -webkit-focus-ring-color: transparent !important;
       }
 
       /* Optional: subtle focus indicator for accessibility */
       .menu-item:focus-visible {
         background: var(--item-hover-bg);
+        outline: none !important;
+        box-shadow: none !important;
+      }
+
+      /* First item focus state - prevent orange outline from autofocus */
+      .menu-item:first-child:focus {
+        outline: none !important;
+        box-shadow: none !important;
+        -webkit-focus-ring-color: transparent !important;
       }
     </style>
   </head>

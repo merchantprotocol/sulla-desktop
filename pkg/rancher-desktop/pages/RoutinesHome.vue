@@ -1104,4 +1104,33 @@ async function onImport() {
   opacity: 0;
   transform: translate(-50%, -4px);
 }
+/* Ribbon Footer — Light Mode */
+.theme-nord-light .ribbon {
+  background: rgba(216, 222, 233, 0.85) !important;
+  border-top: 1px solid rgba(94, 129, 172, 0.3) !important;
+  backdrop-filter: blur(8px) !important;
+}
+
+.theme-nord-light .ribbon .l,
+.theme-nord-light .ribbon .r {
+  color: #5e81ac !important;
+}
+
+.theme-nord-light .ribbon .l .tc,
+.theme-nord-light .ribbon .r b {
+  color: #2e3440 !important;
+  font-weight: 600 !important;
+}
+
+.theme-nord-light .ribbon .c .mark {
+  color: #81a1c1 !important;
+}
+
+.theme-nord-light .ribbon .c .sig {
+  color: #3b4252 !important;
+}
+
+.theme-nord-light .ribbon .c .sig b {
+  color: #5e81ac !important;
+}
 </style>
