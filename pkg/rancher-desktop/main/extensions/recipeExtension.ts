@@ -1295,10 +1295,30 @@ export class RecipeExtensionImpl implements Extension {
       return;
     }
 
-    // On app shutdown, preserve the current running state so containers
-    // return to the same state on next launch.  We do NOT stop containers
-    // here — Docker will handle their lifecycle independently.
-    sullaLog({ topic: 'extensions', level: 'info', message: `Shutdown: preserving state for ${ this.id } (containers left as-is)` });
+    const state = await this.getRunningState();
+
+    if (state !== 'running') {
+      return;
+    }
+
+    // Stop containers gracefully so stateful services (postgres etc.) flush to disk.
+    // We preserve the 'running' state file so startInstalledExtensions() re-starts
+    // them on next app boot. We do NOT call saveRunningState('stopped') here.
+    const manifest = await this.getManifest();
+    const cmd = manifest.commands?.stop;
+
+    if (!cmd) {
+      return;
+    }
+
+    sullaLog({ topic: 'extensions', level: 'info', message: `Shutdown: stopping ${ this.id } for clean container shutdown` });
+
+    try {
+      await spawnFile('/bin/sh', ['-c', this.resolveCommand(cmd)], { stdio: 'pipe', cwd: this.dir, env: this.spawnEnv });
+      sullaLog({ topic: 'extensions', level: 'info', message: `Shutdown: ${ this.id } containers stopped cleanly` });
+    } catch (err: any) {
+      sullaLog({ topic: 'extensions', level: 'warn', message: `Shutdown: stop command for ${ this.id } failed (non-fatal): ${ err.message || err }` });
+    }
   }
 
   // ─── Running State Persistence ──────────────────────────────────────
