@@ -62,11 +62,11 @@ class ModelProviderService {
     primaryProvider:      'grok',
     secondaryProvider:    'grok',
     heartbeatProvider:    'default',
-    subconsciousProvider: 'default',
+    subconsciousProvider: 'claude-code',
     activeModelId:        '',
     modelMode:            'remote',
-    heartbeatModelId:     'claude-haiku-4-5-20251001',
-    subconsciousModelId:  'claude-haiku-4-5-20251001',
+    heartbeatModelId:     'claude-3-5-haiku-20241022',
+    subconsciousModelId:  'claude-3-5-haiku-20241022',
   };
 
   private initialized = false;
@@ -305,25 +305,10 @@ class ModelProviderService {
     this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', 'grok');
     this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'grok');
     this.state.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
-    this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
-    this.state.heartbeatModelId = await SullaSettingsModel.get('heartbeatModelId', 'claude-haiku-4-5-20251001');
-    this.state.subconsciousModelId = await SullaSettingsModel.get('subconsciousModelId', 'claude-haiku-4-5-20251001');
+    this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'claude-code');
+    this.state.heartbeatModelId = await SullaSettingsModel.get('heartbeatModelId', 'claude-3-5-haiku-20241022');
+    this.state.subconsciousModelId = await SullaSettingsModel.get('subconsciousModelId', 'claude-3-5-haiku-20241022');
     this.state.modelMode = 'remote';
-
-    // One-time migration: upgrade installs that were initialized with the old Sonnet default.
-    // Only fires once (tracked by version flag) so user changes after this point are preserved.
-    const migrated = await SullaSettingsModel.get('modelDefaultsMigration', '');
-    if (migrated < 'v2') {
-      if (this.state.heartbeatModelId === 'claude-sonnet-4-6') {
-        this.state.heartbeatModelId = 'claude-haiku-4-5-20251001';
-        await SullaSettingsModel.set('heartbeatModelId', 'claude-haiku-4-5-20251001', 'string');
-      }
-      if (this.state.subconsciousModelId === 'claude-sonnet-4-6') {
-        this.state.subconsciousModelId = 'claude-haiku-4-5-20251001';
-        await SullaSettingsModel.set('subconsciousModelId', 'claude-haiku-4-5-20251001', 'string');
-      }
-      await SullaSettingsModel.set('modelDefaultsMigration', 'v2', 'string');
-    }
 
     // Load active model from the provider's integration form values
     try {

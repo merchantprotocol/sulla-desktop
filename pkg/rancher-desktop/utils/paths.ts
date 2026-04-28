@@ -162,7 +162,7 @@ function getDefaultPaths(): Partial<Paths> {
       logs:                       path.join(home, 'Library', 'Logs', 'rancher-desktop'),
       cache:                      path.join(home, 'Library', 'Caches', 'rancher-desktop'),
       resources,
-      lima:                       path.join(appHome, 'lima'),
+      lima:                       path.join(home, '.rd', 'lima'),
       integration:                path.join(home, '.rd', 'bin'),
       deploymentProfileSystem:    '/Library/Managed Preferences',
       altDeploymentProfileSystem: '/Library/Preferences',

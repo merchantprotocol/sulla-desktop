@@ -145,15 +145,15 @@ class LLMRegistryImpl {
   }
 
   /**
-   * Heartbeat-aware service. Uses heartbeatModelId override (default: claude-haiku-4-5-20251001)
-   * so the background agent runs on Haiku independently of the primary model.
+   * Heartbeat-aware service. Uses heartbeatModelId override (default: claude-3-5-haiku-20241022)
+   * so the background agent runs independently of the primary model.
    */
   async getHeartbeatLLM(): Promise<BaseLanguageModel> {
     const mps = tryGetModelProviderService();
     const heartbeatProvider = mps
       ? mps.getHeartbeatProvider()
       : await SullaSettingsModel.get('heartbeatProvider', 'default');
-    const heartbeatModelId = mps?.getHeartbeatModelId?.() || await SullaSettingsModel.get('heartbeatModelId', 'claude-haiku-4-5-20251001');
+    const heartbeatModelId = mps?.getHeartbeatModelId?.() || await SullaSettingsModel.get('heartbeatModelId', 'claude-3-5-haiku-20241022');
     const modelOverride = heartbeatModelId || undefined;
 
     if (heartbeatProvider === 'default') {
@@ -167,20 +167,9 @@ class LLMRegistryImpl {
 
   /**
    * Subconscious-aware service. Subconscious agents (memory-recall,
-   * observation, unstuck-research) run in the background and need a fast
-   * chat-completion peer that emits tool_use blocks — NOT an autonomous
-   * agent like Claude Code which would over-invest in each recall task.
-   *
-   * Resolution order:
-   *   1. Explicit subconsciousProvider setting (if not 'default')
-   *   2. Secondary provider (the existing fallback)
-   *   3. Primary provider (last resort)
-   */
-  /**
-   * Subconscious-aware service. Subconscious agents (memory-recall,
    * observation, unstuck-research) and spawned sub-agents run here.
-   * Uses subconsciousModelId override (default: claude-haiku-4-5-20251001) so these
-   * agents run on Haiku regardless of the primary model selection.
+   * Uses subconsciousModelId override (default: claude-3-5-haiku-20241022) for cheap,
+   * fast file searching so the primary orchestrator doesn't burn expensive tokens on recon.
    *
    * Resolution order:
    *   1. Explicit subconsciousProvider setting (if not 'default')
@@ -193,7 +182,7 @@ class LLMRegistryImpl {
     const subconsciousProvider = mps
       ? mps.getSubconsciousProvider()
       : await SullaSettingsModel.get('subconsciousProvider', 'default');
-    const subconsciousModelId = mps?.getSubconsciousModelId?.() || await SullaSettingsModel.get('subconsciousModelId', 'claude-haiku-4-5-20251001');
+    const subconsciousModelId = mps?.getSubconsciousModelId?.() || await SullaSettingsModel.get('subconsciousModelId', 'claude-3-5-haiku-20241022');
     const modelOverride = subconsciousModelId || undefined;
 
     const hasUsableModel = (svc: BaseLanguageModel | null | undefined): boolean => {

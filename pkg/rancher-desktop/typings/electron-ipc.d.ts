@@ -839,16 +839,17 @@ export interface IpcMainInvokeEvents {
   // #region Recipe Docker (recipe container status, log streaming, PTY shell)
   'recipe-docker-status': (slug: string) => {
     running:    boolean;
-    containers: { name: string; state: string; status: string; ports: string[] }[];
+    containers: { name: string; service: string; state: string; status: string; ports: string[] }[];
     error?:     string;
   };
-  'recipe-logs-start':   (slug: string) => { sessionId: string };
+  'recipe-logs-start':   (slug: string, service?: string) => { sessionId: string };
   'recipe-logs-stop':    (sessionId: string) => { ok: boolean };
   'recipe-shell-open':   (slug: string, containerName: string, cols?: number, rows?: number) => { sessionId?: string; error?: string };
   'recipe-shell-input':  (sessionId: string, data: string) => { ok: boolean };
   'recipe-shell-resize': (sessionId: string, cols: number, rows: number) => { ok: boolean };
   'recipe-shell-close':  (sessionId: string) => { ok: boolean };
   'recipe-start':        (slug: string) => { ok: boolean; stdout?: string; stderr?: string; error?: string };
+  'recipe-start-stream': (slug: string) => { sessionId: string };
   'recipe-stop':         (slug: string) => { ok: boolean; stdout?: string; stderr?: string; error?: string };
   // #endregion
 }
@@ -1007,5 +1008,14 @@ export interface IpcRendererEvents {
   'conversation-history:show-all':            () => void;
   'conversation-history:restore-last-closed': () => void;
   'conversation-history:cleared':             (olderThan?: string) => void;
+  // #endregion
+
+  // #region Recipe Docker push events (main → renderer)
+  'recipe-logs-data':    (sessionId: string, chunk: string) => void;
+  'recipe-logs-end':     (sessionId: string) => void;
+  'recipe-shell-data':   (sessionId: string, data: string) => void;
+  'recipe-shell-exit':   (sessionId: string, exitCode: number) => void;
+  'recipe-start-output': (sessionId: string, chunk: string) => void;
+  'recipe-start-done':   (sessionId: string, exitCode: number) => void;
   // #endregion
 }
