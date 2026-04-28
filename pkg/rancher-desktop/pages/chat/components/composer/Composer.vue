@@ -218,8 +218,8 @@ function choosePopoverItem(idx: number): void {
 function onSend(text: string): void {
   const trimmed = text.trim();
 
-  // If the whole input is a bare URL and we have a browser context, open it.
-  if (navigateUrl && looksLikeUrl(trimmed) && !controller.staged.value.length) {
+  // Only navigate if the input is a lone URL — no surrounding words.
+  if (navigateUrl && looksLikeUrl(trimmed) && !trimmed.includes(' ') && !controller.staged.value.length) {
     navigateUrl(trimmed);
     draft.value = '';
     return;
