@@ -13,20 +13,6 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./add_observational_memory'),
   },
   {
-    name:        'exec',
-    description: 'Run any shell command inside a fully isolated sandboxed Linux VM with root access. This is ALSO how you invoke every `sulla <category>/<tool>` CLI command surfaced by browse_tools — pass the full `sulla ...` command string as the `command` arg (e.g. command: "sulla github/create_issue \'{\\"title\\":\\"bug\\"}\'"). Safe to install packages, compile code, delete files, or run any system command.',
-    category:    'meta',
-    schemaDef:   {
-      command: { type: 'string', optional: true, description: 'The exact shell command to run' },
-      cmd:     { type: 'string', optional: true, description: 'Alias for command' },
-      cwd:     { type: 'string', optional: true, description: 'Working directory inside the VM to run the command in' },
-      timeout: { type: 'number', optional: true, description: 'Timeout in milliseconds (default 120000). Use higher values for long-running installs.' },
-      stdin:   { type: 'string', optional: true, description: 'Optional stdin data to pipe into the command' },
-    },
-    operationTypes: ['execute'],
-    loader:         () => import('./exec'),
-  },
-  {
     name:        'remove_observational_memory',
     description: 'Remove a specific observational memory by its ID to delete it from long-term memory.',
     category:    'observation',
