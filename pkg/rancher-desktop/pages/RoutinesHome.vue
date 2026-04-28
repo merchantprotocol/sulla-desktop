@@ -376,6 +376,13 @@ const emit = defineEmits<{
 const activeTab = ref<Tab>(props.initialTab);
 const myWorkView = ref<MyWorkView>('active');
 
+// Watch for external navigation (e.g., clicking Library in ModeRail)
+watch(() => props.initialTab, (newTab) => {
+  if (newTab && newTab !== activeTab.value) {
+    activeTab.value = newTab;
+  }
+});
+
 // Composables = the controller layer. The view only reads their reactive
 // state and forwards user intents back to them or up to the parent.
 const routinesController = useRoutines();
