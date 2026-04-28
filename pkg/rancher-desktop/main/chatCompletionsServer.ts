@@ -1115,6 +1115,14 @@ export class ChatCompletionsServer {
         if (!tool) {
           tool = await toolRegistry.getTool(endpoint).catch(() => null);
         }
+        // Block tools that are native-agent-only — not callable via the sulla CLI subprocess
+        const CLI_BLOCKED_TOOLS = new Set(['meta_exec']);
+        if (tool && CLI_BLOCKED_TOOLS.has(prefixed)) {
+          return res.status(403).json({
+            success: false,
+            error:   `Tool "${ prefixed }" is not available via the sulla CLI. It can only be invoked by the agent natively.`,
+          });
+        }
         if (!tool) {
           // Fuzzy-suggest the closest real tool names. Score both candidate
           // keys (prefixed + bare) and dedupe — agents hallucinate CLI
