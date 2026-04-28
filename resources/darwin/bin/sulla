@@ -119,6 +119,11 @@ else
       # Has a slash — check if it's a tool category or a proxy call
       PART1="${FIRST%%/*}"
       PART2="${FIRST#*/}"
+      # Blocked from CLI — native agent tool only, prevents circular tool calling
+      if [ "$PART1/$PART2" = "meta/exec" ]; then
+        echo '{"error":"Blocked: do not call sulla CLI for this function. Preventing circular tool calling. Use the native exec tool instead."}' >&2
+        exit 1
+      fi
       if echo "$PART1" | grep -qE "^($TOOL_CATEGORIES)$"; then
         # Tool call: category/tool_name
         URL="/v1/tools/internal/${PART1}/${PART2}/call"
