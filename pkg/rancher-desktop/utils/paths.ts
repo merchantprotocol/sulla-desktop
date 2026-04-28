@@ -155,12 +155,6 @@ function getDefaultPaths(): Partial<Paths> {
       ? path.join(process.resourcesPath, 'resources')
       : path.join(process.cwd(), 'resources');
 
-    // Lima's ssh socket path appends /0/ssh.sock. + up to 16 chars (28 total).
-    // UNIX_PATH_MAX=104, so the lima home must be ≤76 chars. Fall back to ~/.rd/lima
-    // for users whose Library path is too long (e.g. long usernames).
-    const standardLima = path.join(appHome, 'lima');
-    const lima = standardLima.length <= 76 ? standardLima : path.join(home, '.rd', 'lima');
-
     return {
       appHome,
       altAppHome:                 path.join(home, '.rd'),
@@ -168,7 +162,7 @@ function getDefaultPaths(): Partial<Paths> {
       logs:                       path.join(home, 'Library', 'Logs', 'rancher-desktop'),
       cache:                      path.join(home, 'Library', 'Caches', 'rancher-desktop'),
       resources,
-      lima,
+      lima:                       path.join(home, '.rd', 'lima'),
       integration:                path.join(home, '.rd', 'bin'),
       deploymentProfileSystem:    '/Library/Managed Preferences',
       altDeploymentProfileSystem: '/Library/Preferences',
