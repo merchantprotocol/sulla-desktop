@@ -14,6 +14,7 @@
 
 import { BaseLanguageModel } from './BaseLanguageModel';
 import { modelDiscoveryService, type ModelInfo } from './ModelDiscoveryService';
+import { isTierName, resolveTierToModelId, type ModelTier } from './ModelTierResolver';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
 
@@ -145,45 +146,59 @@ class LLMRegistryImpl {
   }
 
   /**
-   * Heartbeat-aware service. Uses heartbeatModelId override (default: claude-3-5-haiku-20241022)
-   * so the background agent runs independently of the primary model.
+   * Heartbeat-aware service. Runs background agents at the 'fast' tier by default.
+   * heartbeatModelId can be a tier name ('fast'|'balanced'|'powerful') or an explicit
+   * model ID. Tier names are resolved dynamically from the provider's live model list.
    */
   async getHeartbeatLLM(): Promise<BaseLanguageModel> {
     const mps = tryGetModelProviderService();
     const heartbeatProvider = mps
       ? mps.getHeartbeatProvider()
       : await SullaSettingsModel.get('heartbeatProvider', 'default');
-    const heartbeatModelId = mps?.getHeartbeatModelId?.() || await SullaSettingsModel.get('heartbeatModelId', 'claude-3-5-haiku-20241022');
-    const modelOverride = heartbeatModelId || undefined;
 
-    if (heartbeatProvider === 'default') {
-      const primaryProvider = mps
-        ? mps.getPrimaryProvider()
-        : await SullaSettingsModel.get('primaryProvider', 'grok');
-      return this.getServiceByProvider(primaryProvider, modelOverride);
-    }
-    return this.getServiceByProvider(heartbeatProvider, modelOverride);
+    const effectiveProvider = heartbeatProvider === 'default'
+      ? (mps ? mps.getPrimaryProvider() : await SullaSettingsModel.get('primaryProvider', 'grok'))
+      : heartbeatProvider;
+
+    const heartbeatModelId = mps?.getHeartbeatModelId?.() || await SullaSettingsModel.get('heartbeatModelId', 'fast');
+    const modelOverride = isTierName(heartbeatModelId)
+      ? await resolveTierToModelId(effectiveProvider, heartbeatModelId as ModelTier)
+      : (heartbeatModelId || undefined);
+
+    return this.getServiceByProvider(effectiveProvider, modelOverride);
   }
 
   /**
    * Subconscious-aware service. Subconscious agents (memory-recall,
-   * observation, unstuck-research) and spawned sub-agents run here.
-   * Uses subconsciousModelId override (default: claude-3-5-haiku-20241022) for cheap,
-   * fast file searching so the primary orchestrator doesn't burn expensive tokens on recon.
+   * observation, unstuck-research) and spawned sub-agents run here at the
+   * 'fast' tier by default — cheap, quick recon so the orchestrator doesn't
+   * burn expensive tokens on file searching.
+   *
+   * subconsciousModelId can be a tier name ('fast'|'balanced'|'powerful') or
+   * an explicit model ID. Tier names are resolved dynamically from the
+   * provider's live model list.
    *
    * Resolution order:
    *   1. Explicit subconsciousProvider setting (if not 'default')
    *   2. Secondary provider (the existing fallback)
    *   3. Primary provider (last resort)
-   * Model override is applied at every level of the fallback chain.
    */
   async getSubconsciousLLM(): Promise<BaseLanguageModel> {
     const mps = tryGetModelProviderService();
     const subconsciousProvider = mps
       ? mps.getSubconsciousProvider()
       : await SullaSettingsModel.get('subconsciousProvider', 'default');
-    const subconsciousModelId = mps?.getSubconsciousModelId?.() || await SullaSettingsModel.get('subconsciousModelId', 'claude-3-5-haiku-20241022');
-    const modelOverride = subconsciousModelId || undefined;
+    const subconsciousModelId = mps?.getSubconsciousModelId?.() || await SullaSettingsModel.get('subconsciousModelId', 'fast');
+
+    const resolveModel = async(providerId: string) => isTierName(subconsciousModelId)
+      ? await resolveTierToModelId(providerId, subconsciousModelId as ModelTier)
+      : (subconsciousModelId || undefined);
+
+    const modelOverride = await resolveModel(
+      subconsciousProvider && subconsciousProvider !== 'default'
+        ? subconsciousProvider
+        : (mps ? mps.getPrimaryProvider() : await SullaSettingsModel.get('primaryProvider', 'grok')),
+    );
 
     const hasUsableModel = (svc: BaseLanguageModel | null | undefined): boolean => {
       try { return !!(svc?.getModel?.() || '').trim() } catch { return false }

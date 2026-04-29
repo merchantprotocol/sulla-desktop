@@ -29,7 +29,6 @@ const SUMMARIZER_TOOLS: string[] = [];
 const MEMORY_RECALL_TOOLS: string[] = [
   'file_search',           // Search ~/sulla/resources/ for skills & workflows
   'read_file',             // Read SKILL.md, workflow YAML, environment docs
-  'list_tabs',             // See what browser tabs are open
   'vault_list',            // List available integration service credentials
   'get_human_presence',    // Check if user is available
   'browse_tools',          // Search tool catalog by category or keyword
@@ -102,24 +101,20 @@ find it, and how to invoke it.
 Search \`~/sulla/resources/workflows/\` for workflows relevant to the request.
 For each match, read the YAML and include the workflow definition.
 
-### 4. Open Tabs
-Call \`list_tabs\` to see what the human currently has open in the browser.
-Only do this when the conversation references browser activity or current work.
-
-### 5. Credentials
+### 4. Credentials
 Call \`vault_list\` to check for credentials related to a specific service
 the human is asking about. Never list all credentials unprompted.
 
-### 6. Environment
+### 5. Environment
 Search \`~/sulla/integrations/environment/\` for environment docs relevant
 to the conversation. Read and include key details from matching files.
 
-### 7. Tools & Connected Accounts
+### 6. Tools & Connected Accounts
 Use \`browse_tools\` to search for tools relevant to this conversation.
 Only search when the human is asking about an integration or tool by name.
 For relevant tools, call \`vault_list\` to check for connected accounts.
 
-### 8. Identity & Goals
+### 7. Identity & Goals
 Search \`~/sulla/identity/\` when the request involves business strategy, outreach,
 content, personal preferences, goals, or anything where knowing WHO the human is
 would shape the answer.
@@ -130,7 +125,7 @@ would shape the answer.
 - \`~/sulla/identity/agent/identity.md\` — agent operating rules and decision framework
 Read only the files relevant to the request — don't load all of them by default.
 
-### 9. Platform Documentation
+### 8. Platform Documentation
 Search \`~/Sites/sulla/sulla-desktop/resources/sulla-docs/\` when the request
 involves a specific Sulla subsystem (workflows, functions, browser, GitHub, etc.)
 and the agent needs procedural detail beyond what browse_tools returns.
@@ -140,7 +135,7 @@ Only search here when the human is asking HOW to do something with Sulla's inter
 ## Output format
 
 Return your findings organized by section. Paste the actual content — skill
-instructions, workflow YAML, project statuses, tab URLs, credential names,
+instructions, workflow YAML, project statuses, credential names,
 environment details, tool entries. Cite file paths for everything you include.
 
 Skip any section you did not search or that had no relevant results.
@@ -552,7 +547,7 @@ export const GraphRegistry = {
       messages:               originalMessages,
       agentLabel:             'summarizer',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
-      parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       parentAbortSignal:    (parentState.metadata as any).options?.abort,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
@@ -618,7 +613,7 @@ export const GraphRegistry = {
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'memory-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
-      parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
     });
@@ -643,7 +638,7 @@ export const GraphRegistry = {
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
-      parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
     });
@@ -676,7 +671,7 @@ export const GraphRegistry = {
       parentAbortSignal:    (parentState.metadata as any).abortSignal || (parentState.metadata as any).options?.abort,
       agentLabel:           'unstuck-research',
       parentWsChannel:      String(parentState.metadata.wsChannel || ''),
-      parentConversationId: (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId: (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
     });
   },
 
@@ -706,7 +701,7 @@ export const GraphRegistry = {
       parentAbortSignal:    (parentState.metadata as any).abortSignal || (parentState.metadata as any).options?.abort,
       agentLabel:           'unstuck-relaxation',
       parentWsChannel:      String(parentState.metadata.wsChannel || ''),
-      parentConversationId: (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId: (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
     });
   },
 

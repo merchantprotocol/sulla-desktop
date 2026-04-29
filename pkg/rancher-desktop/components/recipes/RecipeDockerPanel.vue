@@ -91,7 +91,7 @@
         class="btn-open-app"
         type="button"
         :disabled="!isRunning || actionLoading"
-        :title="isRunning ? `Open http://localhost:${primaryPortNum}` : 'Start the recipe first'"
+        :title="isRunning ? `Open ${primaryScheme}://localhost:${primaryPortNum}` : 'Start the recipe first'"
         @click="openPrimaryApp"
       >
         <span class="open-label">Open App</span>
@@ -126,7 +126,7 @@
         :key="p"
         type="button"
         class="port-chip"
-        @click="openPort(extractPortNum(p))"
+        @click="openPort(p)"
       >
         :{{ extractPortNum(p) }}
       </button>
@@ -164,7 +164,7 @@
               :key="p"
               type="button"
               class="sc-port"
-              @click="openPort(extractPortNum(p))"
+              @click="openPort(p)"
             >
               :{{ extractPortNum(p) }}
             </button>
@@ -358,6 +358,15 @@ function extractPortNum(portStr: string): string {
   return hostPart.split(':').pop()?.split('/')[0] ?? portStr;
 }
 
+function extractContainerPort(portStr: string): string {
+  const afterArrow = (portStr.split('→')[1] ?? portStr.split('->')[1] ?? '').trim();
+  return afterArrow.split('/')[0];
+}
+
+function isHttpsPortStr(portStr: string): boolean {
+  return extractContainerPort(portStr) === '443';
+}
+
 const allPorts = computed((): string[] => {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -366,7 +375,7 @@ const allPorts = computed((): string[] => {
       const host = p.split('→')[0].split('->')[0];
       if (!seen.has(host)) {
         seen.add(host);
-        out.push(host);
+        out.push(p);
       }
     }
   }
@@ -376,15 +385,16 @@ const allPorts = computed((): string[] => {
 const primaryPort = computed((): string | null => {
   if (allPorts.value.length === 0) return null;
   for (const preferred of WEB_PORT_ORDER) {
-    const match = allPorts.value.find(p => extractPortNum(p) === preferred);
+    const match = allPorts.value.find(p => extractContainerPort(p) === preferred);
     if (match) return match;
   }
-  const nonDb = allPorts.value.filter(p => !DB_PORTS.has(extractPortNum(p)));
+  const nonDb = allPorts.value.filter(p => !DB_PORTS.has(extractContainerPort(p)));
   if (nonDb.length > 0) return nonDb[0];
   return allPorts.value[0];
 });
 
 const primaryPortNum = computed(() => (primaryPort.value ? extractPortNum(primaryPort.value) : ''));
+const primaryScheme = computed(() => (primaryPort.value && isHttpsPortStr(primaryPort.value) ? 'https' : 'http'));
 
 const secondaryPorts = computed(() => {
   if (!primaryPort.value) return allPorts.value;
@@ -416,16 +426,18 @@ async function refreshStatus() {
   }
 }
 
-function openPort(portNum: string) {
-  const p = portNum.split(':').pop() ?? portNum;
-  ipcRenderer.invoke('open-external', `http://localhost:${ p }`).catch(() => {
-    window.open(`http://localhost:${ p }`, '_blank');
+function openPort(portStr: string) {
+  const hostPort = extractPortNum(portStr);
+  const scheme = isHttpsPortStr(portStr) ? 'https' : 'http';
+  const url = `${ scheme }://localhost:${ hostPort }`;
+  ipcRenderer.invoke('open-external', url).catch(() => {
+    window.open(url, '_blank');
   });
 }
 
 function openPrimaryApp() {
   if (!primaryPort.value) return;
-  openPort(primaryPortNum.value);
+  openPort(primaryPort.value);
 }
 
 function onStartOutput(_: unknown, sid: string, chunk: string) {

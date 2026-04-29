@@ -70,7 +70,7 @@
               fill="none"
               stroke="currentColor"
               stroke-width="2"
-              class="h-4 w-4 text-green-400"
+              class="h-4 w-4 text-sky-400"
             >
               <path d="M20 6L9 17l-5-5" />
             </svg>

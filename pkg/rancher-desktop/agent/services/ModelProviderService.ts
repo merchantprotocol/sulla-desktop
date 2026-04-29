@@ -25,9 +25,9 @@ export interface ModelProviderState {
   /**
    * Provider used by subconscious agents (memory-recall, observation,
    * unstuck-research). Defaults to 'default', which means "fall back to the
-   * secondary provider". This keeps Claude Code — which runs its own
-   * autonomous tool loop and is ill-suited for quick recall tasks — off
-   * the subconscious path unless the user explicitly opts in.
+   * secondary provider". Any provider including 'claude-code' is valid here —
+   * setting it to 'claude-code' runs a full autonomous Claude Code subprocess
+   * for each subconscious turn.
    */
   subconsciousProvider: string;
   activeModelId:       string;
@@ -62,11 +62,11 @@ class ModelProviderService {
     primaryProvider:      'grok',
     secondaryProvider:    'grok',
     heartbeatProvider:    'default',
-    subconsciousProvider: 'claude-code',
+    subconsciousProvider: 'default',
     activeModelId:        '',
     modelMode:            'remote',
-    heartbeatModelId:     'claude-3-5-haiku-20241022',
-    subconsciousModelId:  'claude-3-5-haiku-20241022',
+    heartbeatModelId:     'claude-haiku-4-5-20251001',
+    subconsciousModelId:  'claude-haiku-4-5-20251001',
   };
 
   private initialized = false;
@@ -305,9 +305,9 @@ class ModelProviderService {
     this.state.primaryProvider = await SullaSettingsModel.get('primaryProvider', 'grok');
     this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'grok');
     this.state.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
-    this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'claude-code');
-    this.state.heartbeatModelId = await SullaSettingsModel.get('heartbeatModelId', 'claude-3-5-haiku-20241022');
-    this.state.subconsciousModelId = await SullaSettingsModel.get('subconsciousModelId', 'claude-3-5-haiku-20241022');
+    this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
+    this.state.heartbeatModelId = await SullaSettingsModel.get('heartbeatModelId', 'fast');
+    this.state.subconsciousModelId = await SullaSettingsModel.get('subconsciousModelId', 'fast');
     this.state.modelMode = 'remote';
 
     // Load active model from the provider's integration form values

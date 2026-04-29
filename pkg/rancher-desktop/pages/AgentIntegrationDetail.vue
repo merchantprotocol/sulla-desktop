@@ -202,7 +202,7 @@
                     <div class="flex items-center gap-2">
                       <div
                         class="h-2 w-2 rounded-full"
-                        :class="integration.connected ? 'bg-green-500' : 'bg-gray-300'"
+                        :class="integration.connected ? 'bg-sky-500' : 'bg-gray-300'"
                       />
                       <span class="text-xs text-slate-500 dark:text-slate-400">
                         {{ integration.connected
@@ -340,7 +340,7 @@
                   </p>
                   <div
                     v-if="oauthSuccess"
-                    class="flex items-center gap-2 rounded-md bg-green-50 px-3 py-2 text-xs text-green-700 dark:bg-green-900/20 dark:text-green-300"
+                    class="flex items-center gap-2 rounded-md bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:bg-sky-900/20 dark:text-sky-300"
                   >
                     <svg
                       class="h-4 w-4 flex-shrink-0"
