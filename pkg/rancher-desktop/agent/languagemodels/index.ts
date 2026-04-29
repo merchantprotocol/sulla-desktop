@@ -196,26 +196,26 @@ class LLMRegistryImpl {
       : await SullaSettingsModel.get('subconsciousProvider', 'default');
     const subconsciousModelId = mps?.getSubconsciousModelId?.() || await SullaSettingsModel.get('subconsciousModelId', 'fast');
 
-    const resolveModel = async(providerId: string) => isTierName(subconsciousModelId)
-      ? await resolveTierToModelId(providerId, subconsciousModelId as ModelTier)
-      : (subconsciousModelId || undefined);
+    const primaryProvider = mps
+      ? mps.getPrimaryProvider()
+      : await SullaSettingsModel.get('primaryProvider', 'grok');
 
-    const modelOverride = await resolveModel(
-      subconsciousProvider && subconsciousProvider !== 'default'
-        ? subconsciousProvider
-        : (mps ? mps.getPrimaryProvider() : await SullaSettingsModel.get('primaryProvider', 'grok')),
-    );
+    // 'default' routes to primary; explicit value uses that provider
+    const effectiveProvider = (subconsciousProvider && subconsciousProvider !== 'default')
+      ? subconsciousProvider
+      : primaryProvider;
+
+    const modelOverride = isTierName(subconsciousModelId)
+      ? await resolveTierToModelId(effectiveProvider, subconsciousModelId as ModelTier)
+      : (subconsciousModelId || undefined);
 
     const hasUsableModel = (svc: BaseLanguageModel | null | undefined): boolean => {
       try { return !!(svc?.getModel?.() || '').trim() } catch { return false }
     };
 
-    if (subconsciousProvider && subconsciousProvider !== 'default') {
-      const svc = await this.getServiceByProvider(subconsciousProvider, modelOverride);
-      if (hasUsableModel(svc)) return svc;
-    }
+    const svc = await this.getServiceByProvider(effectiveProvider, modelOverride);
+    if (hasUsableModel(svc)) return svc;
 
-    // 'default' → primary provider
     return this.getPrimaryService();
   }
 
