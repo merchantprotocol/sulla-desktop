@@ -342,6 +342,43 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
+  deepseek: {
+    id:          'deepseek',
+    sort:        8.5,
+    paid:        false,
+    beta:        true,
+    comingSoon:  false,
+    name:        'DeepSeek',
+    description: 'Connect to DeepSeek AI for DeepSeek V4 Flash and V4 Pro models. All models support tool use. 500M tokens/day free tier. Note: deepseek-chat and deepseek-reasoner deprecated 2026/07/24.',
+    category:    'AI Infrastructure',
+    icon:        'deepseek.svg',
+    connected:   false,
+    version:     '1.0.0',
+    lastUpdated: '2026-04-29 00:00:00',
+    developer:   'DeepSeek',
+    formGuide:   'Get your free API key from platform.deepseek.com. The free tier includes 500M tokens/day. Use deepseek-v4-flash (fast) or deepseek-v4-pro (most capable). Legacy names (deepseek-chat, deepseek-reasoner) deprecated 2026/07/24.',
+    properties:  [
+      {
+        key:         'api_key',
+        title:       'DeepSeek API Key',
+        hint:        'Get your key from platform.deepseek.com',
+        type:        'password',
+        required:    true,
+        placeholder: 'sk-...',
+      },
+      {
+        key:             'model',
+        title:           'Model',
+        hint:            'Select a DeepSeek model to use.',
+        type:            'select',
+        required:        true,
+        placeholder:     'Select a model...',
+        selectBoxId:     'deepseek_models',
+        selectDependsOn: ['api_key'],
+      },
+    ],
+  },
+
   enterprise_gateway: {
     id:          'enterprise_gateway',
     sort:        9,

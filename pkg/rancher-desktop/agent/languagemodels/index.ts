@@ -21,6 +21,7 @@ import { getIntegrationService } from '../services/IntegrationService';
 const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
   cohere:        async() => { const { getCohereService } = await import('./CohereService'); return getCohereService() },
+  deepseek:      async() => { const { getDeepSeekService } = await import('./DeepSeekService'); return getDeepSeekService() },
   grok:          async() => { const { getGrokService } = await import('./GrokService'); return getGrokService() },
   groq:          async() => { const { getGroqService } = await import('./GroqService'); return getGroqService() },
   openai:        async() => { const { getOpenAIService } = await import('./OpenAIService'); return getOpenAIService() },
