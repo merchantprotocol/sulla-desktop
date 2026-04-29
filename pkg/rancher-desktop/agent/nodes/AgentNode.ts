@@ -47,6 +47,17 @@ export class AgentNode extends BaseNode {
   async execute(state: BaseThreadState): Promise<NodeResult<BaseThreadState>> {
     const startTime = Date.now();
 
+    // Emit an immediate thinking heartbeat so the UI shows activity within
+    // milliseconds of the user sending a message — before enrichPrompt or
+    // subconscious agents (which can take 30+ seconds with Claude Code).
+    // Only on fresh turns, never inside workflows (subconscious already skips those).
+    const _isFirstEntry = ((state.metadata as any).consecutiveSameNode ?? 0) === 0;
+    const _inWorkflow   = (state.metadata as any).workflowNodeId || (state.metadata as any).activeWorkflow || (state.metadata as any).scopedWorkflowId;
+    if (_isFirstEntry && !_inWorkflow) {
+      await this.wsChatMessage(state, 'Thinking…', 'assistant', 'thinking');
+      await this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
+    }
+
     // ----------------------------------------------------------------
     // 1. BUILD SYSTEM PROMPT
     // ----------------------------------------------------------------

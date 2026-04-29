@@ -624,6 +624,7 @@ const viewCreated = ref(false);
 function looksLikeUrl(input: string): boolean {
   const trimmed = input.trim();
   if (/^https?:\/\//i.test(trimmed)) return true;
+  if (/^file:\/\//i.test(trimmed)) return true;
   if (/^localhost(:\d+)?/i.test(trimmed)) return true;
   if (/^127\.0\.0\.1(:\d+)?/i.test(trimmed)) return true;
   if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(\/|$)/.test(trimmed)) return true;
@@ -636,7 +637,7 @@ function normalizeUrl(input: string): string {
   if (!trimmed) {
     return 'about:blank';
   }
-  if (/^https?:\/\//i.test(trimmed)) {
+  if (/^https?:\/\//i.test(trimmed) || /^file:\/\//i.test(trimmed)) {
     return trimmed;
   }
   if (/^localhost(:\d+)?/i.test(trimmed) || /^127\.0\.0\.1(:\d+)?/i.test(trimmed)) {

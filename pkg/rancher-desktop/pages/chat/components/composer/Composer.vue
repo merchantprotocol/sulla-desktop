@@ -91,6 +91,7 @@ const navigateUrl = inject<((url: string) => void) | undefined>('chat:navigate-u
 
 function looksLikeUrl(input: string): boolean {
   if (/^https?:\/\//i.test(input)) return true;
+  if (/^file:\/\//i.test(input)) return true;
   if (/^localhost(:\d+)?(\/|$)/i.test(input)) return true;
   if (/^127\.0\.0\.1(:\d+)?(\/|$)/.test(input)) return true;
   // Match domain.tld and sub.domain.tld (including www.google.com)
@@ -218,8 +219,8 @@ function choosePopoverItem(idx: number): void {
 function onSend(text: string): void {
   const trimmed = text.trim();
 
-  // Only navigate if the input is a lone URL — no surrounding words.
-  if (navigateUrl && looksLikeUrl(trimmed) && !trimmed.includes(' ') && !controller.staged.value.length) {
+  // Only navigate on the very first message (empty history) — no surrounding words.
+  if (navigateUrl && looksLikeUrl(trimmed) && !trimmed.includes(' ') && !controller.staged.value.length && controller.messages.value.length === 0) {
     navigateUrl(trimmed);
     draft.value = '';
     return;

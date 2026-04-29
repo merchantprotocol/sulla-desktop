@@ -60,7 +60,16 @@ export default defineComponent({
       heartbeatDelayMinutes: 15,
       heartbeatPrompt:       '',
       heartbeatProvider:     'default' as string, // 'default' = use primary provider, or a specific provider id
-      subconsciousProvider:  'default' as string, // 'default' = use secondary/fallback provider, or a specific provider id
+      subconsciousProvider:  'default' as string, // 'default' = use primary provider, or a specific provider id
+
+      // Per-slot model overrides ('' = use provider's integration config default)
+      secondaryModelId:      '' as string,
+      subconsciousModelId:   '' as string,
+
+      // Models lists for each provider slot
+      primaryModels:         [] as { id: string; name: string }[],
+      secondaryModels:       [] as { id: string; name: string }[],
+      subconsciousModels:    [] as { id: string; name: string }[],
 
       // Soul prompt settings
       soulPrompt:      '',
@@ -172,6 +181,9 @@ export default defineComponent({
       this.viewingTab = mpsState.modelMode;
       this.primaryProvider = mpsState.primaryProvider;
       this.secondaryProvider = mpsState.secondaryProvider;
+      this.subconsciousProvider = mpsState.subconsciousProvider || 'default';
+      this.secondaryModelId = mpsState.secondaryModelId || '';
+      this.subconsciousModelId = mpsState.subconsciousModelId || '';
       this.activeModel = mpsState.activeModelId;
       this.pendingModel = mpsState.activeModelId;
 
@@ -217,6 +229,9 @@ export default defineComponent({
       await this.loadRemoteModels();
     }
 
+    // Load model lists for all three provider slots
+    await this.loadSlotModels();
+
     ipcRenderer.send('dialog/ready');
   },
 
@@ -232,6 +247,49 @@ export default defineComponent({
     async selectedProvider(newProvider: string, oldProvider: string) {
       if (newProvider && newProvider !== oldProvider && this.apiKey.trim()) {
         await this.loadRemoteModels();
+      }
+    },
+
+    // Watch secondary provider — persist via ModelProviderService + reload model list
+    async secondaryProvider(newProvider: string, oldProvider: string) {
+      if (!newProvider || newProvider === oldProvider) return;
+      try {
+        await ipcRenderer.invoke('model-provider:set-secondary', newProvider);
+        this.secondaryModels = await ipcRenderer.invoke('model-provider:get-models', newProvider);
+      } catch (err) {
+        console.error('[LM Settings] Failed to set secondary provider:', err);
+      }
+    },
+
+    // Watch secondary model override
+    async secondaryModelId(newId: string) {
+      try {
+        await ipcRenderer.invoke('model-provider:set-secondary-model', newId);
+      } catch (err) {
+        console.error('[LM Settings] Failed to set secondary model:', err);
+      }
+    },
+
+    // Watch subconscious provider — persist + reload model list
+    async subconsciousProvider(newProvider: string, oldProvider: string) {
+      if (newProvider === oldProvider) return;
+      try {
+        await ipcRenderer.invoke('model-provider:set-subconscious', newProvider);
+        const effectiveProvider = newProvider === 'default' ? this.primaryProvider : newProvider;
+        if (effectiveProvider) {
+          this.subconsciousModels = await ipcRenderer.invoke('model-provider:get-models', effectiveProvider);
+        }
+      } catch (err) {
+        console.error('[LM Settings] Failed to set subconscious provider:', err);
+      }
+    },
+
+    // Watch subconscious model override
+    async subconsciousModelId(newId: string) {
+      try {
+        await ipcRenderer.invoke('model-provider:set-subconscious-model', newId);
+      } catch (err) {
+        console.error('[LM Settings] Failed to set subconscious model:', err);
       }
     },
 
@@ -256,6 +314,11 @@ export default defineComponent({
         this.activeModel = newState.activeModelId;
         this.selectedProvider = newProvider;
         this.selectedRemoteModel = newState.activeModelId;
+
+        // Reload primary model list for the new provider
+        try {
+          this.primaryModels = await ipcRenderer.invoke('model-provider:get-models', newProvider) || [];
+        } catch { /* ignore */ }
       } catch (err) {
         console.error('[LM Settings] Failed to change primary provider via service:', err);
       }
@@ -751,14 +814,48 @@ export default defineComponent({
       window.close();
     },
 
+    async onPrimaryModelChange(event: Event) {
+      const modelId = (event.target as HTMLSelectElement).value;
+      try {
+        const newState = await ipcRenderer.invoke('model-provider:select-model', this.primaryProvider, modelId);
+        this.activeModel = newState.activeModelId;
+        this.selectedRemoteModel = newState.activeModelId;
+      } catch (err) {
+        console.error('[LM Settings] Failed to change primary model:', err);
+      }
+    },
+
+    // Load model lists for primary, secondary, and subconscious provider slots
+    async loadSlotModels() {
+      try {
+        const [primary, secondary] = await Promise.all([
+          ipcRenderer.invoke('model-provider:get-models', this.primaryProvider),
+          ipcRenderer.invoke('model-provider:get-models', this.secondaryProvider),
+        ]);
+        this.primaryModels = primary || [];
+        this.secondaryModels = secondary || [];
+
+        const effectiveSubProvider = this.subconsciousProvider === 'default'
+          ? this.primaryProvider
+          : this.subconsciousProvider;
+        if (effectiveSubProvider) {
+          this.subconsciousModels = await ipcRenderer.invoke('model-provider:get-models', effectiveSubProvider) || [];
+        }
+      } catch (err) {
+        console.warn('[LM Settings] Failed to load slot model lists:', err);
+      }
+    },
+
     // Handle state changes from ModelProviderService (source of truth)
     handleProviderStateChanged(
       _event: IpcRendererEvent,
-      state: { primaryProvider: string; activeModelId: string; modelMode: 'local' | 'remote' },
+      state: { primaryProvider: string; secondaryProvider: string; subconsciousProvider: string; activeModelId: string; modelMode: 'local' | 'remote'; secondaryModelId: string; subconsciousModelId: string },
     ) {
       this.activeModel = state.activeModelId;
       this.activeMode = state.modelMode;
       this.pendingModel = state.activeModelId;
+      if (state.secondaryModelId !== undefined) this.secondaryModelId = state.secondaryModelId;
+      if (state.subconsciousModelId !== undefined) this.subconsciousModelId = state.subconsciousModelId;
       if (state.modelMode === 'remote') {
         this.selectedProvider = state.primaryProvider;
         this.selectedRemoteModel = state.activeModelId;
@@ -863,6 +960,34 @@ export default defineComponent({
             </p>
           </div>
 
+          <!-- Primary Model -->
+          <div class="setting-group setting-group--indent">
+            <label class="setting-label">Primary Model</label>
+            <select
+              v-model="selectedRemoteModel"
+              class="model-select"
+              @change="onPrimaryModelChange"
+            >
+              <option
+                v-if="primaryModels.length === 0"
+                value=""
+                disabled
+              >
+                Loading models...
+              </option>
+              <option
+                v-for="model in primaryModels"
+                :key="model.id"
+                :value="model.id"
+              >
+                {{ model.name }}
+              </option>
+            </select>
+            <p class="setting-description">
+              The specific model version to use. "Auto" lets Claude Code pick the best model for each task.
+            </p>
+          </div>
+
           <!-- Secondary (Fallback) Provider -->
           <div class="setting-group">
             <label class="setting-label">Secondary Provider (Fallback)</label>
@@ -879,7 +1004,94 @@ export default defineComponent({
               </option>
             </select>
             <p class="setting-description">
-              If for some reason the primary provider is inaccessible, we will fall back to the secondary provider.
+              If the primary provider is inaccessible, the agent falls back to this provider.
+            </p>
+          </div>
+
+          <!-- Secondary Model -->
+          <div class="setting-group setting-group--indent">
+            <label class="setting-label">Secondary Model Override</label>
+            <select
+              v-model="secondaryModelId"
+              class="model-select"
+            >
+              <option value="">
+                Use provider default
+              </option>
+              <option value="fast">
+                fast (cheapest/fastest tier)
+              </option>
+              <option value="balanced">
+                balanced (mid tier)
+              </option>
+              <option value="powerful">
+                powerful (best tier)
+              </option>
+              <option
+                v-for="model in secondaryModels"
+                :key="model.id"
+                :value="model.id"
+              >
+                {{ model.name }}
+              </option>
+            </select>
+            <p class="setting-description">
+              Override which model the secondary provider uses. Leave blank to use the provider's configured default.
+            </p>
+          </div>
+
+          <!-- Subconscious Provider -->
+          <div class="setting-group">
+            <label class="setting-label">Subconscious Provider</label>
+            <select
+              v-model="subconsciousProvider"
+              class="model-select"
+            >
+              <option value="default">
+                Use Primary Provider
+              </option>
+              <option
+                v-for="provider in availableProviders"
+                :key="provider.id"
+                :value="provider.id"
+              >
+                {{ provider.name }}
+              </option>
+            </select>
+            <p class="setting-description">
+              Provider for background agents (memory recall, observation, unstuck research). "Use Primary Provider" mirrors your primary provider above.
+            </p>
+          </div>
+
+          <!-- Subconscious Model -->
+          <div class="setting-group setting-group--indent">
+            <label class="setting-label">Subconscious Model Override</label>
+            <select
+              v-model="subconsciousModelId"
+              class="model-select"
+            >
+              <option value="">
+                Use provider default
+              </option>
+              <option value="fast">
+                fast (cheapest/fastest tier)
+              </option>
+              <option value="balanced">
+                balanced (mid tier)
+              </option>
+              <option value="powerful">
+                powerful (best tier)
+              </option>
+              <option
+                v-for="model in subconsciousModels"
+                :key="model.id"
+                :value="model.id"
+              >
+                {{ model.name }}
+              </option>
+            </select>
+            <p class="setting-description">
+              Override the model used by subconscious agents. Tier names (fast/balanced/powerful) are resolved dynamically from the provider's live model list. Avoid slow autonomous models here — memory recall needs a fast chat model.
             </p>
           </div>
 
@@ -1024,7 +1236,7 @@ export default defineComponent({
               class="model-select"
             >
               <option value="default">
-                Use Fallback Provider
+                Use Primary Provider
               </option>
               <option
                 v-for="provider in availableProviders"
@@ -1035,7 +1247,7 @@ export default defineComponent({
               </option>
             </select>
             <p class="setting-description">
-              Subconscious agents (memory recall, observation, unstuck research) run in the background and need a fast tool-emitting chat model. "Use Fallback Provider" uses your secondary provider. Avoid autonomous models like Claude Code here — they over-invest in quick recall tasks.
+              Subconscious agents (memory recall, observation, unstuck research) run in the background and need a fast tool-emitting chat model. "Use Primary Provider" mirrors your main provider. Avoid autonomous models like Claude Code here — they over-invest in quick recall tasks.
             </p>
           </div>
         </div>
@@ -1750,6 +1962,13 @@ export default defineComponent({
 // Models tab styles
 .setting-group {
   margin-bottom: 1.5rem;
+
+  &.setting-group--indent {
+    margin-left: 1.25rem;
+    padding-left: 1rem;
+    border-left: 2px solid var(--border-muted, rgba(255,255,255,0.1));
+    margin-bottom: 1.25rem;
+  }
 
   .setting-label {
     display: block;
