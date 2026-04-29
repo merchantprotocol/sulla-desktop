@@ -1345,6 +1345,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
 
       this.wsChatMessage(state, message, 'assistant', 'thinking');
+
+      // When a sub-agent (e.g. memory-recall running Claude Code) has a parent
+      // channel, forward activity there too so the user sees the heartbeat
+      // ("Booting isolated environment…", "Claude binary starting", etc.)
+      // instead of a frozen UI during the 30-60s spawn gap.
+      const parentWsCh = (state.metadata as any).parentWsChannel;
+      if (parentWsCh && (state.metadata as any).isSubAgent) {
+        const parentTid = (state.metadata as any).parentConversationId || state.metadata.threadId;
+        const parentProxy = { ...state, metadata: { ...state.metadata, wsChannel: parentWsCh, threadId: parentTid } };
+        this.wsChatMessage(parentProxy as BaseThreadState, message, 'assistant', 'thinking');
+      }
     };
 
     // File patch channel — ClaudeCodeService calls this when its inner agent

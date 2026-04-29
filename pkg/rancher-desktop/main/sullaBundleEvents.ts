@@ -417,7 +417,9 @@ export function initSullaBundleEvents(): void {
     let slug:      string;
     if (kind === 'recipe') {
       if (!args.extensionId) throw new Error('bundles-publish(recipe): extensionId is required');
-      sourceDir = path.join(paths.extensionRoot, args.extensionId);
+      const { resolveSullaHomeDir } = require('@pkg/agent/utils/sullaPaths');
+      const home: string = resolveSullaHomeDir();
+      sourceDir = path.join(home, 'recipes', args.extensionId);
       slug      = args.extensionId;
     } else {
       if (!args.slug) throw new Error(`bundles-publish(${ kind }): slug is required`);

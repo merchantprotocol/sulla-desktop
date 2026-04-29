@@ -10,8 +10,8 @@
         :toggle-theme="toggleTheme"
       />
 
-      <div class="flex w-full flex-col flex-1 bg-white dark:bg-slate-900">
-        <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
+      <div class="flex w-full flex-col flex-1 accounts-page-wrap">
+        <div class="overflow-hidden accounts-hero">
           <div class="py-16 sm:px-2 lg:relative lg:px-0 lg:py-20">
             <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
               <div class="relative z-10 md:text-center lg:text-left">
@@ -45,7 +45,7 @@
                   </div>
                   <button
                     type="button"
-                    class="h-11 px-4 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors flex items-center gap-2"
+                    class="h-11 px-4 rounded-lg text-white text-sm font-medium transition-colors flex items-center gap-2 accounts-btn-primary"
                     @click="$emit('new-account')"
                   >
                     <svg
@@ -88,14 +88,14 @@
           </div>
         </div>
 
-        <div class="flex-1 overflow-auto bg-slate-50 dark:bg-slate-900">
+        <div class="flex-1 overflow-auto accounts-body">
           <div class="mx-auto max-w-7xl px-4 py-6">
             <!-- Vault status + Export / Import bar -->
             <div class="flex items-center gap-2 mb-4">
               <div
                 v-if="vaultSecure"
                 class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
-                style="background: rgba(56, 189, 248, 0.08); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.15);"
+                style="background: rgba(80, 150, 179, 0.08); color: #5096b3; border: 1px solid rgba(80, 150, 179, 0.2);"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -179,14 +179,14 @@
                         type="button"
                         class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
                         :class="activeFilter === null
-                          ? 'bg-sky-500/10 text-sky-600 font-medium dark:bg-sky-400/10 dark:text-sky-400'
+                          ? 'bg-[#5096b3]/10 text-[#5096b3] font-medium dark:bg-[#5096b3]/10 dark:text-[#6ab0cc]'
                           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'"
                         @click="activeFilter = null"
                       >
                         <span>All</span>
                         <span
                           class="text-xs tabular-nums"
-                          :class="activeFilter === null ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
+                          :class="activeFilter === null ? 'text-[#5096b3] dark:text-[#6ab0cc]' : 'text-slate-400 dark:text-slate-500'"
                         >{{ flatAccounts.length }}</span>
                       </button>
                     </li>
@@ -198,14 +198,14 @@
                         type="button"
                         class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
                         :class="activeFilter === type
-                          ? 'bg-sky-500/10 text-sky-600 font-medium dark:bg-sky-400/10 dark:text-sky-400'
+                          ? 'bg-[#5096b3]/10 text-[#5096b3] font-medium dark:bg-[#5096b3]/10 dark:text-[#6ab0cc]'
                           : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'"
                         @click="activeFilter = type"
                       >
                         <span>{{ integrationName(type) }}</span>
                         <span
                           class="text-xs tabular-nums"
-                          :class="activeFilter === type ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
+                          :class="activeFilter === type ? 'text-[#5096b3] dark:text-[#6ab0cc]' : 'text-slate-400 dark:text-slate-500'"
                         >{{ countByType(type) }}</span>
                       </button>
                     </li>
@@ -261,7 +261,7 @@
                         <span
                           class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
                           :class="account.connected
-                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                            ? 'bg-[#5096b3]/10 text-[#5096b3] dark:text-[#6ab0cc]'
                             : 'bg-slate-500/10 text-slate-500 dark:text-slate-400'"
                         >
                           {{ account.connected ? 'Connected' : 'Disconnected' }}
@@ -388,7 +388,7 @@ const typeBadgeLabel = (id: string): string => {
 };
 
 const typeBadgeClass = (id: string): string => {
-  if (id === 'website') return 'bg-sky-500/20 text-sky-600 dark:text-sky-400';
+  if (id === 'website') return 'bg-[#5096b3]/20 text-[#5096b3] dark:text-[#6ab0cc]';
   const catalog = integrationCatalog[id];
   if (!catalog) return 'bg-slate-500/20 text-slate-500';
 
@@ -396,7 +396,7 @@ const typeBadgeClass = (id: string): string => {
   if (category.includes('ai')) return 'bg-purple-500/20 text-purple-600 dark:text-purple-400';
   if (category.includes('communication')) return 'bg-blue-500/20 text-blue-600 dark:text-blue-400';
   if (category.includes('developer')) return 'bg-gray-500/20 text-gray-600 dark:text-gray-400';
-  return 'bg-sky-500/20 text-sky-600 dark:text-sky-400';
+  return 'bg-[#5096b3]/20 text-[#5096b3] dark:text-[#6ab0cc]';
 };
 
 const llmAccessBadgeClass = (level: string): string => {
@@ -404,7 +404,7 @@ const llmAccessBadgeClass = (level: string): string => {
   case 'none': return 'bg-red-500/10 text-red-600 dark:text-red-400';
   case 'metadata': return 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400';
   case 'autofill': return 'bg-blue-500/10 text-blue-600 dark:text-blue-400';
-  case 'full': return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400';
+  case 'full': return 'bg-[#5096b3]/10 text-[#5096b3] dark:text-[#6ab0cc]';
   default: return 'bg-slate-500/10 text-slate-500';
   }
 };
@@ -513,3 +513,25 @@ onMounted(async() => {
   loadAccounts();
 });
 </script>
+
+<style scoped>
+.accounts-page-wrap {
+  background: var(--bg-page);
+}
+
+.accounts-hero {
+  background: var(--bg-page);
+}
+
+.accounts-body {
+  background: var(--bg-page);
+}
+
+.accounts-btn-primary {
+  background: #5096b3;
+}
+
+.accounts-btn-primary:hover {
+  background: #4485a0;
+}
+</style>

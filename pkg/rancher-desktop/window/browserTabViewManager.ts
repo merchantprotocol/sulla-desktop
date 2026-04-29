@@ -98,14 +98,23 @@ export class BrowserTabViewManager {
       sess.cookies.flushStore().catch(() => {});
       sess.on('will-download', () => {}); // ensure session stays alive
 
-      // Override cookie persistence: when a session cookie is set, re-set it
-      // with a far-future expiry so it survives app restarts.
+      // Promote session cookies to persistent ONLY for localhost services.
+      // External sites (github.com, etc.) rely on persist:sulla-browser which
+      // already persists all cookies to disk — re-setting them causes CSRF
+      // validation failures because the immediate overwrite races with the
+      // site's own session management (e.g. GitHub authenticity_token check).
       sess.cookies.on('changed', (_event, cookie, _cause, removed) => {
         if (removed) return;
         // Only promote session cookies (those without an expiry)
         if (cookie.expirationDate) return;
 
-        const url = `http${ cookie.secure ? 's' : '' }://${ (cookie.domain || '').replace(/^\./, '') }${ cookie.path || '/' }`;
+        // Only promote localhost service cookies — persist: partition already
+        // handles persistence for external sites without us touching the cookie.
+        const rawDomain = (cookie.domain || '').replace(/^\./, '');
+        const isLocal = rawDomain === 'localhost' || rawDomain === '127.0.0.1' || rawDomain === '0.0.0.0';
+        if (!isLocal) return;
+
+        const url = `http${ cookie.secure ? 's' : '' }://${ rawDomain }${ cookie.path || '/' }`;
 
         sess.cookies.set({
           url,

@@ -29,7 +29,6 @@ const SUMMARIZER_TOOLS: string[] = [];
 const MEMORY_RECALL_TOOLS: string[] = [
   'file_search',           // Search ~/sulla/resources/ for skills & workflows
   'read_file',             // Read SKILL.md, workflow YAML, environment docs
-  'list_tabs',             // See what browser tabs are open
   'vault_list',            // List available integration service credentials
   'get_human_presence',    // Check if user is available
   'browse_tools',          // Search tool catalog by category or keyword
@@ -102,24 +101,20 @@ find it, and how to invoke it.
 Search \`~/sulla/resources/workflows/\` for workflows relevant to the request.
 For each match, read the YAML and include the workflow definition.
 
-### 4. Open Tabs
-Call \`list_tabs\` to see what the human currently has open in the browser.
-Only do this when the conversation references browser activity or current work.
-
-### 5. Credentials
+### 4. Credentials
 Call \`vault_list\` to check for credentials related to a specific service
 the human is asking about. Never list all credentials unprompted.
 
-### 6. Environment
+### 5. Environment
 Search \`~/sulla/integrations/environment/\` for environment docs relevant
 to the conversation. Read and include key details from matching files.
 
-### 7. Tools & Connected Accounts
+### 6. Tools & Connected Accounts
 Use \`browse_tools\` to search for tools relevant to this conversation.
 Only search when the human is asking about an integration or tool by name.
 For relevant tools, call \`vault_list\` to check for connected accounts.
 
-### 8. Identity & Goals
+### 7. Identity & Goals
 Search \`~/sulla/identity/\` when the request involves business strategy, outreach,
 content, personal preferences, goals, or anything where knowing WHO the human is
 would shape the answer.
@@ -130,21 +125,55 @@ would shape the answer.
 - \`~/sulla/identity/agent/identity.md\` — agent operating rules and decision framework
 Read only the files relevant to the request — don't load all of them by default.
 
-### 9. Platform Documentation
+### 8. Platform Documentation
 Search \`~/Sites/sulla/sulla-desktop/resources/sulla-docs/\` when the request
 involves a specific Sulla subsystem (workflows, functions, browser, GitHub, etc.)
 and the agent needs procedural detail beyond what browse_tools returns.
 Start with \`INDEX.md\` to find the right doc, then read only the relevant file.
 Only search here when the human is asking HOW to do something with Sulla's internals.
 
-## Output format
+## Output format — TRUSTED CITATIONS
 
-Return your findings organized by section. Paste the actual content — skill
-instructions, workflow YAML, project statuses, tab URLs, credential names,
-environment details, tool entries. Cite file paths for everything you include.
+You are doing the research so the primary agent doesn't have to. Return
+**structured citations** with enough detail that the primary agent can
+trust and use them directly — no re-validation needed.
 
-Skip any section you did not search or that had no relevant results.
-When done, finish immediately.`;
+For each relevant resource found, return:
+
+### [Resource Type]: [Name]
+**Source:** \`[full file path]\`
+**Relevance:** [Why this matters for the user's request — 1-2 sentences]
+**Key Details:**
+[The specific information the primary agent needs to act. Include actual
+values, steps, parameters, or instructions. Be detailed enough that the
+primary agent can execute without reading the source file.]
+
+### Example output:
+
+### Skill: git-workflow
+**Source:** \`~/sulla/resources/skills/git-workflow/SKILL.md\`
+**Relevance:** User is asking about pushing code — this skill defines the correct git tools and auth flow.
+**Key Details:**
+- Always use \`sulla github/git_push\` — never raw git push or SSH
+- Vault PAT injected automatically, no manual auth needed
+- For force push, use \`forceWithLease: true\` parameter
+- Trigger phrases: "push", "commit", "git", "deploy"
+
+### Project: sulla-social-agent
+**Source:** \`~/sulla/projects/sulla-social-agent/PROJECT.md\`
+**Relevance:** User mentioned this project by name — providing current status and blockers.
+**Key Details:**
+- Status: IN PROGRESS
+- Current task: Build conversations page with Messenger-style layout
+- Blocker: Session cut off before package.json and entry point created
+- Next step: Create package.json, .env.example, server.ts entry point
+
+### Rules:
+- Include ALL details the primary agent needs to act — this is trusted context.
+- If you read a file, extract the relevant parts — don't force a re-read.
+- Include specific values, parameters, steps, not vague summaries.
+- Skip sections with no relevant results.
+- If nothing is relevant, return nothing — finish immediately.`;
 
 // ── Heartbeat-specific memory recall ──────────────────────────────────────
 
@@ -163,28 +192,53 @@ Complete these steps in order, then finish:
 ### 1. Active Projects
 Search \`~/sulla/projects/\` for all project directories.
 For each project found, read its PROJECT.md (the PRD).
-Include the full PRD content for every active (non-archived) project.
+Extract: project name, status, current focus, specific blockers, and the exact
+next actionable step. Include enough detail that heartbeat can start working.
 
 ### 2. Project Briefing
-Read \`~/sulla/agents/sulla-desktop/projects.md\` — this is the daily planning briefing
-with the current mode (PROPOSE/FOCUS/UNBLOCK) and ranked project proposals.
-Include the full content.
+Read \`~/sulla/agents/sulla-desktop/projects.md\` — the daily planning briefing.
+Extract: current mode (PROPOSE/FOCUS/UNBLOCK), ranked priorities, and what
+the heartbeat should focus on right now.
 
 ### 3. Identity & Goals
 Read \`~/sulla/identity/agent/goals.md\` and \`~/sulla/identity/human/goals.md\`.
-Include any active goals or priorities.
+Extract: active goals that affect today's work decisions.
 
 ### 4. Human Presence
 Call \`get_human_presence\` to check if the human is available.
-Include their status.
+Include their status and whether heartbeat should proceed autonomously.
 
-## Output format
+## Output format — TRUSTED CITATIONS
 
-Return your findings organized by section. Paste the actual PRD content — the
-heartbeat agent needs the full details to decide what to work on.
-Cite file paths for everything you include.
+You are doing the research so the heartbeat agent can act immediately. Return
+**structured citations** with enough detail that the heartbeat can pick up
+work without re-reading the source files.
 
-If a section has no relevant results, skip it entirely.
+For each project, return:
+
+### Project: [Name]
+**Source:** \`[full file path]\`
+**Status:** [active/blocked/paused]
+**Current Focus:** [What specifically is being worked on — be concrete]
+**Blocker:** [Specific blocker if any, or "none"]
+**Next Actionable Step:** [The exact next thing to do]
+
+### Current Mode
+**Source:** \`~/sulla/agents/sulla-desktop/projects.md\`
+**Mode:** [PROPOSE/FOCUS/UNBLOCK]
+**Priority:** [What the heartbeat should focus on and why]
+
+### Human Presence
+**Status:** [available/away/busy]
+**Activity:** [What they're doing if known]
+**Implication:** [Whether heartbeat should proceed autonomously or wait]
+
+### Rules:
+- Include enough detail that heartbeat can start working immediately.
+- Extract specific tasks, blockers, and next steps from PRDs.
+- Don't dump full PRD content, but DO include actionable specifics.
+- Skip sections with no relevant results.
+
 When all steps are done, finish immediately.`;
 
 // ── Unstuck: Research Agent ───────────────────────────────────────────────
@@ -552,7 +606,7 @@ export const GraphRegistry = {
       messages:               originalMessages,
       agentLabel:             'summarizer',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
-      parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       parentAbortSignal:    (parentState.metadata as any).options?.abort,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
@@ -612,13 +666,13 @@ export const GraphRegistry = {
       systemPrompt:           isHeartbeat ? HEARTBEAT_RECALL_PROMPT : MEMORY_RECALL_PROMPT,
       tools:                  isHeartbeat ? HEARTBEAT_RECALL_TOOLS : MEMORY_RECALL_TOOLS,
       userMessage:            isHeartbeat
-        ? 'Load all active projects from ~/sulla/projects/, agent and human goals, and human presence. Return the full PRD content for each project.'
+        ? 'Load active projects, goals, and human presence. Return a structured summary — project names, statuses, blockers, and file paths. Do NOT paste full PRD contents.'
         : 'Read the latest user message in the conversation and decide what context is needed. Only search relevant categories — or return nothing if the message is casual.',
       messages:               [...parentState.messages],
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'memory-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
-      parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
     });
@@ -643,7 +697,7 @@ export const GraphRegistry = {
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
-      parentConversationId:   (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
     });
@@ -676,7 +730,7 @@ export const GraphRegistry = {
       parentAbortSignal:    (parentState.metadata as any).abortSignal || (parentState.metadata as any).options?.abort,
       agentLabel:           'unstuck-research',
       parentWsChannel:      String(parentState.metadata.wsChannel || ''),
-      parentConversationId: (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId: (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
     });
   },
 
@@ -706,7 +760,7 @@ export const GraphRegistry = {
       parentAbortSignal:    (parentState.metadata as any).abortSignal || (parentState.metadata as any).options?.abort,
       agentLabel:           'unstuck-relaxation',
       parentWsChannel:      String(parentState.metadata.wsChannel || ''),
-      parentConversationId: (parentState.metadata as any).conversationId || (parentState.metadata as any).threadId,
+      parentConversationId: (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
     });
   },
 

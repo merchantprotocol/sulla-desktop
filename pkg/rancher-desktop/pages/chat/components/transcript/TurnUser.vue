@@ -94,6 +94,9 @@ function onNewChat(): void {
 .body-wrap {
   position: relative;
 }
+.chat-body {
+  white-space: pre-wrap;
+}
 .chat-body.is-editing {
   opacity: 0.35;
   filter: blur(1px);

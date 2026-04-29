@@ -150,16 +150,49 @@ export class ClaudeCodeService extends BaseLanguageModel {
   // ─────────────────────────────────────────────────────────────
 
   /**
+   * Save a base64 image block to ~/sulla/workspaces/attachments/ so the
+   * Lima VM agent can read it via the Read tool. Returns the saved path.
+   */
+  private saveImageAttachment(b: any): string | null {
+    try {
+      const data: string | undefined = b?.source?.data;
+      const mediaType: string = b?.source?.media_type || 'image/png';
+      if (!data) return null;
+
+      const ext = mediaType.split('/')[1]?.split('+')[0] || 'png';
+      const dir = path.join(os.homedir(), 'sulla', 'workspaces', 'attachments');
+      fs.mkdirSync(dir, { recursive: true });
+
+      const filename = `attachment-${ Date.now() }.${ ext }`;
+      const filepath = path.join(dir, filename);
+      fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
+
+      log.info(`[ClaudeCodeService] Image saved: ${ filepath }`);
+      return filepath;
+    } catch (err) {
+      log.error('[ClaudeCodeService] Failed to save image attachment:', err);
+      return null;
+    }
+  }
+
+  /**
    * Extract the last user message. Walks backward to find the newest
    * user-role content, flattening string + content-block shapes. When a
    * --resume session exists, this is all we send — Claude already has
    * everything earlier in its session state.
+   *
+   * Image blocks are saved to disk and their paths injected into the text
+   * so the Claude Code agent can read them with the Read tool.
    */
   private extractLatestUserMessage(messages: ChatMessage[]): string {
     const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
       if (b.type === 'text' && typeof b.text === 'string') return b.text;
+      if (b.type === 'image' && b?.source?.type === 'base64') {
+        const savedPath = this.saveImageAttachment(b);
+        return savedPath ? `[Image attached — read it at: ${ savedPath }]` : '';
+      }
       if (b.type === 'tool_result') {
         if (typeof b.content === 'string') return b.content;
         if (Array.isArray(b.content)) return b.content.map(blockToText).filter(Boolean).join('\n');

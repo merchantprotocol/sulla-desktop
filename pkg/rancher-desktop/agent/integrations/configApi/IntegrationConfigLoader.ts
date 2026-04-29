@@ -107,10 +107,13 @@ export class IntegrationConfigLoader {
   private loadIntegration(name: string, dir: string): LoadedIntegration | null {
     const files = fs.readdirSync(dir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
 
-    // Find auth config file
+    // Find auth config file — skip silently if only integration.yaml (marketplace listing) is present
     const authFile = files.find(f => AUTH_FILE_PATTERN.test(f));
     if (!authFile) {
-      console.warn(`${ LOG } No auth config found in ${ dir } (expected *-auth.yaml)`);
+      const hasOperationalYaml = files.some(f => f !== 'integration.yaml' && f !== 'integration.yml');
+      if (hasOperationalYaml) {
+        console.warn(`${ LOG } No auth config found in ${ dir } (expected *-auth.yaml)`);
+      }
       return null;
     }
 

@@ -14,7 +14,7 @@
         <!-- Back to Vault button (only when embedded in vault flow) -->
         <div
           v-if="embedded"
-          class="flex items-center px-4 py-2 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700/50"
+          class="flex items-center px-4 py-2 integrations-back-bar border-b"
         >
           <button
             type="button"
@@ -35,12 +35,12 @@
           </button>
         </div>
 
-        <div class="overflow-hidden bg-slate-900 dark:-mt-19 dark:-mb-32 dark:pt-19 dark:pb-32">
+        <div class="overflow-hidden integrations-hero">
           <div class="py-16 sm:px-2 lg:relative lg:px-0 lg:py-20">
             <div class="mx-auto grid max-w-6xl md:grid-cols-2 items-center gap-x-8 gap-y-10 px-4 md:px-6 lg:px-8 xl:gap-x-16">
               <div class="relative z-10 md:text-center lg:text-left">
                 <div class="relative">
-                  <p class="inline bg-linear-to-r from-indigo-200 via-sky-400 to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
+                  <p class="inline bg-linear-to-r from-sky-200 via-sky-400 to-sky-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
                     Native Integrations.
                   </p>
                   <p class="mt-3 text-2xl tracking-tight text-slate-400">
@@ -64,7 +64,7 @@
                       v-model="search"
                       type="text"
                       placeholder="Search integrations"
-                      class="h-11 w-full rounded-lg bg-white/95 pr-4 pl-12 text-sm text-slate-900 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-300/50 dark:bg-slate-800/75 dark:text-slate-100 dark:ring-white/5 dark:ring-inset"
+                      class="h-11 w-full rounded-lg bg-white/95 pr-4 pl-12 text-sm text-slate-900 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-400/30 dark:text-slate-100 dark:ring-white/5 dark:ring-inset integrations-search-input"
                     >
                     <kbd class="pointer-events-none absolute top-1/2 right-3 hidden -translate-y-1/2 font-medium text-slate-400 md:block dark:text-slate-500">
                       <kbd class="font-sans">⌘</kbd><kbd class="font-sans">K</kbd>
@@ -76,7 +76,7 @@
           </div>
         </div>
 
-        <div class="flex-1 overflow-auto bg-slate-50 dark:bg-slate-900">
+        <div class="flex-1 overflow-auto integrations-body">
           <div class="mx-auto max-w-7xl px-4 py-6">
             <div class="flex gap-6">
               <!-- Category Sidebar -->
@@ -91,14 +91,14 @@
                         type="button"
                         class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
                         :class="activeCategory === null
-                          ? 'bg-sky-500/10 text-sky-600 font-medium dark:bg-sky-400/10 dark:text-sky-400'
-                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'"
+                          ? 'sidebar-item-active font-medium'
+                          : 'sidebar-item-inactive'"
                         @click="activeCategory = null"
                       >
                         <span>Popular</span>
                         <span
                           class="text-xs tabular-nums"
-                          :class="activeCategory === null ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
+                          :class="activeCategory === null ? 'sidebar-count-active' : 'sidebar-count-inactive'"
                         >{{ popularCount }}</span>
                       </button>
                     </li>
@@ -110,14 +110,14 @@
                         type="button"
                         class="flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-sm transition-colors"
                         :class="activeCategory === cat.name
-                          ? 'bg-sky-500/10 text-sky-600 font-medium dark:bg-sky-400/10 dark:text-sky-400'
-                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'"
+                          ? 'sidebar-item-active font-medium'
+                          : 'sidebar-item-inactive'"
                         @click="activeCategory = cat.name"
                       >
                         <span>{{ cat.name }}</span>
                         <span
                           class="text-xs tabular-nums"
-                          :class="activeCategory === cat.name ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
+                          :class="activeCategory === cat.name ? 'sidebar-count-active' : 'sidebar-count-inactive'"
                         >{{ cat.count }}</span>
                       </button>
                     </li>
@@ -171,11 +171,11 @@
                         <div
                           v-for="integration in group.integrations"
                           :key="integration.id"
-                          class="group relative overflow-hidden rounded-xl bg-white shadow-sm border border-gray-200 transition-all duration-200 hover:shadow-lg hover:border-gray-300 dark:bg-slate-800 dark:border-gray-700 dark:hover:border-gray-600"
+                          class="group relative overflow-hidden rounded-xl integration-card shadow-sm border transition-all duration-200 hover:shadow-lg"
                         >
                           <div class="p-6">
                             <div class="flex items-start justify-between mb-4">
-                              <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700">
+                              <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg integration-icon-bg">
                                 <img
                                   v-if="isImageIcon(integration.icon) && safeIconSrc(integration.icon!)"
                                   :src="safeIconSrc(integration.icon!)"
@@ -194,7 +194,7 @@
                                 >
                                   <div
                                     class="h-2 w-2 rounded-full"
-                                    :class="integration.connected ? 'bg-green-500' : 'bg-gray-300'"
+                                    :class="integration.connected ? 'bg-[#5096b3]' : 'bg-gray-300'"
                                   />
                                   <span class="text-xs text-slate-500 dark:text-slate-400">
                                     {{ integration.connected ? 'Connected' : 'Disconnected' }}
@@ -203,7 +203,7 @@
                                 <div class="flex gap-1 ml-2">
                                   <span
                                     v-if="integration.beta"
-                                    class="inline-flex items-center rounded-full bg-blue-500 text-white text-xs px-2 py-0.5 font-medium"
+                                    class="inline-flex items-center rounded-full integration-badge-beta text-xs px-2 py-0.5 font-medium"
                                   >
                                     BETA
                                   </span>
@@ -226,7 +226,7 @@
                             </p>
 
                             <div class="flex items-center justify-between">
-                              <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800 dark:bg-slate-700 dark:text-slate-200">
+                              <span class="inline-flex items-center rounded-full integration-tag px-2.5 py-0.5 text-xs font-medium">
                                 {{ integration.category }}
                               </span>
 
@@ -240,8 +240,8 @@
                                 type="button"
                                 class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
                                 :class="integration.comingSoon
-                                  ? 'bg-gray-500 text-white hover:bg-gray-600'
-                                  : 'bg-blue-600 text-white hover:bg-blue-700'"
+                                  ? 'integration-btn-disabled'
+                                  : 'integration-btn-primary'"
                                 @click="onIntegrationCardClick(integration)"
                               >
                                 {{ integration.comingSoon ? 'Read more' : 'Connect Now' }}
@@ -296,11 +296,11 @@
                     <div
                       v-for="integration in filteredIntegrations"
                       :key="integration.id"
-                      class="group relative overflow-hidden rounded-xl bg-white shadow-sm border border-gray-200 transition-all duration-200 hover:shadow-lg hover:border-gray-300 dark:bg-slate-800 dark:border-gray-700 dark:hover:border-gray-600"
+                      class="group relative overflow-hidden rounded-xl integration-card shadow-sm border transition-all duration-200 hover:shadow-lg"
                     >
                       <div class="p-6">
                         <div class="flex items-start justify-between mb-4">
-                          <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700">
+                          <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg integration-icon-bg">
                             <img
                               v-if="isImageIcon(integration.icon) && safeIconSrc(integration.icon!)"
                               :src="safeIconSrc(integration.icon!)"
@@ -319,7 +319,7 @@
                             >
                               <div
                                 class="h-2 w-2 rounded-full"
-                                :class="integration.connected ? 'bg-green-500' : 'bg-gray-300'"
+                                :class="integration.connected ? 'bg-[#5096b3]' : 'bg-gray-300'"
                               />
                               <span class="text-xs text-slate-500 dark:text-slate-400">
                                 {{ integration.connected ? 'Connected' : 'Disconnected' }}
@@ -328,7 +328,7 @@
                             <div class="flex gap-1 ml-2">
                               <span
                                 v-if="integration.beta"
-                                class="inline-flex items-center rounded-full bg-blue-500 text-white text-xs px-2 py-0.5 font-medium"
+                                class="inline-flex items-center rounded-full integration-badge-beta text-xs px-2 py-0.5 font-medium"
                               >
                                 BETA
                               </span>
@@ -351,7 +351,7 @@
                         </p>
 
                         <div class="flex items-center justify-between">
-                          <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-800 dark:bg-slate-700 dark:text-slate-200">
+                          <span class="inline-flex items-center rounded-full integration-tag px-2.5 py-0.5 text-xs font-medium">
                             {{ integration.category }}
                           </span>
 
@@ -365,8 +365,8 @@
                             type="button"
                             class="inline-flex items-center rounded-md px-3 py-1.5 text-xs font-medium transition-colors"
                             :class="integration.comingSoon
-                              ? 'bg-gray-500 text-white hover:bg-gray-600'
-                              : 'bg-blue-600 text-white hover:bg-blue-700'"
+                              ? 'integration-btn-disabled'
+                              : 'integration-btn-primary'"
                             @click="onIntegrationCardClick(integration)"
                           >
                             {{ integration.comingSoon ? 'Read more' : 'Connect Now' }}
@@ -725,16 +725,86 @@ onMounted(async() => {
 
 <style scoped>
 .page-root {
-  background: var(--bg-page, #ffffff);
-  color: var(--text-primary, #0d0d0d);
+  background: var(--bg);
+  color: var(--text);
 }
 
-.page-root.dark {
-  background: var(--bg-page, #0f172a);
-  color: var(--text-primary, #fafafa);
+.integrations-hero {
+  background: var(--bg-page, var(--bg));
 }
 
-/* Integration cards styles */
+.integrations-body {
+  background: var(--bg-page, var(--bg));
+}
+
+.integrations-back-bar {
+  background: var(--surface-1);
+  border-color: var(--border);
+}
+
+.integration-card {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+.integration-card:hover {
+  border-color: var(--border-muted);
+}
+
+.integration-icon-bg {
+  background: var(--surface-3);
+}
+
+.integration-tag {
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+
+.integration-btn-primary {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.integration-btn-primary:hover {
+  filter: brightness(1.15);
+}
+
+.integration-btn-disabled {
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+
+.sidebar-item-active {
+  background: var(--surface-2);
+  color: var(--accent-primary);
+}
+
+.sidebar-item-inactive {
+  color: var(--text-muted);
+}
+
+.sidebar-item-inactive:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.sidebar-count-active {
+  color: var(--accent-primary);
+}
+
+.sidebar-count-inactive {
+  color: var(--text-dim);
+}
+
+.integration-badge-beta {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+.integrations-search-input {
+  background: var(--surface-2);
+}
+
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;

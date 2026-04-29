@@ -77,7 +77,7 @@
               :key="hostPort"
               target="_blank"
               class="link"
-              @click="openUrl(hostPort)"
+              @click="openUrl(hostPort, containerPort)"
             >
               {{ hostPort }}:{{ containerPort }}
             </a>
@@ -97,7 +97,7 @@
                   :key="hostPort"
                   target="_blank"
                   class="link"
-                  @click="openUrl(hostPort)"
+                  @click="openUrl(hostPort, containerPort)"
                 >
                   {{ hostPort }}:{{ containerPort }}
                 </a>
@@ -501,9 +501,13 @@ export default defineComponent({
 
       return ports.length >= 3;
     },
-    openUrl(hostPort) {
+    openUrl(hostPort, containerPort = 80) {
+      const isHttps = containerPort === 443;
+
       if ([80, 443].includes(hostPort)) {
         ipcRenderer.send('open-url-in-app', hostPort === 80 ? `http://localhost` : `https://localhost`);
+      } else if (isHttps) {
+        ipcRenderer.send('open-url-in-app', `https://localhost:${ hostPort }`);
       } else {
         ipcRenderer.send('open-url-in-app', `http://localhost:${ hostPort }`);
       }

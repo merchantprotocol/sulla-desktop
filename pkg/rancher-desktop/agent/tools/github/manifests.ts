@@ -184,6 +184,7 @@ export const githubToolManifests: ToolManifest[] = [
       remote:       { type: 'string', optional: true, description: "Remote name (defaults to 'origin')" },
       branch:       { type: 'string', optional: true, description: 'Branch to push (defaults to current branch)' },
       tags:         { type: 'boolean', optional: true, description: 'Push all local tags instead of a branch (git push --tags)' },
+      force:        { type: 'boolean', optional: true, description: 'Force push using --force-with-lease (use after rebase)' },
     },
     operationTypes: ['execute'],
     loader:         () => import('./git_push'),
