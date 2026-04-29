@@ -193,9 +193,18 @@ class ModelProviderService {
   }
 
   async getModelsForProvider(providerId: string): Promise<ProviderModelInfo[]> {
-    // Claude Code picks its own model internally; return a single synthetic entry.
+    // Claude Code can accept an explicit --model flag; expose the known models
+    // plus an "auto" sentinel that omits the flag and lets the CLI choose.
     if (providerId === 'claude-code') {
-      return [{ id: 'claude-code', name: 'Claude Code (auto)', description: 'Claude-selected model, runs in sandboxed VM' }];
+      return [
+        { id: 'claude-code',        name: 'Auto (CLI default)',   description: 'Let Claude Code choose the best model automatically' },
+        { id: 'claude-opus-4-7',    name: 'Claude Opus 4.7',      description: 'Most capable — orchestration and complex tasks' },
+        { id: 'claude-opus-4-6',    name: 'Claude Opus 4.6',      description: 'Previous most capable model' },
+        { id: 'claude-sonnet-4-6',  name: 'Claude Sonnet 4.6',    description: 'Latest balanced model' },
+        { id: 'claude-opus-4-5',    name: 'Claude Opus 4.5',      description: 'Older capable model' },
+        { id: 'claude-sonnet-4-5',  name: 'Claude Sonnet 4.5',    description: 'Previous balanced model' },
+        { id: 'claude-haiku-4-5',   name: 'Claude Haiku 4.5',     description: 'Fast and lightweight' },
+      ];
     }
 
     const integration = integrations[providerId];

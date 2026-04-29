@@ -131,7 +131,12 @@ class LLMRegistryImpl {
     const providerId = mps
       ? mps.getPrimaryProvider()
       : await SullaSettingsModel.get('primaryProvider', 'grok');
-    return this.getServiceByProvider(providerId);
+    const activeModelId = mps
+      ? mps.getActiveModelId()
+      : await SullaSettingsModel.get('activeModelId', '');
+    // 'claude-code' sentinel means "auto" — omit the override so the CLI picks freely.
+    const modelOverride = activeModelId && activeModelId !== 'claude-code' ? activeModelId : undefined;
+    return this.getServiceByProvider(providerId, modelOverride);
   }
 
   /**

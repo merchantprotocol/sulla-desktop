@@ -961,16 +961,20 @@ export default defineComponent({
           </div>
 
           <!-- Primary Model -->
-          <div
-            v-if="primaryModels.length > 0"
-            class="setting-group setting-group--indent"
-          >
+          <div class="setting-group setting-group--indent">
             <label class="setting-label">Primary Model</label>
             <select
               v-model="selectedRemoteModel"
               class="model-select"
               @change="onPrimaryModelChange"
             >
+              <option
+                v-if="primaryModels.length === 0"
+                value=""
+                disabled
+              >
+                Loading models...
+              </option>
               <option
                 v-for="model in primaryModels"
                 :key="model.id"
@@ -980,7 +984,7 @@ export default defineComponent({
               </option>
             </select>
             <p class="setting-description">
-              The model used for primary agent tasks. This is managed by the provider's integration config.
+              The specific model version to use. "Auto" lets Claude Code pick the best model for each task.
             </p>
           </div>
 
