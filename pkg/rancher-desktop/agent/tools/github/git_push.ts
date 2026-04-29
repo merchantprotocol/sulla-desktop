@@ -11,7 +11,7 @@ export class GitPushWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { absolutePath, remote = 'origin', branch, tags = false } = input;
+    const { absolutePath, remote = 'origin', branch, tags = false, force = false } = input;
 
     try {
       // Get repo root
@@ -64,9 +64,10 @@ export class GitPushWorker extends BaseTool {
         }
       }
 
+      const forceFlag = force ? ' --force-with-lease' : '';
       const cmd = tags
-        ? `git -C "${ repoRoot }" push ${ pushTarget } --tags`
-        : `git -C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }`;
+        ? `git -C "${ repoRoot }" push ${ pushTarget } --tags${ forceFlag }`
+        : `git -C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }${ forceFlag }`;
       const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
 
       if (result.exitCode !== 0) {
