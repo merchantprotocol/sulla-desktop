@@ -69,7 +69,7 @@ class ModelProviderService {
     modelMode:            'remote',
     secondaryModelId:     '',
     heartbeatModelId:     'claude-haiku-4-5-20251001',
-    subconsciousModelId:  'claude-haiku-4-5-20251001',
+    subconsciousModelId:  'fast',
   };
 
   private initialized = false;

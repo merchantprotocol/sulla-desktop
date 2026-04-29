@@ -60,7 +60,7 @@ export default defineComponent({
       heartbeatDelayMinutes: 15,
       heartbeatPrompt:       '',
       heartbeatProvider:     'default' as string, // 'default' = use primary provider, or a specific provider id
-      subconsciousProvider:  'default' as string, // 'default' = use secondary/fallback provider, or a specific provider id
+      subconsciousProvider:  'default' as string, // 'default' = use primary provider, or a specific provider id
 
       // Per-slot model overrides ('' = use provider's integration config default)
       secondaryModelId:      '' as string,
@@ -275,7 +275,7 @@ export default defineComponent({
       if (newProvider === oldProvider) return;
       try {
         await ipcRenderer.invoke('model-provider:set-subconscious', newProvider);
-        const effectiveProvider = newProvider === 'default' ? this.secondaryProvider : newProvider;
+        const effectiveProvider = newProvider === 'default' ? this.primaryProvider : newProvider;
         if (effectiveProvider) {
           this.subconsciousModels = await ipcRenderer.invoke('model-provider:get-models', effectiveProvider);
         }
@@ -836,7 +836,7 @@ export default defineComponent({
         this.secondaryModels = secondary || [];
 
         const effectiveSubProvider = this.subconsciousProvider === 'default'
-          ? this.secondaryProvider
+          ? this.primaryProvider
           : this.subconsciousProvider;
         if (effectiveSubProvider) {
           this.subconsciousModels = await ipcRenderer.invoke('model-provider:get-models', effectiveSubProvider) || [];
@@ -1044,7 +1044,7 @@ export default defineComponent({
               class="model-select"
             >
               <option value="default">
-                Use Secondary Provider
+                Use Primary Provider
               </option>
               <option
                 v-for="provider in availableProviders"
@@ -1055,7 +1055,7 @@ export default defineComponent({
               </option>
             </select>
             <p class="setting-description">
-              Provider for background agents (memory recall, observation, unstuck research). "Use Secondary Provider" follows your secondary provider setting above.
+              Provider for background agents (memory recall, observation, unstuck research). "Use Primary Provider" mirrors your primary provider above.
             </p>
           </div>
 
@@ -1232,7 +1232,7 @@ export default defineComponent({
               class="model-select"
             >
               <option value="default">
-                Use Fallback Provider
+                Use Primary Provider
               </option>
               <option
                 v-for="provider in availableProviders"
@@ -1243,7 +1243,7 @@ export default defineComponent({
               </option>
             </select>
             <p class="setting-description">
-              Subconscious agents (memory recall, observation, unstuck research) run in the background and need a fast tool-emitting chat model. "Use Fallback Provider" uses your secondary provider. Avoid autonomous models like Claude Code here — they over-invest in quick recall tasks.
+              Subconscious agents (memory recall, observation, unstuck research) run in the background and need a fast tool-emitting chat model. "Use Primary Provider" mirrors your main provider. Avoid autonomous models like Claude Code here — they over-invest in quick recall tasks.
             </p>
           </div>
         </div>

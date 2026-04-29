@@ -187,8 +187,7 @@ class LLMRegistryImpl {
    *
    * Resolution order:
    *   1. Explicit subconsciousProvider setting (if not 'default')
-   *   2. Secondary provider (the existing fallback)
-   *   3. Primary provider (last resort)
+   *   2. Primary provider (default)
    */
   async getSubconsciousLLM(): Promise<BaseLanguageModel> {
     const mps = tryGetModelProviderService();
@@ -216,15 +215,7 @@ class LLMRegistryImpl {
       if (hasUsableModel(svc)) return svc;
     }
 
-    const secondaryProvider = mps
-      ? mps.getSecondaryProvider()
-      : await SullaSettingsModel.get('secondaryProvider', 'grok');
-
-    if (secondaryProvider) {
-      const svc = await this.getServiceByProvider(secondaryProvider, modelOverride);
-      if (hasUsableModel(svc)) return svc;
-    }
-
+    // 'default' → primary provider
     return this.getPrimaryService();
   }
 
