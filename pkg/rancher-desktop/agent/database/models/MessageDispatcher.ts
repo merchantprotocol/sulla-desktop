@@ -825,13 +825,12 @@ function handleChatImage(ctx: DispatchContext, agentId: string, msgThreadId: str
 function handleTransferData(ctx: DispatchContext, agentId: string, _threadId: string, msg: WebSocketMessage): void {
   const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : null;
   if (data === 'graph_execution_complete' || data?.content === 'graph_execution_complete') {
-    // Only react to completion events for the active thread — subconscious
-    // agents can complete on the same channel and must not poison main UI state.
-    // If activeThreadId is set we require an exact match; a missing eventThreadId
-    // (e.g. from a heartbeat/subconscious graph) must also be ignored.
+    // Only reject completion events when we're SURE they're from a different
+    // thread (both IDs present and mismatched). If either ID is missing, accept
+    // the completion to avoid leaving the UI stuck in "running" state.
     const eventThreadId = data?.thread_id || data?.threadId;
     const activeThreadId = ctx.getThreadId();
-    if (activeThreadId && (!eventThreadId || eventThreadId !== activeThreadId)) {
+    if (activeThreadId && eventThreadId && eventThreadId !== activeThreadId) {
       console.log('[MessageDispatcher] Ignoring graph_execution_complete: thread mismatch (event:', eventThreadId, ', active:', activeThreadId, ')');
       return;
     }
