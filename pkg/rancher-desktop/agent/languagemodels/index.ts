@@ -136,13 +136,20 @@ class LLMRegistryImpl {
 
   /**
    * Get the secondary (fallback) LLM service.
+   * Applies secondaryModelId override (supports tier names or explicit model IDs).
    */
   async getSecondaryService(): Promise<BaseLanguageModel> {
     const mps = tryGetModelProviderService();
     const providerId = mps
       ? mps.getSecondaryProvider()
       : await SullaSettingsModel.get('secondaryProvider', 'grok');
-    return this.getServiceByProvider(providerId);
+    const secondaryModelId = mps?.getSecondaryModelId?.() || await SullaSettingsModel.get('secondaryModelId', '');
+    const modelOverride = secondaryModelId
+      ? (isTierName(secondaryModelId)
+        ? await resolveTierToModelId(providerId, secondaryModelId as ModelTier)
+        : secondaryModelId)
+      : undefined;
+    return this.getServiceByProvider(providerId, modelOverride);
   }
 
   /**

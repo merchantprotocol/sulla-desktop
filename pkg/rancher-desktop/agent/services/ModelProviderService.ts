@@ -32,6 +32,8 @@ export interface ModelProviderState {
   subconsciousProvider: string;
   activeModelId:       string;
   modelMode:           'remote';
+  /** Model ID override for secondary/fallback LLM. '' = use provider's integration config. */
+  secondaryModelId:    string;
   /** Model ID override for heartbeat agent. '' = use provider's integration config. */
   heartbeatModelId:    string;
   /** Model ID override for subconscious agents and spawned sub-agents. '' = use provider's integration config. */
@@ -65,6 +67,7 @@ class ModelProviderService {
     subconsciousProvider: 'default',
     activeModelId:        '',
     modelMode:            'remote',
+    secondaryModelId:     '',
     heartbeatModelId:     'claude-haiku-4-5-20251001',
     subconsciousModelId:  'claude-haiku-4-5-20251001',
   };
@@ -129,6 +132,10 @@ class ModelProviderService {
 
   getSecondaryProvider(): string {
     return this.state.secondaryProvider;
+  }
+
+  getSecondaryModelId(): string {
+    return this.state.secondaryModelId;
   }
 
   getHeartbeatProvider(): string {
@@ -252,6 +259,12 @@ class ModelProviderService {
     await this.broadcastChange();
   }
 
+  async setSecondaryModelId(modelId: string): Promise<void> {
+    this.state.secondaryModelId = modelId;
+    await SullaSettingsModel.set('secondaryModelId', modelId, 'string');
+    await this.broadcastChange();
+  }
+
   async setHeartbeatProvider(providerId: string): Promise<void> {
     this.state.heartbeatProvider = providerId;
     await SullaSettingsModel.set('heartbeatProvider', providerId, 'string');
@@ -306,6 +319,7 @@ class ModelProviderService {
     this.state.secondaryProvider = await SullaSettingsModel.get('secondaryProvider', 'grok');
     this.state.heartbeatProvider = await SullaSettingsModel.get('heartbeatProvider', 'default');
     this.state.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
+    this.state.secondaryModelId = await SullaSettingsModel.get('secondaryModelId', '');
     this.state.heartbeatModelId = await SullaSettingsModel.get('heartbeatModelId', 'fast');
     this.state.subconsciousModelId = await SullaSettingsModel.get('subconsciousModelId', 'fast');
     this.state.modelMode = 'remote';
@@ -393,6 +407,10 @@ class ModelProviderService {
 
     ipcMain.handle('model-provider:set-secondary', async(_event: unknown, providerId: string) => {
       return this.setSecondaryProvider(providerId);
+    });
+
+    ipcMain.handle('model-provider:set-secondary-model', async(_event: unknown, modelId: string) => {
+      return this.setSecondaryModelId(modelId);
     });
 
     ipcMain.handle('model-provider:set-heartbeat', async(_event: unknown, providerId: string) => {
