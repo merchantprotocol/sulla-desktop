@@ -55,6 +55,7 @@ export class AgentNode extends BaseNode {
     const _inWorkflow   = (state.metadata as any).workflowNodeId || (state.metadata as any).activeWorkflow || (state.metadata as any).scopedWorkflowId;
     if (_isFirstEntry && !_inWorkflow) {
       await this.wsChatMessage(state, 'Thinking…', 'assistant', 'thinking');
+      await this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
     }
 
     // ----------------------------------------------------------------
