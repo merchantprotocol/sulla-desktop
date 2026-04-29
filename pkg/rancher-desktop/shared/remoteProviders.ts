@@ -125,4 +125,19 @@ export const REMOTE_PROVIDERS = [
       { id: 'command-r-plus', name: 'Command R+', description: 'Advanced reasoning - tool use, complex tasks' },
     ],
   },
+  {
+    id:          'deepseek',
+    name:        'DeepSeek',
+    description: 'DeepSeek V4 Flash and V4 Pro models - all support tool use - 500M tokens/day free tier',
+    baseUrl:     'https://api.deepseek.com',
+    signupUrl:   'https://platform.deepseek.com',
+    signupText:  'Get free API key from DeepSeek',
+    models:      [
+      { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', description: 'Fast, efficient model - tool use, coding, reasoning (non-thinking mode)' },
+      { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', description: 'Most capable model - tool use, complex reasoning, coding' },
+      // Legacy aliases (to be deprecated 2026/07/24)
+      { id: 'deepseek-chat', name: 'DeepSeek-Chat (Legacy)', description: 'TO BE DEPRECATED 2026/07/24 - Maps to V4 Flash non-thinking mode' },
+      { id: 'deepseek-reasoner', name: 'DeepSeek-R1 Reasoner (Legacy)', description: 'TO BE DEPRECATED 2026/07/24 - Maps to V4 Flash thinking mode' },
+    ],
+  },
 ];

@@ -64,11 +64,11 @@ class ModelProviderService {
     primaryProvider:      'grok',
     secondaryProvider:    'grok',
     heartbeatProvider:    'default',
-    subconsciousProvider: 'default',
+    subconsciousProvider: 'claude-code',
     activeModelId:        '',
     modelMode:            'remote',
     secondaryModelId:     '',
-    heartbeatModelId:     'claude-haiku-4-5-20251001',
+    heartbeatModelId:     'fast',
     subconsciousModelId:  'fast',
   };
 
