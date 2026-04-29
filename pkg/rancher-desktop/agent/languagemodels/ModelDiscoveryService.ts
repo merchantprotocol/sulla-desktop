@@ -2,7 +2,7 @@
  * Model Discovery Service
  *
  * Dynamically fetches available models from LLM provider APIs
- * Supports: OpenAI, Anthropic, Google, Grok, Kimi, NVIDIA, Alibaba, Cohere
+ * Supports: OpenAI, Anthropic, Google, Grok, Kimi, NVIDIA, Alibaba, Cohere, DeepSeek
  * Features: Caching, error handling, provider-specific endpoint mapping
  */
 
@@ -274,6 +274,32 @@ export class ModelDiscoveryService {
         { id: 'command-r-plus-08-2024', name: 'Command R+ (08-2024)', provider: 'cohere', description: 'Advanced reasoning - tool use, complex tasks' },
         { id: 'command-r-plus-04-2024', name: 'Command R+ (04-2024)', provider: 'cohere', description: 'Earlier Command R+ - tool use, reasoning' },
         { id: 'command-r-plus', name: 'Command R+', provider: 'cohere', description: 'Advanced reasoning - tool use, complex tasks' },
+      ],
+    },
+
+    deepseek: {
+      baseUrl:        'https://api.deepseek.com',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => {
+        // Parse DeepSeek models API response
+        if (data && Array.isArray(data.data)) {
+          return data.data.map((model: any) => ({
+            id:          model.id,
+            name:        model.id,
+            provider:    'deepseek',
+            description: model.description || `${ model.id } model`,
+          }));
+        }
+        return [];
+      },
+      // Fallback static list - DeepSeek V4 models
+      staticModels: [
+        { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'deepseek', description: 'Fast, efficient model - tool use, coding, reasoning (non-thinking mode)' },
+        { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'deepseek', description: 'Most capable model - tool use, complex reasoning, coding' },
+        // Legacy aliases (to be deprecated 2026/07/24)
+        { id: 'deepseek-chat', name: 'DeepSeek-Chat (Legacy)', provider: 'deepseek', description: 'TO BE DEPRECATED 2026/07/24 - Maps to V4 Flash non-thinking mode' },
+        { id: 'deepseek-reasoner', name: 'DeepSeek-R1 Reasoner (Legacy)', provider: 'deepseek', description: 'TO BE DEPRECATED 2026/07/24 - Maps to V4 Flash thinking mode' },
       ],
     },
   };
