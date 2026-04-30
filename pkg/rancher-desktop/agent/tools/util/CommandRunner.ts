@@ -32,7 +32,7 @@ export function shouldFallbackFromLimaShell(result: { stdout?: string; stderr?: 
 export function resolveLimaHome(options: CommandRunnerOptions): string {
   return options.limaHome ||
     process.env.LIMA_HOME ||
-    path.join(os.homedir(), 'Library/Application Support/rancher-desktop/lima');
+    path.join(os.homedir(), '.rd', 'lima');
 }
 
 export function resolveLimactlPath(options: CommandRunnerOptions): string {

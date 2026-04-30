@@ -61,7 +61,7 @@ describe('paths', () => {
     lima: {
       win32:  new Error('lima'),
       linux:  '%HOME%/.local/share/rancher-desktop/lima/',
-      darwin: '%HOME%/Library/Application Support/rancher-desktop/lima/',
+      darwin: '%HOME%/.rd/lima/',
     },
     integration: {
       win32:  new Error('integration'),

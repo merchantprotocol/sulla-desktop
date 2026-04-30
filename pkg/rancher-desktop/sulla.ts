@@ -68,7 +68,7 @@ const checkDockerMode = async() => {
       resourcesPath = process.resourcesPath;
     }
     const limactlPath = path.join(resourcesPath, 'darwin/lima/bin/limactl');
-    const output = execSync(`LIMA_HOME=~/Library/Application\\ Support/rancher-desktop/lima "${ limactlPath }" list --json`, { encoding: 'utf8' });
+    const output = execSync(`LIMA_HOME=~/.rd/lima "${ limactlPath }" list --json`, { encoding: 'utf8' });
     const instances = JSON.parse(output);
     const instance = instances.find((i: any) => i.name === '0');
     const vmRunning = instance?.status === 'Running';
