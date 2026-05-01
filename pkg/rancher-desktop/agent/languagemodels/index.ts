@@ -20,6 +20,7 @@ import { getIntegrationService } from '../services/IntegrationService';
 // Provider factory map — lazy-loaded to avoid circular imports
 const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
+  arcee:         async() => { const { getArceeService } = await import('./ArceeService'); return getArceeService() },
   cohere:        async() => { const { getCohereService } = await import('./CohereService'); return getCohereService() },
   deepseek:      async() => { const { getDeepSeekService } = await import('./DeepSeekService'); return getDeepSeekService() },
   grok:          async() => { const { getGrokService } = await import('./GrokService'); return getGrokService() },

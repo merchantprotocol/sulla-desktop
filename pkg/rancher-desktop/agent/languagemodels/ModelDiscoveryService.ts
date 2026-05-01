@@ -2,7 +2,7 @@
  * Model Discovery Service
  *
  * Dynamically fetches available models from LLM provider APIs
- * Supports: OpenAI, Anthropic, Google, Grok, Kimi, NVIDIA, Alibaba, Cohere, DeepSeek
+ * Supports: OpenAI, Anthropic, Google, Grok, Kimi, NVIDIA, Alibaba, Cohere, DeepSeek, Arcee
  * Features: Caching, error handling, provider-specific endpoint mapping
  */
 
@@ -300,6 +300,30 @@ export class ModelDiscoveryService {
         // Legacy aliases (to be deprecated 2026/07/24)
         { id: 'deepseek-chat', name: 'DeepSeek-Chat (Legacy)', provider: 'deepseek', description: 'TO BE DEPRECATED 2026/07/24 - Maps to V4 Flash non-thinking mode' },
         { id: 'deepseek-reasoner', name: 'DeepSeek-R1 Reasoner (Legacy)', provider: 'deepseek', description: 'TO BE DEPRECATED 2026/07/24 - Maps to V4 Flash thinking mode' },
+      ],
+    },
+
+    arcee: {
+      baseUrl:        'https://api.arcee.ai/api/v1',
+      modelsEndpoint: '/models',
+      authHeader:     'Authorization',
+      parseResponse:  (data) => {
+        // Parse Arcee models API response
+        if (data && Array.isArray(data.data)) {
+          return data.data.map((model: any) => ({
+            id:          model.id,
+            name:        model.id,
+            provider:    'arcee',
+            description: model.description || `${ model.id } model`,
+          }));
+        }
+        return [];
+      },
+      // Fallback static list - Arcee Trinity models
+      staticModels: [
+        { id: 'trinity-large-thinking', name: 'Trinity Large Thinking', provider: 'arcee', description: 'Arcee\'s most capable thinking model - tool use, reasoning, coding' },
+        { id: 'trinity-large-preview', name: 'Trinity Large Preview', provider: 'arcee', description: 'Preview of latest improvements - tool use, reasoning, coding' },
+        { id: 'trinity-mini', name: 'Trinity Mini', provider: 'arcee', description: 'Fast, efficient model - tool use, quick tasks' },
       ],
     },
   };

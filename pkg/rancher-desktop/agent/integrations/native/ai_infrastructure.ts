@@ -379,6 +379,43 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
+  arcee: {
+    id:          'arcee',
+    sort:        8.7,
+    paid:        false,
+    beta:        true,
+    comingSoon:  false,
+    name:        'Arcee AI',
+    description: 'Connect to Arcee AI for Trinity models: Large Thinking (most capable), Large Preview (latest improvements), and Mini (fast). All support tool use.',
+    category:    'AI Infrastructure',
+    icon:        'arcee.svg',
+    connected:   false,
+    version:     '1.0.0',
+    lastUpdated: '2026-04-29 00:00:00',
+    developer:   'Arcee',
+    formGuide:   'Get your API key from chat.arcee.ai/api/api-keys. Trinity Large Thinking is the most capable model for reasoning and coding. Trinity Mini is faster for quick tasks. All models support tool use.',
+    properties:  [
+      {
+        key:         'api_key',
+        title:       'Arcee API Key',
+        hint:        'Get your key from chat.arcee.ai/api/api-keys',
+        type:        'password',
+        required:    true,
+        placeholder: 'sk-...',
+      },
+      {
+        key:             'model',
+        title:           'Model',
+        hint:            'Select an Arcee model to use.',
+        type:            'select',
+        required:        true,
+        placeholder:     'Select a model...',
+        selectBoxId:     'arcee_models',
+        selectDependsOn: ['api_key'],
+      },
+    ],
+  },
+
   enterprise_gateway: {
     id:          'enterprise_gateway',
     sort:        9,
