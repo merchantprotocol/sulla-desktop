@@ -140,4 +140,17 @@ export const REMOTE_PROVIDERS = [
       { id: 'deepseek-reasoner', name: 'DeepSeek-R1 Reasoner (Legacy)', description: 'TO BE DEPRECATED 2026/07/24 - Maps to V4 Flash thinking mode' },
     ],
   },
+  {
+    id:          'arcee',
+    name:        'Arcee AI',
+    description: 'Trinity models - Large Thinking, Large Preview, Mini - all support tool use',
+    baseUrl:     'https://api.arcee.ai/api/v1',
+    signupUrl:   'https://chat.arcee.ai/api/api-keys',
+    signupText:  'Get API key from Arcee',
+    models:      [
+      { id: 'trinity-large-thinking', name: 'Trinity Large Thinking', description: 'Arcee\'s most capable thinking model - tool use, reasoning, coding' },
+      { id: 'trinity-large-preview', name: 'Trinity Large Preview', description: 'Preview of latest improvements - tool use, reasoning, coding' },
+      { id: 'trinity-mini', name: 'Trinity Mini', description: 'Fast, efficient model - tool use, quick tasks' },
+    ],
+  },
 ];

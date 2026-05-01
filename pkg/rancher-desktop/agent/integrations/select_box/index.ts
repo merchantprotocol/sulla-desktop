@@ -1,5 +1,6 @@
 import { AlibabaModels } from './AlibabaModels';
 import { AnthropicModels } from './AnthropicModels';
+import { ArceeModels } from './ArceeModels';
 import { CohereModels } from './CohereModels';
 import { CustomModels } from './CustomModels';
 import { DeepSeekModels } from './DeepSeekModels';
@@ -21,6 +22,7 @@ registerSelectBoxProvider(new OpenAIModels());
 registerSelectBoxProvider(new KimiModels());
 registerSelectBoxProvider(new AlibabaModels());
 registerSelectBoxProvider(new NvidiaModels());
+registerSelectBoxProvider(new ArceeModels());
 registerSelectBoxProvider(new CohereModels());
 registerSelectBoxProvider(new DeepSeekModels());
 registerSelectBoxProvider(new CustomModels());
