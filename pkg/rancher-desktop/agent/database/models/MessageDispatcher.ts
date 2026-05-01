@@ -114,7 +114,15 @@ export class MessageDispatcher {
 // ─── Handler: chat / assistant / system messages ────────────────
 
 function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, msg: WebSocketMessage): void {
-  ctx.graphRunning.value = true;
+  // Only the primary orchestration loop's emissions affect run-state.
+  // Subconscious agents emit on the `subconscious_message` wire type
+  // (see SubconsciousAgentNode + BaseNode.wsChatMessage's messageType
+  // param) — those still flow through this handler for bubble rendering
+  // but must not flip graphRunning, otherwise stop button visibility
+  // gets driven by background activity instead of the user's own loop.
+  if (msg.type !== 'subconscious_message') {
+    ctx.graphRunning.value = true;
+  }
 
   // user_message: already pushed locally before send — skip
   if (msg.type === 'user_message') return;
@@ -171,6 +179,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (m.kind === target && m.role === 'assistant' && !(m as any)._completed) {
+        if (target === 'thinking') {
+          console.log(`[ThinkingTrace] CLOSED thinking bubble id=${ m.id } reason=sentinel:${ kindRaw } (channel=${ agentId }, msgThreadId=${ msgThreadId }, bubbleThreadId=${ m.threadId })`);
+        }
         (ctx.messages[i] as any)._completed = true;
         break;
       }
@@ -408,6 +419,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       for (let i = ctx.messages.length - 1; i >= 0; i--) {
         const m = ctx.messages[i];
         if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+          console.log(`[ThinkingTrace] CLOSED thinking bubble id=${ m.id } reason=streaming_arrival (channel=${ agentId }, msgThreadId=${ msgThreadId }, bubbleThreadId=${ m.threadId })`);
           (ctx.messages[i] as any)._completed = true;
           break;
         }
@@ -443,6 +455,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        console.log(`[ThinkingTrace] CLOSED thinking bubble id=${ m.id } reason=thinking_complete_kind (channel=${ agentId }, msgThreadId=${ msgThreadId }, bubbleThreadId=${ m.threadId })`);
         (ctx.messages[i] as any)._completed = true;
         break;
       }
@@ -452,18 +465,38 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
   // ── Thinking: accumulate into a single growing bubble ──
   if (kind === 'thinking' && role === 'assistant') {
+    // Trace why bubble does/doesn't merge: walk back and report the FIRST
+    // thinking message we encounter (whether _completed or not), plus what
+    // got in the way if we couldn't merge.
     let existingIdx = -1;
+    let blockerKind: string | undefined;
+    let nearestThinkingId: string | undefined;
+    let nearestThinkingCompleted: boolean | undefined;
+    let nearestThinkingThreadId: string | undefined;
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
-      if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
-        existingIdx = i;
-        break;
+      if (m.kind === 'thinking' && m.role === 'assistant') {
+        if (nearestThinkingId === undefined) {
+          nearestThinkingId = m.id;
+          nearestThinkingCompleted = !!(m as any)._completed;
+          nearestThinkingThreadId = m.threadId;
+        }
+        if (!(m as any)._completed) {
+          existingIdx = i;
+          break;
+        }
+      } else if (existingIdx === -1 && blockerKind === undefined && m.role === 'assistant') {
+        // A non-thinking assistant message between us and the open bubble
+        // (or before the first thinking entirely) — note it for trace.
+        blockerKind = m.kind || 'text';
       }
     }
     if (existingIdx !== -1) {
       const existing = ctx.messages[existingIdx];
+      console.log(`[ThinkingTrace] dispatcher MERGED kind=thinking content="${ finalContent.slice(0, 60) }" → existing id=${ existing.id } (channel=${ agentId }, msgThreadId=${ msgThreadId }, existingThreadId=${ existing.threadId })`);
       ctx.messages[existingIdx] = { ...existing, content: capText(existing.content + '\n\n' + finalContent, MAX_THINKING_CHARS) };
     } else {
+      console.log(`[ThinkingTrace] dispatcher CREATED NEW kind=thinking content="${ finalContent.slice(0, 60) }" (channel=${ agentId }, msgThreadId=${ msgThreadId }, nearestThinkingId=${ nearestThinkingId ?? '(none)' }, nearestThinkingCompleted=${ nearestThinkingCompleted ?? '(n/a)' }, nearestThinkingThreadId=${ nearestThinkingThreadId ?? '(n/a)' }, blockerKind=${ blockerKind ?? '(none)' }, totalMessages=${ ctx.messages.length })`);
       ctx.messages.push({
         id:        `${ Date.now() }_ws_thinking`,
         channelId: agentId,
@@ -530,6 +563,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        console.log(`[ThinkingTrace] CLOSED thinking bubble id=${ m.id } reason=non_streaming_assistant_arrival (channel=${ agentId }, msgThreadId=${ msgThreadId }, bubbleThreadId=${ m.threadId }, incomingKind=${ kind ?? '(undef)' })`);
         (ctx.messages[i] as any)._completed = true;
         break;
       }
@@ -847,6 +881,7 @@ function handleTransferData(ctx: DispatchContext, agentId: string, _threadId: st
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        console.log(`[ThinkingTrace] CLOSED thinking bubble id=${ m.id } reason=graph_execution_complete (channel=${ agentId }, bubbleThreadId=${ m.threadId })`);
         (ctx.messages[i] as any)._completed = true;
       }
     }
@@ -1175,11 +1210,15 @@ function toolNameToVerb(toolName: string): string {
 export function createMessageDispatcher(): MessageDispatcher {
   const dispatcher = new MessageDispatcher();
 
-  // Chat messages (4 aliases)
+  // Chat messages (4 aliases for primary, 1 for subconscious)
+  // All flow through handleChatMessage for shared bubble-rendering logic.
+  // The handler gates run-state updates on msg.type so subconscious
+  // emissions don't flip graphRunning.
   dispatcher.register('chat_message', handleChatMessage);
   dispatcher.register('assistant_message', handleChatMessage);
   dispatcher.register('user_message', handleChatMessage);
   dispatcher.register('system_message', handleChatMessage);
+  dispatcher.register('subconscious_message', handleChatMessage);
 
   // Speak
   dispatcher.register('speak_dispatch', handleSpeakDispatch);

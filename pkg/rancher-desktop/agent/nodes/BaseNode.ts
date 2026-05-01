@@ -1335,6 +1335,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // is happening even if raw tokens are sparse (long Claude Code turns).
       state.metadata.lastActivityMs = Date.now();
 
+      const flushedStreaming = !isVoiceMode && contentBuffer.trim().length > 0;
       if (!isVoiceMode && contentBuffer.trim()) {
         const stripped = stripProtocolTagsStreaming(contentBuffer);
         if (stripped.trim()) {
@@ -1344,16 +1345,20 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         contentBuffer = '';
       }
 
+      const parentWsCh = (state.metadata as any).parentWsChannel;
+      const willForward = !!(parentWsCh && (state.metadata as any).isSubAgent);
+      console.log(`[ThinkingTrace] onActivity emit "${ message.slice(0, 80) }" (threadId=${ state.metadata.threadId }, wsChannel=${ state.metadata.wsChannel }, isSubAgent=${ (state.metadata as any).isSubAgent }, willForwardToParent=${ willForward }, flushedStreamingFirst=${ flushedStreaming })`);
+
       this.wsChatMessage(state, message, 'assistant', 'thinking');
 
       // When a sub-agent (e.g. memory-recall running Claude Code) has a parent
       // channel, forward activity there too so the user sees the heartbeat
       // ("Booting isolated environment…", "Claude binary starting", etc.)
       // instead of a frozen UI during the 30-60s spawn gap.
-      const parentWsCh = (state.metadata as any).parentWsChannel;
-      if (parentWsCh && (state.metadata as any).isSubAgent) {
+      if (willForward) {
         const parentTid = (state.metadata as any).parentConversationId || state.metadata.threadId;
         const parentProxy = { ...state, metadata: { ...state.metadata, wsChannel: parentWsCh, threadId: parentTid } };
+        console.log(`[ThinkingTrace] onActivity FORWARDING to parent (parentChannel=${ parentWsCh }, parentTid=${ parentTid })`);
         this.wsChatMessage(parentProxy as BaseThreadState, message, 'assistant', 'thinking');
       }
     };
@@ -1525,6 +1530,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     role:     'assistant' | 'system' = 'assistant',
     kind    = 'progress',
     extras?: Record<string, unknown>,
+    // Wire type. Defaults to 'assistant_message' (the primary orchestration
+    // path — flips graphRunning on the frontend). Subconscious agents
+    // (memory-recall, observation, etc.) pass 'subconscious_message' so
+    // their emissions render in the chat bubble but don't affect run-state.
+    messageType: 'assistant_message' | 'subconscious_message' = 'assistant_message',
   ): Promise<boolean> {
     // Defence-in-depth: strip agent protocol XML before any user-visible output
     content = stripProtocolTags(content);
@@ -1578,7 +1588,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Send via WebSocket. `extras` (e.g. `citations`) is merged into data
     // so structured fields ride alongside the usual content/role/kind.
     const sent = await this.dispatchToWebSocket(connectionId, {
-      type: 'assistant_message',
+      type: messageType,
       data: {
         content,
         role,

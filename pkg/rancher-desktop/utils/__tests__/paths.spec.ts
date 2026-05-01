@@ -63,6 +63,26 @@ describe('paths', () => {
       linux:  '%HOME%/.local/share/rancher-desktop/lima/',
       darwin: '%HOME%/.rd/lima/',
     },
+    limactl: {
+      win32:  new Error('limactl'),
+      linux:  path.join(RESOURCES_PATH, 'linux', 'lima', 'bin', 'limactl'),
+      darwin: path.join(RESOURCES_PATH, 'darwin', 'lima', 'bin', 'limactl'),
+    },
+    sullaHome: {
+      win32:  '%HOME%/sulla',
+      linux:  '%HOME%/sulla',
+      darwin: '%HOME%/sulla',
+    },
+    sullaConfig: {
+      win32:  '%HOME%/.sulla',
+      linux:  '%HOME%/.sulla',
+      darwin: '%HOME%/.sulla',
+    },
+    sullaDesktopCodebase: {
+      win32:  '%HOME%/.sulla-desktop',
+      linux:  '%HOME%/.sulla-desktop',
+      darwin: '%HOME%/.sulla-desktop',
+    },
     integration: {
       win32:  new Error('integration'),
       linux:  '%HOME%/.rd/bin',

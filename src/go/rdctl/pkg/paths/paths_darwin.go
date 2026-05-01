@@ -30,11 +30,15 @@ func GetPaths(getResourcesPathFuncs ...func() (string, error)) (*Paths, error) {
 	appHome := filepath.Join(homeDir, "Library", "Application Support", appName)
 	altAppHome := filepath.Join(homeDir, ".rd")
 	paths := Paths{
-		AppHome:                    appHome,
-		AltAppHome:                 altAppHome,
-		Config:                     filepath.Join(homeDir, "Library", "Preferences", appName),
-		Cache:                      filepath.Join(homeDir, "Library", "Caches", appName),
-		Lima:                       filepath.Join(appHome, "lima"),
+		AppHome:    appHome,
+		AltAppHome: altAppHome,
+		Config:     filepath.Join(homeDir, "Library", "Preferences", appName),
+		Cache:      filepath.Join(homeDir, "Library", "Caches", appName),
+		// ~/.rd/lima — must stay short to avoid UNIX_PATH_MAX (104 chars)
+		// for the Lima socket files (ssh.sock, ha.sock, etc.). The previous
+		// default (appHome/lima = ~/Library/Application Support/rancher-desktop/lima)
+		// blows past the limit on `limactl create` for users with long usernames.
+		Lima:                       filepath.Join(altAppHome, "lima"),
 		Integration:                filepath.Join(altAppHome, "bin"),
 		DeploymentProfileSystem:    "/Library/Managed Preferences",
 		AltDeploymentProfileSystem: "/Library/Preferences",

@@ -19,15 +19,12 @@ import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { createN8nService } from './agent/services/N8nService';
 import { getDatabaseManager } from '@pkg/agent/database/DatabaseManager';
 import { bootstrapSullaHome } from '@pkg/agent/utils/sullaPaths';
+import paths from '@pkg/utils/paths';
 import * as path from 'path';
-import { fileURLToPath } from 'node:url';
 import { app, webContents } from 'electron';
 import { execSync } from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 
-// Package is `"type": "module"` — __dirname isn't defined in ESM scope.
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 import { submitErrorReport } from '@pkg/main/errorReporter';
 import { getServiceLifecycleManager } from '@pkg/agent/services/ServiceLifecycleManager';
 import Logging from '@pkg/utils/logging';
@@ -59,16 +56,7 @@ const isDockerDaemonRunning = (): boolean => {
 
 const checkDockerMode = async() => {
   try {
-    let resourcesPath;
-    if (process.resourcesPath.includes('node_modules/electron')) {
-      // Development: use source resources
-      resourcesPath = path.join(MODULE_DIR, '../../../resources');
-    } else {
-      // Production: use app resources
-      resourcesPath = process.resourcesPath;
-    }
-    const limactlPath = path.join(resourcesPath, 'darwin/lima/bin/limactl');
-    const output = execSync(`LIMA_HOME=~/.rd/lima "${ limactlPath }" list --json`, { encoding: 'utf8' });
+    const output = execSync(`LIMA_HOME="${ paths.lima }" "${ paths.limactl }" list --json`, { encoding: 'utf8' });
     const instances = JSON.parse(output);
     const instance = instances.find((i: any) => i.name === '0');
     const vmRunning = instance?.status === 'Running';
@@ -379,9 +367,8 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   // Onboarding card visibility — each card hides only when its specific
   // onboarding-created file exists (NOT the general identity files that
   // daily workflows create independently).
-  const sullaHome = path.join(os.homedir(), 'sulla');
-  const goalsOnboardingPath = path.join(sullaHome, 'identity', 'onboarding.md');
-  const businessOnboardingPath = path.join(sullaHome, 'identity', 'business', 'onboarding.md');
+  const goalsOnboardingPath = path.join(paths.sullaHome, 'identity', 'onboarding.md');
+  const businessOnboardingPath = path.join(paths.sullaHome, 'identity', 'business', 'onboarding.md');
 
   ipcMainProxy.handle('check-goals-onboarding', async() => {
     return !fs.existsSync(goalsOnboardingPath);

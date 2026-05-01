@@ -13,8 +13,8 @@ import type { QualityPreset } from './useMediaSources';
 
 const { randomUUID } = require('crypto');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const paths = require('@pkg/utils/paths').default;
 
 interface StreamEntry {
   id:           string;
@@ -50,7 +50,7 @@ export interface CaptureEvent {
 }
 
 function getCapturesDir(): string {
-  return path.join(os.homedir(), 'sulla', 'captures');
+  return path.join(paths.sullaHome, 'captures');
 }
 
 /** Bitrate targets per quality preset (bits per second). */

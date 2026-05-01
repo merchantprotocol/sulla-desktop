@@ -1,7 +1,7 @@
 import { spawn } from 'child_process';
-import fs from 'fs';
 import os from 'os';
-import path from 'path';
+
+import paths from '@pkg/utils/paths';
 
 export interface CommandRunnerOptions {
   timeoutMs?:      number;
@@ -9,7 +9,9 @@ export interface CommandRunnerOptions {
   stdin?:          string;
   runInLimaShell?: boolean;
   limaInstance?:   string;
+  /** Override the canonical `paths.lima` (rarely needed; tests/migrations only). */
   limaHome?:       string;
+  /** Override the canonical `paths.limactl` (rarely needed; tests/migrations only). */
   limactlPath?:    string;
 }
 
@@ -29,38 +31,20 @@ export function shouldFallbackFromLimaShell(result: { stdout?: string; stderr?: 
   return /instance\s+"[^"]+"\s+does not exist/i.test(combinedOutput);
 }
 
-export function resolveLimaHome(options: CommandRunnerOptions): string {
-  return options.limaHome ||
-    process.env.LIMA_HOME ||
-    path.join(os.homedir(), '.rd', 'lima');
+/**
+ * Resolve LIMA_HOME. Prefers explicit override, then the canonical
+ * `paths.lima` (SSOT — see `pkg/rancher-desktop/utils/paths.ts`).
+ */
+export function resolveLimaHome(options: CommandRunnerOptions = {}): string {
+  return options.limaHome || process.env.LIMA_HOME || paths.lima;
 }
 
-export function resolveLimactlPath(options: CommandRunnerOptions): string {
-  if (options.limactlPath) {
-    return options.limactlPath;
-  }
-
-  if (process.env.LIMACTL_PATH) {
-    return process.env.LIMACTL_PATH;
-  }
-
-  const candidates = [
-    path.resolve(process.cwd(), 'resources/darwin/lima/bin/limactl'),
-    path.resolve(process.cwd(), 'pkg/rancher-desktop/resources/darwin/lima/bin/limactl'),
-  ];
-
-  if (typeof process.resourcesPath === 'string' && process.resourcesPath.length > 0) {
-    candidates.push(path.join(process.resourcesPath, 'darwin/lima/bin/limactl'));
-    candidates.push(path.join(process.resourcesPath, 'resources/darwin/lima/bin/limactl'));
-  }
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return 'resources/darwin/lima/bin/limactl';
+/**
+ * Resolve the limactl binary. Prefers explicit override, then the canonical
+ * `paths.limactl` (SSOT — see `pkg/rancher-desktop/utils/paths.ts`).
+ */
+export function resolveLimactlPath(options: CommandRunnerOptions = {}): string {
+  return options.limactlPath || process.env.LIMACTL_PATH || paths.limactl;
 }
 
 function executeSpawn(

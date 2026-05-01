@@ -19,9 +19,10 @@ import path from 'path';
 import crypto from 'crypto';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { getProductionVersion } from '@pkg/utils/version';
+import paths from '@pkg/utils/paths';
 
 const LEGACY_SETTING_KEY = 'sullaCloudDeviceId';
-const SULLA_DIR = path.join(os.homedir(), '.sulla');
+const SULLA_DIR = paths.sullaConfig;
 const DEVICE_ID_PATH = path.join(SULLA_DIR, 'device-id');
 
 export interface DesktopDeviceMetadata {

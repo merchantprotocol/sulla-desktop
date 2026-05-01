@@ -1,14 +1,13 @@
 import * as childProcess from 'child_process';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
-import { resolveLimactlPath, resolveLimaHome } from '../tools/util/CommandRunner';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import { redisClient } from '../database/RedisClient';
 import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
@@ -160,7 +159,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       if (!data) return null;
 
       const ext = mediaType.split('/')[1]?.split('+')[0] || 'png';
-      const dir = path.join(os.homedir(), 'sulla', 'workspaces', 'attachments');
+      const dir = path.join(paths.sullaHome, 'workspaces', 'attachments');
       fs.mkdirSync(dir, { recursive: true });
 
       const filename = `attachment-${ Date.now() }.${ ext }`;
@@ -426,8 +425,8 @@ Rules that apply on every turn:
 
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
 
-    const limactlPath = resolveLimactlPath({});
-    const limaHome = resolveLimaHome({});
+    const limactlPath = paths.limactl;
+    const limaHome = paths.lima;
 
     // POSIX single-quote escape. Single-quoted strings are literal in sh, so
     // no backtick/$VAR/! expansion can fire against untrusted text.
@@ -849,7 +848,7 @@ Rules that apply on every turn:
    * resolve back to the calling graph's BaseThreadState.
    */
   private writeMcpConfig(session: RegisteredSession): string {
-    const dir = path.join(os.homedir(), '.sulla', 'mcp-configs');
+    const dir = path.join(paths.sullaConfig, 'mcp-configs');
     fs.mkdirSync(dir, { recursive: true });
     const filePath = path.join(dir, `${ session.id }.json`);
     const payload = {

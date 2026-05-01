@@ -16,9 +16,9 @@
 
 import * as childProcess from 'child_process';
 
-import { resolveLimactlPath, resolveLimaHome } from '@pkg/agent/tools/util/CommandRunner';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 
 const console = Logging.background;
 
@@ -65,8 +65,8 @@ export function initClaudeCodeTestEvents(): void {
     prompt: string,
     sessionId?: string,
   ): Promise<TestResult> => {
-    const limactlPath = resolveLimactlPath({});
-    const limaHome = resolveLimaHome({});
+    const limactlPath = paths.limactl;
+    const limaHome = paths.lima;
 
     // Pull Claude auth token from settings so we can set CLAUDE_CODE_OAUTH_TOKEN
     // inside the VM. `limactl shell --` runs non-interactive so /etc/claude-env

@@ -23,16 +23,20 @@ import (
 	"runtime"
 )
 
-func SetupLimaHome(appHome string) error {
-	candidatePath := filepath.Join(appHome, "lima")
-	stat, err := os.Stat(candidatePath)
+// SetupLimaHome verifies the canonical Lima-home directory exists and exports
+// it as LIMA_HOME for any limactl child processes. Callers must pass the
+// canonical path (paths.Lima) — never re-derive `appHome/lima`, since the
+// macOS appHome is too long for UNIX_PATH_MAX socket limits with longer
+// usernames. paths.Lima is the SSOT — see pkg/paths/paths_darwin.go.
+func SetupLimaHome(limaHome string) error {
+	stat, err := os.Stat(limaHome)
 	if err != nil {
-		return fmt.Errorf("can't find the lima-home directory at %q: %w", candidatePath, err)
+		return fmt.Errorf("can't find the lima-home directory at %q: %w", limaHome, err)
 	}
 	if !stat.Mode().IsDir() {
-		return fmt.Errorf("path %q exists but isn't a directory", candidatePath)
+		return fmt.Errorf("path %q exists but isn't a directory", limaHome)
 	}
-	return os.Setenv("LIMA_HOME", candidatePath)
+	return os.Setenv("LIMA_HOME", limaHome)
 }
 
 func GetLimactlPath() (string, error) {

@@ -509,7 +509,8 @@ export default class LimaKubernetesBackend extends events.EventEmitter implement
     // The directory is created if it doesn't exist so the K8s hostPath mount
     // doesn't fail on a fresh install. Mirrors the pattern in backend/lima.ts's
     // prepareSullaComposeFile for the compose path.
-    const sullaFunctionsDir = path.join(os.homedir(), 'sulla', 'functions');
+    const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
+    const sullaFunctionsDir = resolveSullaFunctionsDir();
     await fs.promises.mkdir(sullaFunctionsDir, { recursive: true });
 
     const yamlContent = deployments
