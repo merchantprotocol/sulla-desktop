@@ -8,15 +8,15 @@
 import { ref, onUnmounted } from 'vue';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const paths = require('@pkg/utils/paths').default;
 
 const LOW_THRESHOLD = 1 * 1024 * 1024 * 1024; // 1 GB
 const CRITICAL_THRESHOLD = 200 * 1024 * 1024;  // 200 MB
 const CHECK_INTERVAL = 10_000; // 10 seconds
 
 function getCapturesDir(): string {
-  return path.join(os.homedir(), 'sulla', 'captures');
+  return path.join(paths.sullaHome, 'captures');
 }
 
 function formatGB(bytes: number): string {

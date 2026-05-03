@@ -28,17 +28,14 @@ import { initSullaRecipeDockerEvents } from './sullaRecipeDockerEvents';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
+import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
 
-/** Resolve the absolute sulla home directory */
+/** Resolve the absolute sulla home directory (delegates to canonical resolver) */
 function getSullaHomeDir(): string {
-  const os = require('os');
-  const envPath = String(process.env.SULLA_HOME_DIR || '').trim();
-  if (envPath && path.isAbsolute(envPath)) return envPath;
-  if (envPath) return path.resolve(envPath);
-  return path.join(os.homedir(), 'sulla');
+  return resolveSullaHomeDir();
 }
 
 /**

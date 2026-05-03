@@ -20,9 +20,9 @@ import * as pty from 'node-pty';
 
 import { withSuppressedConnectionStatus } from '@pkg/agent/integrations/integrationFlags';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
-import { resolveLimactlPath, resolveLimaHome } from '@pkg/agent/tools/util/CommandRunner';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 
 const CLAUDE_INTEGRATION_ID = 'claude-code';
 const CLAUDE_OAUTH_ACCOUNT_ID = 'oauth';
@@ -81,8 +81,8 @@ function killActiveSession() {
  */
 async function isVMRunning(): Promise<boolean> {
   return await new Promise((resolve) => {
-    const limactlPath = resolveLimactlPath({});
-    const limaHome = resolveLimaHome({});
+    const limactlPath = paths.limactl;
+    const limaHome = paths.lima;
     const proc = childProcess.spawn(limactlPath, ['list', '--json'], {
       env: { ...process.env, LIMA_HOME: limaHome },
     });
@@ -113,8 +113,8 @@ async function isVMRunning(): Promise<boolean> {
  * Claude Code can pick it up without a VM restart.
  */
 async function injectTokenIntoVM(token: string): Promise<void> {
-  const limactlPath = resolveLimactlPath({});
-  const limaHome = resolveLimaHome({});
+  const limactlPath = paths.limactl;
+  const limaHome = paths.lima;
   const env = { ...process.env, LIMA_HOME: limaHome };
 
   // Write the token to a temp file on the host, copy into VM, then move to /etc.
@@ -253,8 +253,8 @@ export function initClaudeOAuthEvents(): void {
     }
 
     return await new Promise((resolve) => {
-      const limactlPath = resolveLimactlPath({});
-      const limaHome = resolveLimaHome({});
+      const limactlPath = paths.limactl;
+      const limaHome = paths.lima;
 
       const ptyProcess = pty.spawn(limactlPath, ['shell', '0', '--', 'claude', 'setup-token'], {
         name: 'xterm-256color',

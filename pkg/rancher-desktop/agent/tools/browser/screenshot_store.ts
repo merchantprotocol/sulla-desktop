@@ -8,12 +8,13 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { nativeImage } from 'electron';
 
-const SCREENSHOT_DIR = path.join(os.homedir(), 'sulla', 'artifacts', 'screenshots');
+import paths from '@pkg/utils/paths';
+
+const SCREENSHOT_DIR = path.join(paths.sullaHome, 'artifacts', 'screenshots');
 const THUMBNAIL_WIDTH = 300;
 const THUMBNAIL_QUALITY = 60;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;

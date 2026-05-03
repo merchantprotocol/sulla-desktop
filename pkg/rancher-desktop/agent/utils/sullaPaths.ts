@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+
+import paths from '@pkg/utils/paths';
 
 const execFileAsync = promisify(execFile);
 
@@ -31,7 +32,7 @@ export function resolveSullaHomeDir(): string {
     return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
   }
 
-  return path.join(os.homedir(), 'sulla');
+  return paths.sullaHome;
 }
 
 export function resolveSullaResourcesDir(): string {
@@ -291,7 +292,7 @@ export function resolveSullaCodebaseDir(): string {
     return path.isAbsolute(envPath) ? envPath : path.resolve(envPath);
   }
 
-  return path.join(os.homedir(), '.sulla-desktop');
+  return paths.sullaDesktopCodebase;
 }
 
 export function resolveSullaConversationsDir(): string {

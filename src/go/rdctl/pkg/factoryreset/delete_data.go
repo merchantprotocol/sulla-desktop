@@ -97,7 +97,7 @@ func deleteLimaVM(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := directories.SetupLimaHome(appPaths.AppHome); err != nil {
+	if err := directories.SetupLimaHome(appPaths.Lima); err != nil {
 		return err
 	}
 	limactl, err := directories.GetLimactlPath()

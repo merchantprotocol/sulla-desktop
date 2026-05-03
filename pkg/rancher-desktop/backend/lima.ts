@@ -733,21 +733,22 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     //    and re-symlink into /usr/local/bin on every boot. The install
     //    itself then becomes a one-time cost instead of a per-boot cost.
     //
-    // 2. The `npm install` step invokes Node, and Node's early-boot
-    //    PlatformInit aborts when the kernel CRNG isn't seeded yet. That
-    //    assertion killed script 00000010 on every fresh boot. We don't
-    //    hit it after the persistent install already exists because the
-    //    fast path exits before ever calling Node — and on the first boot
-    //    we block briefly on /dev/random to let the CRNG seed before npm
-    //    runs.
+    // 2. Node aborts on PlatformInit when the kernel CRNG isn't seeded.
+    //    `dd if=/dev/random` releases as soon as the initial seed completes,
+    //    but on aarch64 vz that's not always enough — Node's `getrandom()`
+    //    can still return EAGAIN under more conservative entropy thresholds
+    //    and the process aborts before npm even parses argv. We retry the
+    //    install up to 5× with a 5-second backoff; even one extra cycle is
+    //    enough for the CRNG to settle.
     //
     // Net effect: a freshly-provisioned VM installs claude once to
-    // /mnt/data/npm-global; every subsequent reboot just recreates the
-    // /usr/local/bin symlink (cheap, doesn't touch Node) even if the
-    // provision script previously died mid-install.
+    // /mnt/data/npm-global, retrying through any first-boot CRNG flakiness;
+    // every subsequent reboot just recreates the /usr/local/bin symlink
+    // (cheap, doesn't touch Node) and exits. If a previous boot died
+    // mid-install leaving an empty $PREFIX, this script re-attempts the
+    // install on the next boot.
     const claudeCodeScript = [
       '#!/bin/sh',
-      'set -o errexit',
       'PREFIX=/mnt/data/npm-global',
       'LINK=/usr/local/bin/claude',
       '# Fast path: persistent install already exists — just recreate the',
@@ -759,10 +760,24 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       'fi',
       '# First boot (or after a persistent-prefix wipe): real install.',
       'mkdir -p "$PREFIX"',
-      '# Block until kernel CRNG is seeded (avoids Node PlatformInit abort).',
+      '# Block until the kernel CRNG is seeded so Node\'s PlatformInit',
+      '# doesn\'t abort on getrandom() EAGAIN.',
       'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
-      'npm install --prefix "$PREFIX" -g @anthropic-ai/claude-code',
-      'ln -sf "$PREFIX/bin/claude" "$LINK"',
+      '# Retry through any residual CRNG flakiness — 5 attempts × 5s backoff.',
+      '# Without this, a single Node abort during npm install leaves the VM',
+      '# permanently without claude until the user re-provisions.',
+      'attempt=0',
+      'while [ "$attempt" -lt 5 ]; do',
+      '  if npm install --prefix "$PREFIX" -g @anthropic-ai/claude-code; then',
+      '    ln -sf "$PREFIX/bin/claude" "$LINK"',
+      '    exit 0',
+      '  fi',
+      '  attempt=$((attempt + 1))',
+      '  echo "[claude-install] npm install attempt $attempt failed; retrying in 5s" >&2',
+      '  sleep 5',
+      'done',
+      'echo "[claude-install] failed after 5 attempts — claude CLI will not be available" >&2',
+      'exit 1',
     ].join('\n');
     config.provision = config.provision.filter((p: { script?: string }) => {
       return !(p.script ?? '').includes('@anthropic-ai/claude-code');
@@ -1959,6 +1974,66 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   }
 
   /**
+   * Ensure the `claude` CLI binary is installed in the VM.
+   *
+   * The lima.yaml provision script (see updateConfig) is the primary
+   * installer. This is a post-VM safety net for the cases where it
+   * failed — historically the npm install could abort during early-boot
+   * when Node's PlatformInit hits the kernel CRNG before it's seeded.
+   * When that happens, /mnt/data/npm-global is left empty, the OAuth
+   * flow exits with code 127, and clients are stuck.
+   *
+   * Fast path: if /usr/local/bin/claude is executable, return immediately.
+   * If only the persistent install at /mnt/data/npm-global/bin/claude
+   * exists (tmpfs wiped /usr/local on reboot), recreate the symlink.
+   * Otherwise, run the full npm install with retries.
+   *
+   * Idempotent and safe to call on every app start.
+   */
+  protected async ensureClaudeBinaryInstalled() {
+    try {
+      // Fast path: already on PATH.
+      await this.execCommand({ root: false }, 'sh', '-c', '[ -x /usr/local/bin/claude ]');
+      return;
+    } catch { /* fall through */ }
+
+    try {
+      // Persistent install exists but /usr/local symlink is missing — restore it.
+      await this.execCommand({ root: false }, 'sh', '-c', '[ -x /mnt/data/npm-global/bin/claude ]');
+      await this.execCommand({ root: true }, 'ln', '-sf', '/mnt/data/npm-global/bin/claude', '/usr/local/bin/claude');
+      console.log('[Lima] claude symlink restored from persistent install');
+      return;
+    } catch { /* fall through */ }
+
+    console.log('[Lima] claude CLI missing — running npm install (1-2 min)');
+    const installScript = [
+      'PREFIX=/mnt/data/npm-global',
+      'LINK=/usr/local/bin/claude',
+      'mkdir -p "$PREFIX"',
+      // CRNG should be seeded by now (the VM has been up long enough for
+      // services to start), but block briefly to be safe.
+      'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
+      'attempt=0',
+      'while [ "$attempt" -lt 5 ]; do',
+      '  if npm install --prefix "$PREFIX" -g @anthropic-ai/claude-code; then',
+      '    ln -sf "$PREFIX/bin/claude" "$LINK"',
+      '    exit 0',
+      '  fi',
+      '  attempt=$((attempt + 1))',
+      '  echo "[claude-install] npm install attempt $attempt failed; retrying in 5s" >&2',
+      '  sleep 5',
+      'done',
+      'exit 1',
+    ].join('\n');
+    try {
+      await this.execCommand({ root: true }, 'sh', '-c', installScript);
+      console.log('[Lima] claude CLI installed successfully');
+    } catch (err) {
+      console.warn('[Lima] Failed to install claude CLI — OAuth flow will not work until this is resolved:', err);
+    }
+  }
+
+  /**
    * Install Claude Code auth credentials into the VM.
    *
    * Supports two auth modes:
@@ -2245,6 +2320,29 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     }
 
     await this.progressTracker.action('Starting virtual machine', 100, async() => {
+      // First-boot inside the VM runs apk-add (python3, nodejs, npm, etc.)
+      // and `npm install -g @anthropic-ai/claude-code` — together ~3-4 min.
+      // `limactl start` is opaque from the host, so decompose the wait into
+      // time-based phases. Each phase is a parallel progressTracker.action
+      // that becomes the visible label at its scheduled time (equal
+      // priority — last-pushed wins). All phases resolve together when
+      // limactl start returns. Subsequent boots skip the slow npm install
+      // and complete in ~30s; the late-phase labels just won't fire.
+      let resolveAllPhases: () => void = () => {};
+      const allPhasesDone = new Promise<void>((r) => { resolveAllPhases = r; });
+      const phases: { afterMs: number; label: string }[] = [
+        { afterMs:  20_000, label: 'Booting virtual machine — initializing system' },
+        { afterMs:  55_000, label: 'Booting virtual machine — installing system packages (Python, Node.js, etc.)' },
+        { afterMs: 130_000, label: 'Booting virtual machine — installing Claude Code via npm (slowest step on first boot)' },
+        { afterMs: 220_000, label: 'Booting virtual machine — finishing first-boot setup' },
+      ];
+      const phaseTimers: NodeJS.Timeout[] = [];
+      for (const { afterMs, label } of phases) {
+        phaseTimers.push(setTimeout(() => {
+          this.progressTracker.action(label, 100, allPhasesDone).catch(() => { /* noop */ });
+        }, afterMs));
+      }
+
       try {
         const env: NodeJS.ProcessEnv = {};
 
@@ -2262,6 +2360,9 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           console.log('[startup-perf] boot-perf.log not found in VM');
         }
       } finally {
+        phaseTimers.forEach(clearTimeout);
+        resolveAllPhases();
+
         // Symlink the logs (especially if start failed) so the users can find them
         const machineDir = path.join(paths.lima, MACHINE_NAME);
 
@@ -2451,6 +2552,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
           this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
           this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli()),
+          this.progressTracker.action('Verifying Claude Code CLI install', 50, this.ensureClaudeBinaryInstalled()),
           this.progressTracker.action('Configuring Claude Code', 50, this.installClaudeCode()),
           this.progressTracker.action('Installing threat-scanning proxy', 50, this.installThreatProxy()),
         ];
@@ -2690,7 +2792,8 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     // Resolve the user's functions directory for runtime containers (read-only bind mount).
     // Lima mounts the host home directory into the VM at the same path, so the host path
     // is valid for Docker bind mounts inside the VM.
-    const sullaFunctionsDir = path.join(os.homedir(), 'sulla', 'functions');
+    const { resolveSullaFunctionsDir } = await import('@pkg/agent/utils/sullaPaths');
+    const sullaFunctionsDir = resolveSullaFunctionsDir();
 
     await fs.promises.mkdir(sullaFunctionsDir, { recursive: true });
 

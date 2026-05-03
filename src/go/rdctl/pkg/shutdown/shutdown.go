@@ -70,7 +70,7 @@ func FinishShutdown(ctx context.Context, waitForShutdown bool, initiatingCommand
 	paths, err := p.GetPaths()
 	if err != nil {
 		logrus.Errorf("Ignoring error trying to get application paths: %s", err)
-	} else if err = directories.SetupLimaHome(paths.AppHome); err != nil {
+	} else if err = directories.SetupLimaHome(paths.Lima); err != nil {
 		logrus.Errorf("Ignoring error trying to get lima directory: %s", err)
 	} else {
 		limaCtlPath, err = directories.GetLimactlPath()

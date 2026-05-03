@@ -1,5 +1,20 @@
 /**
- * This module describes the various paths we use to store state & data.
+ * Single source of truth for filesystem paths used by Sulla Desktop.
+ *
+ * SSOT RULE: All host filesystem paths must originate here. Do not call
+ * `os.homedir()` outside this file (and `agent/utils/sullaPaths.ts`, which
+ * is the env-override layer that delegates to this module). Exceptions:
+ *   - Expanding a `~` typed by the user (read_file, write_file, meta_search).
+ *   - External-tool conventions owned by other vendors (`~/.docker`, `~/.kube`).
+ *
+ * Resolution order for the SSOT itself:
+ *   1. `rdctl paths` Go binary (canonical — see `src/go/rdctl/pkg/directories/`).
+ *   2. `getDefaultPaths()` TypeScript fallback for the cold-path / renderer case.
+ *   3. `augmentPaths()` fills derived fields (`limactl`, `sullaHome`, `sullaConfig`)
+ *      that aren't yet returned by rdctl.
+ *
+ * If a new path needs to be added, add it here and (ideally) to the Go
+ * directories package — never re-derive in a consumer.
  */
 import { spawnSync } from 'child_process';
 import fs from 'fs';
@@ -23,6 +38,14 @@ export interface Paths {
   resources:                  string;
   /** Directory holding Lima state (Unix-specific). */
   lima:                       string;
+  /** Full path to the bundled `limactl` binary (Unix-specific). */
+  limactl:                    string;
+  /** Sulla user home — `~/sulla`. Houses workflows, functions, captures, logs. */
+  sullaHome:                  string;
+  /** Sulla config dir — `~/.sulla`. Houses MCP configs, vault key, device id. */
+  sullaConfig:                string;
+  /** Sulla Desktop codebase mirror dir — `~/.sulla-desktop`. */
+  sullaDesktopCodebase:       string;
   /** Directory holding provided binary resources */
   integration:                string;
   /** Deployment Profile System-wide startup settings path. */
@@ -51,6 +74,10 @@ export class UnixPaths implements Paths {
   cache = '';
   resources = '';
   lima = '';
+  limactl = '';
+  sullaHome = '';
+  sullaConfig = '';
+  sullaDesktopCodebase = '';
   integration = '';
   deploymentProfileSystem = '';
   altDeploymentProfileSystem = '';
@@ -79,6 +106,9 @@ export class WindowsPaths implements Paths {
   logs = '';
   cache = '';
   resources = '';
+  sullaHome = '';
+  sullaConfig = '';
+  sullaDesktopCodebase = '';
   extensionRoot = '';
   wslDistro = '';
   wslDistroData = '';
@@ -91,6 +121,10 @@ export class WindowsPaths implements Paths {
 
   get lima(): string {
     throw new Error('lima not available for Windows');
+  }
+
+  get limactl(): string {
+    throw new Error('limactl not available for Windows');
   }
 
   get integration(): string {
@@ -162,6 +196,10 @@ function getDefaultPaths(): Partial<Paths> {
       logs:                       path.join(home, 'Library', 'Logs', 'rancher-desktop'),
       cache:                      path.join(home, 'Library', 'Caches', 'rancher-desktop'),
       resources,
+      // ~/.rd/lima — must stay short to avoid UNIX_PATH_MAX (104 chars)
+      // for the Lima socket files (ssh.sock, ha.sock, etc.). Don't put this
+      // under appHome (~/Library/Application Support/rancher-desktop/lima) —
+      // long usernames blow past the limit on `limactl create`.
       lima:                       path.join(home, '.rd', 'lima'),
       integration:                path.join(home, '.rd', 'bin'),
       deploymentProfileSystem:    '/Library/Managed Preferences',
@@ -203,6 +241,32 @@ function getDefaultPaths(): Partial<Paths> {
   }
 }
 
+/**
+ * Augment the paths object with derived fields that aren't returned by the
+ * Go-side `rdctl paths` binary yet. When rdctl starts returning these, the
+ * Object.assign in the Paths constructor will pick them up first and these
+ * `if (!...)` guards become no-ops.
+ */
+function augmentPaths(pathsData: Partial<Paths>): Partial<Paths> {
+  const home = os.homedir();
+
+  if (!pathsData.sullaHome) {
+    pathsData.sullaHome = path.join(home, 'sulla');
+  }
+  if (!pathsData.sullaConfig) {
+    pathsData.sullaConfig = path.join(home, '.sulla');
+  }
+  if (!pathsData.sullaDesktopCodebase) {
+    pathsData.sullaDesktopCodebase = path.join(home, '.sulla-desktop');
+  }
+  if (!pathsData.limactl && pathsData.resources && process.platform !== 'win32') {
+    const platformDir = process.platform === 'darwin' ? 'darwin' : 'linux';
+    pathsData.limactl = path.join(pathsData.resources, platformDir, 'lima', 'bin', 'limactl');
+  }
+
+  return pathsData;
+}
+
 function getPaths(): Paths {
   const rdctlPath = getRdctlPath();
   let pathsData: Partial<Paths> | undefined;
@@ -223,6 +287,8 @@ function getPaths(): Paths {
   if (!pathsData || Object.keys(pathsData).length === 0) {
     throw new Error(`Platform "${ process.platform }" is not supported.`);
   }
+
+  pathsData = augmentPaths(pathsData);
 
   switch (process.platform) {
   case 'darwin':

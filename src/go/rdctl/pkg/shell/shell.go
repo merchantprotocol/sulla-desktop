@@ -79,7 +79,7 @@ func SpawnCommand(ctx context.Context, args ...string) (*exec.Cmd, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := directories.SetupLimaHome(p.AppHome); err != nil {
+		if err := directories.SetupLimaHome(p.Lima); err != nil {
 			return nil, err
 		}
 		if err := setupPathEnvVar(p); err != nil {

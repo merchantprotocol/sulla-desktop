@@ -116,6 +116,7 @@ export class SubconsciousAgentNode extends BaseNode {
     // instant this node starts — before any LLM call or subprocess spawn.
     const agentLabel = (state.metadata as any).agentLabel || 'subconscious';
     if (agentLabel !== 'observation') {
+      console.log(`[ThinkingTrace] SubconsciousAgent emit "Starting ${ agentLabel }…" (threadId=${ state.metadata.threadId }, parentChannel=${ (state.metadata as any).parentWsChannel }, parentTid=${ (state.metadata as any).parentConversationId })`);
       await this.emitThinking(state, `Starting ${ agentLabel }…`);
     }
 
@@ -287,7 +288,11 @@ export class SubconsciousAgentNode extends BaseNode {
     const parentState = this.buildParentState(state);
     if (!parentState) return;
 
-    await this.wsChatMessage(parentState, content, 'assistant', 'thinking');
+    // Emit on the `subconscious_message` wire type so the frontend dispatcher
+    // routes this through a handler that renders the thinking bubble but
+    // does NOT touch graphRunning. Run-state is owned exclusively by the
+    // primary orchestration loop's `assistant_message` emissions.
+    await this.wsChatMessage(parentState, content, 'assistant', 'thinking', { isSubconscious: true }, 'subconscious_message');
   }
 
   /**
@@ -299,6 +304,7 @@ export class SubconsciousAgentNode extends BaseNode {
     const parentState = this.buildParentState(state);
     if (!parentState) return;
 
-    await this.wsChatMessage(parentState, '...', 'assistant', 'thinking_complete');
+    // Same `subconscious_message` wire type for the close-bubble sentinel.
+    await this.wsChatMessage(parentState, '...', 'assistant', 'thinking_complete', { isSubconscious: true }, 'subconscious_message');
   }
 }

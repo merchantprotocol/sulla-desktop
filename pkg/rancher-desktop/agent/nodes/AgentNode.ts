@@ -54,6 +54,7 @@ export class AgentNode extends BaseNode {
     const _isFirstEntry = ((state.metadata as any).consecutiveSameNode ?? 0) === 0;
     const _inWorkflow   = (state.metadata as any).workflowNodeId || (state.metadata as any).activeWorkflow || (state.metadata as any).scopedWorkflowId;
     if (_isFirstEntry && !_inWorkflow) {
+      console.log(`[ThinkingTrace] AgentNode emit "Thinking…" + immediate thinking_complete (threadId=${ state.metadata.threadId }, wsChannel=${ state.metadata.wsChannel })`);
       await this.wsChatMessage(state, 'Thinking…', 'assistant', 'thinking');
       await this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
     }

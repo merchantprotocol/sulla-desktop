@@ -11,8 +11,9 @@
 
 import * as crypto from 'crypto';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
+
+import paths from '@pkg/utils/paths';
 
 const VAULT_PREFIX = '$VAULT$';
 const PBKDF2_ITERATIONS = 100_000;
@@ -37,7 +38,7 @@ export class VaultKeyService {
   private sullaDir: string;
 
   constructor() {
-    this.sullaDir = path.join(os.homedir(), '.sulla');
+    this.sullaDir = paths.sullaConfig;
   }
 
   // ─── File paths ──────────────────────────────────────────────────
