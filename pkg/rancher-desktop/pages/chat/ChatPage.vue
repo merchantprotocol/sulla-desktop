@@ -238,6 +238,10 @@ watch(hasArtifact, v => { if (!v) artifactExpanded.value = false; });
 const historyOpen    = computed(() => controller.sidebar.value.historyOpen);
 const fileTreeOpen   = computed(() => controller.sidebar.value.fileTreeOpen);
 const activeThreadId = computed(() => controller.thread.value.id);
+
+watch(fileTreeOpen, (open) => {
+  window.dispatchEvent(new CustomEvent('sulla:file-tree-state-changed', { detail: { open } }));
+});
 // App-wide conversation history (Postgres-backed, shared across every
 // open chat). Fetched on mount via the main-process IPC. Merged into the
 // thread list below so the HistoryRail surfaces every past chat, not
@@ -493,15 +497,21 @@ function onFileSelected(entry: FileEntry): void {
   }
 }
 
+function onToggleFileTreeEvent() {
+  controller.toggleFileTree();
+}
+
 onMounted(() => {
-  window.addEventListener('chat:new-chat',       onNewChatEvent);
-  window.addEventListener('chat:fork',           onForkEvent);
-  window.addEventListener('chat:artifact-expand', onArtifactExpand);
+  window.addEventListener('chat:new-chat',          onNewChatEvent);
+  window.addEventListener('chat:fork',              onForkEvent);
+  window.addEventListener('chat:artifact-expand',   onArtifactExpand);
+  window.addEventListener('sulla:toggle-file-tree', onToggleFileTreeEvent);
 });
 onBeforeUnmount(() => {
-  window.removeEventListener('chat:new-chat',       onNewChatEvent);
-  window.removeEventListener('chat:fork',           onForkEvent);
-  window.removeEventListener('chat:artifact-expand', onArtifactExpand);
+  window.removeEventListener('chat:new-chat',          onNewChatEvent);
+  window.removeEventListener('chat:fork',              onForkEvent);
+  window.removeEventListener('chat:artifact-expand',   onArtifactExpand);
+  window.removeEventListener('sulla:toggle-file-tree', onToggleFileTreeEvent);
 });
 </script>
 
