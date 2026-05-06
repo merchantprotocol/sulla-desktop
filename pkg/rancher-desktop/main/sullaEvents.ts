@@ -3,6 +3,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 
 import { initTabsIpc } from './browserTabs/tabsIpc';
@@ -38,12 +39,23 @@ function getSullaHomeDir(): string {
   return resolveSullaHomeDir();
 }
 
-/** Ensure a path is inside the sulla home directory (sandbox guard) */
+/** Ensure a path is inside the sulla home directory (write sandbox guard) */
 function assertInsideSullaHome(targetPath: string): string {
   const root     = getSullaHomeDir();
   const resolved = path.resolve(targetPath);
   if (!resolved.startsWith(root + path.sep) && resolved !== root) {
     throw new Error(`Path is outside sulla home: ${ resolved }`);
+  }
+  return resolved;
+}
+
+/** Ensure a path is inside the user's home directory (read sandbox guard — allows browsing outside sulla home) */
+function assertInsideUserHome(targetPath: string): string {
+  const os       = require('os');
+  const home     = os.homedir();
+  const resolved = path.resolve(targetPath);
+  if (!resolved.startsWith(home + path.sep) && resolved !== home) {
+    throw new Error(`Path is outside user home: ${ resolved }`);
   }
   return resolved;
 }
@@ -838,7 +850,7 @@ export function initSullaEvents(): void {
   });
 
   ipcMainProxy.handle('filesystem-read-dir', async(_event: unknown, dirPath: string) => {
-    const resolved = assertInsideSullaHome(dirPath);
+    const resolved = assertInsideUserHome(dirPath);
     const entries  = fs.readdirSync(resolved, { withFileTypes: true });
     return entries
       .map((e) => {
@@ -855,7 +867,7 @@ export function initSullaEvents(): void {
   });
 
   ipcMainProxy.handle('filesystem-read-file', async(_event: unknown, filePath: string) => {
-    const resolved = assertInsideSullaHome(filePath);
+    const resolved = assertInsideUserHome(filePath);
     if (!fs.existsSync(resolved)) throw new Error(`File not found: ${ resolved }`);
     const stat = fs.statSync(resolved);
     if (stat.isDirectory()) throw new Error('Cannot read a directory as a file');
@@ -864,7 +876,7 @@ export function initSullaEvents(): void {
   });
 
   ipcMainProxy.handle('filesystem-write-file', async(_event: unknown, filePath: string, content: string) => {
-    const resolved = assertInsideSullaHome(filePath);
+    const resolved = assertInsideUserHome(filePath);
     fs.writeFileSync(resolved, content, 'utf-8');
   });
 

@@ -124,8 +124,10 @@ Theme toggles at runtime via the included JS snippet in `template.html`.
 
 ## Output conventions
 
-- Default all new project HTML to `class="dark"` (Protocol Dark)
-- Include the theme toggle `<script>` block from `template.html` so users can switch
+- **ALWAYS** link `sulla.css` via `<link rel="stylesheet">` — NEVER define `:root { --bg: ... }` color vars inline
+- Default `<html class="dark">` — the browser tab preload overrides this automatically with the live app theme
+- The preload runs `ipcRenderer.invoke('sulla-settings-get', 'theme')` on load and listens for `sulla:theme-changed` to toggle `class="dark"` / `class="light"` on `<html>` — this is why the CSS link is required
+- Inline `<style>` blocks are fine for layout-only rules (grid, spacing, fonts) — just no theme tokens
 - Store project files at `~/sulla/projects/<project-name>/`
-- Use absolute path to `sulla.css` so files open correctly from any location
+- Use the relative path `../../designs/sulla.css` from `~/sulla/projects/<project-name>/` — this resolves to `~/sulla/designs/sulla.css`
 - One file per document type: `overview.html`, `roadmap.html`, `competitor-analysis.html`, etc.
