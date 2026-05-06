@@ -451,9 +451,8 @@ export default defineComponent({
 <style scoped>
 .files {
   overflow: hidden;
-  border-right: 1px solid rgba(168, 192, 220, 0.08);
-  background: rgba(7, 13, 26, 0.4);
-  backdrop-filter: blur(8px);
+  border-right: 1px solid var(--border-muted);
+  background: var(--bg-surface);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -466,12 +465,12 @@ export default defineComponent({
   padding: 0 8px 0 16px;
   height: 35px;
   flex-shrink: 0;
-  border-bottom: 1px solid rgba(168, 192, 220, 0.08);
+  border-bottom: 1px solid var(--border-muted);
 }
 
 .files-title {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--steel-400, rgba(80,150,179,0.7));
+  text-transform: uppercase; color: var(--accent);
 }
 
 .files-actions {
@@ -482,17 +481,17 @@ export default defineComponent({
   display: flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border: none; background: none;
   border-radius: 4px; cursor: pointer;
-  color: var(--read-4, rgba(168,192,220,0.5));
+  color: var(--text-muted);
   transition: background 0.12s ease, color 0.12s ease;
 }
 .action-btn:hover {
-  background: rgba(80, 150, 179, 0.10);
-  color: var(--read-2, rgba(215,225,235,0.9));
+  background: var(--accent-dim);
+  color: var(--text);
 }
 
 .files-loading {
   padding: 16px; font-family: var(--mono); font-size: 11px;
-  color: var(--read-5, rgba(168,192,220,0.35)); font-style: italic;
+  color: var(--text-dim); font-style: italic;
 }
 
 .files-scroll {
@@ -501,12 +500,12 @@ export default defineComponent({
 .files-scroll::-webkit-scrollbar { width: 4px; }
 .files-scroll::-webkit-scrollbar-track { background: transparent; }
 .files-scroll::-webkit-scrollbar-thumb {
-  background: rgba(80,150,179,0.2); border-radius: 2px;
+  background: var(--border-muted, rgba(80,150,179,0.2)); border-radius: 2px;
 }
 
 .files-scroll.drop-active {
-  outline: 2px dashed rgba(80, 150, 179, 0.4);
+  outline: 2px dashed var(--accent-border, rgba(80, 150, 179, 0.4));
   outline-offset: -2px;
-  background: rgba(80, 150, 179, 0.05);
+  background: var(--bg-hover, rgba(80, 150, 179, 0.05));
 }
 </style>

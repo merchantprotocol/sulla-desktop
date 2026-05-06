@@ -17,3 +17,11 @@
 @import "./themes/nord-dark.css";
 @import "./themes/protocol-dark.css";
 @import "./themes/protocol-light.css";
+
+/* Global accent aliases — themes can override, but these ensure --accent-dim,
+   --accent-border, and --accent-hover always resolve to something sensible. */
+:root {
+  --accent-dim: rgba(80, 150, 179, 0.12);
+  --accent-border: rgba(80, 150, 179, 0.45);
+  --accent-hover: rgba(80, 150, 179, 0.08);
+}
