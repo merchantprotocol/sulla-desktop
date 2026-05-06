@@ -136,34 +136,6 @@ export async function instantiateSullaStart(): Promise<void> {
 
   await bootstrapSullaHome();
 
-  // PG connection issue — keep global handler
-  process.on('unhandledRejection', (reason: any) => {
-    if (reason?.code === '57P01') {
-      console.warn('[Unhandled] Ignored Postgres admin termination');
-
-      return;
-    }
-    console.error('[Unhandled Rejection]', reason);
-    const err = reason instanceof Error ? reason : new Error(String(reason));
-
-    submitErrorReport({
-      error_type:    err.name || 'unhandledRejection',
-      error_message: err.message,
-      stack_trace:   err.stack || '',
-      user_context:  'unhandledRejection in sulla.ts (Sulla services)',
-    }).catch(() => {});
-  });
-
-  process.on('uncaughtException', (err: Error) => {
-    console.error('[Uncaught Exception]', err);
-    submitErrorReport({
-      error_type:    err.name || 'uncaughtException',
-      error_message: err.message,
-      stack_trace:   err.stack || '',
-      user_context:  'uncaughtException in sulla.ts (Sulla services)',
-    }).catch(() => {});
-  });
-
   const lifecycle = getServiceLifecycleManager();
 
   // ── Independent services (no DB/Redis dependency) ──────────────────────
