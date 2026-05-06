@@ -86,6 +86,7 @@ export default class AsyncCallbackIterator<T> implements AsyncIterableIterator<T
    * Notify the iterator that the enumeration has completed.
    */
   end() {
+    if (this.#done) return;
     this.#resolve(doneSentinel);
   }
 
