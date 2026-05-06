@@ -51,7 +51,6 @@ function assertInsideSullaHome(targetPath: string): string {
 
 /** Ensure a path is inside the user's home directory (read sandbox guard — allows browsing outside sulla home) */
 function assertInsideUserHome(targetPath: string): string {
-  const os       = require('os');
   const home     = os.homedir();
   const resolved = path.resolve(targetPath);
   if (!resolved.startsWith(home + path.sep) && resolved !== home) {
