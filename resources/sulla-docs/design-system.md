@@ -24,6 +24,25 @@ They are also copied to the user's Sulla home on first use:
 
 ---
 
+## ❌ Anti-Pattern — DO NOT DO THIS
+
+Never hardcode dark-mode colors in a `<style>` block. This breaks light mode permanently and makes theme-switching impossible.
+
+```html
+<!-- WRONG — locks the page to dark mode forever -->
+<style>
+  :root {
+    --bg: #0d1117;
+    --text: #e6edf3;
+    /* ... all hardcoded dark values ... */
+  }
+</style>
+```
+
+The correct approach is always: link `sulla.css` + add the theme detection script below. The CSS file handles both themes via the `dark` / `light` class on `<html>`.
+
+---
+
 ## Minimal HTML stub
 
 ```html
@@ -187,6 +206,34 @@ var(--radius-lg)  /* 8px */
 | `.btn.btn-ghost` | Outline/transparent |
 | `.btn.btn-outline-accent` | Accent outline |
 | `.btn-sm`, `.btn-xs` | Size variants |
+
+---
+
+## Migrating Legacy Inline-Style Files
+
+If you encounter a project HTML file with a hardcoded `:root {}` block, convert it:
+
+1. Add `class="dark"` to `<html>`
+2. Remove the Google Fonts `<link>` tags (`sulla.css` imports them)
+3. Add `<link rel="stylesheet" href="../../designs/sulla.css" />` before `<style>`
+4. Replace the `:root {}` block with a small alias block that maps any custom names to `sulla.css` equivalents:
+
+```css
+/* Keep only aliases for non-standard variable names used in this file */
+:root {
+  --accent-soft: var(--accent-dim);
+  --steel: var(--accent); --steel-hover: var(--accent-hover);
+  --steel-soft: var(--accent-dim); --steel-border: var(--accent-border);
+  --green: var(--success); --green-bg: var(--bg-success); --green-border: var(--border-success);
+  --red: var(--danger); --red-bg: var(--bg-danger); --red-border: var(--border-danger);
+  --yellow: var(--warning); --yellow-bg: var(--bg-warning); --yellow-border: var(--border-warning);
+  --blue: var(--info); --blue-bg: var(--bg-info); --blue-border: var(--border-info);
+}
+```
+
+5. Add the theme detection script before `</body>` (see Minimal HTML stub above)
+
+The component styles themselves don't need to change as long as they reference CSS variables — the variables will now resolve correctly for both themes.
 
 ---
 

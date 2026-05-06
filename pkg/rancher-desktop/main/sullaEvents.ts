@@ -89,6 +89,15 @@ export function initSullaEvents(): void {
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
 
     await SullaSettingsModel.set(property, value, cast);
+
+    // Broadcast theme changes to all browser tab WebContentsViews so
+    // file:// pages can update their light/dark class via the preload bridge.
+    if (property === 'theme') {
+      const { webContents } = await import('electron');
+      for (const wc of webContents.getAllWebContents()) {
+        try { wc.send('sulla:theme-changed', value); } catch { /* disposed */ }
+      }
+    }
   });
 
   ipcMainProxy.handle('sulla-settings-delete', async(_event: unknown, property: string) => {
