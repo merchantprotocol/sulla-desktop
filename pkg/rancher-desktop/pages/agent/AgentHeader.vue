@@ -234,7 +234,10 @@
           </svg>
         </button>
       </div>
-      <div class="relative z-10">
+      <div
+        v-if="canToggleMode !== false"
+        class="relative z-10"
+      >
         <label class="sr-only">Theme</label>
         <button
           class="flex h-5 w-5 items-center justify-center rounded-lg shadow-md ring-1 shadow-black/5 ring-black/5 cursor-pointer"
@@ -432,8 +435,9 @@ const router = useRouter();
 const { tabs: browserTabs, closedTabs, tabOrder, createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab, reorderTabs } = useBrowserTabs();
 
 defineProps<{
-  isDark:      boolean;
-  toggleTheme: () => void;
+  isDark:         boolean;
+  toggleTheme:    () => void;
+  canToggleMode?: boolean;
 }>();
 
 const emit = defineEmits<{

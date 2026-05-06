@@ -6,6 +6,7 @@
     <AgentHeader
       :is-dark="isDark"
       :toggle-theme="toggleTheme"
+      :can-toggle-mode="canToggleMode"
     />
 
     <!-- Browser toolbar — always visible in welcome and browser modes -->
@@ -267,6 +268,16 @@
         <LabsPage />
       </div>
     </template>
+
+    <!-- File editor: Monaco-based code editor for files from the file tree -->
+    <template v-else-if="tabMode === 'file-editor'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <FileEditorTab
+          :file-path="getTab(props.tabId)?.url || ''"
+          :is-dark="isDark"
+        />
+      </div>
+    </template>
   </div>
 </template>
 
@@ -286,6 +297,7 @@ import HistoryTab from './HistoryTab.vue';
 import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
 import PasswordGenerator from './PasswordGenerator.vue';
+import FileEditorTab from './FileEditorTab.vue';
 import LabsPage from './LabsPage.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
@@ -312,6 +324,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   routines:     'Routines',
   marketplace:  'Sulla Studio',
   labs:         'Labs',
+  'file-editor': 'Editor',
 };
 
 const props = defineProps<{
@@ -319,7 +332,12 @@ const props = defineProps<{
   isVisible: boolean;
 }>();
 
-const { isDark, toggleTheme } = useTheme();
+const { isDark, toggleTheme, currentScheme, availableThemes } = useTheme();
+
+const canToggleMode = computed(() => {
+  const schemeThemes = availableThemes.filter(t => t.scheme === currentScheme.value);
+  return schemeThemes.some(t => t.mode === 'light') && schemeThemes.some(t => t.mode === 'dark');
+});
 const { updateTab, getTab, createTab } = useBrowserTabs();
 const { showOverlay } = useStartupProgress();
 

@@ -2,7 +2,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 
-export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark';
+export type ThemeName = 'default-light' | 'default-dark' | 'ocean-light' | 'ocean-dark' | 'nord-light' | 'nord-dark' | 'protocol-dark' | 'protocol-light';
 
 export type ThemeScheme = 'default' | 'ocean' | 'nord' | 'protocol';
 
@@ -27,7 +27,8 @@ export const availableThemes: ThemeOption[] = [
   { id: 'ocean-dark', scheme: 'ocean', mode: 'dark', label: 'Ocean Dark', isDark: true },
   { id: 'nord-light', scheme: 'nord', mode: 'light', label: 'Nord Light', isDark: false },
   { id: 'nord-dark', scheme: 'nord', mode: 'dark', label: 'Nord Dark', isDark: true },
-  { id: 'protocol-dark', scheme: 'protocol', mode: 'dark', label: 'Protocol Dark', isDark: true },
+  { id: 'protocol-dark',  scheme: 'protocol', mode: 'dark',  label: 'Protocol Dark',  isDark: true },
+  { id: 'protocol-light', scheme: 'protocol', mode: 'light', label: 'Protocol Light', isDark: false },
 ];
 
 export const themeGroups: ThemeGroup[] = [
@@ -106,7 +107,7 @@ async function loadThemeFromSettings(): Promise<ThemeName> {
     return migratedStored;
   }
 
-  // Final fallback: OS preference
+  // Final fallback
   return 'protocol-dark';
 }
 
@@ -158,7 +159,7 @@ export function useTheme() {
     }
     const newMode = current.mode === 'dark' ? 'light' : 'dark';
     const target = availableThemes.find(t => t.scheme === current.scheme && t.mode === newMode);
-    // If the opposite mode doesn't exist for this scheme (e.g. Protocol has no light), stay put
+    // If the opposite mode doesn't exist for this scheme, stay put
     if (target) {
       setTheme(target.id);
     }

@@ -21,6 +21,7 @@
             <div class="row"><span>Stop run</span><kbd>Esc</kbd></div>
             <div class="row"><span>Continue</span><kbd>⌘↵</kbd></div>
             <div class="row"><span>Toggle history</span><kbd>⌘⇧H</kbd></div>
+            <div class="row"><span>Toggle file explorer</span><kbd>⌘⇧E</kbd></div>
             <div class="row"><span>Help</span><kbd>?</kbd></div>
           </div>
         </div>

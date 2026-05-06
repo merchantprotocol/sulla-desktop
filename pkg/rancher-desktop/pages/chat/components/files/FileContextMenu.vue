@@ -1,0 +1,177 @@
+<template>
+  <Teleport to="body">
+    <div
+      v-if="visible"
+      ref="menuRef"
+      class="file-ctx-menu"
+      :style="{ top: posY + 'px', left: posX + 'px' }"
+      @contextmenu.prevent
+    >
+      <button class="ctx-item" @click="action('new-file')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="12" y1="18" x2="12" y2="12" /><line x1="9" y1="15" x2="15" y2="15" />
+        </svg>
+        <span>New File</span>
+      </button>
+      <button class="ctx-item" @click="action('new-folder')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          <line x1="12" y1="11" x2="12" y2="17" /><line x1="9" y1="14" x2="15" y2="14" />
+        </svg>
+        <span>New Folder</span>
+      </button>
+      <div class="ctx-sep" />
+
+      <button class="ctx-item" @click="action('cut')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
+          <line x1="20" y1="4" x2="8.12" y2="15.88" /><line x1="14.47" y1="14.48" x2="20" y2="20" /><line x1="8.12" y1="8.12" x2="12" y2="12" />
+        </svg>
+        <span>Cut</span><span class="ctx-shortcut">⌘X</span>
+      </button>
+      <button class="ctx-item" @click="action('copy')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+        </svg>
+        <span>Copy</span><span class="ctx-shortcut">⌘C</span>
+      </button>
+      <button v-if="hasClipboard" class="ctx-item" @click="action('paste')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+          <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+        </svg>
+        <span>Paste</span><span class="ctx-shortcut">⌘V</span>
+      </button>
+      <div class="ctx-sep" />
+
+      <button class="ctx-item" @click="action('rename')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" />
+        </svg>
+        <span>Rename</span>
+      </button>
+      <button class="ctx-item danger" @click="action('delete')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+          <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+          <line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" />
+        </svg>
+        <span>Delete</span>
+      </button>
+      <div class="ctx-sep" />
+
+      <button class="ctx-item" @click="action('copy-path')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+        </svg>
+        <span>Copy Path</span>
+      </button>
+      <button class="ctx-item" @click="action('copy-relative-path')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+        </svg>
+        <span>Copy Relative Path</span>
+      </button>
+      <div class="ctx-sep" />
+
+      <button class="ctx-item" @click="action('reveal')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+        </svg>
+        <span>Reveal in Finder</span>
+      </button>
+      <button v-if="!isDir" class="ctx-item" @click="action('open-external')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+        <span>Open with Default App</span>
+      </button>
+    </div>
+  </Teleport>
+</template>
+
+<script lang="ts">
+import { defineComponent, ref, onMounted, onBeforeUnmount, nextTick } from 'vue';
+
+export default defineComponent({
+  name: 'FileContextMenu',
+
+  props: {
+    hasClipboard: { type: Boolean, default: false },
+  },
+
+  emits: ['action'],
+
+  setup(props, { emit, expose }) {
+    const visible  = ref(false);
+    const posX     = ref(0);
+    const posY     = ref(0);
+    const isDir    = ref(false);
+    const menuRef  = ref<HTMLElement | null>(null);
+    let targetPath = '';
+
+    function show(event: MouseEvent, filePath: string, dir: boolean) {
+      targetPath   = filePath;
+      isDir.value  = dir;
+      posX.value   = event.clientX;
+      posY.value   = event.clientY;
+      visible.value = true;
+      nextTick(() => {
+        if (!menuRef.value) return;
+        const r = menuRef.value.getBoundingClientRect();
+        if (r.right  > window.innerWidth)  posX.value = window.innerWidth  - r.width  - 4;
+        if (r.bottom > window.innerHeight) posY.value = window.innerHeight - r.height - 4;
+      });
+    }
+    function hide()   { visible.value = false; }
+    function action(type: string) { emit('action', { type, path: targetPath, isDir: isDir.value }); hide(); }
+
+    function onClickOutside(e: MouseEvent) {
+      if (menuRef.value && !menuRef.value.contains(e.target as Node)) hide();
+    }
+    function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') hide(); }
+
+    onMounted(() => {
+      document.addEventListener('mousedown', onClickOutside);
+      document.addEventListener('keydown', onEsc);
+    });
+    onBeforeUnmount(() => {
+      document.removeEventListener('mousedown', onClickOutside);
+      document.removeEventListener('keydown', onEsc);
+    });
+
+    expose({ show, hide });
+    return { visible, posX, posY, isDir, menuRef, action, hasClipboard: props.hasClipboard };
+  },
+});
+</script>
+
+<style scoped>
+.file-ctx-menu {
+  position: fixed; z-index: 9999;
+  min-width: 180px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.24), 0 1px 3px rgba(0,0,0,0.12);
+  font-size: var(--fs-code);
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 6px 12px;
+  border: none; background: none;
+  color: var(--text); cursor: pointer; text-align: left; line-height: 1;
+}
+.ctx-item:hover { background: var(--surface-3); }
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.danger:hover { background: rgba(var(--danger), 0.1); }
+.ctx-shortcut { margin-left: auto; font-size: var(--fs-body-sm); color: var(--text-muted); padding-left: 16px; }
+.ctx-sep { height: 1px; background: var(--border-muted); margin: 4px 0; }
+</style>

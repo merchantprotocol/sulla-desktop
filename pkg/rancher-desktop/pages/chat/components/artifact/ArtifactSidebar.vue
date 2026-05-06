@@ -44,8 +44,8 @@ function onExpand(): void {
 */
 .artifact {
   overflow: hidden;
-  border-left: 1px solid rgba(168, 192, 220, 0.1);
-  background: #0d131f;
+  border-left: 1px solid var(--border-default, rgba(168, 192, 220, 0.1));
+  background: var(--bg-surface, #0d131f);
   backdrop-filter: blur(10px);
   display: flex; flex-direction: column;
   height: 100%;

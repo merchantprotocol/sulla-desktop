@@ -39,6 +39,7 @@
   /* Accent */
   --accent-primary: #4fc3f7;
   --accent-primary-hover: #29b6f6;
+  --accent: var(--accent-primary);
   --text-accent: #a78bfa;
 
   /* Semantic Borders */

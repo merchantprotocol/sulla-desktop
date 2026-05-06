@@ -53,6 +53,7 @@
   /* Accent — steel blue (buttons, links, indicators only) */
   --accent-primary: #5096b3;
   --accent-primary-hover: #6ab0cc;
+  --accent: var(--accent-primary);
   --text-accent: #bc8cff;
 
   /* Semantic Borders */
@@ -360,41 +361,6 @@
   color: #fff;
 }
 
-/* ── CRT Scanline Overlay — matches docs.sulladesktop.com ── */
-.theme-default-dark::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.08) 2px,
-    rgba(0, 0, 0, 0.08) 4px
-  );
-}
-
-/* ── Vignette — corner darkening matching docs site CRT overlay ── */
-.theme-default-dark::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  pointer-events: none;
-  background:
-    /* Top-left corner */
-    radial-gradient(ellipse at top left, rgba(0, 0, 0, 0.3) 0%, transparent 50%),
-    /* Top-right corner */
-    radial-gradient(ellipse at top right, rgba(0, 0, 0, 0.3) 0%, transparent 50%),
-    /* Bottom-left corner */
-    radial-gradient(ellipse at bottom left, rgba(0, 0, 0, 0.2) 0%, transparent 45%),
-    /* Bottom-right corner */
-    radial-gradient(ellipse at bottom right, rgba(0, 0, 0, 0.2) 0%, transparent 45%),
-    /* Overall vignette */
-    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.2) 100%);
-}
 
 /* ── Global scrollbar ── */
 .theme-protocol-dark ::-webkit-scrollbar {
@@ -426,20 +392,6 @@
   -webkit-app-region: no-drag;
 }
 
-/* ── Ambient center glow (noir radial) ── */
-.theme-protocol-dark .page-root::before {
-  content: '';
-  position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 800px;
-  height: 600px;
-  border-radius: 50%;
-  background: radial-gradient(ellipse, rgba(80, 150, 179, 0.06) 0%, transparent 60%);
-  pointer-events: none;
-  z-index: 0;
-}
 
 /* ── Header: noir nav with backdrop blur ── */
 .theme-protocol-dark header {
@@ -453,23 +405,10 @@
   text-transform: uppercase;
 }
 
-/* Hide light/dark toggle — protocol theme is dark-only */
-.theme-protocol-dark header .fill-sky-400 {
-  display: none !important;
-}
-
-.theme-protocol-dark header button[aria-label*="Switch to"] {
-  display: none !important;
-}
-
-/* ── Page background with subtle grid lines ── */
+/* ── Page background ── */
 .theme-protocol-dark .page-root {
-  background: #0d1117;           /* Level 0 — deepest, so cards at Level 100 stand out */
+  background: #0d1117;
   color: #e6edf3;
-  background-image:
-    linear-gradient(rgba(80, 150, 179, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(80, 150, 179, 0.02) 1px, transparent 1px);
-  background-size: 80px 80px;
 }
 
 /* ── Composer input: Terminal look ── */

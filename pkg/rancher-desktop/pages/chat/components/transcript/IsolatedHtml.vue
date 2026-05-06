@@ -51,7 +51,6 @@ const BASE_STYLES = `
     font-family: var(--font-body, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif);
     font-size: 14px;
     line-height: 1.55;
-    color-scheme: dark;
 
     --bg: var(--bg-page, #0d1117);
     --surface-1: var(--bg-surface, #161b22);
@@ -60,6 +59,11 @@ const BASE_STYLES = `
     --text: var(--text-primary, #e6edf3);
     --text-muted: #8b949e;
     --text-dim: #6e7681;
+    --accent: var(--accent-primary, #5096b3);
+    --accent-hover: var(--accent-primary-hover, #6ab0cc);
+    --accent-dim: rgba(80, 150, 179, 0.15);
+    --accent-border: rgba(80, 150, 179, 0.5);
+    --accent-glow: rgba(80, 150, 179, 0.4);
     --green: #2ea043;
     --green-bright: #3fb950;
     --green-glow: rgba(46, 160, 67, 0.4);
@@ -138,6 +142,10 @@ function render(html: string): void {
     FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
   });
   const themeClass = activeThemeClass();
+  const isLight = themeClass.includes('light');
+
+  // Mirror color-scheme so browser built-ins (scrollbars, inputs) match the active theme.
+  if (hostEl.value) hostEl.value.style.colorScheme = isLight ? 'light' : 'dark';
 
   shadow.innerHTML = themeClass
     ? `<div class="${ themeClass }">${ safe }</div>`

@@ -442,6 +442,11 @@ function onHistoryRestoreLastClosed() {
   }
 }
 
+function onNavigateTab(ev: Event) {
+  const tabId = (ev as CustomEvent<{ tabId: string }>).detail?.tabId;
+  if (tabId) router.push(`/Browser/${ tabId }`);
+}
+
 function onHistoryNavigate(_event: any, ...args: any[]) {
   const entry = args[0] as { id: string; type: string; url?: string; title?: string; tab_id?: string };
   if (!entry) return;
@@ -461,6 +466,7 @@ const presenceTracker = getHumanPresenceTracker();
 onMounted(async() => {
   // Register sub-tab change listener
   window.addEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
+  window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
 
   // Ensure at least one tab exists and navigate to it on fresh start
   const initialTab = ensureOneTab();
@@ -509,6 +515,7 @@ onUnmounted(() => {
     clearInterval(footerStatsTimer);
   }
   window.removeEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
+  window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   ipcRenderer.removeListener('route' as any, onRoute);
   ipcRenderer.removeListener('agent-command' as any, onAgentCommand);
   ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);
