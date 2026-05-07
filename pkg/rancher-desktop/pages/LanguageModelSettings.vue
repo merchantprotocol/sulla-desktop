@@ -217,8 +217,9 @@ export default defineComponent({
     try {
       const providers = await ipcRenderer.invoke('model-provider:get-providers');
       this.availableProviders = providers
+        .filter((p: { id: string; name: string; connected?: boolean }) => p.connected !== false)
         .map((p: { id: string; name: string; connected?: boolean }) => ({
-          id: p.id, name: p.connected === false ? `${ p.name } (not connected)` : p.name,
+          id: p.id, name: p.name,
         }));
     } catch (err) {
       console.warn('[LM Settings] Failed to load available providers:', err);
@@ -1108,8 +1109,8 @@ export default defineComponent({
             class="info-box"
           >
             <p>
-              Providers marked <em>(not connected)</em> require an API key. Open
-              <strong>Integrations</strong> to configure credentials for Grok, OpenAI, Anthropic, etc.
+              Only connected providers appear in these dropdowns. Open
+              <strong>Integrations</strong> to add credentials for Grok, OpenAI, Anthropic, etc.
             </p>
           </div>
         </div>

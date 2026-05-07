@@ -163,6 +163,7 @@ export class AgentModelSelectorController {
       const groups: ProviderGroup[] = [];
 
       for (const provider of providers) {
+        if (provider.connected === false) continue;
         const isActive = this.activePrimaryProvider.value === provider.id;
 
         const group: ProviderGroup = {
