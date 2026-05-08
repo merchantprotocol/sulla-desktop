@@ -23,7 +23,7 @@ export class OpenAIModels extends SelectBoxProvider {
 
       if (body.data && body.data.length > 0) {
         return body.data
-          .filter(m => /^(gpt-|o[0-9])/.test(m.id))
+          .filter(m => /^(gpt|o\d)/.test(m.id))
           .sort((a, b) => a.id.localeCompare(b.id))
           .map(m => ({ value: m.id, label: m.id }));
       }
@@ -38,10 +38,13 @@ export class OpenAIModels extends SelectBoxProvider {
     return [
       { value: 'o3', label: 'o3', description: 'Latest reasoning model' },
       { value: 'o3-mini', label: 'o3-mini', description: 'Lightweight reasoning model' },
-      { value: 'gpt-4.1', label: 'GPT-4.1', description: 'Latest GPT model' },
-      { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', description: 'Lightweight GPT model' },
-      { value: 'gpt-4o', label: 'GPT-4o', description: 'Multimodal model' },
+      { value: 'o1', label: 'o1', description: 'Advanced reasoning model' },
+      { value: 'o1-mini', label: 'o1-mini', description: 'Fast reasoning model' },
+      { value: 'gpt-4o', label: 'GPT-4o', description: 'Most capable multimodal model' },
       { value: 'gpt-4o-mini', label: 'GPT-4o Mini', description: 'Fast multimodal model' },
+      { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', description: 'High capability model' },
+      { value: 'gpt-4', label: 'GPT-4', description: 'Original GPT-4 model' },
+      { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', description: 'Fast and affordable model' },
     ];
   }
 }
