@@ -164,6 +164,16 @@ export function initOpenAIOAuthEvents(): void {
         value:          apiKey,
       });
 
+      // Store refresh token if provided (for token refresh later)
+      if (tokens.refresh_token) {
+        await integrationService.setIntegrationValue({
+          integration_id: 'openai',
+          account_id:     accountId,
+          property:       'refresh_token',
+          value:          tokens.refresh_token,
+        });
+      }
+
       await integrationService.setConnectionStatus('openai', true, accountId);
 
       // Bust the LLM service cache so the next call re-reads the new API key
