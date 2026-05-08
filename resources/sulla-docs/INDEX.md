@@ -5,6 +5,28 @@ Searchable reference for agents running inside Lima. All files are at:
 
 Search: `grep -r "keyword" <path-to-this-dir>/`
 
+## Session start — load these before acting
+
+When you wake up on a non-trivial task, read these in order:
+
+1. This INDEX (you're here) — maps every topic to a doc
+2. `tools/inventory.md` — every tool by category, saves `browse_tools` round-trips
+3. `agent-patterns/user-stories.md` — concrete plans for common requests
+4. `agent-patterns/known-gaps.md` — what you CAN'T do today; don't fake it
+5. `agent-patterns/writing-voice.md` — required reading before writing any prose for a human
+6. `~/sulla/identity/human/identity.md` — who you work for, operating model
+7. `~/sulla/identity/business/identity.md` — business model, active deadlines
+8. `~/sulla/identity/human/goals.md` — current goals, financial targets, operating rules
+9. `~/sulla/projects/ACTIVE_PROJECTS.md` — active projects and blockers
+
+For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the relevant doc.
+
+**Writing anything a human will read?**
+→ [`agent-patterns/writing-voice.md`](agent-patterns/writing-voice.md) — applies to chat replies, docs, social posts, marketing copy, commit messages, PR descriptions, emails, READMEs, anything prose. The two non-negotiables: no end-of-response summary, no short-burst fact format. Read this before you write.
+
+**Creating project docs / dashboards / reports?**
+→ [`design-system.md`](design-system.md) — all project HTML must use `sulla.css`. Copy `template.html`, link the CSS relative to `~/sulla/designs/`, default `class="dark"` on `<html>`.
+
 **Start here when a user request comes in:**
 - [`tools/inventory.md`](tools/inventory.md) — master list of every tool the agent can call (~183 tools)
 - [`agent-patterns/user-stories.md`](agent-patterns/user-stories.md) — request → action playbook (covers all subsystems)
@@ -13,6 +35,7 @@ Search: `grep -r "keyword" <path-to-this-dir>/`
 - [`agent-patterns/mentions.md`](agent-patterns/mentions.md) — how to interpret `@routine:…`, `@function:…`, `@project:…` tokens in user messages
 - [`agent-patterns/citations.md`](agent-patterns/citations.md) — how to emit `<citations>` blocks that render as source cards
 - [`agent-patterns/user-consent.md`](agent-patterns/user-consent.md) — when to call `meta/request_user_input` to pause mid-turn and get explicit approve/deny from the user
+- [`agent-patterns/writing-voice.md`](agent-patterns/writing-voice.md) — how to write so output doesn't read like AI; the two non-negotiables (no end-summary, no bullet-burst) plus the full tell catalogue
 - [`verification-2026-04-23.md`](verification-2026-04-23.md) — what was verified live against the running system, what was wrong, what got fixed
 
 ## environment/
@@ -67,6 +90,7 @@ Search: `grep -r "keyword" <path-to-this-dir>/`
 - `citations.md` — The `<citations><source …/></citations>` XML protocol; when to emit, exact shape, rules against hallucinated sources
 - `mentions.md` — `@kind:slug` tokens in user messages (routine / skill / function / recipe / integration / workflow / project); how to resolve each
 - `user-consent.md` — 🚦 When to call `meta/request_user_input` vs when to charge ahead vs when to end the turn blocked; how to phrase the approval card
+- `writing-voice.md` — ✍️ Required reading before writing any prose for a human; bans end-summary wrap-ups and bullet-burst fact dumps; full AI-tell catalogue + positive rules
 
 ## marketplace/
 - `overview.md` — Recipes (Docker compose), catalog, install/uninstall, extension UIs
@@ -80,6 +104,11 @@ Search: `grep -r "keyword" <path-to-this-dir>/`
 
 ## mobile/
 - `overview.md` — Sulla Mobile (iOS): AI iPhone receptionist, push-to-talk to Desktop, lead inbox
+
+## design-system (project HTML docs)
+- [`design-system.md`](design-system.md) — ⭐ **ALL project docs must be HTML using this system** — sulla.css tokens, component classes, quick-start, CSS path
+- Actual CSS: `<app-resources>/design-system/sulla.css` → also at `~/sulla/designs/sulla.css`
+- Actual template: `<app-resources>/design-system/template.html` → also at `~/sulla/designs/template.html`
 
 ## identity/
 - `structure.md` — ~/sulla/identity/ layout, file formats, observational memory

@@ -137,7 +137,20 @@ export class SullaWebRequestFixer extends EventEmitter {
     });
 
     // ==================== onBeforeSendHeaders ====================
-    session.webRequest.onBeforeSendHeaders((details, callback) => {
+    // Electron's webRequest callback is a one-time native callback (gin_helper).
+    // The async IIFE below has both a success and a .catch() path that call it,
+    // and the success-path invocation can throw (e.g. session torn down, request
+    // cancelled). When it throws, the rejection lands in .catch() which would
+    // call the callback a second time — Electron then throws "One-time callback
+    // was called more than once". Wrap once at entry to enforce Electron's
+    // own contract.
+    session.webRequest.onBeforeSendHeaders((details, originalCallback) => {
+      let callbackInvoked = false;
+      const callback: typeof originalCallback = (response) => {
+        if (callbackInvoked) return;
+        callbackInvoked = true;
+        originalCallback(response);
+      };
       this.emit('beforeSendHeaders', details);
 
       if (details.url.startsWith('app://') || details.url.startsWith('x-rd-extension://')) {

@@ -12,6 +12,41 @@ import Electron from 'electron';
 
 const ERROR_REPORT_URL = 'https://error-reports.merchantprotocol.com';
 
+// Client-side flood guard: if a process gets stuck in a tight loop emitting the
+// same rejection (e.g. a `.once()` listener firing repeatedly), we'd otherwise
+// hammer the worker thousands of times in seconds. Keep the first N submissions
+// per signature within a window, then drop the rest until the window resets.
+const DEDUPE_WINDOW_MS = 60_000;
+const DEDUPE_MAX_PER_WINDOW = 3;
+const recentSubmissions = new Map<string, { firstSeenAt: number; count: number; suppressed: number }>();
+
+function dedupeSignature(report: ErrorReportPayload): string {
+  const firstStackFrame = (report.stack_trace || '').split('\n').find(line => line.trim().startsWith('at ')) || '';
+  return `${ report.error_type }|${ report.error_message }|${ firstStackFrame.trim() }`;
+}
+
+function shouldSuppress(report: ErrorReportPayload): boolean {
+  const sig = dedupeSignature(report);
+  const now = Date.now();
+  const entry = recentSubmissions.get(sig);
+
+  if (!entry || now - entry.firstSeenAt > DEDUPE_WINDOW_MS) {
+    recentSubmissions.set(sig, { firstSeenAt: now, count: 1, suppressed: 0 });
+    return false;
+  }
+
+  entry.count += 1;
+  if (entry.count <= DEDUPE_MAX_PER_WINDOW) {
+    return false;
+  }
+
+  entry.suppressed += 1;
+  if (entry.suppressed === 1 || entry.suppressed % 100 === 0) {
+    console.warn(`[ErrorReporter] Suppressed ${ entry.suppressed } duplicate report(s) for: ${ sig.slice(0, 200) }`);
+  }
+  return true;
+}
+
 export interface ErrorReportPayload {
   error_type:    string;
   error_message: string;
@@ -40,6 +75,10 @@ export async function submitErrorReport(report: ErrorReportPayload): Promise<{ s
 
   if (report.notify_email) {
     payload.notify_email = report.notify_email;
+  }
+
+  if (shouldSuppress(payload)) {
+    return { success: false, action: 'suppressed_duplicate' };
   }
 
   try {

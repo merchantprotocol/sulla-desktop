@@ -112,14 +112,6 @@ export class SubconsciousAgentNode extends BaseNode {
   }
 
   async execute(state: BaseThreadState): Promise<NodeResult<BaseThreadState>> {
-    // Emit immediately so the parent chat UI shows a thinking bubble the
-    // instant this node starts — before any LLM call or subprocess spawn.
-    const agentLabel = (state.metadata as any).agentLabel || 'subconscious';
-    if (agentLabel !== 'observation') {
-      console.log(`[ThinkingTrace] SubconsciousAgent emit "Starting ${ agentLabel }…" (threadId=${ state.metadata.threadId }, parentChannel=${ (state.metadata as any).parentWsChannel }, parentTid=${ (state.metadata as any).parentConversationId })`);
-      await this.emitThinking(state, `Starting ${ agentLabel }…`);
-    }
-
     // Build system prompt: caller's prompt + completion wrappers
     const callerPrompt = (state.metadata as any).systemPrompt || '';
     const systemPrompt = callerPrompt + COMPLETION_WRAPPER_PROMPT;
@@ -246,6 +238,7 @@ export class SubconsciousAgentNode extends BaseNode {
       }
     }
 
+    const agentLabel = (state.metadata as any).agentLabel || 'subconscious';
     console.log(`[SubconsciousAgentNode:${ agentLabel }] Complete — status: ${ outcome.status }`);
 
     return { state, decision: { type: 'next' } };

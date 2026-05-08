@@ -179,19 +179,22 @@ Electron.protocol.registerSchemesAsPrivileged([
 ]);
 
 process.on('unhandledRejection', (reason: any, promise: any) => {
-  if (reason.code === 'ECONNREFUSED' && reason.port === cfg.kubernetes.port) {
-    // Do nothing: a connection to the kubernetes server was broken
-  } else {
-    console.error('UnhandledRejectionWarning:', reason);
-    const err = reason instanceof Error ? reason : new Error(String(reason));
-
-    submitErrorReport({
-      error_type:    err.name || 'unhandledRejection',
-      error_message: err.message,
-      stack_trace:   err.stack || '',
-      user_context:  'unhandledRejection in main process (background.ts)',
-    }).catch(() => {});
+  if (reason?.code === 'ECONNREFUSED' && reason.port === cfg.kubernetes.port) {
+    return;
   }
+  if (reason?.code === '57P01') {
+    console.warn('[Unhandled] Ignored Postgres admin termination');
+    return;
+  }
+  console.error('UnhandledRejectionWarning:', reason);
+  const err = reason instanceof Error ? reason : new Error(String(reason));
+
+  submitErrorReport({
+    error_type:    err.name || 'unhandledRejection',
+    error_message: err.message,
+    stack_trace:   err.stack || '',
+    user_context:  'unhandledRejection in main process (background.ts)',
+  }).catch(() => {});
 });
 
 process.on('uncaughtException', (err: Error) => {

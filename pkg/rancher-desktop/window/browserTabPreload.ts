@@ -30,6 +30,32 @@ const IPC_CHANNEL = 'browser-tab-view:bridge-event';
 const LOG_PREFIX = '[SULLA_TAB_PRELOAD]';
 
 /* ------------------------------------------------------------------ */
+/*  Theme bridge: sync Sulla Desktop theme → file:// page classes     */
+/* ------------------------------------------------------------------ */
+
+// Only inject theme classes into local file:// pages (agent-created HTML docs).
+// Injecting on external URLs is harmless but unnecessary.
+const IS_FILE_URL = location.protocol === 'file:';
+
+function applyThemeToPage(theme: string): void {
+  if (!IS_FILE_URL) return;
+  const root = document.documentElement;
+  const isLight = typeof theme === 'string' && theme.includes('-light');
+  root.classList.remove('dark', 'light');
+  root.classList.add(isLight ? 'light' : 'dark');
+}
+
+// Apply on load — async IPC call, resolves before first meaningful paint
+ipcRenderer.invoke('sulla-settings-get', 'theme', 'protocol-dark')
+  .then((theme: unknown) => applyThemeToPage(String(theme || 'protocol-dark')))
+  .catch(() => IS_FILE_URL && document.documentElement.classList.add('dark'));
+
+// Listen for live theme changes pushed from the main process
+ipcRenderer.on('sulla:theme-changed', (_event, theme: string) => {
+  applyThemeToPage(theme);
+});
+
+/* ------------------------------------------------------------------ */
 /*  1. Set up the bridge emit function BEFORE any page JS runs        */
 /* ------------------------------------------------------------------ */
 

@@ -294,6 +294,9 @@ export interface IpcMainInvokeEvents {
   'claude-oauth:start':  () => { token?: string; error?: string };
   'claude-oauth:cancel': () => void;
 
+  /** OpenAI OAuth flow */
+  'openai-oauth:start': () => { success: boolean; error?: string };
+
   /** Sulla Cloud account auth (phone OTP / email / Apple) */
   'sulla-cloud:get-status':            () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
   'sulla-cloud:send-otp':              (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };

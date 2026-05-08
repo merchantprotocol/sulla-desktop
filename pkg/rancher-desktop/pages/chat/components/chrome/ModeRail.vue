@@ -19,6 +19,24 @@
     >
       <span class="icon" v-html="item.icon" />
     </button>
+
+    <div class="rail-spacer" />
+
+    <button
+      type="button"
+      :class="['mode-btn', { active: fileTreeOpen }]"
+      data-tooltip="File Explorer"
+      aria-label="File Explorer"
+      @click="$emit('toggle-file-tree')"
+    >
+      <span class="icon">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <line x1="9" y1="12" x2="15" y2="12"/>
+          <line x1="9" y1="15" x2="13" y2="15"/>
+        </svg>
+      </span>
+    </button>
   </nav>
 </template>
 
@@ -28,10 +46,12 @@ const props = defineProps<{
   active?:       string;
   /** When `active === 'routines'`, disambiguates My Work vs Library. */
   activeSubTab?: string;
+  fileTreeOpen?: boolean;
 }>();
 
 defineEmits<{
   (e: 'set-mode', mode: string, subTab?: string): void;
+  (e: 'toggle-file-tree'): void;
 }>();
 
 interface ModeItem {
@@ -139,6 +159,8 @@ const items: readonly ModeItem[] = Object.freeze([
   scrollbar-width: none;
 }
 .mode-rail::-webkit-scrollbar { display: none; }
+
+.rail-spacer { flex: 1; min-height: 8px; }
 
 .mode-btn {
   position: relative;

@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Name — Sulla</title>
+  <!--
+    Adjust this path to wherever sulla.css lives relative to this file.
+    e.g. ../../../designs/sulla.css or https://your-cdn/sulla.css
+  -->
+  <link rel="stylesheet" href="sulla.css">
+</head>
+<body>
+
+<!-- ================================================================
+     OPTION A: Page with sidebar navigation
+     Remove if you don't need a sidebar.
+     ================================================================ -->
+<div class="sulla-app">
+
+  <!-- ── Sidebar ── -->
+  <aside class="sulla-sidebar">
+    <!-- Brand logo area -->
+    <div class="sulla-header" style="height:52px; border-right:none; border-bottom:1px solid var(--border);">
+      <div class="sulla-header-brand">
+        <span class="brand-dot"></span>
+        Sulla
+      </div>
+    </div>
+
+    <nav class="sulla-nav">
+      <div class="sulla-nav-section">Navigation</div>
+      <a href="#overview"    class="sulla-nav-item active">
+        <span class="nav-icon">◈</span> Overview
+      </a>
+      <a href="#status"      class="sulla-nav-item">
+        <span class="nav-icon">◎</span> Status
+      </a>
+      <a href="#roadmap"     class="sulla-nav-item">
+        <span class="nav-icon">◷</span> Roadmap
+      </a>
+      <a href="#components"  class="sulla-nav-item">
+        <span class="nav-icon">▦</span> Components
+      </a>
+      <a href="#terminal"    class="sulla-nav-item">
+        <span class="nav-icon">▸</span> Terminal
+      </a>
+
+      <div class="sulla-nav-section" style="margin-top:.5rem;">Resources</div>
+      <a href="#"            class="sulla-nav-item">
+        <span class="nav-icon">⌗</span> Docs
+      </a>
+      <a href="#"            class="sulla-nav-item">
+        <span class="nav-icon">⊹</span> Settings
+      </a>
+    </nav>
+
+    <!-- Sidebar footer -->
+    <div style="padding:.75rem 1rem; border-top:1px solid var(--border);">
+      <div class="meta-grid">
+        <span class="meta-key">version</span>
+        <span class="meta-val">1.0.0</span>
+        <span class="meta-key">env</span>
+        <span class="badge badge-success" style="font-size:.6rem;">live</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <div class="sulla-main">
+
+    <!-- Header bar -->
+    <header class="sulla-header">
+      <div class="sulla-header-brand">
+        <span class="brand-dot"></span>
+        Project Name
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="badge badge-accent with-dot">Active</span>
+        <button class="theme-toggle" onclick="toggleTheme()">☀ / ☾ Theme</button>
+      </div>
+    </header>
+
+    <!-- ── Content ── -->
+    <div class="sulla-content" id="overview">
+
+      <!-- Page hero -->
+      <div class="page-hero">
+        <h1>Project Name</h1>
+        <p>Short description of what this document covers. Replace this with the actual project summary.</p>
+        <div class="flex items-center gap-3 mt-3 flex-wrap">
+          <span class="badge badge-accent">Phase 1</span>
+          <span class="badge badge-success with-dot">On Track</span>
+          <span class="text-sm text-muted">Updated: 2026-05-05</span>
+        </div>
+      </div>
+
+      <!-- ── KPI Stats ── -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">Key Metrics</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="grid grid-4 gap-4">
+          <div class="card">
+            <div class="stat">
+              <span class="stat-label">Total Tasks</span>
+              <span class="stat-value">24</span>
+              <span class="stat-delta up">▲ 3 this week</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="stat">
+              <span class="stat-label">Completed</span>
+              <span class="stat-value success">18</span>
+              <span class="stat-delta">75% done</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="stat">
+              <span class="stat-label">Blocked</span>
+              <span class="stat-value danger">2</span>
+              <span class="stat-delta down">Needs attention</span>
+            </div>
+          </div>
+          <div class="card">
+            <div class="stat">
+              <span class="stat-label">Velocity</span>
+              <span class="stat-value accent">4.2</span>
+              <span class="stat-delta">tasks/day</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Progress ── -->
+      <div class="section" id="status">
+        <div class="section-header">
+          <span class="section-title">Progress</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="card">
+          <div class="flex flex-col gap-4">
+
+            <div>
+              <div class="progress-label">
+                <span>Phase 1 — Setup</span>
+                <span class="pct">100%</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill success" style="width:100%"></div>
+              </div>
+            </div>
+
+            <div>
+              <div class="progress-label">
+                <span>Phase 2 — Build</span>
+                <span class="pct">62%</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" style="width:62%"></div>
+              </div>
+            </div>
+
+            <div>
+              <div class="progress-label">
+                <span>Phase 3 — Launch</span>
+                <span class="pct">10%</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill warning" style="width:10%"></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Alerts ── -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">Alerts</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="flex flex-col gap-3">
+          <div class="alert alert-success">
+            <span class="alert-icon">✓</span>
+            <div class="alert-body">
+              <div class="alert-title">Deployment complete</div>
+              <div class="alert-msg">All services healthy. No downtime detected.</div>
+            </div>
+          </div>
+          <div class="alert alert-warning">
+            <span class="alert-icon">⚠</span>
+            <div class="alert-body">
+              <div class="alert-title">Rate limit approaching</div>
+              <div class="alert-msg">API usage at 82% of monthly quota.</div>
+            </div>
+          </div>
+          <div class="alert alert-danger">
+            <span class="alert-icon">✕</span>
+            <div class="alert-body">
+              <div class="alert-title">Build failing</div>
+              <div class="alert-msg">main branch CI failing — 3 tests broken.</div>
+            </div>
+          </div>
+          <div class="alert alert-info">
+            <span class="alert-icon">ℹ</span>
+            <div class="alert-body">
+              <div class="alert-title">New version available</div>
+              <div class="alert-msg">v1.4.0 released. Review changelog before upgrading.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 2-col: Checklist + Metadata ── -->
+      <div class="section" id="components">
+        <div class="section-header">
+          <span class="section-title">Phase Checklist</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="grid grid-2 gap-4">
+
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Phase 1 Tasks</span>
+              <span class="badge badge-success">Done</span>
+            </div>
+            <ul class="checklist">
+              <li class="done"><span class="check"></span><span>LLC registration filed</span></li>
+              <li class="done"><span class="check"></span><span>Domain purchased</span></li>
+              <li class="done"><span class="check"></span><span>Brand identity complete</span></li>
+              <li class="in-progress"><span class="check"></span><span>Website in review</span></li>
+              <li><span class="check"></span><span>Paid ads setup</span></li>
+              <li><span class="check"></span><span>First booking received</span></li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Project Metadata</span>
+            </div>
+            <div class="meta-grid mt-2">
+              <span class="meta-key">owner</span>
+              <span class="meta-val">Jonathon Byrdziak</span>
+              <span class="meta-key">started</span>
+              <span class="meta-val">2026-05-01</span>
+              <span class="meta-key">deadline</span>
+              <span class="meta-val">2026-06-30</span>
+              <span class="meta-key">market</span>
+              <span class="meta-val">Coeur d'Alene / Spokane</span>
+              <span class="meta-key">phase</span>
+              <span class="badge badge-accent">1 of 3</span>
+              <span class="meta-key">status</span>
+              <span class="badge badge-success with-dot">Active</span>
+              <span class="meta-key">budget</span>
+              <span class="meta-val">$12,500</span>
+              <span class="meta-key">priority</span>
+              <span class="badge badge-warning">High</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ── Table ── -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">Task Table</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="table-wrap">
+          <table class="sulla-table">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Owner</th>
+                <th>Status</th>
+                <th>Due</th>
+                <th>Priority</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="col-key">LLC registration</td>
+                <td>Jonathon</td>
+                <td><span class="badge badge-success with-dot">Done</span></td>
+                <td class="col-muted">2026-05-10</td>
+                <td><span class="badge badge-danger">Critical</span></td>
+              </tr>
+              <tr>
+                <td class="col-key">Website v1</td>
+                <td>Jonathon</td>
+                <td><span class="badge badge-warning with-dot">In Review</span></td>
+                <td class="col-muted">2026-05-20</td>
+                <td><span class="badge badge-warning">High</span></td>
+              </tr>
+              <tr>
+                <td class="col-key">Google Ads setup</td>
+                <td>Jonathon</td>
+                <td><span class="badge badge-default">Pending</span></td>
+                <td class="col-muted">2026-06-01</td>
+                <td><span class="badge badge-info">Medium</span></td>
+              </tr>
+              <tr>
+                <td class="col-key">First client booking</td>
+                <td>—</td>
+                <td><span class="badge badge-default">Waiting</span></td>
+                <td class="col-muted">2026-06-15</td>
+                <td><span class="badge badge-warning">High</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── Timeline ── -->
+      <div class="section" id="roadmap">
+        <div class="section-header">
+          <span class="section-title">Timeline</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="card">
+          <div class="timeline">
+            <div class="timeline-item done">
+              <div class="timeline-date">May 2026</div>
+              <div class="timeline-title">Phase 1 — Foundation</div>
+              <div class="timeline-body">LLC, brand, website, basic tooling. First quotes sent.</div>
+            </div>
+            <div class="timeline-item active">
+              <div class="timeline-date">June 2026</div>
+              <div class="timeline-title">Phase 2 — First Revenue</div>
+              <div class="timeline-body">Paid ads live. Storm-chasing starts. First 5 jobs completed.</div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-date">Q3 2026</div>
+              <div class="timeline-title">Phase 3 — Scale</div>
+              <div class="timeline-body">Hire first crew. Expand to gutters and siding. iPad sales app.</div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-date">Q4 2026</div>
+              <div class="timeline-title">Phase 4 — Systems</div>
+              <div class="timeline-body">Full estimating platform. Insurance claim pipeline. Solar expansion.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Terminal block ── -->
+      <div class="section" id="terminal">
+        <div class="section-header">
+          <span class="section-title">Terminal Output</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="terminal">
+          <div class="terminal-bar">
+            <div class="terminal-dots">
+              <span class="dot-red"></span>
+              <span class="dot-yellow"></span>
+              <span class="dot-green"></span>
+            </div>
+            <span class="terminal-title">sulla — zsh</span>
+          </div>
+          <div class="terminal-body">
+            <div class="prompt cmd">sulla github/git_push '{"branch":"main","message":"feat: init project"}'</div>
+            <div class="out">↑ Pushing to origin/main...</div>
+            <div class="ok">✓ Push successful — HEAD at 8582b4d</div>
+            <div class="dim mt-2">─────────────────────────────────</div>
+            <div class="prompt cmd">sulla workflow/import_workflow '{"name":"daily-report"}'</div>
+            <div class="warn">⚠ Workflow already exists — skipping import</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Badges showcase ── -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">Badges &amp; Tags</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="card">
+          <div class="flex wrap gap-2">
+            <span class="badge badge-default">Default</span>
+            <span class="badge badge-accent">Accent</span>
+            <span class="badge badge-success">Success</span>
+            <span class="badge badge-warning">Warning</span>
+            <span class="badge badge-danger">Danger</span>
+            <span class="badge badge-info">Info</span>
+            <span class="badge badge-success pill with-dot">Online</span>
+            <span class="badge badge-danger pill with-dot">Offline</span>
+            <span class="badge badge-warning pill with-dot">Degraded</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Buttons ── -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">Buttons</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="card">
+          <div class="flex wrap gap-3">
+            <button class="btn btn-primary">Primary Action</button>
+            <button class="btn btn-outline-accent">Outline Accent</button>
+            <button class="btn btn-ghost">Ghost Button</button>
+            <button class="btn btn-primary btn-sm">Small</button>
+            <button class="btn btn-ghost btn-xs">Tiny</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Typography ── -->
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">Typography</span>
+          <span class="section-rule"></span>
+        </div>
+        <div class="card card-lg">
+          <h1>Display Heading (h1)</h1>
+          <h2 class="mt-3">Section Heading (h2)</h2>
+          <h3 class="mt-3">Subsection (h3)</h3>
+          <h4 class="mt-3">Card Title (h4)</h4>
+          <h6 class="mt-3">Label heading (h6)</h6>
+          <p class="mt-4">Body text uses the monospace stack for the terminal-noir aesthetic. This paragraph demonstrates normal reading flow with line-height and color hierarchy.</p>
+          <p>A link looks like <a href="#">this anchor</a> and has hover behavior.</p>
+          <blockquote class="mt-3">
+            "Looking at the outside of our house used to be stressful, but now it feels good to walk outside." — Customer review
+          </blockquote>
+          <pre class="mt-3"><code>// Code block example
+const sulla = await import('sulla-desktop');
+await sulla.workflow.run('daily-report');</code></pre>
+          <p class="mt-3">Inline <code>code snippets</code> look like this within prose. <strong>Bold text</strong> and <em>italic text</em> also work.</p>
+        </div>
+      </div>
+
+      <!-- Footer padding -->
+      <div style="height:3rem;"></div>
+
+    </div><!-- /.sulla-content -->
+  </div><!-- /.sulla-main -->
+</div><!-- /.sulla-app -->
+
+<!--
+  OPTION B: Simple page without sidebar
+  Just wrap your content in <div class="sulla-page"> instead of the entire sulla-app structure.
+  Example:
+
+  <body>
+    <div class="sulla-page">
+      <div class="page-hero">
+        <h1>Project Name</h1>
+        <p>Subtitle goes here.</p>
+      </div>
+      ... rest of content ...
+    </div>
+  </body>
+-->
+
+<script>
+  // ── Theme Toggle ──────────────────────────────────────────────
+  function toggleTheme() {
+    const html = document.documentElement;
+    if (html.classList.contains('dark')) {
+      html.classList.replace('dark', 'light');
+    } else {
+      html.classList.replace('light', 'dark');
+    }
+    localStorage.setItem('sulla-theme', html.className);
+  }
+
+  // Restore saved theme on load
+  (function () {
+    const saved = localStorage.getItem('sulla-theme');
+    if (saved) {
+      document.documentElement.className = saved;
+    } else if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+      document.documentElement.className = 'light';
+    }
+  })();
+</script>
+
+</body>
+</html>

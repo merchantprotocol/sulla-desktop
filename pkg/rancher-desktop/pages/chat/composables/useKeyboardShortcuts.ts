@@ -40,6 +40,10 @@ export function useKeyboardShortcuts(opts: KeyboardShortcutOptions = {}): void {
     if (metaish && e.shiftKey && e.key.toLowerCase() === 'h') {
       e.preventDefault(); c.toggleHistory(); return;
     }
+    // ⌘⇧E — toggle file explorer drawer
+    if (metaish && e.shiftKey && e.key.toLowerCase() === 'e') {
+      e.preventDefault(); c.toggleFileTree(); return;
+    }
     // ⌘/ — voice toggle
     if (metaish && e.key === '/') {
       e.preventDefault(); opts.onVoiceToggle?.(); return;

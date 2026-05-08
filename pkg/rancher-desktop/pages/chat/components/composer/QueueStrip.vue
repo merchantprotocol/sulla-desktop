@@ -54,40 +54,40 @@ const queue = computed(() => controller.queue.value);
   padding: 12px 16px;
   border: 1px dashed rgba(80, 150, 179, 0.3);
   border-radius: 10px;
-  background: rgba(20, 30, 42, 0.4);
+  background: var(--bg-surface, rgba(20, 30, 42, 0.4));
 }
 .queue.has-items { display: block; }
 .qhead {
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.25em;
-  text-transform: uppercase; color: var(--steel-400);
+  text-transform: uppercase; color: var(--accent-primary, var(--steel-400));
   margin-bottom: 10px; display: flex; align-items: center; gap: 12px;
 }
 .qhead .count {
-  background: rgba(80, 150, 179, 0.14); color: var(--steel-400);
+  background: rgba(80, 150, 179, 0.14); color: var(--accent-primary, var(--steel-400));
   padding: 1px 7px; border-radius: 3px; font-size: 9.5px;
 }
 .qhead .clear {
   margin-left: auto; background: transparent; border: none;
-  color: var(--read-4); font: inherit; cursor: pointer;
+  color: var(--text-muted, var(--read-4)); font: inherit; cursor: pointer;
   letter-spacing: 0.2em;
 }
-.qhead .clear:hover { color: var(--err); }
+.qhead .clear:hover { color: var(--text-error, var(--err)); }
 .qitem {
   display: flex; align-items: center; gap: 6px;
   padding: 8px 0; border-top: 1px solid rgba(80, 150, 179, 0.15);
   font-family: var(--serif); font-style: italic; font-size: 14px;
-  color: var(--read-3);
+  color: var(--text-secondary, var(--read-3));
 }
 .qitem:first-of-type { border-top: none; padding-top: 4px; }
 .qitem .text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qitem button {
-  background: transparent; border: none; color: var(--read-4);
+  background: transparent; border: none; color: var(--text-muted, var(--read-4));
   cursor: pointer; width: 24px; height: 24px; border-radius: 4px;
   font-family: var(--mono); font-size: 12px;
   transition: all 0.15s ease;
 }
-.qitem button:hover      { color: var(--steel-400); background: rgba(80, 150, 179, 0.1); }
-.qitem .inject           { color: var(--ok); font-size: 10px; }
-.qitem .inject:hover     { color: var(--ok);  background: rgba(134, 239, 172, 0.1); }
-.qitem .rm:hover         { color: var(--err); background: rgba(252, 165, 165, 0.1); }
+.qitem button:hover      { color: var(--accent-primary, var(--steel-400)); background: rgba(80, 150, 179, 0.1); }
+.qitem .inject           { color: var(--text-success, var(--ok)); font-size: 10px; }
+.qitem .inject:hover     { color: var(--text-success, var(--ok)); background: rgba(134, 239, 172, 0.1); }
+.qitem .rm:hover         { color: var(--text-error, var(--err)); background: rgba(252, 165, 165, 0.1); }
 </style>

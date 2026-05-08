@@ -25,13 +25,11 @@ const registry = new Map<string, {
 /** Summarizer: no tools — pure text analysis and XML output */
 const SUMMARIZER_TOOLS: string[] = [];
 
-/** Memory Recall: targeted searches for resources, tabs, credentials, environment, tools */
+/** Memory Recall: read-only access to files and vault — nothing else */
 const MEMORY_RECALL_TOOLS: string[] = [
   'file_search',           // Search ~/sulla/resources/ for skills & workflows
   'read_file',             // Read SKILL.md, workflow YAML, environment docs
   'vault_list',            // List available integration service credentials
-  'get_human_presence',    // Check if user is available
-  'browse_tools',          // Search tool catalog by category or keyword
 ];
 
 /** Observation Agent: manage observational memory and update identity files */
@@ -109,10 +107,8 @@ the human is asking about. Never list all credentials unprompted.
 Search \`~/sulla/integrations/environment/\` for environment docs relevant
 to the conversation. Read and include key details from matching files.
 
-### 6. Tools & Connected Accounts
-Use \`browse_tools\` to search for tools relevant to this conversation.
-Only search when the human is asking about an integration or tool by name.
-For relevant tools, call \`vault_list\` to check for connected accounts.
+### 6. Connected Accounts
+Call \`vault_list\` to check for connected accounts when the human is asking about an integration or tool by name.
 
 ### 7. Identity & Goals
 Search \`~/sulla/identity/\` when the request involves business strategy, outreach,
@@ -128,7 +124,7 @@ Read only the files relevant to the request — don't load all of them by defaul
 ### 8. Platform Documentation
 Search \`~/Sites/sulla/sulla-desktop/resources/sulla-docs/\` when the request
 involves a specific Sulla subsystem (workflows, functions, browser, GitHub, etc.)
-and the agent needs procedural detail beyond what browse_tools returns.
+and the agent needs procedural detail.
 Start with \`INDEX.md\` to find the right doc, then read only the relevant file.
 Only search here when the human is asking HOW to do something with Sulla's internals.
 

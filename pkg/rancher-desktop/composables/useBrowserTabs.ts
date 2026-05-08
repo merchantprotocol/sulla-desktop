@@ -2,7 +2,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor';
 
 export interface BrowserTab {
   id:       string;
@@ -49,11 +49,14 @@ function loadPersistedTabs(): BrowserTab[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
+    // Drop stale file-editor tabs — they reference absolute paths that may
+    // no longer be valid (moved, outside sandbox, etc). The file tree reopens them.
+    const noFileEditor = parsed.filter((t: any) => t?.mode !== 'file-editor');
     // Dedupe by (url + mode) so a runaway "open same URL 500 times" loop
     // collapses to a single entry on restore.
     const seen = new Set<string>();
     const deduped: any[] = [];
-    for (const t of parsed) {
+    for (const t of noFileEditor) {
       const key = `${ t?.mode || '' }|${ t?.url || '' }`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -81,7 +84,10 @@ function persistTabs(tabList: BrowserTab[]): void {
     // them is exactly how we end up restoring hundreds of WebContentsViews
     // and blacking out the main chat window. Only user-initiated tabs
     // (no assetId) persist.
-    const userTabs = tabList.filter(t => !t.assetId);
+    // file-editor tabs reference absolute file paths that may become stale
+    // across sessions (e.g. moved files, path-validation errors on restart).
+    // The file tree is always available to reopen them, so don't persist them.
+    const userTabs = tabList.filter(t => !t.assetId && t.mode !== 'file-editor');
     // Strip large HTML content + enforce the cap on write too, so a live
     // runaway can't balloon localStorage between app launches.
     const capped = userTabs.length > MAX_RESTORED_TABS
@@ -300,6 +306,7 @@ export function useBrowserTabs() {
     routines:     'Routines',
     marketplace:  'Sulla Studio',
     labs:         'Labs',
+    'file-editor': 'Editor',
   };
 
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {

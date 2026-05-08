@@ -16,7 +16,9 @@
         class="agent-router-rail"
         :active="activeTabMode"
         :active-sub-tab="activeSubTab"
+        :file-tree-open="fileTreeOpen"
         @set-mode="onModeRailSelect"
+        @toggle-file-tree="onToggleFileTree"
       />
 
       <div class="agent-router-content flex flex-col">
@@ -179,7 +181,8 @@ const activeTabMode = computed(() => {
 
 // Track active sub-tab for highlighting the correct ModeRail icon
 // (e.g., 'library' vs 'mywork' when mode is 'routines')
-const activeSubTab = ref<string | undefined>(undefined);
+const activeSubTab  = ref<string | undefined>(undefined);
+const fileTreeOpen  = ref(false);
 
 // Listen for sub-tab changes from BrowserTab
 function onRoutinesSubTabChange(event: Event) {
@@ -187,6 +190,15 @@ function onRoutinesSubTabChange(event: Event) {
   if (customEvent.detail?.subTab) {
     activeSubTab.value = customEvent.detail.subTab;
   }
+}
+
+function onToggleFileTree() {
+  window.dispatchEvent(new CustomEvent('sulla:toggle-file-tree'));
+}
+
+function onFileTreeStateChanged(event: Event) {
+  const open = (event as CustomEvent<{ open: boolean }>).detail?.open;
+  if (typeof open === 'boolean') fileTreeOpen.value = open;
 }
 
 function onModeRailSelect(mode: string, subTab?: string) {
@@ -442,6 +454,11 @@ function onHistoryRestoreLastClosed() {
   }
 }
 
+function onNavigateTab(ev: Event) {
+  const tabId = (ev as CustomEvent<{ tabId: string }>).detail?.tabId;
+  if (tabId) router.push(`/Browser/${ tabId }`);
+}
+
 function onHistoryNavigate(_event: any, ...args: any[]) {
   const entry = args[0] as { id: string; type: string; url?: string; title?: string; tab_id?: string };
   if (!entry) return;
@@ -461,6 +478,8 @@ const presenceTracker = getHumanPresenceTracker();
 onMounted(async() => {
   // Register sub-tab change listener
   window.addEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
+  window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
+  window.addEventListener('sulla:file-tree-state-changed', onFileTreeStateChanged as EventListener);
 
   // Ensure at least one tab exists and navigate to it on fresh start
   const initialTab = ensureOneTab();
@@ -509,6 +528,8 @@ onUnmounted(() => {
     clearInterval(footerStatsTimer);
   }
   window.removeEventListener('sulla:routines-subtab-change', onRoutinesSubTabChange as EventListener);
+  window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
+  window.removeEventListener('sulla:file-tree-state-changed', onFileTreeStateChanged as EventListener);
   ipcRenderer.removeListener('route' as any, onRoute);
   ipcRenderer.removeListener('agent-command' as any, onAgentCommand);
   ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);

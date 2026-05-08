@@ -177,19 +177,10 @@ async function runMemoryRecall(state: BaseThreadState, variant?: 'default' | 'he
       Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
     ).length;
 
-    // Extract the agent's accumulated response.
-    // Fallback: if response is empty (e.g. hit max_iterations), grab the
-    // last substantial assistant message from the subconscious conversation.
-    let response = agentMeta.response;
-    if (!response || !String(response).trim()) {
-      for (let i = subState.messages.length - 1; i >= 0; i--) {
-        const msg = subState.messages[i];
-        if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.trim().length > 50) {
-          response = msg.content;
-          break;
-        }
-      }
-    }
+    // Extract only the structured contract from AGENT_DONE.
+    // Never fall back to raw assistant messages — those are narration for the
+    // thinking bubble, not a contract for the primary agent.
+    const response = agentMeta.response;
 
     if (response && typeof response === 'string' && response.trim()) {
       console.log(`[SubconsciousMiddleware:MemoryRecall] Returning ${ response.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);

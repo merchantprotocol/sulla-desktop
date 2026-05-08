@@ -13,7 +13,7 @@ export default defineComponent({
   name: 'preferences-body-appearance',
   data() {
     return {
-      selectedTheme: localStorage.getItem(THEME_STORAGE_KEY) || 'default-light',
+      selectedTheme: localStorage.getItem(THEME_STORAGE_KEY) || 'protocol-dark',
       themeGroups,
     };
   },
@@ -200,6 +200,10 @@ export default defineComponent({
 
 .preview-nord-dark {
   background: linear-gradient(135deg, #2e3440 0%, #3b4252 50%, #434c5e 100%);
+}
+
+.preview-protocol-light {
+  background: linear-gradient(135deg, #f4f7fb 0%, #eef2f8 50%, #5096b3 100%);
 }
 
 .preview-protocol-dark {

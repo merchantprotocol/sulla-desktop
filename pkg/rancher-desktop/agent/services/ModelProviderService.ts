@@ -171,18 +171,10 @@ class ModelProviderService {
       if (EXCLUDED_PROVIDER_IDS.includes(integration.id)) continue;
 
       let connected = false;
-      if (integration.id === 'claude-code') {
-        // Claude Code is "connected" if the user has either credential type stored
-        try {
-          const oauth = await SullaSettingsModel.get('claudeOAuthToken', '');
-          const apiKey = await SullaSettingsModel.get('claudeApiKey', '');
-          connected = !!(oauth || apiKey);
-        } catch { /* DB not ready */ }
-      } else {
-        try {
-          connected = await integrationService.isAnyAccountConnected(integration.id);
-        } catch { /* not ready */ }
-      }
+      try {
+        // All providers (including Claude Code) check the vault for connected accounts
+        connected = await integrationService.isAnyAccountConnected(integration.id);
+      } catch { /* not ready */ }
 
       providers.push({ id: integration.id, name: integration.name, connected });
     }

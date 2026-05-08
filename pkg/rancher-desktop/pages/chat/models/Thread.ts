@@ -49,7 +49,8 @@ export const emptyTokenUsage = (): TokenUsage => ({
 });
 
 export interface SidebarState {
-  historyOpen: boolean;
+  historyOpen:  boolean;
+  fileTreeOpen: boolean;
 }
 
 /**

@@ -13,10 +13,15 @@
       messages. The transcript replaces it once a conversation begins.
 -->
 <template>
-  <div class="chat-root" :class="{ 'artifact-open': hasArtifact, 'history-open': historyOpen, 'artifact-expanded': artifactExpanded }">
+  <div class="chat-root" :class="{ 'artifact-open': hasArtifact, 'history-open': historyOpen, 'file-tree-open': fileTreeOpen, 'artifact-expanded': artifactExpanded }">
     <Canvas />
 
     <div class="shell">
+      <FileTreeRail
+        :open="fileTreeOpen"
+        @close="controller.toggleFileTree()"
+        @file-selected="onFileSelected"
+      />
       <HistoryRail
         :open="historyOpen"
         :threads="allThreads"
@@ -83,6 +88,7 @@ import Transcript        from './components/transcript/Transcript.vue';
 import Composer          from './components/composer/Composer.vue';
 import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import HistoryRail       from './components/history/HistoryRail.vue';
+import FileTreeRail      from './components/files/FileTreeRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
 
 import { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
@@ -102,6 +108,8 @@ import { useKeyboardShortcuts }  from './composables/useKeyboardShortcuts';
 import { useResizeSync }         from './composables/useResizeSync';
 
 import { ipcRenderer }           from '@pkg/utils/ipcRenderer';
+import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
+import type { FileEntry }        from './components/files/FileTreeRail.vue';
 
 import type { Thread }   from './models/Thread';
 import { asThreadId, type ThreadId } from './types/chat';
@@ -228,7 +236,12 @@ function onArtifactExpand(ev: Event): void {
 // Reset when all artifacts close.
 watch(hasArtifact, v => { if (!v) artifactExpanded.value = false; });
 const historyOpen    = computed(() => controller.sidebar.value.historyOpen);
+const fileTreeOpen   = computed(() => controller.sidebar.value.fileTreeOpen);
 const activeThreadId = computed(() => controller.thread.value.id);
+
+watch(fileTreeOpen, (open) => {
+  window.dispatchEvent(new CustomEvent('sulla:file-tree-state-changed', { detail: { open } }));
+});
 // App-wide conversation history (Postgres-backed, shared across every
 // open chat). Fetched on mount via the main-process IPC. Merged into the
 // thread list below so the HistoryRail surfaces every past chat, not
@@ -460,15 +473,45 @@ function onForkEvent(ev: Event): void {
   persister.save(snapshot);
 }
 
+// ─── File tree → file editor tab ────────────────────────────────────
+const { createTab, updateTab } = useBrowserTabs();
+
+const BROWSER_RENDERABLE_EXTS = new Set([
+  '.html', '.htm', '.md', '.markdown', '.json', '.jsonc',
+  '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico',
+  '.mp4', '.webm', '.mp3', '.ogg', '.wav',
+]);
+
+function onFileSelected(entry: FileEntry): void {
+  if (entry.isDir) return;
+  const rawExt = (entry.ext || '').toLowerCase();
+  const ext    = rawExt.startsWith('.') ? rawExt : (rawExt ? `.${ rawExt }` : '');
+  if (BROWSER_RENDERABLE_EXTS.has(ext)) {
+    const tab = createTab(`file://${ entry.path }`, { mode: 'browser' });
+    updateTab(tab.id, { title: entry.name });
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+  } else {
+    const tab = createTab(entry.path, { mode: 'file-editor' });
+    updateTab(tab.id, { title: entry.name });
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+  }
+}
+
+function onToggleFileTreeEvent() {
+  controller.toggleFileTree();
+}
+
 onMounted(() => {
-  window.addEventListener('chat:new-chat',       onNewChatEvent);
-  window.addEventListener('chat:fork',           onForkEvent);
-  window.addEventListener('chat:artifact-expand', onArtifactExpand);
+  window.addEventListener('chat:new-chat',          onNewChatEvent);
+  window.addEventListener('chat:fork',              onForkEvent);
+  window.addEventListener('chat:artifact-expand',   onArtifactExpand);
+  window.addEventListener('sulla:toggle-file-tree', onToggleFileTreeEvent);
 });
 onBeforeUnmount(() => {
-  window.removeEventListener('chat:new-chat',       onNewChatEvent);
-  window.removeEventListener('chat:fork',           onForkEvent);
-  window.removeEventListener('chat:artifact-expand', onArtifactExpand);
+  window.removeEventListener('chat:new-chat',          onNewChatEvent);
+  window.removeEventListener('chat:fork',              onForkEvent);
+  window.removeEventListener('chat:artifact-expand',   onArtifactExpand);
+  window.removeEventListener('sulla:toggle-file-tree', onToggleFileTreeEvent);
 });
 </script>
 
@@ -571,8 +614,9 @@ onBeforeUnmount(() => {
   -webkit-mask-composite: source-in;
 }
 
-.chat-root.history-open  .main { left: 260px; }
-.chat-root.artifact-open .main { right: 560px; }
+.chat-root.history-open   .main { left: 260px; }
+.chat-root.file-tree-open .main { left: 260px; }
+.chat-root.artifact-open  .main { right: 560px; }
 .chat-root.artifact-open.artifact-expanded .main { right: 70vw; }
 
 /* Rails float over the left/right edges at fixed widths. */
@@ -581,6 +625,12 @@ onBeforeUnmount(() => {
   top: 0; bottom: 0; left: 0;
   width: 260px;
   z-index: 6;
+}
+.shell :deep(.files) {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 260px;
+  z-index: 7;
 }
 .shell :deep(.artifact) {
   position: absolute;
