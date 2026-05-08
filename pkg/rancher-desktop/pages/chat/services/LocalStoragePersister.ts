@@ -29,8 +29,9 @@ export class LocalStoragePersister implements ThreadPersister {
 
       // Also save to database via IPC (fire-and-forget)
       // If this fails, we still have localStorage as fallback
-      ipcRenderer.invoke('chat-messages:save', state.thread.id, state)
-        .catch(err => console.error('[LocalStoragePersister] DB backup save failed:', err));
+      // DISABLED TEMPORARILY: debugging duplicate message issue
+      // ipcRenderer.invoke('chat-messages:save', state.thread.id, state)
+      //   .catch(err => console.error('[LocalStoragePersister] DB backup save failed:', err));
     } catch (e) { console.error('[LocalStoragePersister] save failed:', e); }
   }
 
