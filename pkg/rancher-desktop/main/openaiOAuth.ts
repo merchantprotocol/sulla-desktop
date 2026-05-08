@@ -149,14 +149,70 @@ export function initOpenAIOAuthEvents(): void {
       const tokens = await tokenRes.json() as any;
       window.destroy();
 
-      // Store the tokens (don't store in oauth_tokens table, store the access_token as api_key)
+      console.log(`${ LOG_PREFIX } First exchange complete, tokens received:`, {
+        has_access_token: !!tokens.access_token,
+        has_id_token:     !!tokens.id_token,
+        has_refresh_token: !!tokens.refresh_token,
+        token_type:       tokens.token_type,
+      });
+
       const accountId = 'oauth';
-      const apiKey = tokens.access_token;
-      if (!apiKey) {
-        throw new Error('No access_token in OAuth response');
+
+      // OpenAI requires a second token exchange (RFC 8693) to convert id_token → actual API key
+      const idToken = tokens.id_token as string | undefined;
+      if (!idToken) {
+        console.error(`${ LOG_PREFIX } ERROR: No id_token in OAuth response`);
+        console.log(`${ LOG_PREFIX } Response keys:`, Object.keys(tokens));
+        throw new Error('No id_token in OAuth response — cannot complete API key exchange');
       }
 
-      // Store the API key so OpenAIService.create() can use it
+      console.log(`${ LOG_PREFIX } Starting second token exchange (RFC 8693)...`);
+
+      const keyExchangeBody = new URLSearchParams({
+        grant_type:         'urn:ietf:params:oauth:grant-type:token-exchange',
+        client_id:          clientId,
+        requested_token:    'openai-api-key',
+        subject_token:      idToken,
+        subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+      });
+
+      const keyRes = await fetch('https://auth.openai.com/oauth/token', {
+        method:  'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept:         'application/json',
+          'User-Agent':   'Sulla-Desktop/1.0',
+        },
+        body: keyExchangeBody.toString(),
+      });
+
+      const keyResText = await keyRes.text().catch(() => '');
+      console.log(`${ LOG_PREFIX } Key exchange response: ${ keyRes.status }`, {
+        ok:      keyRes.ok,
+        status:  keyRes.status,
+        headers: Object.fromEntries(keyRes.headers.entries()),
+        body:    keyResText.substring(0, 500),
+      });
+
+      if (!keyRes.ok) {
+        throw new Error(`API key exchange failed: ${ keyRes.status } ${ keyResText.substring(0, 200) }`);
+      }
+
+      const keyData = JSON.parse(keyResText) as any;
+      console.log(`${ LOG_PREFIX } Key exchange response parsed:`, {
+        has_access_token: !!keyData.access_token,
+        has_api_key:      !!keyData.api_key,
+        keys:             Object.keys(keyData),
+      });
+
+      const apiKey = keyData.access_token || keyData.api_key;
+      if (!apiKey) {
+        throw new Error('No access_token or api_key in API key exchange response');
+      }
+
+      console.log(`${ LOG_PREFIX } Got API key, length: ${ apiKey.length }`);
+
+      // Store the actual API key so OpenAIService.create() can use it
       await integrationService.setIntegrationValue({
         integration_id: 'openai',
         account_id:     accountId,

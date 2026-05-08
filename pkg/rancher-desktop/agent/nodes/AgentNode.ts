@@ -284,15 +284,16 @@ export class AgentNode extends BaseNode {
       if (!reply) return null;
 
       // Emit text to the UI BEFORE tool execution so text appears before tool cards.
-      // Dedup: skip only if this response is 100% identical to the immediately
-      // previous assistant message. Prevents duplicate display when AGENT_CONTINUE
-      // causes a second LLM turn that regenerates identical text.
+      // Dedup: skip if streaming already sent this content to the UI, or if 100%
+      // identical to the immediately previous assistant message (AGENT_CONTINUE
+      // causes a second LLM turn that regenerates identical text).
       const agentOutcome = this.extractAgentOutcome(reply.content);
       const userVisibleText = this.toUserVisibleAgentMessage(reply.content, agentOutcome);
       if (userVisibleText?.trim()) {
         const isDuplicate = lastAssistantText !== null &&
           lastAssistantText === userVisibleText.trim();
-        if (!isDuplicate) {
+        const alreadyStreamed = !!reply.metadata.streamingEmitted;
+        if (!isDuplicate && !alreadyStreamed) {
           await this.wsChatMessage(state, userVisibleText, 'assistant');
         }
       }

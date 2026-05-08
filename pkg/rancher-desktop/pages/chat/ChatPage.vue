@@ -338,12 +338,18 @@ function onSuggestion(text: string): void {
   controller.send(text);
 }
 
-function onActivate(id: ThreadId): void {
+async function onActivate(id: ThreadId): Promise<void> {
   const next = registry.activate(id);
   if (next) return;
-  // Not in memory yet — hydrate from disk.
+  // Not in memory yet — try to hydrate from disk (localStorage or database).
   const state = persister.load(id);
-  if (state) registry.open(state, props.tabId);
+  if (state) {
+    registry.open(state, props.tabId);
+    return;
+  }
+  // localStorage miss — try database fallback
+  const dbState = await persister.loadAsync(id);
+  if (dbState) registry.open(dbState, props.tabId);
 }
 
 // ─── Pinboard entries (top of history rail) ───────────────────────
@@ -391,8 +397,8 @@ const pinnedEntries = computed(() => {
  * can scroll the target message into view. Transcript-side handler is
  * a follow-up; for now the activate gets you there.
  */
-function onJumpTo(target: { threadId: ThreadId; messageId: any }): void {
-  onActivate(target.threadId);
+async function onJumpTo(target: { threadId: ThreadId; messageId: any }): Promise<void> {
+  await onActivate(target.threadId);
   // Give the transcript a tick to mount, then nudge it.
   setTimeout(() => {
     window.dispatchEvent(new CustomEvent('chat:jump-to-message', {

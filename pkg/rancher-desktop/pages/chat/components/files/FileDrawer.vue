@@ -40,6 +40,16 @@
       @dragleave="onScrollDragLeave"
       @drop.prevent="onScrollDrop"
     >
+      <button
+        v-if="canGoUp"
+        class="fd-parent-row"
+        type="button"
+        :title="`Go to parent directory: ${parentPath}`"
+        @click="goUp"
+      >
+        <span class="fd-parent-dots">..</span>
+      </button>
+
       <FileTreeNode
         v-for="entry in entries"
         :key="entry.path"
@@ -66,7 +76,7 @@
 
 <script lang="ts">
 import { ipcRenderer, clipboard } from 'electron';
-import { defineComponent, ref, onMounted, onBeforeUnmount, watch } from 'vue';
+import { defineComponent, ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 
 import FileContextMenu from './FileContextMenu.vue';
 import FileTreeNode    from './FileTreeNode.vue';
@@ -107,7 +117,9 @@ export default defineComponent({
     async function loadRoot() {
       loading.value = true;
       try {
-        rootPath.value = await ipcRenderer.invoke('filesystem-get-root');
+        const initialRoot = await ipcRenderer.invoke('filesystem-get-root');
+        if (!homePath.value) homePath.value = initialRoot;
+        rootPath.value = initialRoot;
         entries.value  = await ipcRenderer.invoke('filesystem-read-dir', rootPath.value);
       } catch (err) {
         console.error('[FileDrawer] loadRoot failed:', err);
@@ -126,6 +138,38 @@ export default defineComponent({
       } finally {
         loadingDirs.value.delete(dirPath);
       }
+    }
+
+    const parentPath = computed(() => {
+      const current = rootPath.value;
+      if (!current || current === '/') return '';
+      const normalized = current.endsWith('/') && current.length > 1 ? current.slice(0, -1) : current;
+      const lastSlash = normalized.lastIndexOf('/');
+      if (lastSlash <= 0) return '/';
+      return normalized.slice(0, lastSlash);
+    });
+
+    const canGoUp = computed(() => !!rootPath.value && rootPath.value !== '/' && rootPath.value !== homePath.value);
+
+    async function navigateTo(dirPath: string) {
+      loading.value = true;
+      try {
+        rootPath.value = dirPath;
+        entries.value = await ipcRenderer.invoke('filesystem-read-dir', dirPath);
+        childrenMap.value = {};
+        expandedDirs.value = new Set();
+        selectedPaths.value = new Set();
+        lastSelectedPath.value = '';
+      } catch (err) {
+        console.error('[FileDrawer] navigateTo failed:', dirPath, err);
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    async function goUp() {
+      if (!canGoUp.value || !parentPath.value) return;
+      await navigateTo(parentPath.value);
     }
 
     async function toggleDir(dirPath: string) {
@@ -351,7 +395,7 @@ export default defineComponent({
 
     return {
       entries, expandedDirs, childrenMap, loadingDirs, loading,
-      selectedPaths, rootPath, toggleDir, selectFile,
+      selectedPaths, rootPath, parentPath, canGoUp, goUp, toggleDir, selectFile,
       contextMenuRef, inlinePromptRef, fileClipboard,
       onContextMenu, onContextAction,
       uploadInputRef, newFileAtRoot, newFolderAtRoot, triggerUpload, onUploadInput,
@@ -412,6 +456,30 @@ export default defineComponent({
   padding: 16px 12px;
   color: var(--text-muted);
   font-size: var(--fs-body-sm);
+}
+
+.fd-parent-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-bottom: 1px solid var(--border-muted);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.fd-parent-row:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.fd-parent-dots {
+  padding-left: 8px;
 }
 
 .fd-scroll {
