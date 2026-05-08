@@ -528,11 +528,8 @@ Rules that apply on every turn:
         heartbeatTimer = setInterval(() => {
           tick += 1;
           const elapsed = Math.round((Date.now() - heartbeatStart) / 1000);
-          const msg = tick === 1 ? 'Claude binary starting'
-                    : tick === 2 ? 'Loading tools and context'
-                    : tick === 3 ? 'Calling model — waiting for first response'
-                    : `Still waiting on model (${ elapsed }s)`;
-          directActivity(msg);
+          // Don't emit transient status messages as separate thinking bubbles
+          // Tool activities and model thinking will provide feedback
         }, 3000);
       });
 
@@ -729,10 +726,9 @@ Rules that apply on every turn:
             return;
           }
 
-          // Thinking block starting → indicate reasoning phase.
+          // Thinking block starting → stop the heartbeat
           if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') {
             stopHeartbeat();
-            emitActivity('Thinking…');
             return;
           }
         }

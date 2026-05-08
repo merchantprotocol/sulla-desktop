@@ -83,6 +83,20 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
 
+        // Propagate parent's abort signal so stop button reaches subagents
+        const parentAbort = (this.state as any)?.metadata?.options?.abort;
+        if (parentAbort) {
+          subState.metadata.options ??= {};
+          subState.metadata.options.abort = parentAbort;
+        }
+
+        // Register this threadId on the parent so user-abort fans out to it
+        const parentMeta = (this.state as any)?.metadata;
+        if (parentMeta) {
+          const active = (parentMeta.activeSubAgentThreadIds ??= []);
+          if (!active.includes(threadId)) active.push(threadId);
+        }
+
         // Execute the sub-agent graph
         const finalState = await graph.execute(subState);
 
@@ -121,6 +135,14 @@ export class SpawnAgentWorker extends BaseTool {
           threadId,
         };
       } finally {
+        // Deregister from parent's active-sub-agents list so stale threadIds
+        // don't receive abort signals after the subagent has already exited
+        const parentMeta = (this.state as any)?.metadata;
+        if (parentMeta?.activeSubAgentThreadIds) {
+          const arr: string[] = parentMeta.activeSubAgentThreadIds;
+          const idx = arr.indexOf(threadId);
+          if (idx >= 0) arr.splice(idx, 1);
+        }
         // Clean up registry to prevent memory leaks
         GraphRegistry.delete(threadId);
       }
