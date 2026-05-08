@@ -1,5 +1,6 @@
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, type LLMServiceConfig, FinishReason } from './BaseLanguageModel';
 import { readSSEEvents } from './SSEStreamReader';
+import { ModelDetectionService } from './ModelDetectionService';
 
 /**
  * OpenAI-compatible remote LLM provider base class.
@@ -50,8 +51,14 @@ export class OpenAICompatibleService extends BaseLanguageModel {
    * Send request to remote provider with retry + local LLM fallback.
    */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const url = `${ this.baseUrl }${ this.chatEndpoint }`;
-    const body = this.buildRequestBody(messages, options);
+    const endpoint = ModelDetectionService.getEndpoint(this.model);
+    const url = `${ this.baseUrl }${ endpoint }`;
+    let body = this.buildRequestBody(messages, options);
+
+    // Transform request body for /responses API (uses 'input' instead of 'messages')
+    if (ModelDetectionService.usesResponsesAPI(this.model)) {
+      body = this.transformToResponsesAPI(body);
+    }
     const conversationId = typeof options?.conversationId === 'string' ? options.conversationId : undefined;
     const nodeName = typeof options?.nodeName === 'string' ? options.nodeName : undefined;
 
@@ -137,8 +144,14 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     messages: ChatMessage[],
     options: any,
   ): Promise<Response | null> {
-    const url = `${ this.baseUrl }${ this.chatEndpoint }`;
-    const body = this.buildRequestBody(messages, options);
+    const endpoint = ModelDetectionService.getEndpoint(this.model);
+    const url = `${ this.baseUrl }${ endpoint }`;
+    let body = this.buildRequestBody(messages, options);
+
+    // Transform request body for /responses API (uses 'input' instead of 'messages')
+    if (ModelDetectionService.usesResponsesAPI(this.model)) {
+      body = this.transformToResponsesAPI(body);
+    }
 
     body.stream = true;
 
@@ -356,13 +369,26 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     const otherMsgs = openaiMessages.filter((m: any) => m.role !== 'system');
     const orderedMessages = [...systemMsgs, ...otherMsgs];
 
+    // Defensive: ensure no message has null content (sanitize before sending)
+    const sanitizedMessages = orderedMessages.map((m: any) => {
+      if (m.content === null || m.content === undefined) {
+        return { ...m, content: '' };
+      }
+      return m;
+    });
+
     const body: any = {
       model:    options.model ?? this.model,
-      messages: orderedMessages,
+      messages: sanitizedMessages,
     };
 
     if (options.maxTokens) {
-      body.max_tokens = options.maxTokens;
+      // Newer models (gpt-5.x, o1, o3) use 'max_completion_tokens'
+      if (ModelDetectionService.usesMaxCompletionTokens(this.model)) {
+        body.max_completion_tokens = options.maxTokens;
+      } else {
+        body.max_tokens = options.maxTokens;
+      }
     }
 
     if (options.tools?.length) {
@@ -374,6 +400,42 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     }
 
     return body;
+  }
+
+  /**
+   * Transform request body for the /responses API.
+   * The /responses API uses 'input' instead of 'messages'.
+   */
+  protected transformToResponsesAPI(body: any): any {
+    // The Responses API rejects null content — replace with empty string
+    const input = (body.messages as any[]).map((msg: any) => {
+      if (msg.content === null || msg.content === undefined) {
+        return { ...msg, content: '' };
+      }
+      return msg;
+    });
+
+    const transformed: any = {
+      model: body.model,
+      input,
+    };
+
+    // Handle both max_tokens and max_completion_tokens
+    if (body.max_completion_tokens) {
+      transformed.max_completion_tokens = body.max_completion_tokens;
+    } else if (body.max_tokens) {
+      transformed.max_tokens = body.max_tokens;
+    }
+
+    if (body.tools?.length) {
+      transformed.tools = body.tools;
+    }
+
+    if (body.response_format) {
+      transformed.response_format = body.response_format;
+    }
+
+    return transformed;
   }
 
   /**
@@ -395,7 +457,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       if (m.role === 'assistant' && Array.isArray(m.content)) {
         const toolUseBlocks = m.content.filter((b: any) => b?.type === 'tool_use');
         const textBlocks = m.content.filter((b: any) => b?.type === 'text' && b?.text?.trim());
-        const textContent = textBlocks.map((b: any) => b.text).join('\n').trim() || null;
+        const textContent = textBlocks.map((b: any) => b.text).join('\n').trim() || '';
 
         if (toolUseBlocks.length > 0) {
           const toolCalls = toolUseBlocks.map((b: any) => ({
