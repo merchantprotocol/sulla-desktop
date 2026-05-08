@@ -1323,6 +1323,34 @@ const handleOAuthConnect = async() => {
     return;
   }
 
+  // OpenAI uses an embedded BrowserWindow OAuth flow. Route to its dedicated IPC handler.
+  if (integration.value.id === 'openai') {
+    isLoading.value = true;
+    try {
+      const result = await ipcRenderer.invoke('openai-oauth:start');
+      if (result?.error) {
+        oauthError.value = result.error;
+        return;
+      }
+      if (!result?.success) {
+        oauthError.value = 'OAuth authorization failed. Please try again.';
+        return;
+      }
+      // openaiOAuth.ts persisted the token + connection status to the vault
+      // already. Just refresh the UI.
+      await refreshAccounts();
+      integration.value.connected = await integrationService.isAnyAccountConnected(integration.value.id);
+      mergedIntegrations.value[integration.value.id].connected = integration.value.connected;
+      oauthSuccess.value = 'Successfully signed in with OpenAI — ready to use.';
+    } catch (error: any) {
+      console.error('OpenAI OAuth connection failed:', error);
+      oauthError.value = error?.message || 'OAuth authorization failed. Please try again.';
+    } finally {
+      isLoading.value = false;
+    }
+    return;
+  }
+
   // Sulla-managed OAuth (Apple Sign In, future Google sign-in, etc.) runs
   // through sulla-workers using Sulla's shared OAuth app credentials —
   // no user-supplied client_id/client_secret. The main-process IPC handler

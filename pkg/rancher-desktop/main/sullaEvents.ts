@@ -9,6 +9,7 @@ import * as path from 'path';
 import { initTabsIpc } from './browserTabs/tabsIpc';
 import { initClaudeCodeTestEvents } from './claudeCodeTest';
 import { initClaudeOAuthEvents } from './claudeOAuth';
+import { initOpenAIOAuthEvents } from './openaiOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
@@ -67,6 +68,7 @@ export function initSullaEvents(): void {
   initTabsIpc();
   initConversationHistoryIpc();
   initClaudeOAuthEvents();
+  initOpenAIOAuthEvents();
   initClaudeCodeTestEvents();
   initDesktopRelayEvents();
   initSullaCloudAuthEvents();

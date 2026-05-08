@@ -97,7 +97,7 @@ export class OAuthService {
     let codeVerifier: string | undefined;
     let codeChallenge: string | undefined;
     if (cfg.usePKCE) {
-      codeVerifier = crypto.randomBytes(32).toString('base64url');
+      codeVerifier = crypto.randomBytes(64).toString('base64url');
       codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
     }
 
@@ -202,6 +202,7 @@ export class OAuthService {
     const headers: Record<string, string> = {
       'Content-Type': 'application/x-www-form-urlencoded',
       Accept:         'application/json',
+      'User-Agent':   'Sulla-Desktop/1.0',
     };
 
     if (cfg.clientAuthMethod === 'header') {
