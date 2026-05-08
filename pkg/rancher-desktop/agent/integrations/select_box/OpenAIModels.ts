@@ -23,7 +23,6 @@ export class OpenAIModels extends SelectBoxProvider {
 
       if (body.data && body.data.length > 0) {
         return body.data
-          .filter(m => /^(gpt|o\d)/.test(m.id))
           .sort((a, b) => a.id.localeCompare(b.id))
           .map(m => ({ value: m.id, label: m.id }));
       }
