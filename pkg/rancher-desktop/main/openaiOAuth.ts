@@ -168,7 +168,7 @@ export function initOpenAIOAuthEvents(): void {
 
       // Bust the LLM service cache so the next call re-reads the new API key
       try {
-        const { resetOpenAIService } = await import('../languagemodels/OpenAIService');
+        const { resetOpenAIService } = await import('@pkg/agent/languagemodels/OpenAIService');
         resetOpenAIService();
       } catch { /* non-critical */ }
 
