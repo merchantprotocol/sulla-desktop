@@ -80,7 +80,7 @@ export function initOpenAIOAuthEvents(): void {
         authorizeUrl: 'https://auth.openai.com/oauth/authorize',
         scopeSeparator: ' ',
       };
-      const scopes = ['openid', 'profile', 'email', 'offline_access', 'model.request'];
+      const scopes = ['openid', 'profile', 'email', 'offline_access'];
       const clientId = 'app_EMoamEEZ73f0CkXaXp7hrann';
       const redirectUri = 'http://localhost:1455/auth/callback';
 
