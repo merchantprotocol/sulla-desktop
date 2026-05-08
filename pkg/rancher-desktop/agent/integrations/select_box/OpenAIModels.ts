@@ -16,20 +16,25 @@ export class OpenAIModels extends SelectBoxProvider {
       });
 
       if (!response.ok) {
+        console.warn(`[OpenAIModels] API call failed: ${ response.status } ${ response.statusText }`);
         return this.getStaticModels();
       }
 
       const body = await response.json() as { data?: { id: string }[] };
 
       if (body.data && body.data.length > 0) {
+        console.log(`[OpenAIModels] Got ${ body.data.length } models from OpenAI API`);
         return body.data
           .sort((a, b) => a.id.localeCompare(b.id))
           .map(m => ({ value: m.id, label: m.id }));
       }
-    } catch {
-      // Fall back to static list
+
+      console.warn('[OpenAIModels] API returned no data');
+    } catch (err) {
+      console.error('[OpenAIModels] API call failed:', err);
     }
 
+    console.log('[OpenAIModels] Falling back to static model list');
     return this.getStaticModels();
   }
 
