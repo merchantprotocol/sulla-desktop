@@ -27,11 +27,9 @@ export class LocalStoragePersister implements ThreadPersister {
         localStorage.setItem(INDEX_KEY, JSON.stringify(index));
       }
 
-      // Also save to database via IPC (fire-and-forget)
-      // If this fails, we still have localStorage as fallback
-      // DISABLED TEMPORARILY: debugging duplicate message issue
-      // ipcRenderer.invoke('chat-messages:save', state.thread.id, state)
-      //   .catch(err => console.error('[LocalStoragePersister] DB backup save failed:', err));
+      // DISABLED COMPLETELY: all persistence IPC calls disabled while debugging duplication
+      // The DB save was interfering with message completion
+      // TODO: re-enable after root cause is found
     } catch (e) { console.error('[LocalStoragePersister] save failed:', e); }
   }
 
@@ -92,9 +90,7 @@ export class LocalStoragePersister implements ThreadPersister {
       const index = this.readIndex().filter(x => x !== id);
       localStorage.setItem(INDEX_KEY, JSON.stringify(index));
 
-      // Also delete from database (fire-and-forget)
-      ipcRenderer.invoke('chat-messages:delete', id)
-        .catch(err => console.error('[LocalStoragePersister] DB delete failed:', err));
+      // DISABLED: DB delete disabled while debugging duplication
     } catch {}
   }
 
