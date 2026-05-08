@@ -159,7 +159,7 @@ export class ChatMessageModel {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - daysOld);
 
-      const result = await postgresClient.query(`
+      const result = await postgresClient.queryWithResult(`
         DELETE FROM ${ ChatMessageModel.TABLE }
         WHERE updated_at < $1
       `, [cutoff.toISOString()]);
