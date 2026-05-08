@@ -166,6 +166,12 @@ export function initOpenAIOAuthEvents(): void {
 
       await integrationService.setConnectionStatus('openai', true, accountId);
 
+      // Bust the LLM service cache so the next call re-reads the new API key
+      try {
+        const { resetOpenAIService } = await import('../languagemodels/OpenAIService');
+        resetOpenAIService();
+      } catch { /* non-critical */ }
+
       console.log(`${ LOG_PREFIX } OAuth successful, tokens stored`);
       return { success: true };
     } catch (err) {
