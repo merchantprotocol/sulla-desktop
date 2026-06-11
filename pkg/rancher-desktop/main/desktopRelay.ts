@@ -10,6 +10,22 @@
  *
  * Phase 1: manual pairing — user copies their mobile user_id into Language
  * Model Settings. Phase 2 will replace this with QR pairing.
+ *
+ * ── Authoritative scribe ────────────────────────────────────────────────
+ * The desktop is the system of record for relay conversations. Every
+ * committed turn — the inbound mobile user message, injected mid-run
+ * messages, each committed assistant message, and tool activity — is
+ * written to the sync log (local claude_messages/claude_conversations via
+ * scribeRelayTurn, then pushed by SullaSyncService with retry) independently
+ * of WebSocket delivery. The WS frames are a best-effort real-time push; if
+ * the phone is asleep or offline, it recovers the missed turns from cloud
+ * claude_messages on its next on-demand history load. Losing the socket
+ * must never lose conversation history.
+ *
+ * Scribing goes through the sync queue rather than POSTing the cloud REST
+ * API directly: the queue writes local Postgres first (so desktop history
+ * and syncDispatcher dedup work offline) and survives network failures via
+ * the 15s retry loop, where a direct fetch would silently drop the turn.
  */
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -18,6 +34,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
+import { scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -368,6 +385,8 @@ class DesktopRelayClient {
       if (!content) return;
       const conversationId = msg.conversationId ?? this.currentRoom ?? undefined;
       console.log(`[DesktopRelay] Inject received for conversationId=${ conversationId ?? '(none)' }`);
+      // Injected mid-run turns are part of the conversation record too.
+      this.scribeTurn(conversationId, 'user', content);
       const wsService = getWebSocketClientService();
       wsService.send(MOBILE_RELAY_CHANNEL, {
         type:      'inject_message',
@@ -422,6 +441,11 @@ class DesktopRelayClient {
     }
 
     this.ensureMobileChannelBridge();
+
+    // Scribe the user turn FIRST — the sync log is the authoritative record,
+    // and the turn must survive even if the agent dispatch or the socket
+    // fails right after this point.
+    this.scribeTurn(conversationId, 'user', content);
 
     const wsService = getWebSocketClientService();
     wsService.send(MOBILE_RELAY_CHANNEL, {
@@ -516,6 +540,9 @@ class DesktopRelayClient {
           if (stripped === lastActivity) return;
           lastActivity = stripped;
           this.send({ type: 'activity', message: stripped });
+          // Scribe tool activity so the history view (and a phone that was
+          // asleep) can show what the agent did, not just what it said.
+          this.scribeTurn(threadId, 'tool', stripped);
           return;
         }
 
@@ -541,6 +568,9 @@ class DesktopRelayClient {
           // a fresh streaming bubble rather than accumulating onto this one.
           finalTextByThread.set(threadId, stripped);
           streamedByThread.delete(threadId);
+          // Scribe before the WS send — committed turns must survive even
+          // if the phone is asleep and the frame is never delivered.
+          this.scribeTurn(threadId, 'assistant', stripped);
           this.send({ type: 'message', content: stripped });
           return;
         }
@@ -561,7 +591,13 @@ class DesktopRelayClient {
         const content = typeof data.content === 'string' ? data.content : '';
         if (content !== 'graph_execution_complete') return;
         const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
-        const finalText = finalTextByThread.get(threadId) ?? streamedByThread.get(threadId) ?? '';
+        const committed = finalTextByThread.get(threadId);
+        const finalText = committed ?? streamedByThread.get(threadId) ?? '';
+        // Streaming-only runs never hit the `progress` branch, so their text
+        // was never scribed. Committed (progress) text was already written.
+        if (!committed && finalText) {
+          this.scribeTurn(threadId, 'assistant', finalText);
+        }
         streamedByThread.delete(threadId);
         finalTextByThread.delete(threadId);
         lastActivity = '';
@@ -586,7 +622,7 @@ class DesktopRelayClient {
       // Queue completion/error frames so they're delivered after reconnect.
       // Streaming/activity frames are ephemeral — dropping them is acceptable.
       const type = (payload as any)?.type as string | undefined;
-      if (type === 'done' || type === 'stopped' || type === 'error') {
+      if (type === 'done' || type === 'stopped' || type === 'error' || type === 'message') {
         this.pendingFrames.push(json);
         console.warn(`[DesktopRelay] Queued ${ type } frame — socket not open`);
       } else {
@@ -614,6 +650,23 @@ class DesktopRelayClient {
       const t = this.keepaliveTimers.get(conversationId);
       if (t) { clearInterval(t); this.keepaliveTimers.delete(conversationId); }
     }, 10 * 60 * 1_000);
+  }
+
+  /**
+   * Write a committed relay turn to the sync log (local claude_messages +
+   * sync_queue push). Fire-and-forget: scribing must never block or fail
+   * the real-time WS path, and SullaSyncService retries cloud delivery on
+   * its own. Turns without a conversationId are skipped — in that case the
+   * agent runs under a self-created `thread_…` id and the SullaLogger
+   * mirror is the scribe instead.
+   */
+  private scribeTurn(conversationId: string | undefined, role: 'user' | 'assistant' | 'tool', content: string) {
+    if (!conversationId || !content.trim()) return;
+    scribeRelayTurn({
+      conversationId, role, content, ts: new Date().toISOString(),
+    }).catch((err) => {
+      console.warn(`[DesktopRelay] Failed to scribe ${ role } turn for ${ conversationId }:`, err);
+    });
   }
 
   private broadcastStatus() {
