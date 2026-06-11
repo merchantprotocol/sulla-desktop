@@ -37,6 +37,21 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   else
     echo "[audio-native] capture-loopback.cpp not found — skipping"
   fi
+
+  # Stage scripts + binaries into resources/darwin/audio-driver/ so
+  # electron-builder's extraResources picks them up. The runtime resolves
+  # them via paths.resources (see platform/darwin/index.ts); resources/darwin
+  # is gitignored, so without this step packaged builds ship no audio assets.
+  STAGE_DIR="resources/darwin/audio-driver"
+  mkdir -p "$STAGE_DIR"
+  cp "$AUDIO_DARWIN_DIR"/*.swift "$STAGE_DIR/"
+  for bin in create-mirror capture-loopback; do
+    if [[ -f "$AUDIO_DARWIN_DIR/$bin" ]]; then
+      cp "$AUDIO_DARWIN_DIR/$bin" "$STAGE_DIR/"
+      chmod +x "$STAGE_DIR/$bin"
+    fi
+  done
+  echo "[audio-native] Staged audio-driver assets into $STAGE_DIR"
 else
   echo "[audio-native] Not macOS — skipping native audio build"
 fi

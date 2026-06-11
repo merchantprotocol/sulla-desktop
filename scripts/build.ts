@@ -63,9 +63,23 @@ class Builder {
     );
   }
 
+  /**
+   * Compile the native audio-driver helpers (create-mirror, capture-loopback)
+   * for the host architecture and stage them into resources/darwin/audio-driver/.
+   * Must run before buildMain/packaging so the binaries match the build arch —
+   * the committed prebuilt binary is arm64-only and would break Intel macs.
+   */
+  async buildAudioNative() {
+    if (os.platform() !== 'darwin') {
+      return;
+    }
+    await simpleSpawn('bash', ['scripts/build-audio-native.sh']);
+  }
+
   async build() {
     console.log('Building...');
     buildUtils.isDevelopment = false;
+    await this.buildAudioNative();
     await this.buildRenderer();
     await buildUtils.buildPreload();
     await buildUtils.buildMain();
