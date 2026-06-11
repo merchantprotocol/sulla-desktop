@@ -2332,7 +2332,7 @@ class BackgroundCommandWorker implements CommandWorkerInterface {
 }
 
 /**
- * Checks if Rancher Desktop was run as root.
+ * Checks if Sulla Desktop was run as root.
  */
 function isRoot(): boolean {
   const validPlatforms = ['linux', 'darwin'];

@@ -240,7 +240,7 @@ class Builder {
   }
 
   protected async createLinuxResources(finalBuildVersion: string) {
-    const appData = 'packaging/linux/rancher-desktop.appdata.xml';
+    const appData = 'packaging/linux/sulla-desktop.appdata.xml';
     const release = `<release version="${ finalBuildVersion }" date="${ new Date().toISOString() }"/>`;
 
     await this.replaceInFile(appData, /<release.*\/>/g, release, appData.replace('packaging', 'resources'));

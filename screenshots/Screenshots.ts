@@ -126,7 +126,7 @@ export class Screenshots {
 export class MainWindowScreenshots extends Screenshots {
   constructor(page: Page, opt: ScreenshotsOptions) {
     super(page, opt);
-    this.windowTitle = 'Rancher Desktop';
+    this.windowTitle = 'Sulla Desktop';
   }
 
   async take(tabName: Parameters<NavPage['navigateTo']>[0], navPage?: NavPage, timeout?: number, includeAll?: boolean): Promise<void>;
@@ -155,7 +155,7 @@ export class PreferencesScreenshots extends Screenshots {
   constructor(page: Page, preferencePage: PreferencesPage, opt: ScreenshotsOptions) {
     super(page, opt);
     this.preferencePage = preferencePage;
-    this.windowTitle = 'Rancher Desktop - Preferences';
+    this.windowTitle = 'Sulla Desktop - Preferences';
   }
 
   async take(tabName: string, subTabName?: string) {
