@@ -105,25 +105,39 @@ runs:
         echo "::warning title=electron install attempt ${attempt} unverified::${msg}"
         rm -rf node_modules/electron/dist node_modules/electron/path.txt
         if [ "${attempt}" -lt 3 ]; then
-          echo "Attempt ${attempt} unverified, retrying in 30s..."
-          sleep 30
+          echo "Attempt ${attempt} unverified, retrying in 10s..."
+          sleep 10
         fi
       done
-      # Linux fallback: extract the cached zip with system unzip, which
-      # bypasses the JS extractor entirely. downloadArtifact caches the
-      # (checksum-verified) zip before extraction, so it is present even
-      # when the extract phase is what failed.
-      if [ "$(uname)" = "Linux" ]; then
-        zip=$(find "$HOME/.cache/electron" -name 'electron-v*-linux-*.zip' 2>/dev/null | head -1)
-        if [ -n "$zip" ]; then
-          echo "Falling back to system unzip of ${zip}"
-          mkdir -p node_modules/electron/dist
-          unzip -q -o "$zip" -d node_modules/electron/dist
-          printf electron > node_modules/electron/path.txt
-          if verify; then
-            echo "::notice title=electron install::JS extractor failed 3x; system unzip fallback succeeded"
-            exit 0
-          fi
+      # Native-extractor fallback: the JS extractor (extract-zip) silently
+      # dies mid-extract on the hosted runners — observed identically on
+      # linux x64 (dist held one file) and mac arm64 (empty app scaffold).
+      # downloadArtifact caches the checksum-verified zip before extracting,
+      # so extract that zip with the platform's native tool instead:
+      # ditto preserves the app-bundle symlinks on macOS, Info-ZIP unzip
+      # preserves modes on Linux, 7z covers Windows.
+      zipfile=$(find "$HOME/.cache/electron" "$HOME/Library/Caches/electron" "${LOCALAPPDATA:-/nonexistent}/electron/Cache" -name 'electron-v*.zip' 2>/dev/null | head -1)
+      if [ -n "$zipfile" ]; then
+        echo "Falling back to native extraction of ${zipfile}"
+        rm -rf node_modules/electron/dist
+        mkdir -p node_modules/electron/dist
+        case "$(uname -s)" in
+          Darwin)
+            ditto -x -k "$zipfile" node_modules/electron/dist
+            printf 'Electron.app/Contents/MacOS/Electron' > node_modules/electron/path.txt
+            ;;
+          Linux)
+            unzip -q -o "$zipfile" -d node_modules/electron/dist
+            printf electron > node_modules/electron/path.txt
+            ;;
+          *)
+            7z x -y "-onode_modules/electron/dist" "$zipfile" >/dev/null
+            printf electron.exe > node_modules/electron/path.txt
+            ;;
+        esac
+        if verify; then
+          echo "::notice title=electron install::JS extractor unverified 3x; native extraction fallback succeeded"
+          exit 0
         fi
       fi
       msg=$(tail -n 60 "$log" | tail -c 3500 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
