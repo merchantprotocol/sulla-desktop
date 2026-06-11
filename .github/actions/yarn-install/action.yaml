@@ -6,16 +6,16 @@ runs:
   using: composite
   steps:
   # In case we're running on a self-hosted runner without `yarn` installed,
-  # set up NodeJS, enable `yarn`, and then handle the caching.
+  # set up NodeJS and enable `yarn`.
+  # Yarn caching is deliberately disabled: setup-node's post-step cache save
+  # runs even when the step is killed by a timeout, so a hung install poisons
+  # the cache under a key that only hashes yarn.lock — every later run then
+  # restores the same corrupt archive and fails until the lockfile changes.
   - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
     with:
       node-version-file: package.json
   - run: corepack enable yarn
     shell: bash
-  - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
-    with:
-      node-version-file: package.json
-      cache: yarn
 
   - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
     with:
