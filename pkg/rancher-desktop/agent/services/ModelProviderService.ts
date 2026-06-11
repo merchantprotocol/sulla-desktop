@@ -190,9 +190,11 @@ class ModelProviderService {
     if (providerId === 'claude-code') {
       return [
         { id: 'claude-code',        name: 'Auto (CLI default)',   description: 'Let Claude Code choose the best model automatically' },
-        { id: 'claude-opus-4-7',    name: 'Claude Opus 4.7',      description: 'Most capable — orchestration and complex tasks' },
-        { id: 'claude-opus-4-6',    name: 'Claude Opus 4.6',      description: 'Previous most capable model' },
+        { id: 'claude-fable-5',     name: 'Claude Fable 5',       description: 'Latest flagship model' },
+        { id: 'claude-opus-4-8',    name: 'Claude Opus 4.8',      description: 'Most capable Opus — orchestration and complex tasks' },
+        { id: 'claude-opus-4-7',    name: 'Claude Opus 4.7',      description: 'Previous most capable model' },
         { id: 'claude-sonnet-4-6',  name: 'Claude Sonnet 4.6',    description: 'Latest balanced model' },
+        { id: 'claude-opus-4-6',    name: 'Claude Opus 4.6',      description: 'Older capable model' },
         { id: 'claude-opus-4-5',    name: 'Claude Opus 4.5',      description: 'Older capable model' },
         { id: 'claude-sonnet-4-5',  name: 'Claude Sonnet 4.5',    description: 'Previous balanced model' },
         { id: 'claude-haiku-4-5',   name: 'Claude Haiku 4.5',     description: 'Fast and lightweight' },
