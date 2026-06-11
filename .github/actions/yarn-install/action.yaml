@@ -83,28 +83,51 @@ runs:
     env:
       DEBUG: 'electron*,@electron*'
     run: |
-      # pipefail is essential here: without it the `if` tests tee's exit
-      # code and a failing install.js is silently treated as success,
-      # leaving a partial dist/ for later steps to trip over.
+      # install.js's exit code CANNOT be trusted: on the Linux runners it
+      # has exited 0 with dist/ containing a single file and no path.txt
+      # (its top-level promise chain can be dropped mid-extract, draining
+      # the event loop — node then exits 0 without ever settling). So we
+      # verify the install by requiring electron's index.js, which throws
+      # unless path.txt and the binary it names both exist.
       set -o pipefail
       log="${RUNNER_TEMP}/electron-install.log"
+      verify() { node -e "require('./node_modules/electron')" >/dev/null 2>&1; }
       for attempt in 1 2 3; do
         echo "::group::electron install attempt ${attempt}"
-        if node node_modules/electron/install.js 2>&1 | tee "$log"; then
+        node node_modules/electron/install.js 2>&1 | tee "$log" || true
+        if verify; then
           echo "::endgroup::"
+          echo "electron install verified"
           exit 0
         fi
         echo "::endgroup::"
         msg=$( (tail -n 40 "$log"; echo "disk:"; df -h / | tail -1; echo "dist:"; ls -la node_modules/electron/dist/ 2>&1 | head -8) | tail -c 2800 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
-        echo "::warning title=electron install attempt ${attempt} failed::${msg}"
+        echo "::warning title=electron install attempt ${attempt} unverified::${msg}"
+        rm -rf node_modules/electron/dist node_modules/electron/path.txt
         if [ "${attempt}" -lt 3 ]; then
-          echo "Attempt ${attempt} failed, retrying in 30s..."
-          rm -rf node_modules/electron/dist
+          echo "Attempt ${attempt} unverified, retrying in 30s..."
           sleep 30
         fi
       done
+      # Linux fallback: extract the cached zip with system unzip, which
+      # bypasses the JS extractor entirely. downloadArtifact caches the
+      # (checksum-verified) zip before extraction, so it is present even
+      # when the extract phase is what failed.
+      if [ "$(uname)" = "Linux" ]; then
+        zip=$(find "$HOME/.cache/electron" -name 'electron-v*-linux-*.zip' 2>/dev/null | head -1)
+        if [ -n "$zip" ]; then
+          echo "Falling back to system unzip of ${zip}"
+          mkdir -p node_modules/electron/dist
+          unzip -q -o "$zip" -d node_modules/electron/dist
+          printf electron > node_modules/electron/path.txt
+          if verify; then
+            echo "::notice title=electron install::JS extractor failed 3x; system unzip fallback succeeded"
+            exit 0
+          fi
+        fi
+      fi
       msg=$(tail -n 60 "$log" | tail -c 3500 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
-      echo "::error title=electron binary download failed (3 attempts)::${msg}"
+      echo "::error title=electron install failed (3 attempts + fallback)::${msg}"
       exit 1
 
   # Diagnostic probe: chrome-sandbox has been missing at the final step
