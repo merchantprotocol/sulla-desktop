@@ -425,6 +425,12 @@ Rules that apply on every turn:
 
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
 
+    // Lima only exists on macOS/Linux; paths.limactl is a throwing getter on
+    // Windows. Surface a clear, user-readable error instead of an opaque crash.
+    if (process.platform === 'win32') {
+      throw new Error('Claude Code execution requires the Lima VM, which is not available on Windows yet. This feature currently supports macOS and Linux only.');
+    }
+
     const limactlPath = paths.limactl;
     const limaHome = paths.lima;
 

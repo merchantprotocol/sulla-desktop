@@ -13,6 +13,13 @@ export class ApplescriptExecuteWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { target_app, script, action_type } = input;
 
+    if (process.platform !== 'darwin') {
+      return {
+        successBoolean: false,
+        responseString:  'AppleScript automation is only available on macOS.',
+      };
+    }
+
     if (!target_app || !script) {
       return {
         successBoolean: false,
