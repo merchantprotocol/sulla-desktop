@@ -83,6 +83,10 @@ runs:
     env:
       DEBUG: 'electron*,@electron*'
     run: |
+      # pipefail is essential here: without it the `if` tests tee's exit
+      # code and a failing install.js is silently treated as success,
+      # leaving a partial dist/ for later steps to trip over.
+      set -o pipefail
       log="${RUNNER_TEMP}/electron-install.log"
       for attempt in 1 2 3; do
         echo "::group::electron install attempt ${attempt}"
@@ -91,8 +95,11 @@ runs:
           exit 0
         fi
         echo "::endgroup::"
+        msg=$( (tail -n 40 "$log"; echo "disk:"; df -h / | tail -1; echo "dist:"; ls -la node_modules/electron/dist/ 2>&1 | head -8) | tail -c 2800 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+        echo "::warning title=electron install attempt ${attempt} failed::${msg}"
         if [ "${attempt}" -lt 3 ]; then
           echo "Attempt ${attempt} failed, retrying in 30s..."
+          rm -rf node_modules/electron/dist
           sleep 30
         fi
       done
