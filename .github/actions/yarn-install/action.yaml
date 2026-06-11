@@ -100,6 +100,17 @@ runs:
       echo "::error title=electron binary download failed (3 attempts)::${msg}"
       exit 1
 
+  # Diagnostic probe: chrome-sandbox has been missing at the final step
+  # on Linux despite install.js exiting 0. This notice (public on the
+  # run page) records the electron dist state immediately after the
+  # download so we can tell whether postinstall removes it.
+  - name: Probe electron dist (post-download)
+    if: runner.os == 'Linux'
+    shell: bash
+    run: |
+      info=$( (echo "electron dir:"; ls node_modules/electron/ 2>&1; echo "dist:"; ls node_modules/electron/dist/ 2>&1 | head -20; echo "path.txt:"; cat node_modules/electron/path.txt 2>&1; echo "cwd: $(pwd)") | tail -c 3000 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+      echo "::notice title=electron dist after install.js::${info}"
+
   # Our postinstall.ts downloads external deps (Lima, Trivy, Moby spec,
   # etc.) and then calls electron-builder install-app-deps to rebuild
   # native modules (node-pty, better-sqlite3) against Electron's ABI.
@@ -114,5 +125,10 @@ runs:
     if: runner.os == 'Linux'
     shell: bash
     run: |
+      if [ ! -e node_modules/electron/dist/chrome-sandbox ]; then
+        info=$( (echo "electron dir:"; ls node_modules/electron/ 2>&1; echo "dist:"; ls node_modules/electron/dist/ 2>&1 | head -20; echo "path.txt:"; cat node_modules/electron/path.txt 2>&1; echo "cwd: $(pwd)") | tail -c 3000 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+        echo "::error title=chrome-sandbox missing — electron state at sandbox step::${info}"
+        exit 1
+      fi
       "${RUNNER_TEMP}/run-annotated.sh" "fix electron sandbox" sudo chown root node_modules/electron/dist/chrome-sandbox
       "${RUNNER_TEMP}/run-annotated.sh" "fix electron sandbox" sudo chmod 04755 node_modules/electron/dist/chrome-sandbox
