@@ -36,7 +36,7 @@ export class AnthropicService extends BaseLanguageModel {
 
     return new AnthropicService({
       id:      'anthropic',
-      model:   valMap.model || 'claude-sonnet-4-20250514',
+      model:   valMap.model || 'claude-sonnet-4-6',
       baseUrl: 'https://api.anthropic.com/v1',
       apiKey:  valMap.api_key || '',
     });
@@ -219,9 +219,52 @@ export class AnthropicService extends BaseLanguageModel {
       });
     }
 
+    // Cache the conversation history: mark the last content block of the
+    // final message so the next request reads the entire prior transcript
+    // from the prompt cache (~0.1x input price) instead of re-billing it at
+    // full price. The API's automatic prefix lookup finds the previous
+    // request's cache entry, so hits accrue incrementally as the
+    // conversation grows. Without this, only the system prompt is cached and
+    // history (including tool results) is reprocessed uncached on every turn.
+    //
+    // Anthropic allows at most 4 cache_control breakpoints per request
+    // (2 are used by the system blocks), and message objects here share
+    // content arrays with the persistent state.messages history — so we must
+    // (a) strip any markers that leaked into history on prior rounds, and
+    // (b) mark via cloned blocks, never by mutating a shared one.
+    for (const msg of processedMessages) {
+      if (Array.isArray(msg.content)) {
+        msg.content = msg.content.map((b: any) => {
+          if (b && typeof b === 'object' && b.cache_control) {
+            const { cache_control: _stripped, ...rest } = b;
+            return rest;
+          }
+          return b;
+        });
+      }
+    }
+    const lastMessage = processedMessages[processedMessages.length - 1];
+    if (lastMessage) {
+      if (typeof lastMessage.content === 'string') {
+        lastMessage.content = [{
+          type:          'text',
+          text:          lastMessage.content,
+          cache_control: { type: 'ephemeral' },
+        }];
+      } else if (Array.isArray(lastMessage.content) && lastMessage.content.length > 0) {
+        const lastIdx = lastMessage.content.length - 1;
+        const lastBlock = lastMessage.content[lastIdx];
+        if (lastBlock && typeof lastBlock === 'object') {
+          lastMessage.content[lastIdx] = { ...lastBlock, cache_control: { type: 'ephemeral' } };
+        }
+      }
+    }
+
     const anthropicBody: any = {
       model:      this.model,
-      max_tokens: options.maxTokens ?? 1024,
+      // Low caps force extra AGENT_CONTINUE round trips, and every round trip
+      // re-bills the full prompt — a generous default is cheaper overall.
+      max_tokens: options.maxTokens ?? 8192,
       messages:   processedMessages,
     };
 

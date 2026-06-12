@@ -1,4 +1,5 @@
 import * as childProcess from 'child_process';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -41,6 +42,15 @@ const log = Logging.background;
 export class ClaudeCodeService extends BaseLanguageModel {
   // conversationId → Claude session_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
+
+  /**
+   * Tracks the hash of the stable <sulla_context> payload (platform rules +
+   * high-priority memories) last sent per conversation, so we only re-send it
+   * when it actually changes. Without this, every turn stamps a fresh copy
+   * into the permanent conversation history — N turns means N copies, each
+   * re-billed on every subsequent request.
+   */
+  private lastStableContextHash = new Map<string, string>();
 
   private readonly SESSION_KEY_PREFIX = 'claude_code_session:';
   private readonly SESSION_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
@@ -306,23 +316,30 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   /**
-   * Build a <sulla_context> prefix to prepend to every outgoing user message.
-   * Includes:
-   *   - High-priority observational memory entries (critical + high)
-   *   - Recall context produced by the subconscious middleware this turn
+   * Build a <sulla_context> prefix for the outgoing user message.
    *
-   * Injecting here rather than relying solely on --append-system-prompt ensures
-   * Claude treats this context as part of the user turn — which it weights more
-   * heavily than appended system prompt content. It also fixes the resumed-
-   * session gap: --resume sends only the latest user message, so recall context
-   * merged into prior assistant messages was silently dropped.
+   * Two tiers:
+   *   - Stable context (platform rules + critical/high observational memory):
+   *     sent on the first turn of a session and again ONLY when its content
+   *     changes. Each send becomes permanent conversation history, so
+   *     repeating it verbatim every turn multiplies token cost with zero
+   *     information gain.
+   *   - Recall context (subconscious middleware output for THIS turn): always
+   *     included when present — it's the per-turn payload the recall agent
+   *     produced specifically so the primary agent doesn't have to research.
+   *
+   * Injecting in the user turn rather than relying solely on
+   * --append-system-prompt ensures Claude weights it properly, and fixes the
+   * resumed-session gap: --resume sends only the latest user message, so
+   * recall context merged into prior assistant messages was silently dropped.
    */
-  private async buildUserMessageContextPrefix(state?: BaseThreadState): Promise<string> {
-    const parts: string[] = [];
+  private async buildUserMessageContextPrefix(
+    state: BaseThreadState | undefined,
+    opts: { convId: string; isNewSession: boolean },
+  ): Promise<string> {
+    const stableParts: string[] = [];
 
-    // Platform identity — injected on every turn so Claude Code always knows
-    // it's operating inside an agentic platform, not a standalone chat session.
-    parts.push(`<platform_context>
+    stableParts.push(`<platform_context>
 You are operating inside Sulla Desktop — an autonomous agentic platform built by Jonathon Byrdziak. You are not a chatbot or a brain being asked questions. You are an agent with real tools and real execution capability.
 
 Rules that apply on every turn:
@@ -347,10 +364,21 @@ Rules that apply on every turn:
         );
         if (high.length > 0) {
           const lines = high.map((e: any) => `- ${ e.content ?? '' }`).join('\n');
-          parts.push(`<observational_memory>\n${ lines }\n</observational_memory>`);
+          stableParts.push(`<observational_memory>\n${ lines }\n</observational_memory>`);
         }
       }
     } catch { /* non-fatal */ }
+
+    const parts: string[] = [];
+
+    // Only send the stable tier when it's new to this session or has changed
+    // since it was last sent.
+    const stableText = stableParts.join('\n\n');
+    const stableHash = crypto.createHash('sha1').update(stableText).digest('hex');
+    if (opts.isNewSession || this.lastStableContextHash.get(opts.convId) !== stableHash) {
+      parts.push(stableText);
+    }
+    this.lastStableContextHash.set(opts.convId, stableHash);
 
     // Recall context from subconscious middleware (may be null on first turn)
     const recallContext = (state?.metadata as any)?.recallContext;
@@ -417,10 +445,14 @@ Rules that apply on every turn:
       throw new Error(`Claude Code got no extractable prompt from ${ messages.length } messages (roles=${ roles })`);
     }
 
-    // Prepend Sulla context (high-priority observational memory + recall context)
-    // to the outgoing user message. This travels with every turn regardless of
-    // whether the session is resumed, so Claude can't deprioritize it.
-    const contextPrefix = await this.buildUserMessageContextPrefix(options.state);
+    // Prepend Sulla context to the outgoing user message. Recall context
+    // travels every turn; the stable tier (platform rules + memories) is only
+    // re-sent when new to the session or changed — see
+    // buildUserMessageContextPrefix.
+    const contextPrefix = await this.buildUserMessageContextPrefix(options.state, {
+      convId,
+      isNewSession: !existingSession,
+    });
     const prompt = contextPrefix ? `${ contextPrefix }\n\n${ basePrompt }` : basePrompt;
 
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
