@@ -787,6 +787,46 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   }
 
   /**
+   * Remove previously injected subconscious context blocks
+   * (<recall_context>, <observation_context>, <unstuck_context>) from all
+   * assistant messages, so the per-turn merge below replaces rather than
+   * accumulates. Two accumulation paths existed without this:
+   * - the merge runs on every graph iteration of a tool-call loop, re-
+   *   appending the same metadata context within a single turn, and
+   * - the mutated assistant message is persisted with the thread state,
+   *   so each new turn stacked its blocks on top of the saved ones.
+   * Also drops first-turn synthetic carrier messages once emptied.
+   */
+  protected stripInjectedContextBlocks(state: BaseThreadState): void {
+    const BLOCK_RE = /\n*<(recall_context|observation_context|unstuck_context)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:recall_context|observation_context|unstuck_context)>/;
+
+    for (const msg of state.messages) {
+      if (msg.role !== 'assistant') continue;
+      if (typeof msg.content === 'string') {
+        if (MARKER_RE.test(msg.content)) {
+          msg.content = msg.content.replace(BLOCK_RE, '').trim();
+        }
+      } else if (Array.isArray(msg.content)) {
+        for (const b of msg.content as any[]) {
+          if (b?.type === 'text' && typeof b.text === 'string' && MARKER_RE.test(b.text)) {
+            b.text = b.text.replace(BLOCK_RE, '').trim();
+          }
+        }
+        msg.content = (msg.content as any[]).filter((b: any) =>
+          !(b?.type === 'text' && typeof b.text === 'string' && !b.text.trim()));
+      }
+    }
+
+    state.messages = state.messages.filter((m: any) => {
+      if (!m?.metadata?._synthetic) return true;
+      if (typeof m.content === 'string') return m.content.trim().length > 0;
+      if (Array.isArray(m.content)) return m.content.length > 0;
+      return true;
+    });
+  }
+
+  /**
      *
      * @param state
      * @param systemPrompt

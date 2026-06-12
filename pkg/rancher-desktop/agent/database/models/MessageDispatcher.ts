@@ -692,6 +692,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     const THINKING_TOOL_NAMES = new Set([
       'file_search', 'read_file',
       'add_observational_memory', 'remove_observational_memory',
+      'search_observations', 'list_observations',
       'vault_list', 'vault_is_enabled', 'search_conversations',
       'recall_index_lookup', 'recall_index_store',
       'search_history', 'github_read_file', 'get_human_presence', 'list_tabs',
@@ -711,6 +712,18 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       } else if (toolName === 'remove_observational_memory') {
         const id = typeof args.id === 'string' ? args.id : '';
         thinkingText = `Forgetting observation ${ id }`;
+      } else if (toolName === 'search_observations') {
+        const query = typeof args.query === 'string' ? args.query : '';
+        const archived = args.include_archived === true ? ', including archived ones' : '';
+        thinkingText = query
+          ? `Recalling what I know about "${ query }"${ archived }`
+          : `Searching my observations${ archived }`;
+      } else if (toolName === 'list_observations') {
+        const priority = typeof args.priority === 'string' ? args.priority : '';
+        const archived = args.include_archived === true ? ', including archived ones' : '';
+        thinkingText = priority
+          ? `Reviewing my ${ priority }-priority observations${ archived }`
+          : `Reviewing everything I've observed so far${ archived }`;
       } else if (toolName === 'vault_list') {
         thinkingText = 'Checking saved credentials in vault';
       } else if (toolName === 'vault_is_enabled') {

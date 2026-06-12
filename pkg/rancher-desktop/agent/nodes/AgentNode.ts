@@ -109,6 +109,10 @@ export class AgentNode extends BaseNode {
 
     // Merge recall context + observation context into the last assistant message
     // (or create one) so the primary agent sees it as information it already has.
+    // Strip any blocks injected on previous turns / earlier loop iterations
+    // first — this merge must replace, never accumulate (the mutated message
+    // is persisted with the thread state).
+    this.stripInjectedContextBlocks(state);
     const recallContext       = (state.metadata as any).recallContext;
     const observationContext  = (state.metadata as any).observationContext;
     const combinedContextParts: string[] = [];

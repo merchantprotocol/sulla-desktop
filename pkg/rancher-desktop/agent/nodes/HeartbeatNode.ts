@@ -93,7 +93,10 @@ export class HeartbeatNode extends BaseNode {
     }
 
     // Merge recall context into the last assistant message so the
-    // agent treats it as its own knowledge.
+    // agent treats it as its own knowledge. Strip previously injected
+    // blocks first so the merge replaces rather than accumulates across
+    // turns and tool-loop iterations (the message is persisted).
+    this.stripInjectedContextBlocks(state);
     const recallContext = (state.metadata as any).recallContext;
     if (recallContext) {
       const recallBlock = `\n\n<recall_context>\n${ recallContext }\n</recall_context>`;

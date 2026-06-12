@@ -38,10 +38,10 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'search_observations',
-    description: 'Search active observational memories by keyword or phrase. Returns compact rows (id, priority, timestamp, content). Use this before adding a new observation to check for existing similar ones.',
+    description: 'Search active observational memories by keyword or phrase. The query is split into words and any observation containing ANY meaningful word matches (stopwords ignored), ranked by phrase hit then word-match count. Returns compact rows (id, priority, timestamp, content). Use this before adding a new observation to check for existing similar ones.',
     category:    'observation',
     schemaDef:   {
-      query:            { type: 'string', description: 'Search keyword or phrase — matched with ILIKE against observation content.' },
+      query:            { type: 'string', description: 'Search keyword or phrase — split into words, any-word ILIKE match against observation content.' },
       limit:            { type: 'number', optional: true, description: 'Max results to return (default 20).' },
       include_archived: { type: 'boolean', optional: true, description: 'When true, also searches archived (soft-deleted) observations (default false).' },
     },

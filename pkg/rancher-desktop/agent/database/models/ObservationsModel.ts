@@ -187,20 +187,67 @@ export class ObservationsModel {
   }
 
   /**
-   * Full-text ILIKE search on content field.
-   * @param query   Search term (will be wrapped in %…%).
+   * Common words that carry no search signal — excluded from word-level
+   * matching so "what did we decide about the relay server" only searches
+   * the meaningful terms (decide, relay, server).
+   */
+  private static readonly STOPWORDS = new Set([
+    'the', 'and', 'for', 'are', 'was', 'were', 'with', 'that', 'this', 'these', 'those',
+    'have', 'has', 'had', 'about', 'into', 'from', 'when', 'where', 'what', 'which', 'who',
+    'how', 'why', 'did', 'does', 'doing', 'will', 'would', 'could', 'should', 'can', 'not',
+    'you', 'your', 'our', 'his', 'her', 'its', 'their', 'them', 'they', 'all', 'any', 'some',
+    'just', 'than', 'then', 'too', 'very', 'out', 'now', 'get', 'got', 'been', 'being',
+  ]);
+
+  /**
+   * Break a free-text query into meaningful search words: lowercased,
+   * alphanumeric, ≥3 chars, stopwords removed, deduplicated.
+   * Exported so the search tool can report which words were matched.
+   */
+  static tokenizeQuery(query: string): string[] {
+    return Array.from(new Set(
+      (query.toLowerCase().match(/[a-z0-9_-]+/g) ?? [])
+        .filter(w => w.length >= 3 && !ObservationsModel.STOPWORDS.has(w)),
+    ));
+  }
+
+  /**
+   * Word-level ILIKE search on the content field. The query is split into
+   * meaningful words (see tokenizeQuery) and a row matches if it contains
+   * ANY of them. Results are ranked: exact-phrase hits first, then by how
+   * many distinct words matched, then recency. Falls back to plain phrase
+   * matching when the query yields no usable words (symbols, stopwords
+   * only, or wildcard patterns like '%').
+   *
+   * @param query   Free-text search query.
    * @param limit   Max rows (default 20).
    * @param includeArchived  When true, includes archived rows too.
    */
   static async search(query: string, limit = 20, includeArchived = false): Promise<ObservationRecord[]> {
-    const pattern = `%${ query }%`;
+    const activeCond = includeArchived ? 'true' : 'archived = false';
+    const words = ObservationsModel.tokenizeQuery(query);
+
+    if (words.length === 0) {
+      return postgresClient.query<ObservationRecord>(
+        `SELECT * FROM ${ ObservationsModel.TABLE }
+         WHERE (${ activeCond })
+           AND content ILIKE $1
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [`%${ query }%`, limit],
+      );
+    }
+
+    // $1 = full phrase, $2 = limit, $3..$n = individual words
+    const wordConds = words.map((_, i) => `content ILIKE $${ i + 3 }`);
+    const matchScore = words.map((_, i) => `(content ILIKE $${ i + 3 })::int`).join(' + ');
     return postgresClient.query<ObservationRecord>(
       `SELECT * FROM ${ ObservationsModel.TABLE }
-       WHERE (${ includeArchived ? 'true' : 'archived = false' })
-         AND content ILIKE $1
-       ORDER BY created_at DESC
+       WHERE (${ activeCond })
+         AND (content ILIKE $1 OR ${ wordConds.join(' OR ') })
+       ORDER BY (content ILIKE $1)::int DESC, (${ matchScore }) DESC, created_at DESC
        LIMIT $2`,
-      [pattern, limit],
+      [`%${ query }%`, limit, ...words.map(w => `%${ w }%`)],
     );
   }
 

@@ -24,11 +24,13 @@ export class SearchObservationsWorker extends BaseTool {
 
     try {
       const rows = await ObservationsModel.search(query.trim(), Number(limit) || 20, Boolean(include_archived));
+      const words = ObservationsModel.tokenizeQuery(query.trim());
+      const matchDesc = words.length > 1 ? `"${ query }" (any of: ${ words.join(', ') })` : `"${ query }"`;
 
       if (rows.length === 0) {
         return {
           successBoolean: true,
-          responseString: `No observations found matching "${ query }".`,
+          responseString: `No observations found matching ${ matchDesc }.`,
         };
       }
 
@@ -38,7 +40,7 @@ export class SearchObservationsWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Found ${ rows.length } observation(s) matching "${ query }":\n${ lines.join('\n') }`,
+        responseString: `Found ${ rows.length } observation(s) matching ${ matchDesc }, best matches first:\n${ lines.join('\n') }`,
       };
     } catch (err: any) {
       return {
