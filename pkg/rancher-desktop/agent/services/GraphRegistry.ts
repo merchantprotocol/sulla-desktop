@@ -25,6 +25,9 @@ const registry = new Map<string, {
 /** Summarizer: no tools — pure text analysis and XML output */
 const SUMMARIZER_TOOLS: string[] = [];
 
+/** Tool-Result Digester: no tools — pure text analysis and XML output */
+const TOOL_RESULT_DIGESTER_TOOLS: string[] = [];
+
 /** Memory Recall: read-only access to files and vault — nothing else */
 const MEMORY_RECALL_TOOLS: string[] = [
   'file_search',           // Search ~/sulla/resources/ for skills & workflows
@@ -417,6 +420,36 @@ Rules:
 - System messages should never be deleted or summarized.
 - Always use the message_id attribute, never reference messages by position.`;
 
+const TOOL_RESULT_DIGESTER_PROMPT = `You are the tool-result digestion process for an AI agent. Stale tool
+results from earlier in the conversation are about to be compressed so the
+primary agent re-reads trusted citations instead of verbatim dumps. Talk
+through what each result contains and what's worth keeping, then provide
+your digests as XML.
+
+Each tool result below is tagged with a unique tool_result_id. For EVERY
+result, write a digest in trusted-citation style:
+- What was run (tool name + key inputs/parameters)
+- Key findings: concrete values, file paths, ids, counts, error messages
+- Where the full output came from (file path, URL, command) so the primary
+  agent can re-fetch it if truly needed
+
+Return your digests as XML. Reference results by their tool_result_id (NOT
+by position — positions change between loops).
+
+<DIGEST>
+  <RESULT id="toolu_abc123">file_search "auth flow" → 3 matches: src/auth/login.ts, src/auth/session.ts, docs/auth.md. login.ts owns the OAuth redirect. Re-run file_search to refresh.</RESULT>
+  <RESULT id="toolu_def456">exec \`kubectl get pods\` → 12 pods running, 1 CrashLoopBackOff (redis-7d4f, restarts=14). Full output re-obtainable by re-running the command.</RESULT>
+</DIGEST>
+
+Rules:
+- Digest EVERY tool result you were given — do not skip any.
+- Preserve exact values: paths, ids, numbers, hashes, error strings. Never
+  round, rename, or paraphrase identifiers.
+- Never invent information that isn't in the original output.
+- 1-4 sentences per digest. Dense, factual, no filler.
+- If a result is an error, keep the error message verbatim.
+- If nothing was given, return empty tags: <DIGEST></DIGEST>`;
+
 // XML parsing for summarizer response handler — uses message IDs (strings)
 const DELETE_BLOCK_REGEX = /<DELETE>([\s\S]*?)<\/DELETE>/i;
 const SUMMARIZE_BLOCK_REGEX = /<SUMMARIZE>([\s\S]*?)<\/SUMMARIZE>/i;
@@ -446,6 +479,43 @@ function parseSummarizerXML(text: string): { deletions: Set<string>; summaries: 
   }
 
   return { deletions, summaries };
+}
+
+// XML parsing for tool-result digester response handler — uses tool_use_ids
+const DIGEST_BLOCK_REGEX = /<DIGEST>([\s\S]*?)<\/DIGEST>/i;
+const DIGEST_RESULT_REGEX = /<RESULT\s+id="([^"]+)">([\s\S]*?)<\/RESULT>/gi;
+
+function parseDigesterXML(text: string): Map<string, string> {
+  const digests = new Map<string, string>();
+
+  const digestBlock = DIGEST_BLOCK_REGEX.exec(text);
+  if (digestBlock) {
+    let match;
+    DIGEST_RESULT_REGEX.lastIndex = 0;
+    while ((match = DIGEST_RESULT_REGEX.exec(digestBlock[1])) !== null) {
+      const digest = match[2].trim();
+      if (digest) {
+        digests.set(match[1], digest);
+      }
+    }
+  }
+
+  return digests;
+}
+
+/**
+ * A stale tool_result block eligible for digestion.
+ * Built by SubconsciousMiddleware, consumed by createToolResultDigester.
+ */
+export interface DigestibleToolResult {
+  /** tool_use_id of the tool_result block in state.messages */
+  toolUseId: string;
+  /** Tool name if known (from message metadata) */
+  toolName:  string;
+  /** Serialized character count of the original block content */
+  charCount: number;
+  /** Text rendering of the block content (image data omitted) */
+  text:      string;
 }
 
 export const GraphRegistry = {
@@ -643,6 +713,59 @@ export const GraphRegistry = {
         (state.metadata as any).deletedCount = actions.deletions.size;
         (state.metadata as any).summarizedCount = actions.summaries.size;
         console.log(`[Summarizer] Compressed: deleted ${ actions.deletions.size }, summarized ${ actions.summaries.size }, kept ${ result.length } of ${ originalMessages.length }`);
+      },
+    });
+  },
+
+  /**
+   * Create a Tool-Result Digester graph — single-pass compression of stale
+   * tool_result blocks into trusted-citation digests. Uses a responseHandler
+   * to parse XML <DIGEST> instructions into a tool_use_id → digest map; the
+   * caller (SubconsciousMiddleware) applies the replacements to the live
+   * state in one batch.
+   *
+   * The eligible tool results are rendered directly into the user message
+   * rather than passing the full conversation — the digester only needs the
+   * stale outputs themselves plus the current goal for relevance.
+   */
+  createToolResultDigester: async function(parentState: BaseThreadState, eligible: DigestibleToolResult[]): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    // Current goal — the last real user message — so the digester knows
+    // which values matter for the active task.
+    const lastUserMsg = [...parentState.messages].reverse().find(
+      (m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.trim(),
+    );
+    const goalText = lastUserMsg ? String(lastUserMsg.content).slice(0, 600) : '(unknown)';
+
+    const rendered = eligible
+      .map(r => `[tool_result_id: ${ r.toolUseId } | tool: ${ r.toolName } | ~${ r.charCount } chars]\n${ r.text }`)
+      .join('\n\n---\n\n');
+
+    return this.createSubconscious({
+      systemPrompt:           TOOL_RESULT_DIGESTER_PROMPT,
+      tools:                  TOOL_RESULT_DIGESTER_TOOLS,
+      userMessage:            `Current goal:\n${ goalText }\n\nStale tool results to digest:\n\n${ rendered }\n\nDigest every tool result above and return your <DIGEST> XML.`,
+      agentLabel:             'tool-result-digester',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+      responseHandler(response: string, state: BaseThreadState) {
+        let digests: Map<string, string>;
+        try {
+          digests = parseDigesterXML(response);
+        } catch (err) {
+          console.warn('[ToolResultDigester] Failed to parse XML response:', err instanceof Error ? err.message : err);
+          return;
+        }
+        if (digests.size === 0) return;
+
+        (state.metadata as any).toolResultDigests = digests;
+        console.log(`[ToolResultDigester] Parsed ${ digests.size } digests for ${ eligible.length } eligible tool results`);
       },
     });
   },
