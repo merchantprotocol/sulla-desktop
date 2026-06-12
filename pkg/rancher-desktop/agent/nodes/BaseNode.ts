@@ -673,6 +673,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     const mode = options.promptMode || 'full';
 
+    // Tool exposure mode — mirrors the dynamic-discovery tool build in
+    // normalizedChat(): slim (default) unless the agent config explicitly
+    // allowlists tools (explicit config > default) or the setting is 'full'.
+    const toolModeSetting = await SullaSettingsModel.get('toolMode', 'slim');
+    const toolMode: 'slim' | 'full' = (toolModeSetting === 'slim' && !agentMeta?.tools?.length)
+      ? 'slim'
+      : 'full';
+
     // Build prompt context
     const buildCtx: PromptBuildContext = {
       mode,
@@ -684,6 +692,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       isSubAgent:           !!(state.metadata as any).isSubAgent,
       isHeartbeat:          options.isHeartbeat || false,
       wsChannel:            String(state.metadata.wsChannel || 'sulla-desktop'),
+      toolMode,
       templateVars,
       agentSectionOverrides,
       excludeSections,
@@ -898,7 +907,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         llmTools = (state as any).llmTools;
       } else {
         // Dynamic discovery mode (primary agent)
+        // Slim tool mode (default): push only the minimal native set — every
+        // other tool is discovered via browse_tools and invoked through exec
+        // (`sulla <category>/<tool> '...'`). An explicit agent tool allowlist
+        // opts back into full schema resolution (explicit config > default).
+        const agentToolAllowlist = (state.metadata as any).agent?.tools;
+        const hasAgentToolAllowlist = Array.isArray(agentToolAllowlist) && agentToolAllowlist.length > 0;
+        const toolMode = await SullaSettingsModel.get('toolMode', 'slim');
+
         llmTools = (state as any).llmTools;
+        if (!llmTools && toolMode === 'slim' && !hasAgentToolAllowlist) {
+          llmTools = await toolRegistry.getSlimPrimaryLLMTools();
+        }
         if (!llmTools && state.foundTools?.length) {
           const metaLLMTools = await toolRegistry.getLLMToolsFor(await toolRegistry.getToolsByCategory('meta'));
           const foundLLMTools = await Promise.all(state.foundTools.map((tool: any) => toolRegistry.convertToolToLLM(tool.name)));
@@ -912,8 +932,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         llmTools = filtered.tools;
 
         // Apply agent tool allowlist from agent config
-        const agentToolAllowlist = (state.metadata as any).agent?.tools;
-        if (Array.isArray(agentToolAllowlist) && agentToolAllowlist.length > 0) {
+        if (hasAgentToolAllowlist) {
           const allowSet = new Set(agentToolAllowlist);
           const metaNames = toolRegistry.getToolNamesForCategory('meta');
           metaNames.forEach(n => allowSet.add(n));

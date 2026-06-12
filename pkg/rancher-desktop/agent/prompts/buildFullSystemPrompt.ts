@@ -14,6 +14,7 @@
 
 import './sections/index';
 
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getPrimaryService } from '../languagemodels';
 import { buildIntegrationsIndex, getTemplateVariables, loadAgentPromptData, type AgentPromptLoadResult } from '../nodes/BaseNode';
 import { SystemPromptBuilder, type AgentConfig, type PromptBuildContext } from './SystemPromptBuilder';
@@ -84,6 +85,13 @@ export async function buildFullSystemPrompt(
     }
   }
 
+  // Tool exposure mode — mirrors BaseNode.enrichPrompt: slim (default)
+  // unless the agent config explicitly allowlists tools or the setting is 'full'.
+  const toolModeSetting = await SullaSettingsModel.get('toolMode', 'slim');
+  const toolMode: 'slim' | 'full' = (toolModeSetting === 'slim' && !agentConfig?.tools?.length)
+    ? 'slim'
+    : 'full';
+
   const buildCtx: PromptBuildContext = {
     mode,
     agentId,
@@ -94,6 +102,7 @@ export async function buildFullSystemPrompt(
     isSubAgent:            false,
     isHeartbeat:           false,
     wsChannel:             'sulla-desktop',
+    toolMode,
     templateVars,
     agentSectionOverrides,
     excludeSections,
