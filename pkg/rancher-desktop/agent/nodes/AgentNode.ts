@@ -98,6 +98,15 @@ export class AgentNode extends BaseNode {
       });
     }
 
+    // Inject the compact per-turn <turn_context> block (current time, agent
+    // roster, voice directive) into the latest user message. This replaced
+    // the system prompt's dynamic tier so the prompt stays byte-stable.
+    // Fresh turns only — tool-call loops reuse the block injected when the
+    // turn started (injectTurnContext is also internally idempotent).
+    if (!isToolCallLoop) {
+      await this.injectTurnContext(state, { chatMode });
+    }
+
     // Merge recall context + observation context into the last assistant message
     // (or create one) so the primary agent sees it as information it already has.
     const recallContext       = (state.metadata as any).recallContext;

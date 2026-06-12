@@ -711,6 +711,82 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   }
 
   /**
+   * Inject the compact per-turn <turn_context> block (current time, live
+   * agent roster, voice-mode directive) into the latest user message. This
+   * content used to live in the system prompt's dynamic tier and re-wrote
+   * the prompt every turn — moving it into the message stream keeps the
+   * system prompt byte-stable for prompt caching and the claude-code
+   * stable-context hash. See ../prompts/turnContext.ts.
+   *
+   * Injection rules (cache safety):
+   * - Only the LATEST user message ever gets a block; earlier turns keep
+   *   theirs untouched so cached prefixes stay valid.
+   * - If the latest user message already has a block AND messages exist
+   *   after it (tool loop / CONTINUE loop within the same turn), it is left
+   *   alone — rewriting mid-history would invalidate the cached prefix.
+   * - If it has a block but is still the final message (e.g. a retried
+   *   turn), the block is replaced in place, never duplicated.
+   */
+  protected async injectTurnContext(
+    state: BaseThreadState,
+    options: { chatMode?: ChatMode; isHeartbeat?: boolean } = {},
+  ): Promise<void> {
+    try {
+      const { buildTurnContext, stripTurnContext, hasTurnContext } = await import('../prompts/turnContext');
+
+      // Find the latest user message
+      let userIdx = -1;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        if (state.messages[i].role === 'user') {
+          userIdx = i;
+          break;
+        }
+      }
+      if (userIdx === -1) return;
+
+      const msg = state.messages[userIdx];
+      const isFinalMessage = userIdx === state.messages.length - 1;
+
+      // Detect an existing block on this message
+      const existingBlock = typeof msg.content === 'string'
+        ? hasTurnContext(msg.content)
+        : Array.isArray(msg.content) &&
+          (msg.content as any[]).some((b: any) => b?.type === 'text' && hasTurnContext(b.text));
+
+      // Already injected this turn and later messages depend on the prefix —
+      // leave it alone (slightly stale time beats a cache invalidation).
+      if (existingBlock && !isFinalMessage) return;
+
+      const block = await buildTurnContext({
+        agentId:     String(state.metadata.wsChannel || 'sulla-desktop'),
+        wsChannel:   String(state.metadata.wsChannel || 'sulla-desktop'),
+        chatMode:    options.chatMode || 'text',
+        isHeartbeat: options.isHeartbeat || false,
+      });
+      if (!block) return;
+
+      if (typeof msg.content === 'string') {
+        const base = stripTurnContext(msg.content);
+        msg.content = base ? `${ base }\n\n${ block }` : block;
+      } else if (Array.isArray(msg.content)) {
+        // Drop any previously injected turn-context text blocks (and strip
+        // embedded ones), then append a fresh block — never duplicated.
+        msg.content = (msg.content as any[]).filter((b: any) =>
+          !(b?.type === 'text' && typeof b.text === 'string' && hasTurnContext(b.text) && !stripTurnContext(b.text)));
+        for (const b of msg.content as any[]) {
+          if (b?.type === 'text' && typeof b.text === 'string' && hasTurnContext(b.text)) {
+            b.text = stripTurnContext(b.text);
+          }
+        }
+        (msg.content as any[]).push({ type: 'text', text: block });
+      }
+    } catch (err) {
+      // Non-fatal — the agent just misses this turn's context block
+      console.warn(`[${ this.name }] Failed to inject turn context:`, err);
+    }
+  }
+
+  /**
      *
      * @param state
      * @param systemPrompt

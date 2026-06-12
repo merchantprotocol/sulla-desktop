@@ -181,4 +181,36 @@ export class ActiveAgentsRegistry {
 
     return parts.join('\n');
   }
+
+  /**
+   * Compact roster for the per-turn <turn_context> block — one line for the
+   * human's presence, one pipe-joined line for the agents. No instructions,
+   * no markdown headers: those live in the stable channel_awareness prompt
+   * section. Status notes are truncated hard; this text is re-sent every turn.
+   */
+  async buildCompactRoster(): Promise<string> {
+    const lines: string[] = [];
+
+    try {
+      const { getHumanHeartbeatBridge } = await import('./HumanHeartbeatBridge');
+      const summary = await getHumanHeartbeatBridge().getPresenceSummary();
+      if (summary) lines.push(summary.replace(/\*\*/g, ''));
+    } catch { /* presence unavailable */ }
+
+    const agents = await this.getAllAgents();
+    const agentParts = agents
+      .filter(a => a.type !== 'human')
+      .map(a => {
+        const age = Math.floor((Date.now() - a.lastActiveAt) / 60000);
+        const note = a.statusNote && a.statusNote !== 'idle'
+          ? ` — ${ this.normalizeStatusNote(a.statusNote).slice(0, 60) }`
+          : '';
+        return `${ a.name || a.agentId }@${ a.channel } (${ a.status }, ${ age }m)${ note }`;
+      });
+    if (agentParts.length > 0) {
+      lines.push(`agents: ${ agentParts.join(' | ') }`);
+    }
+
+    return lines.join('\n');
+  }
 }

@@ -85,6 +85,13 @@ export class HeartbeatNode extends BaseNode {
       });
     }
 
+    // Inject the compact per-turn <turn_context> block (current time, agent
+    // roster) into the latest user message — replaces the system prompt's
+    // former dynamic tier so the heartbeat prompt stays byte-stable too.
+    if (!isToolCallLoop) {
+      await this.injectTurnContext(state, { isHeartbeat: true });
+    }
+
     // Merge recall context into the last assistant message so the
     // agent treats it as its own knowledge.
     const recallContext = (state.metadata as any).recallContext;

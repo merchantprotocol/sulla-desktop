@@ -24,6 +24,8 @@ export function buildSilentReplySection(ctx: PromptBuildContext): PromptSection 
     id:             'silent_reply',
     content:        SILENT_REPLY_CONTENT,
     priority:       120,
-    cacheStability: 'dynamic',
+    // Static content gated on isHeartbeat/isSubAgent, both fixed for the
+    // session — safe to cache with the stable prefix.
+    cacheStability: 'stable',
   };
 }

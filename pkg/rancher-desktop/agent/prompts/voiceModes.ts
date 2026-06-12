@@ -3,6 +3,11 @@
  *
  * Each voice mode appends a directive to the agent's system prompt
  * that controls how the LLM responds to voice input.
+ *
+ * NOTE: the primary agent loop no longer puts these in the system prompt —
+ * condensed equivalents travel in the per-turn <turn_context> block instead
+ * (see ./turnContext.ts) so the system prompt stays byte-stable. These full
+ * prompts remain for the ChatController extractors and any direct callers.
  */
 
 // ─── Voice Mode (1:1 conversation) ─────────────────────────────────
