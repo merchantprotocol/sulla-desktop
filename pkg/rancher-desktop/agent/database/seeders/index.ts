@@ -3,6 +3,7 @@
 // DatabaseManager imports this to run tracked seeders
 
 import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteCredentialsSeeder';
+import { initialize as observationsImportSeeder } from './ObservationsImportSeeder';
 
 // n8n user and settings seeders have been replaced by the recipe's
 // post-server-migration.sql which handles user creation, bcrypt password
@@ -15,6 +16,10 @@ export const seedersRegistry = [
   {
     name: 'firstrun-remote-credentials-seeder',
     run:  firstRunRemoteCredentialsSeeder,
+  },
+  {
+    name: 'observations-import-seeder',
+    run:  observationsImportSeeder,
   },
   // {
   //   name: 'core-data-seed',

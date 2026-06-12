@@ -28,13 +28,37 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'remove_observational_memory',
-    description: 'Remove a specific observational memory by its ID to delete it from long-term memory.',
+    description: 'Archive (soft-delete) a specific observational memory by its ID. The record is never hard-deleted — it is marked archived=true so the history is always recoverable.',
     category:    'observation',
     schemaDef:   {
-      id: { type: 'string', description: 'The 4-character ID of the memory to remove.' },
+      id: { type: 'string', description: 'The 4-character ID of the observation to archive.' },
     },
     operationTypes: ['delete'],
     loader:         () => import('./remove_observational_memory'),
+  },
+  {
+    name:        'search_observations',
+    description: 'Search active observational memories by keyword or phrase. Returns compact rows (id, priority, timestamp, content). Use this before adding a new observation to check for existing similar ones.',
+    category:    'observation',
+    schemaDef:   {
+      query:            { type: 'string', description: 'Search keyword or phrase — matched with ILIKE against observation content.' },
+      limit:            { type: 'number', optional: true, description: 'Max results to return (default 20).' },
+      include_archived: { type: 'boolean', optional: true, description: 'When true, also searches archived (soft-deleted) observations (default false).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./search_observations'),
+  },
+  {
+    name:        'list_observations',
+    description: 'List active observational memories sorted by priority (critical/high first) then recency. Optionally filter by priority level.',
+    category:    'observation',
+    schemaDef:   {
+      priority:         { type: 'string', optional: true, description: 'Priority filter — e.g. "critical", "high", "medium", "low". Omit to list all.' },
+      limit:            { type: 'number', optional: true, description: 'Max results to return (default 50).' },
+      include_archived: { type: 'boolean', optional: true, description: 'When true, also includes archived observations (default false).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_observations'),
   },
   {
     name:        'request_user_input',
