@@ -36,6 +36,40 @@ Make parallel tool calls when possible.`;
     };
   }
 
+  // Slim tool mode — only the minimal native set is pushed (browse_tools,
+  // exec, read_file, write_file, request_user_input); teach catalog
+  // discovery instead of listing capabilities. Kept short on purpose.
+  if (ctx.toolMode === 'slim') {
+    const slimContent = `## Tools
+
+You have a minimal native toolset: \`browse_tools\`, \`exec\`, \`read_file\`, \`write_file\`, \`request_user_input\`. Every other capability (browser, docker, github, calendar, vault, slack, workflows, kubernetes, …) lives in the sulla CLI tool catalog.
+
+**Workflow — always in this order:**
+1. Discover: \`browse_tools({ category: "docker" })\` or \`browse_tools({ query: "send slack message" })\` — returns ready-to-run commands with parameter JSON
+2. Invoke: \`exec({ command: "sulla <category>/<tool> '{\\"param\\":\\"value\\"}'" })\`
+
+Integrations and MCP servers use the same pattern — auth is injected automatically from the vault:
+
+\`\`\`bash
+sulla <account_id>/<slug> '{"method":"GET","path":"/rest/companies"}'   # proxy call
+sulla <account_id>/mcp/<tool> '{"param":"value"}'                       # MCP tool
+\`\`\`
+
+**Rules:**
+- ❌ NEVER invent tool names or sulla commands — browse_tools first when unsure
+- ❌ NEVER use \`execute_workflow\` for CLI commands — it only runs named Sulla workflows
+- Use \`request_user_input\` before risky or destructive actions outside the VM
+
+Make parallel tool calls when possible.`;
+
+    return {
+      id:             'tooling',
+      content:        slimContent,
+      priority:       40,
+      cacheStability: 'stable',
+    };
+  }
+
   const content = `## Your App
 
 Your tools are provided as function calls in this conversation. They are already loaded and ready to use.

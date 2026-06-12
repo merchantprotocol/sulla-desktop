@@ -321,6 +321,24 @@ export class ToolRegistry {
     };
   }
 
+  /**
+   * Minimal native tool set pushed to the primary agent in slim tool mode
+   * (toolMode setting, default 'slim'). Everything else lives in the tool
+   * catalog: discovered via browse_tools and invoked through exec with
+   * `sulla <category>/<tool> '<json>'`. request_user_input stays native
+   * because it is a blocking approval gate wired into the chat UI — it
+   * cannot render its prompt card or pause the loop when run via the CLI.
+   */
+  static readonly SLIM_PRIMARY_TOOL_NAMES = [
+    'browse_tools', 'exec', 'read_file', 'write_file', 'request_user_input',
+  ];
+
+  /** Resolve the slim native set to LLM schemas, skipping any unregistered names. */
+  async getSlimPrimaryLLMTools(): Promise<any[]> {
+    const names = ToolRegistry.SLIM_PRIMARY_TOOL_NAMES.filter(name => this.loaders.has(name));
+    return Promise.all(names.map(name => this.convertToolToLLM(name)));
+  }
+
   getToolNames(): string[] {
     return Array.from(this.loaders.keys());
   }
