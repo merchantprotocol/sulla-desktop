@@ -54,6 +54,12 @@
       @dragleave="onScrollDragLeave"
       @drop.prevent="onScrollDrop"
     >
+      <button class="parent-dir-row" title="Go to parent directory" @click="navigateUp">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+        <span>..</span>
+      </button>
       <FileTreeNode
         v-for="entry in entries"
         :key="entry.path"
@@ -136,6 +142,24 @@ export default defineComponent({
         entries.value  = await ipcRenderer.invoke('filesystem-read-dir', rootPath.value);
       } catch (err) {
         console.error('[FileTreeRail] loadRoot:', err);
+      } finally {
+        loading.value = false;
+      }
+    }
+
+    async function navigateUp() {
+      const parent = rootPath.value.replace(/\/[^/]+\/?$/, '');
+      if (!parent) return;
+      loading.value = true;
+      try {
+        rootPath.value         = parent;
+        entries.value          = await ipcRenderer.invoke('filesystem-read-dir', parent);
+        expandedDirs.value     = new Set();
+        childrenMap.value      = {};
+        selectedPaths.value    = new Set();
+        lastSelectedPath.value = '';
+      } catch (err) {
+        console.error('[FileTreeRail] navigateUp:', err);
       } finally {
         loading.value = false;
       }
@@ -443,6 +467,7 @@ export default defineComponent({
       fileClipboard, onContextMenu, onContextAction,
       uploadInputRef, newFileAtRoot, newFolderAtRoot, triggerUpload, onUploadInput,
       onScrollDragOver, onScrollDragLeave, onScrollDrop, onDragHover, onDropFiles,
+      navigateUp,
     };
   },
 });
@@ -501,6 +526,27 @@ export default defineComponent({
 .files-scroll::-webkit-scrollbar-track { background: transparent; }
 .files-scroll::-webkit-scrollbar-thumb {
   background: var(--border-muted, rgba(80,150,179,0.2)); border-radius: 2px;
+}
+
+.parent-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 3px 8px 3px 14px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px solid var(--border-muted);
+  margin-bottom: 2px;
+}
+.parent-dir-row:hover {
+  background: var(--accent-dim);
+  color: var(--text);
 }
 
 .files-scroll.drop-active {

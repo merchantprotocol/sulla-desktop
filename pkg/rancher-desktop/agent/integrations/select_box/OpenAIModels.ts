@@ -16,21 +16,25 @@ export class OpenAIModels extends SelectBoxProvider {
       });
 
       if (!response.ok) {
+        console.warn(`[OpenAIModels] API call failed: ${ response.status } ${ response.statusText }`);
         return this.getStaticModels();
       }
 
       const body = await response.json() as { data?: { id: string }[] };
 
       if (body.data && body.data.length > 0) {
+        console.log(`[OpenAIModels] Got ${ body.data.length } models from OpenAI API`);
         return body.data
-          .filter(m => /^(gpt-|o[0-9])/.test(m.id))
           .sort((a, b) => a.id.localeCompare(b.id))
           .map(m => ({ value: m.id, label: m.id }));
       }
-    } catch {
-      // Fall back to static list
+
+      console.warn('[OpenAIModels] API returned no data');
+    } catch (err) {
+      console.error('[OpenAIModels] API call failed:', err);
     }
 
+    console.log('[OpenAIModels] Falling back to static model list');
     return this.getStaticModels();
   }
 
@@ -38,10 +42,13 @@ export class OpenAIModels extends SelectBoxProvider {
     return [
       { value: 'o3', label: 'o3', description: 'Latest reasoning model' },
       { value: 'o3-mini', label: 'o3-mini', description: 'Lightweight reasoning model' },
-      { value: 'gpt-4.1', label: 'GPT-4.1', description: 'Latest GPT model' },
-      { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', description: 'Lightweight GPT model' },
-      { value: 'gpt-4o', label: 'GPT-4o', description: 'Multimodal model' },
+      { value: 'o1', label: 'o1', description: 'Advanced reasoning model' },
+      { value: 'o1-mini', label: 'o1-mini', description: 'Fast reasoning model' },
+      { value: 'gpt-4o', label: 'GPT-4o', description: 'Most capable multimodal model' },
       { value: 'gpt-4o-mini', label: 'GPT-4o Mini', description: 'Fast multimodal model' },
+      { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', description: 'High capability model' },
+      { value: 'gpt-4', label: 'GPT-4', description: 'Original GPT-4 model' },
+      { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', description: 'Fast and affordable model' },
     ];
   }
 }

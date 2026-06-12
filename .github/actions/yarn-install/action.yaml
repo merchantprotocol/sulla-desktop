@@ -5,17 +5,40 @@ description: >-
 runs:
   using: composite
   steps:
-  # In case we're running on a self-hosted runner without `yarn` installed,
-  # set up NodeJS, enable `yarn`, and then handle the caching.
-  - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
-    with:
-      node-version-file: package.json
-  - run: corepack enable yarn
+  # Actions job logs are not readable without repo Actions:read, so every
+  # run step below is wrapped by this helper: on failure it surfaces the
+  # log tail as an ::error:: annotation, which IS visible on the public
+  # run page. Without this, a composite failure reports only the opaque
+  # "Process completed with exit code 1".
+  - name: Install annotation helper
     shell: bash
+    run: |
+      cat > "${RUNNER_TEMP}/run-annotated.sh" <<'EOF'
+      #!/usr/bin/env bash
+      set -o pipefail
+      title="$1"; shift
+      log="$(mktemp)"
+      "$@" 2>&1 | tee "$log"
+      rc=$?
+      if [ "$rc" -ne 0 ]; then
+        msg=$(tail -n 60 "$log" | tail -c 3500 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+        echo "::error title=${title} failed (exit ${rc})::${msg}"
+        exit "$rc"
+      fi
+      EOF
+      chmod +x "${RUNNER_TEMP}/run-annotated.sh"
+
+  # In case we're running on a self-hosted runner without `yarn` installed,
+  # set up NodeJS and enable `yarn`.
+  # Yarn caching is deliberately disabled: setup-node's post-step cache save
+  # runs even when the step is killed by a timeout, so a hung install poisons
+  # the cache under a key that only hashes yarn.lock — every later run then
+  # restores the same corrupt archive and fails until the lockfile changes.
   - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
     with:
       node-version-file: package.json
-      cache: yarn
+  - run: '"${RUNNER_TEMP}/run-annotated.sh" "corepack enable yarn" corepack enable yarn'
+    shell: bash
 
   - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
     with:
@@ -26,7 +49,7 @@ runs:
     with:
       python-version: '3.x'
       cache: pip
-  - run: pip install setuptools
+  - run: '"${RUNNER_TEMP}/run-annotated.sh" "pip install setuptools" pip install setuptools'
     shell: bash
 
   - name: Install Windows dependencies
@@ -45,7 +68,7 @@ runs:
   # Native modules get rebuilt in the next step by electron-builder's
   # install-app-deps (invoked from scripts/postinstall.ts) which emits
   # per-package progress and honours our overall step timeout.
-  - run: yarn install --immutable --ignore-platform --ignore-scripts
+  - run: '"${RUNNER_TEMP}/run-annotated.sh" "yarn install" yarn install --immutable --ignore-platform --ignore-scripts'
     shell: bash
 
   # --ignore-scripts above skipped electron's own install script, so the
@@ -60,26 +83,83 @@ runs:
     env:
       DEBUG: 'electron*,@electron*'
     run: |
+      # install.js's exit code CANNOT be trusted: on the Linux runners it
+      # has exited 0 with dist/ containing a single file and no path.txt
+      # (its top-level promise chain can be dropped mid-extract, draining
+      # the event loop — node then exits 0 without ever settling). So we
+      # verify the install by requiring electron's index.js, which throws
+      # unless path.txt and the binary it names both exist.
+      set -o pipefail
+      log="${RUNNER_TEMP}/electron-install.log"
+      verify() { node -e "require('./node_modules/electron')" >/dev/null 2>&1; }
       for attempt in 1 2 3; do
         echo "::group::electron install attempt ${attempt}"
-        if node node_modules/electron/install.js; then
+        node node_modules/electron/install.js 2>&1 | tee "$log" || true
+        if verify; then
           echo "::endgroup::"
+          echo "electron install verified"
           exit 0
         fi
         echo "::endgroup::"
+        msg=$( (tail -n 40 "$log"; echo "disk:"; df -h / | tail -1; echo "dist:"; ls -la node_modules/electron/dist/ 2>&1 | head -8) | tail -c 2800 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+        echo "::warning title=electron install attempt ${attempt} unverified::${msg}"
+        rm -rf node_modules/electron/dist node_modules/electron/path.txt
         if [ "${attempt}" -lt 3 ]; then
-          echo "Attempt ${attempt} failed, retrying in 30s..."
-          sleep 30
+          echo "Attempt ${attempt} unverified, retrying in 10s..."
+          sleep 10
         fi
       done
-      echo "All 3 attempts failed" >&2
+      # Native-extractor fallback: the JS extractor (extract-zip) silently
+      # dies mid-extract on the hosted runners — observed identically on
+      # linux x64 (dist held one file) and mac arm64 (empty app scaffold).
+      # downloadArtifact caches the checksum-verified zip before extracting,
+      # so extract that zip with the platform's native tool instead:
+      # ditto preserves the app-bundle symlinks on macOS, Info-ZIP unzip
+      # preserves modes on Linux, 7z covers Windows.
+      zipfile=$(find "$HOME/.cache/electron" "$HOME/Library/Caches/electron" "${LOCALAPPDATA:-/nonexistent}/electron/Cache" -name 'electron-v*.zip' 2>/dev/null | head -1)
+      if [ -n "$zipfile" ]; then
+        echo "Falling back to native extraction of ${zipfile}"
+        rm -rf node_modules/electron/dist
+        mkdir -p node_modules/electron/dist
+        case "$(uname -s)" in
+          Darwin)
+            ditto -x -k "$zipfile" node_modules/electron/dist
+            printf 'Electron.app/Contents/MacOS/Electron' > node_modules/electron/path.txt
+            ;;
+          Linux)
+            unzip -q -o "$zipfile" -d node_modules/electron/dist
+            printf electron > node_modules/electron/path.txt
+            ;;
+          *)
+            7z x -y "-onode_modules/electron/dist" "$zipfile" >/dev/null
+            printf electron.exe > node_modules/electron/path.txt
+            ;;
+        esac
+        if verify; then
+          echo "::notice title=electron install::JS extractor unverified 3x; native extraction fallback succeeded"
+          exit 0
+        fi
+      fi
+      msg=$(tail -n 60 "$log" | tail -c 3500 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+      echo "::error title=electron install failed (3 attempts + fallback)::${msg}"
       exit 1
+
+  # Diagnostic probe: chrome-sandbox has been missing at the final step
+  # on Linux despite install.js exiting 0. This notice (public on the
+  # run page) records the electron dist state immediately after the
+  # download so we can tell whether postinstall removes it.
+  - name: Probe electron dist (post-download)
+    if: runner.os == 'Linux'
+    shell: bash
+    run: |
+      info=$( (echo "electron dir:"; ls node_modules/electron/ 2>&1; echo "dist:"; ls node_modules/electron/dist/ 2>&1 | head -20; echo "path.txt:"; cat node_modules/electron/path.txt 2>&1; echo "cwd: $(pwd)") | tail -c 3000 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+      echo "::notice title=electron dist after install.js::${info}"
 
   # Our postinstall.ts downloads external deps (Lima, Trivy, Moby spec,
   # etc.) and then calls electron-builder install-app-deps to rebuild
   # native modules (node-pty, better-sqlite3) against Electron's ABI.
   # Running it as its own step isolates failures and makes them visible.
-  - run: node scripts/ts-wrapper.js scripts/postinstall.ts
+  - run: '"${RUNNER_TEMP}/run-annotated.sh" "postinstall" node scripts/ts-wrapper.js scripts/postinstall.ts'
     shell: bash
     env:
       npm_config_loglevel: verbose
@@ -89,5 +169,10 @@ runs:
     if: runner.os == 'Linux'
     shell: bash
     run: |
-      sudo chown root node_modules/electron/dist/chrome-sandbox
-      sudo chmod 04755 node_modules/electron/dist/chrome-sandbox
+      if [ ! -e node_modules/electron/dist/chrome-sandbox ]; then
+        info=$( (echo "electron dir:"; ls node_modules/electron/ 2>&1; echo "dist:"; ls node_modules/electron/dist/ 2>&1 | head -20; echo "path.txt:"; cat node_modules/electron/path.txt 2>&1; echo "cwd: $(pwd)") | tail -c 3000 | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
+        echo "::error title=chrome-sandbox missing — electron state at sandbox step::${info}"
+        exit 1
+      fi
+      "${RUNNER_TEMP}/run-annotated.sh" "fix electron sandbox" sudo chown root node_modules/electron/dist/chrome-sandbox
+      "${RUNNER_TEMP}/run-annotated.sh" "fix electron sandbox" sudo chmod 04755 node_modules/electron/dist/chrome-sandbox

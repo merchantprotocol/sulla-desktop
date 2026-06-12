@@ -401,9 +401,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
   // ── Streaming: update in-place, but respect segment boundaries ──
   if (kind === 'streaming' && role === 'assistant') {
-    // Only reuse a streaming bubble if it hasn't been marked complete
-    // (e.g. by a preceding streaming_complete event or a thinking event
-    // arriving mid-stream). Otherwise this token belongs to a new segment.
+    // Streaming chunks carry the FULL accumulated text-so-far, not deltas.
+    // First preference: an open streaming bubble — replace its content.
     let existingIdx = -1;
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
@@ -414,25 +413,54 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     }
     if (existingIdx !== -1) {
       ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent };
-    } else {
-      // First streaming chunk of a new segment — collapse any open thinking bubble
-      for (let i = ctx.messages.length - 1; i >= 0; i--) {
-        const m = ctx.messages[i];
-        if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
-          console.log(`[ThinkingTrace] CLOSED thinking bubble id=${ m.id } reason=streaming_arrival (channel=${ agentId }, msgThreadId=${ msgThreadId }, bubbleThreadId=${ m.threadId })`);
-          (ctx.messages[i] as any)._completed = true;
-          break;
-        }
-      }
-      ctx.messages.push({
-        id:        `${ Date.now() }_ws_streaming`,
-        channelId: agentId,
-        threadId:  msgThreadId,
-        role,
-        kind,
-        content:   finalContent,
-      });
+      return;
     }
+
+    // No open bubble. Before creating a new one, check whether this chunk is
+    // a continuation of a previously-sealed streaming bubble in the same turn
+    // (i.e. tool_call/thinking interjected mid-stream and sealed the bubble,
+    // and the next chunk arrived carrying the same prefix plus more text).
+    // Resurrect that bubble in place so the response keeps growing where the
+    // user was already reading it, instead of creating a duplicate below.
+    const trimmedIncoming = finalContent.trim();
+    let resurrectedIdx = -1;
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.role === 'user') break;
+      if (m.role !== 'assistant') continue;
+      if (m.kind !== 'streaming') continue;
+      const prev = (m.content || '').trim();
+      if (!prev) continue;
+      if (trimmedIncoming.startsWith(prev) || prev.startsWith(trimmedIncoming)) {
+        resurrectedIdx = i;
+        break;
+      }
+    }
+    if (resurrectedIdx !== -1) {
+      const existing = ctx.messages[resurrectedIdx];
+      ctx.messages[resurrectedIdx] = { ...existing, content: finalContent };
+      (ctx.messages[resurrectedIdx] as any)._completed = false;
+      return;
+    }
+
+    // Fresh streaming segment with no prefix relationship to any prior bubble
+    // — collapse any open thinking bubble and start a new one.
+    for (let i = ctx.messages.length - 1; i >= 0; i--) {
+      const m = ctx.messages[i];
+      if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
+        console.log(`[ThinkingTrace] CLOSED thinking bubble id=${ m.id } reason=streaming_arrival (channel=${ agentId }, msgThreadId=${ msgThreadId }, bubbleThreadId=${ m.threadId })`);
+        (ctx.messages[i] as any)._completed = true;
+        break;
+      }
+    }
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_streaming`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role,
+      kind,
+      content:   finalContent,
+    });
     return;
   }
 

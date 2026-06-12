@@ -26,9 +26,27 @@ export interface QmdSearchResult {
 
 // ── Worker management ───────────────────────────────────────────
 
+const SEARCH_TIMEOUT_MS = 30_000;
+const INDEX_TIMEOUT_MS = 120_000;
+const MAX_INDEX_FILES = 10_000;
+
+export class QmdTimeoutError extends Error {
+  constructor(action: string, ms: number) {
+    super(`qmd ${ action } timed out after ${ ms }ms`);
+    this.name = 'QmdTimeoutError';
+  }
+}
+
+export class QmdTooManyFilesError extends Error {
+  constructor(public count: number, public limit: number, public dirPath: string) {
+    super(`qmd index aborted: ${ count } files in ${ dirPath } exceeds limit of ${ limit }. Narrow the dirPath.`);
+    this.name = 'QmdTooManyFilesError';
+  }
+}
+
 let _worker: Worker | null = null;
 let _requestId = 0;
-const _pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+const _pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
 
 /**
  * Resolve the app root so the worker can find node_modules.
@@ -70,16 +88,21 @@ function getWorker(): Worker {
   const workerPath = getWorkerPath();
   const appRoot = getAppRoot();
 
-  _worker = new Worker(workerPath, { workerData: { appRoot } });
+  _worker = new Worker(workerPath, { workerData: { appRoot, MAX_INDEX_FILES } });
   _worker.on('message', (msg: any) => {
     const pending = _pending.get(msg.id);
 
     if (!pending) {
       return;
     }
+    clearTimeout(pending.timer);
     _pending.delete(msg.id);
     if (msg.error) {
-      pending.reject(new Error(msg.error));
+      if (msg.errorName === 'QmdTooManyFilesError' && msg.errorCount && msg.errorLimit && msg.errorDirPath) {
+        pending.reject(new QmdTooManyFilesError(msg.errorCount, msg.errorLimit, msg.errorDirPath));
+      } else {
+        pending.reject(new Error(msg.error));
+      }
     } else {
       pending.resolve(msg.result);
     }
@@ -91,6 +114,7 @@ function getWorker(): Worker {
     console.log(`[QMD Worker] exited with code ${ code }`);
     _worker = null;
     for (const [id, pending] of _pending) {
+      clearTimeout(pending.timer);
       pending.reject(new Error(`Worker exited with code ${ code }`));
       _pending.delete(id);
     }
@@ -99,12 +123,33 @@ function getWorker(): Worker {
   return _worker;
 }
 
-function postRequest(action: string, params: any): Promise<any> {
+// Forcefully tear down the worker. Used when a request times out — the worker
+// is single-threaded and serializes work, so a stuck operation would block
+// every subsequent call. The SQLite store on disk is durable; the in-memory
+// _realPathMap is rebuilt the next time a directory is indexed.
+function killWorker(reason: string): void {
+  if (!_worker) return;
+  console.warn(`[QMD Worker] terminating: ${ reason }`);
+  const w = _worker;
+  _worker = null;
+  w.terminate().catch(err => console.error('[QMD Worker] terminate error:', err));
+  // The 'exit' handler on the old worker will reject anything still pending.
+}
+
+function postRequest(action: string, params: any, timeoutMs: number): Promise<any> {
   const id = ++_requestId;
   const worker = getWorker();
 
   return new Promise((resolve, reject) => {
-    _pending.set(id, { resolve, reject });
+    const timer = setTimeout(() => {
+      if (!_pending.has(id)) return;
+      _pending.delete(id);
+      killWorker(`${ action } request ${ id } exceeded ${ timeoutMs }ms`);
+      reject(new QmdTimeoutError(action, timeoutMs));
+    }, timeoutMs);
+    // Don't keep the event loop alive on this timer.
+    if (typeof timer.unref === 'function') timer.unref();
+    _pending.set(id, { resolve, reject, timer });
     worker.postMessage({ id, action, ...params });
   });
 }
@@ -122,7 +167,7 @@ export async function indexDirectory(
   dirPath: string,
   glob?: string,
 ): Promise<{ indexed: number; updated: number; removed: number }> {
-  return postRequest('index', { dirPath, glob });
+  return postRequest('index', { dirPath, glob }, INDEX_TIMEOUT_MS);
 }
 
 export async function search(
@@ -130,7 +175,7 @@ export async function search(
   dirPath: string,
   limit = 20,
 ): Promise<QmdSearchResult[]> {
-  return postRequest('search', { query, dirPath, limit });
+  return postRequest('search', { query, dirPath, limit }, SEARCH_TIMEOUT_MS);
 }
 
 // ── Inline worker source ────────────────────────────────────────
@@ -224,6 +269,18 @@ async function handleIndex({ dirPath, glob }) {
     ignore: excludeDirs.map(d => '**/' + d + '/**'),
   });
   const files = allFiles.filter(file => !file.split('/').some(p => p.startsWith('.')));
+  // Guardrail: refuse to index unbounded trees. Without this, a request like
+  // dirPath="~/Sites" enumerates and reads every text file across hundreds of
+  // repos and wedges the single-threaded worker.
+  const maxFiles = workerData.MAX_INDEX_FILES || 10000;
+  if (files.length > maxFiles) {
+    const err = new Error('qmd index aborted: ' + files.length + ' files in ' + resolvedDir + ' exceeds limit of ' + maxFiles + '. Narrow the dirPath.');
+    err.name = 'QmdTooManyFilesError';
+    err.count = files.length;
+    err.limit = maxFiles;
+    err.dirPath = resolvedDir;
+    throw err;
+  }
   const { hashContent, extractTitle, handelize } = await getStoreModule();
   let indexed = 0, updated = 0;
   for (const relativeFile of files) {
@@ -310,7 +367,14 @@ parentPort.on('message', async (msg) => {
     else throw new Error('Unknown action: ' + msg.action);
     parentPort.postMessage({ id: msg.id, result });
   } catch (err) {
-    parentPort.postMessage({ id: msg.id, error: err?.message || String(err) });
+    const out = { id: msg.id, error: err?.message || String(err) };
+    if (err && err.name === 'QmdTooManyFilesError') {
+      out.errorName = err.name;
+      out.errorCount = err.count;
+      out.errorLimit = err.limit;
+      out.errorDirPath = err.dirPath;
+    }
+    parentPort.postMessage(out);
   }
 });
 `;

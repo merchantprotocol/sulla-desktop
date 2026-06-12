@@ -806,6 +806,13 @@ export interface IpcMainInvokeEvents {
   'conversation-history:delete': (id: string, includeTrainingData?: boolean) => void;
   // #endregion
 
+  // #region Chat Messages (persistent storage with DB fallback)
+  'chat-messages:save': (id: string, state: any) => { success: boolean; error?: string };
+  'chat-messages:load': (id: string) => { success: boolean; data?: any; error?: string };
+  'chat-messages:delete': (id: string) => { success: boolean; error?: string };
+  'chat-messages:message-count': (id: string) => { success: boolean; count: number; error?: string };
+  // #endregion
+
   // #region Debug & Monitoring
   'debug-heartbeat-status':    () => { initialized: boolean; isExecuting: boolean; lastTriggerMs: number; schedulerRunning: boolean; totalTriggers: number; totalErrors: number; totalSkips: number; uptimeMs: number };
   'debug-heartbeat-history':   (limit?: number) => { ts: number; type: string; message: string; durationMs?: number; error?: string; meta?: Record<string, unknown> }[];

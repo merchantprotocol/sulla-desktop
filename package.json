@@ -10,24 +10,11 @@
   "engines": {
     "node": ">=22.22.0"
   },
+  "packageManager": "yarn@1.22.22",
   "type": "module",
   "repository": {
     "type": "git",
     "url": "https://github.com/merchantprotocol/sulla-desktop.git"
-  },
-  "build": {
-    "artifactName": "Sulla-Desktop-${version}-${arch}.${ext}",
-    "mac": {
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "./packaging/entitlements.mac.plist",
-      "entitlementsInherit": "./packaging/entitlements.mac.plist",
-      "notarize": true,
-      "target": [
-        "dmg",
-        "zip"
-      ]
-    }
   },
   "scripts": {
     "start": "electron .",

@@ -1,6 +1,6 @@
 /*
-  Simple localStorage-backed persister for phase-0. Swap for an
-  IPC/IndexedDB-backed persister in production.
+  Hybrid persister: saves to both localStorage (phase-0 fallback) and
+  PostgreSQL via IPC (durable backup when localStorage is evicted).
 
   Keys:
     chat:index              → array of ThreadId
@@ -8,6 +8,7 @@
     chat:tab:<tabId>        → ThreadId (last active thread per tab)
 */
 
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { ThreadPersister } from '../controller/ChatController';
 import type { ThreadState }     from '../models/Thread';
 import type { ThreadId }        from '../types/chat';
@@ -25,14 +26,51 @@ export class LocalStoragePersister implements ThreadPersister {
         index.unshift(state.thread.id);
         localStorage.setItem(INDEX_KEY, JSON.stringify(index));
       }
+
+      // Also save to database via IPC (fire-and-forget)
+      ipcRenderer.invoke('chat-messages:save', state.thread.id, state)
+        .catch(err => console.error('[LocalStoragePersister] DB backup save failed:', err));
     } catch (e) { console.error('[LocalStoragePersister] save failed:', e); }
   }
 
   load(id: ThreadId): ThreadState | null {
     try {
       const raw = localStorage.getItem(KEY(id));
-      return raw ? JSON.parse(raw) as ThreadState : null;
+      if (raw) return JSON.parse(raw) as ThreadState;
+
+      // localStorage miss — try to load from database (sync version unavailable)
+      // The async fallback is handled in ChatPage.vue's onActivate()
+      return null;
     } catch { return null; }
+  }
+
+  /**
+   * Async load with database fallback (called when localStorage misses).
+   * Returns the state from database or null if not found.
+   */
+  async loadAsync(id: ThreadId): Promise<ThreadState | null> {
+    try {
+      // Try localStorage first
+      const raw = localStorage.getItem(KEY(id));
+      if (raw) return JSON.parse(raw) as ThreadState;
+
+      // localStorage miss — load from database
+      const result = await ipcRenderer.invoke('chat-messages:load', id);
+      if (result.success && result.data) {
+        // Restore to localStorage for next time
+        try {
+          localStorage.setItem(KEY(id), JSON.stringify(result.data));
+        } catch (e) {
+          // localStorage might be full, but we still have DB data
+          console.warn('[LocalStoragePersister] Could not restore to localStorage:', e);
+        }
+        return result.data as ThreadState;
+      }
+      return null;
+    } catch (err) {
+      console.error('[LocalStoragePersister] Async load failed:', err);
+      return null;
+    }
   }
 
   list(): ThreadState[] {
@@ -51,6 +89,10 @@ export class LocalStoragePersister implements ThreadPersister {
       localStorage.removeItem(KEY(id));
       const index = this.readIndex().filter(x => x !== id);
       localStorage.setItem(INDEX_KEY, JSON.stringify(index));
+
+      // Also delete from database (fire-and-forget)
+      ipcRenderer.invoke('chat-messages:delete', id)
+        .catch(err => console.error('[LocalStoragePersister] DB delete failed:', err));
     } catch {}
   }
 

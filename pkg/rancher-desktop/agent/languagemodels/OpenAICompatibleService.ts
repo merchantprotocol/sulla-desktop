@@ -1,5 +1,6 @@
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, type LLMServiceConfig, FinishReason } from './BaseLanguageModel';
 import { readSSEEvents } from './SSEStreamReader';
+import { ModelDetectionService } from './ModelDetectionService';
 
 /**
  * OpenAI-compatible remote LLM provider base class.
@@ -50,8 +51,14 @@ export class OpenAICompatibleService extends BaseLanguageModel {
    * Send request to remote provider with retry + local LLM fallback.
    */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const url = `${ this.baseUrl }${ this.chatEndpoint }`;
-    const body = this.buildRequestBody(messages, options);
+    const endpoint = ModelDetectionService.getEndpoint(this.model);
+    const url = `${ this.baseUrl }${ endpoint }`;
+    let body = this.buildRequestBody(messages, options);
+
+    // Transform request body for /responses API (uses 'input' instead of 'messages')
+    if (ModelDetectionService.usesResponsesAPI(this.model)) {
+      body = this.transformToResponsesAPI(body);
+    }
     const conversationId = typeof options?.conversationId === 'string' ? options.conversationId : undefined;
     const nodeName = typeof options?.nodeName === 'string' ? options.nodeName : undefined;
 
@@ -70,10 +77,36 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         const timeoutMs = options?.timeoutSeconds ? options.timeoutSeconds * 1000 : this.defaultTimeoutMs;
         const signal = this.combinedSignal(options?.signal, timeoutMs);
         const payload = this.buildFetchOptions(body, signal);
+
+        // ── DIAGNOSTIC LOGGING — request shape ──────────────────────
+        // Captures the exact URL, header set (key masked), and api_key prefix
+        // so we can verify the request shape matches what the upstream provider
+        // expects. Remove or gate behind a debug flag once the auth issue is
+        // confirmed fixed.
+        try {
+          const headersObj = (payload.headers as Record<string, string>) || {};
+          const authHdr = headersObj.Authorization || '';
+          const authMasked = authHdr ? `${ authHdr.slice(0, 14) }…${ authHdr.slice(-6) } (len=${ authHdr.length })` : '<none>';
+          const apiKeyMasked = this.apiKey ? `${ this.apiKey.slice(0, 8) }…${ this.apiKey.slice(-4) } (len=${ this.apiKey.length })` : '<empty>';
+          console.log(`[${ this.constructor.name }:DIAG] → ${ payload.method } ${ url } | model=${ this.model } | auth=${ authMasked } | apiKey=${ apiKeyMasked } | extraHeaders=${ Object.keys(headersObj).filter(k => k !== 'Authorization' && k !== 'Content-Type').join(',') || '<none>' }`);
+        } catch { /* logging only, never break the call */ }
+
         const res = await fetch(url, payload);
 
         if (!res.ok) {
           const text = await res.text().catch(() => '');
+
+          // ── DIAGNOSTIC LOGGING — failed response ──────────────────
+          try {
+            const respHeaders = Object.fromEntries(res.headers.entries());
+            console.error(`[${ this.constructor.name }:DIAG] ← ${ res.status } ${ res.statusText } from ${ url } | resp_headers=${ JSON.stringify({
+              'openai-organization': respHeaders['openai-organization'],
+              'openai-version':      respHeaders['openai-version'],
+              'x-request-id':        respHeaders['x-request-id'],
+              'cf-ray':              respHeaders['cf-ray'],
+              'www-authenticate':    respHeaders['www-authenticate'],
+            }) } | body=${ text.slice(0, 600) }`);
+          } catch { /* logging only */ }
 
           // 429 with insufficient_quota is permanent — don't retry
           if (res.status === 429 && text.includes('insufficient_quota')) {
@@ -137,8 +170,14 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     messages: ChatMessage[],
     options: any,
   ): Promise<Response | null> {
-    const url = `${ this.baseUrl }${ this.chatEndpoint }`;
-    const body = this.buildRequestBody(messages, options);
+    const endpoint = ModelDetectionService.getEndpoint(this.model);
+    const url = `${ this.baseUrl }${ endpoint }`;
+    let body = this.buildRequestBody(messages, options);
+
+    // Transform request body for /responses API (uses 'input' instead of 'messages')
+    if (ModelDetectionService.usesResponsesAPI(this.model)) {
+      body = this.transformToResponsesAPI(body);
+    }
 
     body.stream = true;
 
@@ -356,13 +395,26 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     const otherMsgs = openaiMessages.filter((m: any) => m.role !== 'system');
     const orderedMessages = [...systemMsgs, ...otherMsgs];
 
+    // Defensive: ensure no message has null content (sanitize before sending)
+    const sanitizedMessages = orderedMessages.map((m: any) => {
+      if (m.content === null || m.content === undefined) {
+        return { ...m, content: '' };
+      }
+      return m;
+    });
+
     const body: any = {
       model:    options.model ?? this.model,
-      messages: orderedMessages,
+      messages: sanitizedMessages,
     };
 
     if (options.maxTokens) {
-      body.max_tokens = options.maxTokens;
+      // Newer models (gpt-5.x, o1, o3) use 'max_completion_tokens'
+      if (ModelDetectionService.usesMaxCompletionTokens(this.model)) {
+        body.max_completion_tokens = options.maxTokens;
+      } else {
+        body.max_tokens = options.maxTokens;
+      }
     }
 
     if (options.tools?.length) {
@@ -374,6 +426,59 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     }
 
     return body;
+  }
+
+  /**
+   * Transform request body for the /responses API.
+   * The /responses API uses 'input' instead of 'messages'.
+   */
+  protected transformToResponsesAPI(body: any): any {
+    // The Responses API rejects null content — replace with empty string
+    const input = (body.messages as any[]).map((msg: any) => {
+      if (msg.content === null || msg.content === undefined) {
+        return { ...msg, content: '' };
+      }
+      return msg;
+    });
+
+    const transformed: any = {
+      model: body.model,
+      input,
+    };
+
+    // The Responses API renamed `max_tokens` / `max_completion_tokens`
+    // (Chat Completions) to `max_output_tokens`. Sending the old names returns
+    // 400 "Unsupported parameter".
+    const maxOut = body.max_completion_tokens ?? body.max_tokens;
+    if (typeof maxOut === 'number' && maxOut > 0) {
+      transformed.max_output_tokens = maxOut;
+    }
+
+    if (body.tools?.length) {
+      // Chat Completions shape: { type: 'function', function: { name, description, parameters } }
+      // Responses API shape:    { type: 'function', name, description, parameters, strict }
+      // Without this flattening the Responses API returns
+      // 400 "Missing required parameter: 'tools[0].name'".
+      transformed.tools = body.tools.map((t: any) => {
+        if (t && t.type === 'function' && t.function && typeof t.function === 'object') {
+          return {
+            type:        'function',
+            name:        t.function.name,
+            description: t.function.description,
+            parameters:  t.function.parameters,
+            strict:      typeof t.function.strict === 'boolean' ? t.function.strict : false,
+          };
+        }
+        // Already flattened or unknown tool type — pass through unchanged.
+        return t;
+      });
+    }
+
+    if (body.response_format) {
+      transformed.response_format = body.response_format;
+    }
+
+    return transformed;
   }
 
   /**
@@ -395,7 +500,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
       if (m.role === 'assistant' && Array.isArray(m.content)) {
         const toolUseBlocks = m.content.filter((b: any) => b?.type === 'tool_use');
         const textBlocks = m.content.filter((b: any) => b?.type === 'text' && b?.text?.trim());
-        const textContent = textBlocks.map((b: any) => b.text).join('\n').trim() || null;
+        const textContent = textBlocks.map((b: any) => b.text).join('\n').trim() || '';
 
         if (toolUseBlocks.length > 0) {
           const toolCalls = toolUseBlocks.map((b: any) => ({
@@ -539,11 +644,11 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         }
         const allAnswered = msg.tool_calls.every((tc: any) => followingToolIds.has(tc.id));
         if (!allAnswered) {
-          // Strip tool_calls, keep only text content
+          // Strip tool_calls but keep the message itself — even if content is empty.
+          // An assistant message with tool_calls must not be dropped, as that leaves
+          // orphaned tool messages without a preceding assistant message.
           const { tool_calls: _dropped, ...rest } = msg;
-          if (rest.content?.trim()) {
-            sanitized.push(rest);
-          }
+          sanitized.push(rest);
           continue;
         }
       }

@@ -197,6 +197,15 @@ export class AudioDriverClient extends EventEmitter {
       return true;
     }
 
+    // The install/launchd paths below (launchctl, /Library/LaunchDaemons,
+    // /usr/local/bin) only exist on macOS. On other platforms we can connect
+    // to an already-running daemon (step 1) but cannot start one.
+    if (process.platform !== 'darwin') {
+      this.emit('not-installed');
+
+      return false;
+    }
+
     // 2. Binary installed + plist exists — try to start the service
     if (this.binaryInstalled() && this.plistExists()) {
       console.log('[AudioDriverClient] Daemon not running. Starting via launchctl...');

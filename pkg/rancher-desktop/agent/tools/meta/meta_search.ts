@@ -3,7 +3,7 @@ import * as os from 'os';
 import { BaseTool, ToolResponse } from '../base';
 
 import { resolveSullaDocsDir } from '@pkg/agent/utils/sullaPaths';
-import { indexDirectory, search, type QmdSearchResult } from '@pkg/main/qmdService';
+import { indexDirectory, search, QmdTimeoutError, QmdTooManyFilesError, type QmdSearchResult } from '@pkg/main/qmdService';
 
 /**
  * Search Tool — fast semantic search across any directory using QMD vector indexing.
@@ -51,9 +51,9 @@ export class MetaSearchWorker extends BaseTool {
 
     try {
       if (reindex) {
-        await indexDirectory(dirPath);
+        await safeIndex(dirPath);
         if (includeSecondPass && sullaDocsDir) {
-          await indexDirectory(sullaDocsDir);
+          await safeIndex(sullaDocsDir);
         }
       }
 
@@ -66,7 +66,7 @@ export class MetaSearchWorker extends BaseTool {
           docsHits = await search(query, sullaDocsDir, perDirLimit);
           if (docsHits.length === 0) {
             // Index lazily on first miss, then retry once.
-            await indexDirectory(sullaDocsDir);
+            await safeIndex(sullaDocsDir);
             docsHits = await search(query, sullaDocsDir, perDirLimit);
           }
         } catch (err) {
@@ -76,7 +76,22 @@ export class MetaSearchWorker extends BaseTool {
 
       if (primary.length === 0 && docsHits.length === 0) {
         // Try indexing the primary dir and searching again before giving up.
-        await indexDirectory(dirPath);
+        // safeIndex returns a sentinel on guardrail/timeout so we surface a
+        // useful error to the LLM instead of pretending the search succeeded.
+        const indexOutcome = await safeIndex(dirPath);
+        if (indexOutcome.kind === 'tooManyFiles') {
+          return {
+            successBoolean: false,
+            responseString: `Search not run: ${ indexOutcome.message } Pass a more specific dirPath (e.g. a single repo or subdirectory).`,
+          };
+        }
+        if (indexOutcome.kind === 'timeout') {
+          return {
+            successBoolean: false,
+            responseString: `Search not run: indexing ${ dirPath } timed out. Narrow the dirPath to a smaller subtree.`,
+          };
+        }
+
         const retryPrimary = await search(query, dirPath, perDirLimit);
 
         if (retryPrimary.length === 0 && docsHits.length === 0) {
@@ -98,11 +113,45 @@ export class MetaSearchWorker extends BaseTool {
         responseString: formatResults(primary, docsHits, query, dirPath, sullaDocsDir),
       };
     } catch (error) {
+      if (error instanceof QmdTooManyFilesError) {
+        return {
+          successBoolean: false,
+          responseString: `Search not run: ${ error.message } Pass a more specific dirPath (e.g. a single repo or subdirectory).`,
+        };
+      }
+      if (error instanceof QmdTimeoutError) {
+        return {
+          successBoolean: false,
+          responseString: `Search timed out: ${ error.message }. Narrow the dirPath or simplify the query.`,
+        };
+      }
       return {
         successBoolean: false,
         responseString: `Search failed: ${ error instanceof Error ? error.message : String(error) }`,
       };
     }
+  }
+}
+
+type IndexOutcome =
+  | { kind: 'ok'; result: { indexed: number; updated: number; removed: number } }
+  | { kind: 'tooManyFiles'; message: string }
+  | { kind: 'timeout'; message: string };
+
+// Wrap indexDirectory so the caller can react to guardrail / timeout errors
+// without nesting another try/catch. Other errors propagate.
+async function safeIndex(dirPath: string): Promise<IndexOutcome> {
+  try {
+    const result = await indexDirectory(dirPath);
+    return { kind: 'ok', result };
+  } catch (err) {
+    if (err instanceof QmdTooManyFilesError) {
+      return { kind: 'tooManyFiles', message: err.message };
+    }
+    if (err instanceof QmdTimeoutError) {
+      return { kind: 'timeout', message: err.message };
+    }
+    throw err;
   }
 }
 

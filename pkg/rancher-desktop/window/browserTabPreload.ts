@@ -30,6 +30,37 @@ const IPC_CHANNEL = 'browser-tab-view:bridge-event';
 const LOG_PREFIX = '[SULLA_TAB_PRELOAD]';
 
 /* ------------------------------------------------------------------ */
+/*  Web push stub                                                     */
+/* ------------------------------------------------------------------ */
+//
+// Electron's Chromium ships without an FCM/GCM push service, so any
+// website that calls `registration.pushManager.subscribe(...)` gets a
+// cryptic "Registration failed - push service not available" rejection.
+// Most sites surface that as a generic alert ("Couldn't enable
+// notifications…"), which is noise — the user can't grant something the
+// runtime physically doesn't support.
+//
+// Replace subscribe() with a NotAllowedError rejection — the same shape
+// the API throws when the user denies permission, which sites already
+// handle quietly. We intentionally do NOT touch `Notification.permission`
+// or the `Notification` constructor: native OS toasts via `new
+// Notification(...)` still work in Electron and we don't want to block
+// them.
+
+try {
+  if (typeof PushManager !== 'undefined' && PushManager.prototype) {
+    const deny = function (): Promise<never> {
+      return Promise.reject(
+        new DOMException('Push notifications are not available in this app.', 'NotAllowedError'),
+      );
+    };
+    PushManager.prototype.subscribe = deny as typeof PushManager.prototype.subscribe;
+  }
+} catch (err) {
+  console.warn(`${ LOG_PREFIX } web push stub failed`, err);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Theme bridge: sync Sulla Desktop theme → file:// page classes     */
 /* ------------------------------------------------------------------ */
 

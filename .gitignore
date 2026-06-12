@@ -11,7 +11,7 @@
 /resources/darwin/
 /resources/host/
 /resources/linux/*
-!/resources/linux/rancher-desktop.desktop
+!/resources/linux/sulla-desktop.desktop
 /resources/browserTabPreload.js*
 /resources/preload.js*
 /resources/rancher-dashboard/

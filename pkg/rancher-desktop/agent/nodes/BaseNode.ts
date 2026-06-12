@@ -1287,6 +1287,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Text streaming state — throttle at ~50ms to avoid flooding the WebSocket
     let contentBuffer = '';
     let lastStreamFlush = 0;
+    let streamingWsSent = false;
     const STREAM_THROTTLE_MS = 50;
     const isVoiceMode = controller.getMode() === 'voice';
 
@@ -1311,6 +1312,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           const stripped = stripProtocolTagsStreaming(contentBuffer);
           if (stripped.trim()) {
             this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+            streamingWsSent = true;
           }
         }
       }
@@ -1340,6 +1342,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const stripped = stripProtocolTagsStreaming(contentBuffer);
         if (stripped.trim()) {
           this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+          streamingWsSent = true;
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
         contentBuffer = '';
@@ -1374,6 +1377,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const stripped = stripProtocolTagsStreaming(contentBuffer);
         if (stripped.trim()) {
           this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+          streamingWsSent = true;
         }
         this.wsChatMessage(state, '', 'assistant', 'streaming_complete');
         contentBuffer = '';
@@ -1398,6 +1402,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const stripped = stripProtocolTagsStreaming(contentBuffer);
         if (stripped.trim()) {
           this.wsChatMessage(state, stripped, 'assistant', 'streaming');
+          streamingWsSent = true;
         }
         contentBuffer = '';
       }
@@ -1407,6 +1412,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     if (!reply) {
       return null;
+    }
+
+    if (streamingWsSent) {
+      reply.metadata.streamingEmitted = true;
     }
 
     // Run post-completion processing through all active extractors

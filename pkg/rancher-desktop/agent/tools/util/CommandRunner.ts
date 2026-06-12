@@ -137,6 +137,15 @@ export async function runCommand(
   options: CommandRunnerOptions = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   if (options.runInLimaShell) {
+    // Lima only exists on macOS/Linux; paths.limactl is a throwing getter on
+    // Windows. Fail with a clear message instead of crashing the caller.
+    if (process.platform === 'win32') {
+      return {
+        stdout:   '',
+        stderr:   'VM command execution requires the Lima VM, which is not available on Windows. This feature currently supports macOS and Linux only.',
+        exitCode: 127,
+      };
+    }
     const limaHome = resolveLimaHome(options);
     const limactlPath = resolveLimactlPath(options);
     const limaInstance = options.limaInstance || '0';

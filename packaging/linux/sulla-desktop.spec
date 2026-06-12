@@ -1,5 +1,5 @@
 #
-# spec file for package rancher-desktop
+# spec file for package sulla-desktop
 #
 # Copyright (c) 2025 SUSE LLC
 #
@@ -12,11 +12,11 @@
 # license that conforms to the Open Source Definition (Version 1.9)
 # published by the Open Source Initiative.
 
-# Please submit bugfixes or comments via https://bugs.opensuse.org/
+# Please submit bugfixes or comments via https://github.com/merchantprotocol/sulla-desktop/issues
 #
 
 
-Name:       rancher-desktop
+Name:       sulla-desktop
 Version:    0
 Release:    0
 Summary:    AI Agent Autonomy on the desktop
@@ -24,11 +24,11 @@ License:    Apache-2.0 WITH Commons-Clause
 BuildRoot:  %{_tmppath}/%{name}-%{version}-build
 Group:      Development/Tools/Other
 Source0:    %{name}.zip
-URL:        https://github.com/rancher-sandbox/rancher-desktop#readme
+URL:        https://github.com/merchantprotocol/sulla-desktop#readme
 
 %if "%{_vendor}" == "debbuild"
 # Needed to set Maintainer in output debs
-Packager:       SUSE <containers@suse.com>
+Packager:       Merchant Protocol <jonathonbyrd@gmail.com>
 %endif
 
 %if 0%{?fedora} || 0%{?rhel}
@@ -171,8 +171,8 @@ done
 
 # Desktop integration files
 mkdir -p share/applications share/metainfo
-mv resources/resources/linux/rancher-desktop.desktop share/applications/rancher-desktop.desktop
-mv resources/resources/linux/rancher-desktop.appdata.xml share/metainfo/rancher-desktop.appdata.xml
+mv resources/resources/linux/sulla-desktop.desktop share/applications/sulla-desktop.desktop
+mv resources/resources/linux/sulla-desktop.appdata.xml share/metainfo/sulla-desktop.appdata.xml
 
 # Remove qemu binaries included in lima tarball
 rm -v resources/resources/linux/lima/bin/qemu-*
@@ -186,7 +186,7 @@ cp -ra ./share "%{buildroot}%{_prefix}"
 cp -ra ./* "%{buildroot}/opt/%{name}"
 
 # Link to the binary
-ln -sf "/opt/%{name}/rancher-desktop" "%{buildroot}%{_bindir}/rancher-desktop"
+ln -sf "/opt/%{name}/sulla-desktop" "%{buildroot}%{_bindir}/sulla-desktop"
 
 %post
 # This is needed to ensure Debian packages have proper file permissions;
@@ -198,9 +198,9 @@ true
 %dir /opt/%{name}
 /opt/%{name}*
 %attr(4755,root,root) /opt/%{name}/chrome-sandbox
-%{_bindir}/rancher-desktop
-%{_prefix}/share/applications/rancher-desktop.desktop
+%{_bindir}/sulla-desktop
+%{_prefix}/share/applications/sulla-desktop.desktop
 %{_prefix}/share/icons/hicolor/*
-%{_prefix}/share/metainfo/rancher-desktop.appdata.xml
+%{_prefix}/share/metainfo/sulla-desktop.appdata.xml
 
 %changelog

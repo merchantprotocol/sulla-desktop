@@ -425,6 +425,12 @@ Rules that apply on every turn:
 
     log.log(`[ClaudeCodeService] runClaude: messages=${ messages.length } promptLen=${ prompt.length } conversationId=${ convId } session=${ existingSession ?? '(new)' } hasOAuth=${ !!oauthToken } hasApiKey=${ !!apiKey }`);
 
+    // Lima only exists on macOS/Linux; paths.limactl is a throwing getter on
+    // Windows. Surface a clear, user-readable error instead of an opaque crash.
+    if (process.platform === 'win32') {
+      throw new Error('Claude Code execution requires the Lima VM, which is not available on Windows yet. This feature currently supports macOS and Linux only.');
+    }
+
     const limactlPath = paths.limactl;
     const limaHome = paths.lima;
 
@@ -528,11 +534,8 @@ Rules that apply on every turn:
         heartbeatTimer = setInterval(() => {
           tick += 1;
           const elapsed = Math.round((Date.now() - heartbeatStart) / 1000);
-          const msg = tick === 1 ? 'Claude binary starting'
-                    : tick === 2 ? 'Loading tools and context'
-                    : tick === 3 ? 'Calling model — waiting for first response'
-                    : `Still waiting on model (${ elapsed }s)`;
-          directActivity(msg);
+          // Don't emit transient status messages as separate thinking bubbles
+          // Tool activities and model thinking will provide feedback
         }, 3000);
       });
 
@@ -729,10 +732,9 @@ Rules that apply on every turn:
             return;
           }
 
-          // Thinking block starting → indicate reasoning phase.
+          // Thinking block starting → stop the heartbeat
           if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') {
             stopHeartbeat();
-            emitActivity('Thinking…');
             return;
           }
         }

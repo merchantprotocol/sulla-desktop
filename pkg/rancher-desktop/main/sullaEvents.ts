@@ -13,6 +13,7 @@ import { initOpenAIOAuthEvents } from './openaiOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
+import { initChatMessagesIpc } from './chatMessagesIpc';
 import { initMessageBusIpc } from './messageBusIpc';
 import { initSullaApprovalEvents } from './sullaApprovalEvents';
 import { initSullaBundleEvents } from './sullaBundleEvents';
@@ -67,6 +68,7 @@ export function initSullaEvents(): void {
   initMessageBusIpc();
   initTabsIpc();
   initConversationHistoryIpc();
+  initChatMessagesIpc();
   initClaudeOAuthEvents();
   initOpenAIOAuthEvents();
   initClaudeCodeTestEvents();

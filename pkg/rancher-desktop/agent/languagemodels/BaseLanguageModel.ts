@@ -85,6 +85,7 @@ export interface NormalizedResponse {
     reasoning?:          string;
     parsed_content?:     any;
     rawProviderContent?: any;
+    streamingEmitted?:   boolean;
   };
 }
 
