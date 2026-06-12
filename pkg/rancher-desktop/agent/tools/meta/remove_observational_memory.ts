@@ -1,10 +1,13 @@
-import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
-import { parseJson } from '../../services/JsonParseService';
-import { BaseTool, ToolResponse } from '../base';
+import { ObservationsModel } from '../../database/models/ObservationsModel';
 import { generateClaudeCodeMemoryFile } from '../../prompts/generateClaudeCodeMemoryFile';
+import { BaseTool, ToolResponse } from '../base';
 
 /**
- * Remove Observational Memory Tool - Worker class for execution
+ * Remove (archive) an observational memory by ID.
+ *
+ * Sets archived = true — the row is NEVER hard-deleted so the observation
+ * history is always recoverable.  The observation will no longer appear in
+ * listActive() / search() results unless include_archived is requested.
  */
 export class RemoveObservationalMemoryWorker extends BaseTool {
   name = '';
@@ -13,60 +16,26 @@ export class RemoveObservationalMemoryWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { id } = input;
 
-    // Get current observational memories
-    const observationalMemory = await SullaSettingsModel.get('observationalMemory', []);
-    let memoryArray: any[] = [];
-
     try {
-      const parsed = parseJson(observationalMemory);
-      if (Array.isArray(parsed)) {
-        memoryArray = parsed;
-      } else {
-        memoryArray = [];
+      const existing = await ObservationsModel.getById(id);
+      if (!existing) {
+        return {
+          successBoolean: false,
+          responseString: `Observation with ID "${ id }" not found.`,
+        };
       }
-    } catch (e: any) {
-      return {
-        successBoolean: false,
-        responseString: `Failed to parse observational memory: ${ e?.message }`,
-      };
-    }
 
-    // Find and remove the memory
-    const index = memoryArray.findIndex((mem: any) => mem.id === id);
-    if (index === -1) {
-      return {
-        successBoolean: false,
-        responseString: `Memory with ID "${ id }" not found.`,
-      };
-    }
-
-    const removedMemory = memoryArray.splice(index, 1)[0];
-
-    // Test round-trip to ensure valid JSON before saving
-    try {
-      const testString = JSON.stringify(memoryArray);
-      JSON.parse(testString);
-    } catch (e: any) {
-      return {
-        successBoolean: false,
-        responseString: `Memory data corruption detected, aborting save: ${ e?.message }`,
-      };
-    }
-
-    // Save back to settings
-    try {
-      await SullaSettingsModel.set('observationalMemory', JSON.stringify(memoryArray));
+      await ObservationsModel.archive(id);
       generateClaudeCodeMemoryFile().catch(() => {});
-    } catch (e: any) {
+      return {
+        successBoolean: true,
+        responseString: `Archived (soft-deleted): "${ existing.content }" (id: ${ id })`,
+      };
+    } catch (err: any) {
       return {
         successBoolean: false,
-        responseString: `Failed to save memory: ${ e?.message }`,
+        responseString: `Failed to archive observation: ${ err?.message }`,
       };
     }
-
-    return {
-      successBoolean: true,
-      responseString: `Forgetting: "${ removedMemory.content }" (id: ${ removedMemory.id })`,
-    };
   }
 }

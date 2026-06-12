@@ -1,11 +1,12 @@
 /**
  * SubconsciousMiddleware — pre-processing step before the main agent LLM call.
  *
- * Launches up to 4 parallel subconscious graphs:
+ * Launches up to 5 parallel subconscious graphs:
  * 1. Conversational Summarizer — compresses/deletes old messages
  * 2. Memory Recall Agent — searches for relevant skills, tools, resources
- * 3. Observation Agent — creates/removes observational memories
- * 4. Tool-Result Digester — compresses stale tool_result blocks into
+ * 3. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
+ * 4. Observation Recall Agent — surfaces relevant observations for context injection
+ * 5. Tool-Result Digester — compresses stale tool_result blocks into
  *    trusted-citation digests so the primary model re-reads citations
  *    instead of verbatim dumps
  *
@@ -16,6 +17,7 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
+import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
@@ -128,14 +130,22 @@ export async function runSubconsciousMiddleware(
   const recallPromise = runMemoryRecall(state, options.recallVariant);
   awaitedTasks.push(recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx }));
 
-  // 3. Observation Agent — fire-and-forget: it only does side-effect tool
-  //    calls (add/remove observational memory, update identity files) and
-  //    never touches state.messages directly. No need to wait for it.
+  // 3a. Observation Writer — fire-and-forget: writes/archives observation rows
+  //     via DB tools. Never touches state.messages. No need to await.
   if (options.includeObservations) {
-    launched.push('observation (fire-and-forget)');
+    launched.push('observation-writer (fire-and-forget)');
     runObservationAgent(state).catch((error) => {
-      console.error('[SubconsciousMiddleware] Observation Agent failed (fire-and-forget):', error instanceof Error ? error.message : error);
+      console.error('[SubconsciousMiddleware] Observation Writer failed (fire-and-forget):', error instanceof Error ? error.message : error);
     });
+  }
+
+  // 3b. Observation Recall — awaited: surfaces relevant observations from the
+  //     DB table and writes them to state.metadata.observationContext so the
+  //     primary agent gets targeted observation context instead of the full blob.
+  if (options.includeObservations) {
+    launched.push('observation-recall');
+    const obsRecallPromise = runObservationRecall(state);
+    awaitedTasks.push(obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx }));
   }
 
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
@@ -167,7 +177,8 @@ export async function runSubconsciousMiddleware(
   }
 
   const recallLen = ((state.metadata as any).recallContext || '').length;
-  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars`);
+  const obsRecallLen = ((state.metadata as any).observationContext || '').length;
+  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | observationContext: ${ obsRecallLen } chars`);
 }
 
 // ============================================================================
@@ -396,29 +407,27 @@ async function runMemoryRecall(state: BaseThreadState, variant?: 'default' | 'he
 }
 
 // ============================================================================
-// OBSERVATION AGENT
+// OBSERVATION WRITER AGENT
 // ============================================================================
 
 async function runObservationAgent(state: BaseThreadState): Promise<void> {
   const startTime = Date.now();
 
   try {
-    // Load current observations
-    const rawObservations = await SullaSettingsModel.get('observationalMemory', '[]');
-    let memoryObj: any[];
+    // Load observation count from the DB table for logging.
+    // The agent itself uses search_observations / list_observations tools —
+    // we don't need to pre-load and pass the full blob anymore.
+    let existingCount = 0;
     try {
-      memoryObj = parseJson(rawObservations)!;
-      if (!Array.isArray(memoryObj)) memoryObj = [];
+      const rows = await ObservationsModel.listActive(undefined, 1000);
+      existingCount = rows.length;
     } catch {
-      memoryObj = [];
+      // Table may not exist yet on first boot (migration pending). Proceed anyway;
+      // the tools will surface the same error gracefully.
     }
 
-    const observationsText = memoryObj
-      .map((entry: any) => `[id:${ entry.id }] ${ entry.priority } ${ entry.timestamp } ${ entry.content }`)
-      .join('\n');
-
-    const { graph, state: subState, threadId } = await GraphRegistry.createObservationAgent(state, observationsText);
-    console.log(`[SubconsciousMiddleware:Observation] Started | threadId: ${ threadId } | existing observations: ${ memoryObj.length }`);
+    const { graph, state: subState, threadId } = await GraphRegistry.createObservationAgent(state);
+    console.log(`[SubconsciousMiddleware:ObservationWriter] Started | threadId: ${ threadId } | active observations: ${ existingCount }`);
 
     await graph.execute(subState, 'subconscious', { maxIterations: 20 });
 
@@ -428,12 +437,46 @@ async function runObservationAgent(state: BaseThreadState): Promise<void> {
       Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
     ).length;
 
-    // The observation agent applies its side effects via tools (add/remove observational memory).
-    // No additional state merge needed — the tools write directly to SullaSettingsModel.
-
-    console.log(`[SubconsciousMiddleware:Observation] Completed in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+    // The writer agent applies side effects via add/remove tools that write
+    // directly to the observations DB table. No state merge needed.
+    console.log(`[SubconsciousMiddleware:ObservationWriter] Completed in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
   } catch (error) {
-    console.error(`[SubconsciousMiddleware:Observation] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+    console.error(`[SubconsciousMiddleware:ObservationWriter] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+  }
+}
+
+// ============================================================================
+// OBSERVATION RECALL AGENT
+// ============================================================================
+
+async function runObservationRecall(state: BaseThreadState): Promise<string | null> {
+  const startTime = Date.now();
+
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createObservationRecall(state);
+    console.log(`[SubconsciousMiddleware:ObservationRecall] Started | threadId: ${ threadId }`);
+
+    await graph.execute(subState, 'subconscious', { maxIterations: 10 });
+
+    const agentMeta = (subState.metadata as any).agent || {};
+    const iterations = (subState.metadata as any).iterations || 0;
+    const toolCalls = subState.messages.filter((m: any) =>
+      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
+    ).length;
+
+    // Extract the structured response from AGENT_DONE (same pattern as memory-recall).
+    const response = agentMeta.response;
+
+    if (response && typeof response === 'string' && response.trim()) {
+      console.log(`[SubconsciousMiddleware:ObservationRecall] Returning ${ response.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+      return response.trim();
+    }
+
+    console.log(`[SubconsciousMiddleware:ObservationRecall] No relevant observations in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+    return null;
+  } catch (error) {
+    console.error(`[SubconsciousMiddleware:ObservationRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+    return null;
   }
 }
 

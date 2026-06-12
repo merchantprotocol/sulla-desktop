@@ -1,18 +1,31 @@
 /**
- * Observational Memory Section — Injects Sulla's persistent observations
- * (from SullaSettingsModel 'observationalMemory') so the active LLM has the
- * same durable "what I know about this user/business" context that the cloud
- * agent gets.
+ * Observational Memory Section — Injects a slim set of top-priority
+ * observations into the system prompt so the active LLM has baseline
+ * "what I know about this user/business" context.
  *
- * Cache stability: 'stable' — the memory list only changes when the
- * subconscious observation agent writes a new entry or removes a stale one,
- * which is infrequent relative to the turn rate. Treating it as stable lets
- * Anthropic prompt caching keep it warm across turns.
+ * PRIMARY PATH: reads the top 10 critical/high-priority active rows from the
+ * observations Postgres table (cheap direct query, no LLM involved).
+ *
+ * FALLBACK PATH: if the table is empty or unavailable (e.g. migration hasn't
+ * run yet on this install), falls back to the legacy serialised JSON blob in
+ * SullaSettingsModel 'observationalMemory'. This ensures back-compat during
+ * the transition window.
+ *
+ * Full memory (all observations) is accessible via the observation-recall
+ * subconscious agent or via the search_observations / list_observations tools.
+ *
+ * Cache stability: 'semi-stable' — top-N snapshot changes infrequently
+ * relative to the turn rate, so it doesn't bust the stable prompt cache
+ * on every turn.
  */
 
+import { ObservationsModel } from '../../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { parseJson } from '../../services/JsonParseService';
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
+
+/** Max observations to inject into the system prompt. */
+const TOP_N = 10;
 
 interface ObservationEntry {
   id?:        string;
@@ -24,8 +37,40 @@ interface ObservationEntry {
 export async function buildObservationalMemorySection(
   _ctx: PromptBuildContext,
 ): Promise<PromptSection | null> {
-  let entries: ObservationEntry[] = [];
+  // ── PRIMARY PATH: read from observations table ────────────────────────
+  try {
+    const rows = await ObservationsModel.listActive(undefined, TOP_N);
 
+    if (rows.length > 0) {
+      const lines = rows.map((r) =>
+        `- [id:${ r.id }] ${ r.priority } ${ r.created_at.slice(0, 10) } — ${ r.content }`.trim(),
+      );
+
+      const content = `## Memory (top-${ TOP_N } observations)
+
+Critical and high-priority facts about the user and their business. Full memory is searchable via \`search_observations\` / \`list_observations\` tools. To add or archive, use the appropriate Sulla tool:
+
+\`\`\`bash
+sulla meta/add_observational_memory '{"priority":"high","content":"…"}'
+sulla meta/remove_observational_memory '{"id":"abcd"}'
+\`\`\`
+
+${ lines.join('\n') }`;
+
+      return {
+        id:             'observational_memory',
+        content,
+        priority:       45,
+        cacheStability: 'semi-stable',
+      };
+    }
+    // Table exists but is empty — fall through to legacy fallback.
+  } catch {
+    // Table may not exist yet (migration pending). Fall through to legacy.
+  }
+
+  // ── LEGACY FALLBACK: serialised JSON blob in SullaSettingsModel ───────
+  let entries: ObservationEntry[] = [];
   try {
     const raw = await SullaSettingsModel.get('observationalMemory', '[]');
     const parsed = parseJson(raw);
@@ -33,13 +78,12 @@ export async function buildObservationalMemorySection(
       entries = parsed as ObservationEntry[];
     }
   } catch {
-    // Treat unparseable memory as empty; don't block prompt assembly.
     entries = [];
   }
 
   if (entries.length === 0) return null;
 
-  // Sort: high priority first, then recency within each priority bucket.
+  // Sort: high priority first, then recency.
   const priorityRank = (p: string | undefined) => {
     switch ((p ?? '').toLowerCase()) {
     case 'critical':
@@ -59,7 +103,9 @@ export async function buildObservationalMemorySection(
     return String(b.timestamp ?? '').localeCompare(String(a.timestamp ?? ''));
   });
 
-  const lines = entries.map((e) => {
+  // Cap legacy fallback at TOP_N too.
+  const topEntries = entries.slice(0, TOP_N);
+  const lines = topEntries.map((e) => {
     const id = e.id ? `[id:${ e.id }]` : '';
     const pri = e.priority ? ` ${ e.priority }` : '';
     const ts = e.timestamp ? ` ${ e.timestamp }` : '';
@@ -67,9 +113,9 @@ export async function buildObservationalMemorySection(
     return `- ${ id }${ pri }${ ts } — ${ text }`.trim();
   });
 
-  const content = `## Memory (persistent observations)
+  const content = `## Memory (persistent observations — legacy)
 
-These are durable facts and preferences about the user and their business. Use them to stay consistent across turns. If a new observation should be stored or a stale one removed, call the appropriate Sulla tool:
+These are durable facts about the user and their business. Use them to stay consistent across turns. If a new observation should be stored or a stale one removed, call the appropriate Sulla tool:
 
 \`\`\`bash
 sulla meta/add_observational_memory '{"priority":"high","content":"…"}'
@@ -82,10 +128,6 @@ ${ lines.join('\n') }`;
     id:             'observational_memory',
     content,
     priority:       45,
-    // semi-stable: memories change whenever the observation agent writes —
-    // far more often than the rest of the prompt. Keeping this out of the
-    // stable block means a memory update no longer invalidates the cached
-    // soul/safety/tooling/workspace prefix.
     cacheStability: 'semi-stable',
   };
 }

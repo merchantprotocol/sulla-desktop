@@ -39,12 +39,20 @@ const MEMORY_RECALL_TOOLS: string[] = [
   'search_conversations',  // Search past conversations for established patterns & answers
 ];
 
-/** Observation Agent: manage observational memory and update identity files */
+/** Observation Writer: write/archive observations and update identity files */
 const OBSERVATION_AGENT_TOOLS: string[] = [
-  'add_observational_memory',     // Store new observations
-  'remove_observational_memory',  // Clean up stale observations
+  'add_observational_memory',     // Insert or update an observation row
+  'remove_observational_memory',  // Soft-archive a stale observation
+  'search_observations',          // Check for existing similar observations before adding
+  'list_observations',            // Browse active observations
   'file_search',                  // Search identity/observation files
   'write_file',                   // Write updates to identity/observation files
+];
+
+/** Observation Recall: read-only — search and list observations for context injection */
+const OBSERVATION_RECALL_TOOLS: string[] = [
+  'search_observations',  // ILIKE search on observation content
+  'list_observations',    // Priority-sorted list of active observations
 ];
 
 // ============================================================================
@@ -417,7 +425,7 @@ Return exactly 3 alternative approaches, ordered from simplest to most ambitious
 
 Be direct and actionable. No hedging. The agent needs concrete next steps, not analysis.`;
 
-const OBSERVATION_AGENT_PROMPT = `You are the observation process for an AI agent.
+const OBSERVATION_AGENT_PROMPT = `You are the observation WRITER process for an AI agent.
 
 CRITICAL: You are NOT the primary agent. You do NOT execute tasks, answer
 questions, browse websites, call APIs, create files, or do anything the user
@@ -425,14 +433,23 @@ asked for. Another agent handles that. You ONLY manage observational memory.
 
 Your ONLY jobs:
 1. Review the conversation for important facts, decisions, preferences, or
-   commitments that should be remembered long-term for all conversations. Save them with
-   add_observational_memory.
-2. Review current observations for anything stale or old that no longer needs remembering for all conversations. 
-   Remove them with remove_observational_memory.
-3. If something important should update an identity file at ~/sulla/identity/,
-   read and update that specific file with exec. Nothing else.
+   commitments that should be remembered long-term for all conversations.
 
-when saving new observations, include why certain decisions were made (not just what). Like:
+   BEFORE calling add_observational_memory for any new observation:
+   - Call search_observations with the key topic/phrase to check for existing
+     similar entries.
+   - If a similar entry exists, UPDATE it via add_observational_memory using
+     its existing id (to update in-place) rather than creating a duplicate.
+   - Only INSERT a fresh entry when nothing similar is found.
+
+2. Review current observations for anything stale or superseded. Use
+   remove_observational_memory (soft-archive, never hard-delete) for entries
+   that are no longer accurate or have been superseded by a newer one.
+
+3. If something important should update an identity file at ~/sulla/identity/,
+   read and update that specific file with write_file. Nothing else.
+
+When saving new observations, include why certain decisions were made (not just what). Like:
 
 "Google Maps loaded with roofers — scrolled 3x, collected 5 results"
 "Twenty account ID: local_merchant_protocol — verified working 2m ago"
@@ -448,10 +465,30 @@ Do NOT:
 Priority levels:
 - 🔴 Critical: identity, strong preferences/goals, promises, deal-breakers
 - 🟡 Valuable: decisions, patterns, progress markers
-- ⚪ Low: minor/transient items (use sparingly)
+- ⚪ Low: minor/transient items (use sparingly)`;
 
-Current observational memories:
-{observations}`;
+const OBSERVATION_RECALL_PROMPT = `You are the observation RECALL process for an AI agent.
+
+CRITICAL: You are READ-ONLY. You NEVER write, insert, update, or delete observations.
+You only search and list — then return a filtered, compact summary.
+
+## Your job
+
+Read the recent conversation context. Based on what the human is asking about
+or what task is in progress, search the observations table for entries that
+are relevant OR might be relevant to the current context.
+
+Rules:
+- Call search_observations with the key topic/phrase from the conversation.
+- Optionally call list_observations to see high-priority entries.
+- Return ONLY observations that are relevant or possibly relevant.
+- Format each result as: \`[id] priority date — content\`
+- If nothing is relevant, return an empty string — do NOT pad with filler.
+- Do NOT narrate your process. Output only the filtered observation lines.
+
+Be selective: a 5-entry relevant subset is better than 30 entries dumped verbatim.`;
+
+// ── Observation Recall: cache constants ──────────────────────────────────
 
 const SUMMARIZER_PROMPT = `You are the memory compression process for an AI agent. Talk through
 what you're doing — which messages look irrelevant, which have useful facts
@@ -866,22 +903,51 @@ export const GraphRegistry = {
   },
 
   /**
-   * Create an Observation Agent graph — reviews conversation for important
-   * facts to save to observational memory and cleans up stale observations.
+   * Create an Observation Agent (writer) graph — reviews conversation for
+   * important facts to save to the observations table. Deduplicates via
+   * search_observations before inserting, and soft-archives stale entries.
+   * The agent reads its own context from the DB — no pre-loaded blob needed.
    */
-  createObservationAgent: async function(parentState: BaseThreadState, currentObservations: string): Promise<{
+  createObservationAgent: async function(parentState: BaseThreadState): Promise<{
     graph:    Graph<BaseThreadState>;
     state:    BaseThreadState;
     threadId: string;
   }> {
     const graph = createSubconsciousGraph();
     const state = await buildSubconsciousState({
-      systemPrompt:           OBSERVATION_AGENT_PROMPT.replace('{observations}', currentObservations),
+      systemPrompt:           OBSERVATION_AGENT_PROMPT,
       tools:                  OBSERVATION_AGENT_TOOLS,
-      userMessage:            'Review this conversation. Save any important facts, decisions, or preferences to observational memory. Remove any stale or irrelevant observations. Update identity files if warranted.',
+      userMessage:            'Review this conversation. Search for existing observations before adding any new ones (update instead of duplicate). Soft-archive stale or superseded entries. Update identity files if warranted. If nothing needs to change, finish immediately.',
       messages:               [...parentState.messages],
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create an Observation Recall graph — read-only search of the observations
+   * table to surface entries relevant to the current conversation context.
+   * Returns compact `[id] priority date — content` lines, or null when nothing
+   * is relevant.
+   */
+  createObservationRecall: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           OBSERVATION_RECALL_PROMPT,
+      tools:                  OBSERVATION_RECALL_TOOLS,
+      userMessage:            'Read the recent conversation context and return only the observations that are relevant or possibly relevant to what the human is asking about. Return compact lines only — nothing if nothing is relevant.',
+      messages:               [...parentState.messages],
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'observation-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,

@@ -98,25 +98,30 @@ export class AgentNode extends BaseNode {
       });
     }
 
-    // Merge recall context into the last assistant message (or create one)
-    // so the primary agent sees it as information it already has.
-    const recallContext = (state.metadata as any).recallContext;
-    if (recallContext) {
-      const recallBlock = `\n\n<recall_context>\n${ recallContext }\n</recall_context>`;
+    // Merge recall context + observation context into the last assistant message
+    // (or create one) so the primary agent sees it as information it already has.
+    const recallContext       = (state.metadata as any).recallContext;
+    const observationContext  = (state.metadata as any).observationContext;
+    const combinedContextParts: string[] = [];
+    if (recallContext)      combinedContextParts.push(`<recall_context>\n${ recallContext }\n</recall_context>`);
+    if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
+
+    if (combinedContextParts.length > 0) {
+      const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;
       let merged = false;
       for (let i = state.messages.length - 1; i >= 0; i--) {
         if (state.messages[i].role === 'assistant') {
           const msg = state.messages[i];
           if (typeof msg.content === 'string') {
             // Plain string content — append directly
-            msg.content += recallBlock;
+            msg.content += contextBlock;
           } else if (Array.isArray(msg.content)) {
             // Content blocks array (e.g. [{type:'text', text:'...'}, ...])
-            // Append a new text block with the recall context
-            msg.content.push({ type: 'text', text: recallBlock });
+            // Append a new text block with the context
+            msg.content.push({ type: 'text', text: contextBlock });
           } else {
             // Unknown format — wrap as string
-            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + recallBlock;
+            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + contextBlock;
           }
           merged = true;
           break;
@@ -127,7 +132,7 @@ export class AgentNode extends BaseNode {
         const insertIdx = Math.max(0, state.messages.length - 1);
         state.messages.splice(insertIdx, 0, {
           role:     'assistant',
-          content:  recallBlock.trim(),
+          content:  contextBlock.trim(),
           metadata: { source: 'recall', _synthetic: true },
         });
       }
