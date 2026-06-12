@@ -18,6 +18,8 @@ export function buildHeartbeatSection(ctx: PromptBuildContext): PromptSection | 
     id:             'heartbeat',
     content:        heartbeatPrompt,
     priority:       110,
-    cacheStability: 'dynamic',
+    // Static content gated on isHeartbeat, which never changes within a
+    // session — safe to cache with the stable prefix.
+    cacheStability: 'stable',
   };
 }

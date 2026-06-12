@@ -673,6 +673,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     const mode = options.promptMode || 'full';
 
+    // Tool exposure mode — mirrors the dynamic-discovery tool build in
+    // normalizedChat(): slim (default) unless the agent config explicitly
+    // allowlists tools (explicit config > default) or the setting is 'full'.
+    const toolModeSetting = await SullaSettingsModel.get('toolMode', 'slim');
+    const toolMode: 'slim' | 'full' = (toolModeSetting === 'slim' && !agentMeta?.tools?.length)
+      ? 'slim'
+      : 'full';
+
     // Build prompt context
     const buildCtx: PromptBuildContext = {
       mode,
@@ -684,6 +692,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       isSubAgent:           !!(state.metadata as any).isSubAgent,
       isHeartbeat:          options.isHeartbeat || false,
       wsChannel:            String(state.metadata.wsChannel || 'sulla-desktop'),
+      toolMode,
       templateVars,
       agentSectionOverrides,
       excludeSections,
@@ -699,6 +708,122 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     return built.text;
+  }
+
+  /**
+   * Inject the compact per-turn <turn_context> block (current time, live
+   * agent roster, voice-mode directive) into the latest user message. This
+   * content used to live in the system prompt's dynamic tier and re-wrote
+   * the prompt every turn — moving it into the message stream keeps the
+   * system prompt byte-stable for prompt caching and the claude-code
+   * stable-context hash. See ../prompts/turnContext.ts.
+   *
+   * Injection rules (cache safety):
+   * - Only the LATEST user message ever gets a block; earlier turns keep
+   *   theirs untouched so cached prefixes stay valid.
+   * - If the latest user message already has a block AND messages exist
+   *   after it (tool loop / CONTINUE loop within the same turn), it is left
+   *   alone — rewriting mid-history would invalidate the cached prefix.
+   * - If it has a block but is still the final message (e.g. a retried
+   *   turn), the block is replaced in place, never duplicated.
+   */
+  protected async injectTurnContext(
+    state: BaseThreadState,
+    options: { chatMode?: ChatMode; isHeartbeat?: boolean } = {},
+  ): Promise<void> {
+    try {
+      const { buildTurnContext, stripTurnContext, hasTurnContext } = await import('../prompts/turnContext');
+
+      // Find the latest user message
+      let userIdx = -1;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        if (state.messages[i].role === 'user') {
+          userIdx = i;
+          break;
+        }
+      }
+      if (userIdx === -1) return;
+
+      const msg = state.messages[userIdx];
+      const isFinalMessage = userIdx === state.messages.length - 1;
+
+      // Detect an existing block on this message
+      const existingBlock = typeof msg.content === 'string'
+        ? hasTurnContext(msg.content)
+        : Array.isArray(msg.content) &&
+          (msg.content as any[]).some((b: any) => b?.type === 'text' && hasTurnContext(b.text));
+
+      // Already injected this turn and later messages depend on the prefix —
+      // leave it alone (slightly stale time beats a cache invalidation).
+      if (existingBlock && !isFinalMessage) return;
+
+      const block = await buildTurnContext({
+        agentId:     String(state.metadata.wsChannel || 'sulla-desktop'),
+        wsChannel:   String(state.metadata.wsChannel || 'sulla-desktop'),
+        chatMode:    options.chatMode || 'text',
+        isHeartbeat: options.isHeartbeat || false,
+      });
+      if (!block) return;
+
+      if (typeof msg.content === 'string') {
+        const base = stripTurnContext(msg.content);
+        msg.content = base ? `${ base }\n\n${ block }` : block;
+      } else if (Array.isArray(msg.content)) {
+        // Drop any previously injected turn-context text blocks (and strip
+        // embedded ones), then append a fresh block — never duplicated.
+        msg.content = (msg.content as any[]).filter((b: any) =>
+          !(b?.type === 'text' && typeof b.text === 'string' && hasTurnContext(b.text) && !stripTurnContext(b.text)));
+        for (const b of msg.content as any[]) {
+          if (b?.type === 'text' && typeof b.text === 'string' && hasTurnContext(b.text)) {
+            b.text = stripTurnContext(b.text);
+          }
+        }
+        (msg.content as any[]).push({ type: 'text', text: block });
+      }
+    } catch (err) {
+      // Non-fatal — the agent just misses this turn's context block
+      console.warn(`[${ this.name }] Failed to inject turn context:`, err);
+    }
+  }
+
+  /**
+   * Remove previously injected subconscious context blocks
+   * (<recall_context>, <observation_context>, <unstuck_context>) from all
+   * assistant messages, so the per-turn merge below replaces rather than
+   * accumulates. Two accumulation paths existed without this:
+   * - the merge runs on every graph iteration of a tool-call loop, re-
+   *   appending the same metadata context within a single turn, and
+   * - the mutated assistant message is persisted with the thread state,
+   *   so each new turn stacked its blocks on top of the saved ones.
+   * Also drops first-turn synthetic carrier messages once emptied.
+   */
+  protected stripInjectedContextBlocks(state: BaseThreadState): void {
+    const BLOCK_RE = /\n*<(recall_context|observation_context|unstuck_context)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:recall_context|observation_context|unstuck_context)>/;
+
+    for (const msg of state.messages) {
+      if (msg.role !== 'assistant') continue;
+      if (typeof msg.content === 'string') {
+        if (MARKER_RE.test(msg.content)) {
+          msg.content = msg.content.replace(BLOCK_RE, '').trim();
+        }
+      } else if (Array.isArray(msg.content)) {
+        for (const b of msg.content as any[]) {
+          if (b?.type === 'text' && typeof b.text === 'string' && MARKER_RE.test(b.text)) {
+            b.text = b.text.replace(BLOCK_RE, '').trim();
+          }
+        }
+        msg.content = (msg.content as any[]).filter((b: any) =>
+          !(b?.type === 'text' && typeof b.text === 'string' && !b.text.trim()));
+      }
+    }
+
+    state.messages = state.messages.filter((m: any) => {
+      if (!m?.metadata?._synthetic) return true;
+      if (typeof m.content === 'string') return m.content.trim().length > 0;
+      if (Array.isArray(m.content)) return m.content.length > 0;
+      return true;
+    });
   }
 
   /**
@@ -898,7 +1023,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         llmTools = (state as any).llmTools;
       } else {
         // Dynamic discovery mode (primary agent)
+        // Slim tool mode (default): push only the minimal native set — every
+        // other tool is discovered via browse_tools and invoked through exec
+        // (`sulla <category>/<tool> '...'`). An explicit agent tool allowlist
+        // opts back into full schema resolution (explicit config > default).
+        const agentToolAllowlist = (state.metadata as any).agent?.tools;
+        const hasAgentToolAllowlist = Array.isArray(agentToolAllowlist) && agentToolAllowlist.length > 0;
+        const toolMode = await SullaSettingsModel.get('toolMode', 'slim');
+
         llmTools = (state as any).llmTools;
+        if (!llmTools && toolMode === 'slim' && !hasAgentToolAllowlist) {
+          llmTools = await toolRegistry.getSlimPrimaryLLMTools();
+        }
         if (!llmTools && state.foundTools?.length) {
           const metaLLMTools = await toolRegistry.getLLMToolsFor(await toolRegistry.getToolsByCategory('meta'));
           const foundLLMTools = await Promise.all(state.foundTools.map((tool: any) => toolRegistry.convertToolToLLM(tool.name)));
@@ -912,8 +1048,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         llmTools = filtered.tools;
 
         // Apply agent tool allowlist from agent config
-        const agentToolAllowlist = (state.metadata as any).agent?.tools;
-        if (Array.isArray(agentToolAllowlist) && agentToolAllowlist.length > 0) {
+        if (hasAgentToolAllowlist) {
           const allowSet = new Set(agentToolAllowlist);
           const metaNames = toolRegistry.getToolNamesForCategory('meta');
           metaNames.forEach(n => allowSet.add(n));

@@ -692,7 +692,9 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     const THINKING_TOOL_NAMES = new Set([
       'file_search', 'read_file',
       'add_observational_memory', 'remove_observational_memory',
-      'vault_list', 'search_conversations',
+      'search_observations', 'list_observations',
+      'vault_list', 'vault_is_enabled', 'search_conversations',
+      'recall_index_lookup', 'recall_index_store',
       'search_history', 'github_read_file', 'get_human_presence', 'list_tabs',
       'check_agent_jobs', 'github_get_issue', 'github_get_issues',
       'github_list_branches', 'git_log',
@@ -710,8 +712,33 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       } else if (toolName === 'remove_observational_memory') {
         const id = typeof args.id === 'string' ? args.id : '';
         thinkingText = `Forgetting observation ${ id }`;
+      } else if (toolName === 'search_observations') {
+        const query = typeof args.query === 'string' ? args.query : '';
+        const archived = args.include_archived === true ? ', including archived ones' : '';
+        thinkingText = query
+          ? `Recalling what I know about "${ query }"${ archived }`
+          : `Searching my observations${ archived }`;
+      } else if (toolName === 'list_observations') {
+        const priority = typeof args.priority === 'string' ? args.priority : '';
+        const archived = args.include_archived === true ? ', including archived ones' : '';
+        thinkingText = priority
+          ? `Reviewing my ${ priority }-priority observations${ archived }`
+          : `Reviewing everything I've observed so far${ archived }`;
       } else if (toolName === 'vault_list') {
         thinkingText = 'Checking saved credentials in vault';
+      } else if (toolName === 'vault_is_enabled') {
+        const accountType = typeof args.account_type === 'string' ? args.account_type : '';
+        thinkingText = accountType ? `Checking if ${ accountType } is connected` : 'Checking integration connection status';
+      } else if (toolName === 'recall_index_lookup') {
+        const topic = typeof args.topic === 'string' ? args.topic : '';
+        const pathCount = Array.isArray(args.paths) ? args.paths.length : 0;
+        const parts = [topic ? `"${ topic }"` : '', pathCount ? `${ pathCount } file(s)` : ''].filter(Boolean);
+        thinkingText = `Checking memory index for ${ parts.join(' + ') || 'cached research' }`;
+      } else if (toolName === 'recall_index_store') {
+        const topic = typeof args.topic === 'string' ? args.topic : '';
+        const fileCount = Array.isArray(args.files) ? args.files.length : 0;
+        const parts = [fileCount ? `${ fileCount } digest(s)` : '', topic ? `topic "${ topic }"` : ''].filter(Boolean);
+        thinkingText = `Saving ${ parts.join(' + ') || 'research' } to memory index`;
       } else if (toolName === 'search_conversations') {
         const action = typeof args.action === 'string' ? args.action : 'search';
         const query = typeof args.query === 'string' ? args.query : '';

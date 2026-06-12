@@ -156,7 +156,8 @@ export class SubconsciousAgentNode extends BaseNode {
     const THINKING_TOOLS = new Set([
       'file_search', 'read_file',
       'add_observational_memory', 'remove_observational_memory',
-      'vault_list', 'search_conversations',
+      'vault_list', 'vault_is_enabled', 'search_conversations',
+      'recall_index_lookup', 'recall_index_store',
       'search_history', 'github_read_file', 'get_human_presence', 'list_tabs',
       'check_agent_jobs', 'github_get_issue', 'github_get_issues',
       'github_list_branches', 'git_log',

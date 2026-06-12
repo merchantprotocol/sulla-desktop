@@ -28,13 +28,37 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'remove_observational_memory',
-    description: 'Remove a specific observational memory by its ID to delete it from long-term memory.',
+    description: 'Archive (soft-delete) a specific observational memory by its ID. The record is never hard-deleted — it is marked archived=true so the history is always recoverable.',
     category:    'observation',
     schemaDef:   {
-      id: { type: 'string', description: 'The 4-character ID of the memory to remove.' },
+      id: { type: 'string', description: 'The 4-character ID of the observation to archive.' },
     },
     operationTypes: ['delete'],
     loader:         () => import('./remove_observational_memory'),
+  },
+  {
+    name:        'search_observations',
+    description: 'Search active observational memories by keyword or phrase. The query is split into words and any observation containing ANY meaningful word matches (stopwords ignored), ranked by phrase hit then word-match count. Returns compact rows (id, priority, timestamp, content). Use this before adding a new observation to check for existing similar ones.',
+    category:    'observation',
+    schemaDef:   {
+      query:            { type: 'string', description: 'Search keyword or phrase — split into words, any-word ILIKE match against observation content.' },
+      limit:            { type: 'number', optional: true, description: 'Max results to return (default 20).' },
+      include_archived: { type: 'boolean', optional: true, description: 'When true, also searches archived (soft-deleted) observations (default false).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./search_observations'),
+  },
+  {
+    name:        'list_observations',
+    description: 'List active observational memories sorted by priority (critical/high first) then recency. Optionally filter by priority level.',
+    category:    'observation',
+    schemaDef:   {
+      priority:         { type: 'string', optional: true, description: 'Priority filter — e.g. "critical", "high", "medium", "low". Omit to list all.' },
+      limit:            { type: 'number', optional: true, description: 'Max results to return (default 50).' },
+      include_archived: { type: 'boolean', optional: true, description: 'When true, also includes archived observations (default false).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_observations'),
   },
   {
     name:        'request_user_input',
@@ -84,6 +108,40 @@ export const metaToolManifests: ToolManifest[] = [
     },
     operationTypes: ['create', 'update'],
     loader:         () => import('./write_file'),
+  },
+  {
+    name:        'recall_index_lookup',
+    description: 'Check the Redis citation index for previously-researched digests BEFORE re-reading files or re-searching directories. Pass a topic and/or a list of file paths. Returns trusted digests for files verified unchanged (cheap content-hash check), drops stale entries automatically, and lists which paths/topics need fresh research.',
+    category:    'memory',
+    schemaDef:   {
+      topic: { type: 'string', optional: true, description: 'Topic to look up (e.g. the subject of the user request — "github push auth", "sulla-mobile project"). Normalized internally.' },
+      paths: { type: 'array', items: { type: 'string' }, optional: true, description: 'File paths to check for cached digests (e.g. SKILL.md or PROJECT.md paths you would otherwise read).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./recall_index_lookup'),
+  },
+  {
+    name:        'recall_index_store',
+    description: 'Persist freshly-researched citation digests into the Redis citation index so future recall passes can reuse them without re-reading source files. Store one entry per file you read (path + the digest you produced), and optionally a topic with citation strings. Entries are verified against file content hashes and expire after 24h unless re-hit.',
+    category:    'memory',
+    schemaDef:   {
+      files: {
+        type:        'array',
+        optional:    true,
+        description: 'Array of {path, digest} objects — one per source file researched. The digest should be the full trusted-citation block produced for that file.',
+        items:       {
+          type:       'object',
+          properties: {
+            path:   { type: 'string', description: 'Path of the source file the digest cites.' },
+            digest: { type: 'string', description: 'The trusted-citation digest for this file.' },
+          },
+        },
+      },
+      topic:     { type: 'string', optional: true, description: 'Topic to file these citations under for future topic lookups.' },
+      citations: { type: 'array', items: { type: 'string' }, optional: true, description: 'Citation strings to store under the topic. Required when topic is set.' },
+    },
+    operationTypes: ['create', 'update'],
+    loader:         () => import('./recall_index_store'),
   },
   {
     name:        'browse_tools',

@@ -57,7 +57,7 @@ export class ToolRegistry {
   private categoryDescriptions: Record<string, string> = {
     applescript:        'Execute AppleScript to control macOS applications (Calendar, Reminders, Mail, Finder, etc.) that the user has enabled in Computer Use Settings.',
     meta:               'Tools for browsing available tools, installing skills, and meta management.',
-    memory:             'Tools for the memory recall subconscious agent — tool discovery and catalog browsing.',
+    memory:             'Tools for the memory recall subconscious agent — Redis citation index lookup/store, tool discovery, and catalog browsing.',
     observation:        'Observational memory tools for the subconscious observation curator agent.',
     bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',
     browser:            'Open/close tabs, read page content, click + fill forms, screenshot, exec JS, inspect cookies/history, background browsing, and desktop notifications. Open returns the page snapshot inline so you do not need a second call.',
@@ -319,6 +319,24 @@ export class ToolRegistry {
       const allNames = Array.from(this.loaders.keys());
       return Promise.all(allNames.map(name => this.convertToolToLLM(name)));
     };
+  }
+
+  /**
+   * Minimal native tool set pushed to the primary agent in slim tool mode
+   * (toolMode setting, default 'slim'). Everything else lives in the tool
+   * catalog: discovered via browse_tools and invoked through exec with
+   * `sulla <category>/<tool> '<json>'`. request_user_input stays native
+   * because it is a blocking approval gate wired into the chat UI — it
+   * cannot render its prompt card or pause the loop when run via the CLI.
+   */
+  static readonly SLIM_PRIMARY_TOOL_NAMES = [
+    'browse_tools', 'exec', 'read_file', 'write_file', 'request_user_input',
+  ];
+
+  /** Resolve the slim native set to LLM schemas, skipping any unregistered names. */
+  async getSlimPrimaryLLMTools(): Promise<any[]> {
+    const names = ToolRegistry.SLIM_PRIMARY_TOOL_NAMES.filter(name => this.loaders.has(name));
+    return Promise.all(names.map(name => this.convertToolToLLM(name)));
   }
 
   getToolNames(): string[] {

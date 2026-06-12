@@ -25,19 +25,34 @@ const registry = new Map<string, {
 /** Summarizer: no tools — pure text analysis and XML output */
 const SUMMARIZER_TOOLS: string[] = [];
 
-/** Memory Recall: read-only access to files and vault — nothing else */
+/** Tool-Result Digester: no tools — pure text analysis and XML output */
+const TOOL_RESULT_DIGESTER_TOOLS: string[] = [];
+
+/** Memory Recall: read-only research access plus the Redis citation index */
 const MEMORY_RECALL_TOOLS: string[] = [
+  'recall_index_lookup',   // Check the Redis citation index FIRST — reuse past research
+  'recall_index_store',    // Persist fresh digests so future turns skip the re-read
   'file_search',           // Search ~/sulla/resources/ for skills & workflows
   'read_file',             // Read SKILL.md, workflow YAML, environment docs
   'vault_list',            // List available integration service credentials
+  'vault_is_enabled',      // Pre-flight: is the integration the request needs actually connected?
+  'search_conversations',  // Search past conversations for established patterns & answers
 ];
 
-/** Observation Agent: manage observational memory and update identity files */
+/** Observation Writer: write/archive observations and update identity files */
 const OBSERVATION_AGENT_TOOLS: string[] = [
-  'add_observational_memory',     // Store new observations
-  'remove_observational_memory',  // Clean up stale observations
+  'add_observational_memory',     // Insert or update an observation row
+  'remove_observational_memory',  // Soft-archive a stale observation
+  'search_observations',          // Check for existing similar observations before adding
+  'list_observations',            // Browse active observations
   'file_search',                  // Search identity/observation files
   'write_file',                   // Write updates to identity/observation files
+];
+
+/** Observation Recall: read-only — search and list observations for context injection */
+const OBSERVATION_RECALL_TOOLS: string[] = [
+  'search_observations',  // ILIKE search on observation content
+  'list_observations',    // Priority-sorted list of active observations
 ];
 
 // ============================================================================
@@ -65,8 +80,29 @@ only the categories that relate to it. For example:
 - Asks about the environment or infra → search Environment
 - Involves business goals, outreach, content, identity, or strategy → search Identity & Goals
 - Asks HOW to use a Sulla subsystem (workflows, functions, browser) → search Platform Docs
+- References something discussed before ("like last time", "again", "the usual") → search Past Conversations
 
 Never search all categories by default. Be selective.
+
+## STEP 0 — Check the citation index FIRST
+
+Before any file_search or read_file call, call \`recall_index_lookup\` with the
+topic of the request (and any specific file paths you already know you'd read,
+e.g. a skill's SKILL.md or a project's PROJECT.md). Past recall passes stored
+their digests there, verified against file content hashes:
+- **FRESH hits** are trusted — include them in your citations directly. Do NOT
+  re-read those files.
+- **Stale/miss results** tell you exactly what still needs real research.
+Only search and read what the index could not answer.
+
+## LAST STEP — Store what you researched
+
+After researching, call \`recall_index_store\` ONCE with:
+- one \`{path, digest}\` entry per source file you read (the digest is the
+  citation block you produced for it), and
+- the request's \`topic\` with your citation strings.
+This makes the next recall pass (this session or the next) skip the re-read.
+Skip this step only when you found nothing relevant.
 
 ## Resource categories
 
@@ -109,6 +145,23 @@ to the conversation. Read and include key details from matching files.
 
 ### 6. Connected Accounts
 Call \`vault_list\` to check for connected accounts when the human is asking about an integration or tool by name.
+
+### 6b. Integration Pre-Flight
+When the request will REQUIRE a specific integration to complete (e.g. "post
+this to Slack", "create a GitHub issue", "send the invoice through Stripe"),
+call \`vault_is_enabled\` with that integration's slug BEFORE the primary agent
+acts. Cite the result either way:
+- Connected → the primary agent can proceed without checking.
+- NOT connected → say so explicitly. This saves the primary agent from burning
+  a whole tool-call chain on an "integration not connected" dead-end.
+Only pre-flight integrations the request actually needs — never sweep all of them.
+
+### 6c. Past Conversations
+Call \`search_conversations\` when the request references prior work or an
+established pattern ("like we did before", "the usual report", "that bug from
+yesterday", a recurring task). Search by keyword, pull the matching
+conversation, and cite the established answer/approach so the primary agent
+follows the precedent instead of re-deriving it.
 
 ### 7. Identity & Goals
 Search \`~/sulla/identity/\` when the request involves business strategy, outreach,
@@ -168,15 +221,20 @@ primary agent can execute without reading the source file.]
 - Include ALL details the primary agent needs to act — this is trusted context.
 - If you read a file, extract the relevant parts — don't force a re-read.
 - Include specific values, parameters, steps, not vague summaries.
+- FRESH \`recall_index_lookup\` hits are pre-verified — reuse their digests as
+  citations directly, never re-read those files.
 - Skip sections with no relevant results.
 - If nothing is relevant, return nothing — finish immediately.`;
 
 // ── Heartbeat-specific memory recall ──────────────────────────────────────
 
 const HEARTBEAT_RECALL_TOOLS: string[] = [
+  'recall_index_lookup',   // Check the Redis citation index FIRST — reuse past research
+  'recall_index_store',    // Persist fresh digests so future beats skip the re-read
   'file_search',           // Search ~/sulla/projects/ for active PRDs
   'read_file',             // Read PROJECT.md files and identity docs
   'get_human_presence',    // Check if user is available
+  'check_agent_jobs',      // Pending/completed sub-agent jobs — avoid double-dispatching work
 ];
 
 const HEARTBEAT_RECALL_PROMPT = `You are a READ-ONLY recall process for the heartbeat agent. You gather active project context so the heartbeat knows what to work on.
@@ -185,9 +243,15 @@ const HEARTBEAT_RECALL_PROMPT = `You are a READ-ONLY recall process for the hear
 
 Complete these steps in order, then finish:
 
+### 0. Citation Index
+Call \`recall_index_lookup\` with topic \`heartbeat-projects\` plus the
+PROJECT.md paths you already know. FRESH hits are pre-verified digests — use
+them directly and only re-read files reported stale or missing.
+
 ### 1. Active Projects
 Search \`~/sulla/projects/\` for all project directories.
-For each project found, read its PROJECT.md (the PRD).
+For each project found, read its PROJECT.md (the PRD) — unless the citation
+index already returned a FRESH digest for it.
 Extract: project name, status, current focus, specific blockers, and the exact
 next actionable step. Include enough detail that heartbeat can start working.
 
@@ -203,6 +267,16 @@ Extract: active goals that affect today's work decisions.
 ### 4. Human Presence
 Call \`get_human_presence\` to check if the human is available.
 Include their status and whether heartbeat should proceed autonomously.
+
+### 5. Sub-Agent Jobs
+Call \`check_agent_jobs\` to list pending and completed sub-agent jobs.
+Include any running jobs (so heartbeat doesn't double-dispatch the same work)
+and any completed results that should be picked up.
+
+### 6. Store Fresh Digests
+Call \`recall_index_store\` once with a \`{path, digest}\` entry per PROJECT.md
+or briefing file you actually read this pass, under topic \`heartbeat-projects\`.
+The next beat will then skip those re-reads.
 
 ## Output format — TRUSTED CITATIONS
 
@@ -229,6 +303,10 @@ For each project, return:
 **Activity:** [What they're doing if known]
 **Implication:** [Whether heartbeat should proceed autonomously or wait]
 
+### Sub-Agent Jobs
+**Running:** [jobId + label for each in-flight job, or "none"]
+**Completed:** [jobId + one-line result for anything finished but not yet picked up, or "none"]
+
 ### Rules:
 - Include enough detail that heartbeat can start working immediately.
 - Extract specific tasks, blockers, and next steps from PRDs.
@@ -245,7 +323,7 @@ const UNSTUCK_RESEARCH_TOOLS: string[] = [
   'browse_tools',
   'browse_page',
   'vault_list',
-  'integration_is_enabled',
+  'vault_is_enabled',
 ];
 
 const UNSTUCK_RESEARCH_PROMPT = `You are a research agent analyzing why a primary agent got stuck. Your job is to find concrete resources, approaches, and solutions that the agent can execute autonomously.
@@ -347,7 +425,7 @@ Return exactly 3 alternative approaches, ordered from simplest to most ambitious
 
 Be direct and actionable. No hedging. The agent needs concrete next steps, not analysis.`;
 
-const OBSERVATION_AGENT_PROMPT = `You are the observation process for an AI agent.
+const OBSERVATION_AGENT_PROMPT = `You are the observation WRITER process for an AI agent.
 
 CRITICAL: You are NOT the primary agent. You do NOT execute tasks, answer
 questions, browse websites, call APIs, create files, or do anything the user
@@ -355,14 +433,23 @@ asked for. Another agent handles that. You ONLY manage observational memory.
 
 Your ONLY jobs:
 1. Review the conversation for important facts, decisions, preferences, or
-   commitments that should be remembered long-term for all conversations. Save them with
-   add_observational_memory.
-2. Review current observations for anything stale or old that no longer needs remembering for all conversations. 
-   Remove them with remove_observational_memory.
-3. If something important should update an identity file at ~/sulla/identity/,
-   read and update that specific file with exec. Nothing else.
+   commitments that should be remembered long-term for all conversations.
 
-when saving new observations, include why certain decisions were made (not just what). Like:
+   BEFORE calling add_observational_memory for any new observation:
+   - Call search_observations with the key topic/phrase to check for existing
+     similar entries.
+   - If a similar entry exists, UPDATE it via add_observational_memory using
+     its existing id (to update in-place) rather than creating a duplicate.
+   - Only INSERT a fresh entry when nothing similar is found.
+
+2. Review current observations for anything stale or superseded. Use
+   remove_observational_memory (soft-archive, never hard-delete) for entries
+   that are no longer accurate or have been superseded by a newer one.
+
+3. If something important should update an identity file at ~/sulla/identity/,
+   read and update that specific file with write_file. Nothing else.
+
+When saving new observations, include why certain decisions were made (not just what). Like:
 
 "Google Maps loaded with roofers — scrolled 3x, collected 5 results"
 "Twenty account ID: local_merchant_protocol — verified working 2m ago"
@@ -378,10 +465,30 @@ Do NOT:
 Priority levels:
 - 🔴 Critical: identity, strong preferences/goals, promises, deal-breakers
 - 🟡 Valuable: decisions, patterns, progress markers
-- ⚪ Low: minor/transient items (use sparingly)
+- ⚪ Low: minor/transient items (use sparingly)`;
 
-Current observational memories:
-{observations}`;
+const OBSERVATION_RECALL_PROMPT = `You are the observation RECALL process for an AI agent.
+
+CRITICAL: You are READ-ONLY. You NEVER write, insert, update, or delete observations.
+You only search and list — then return a filtered, compact summary.
+
+## Your job
+
+Read the recent conversation context. Based on what the human is asking about
+or what task is in progress, search the observations table for entries that
+are relevant OR might be relevant to the current context.
+
+Rules:
+- Call search_observations with the key topic/phrase from the conversation.
+- Optionally call list_observations to see high-priority entries.
+- Return ONLY observations that are relevant or possibly relevant.
+- Format each result as: \`[id] priority date — content\`
+- If nothing is relevant, return an empty string — do NOT pad with filler.
+- Do NOT narrate your process. Output only the filtered observation lines.
+
+Be selective: a 5-entry relevant subset is better than 30 entries dumped verbatim.`;
+
+// ── Observation Recall: cache constants ──────────────────────────────────
 
 const SUMMARIZER_PROMPT = `You are the memory compression process for an AI agent. Talk through
 what you're doing — which messages look irrelevant, which have useful facts
@@ -417,6 +524,36 @@ Rules:
 - System messages should never be deleted or summarized.
 - Always use the message_id attribute, never reference messages by position.`;
 
+const TOOL_RESULT_DIGESTER_PROMPT = `You are the tool-result digestion process for an AI agent. Stale tool
+results from earlier in the conversation are about to be compressed so the
+primary agent re-reads trusted citations instead of verbatim dumps. Talk
+through what each result contains and what's worth keeping, then provide
+your digests as XML.
+
+Each tool result below is tagged with a unique tool_result_id. For EVERY
+result, write a digest in trusted-citation style:
+- What was run (tool name + key inputs/parameters)
+- Key findings: concrete values, file paths, ids, counts, error messages
+- Where the full output came from (file path, URL, command) so the primary
+  agent can re-fetch it if truly needed
+
+Return your digests as XML. Reference results by their tool_result_id (NOT
+by position — positions change between loops).
+
+<DIGEST>
+  <RESULT id="toolu_abc123">file_search "auth flow" → 3 matches: src/auth/login.ts, src/auth/session.ts, docs/auth.md. login.ts owns the OAuth redirect. Re-run file_search to refresh.</RESULT>
+  <RESULT id="toolu_def456">exec \`kubectl get pods\` → 12 pods running, 1 CrashLoopBackOff (redis-7d4f, restarts=14). Full output re-obtainable by re-running the command.</RESULT>
+</DIGEST>
+
+Rules:
+- Digest EVERY tool result you were given — do not skip any.
+- Preserve exact values: paths, ids, numbers, hashes, error strings. Never
+  round, rename, or paraphrase identifiers.
+- Never invent information that isn't in the original output.
+- 1-4 sentences per digest. Dense, factual, no filler.
+- If a result is an error, keep the error message verbatim.
+- If nothing was given, return empty tags: <DIGEST></DIGEST>`;
+
 // XML parsing for summarizer response handler — uses message IDs (strings)
 const DELETE_BLOCK_REGEX = /<DELETE>([\s\S]*?)<\/DELETE>/i;
 const SUMMARIZE_BLOCK_REGEX = /<SUMMARIZE>([\s\S]*?)<\/SUMMARIZE>/i;
@@ -446,6 +583,43 @@ function parseSummarizerXML(text: string): { deletions: Set<string>; summaries: 
   }
 
   return { deletions, summaries };
+}
+
+// XML parsing for tool-result digester response handler — uses tool_use_ids
+const DIGEST_BLOCK_REGEX = /<DIGEST>([\s\S]*?)<\/DIGEST>/i;
+const DIGEST_RESULT_REGEX = /<RESULT\s+id="([^"]+)">([\s\S]*?)<\/RESULT>/gi;
+
+function parseDigesterXML(text: string): Map<string, string> {
+  const digests = new Map<string, string>();
+
+  const digestBlock = DIGEST_BLOCK_REGEX.exec(text);
+  if (digestBlock) {
+    let match;
+    DIGEST_RESULT_REGEX.lastIndex = 0;
+    while ((match = DIGEST_RESULT_REGEX.exec(digestBlock[1])) !== null) {
+      const digest = match[2].trim();
+      if (digest) {
+        digests.set(match[1], digest);
+      }
+    }
+  }
+
+  return digests;
+}
+
+/**
+ * A stale tool_result block eligible for digestion.
+ * Built by SubconsciousMiddleware, consumed by createToolResultDigester.
+ */
+export interface DigestibleToolResult {
+  /** tool_use_id of the tool_result block in state.messages */
+  toolUseId: string;
+  /** Tool name if known (from message metadata) */
+  toolName:  string;
+  /** Serialized character count of the original block content */
+  charCount: number;
+  /** Text rendering of the block content (image data omitted) */
+  text:      string;
 }
 
 export const GraphRegistry = {
@@ -648,6 +822,59 @@ export const GraphRegistry = {
   },
 
   /**
+   * Create a Tool-Result Digester graph — single-pass compression of stale
+   * tool_result blocks into trusted-citation digests. Uses a responseHandler
+   * to parse XML <DIGEST> instructions into a tool_use_id → digest map; the
+   * caller (SubconsciousMiddleware) applies the replacements to the live
+   * state in one batch.
+   *
+   * The eligible tool results are rendered directly into the user message
+   * rather than passing the full conversation — the digester only needs the
+   * stale outputs themselves plus the current goal for relevance.
+   */
+  createToolResultDigester: async function(parentState: BaseThreadState, eligible: DigestibleToolResult[]): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    // Current goal — the last real user message — so the digester knows
+    // which values matter for the active task.
+    const lastUserMsg = [...parentState.messages].reverse().find(
+      (m: any) => m.role === 'user' && typeof m.content === 'string' && m.content.trim(),
+    );
+    const goalText = lastUserMsg ? String(lastUserMsg.content).slice(0, 600) : '(unknown)';
+
+    const rendered = eligible
+      .map(r => `[tool_result_id: ${ r.toolUseId } | tool: ${ r.toolName } | ~${ r.charCount } chars]\n${ r.text }`)
+      .join('\n\n---\n\n');
+
+    return this.createSubconscious({
+      systemPrompt:           TOOL_RESULT_DIGESTER_PROMPT,
+      tools:                  TOOL_RESULT_DIGESTER_TOOLS,
+      userMessage:            `Current goal:\n${ goalText }\n\nStale tool results to digest:\n\n${ rendered }\n\nDigest every tool result above and return your <DIGEST> XML.`,
+      agentLabel:             'tool-result-digester',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+      responseHandler(response: string, state: BaseThreadState) {
+        let digests: Map<string, string>;
+        try {
+          digests = parseDigesterXML(response);
+        } catch (err) {
+          console.warn('[ToolResultDigester] Failed to parse XML response:', err instanceof Error ? err.message : err);
+          return;
+        }
+        if (digests.size === 0) return;
+
+        (state.metadata as any).toolResultDigests = digests;
+        console.log(`[ToolResultDigester] Parsed ${ digests.size } digests for ${ eligible.length } eligible tool results`);
+      },
+    });
+  },
+
+  /**
    * Create a Memory Recall graph — searches internal systems for relevant
    * skills, tools, resources, projects, and context.
    */
@@ -676,22 +903,51 @@ export const GraphRegistry = {
   },
 
   /**
-   * Create an Observation Agent graph — reviews conversation for important
-   * facts to save to observational memory and cleans up stale observations.
+   * Create an Observation Agent (writer) graph — reviews conversation for
+   * important facts to save to the observations table. Deduplicates via
+   * search_observations before inserting, and soft-archives stale entries.
+   * The agent reads its own context from the DB — no pre-loaded blob needed.
    */
-  createObservationAgent: async function(parentState: BaseThreadState, currentObservations: string): Promise<{
+  createObservationAgent: async function(parentState: BaseThreadState): Promise<{
     graph:    Graph<BaseThreadState>;
     state:    BaseThreadState;
     threadId: string;
   }> {
     const graph = createSubconsciousGraph();
     const state = await buildSubconsciousState({
-      systemPrompt:           OBSERVATION_AGENT_PROMPT.replace('{observations}', currentObservations),
+      systemPrompt:           OBSERVATION_AGENT_PROMPT,
       tools:                  OBSERVATION_AGENT_TOOLS,
-      userMessage:            'Review this conversation. Save any important facts, decisions, or preferences to observational memory. Remove any stale or irrelevant observations. Update identity files if warranted.',
+      userMessage:            'Review this conversation. Search for existing observations before adding any new ones (update instead of duplicate). Soft-archive stale or superseded entries. Update identity files if warranted. If nothing needs to change, finish immediately.',
       messages:               [...parentState.messages],
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create an Observation Recall graph — read-only search of the observations
+   * table to surface entries relevant to the current conversation context.
+   * Returns compact `[id] priority date — content` lines, or null when nothing
+   * is relevant.
+   */
+  createObservationRecall: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           OBSERVATION_RECALL_PROMPT,
+      tools:                  OBSERVATION_RECALL_TOOLS,
+      userMessage:            'Read the recent conversation context and return only the observations that are relevant or possibly relevant to what the human is asking about. Return compact lines only — nothing if nothing is relevant.',
+      messages:               [...parentState.messages],
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'observation-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,

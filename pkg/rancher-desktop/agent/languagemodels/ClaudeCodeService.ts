@@ -386,6 +386,12 @@ Rules that apply on every turn:
       parts.push(`<recall_context>\n${ recallContext.trim() }\n</recall_context>`);
     }
 
+    // Observation context from observation-recall agent (targeted DB observations)
+    const observationContext = (state?.metadata as any)?.observationContext;
+    if (observationContext && typeof observationContext === 'string' && observationContext.trim()) {
+      parts.push(`<observation_context>\n${ observationContext.trim() }\n</observation_context>`);
+    }
+
     if (parts.length === 0) return '';
     return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;
   }
@@ -500,9 +506,13 @@ Rules that apply on every turn:
       generateClaudeCodeMemoryFile().catch(() => {});
     }).catch(() => {});
 
+    // The prompt is fed via stdin (see below), NOT as an argv element. A large
+    // transcript embedded in the command line overflows limactl's SSH
+    // multiplexing channel and the spawn dies with "mux_client_request_session:
+    // write packet: Broken pipe", bricking any sufficiently long conversation.
     const claudeArgs = [
       'claude',
-      '-p', shq(prompt),
+      '-p',
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
@@ -522,8 +532,9 @@ Rules that apply on every turn:
 
     // `exec` replaces the inner sh with claude so there's no shell layer
     // between the SSH session and the CLI — gives the best chance of signal
-    // propagation when we kill limactl on the host side.
-    const innerCmd = `${ envAssignments.join(' ') } exec ${ claudeArgs.join(' ') } < /dev/null`;
+    // propagation when we kill limactl on the host side. No `< /dev/null`: the
+    // prompt is forwarded over SSH stdin and consumed by `claude -p`.
+    const innerCmd = `${ envAssignments.join(' ') } exec ${ claudeArgs.join(' ') }`;
     const args = ['shell', '0', '--', 'sh', '-c', innerCmd];
 
     const cleanupMcp = () => {
@@ -542,6 +553,16 @@ Rules that apply on every turn:
         const proc = childProcess.spawn(limactlPath, args, {
           env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
         });
+
+        // Feed the prompt through stdin instead of the command line. limactl's
+        // SSH mux caps how large a session-request (command line) can be; a long
+        // transcript blows past it. stdin is a plain data channel with no such
+        // limit. Guard against EPIPE in case claude exits before we finish.
+        proc.stdin.on('error', () => { /* EPIPE — claude already gone, non-fatal */ });
+        try {
+          proc.stdin.write(prompt);
+          proc.stdin.end();
+        } catch { /* stdin already closed */ }
 
       // Heartbeat ticker — keeps the renderer (and routine canvas) informed
       // during the 60–120s cold-start gap between spawn and the first
