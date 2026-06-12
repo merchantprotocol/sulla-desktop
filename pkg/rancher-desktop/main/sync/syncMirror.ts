@@ -58,10 +58,37 @@ interface MirrorInput {
 }
 
 export async function mirrorMessageToClaudeMessages(input: MirrorInput): Promise<void> {
+  if (!isPrimaryChatConversation(input.conversationId)) return;
+  await writeTurnToSyncLog(input);
+}
+
+/**
+ * Scribe a mobile-relay conversation turn into the sync log.
+ *
+ * Relay conversations are keyed by the MOBILE client's conversationId — not
+ * a `thread_…` id — so they fail the primary-chat filter above by design.
+ * This entry point is for the desktop relay, which is the authoritative
+ * scribe for those conversations: every committed turn must land in
+ * claude_messages regardless of whether the WebSocket delivery succeeded.
+ *
+ * `thread_…` ids are declined here: those conversations are desktop graph
+ * chats whose turns the SullaLogger mirror already writes, and accepting
+ * them would double-insert rows under differing derived ids.
+ *
+ * Unlike the desktop mirror, relay turns may carry role 'tool' — activity
+ * lines persisted so mobile's history view can show tool calls alongside
+ * the chat turns.
+ */
+export async function scribeRelayTurn(input: MirrorInput): Promise<void> {
+  if (isPrimaryChatConversation(input.conversationId)) return;
+  await writeTurnToSyncLog(input);
+}
+
+async function writeTurnToSyncLog(input: MirrorInput): Promise<void> {
   const { conversationId, role, content, ts } = input;
 
-  if (!isPrimaryChatConversation(conversationId)) return;
-  if (role !== 'user' && role !== 'assistant') return;
+  if (!conversationId) return;
+  if (role !== 'user' && role !== 'assistant' && role !== 'tool') return;
   if (!content?.trim()) return;
 
   let contractorId = '';
@@ -80,17 +107,21 @@ export async function mirrorMessageToClaudeMessages(input: MirrorInput): Promise
   try {
     // Ensure a conversation row exists (idempotent). The title is only set
     // on INSERT — ON CONFLICT keeps whatever the user / auto-title chose.
-    await postgresClient.query(
-      `INSERT INTO claude_conversations
-         (id, contractor_id, title, status, last_message_at,
-          last_message_preview, unread_count, created_at, updated_at)
-       VALUES ($1, $2, $3, 'active', $4, $5, 0, $4, $4)
-       ON CONFLICT (id) DO UPDATE SET
-         last_message_at      = EXCLUDED.last_message_at,
-         last_message_preview = EXCLUDED.last_message_preview,
-         updated_at           = EXCLUDED.updated_at`,
-      [conversationId, contractorId, title, ts, preview],
-    );
+    // Tool/activity rows don't drive the conversation list: they never
+    // create a conversation or clobber its preview with tool chatter.
+    if (role !== 'tool') {
+      await postgresClient.query(
+        `INSERT INTO claude_conversations
+           (id, contractor_id, title, status, last_message_at,
+            last_message_preview, unread_count, created_at, updated_at)
+         VALUES ($1, $2, $3, 'active', $4, $5, 0, $4, $4)
+         ON CONFLICT (id) DO UPDATE SET
+           last_message_at      = EXCLUDED.last_message_at,
+           last_message_preview = EXCLUDED.last_message_preview,
+           updated_at           = EXCLUDED.updated_at`,
+        [conversationId, contractorId, title, ts, preview],
+      );
+    }
 
     // Insert the message. Deterministic id means duplicates are safe.
     await postgresClient.query(
@@ -103,7 +134,9 @@ export async function mirrorMessageToClaudeMessages(input: MirrorInput): Promise
     );
 
     // Enqueue for sync push so mobile and the cloud see the turn.
-    await enqueueSyncOp('claude_conversation', { id: conversationId }, 'upsert');
+    if (role !== 'tool') {
+      await enqueueSyncOp('claude_conversation', { id: conversationId }, 'upsert');
+    }
     await enqueueSyncOp('claude_message', { id: msgId }, 'upsert');
 
     // Trigger an eager push so there's no 15s lag before mobile sees it.
