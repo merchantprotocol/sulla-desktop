@@ -110,6 +110,40 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./write_file'),
   },
   {
+    name:        'recall_index_lookup',
+    description: 'Check the Redis citation index for previously-researched digests BEFORE re-reading files or re-searching directories. Pass a topic and/or a list of file paths. Returns trusted digests for files verified unchanged (cheap content-hash check), drops stale entries automatically, and lists which paths/topics need fresh research.',
+    category:    'memory',
+    schemaDef:   {
+      topic: { type: 'string', optional: true, description: 'Topic to look up (e.g. the subject of the user request — "github push auth", "sulla-mobile project"). Normalized internally.' },
+      paths: { type: 'array', items: { type: 'string' }, optional: true, description: 'File paths to check for cached digests (e.g. SKILL.md or PROJECT.md paths you would otherwise read).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./recall_index_lookup'),
+  },
+  {
+    name:        'recall_index_store',
+    description: 'Persist freshly-researched citation digests into the Redis citation index so future recall passes can reuse them without re-reading source files. Store one entry per file you read (path + the digest you produced), and optionally a topic with citation strings. Entries are verified against file content hashes and expire after 24h unless re-hit.',
+    category:    'memory',
+    schemaDef:   {
+      files: {
+        type:        'array',
+        optional:    true,
+        description: 'Array of {path, digest} objects — one per source file researched. The digest should be the full trusted-citation block produced for that file.',
+        items:       {
+          type:       'object',
+          properties: {
+            path:   { type: 'string', description: 'Path of the source file the digest cites.' },
+            digest: { type: 'string', description: 'The trusted-citation digest for this file.' },
+          },
+        },
+      },
+      topic:     { type: 'string', optional: true, description: 'Topic to file these citations under for future topic lookups.' },
+      citations: { type: 'array', items: { type: 'string' }, optional: true, description: 'Citation strings to store under the topic. Required when topic is set.' },
+    },
+    operationTypes: ['create', 'update'],
+    loader:         () => import('./recall_index_store'),
+  },
+  {
     name:        'browse_tools',
     description: 'Discover available sulla CLI tools by category or keyword. Returns ready-to-run `sulla <category>/<tool>` commands with descriptions and parameter JSON. IMPORTANT: the commands it returns are NOT directly callable tools — you invoke each one by passing the full command string to the `exec` tool (e.g. exec({command: "sulla docker/ps \'{}\'"})). NEVER call execute_workflow for any command listed here — execute_workflow is only for named n8n/Sulla workflows. Call this before attempting any sulla CLI invocation you are unsure about.',
     category:    'meta',

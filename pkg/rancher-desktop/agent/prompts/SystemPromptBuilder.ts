@@ -55,6 +55,8 @@ export interface PromptBuildContext {
   isHeartbeat:           boolean;
   /** WebSocket channel name */
   wsChannel:             string;
+  /** Tool exposure mode: 'slim' pushes only the minimal native set + catalog discovery; 'full' pushes resolved schemas */
+  toolMode?:             'slim' | 'full';
   /** Template variables for {{placeholder}} substitution */
   templateVars:          Record<string, string>;
   /** Section overrides from agent .md files: section_id → file content */
