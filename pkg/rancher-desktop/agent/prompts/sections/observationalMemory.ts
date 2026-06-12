@@ -82,6 +82,10 @@ ${ lines.join('\n') }`;
     id:             'observational_memory',
     content,
     priority:       45,
-    cacheStability: 'stable',
+    // semi-stable: memories change whenever the observation agent writes —
+    // far more often than the rest of the prompt. Keeping this out of the
+    // stable block means a memory update no longer invalidates the cached
+    // soul/safety/tooling/workspace prefix.
+    cacheStability: 'semi-stable',
   };
 }

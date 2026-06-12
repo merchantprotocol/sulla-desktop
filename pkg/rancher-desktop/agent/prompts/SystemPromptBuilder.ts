@@ -24,8 +24,16 @@ export interface PromptSection {
   content:        string;
   /** Sort order — lower = earlier in the prompt */
   priority:       number;
-  /** Whether this section is stable (cacheable) or dynamic (changes per turn) */
-  cacheStability: 'stable' | 'dynamic';
+  /**
+   * Cache tier:
+   * - 'stable'      — effectively frozen for the session (soul, safety, tooling)
+   * - 'semi-stable' — changes occasionally, not per turn (observational memory).
+   *                   Gets its own cache breakpoint so an update only
+   *                   invalidates this segment, not the whole stable prefix.
+   * - 'dynamic'     — changes every turn (runtime, channel awareness); sits
+   *                   after the cache boundary.
+   */
+  cacheStability: 'stable' | 'semi-stable' | 'dynamic';
 }
 
 export interface PromptBuildContext {
@@ -79,7 +87,7 @@ export interface BuiltPrompt {
 export interface AnthropicSystemBlock {
   type:           'text';
   text:           string;
-  cache_control?: { type: 'ephemeral' };
+  cache_control?: { type: 'ephemeral'; ttl?: '1h' };
 }
 
 /** Factory function that produces a section or null to skip it */
@@ -201,15 +209,16 @@ class SystemPromptBuilderImpl {
       });
     }
 
-    // Split into stable and dynamic
+    // Split by cache tier
     const stableSections = builtSections.filter(s => s.cacheStability === 'stable');
+    const semiStableSections = builtSections.filter(s => s.cacheStability === 'semi-stable');
     const dynamicSections = builtSections.filter(s => s.cacheStability === 'dynamic');
 
     // For local/ollama providers, enforce stable-before-dynamic ordering in the text output.
     // llama-server's KV cache reuses the longest matching prefix — putting all stable (unchanging)
     // content first maximizes cache hits across turns, even if a dynamic section has a low priority.
     const orderedSections = (ctx.provider === 'ollama' || ctx.mode === 'local')
-      ? [...stableSections, ...dynamicSections]
+      ? [...stableSections, ...semiStableSections, ...dynamicSections]
       : builtSections;
 
     // Build full text
@@ -217,25 +226,42 @@ class SystemPromptBuilderImpl {
     const text = allContent.join('\n\n');
     const includedSections = orderedSections.map(s => s.id);
 
-    // Build Anthropic-optimized blocks (stable block with cache_control, then dynamic)
+    // Build Anthropic-optimized blocks: stable (cached) → semi-stable (own
+    // cache breakpoint) → dynamic (uncached, after the boundary). Prompt
+    // caching is a prefix match, so giving semi-stable content (observational
+    // memory) its own breakpoint means a memory update only re-writes that
+    // segment — the stable prefix's cache entry stays valid.
     let anthropicSystem: AnthropicSystemBlock[] | undefined;
     if (ctx.provider === 'anthropic') {
       anthropicSystem = [];
 
+      // The heartbeat fires every 15 minutes, but the default cache TTL is
+      // 5 minutes — every cycle would pay the cache-write premium and never
+      // read. The 1h TTL costs 2x to write but is read by the next ~3 cycles.
+      const cacheControl: AnthropicSystemBlock['cache_control'] = ctx.isHeartbeat
+        ? { type: 'ephemeral', ttl: '1h' }
+        : { type: 'ephemeral' };
+
       if (stableSections.length > 0) {
-        const stableText = stableSections.map(s => s.content).join('\n\n');
         anthropicSystem.push({
           type:          'text',
-          text:          stableText,
-          cache_control: { type: 'ephemeral' },
+          text:          stableSections.map(s => s.content).join('\n\n'),
+          cache_control: cacheControl,
+        });
+      }
+
+      if (semiStableSections.length > 0) {
+        anthropicSystem.push({
+          type:          'text',
+          text:          semiStableSections.map(s => s.content).join('\n\n'),
+          cache_control: cacheControl,
         });
       }
 
       if (dynamicSections.length > 0) {
-        const dynamicText = dynamicSections.map(s => s.content).join('\n\n');
         anthropicSystem.push({
           type: 'text',
-          text: dynamicText,
+          text: dynamicSections.map(s => s.content).join('\n\n'),
         });
       }
     }
