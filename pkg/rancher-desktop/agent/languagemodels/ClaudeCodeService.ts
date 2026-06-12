@@ -386,6 +386,12 @@ Rules that apply on every turn:
       parts.push(`<recall_context>\n${ recallContext.trim() }\n</recall_context>`);
     }
 
+    // Observation context from observation-recall agent (targeted DB observations)
+    const observationContext = (state?.metadata as any)?.observationContext;
+    if (observationContext && typeof observationContext === 'string' && observationContext.trim()) {
+      parts.push(`<observation_context>\n${ observationContext.trim() }\n</observation_context>`);
+    }
+
     if (parts.length === 0) return '';
     return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;
   }

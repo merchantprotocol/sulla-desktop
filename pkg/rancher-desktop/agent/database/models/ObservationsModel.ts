@@ -97,13 +97,13 @@ export class ObservationsModel {
    */
   static async insert(input: InsertObservationInput): Promise<ObservationRecord> {
     const id = input.id || generateTinyId();
-    const result = await postgresClient.query<ObservationRecord>(
+    const rows = await postgresClient.query<ObservationRecord>(
       `INSERT INTO ${ ObservationsModel.TABLE } (id, priority, content, source, created_at)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
       [id, input.priority || 'medium', input.content, input.source ?? null, input.created_at ?? new Date().toISOString()],
     );
-    return result.rows[0];
+    return rows[0];
   }
 
   /**
@@ -122,19 +122,19 @@ export class ObservationsModel {
     if (setClauses.length === 1) return null; // nothing to update
     values.push(id);
 
-    const result = await postgresClient.query<ObservationRecord>(
+    const rows = await postgresClient.query<ObservationRecord>(
       `UPDATE ${ ObservationsModel.TABLE } SET ${ setClauses.join(', ') }
        WHERE id = $${ idx } RETURNING *`,
       values,
     );
-    return result.rows[0] ?? null;
+    return rows[0] ?? null;
   }
 
   /**
    * Soft-delete: sets archived = true.  Never hard-deletes.
    */
   static async archive(id: string): Promise<boolean> {
-    const result = await postgresClient.query(
+    const result = await postgresClient.queryWithResult(
       `UPDATE ${ ObservationsModel.TABLE } SET archived = true, updated_at = now()
        WHERE id = $1`,
       [id],
@@ -146,11 +146,11 @@ export class ObservationsModel {
    * Retrieve a single observation by id (any archived state).
    */
   static async getById(id: string): Promise<ObservationRecord | null> {
-    const result = await postgresClient.query<ObservationRecord>(
+    const rows = await postgresClient.query<ObservationRecord>(
       `SELECT * FROM ${ ObservationsModel.TABLE } WHERE id = $1 LIMIT 1`,
       [id],
     );
-    return result.rows[0] ?? null;
+    return rows[0] ?? null;
   }
 
   /**
@@ -168,24 +168,22 @@ export class ObservationsModel {
       END ASC, created_at DESC`;
 
     if (priority) {
-      const result = await postgresClient.query<ObservationRecord>(
+      return postgresClient.query<ObservationRecord>(
         `SELECT * FROM ${ ObservationsModel.TABLE }
          WHERE archived = false AND priority = $1
          ORDER BY ${ ORDER }
          LIMIT $2`,
         [priority, limit],
       );
-      return result.rows;
     }
 
-    const result = await postgresClient.query<ObservationRecord>(
+    return postgresClient.query<ObservationRecord>(
       `SELECT * FROM ${ ObservationsModel.TABLE }
        WHERE archived = false
        ORDER BY ${ ORDER }
        LIMIT $1`,
       [limit],
     );
-    return result.rows;
   }
 
   /**
@@ -196,7 +194,7 @@ export class ObservationsModel {
    */
   static async search(query: string, limit = 20, includeArchived = false): Promise<ObservationRecord[]> {
     const pattern = `%${ query }%`;
-    const result = await postgresClient.query<ObservationRecord>(
+    return postgresClient.query<ObservationRecord>(
       `SELECT * FROM ${ ObservationsModel.TABLE }
        WHERE (${ includeArchived ? 'true' : 'archived = false' })
          AND content ILIKE $1
@@ -204,7 +202,6 @@ export class ObservationsModel {
        LIMIT $2`,
       [pattern, limit],
     );
-    return result.rows;
   }
 
   /**
