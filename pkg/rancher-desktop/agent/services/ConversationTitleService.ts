@@ -28,6 +28,21 @@ const AUTO_TITLE_THRESHOLD = 3;
 const titledConversations = new Set<string>();
 
 /**
+ * Internal / ephemeral conversations that must never be auto-titled.
+ *
+ * Subconscious agents (memory-recall, observation-writer/recall, summarizer,
+ * tool-result digester) each run as their own short-lived conversation with a
+ * `subconscious_<ts>_<n>` id. They are NOT user-facing history rows, so titling
+ * them is pure waste — and worse, every internal run crossed the 3-message
+ * threshold and fired a title-generation LLM call with no conversationId,
+ * dumping the agent's instruction into the shared `__default__` Claude Code
+ * session once per turn. Skip them entirely.
+ */
+function isInternalConversationId(conversationId: string): boolean {
+  return typeof conversationId === 'string' && conversationId.startsWith('subconscious_');
+}
+
+/**
  * Generate a short title (<=6 words) from the first few messages of a conversation.
  *
  * Attempts to call the active LLM for a summary. Falls back to extracting
@@ -43,10 +58,13 @@ export async function generateTitle(messages: TitleMessage[]): Promise<string> {
     return 'Untitled Conversation';
   }
 
-  // Try LLM-based title generation
+  // Try LLM-based title generation. Use the subconscious (cheap/fast) service,
+  // not the primary — a <=6-word summary is a trivial task and should never
+  // burn the expensive primary (e.g. Claude Code) model. Falls back to the
+  // primary internally if no subconscious provider is configured.
   try {
-    const { getPrimaryService } = await import('../languagemodels/index');
-    const llm = await getPrimaryService();
+    const { getSubconsciousService } = await import('../languagemodels/index');
+    const llm = await getSubconsciousService();
 
     if (llm) {
       const prompt = relevantMessages
@@ -123,6 +141,11 @@ export async function autoTitleAfterMessages(
   conversationId: string,
   messages: TitleMessage[],
 ): Promise<void> {
+  // Never title internal/ephemeral (subconscious) conversations — see
+  // isInternalConversationId. This is the fix for the per-turn duplicate
+  // Claude Code dispatch into the __default__ session.
+  if (isInternalConversationId(conversationId)) return;
+
   // Only trigger once per conversation, after reaching the threshold
   if (titledConversations.has(conversationId)) return;
   if (messages.length < AUTO_TITLE_THRESHOLD) return;
