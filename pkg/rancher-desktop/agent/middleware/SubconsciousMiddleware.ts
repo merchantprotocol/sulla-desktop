@@ -150,22 +150,10 @@ export async function runSubconsciousMiddleware(
 
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
-  // Await only the agents that modify state, but cap total wait so the primary
-  // agent always starts promptly even when a subconscious provider is slow
-  // (e.g. Claude Code subprocess boot + model call = 30-60 s).
-  const SUBCONSCIOUS_TIMEOUT_MS = 15_000;
-  let timedOut = false;
-  const timeoutFence = new Promise<'timeout'>(resolve =>
-    setTimeout(() => { timedOut = true; resolve('timeout'); }, SUBCONSCIOUS_TIMEOUT_MS),
-  );
-  const raceResult = await Promise.race([
-    Promise.allSettled(awaitedTasks).then(r => ({ kind: 'settled' as const, results: r })),
-    timeoutFence.then(() => ({ kind: 'timeout' as const, results: [] as PromiseSettledResult<void>[] })),
-  ]);
-  if (timedOut) {
-    console.warn(`[SubconsciousMiddleware] Timed out after ${ SUBCONSCIOUS_TIMEOUT_MS }ms — proceeding without full subconscious results`);
-  }
-  const settledResults = raceResult.results;
+  // Every task in awaitedTasks writes into the live turn state. The primary
+  // agent must never start while one of these tasks can still mutate messages
+  // or metadata underneath it.
+  const settledResults = await Promise.allSettled(awaitedTasks);
 
   const failures = settledResults.filter(r => r.status === 'rejected');
   const elapsed = Date.now() - startTime;

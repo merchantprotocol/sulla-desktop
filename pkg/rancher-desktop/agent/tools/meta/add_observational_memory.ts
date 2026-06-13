@@ -5,19 +5,36 @@ import { BaseTool, ToolResponse } from '../base';
 /**
  * Add Observational Memory Tool
  *
- * Inserts a new observation row into the `observations` table.
+ * Inserts or updates an observation row in the `observations` table.
  * No 50-cap pruning — observations are never automatically removed.
- * De-duplication: if a substantially similar active observation already
- * exists, the existing row is updated in place (priority + content refreshed).
+ * If an id is provided, that exact row is updated in place. Otherwise,
+ * de-duplication updates a substantially similar active observation.
  */
 export class AddObservationalMemoryWorker extends BaseTool {
   name = '';
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { priority, content, source } = input;
+    const { id, priority, content, source } = input;
+    const existingId = typeof id === 'string' ? id.trim() : '';
 
     try {
+      if (existingId) {
+        const updated = await ObservationsModel.update(existingId, { priority, content, source });
+        if (!updated) {
+          return {
+            successBoolean: false,
+            responseString: `No observation found with id: ${ existingId }`,
+          };
+        }
+
+        generateClaudeCodeMemoryFile().catch(() => {});
+        return {
+          successBoolean: true,
+          responseString: `Remembering (updated): "${ content }" (id: ${ updated.id }, priority: ${ updated.priority })`,
+        };
+      }
+
       // Check for an existing similar observation to avoid duplicates.
       const duplicate = await ObservationsModel.findDuplicate(content);
 
