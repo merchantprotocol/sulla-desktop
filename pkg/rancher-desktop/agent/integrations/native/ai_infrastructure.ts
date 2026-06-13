@@ -179,13 +179,47 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
-  // The standalone 'openai' card was removed in favor of the 'codex' card,
-  // which is the single OpenAI entry point. Codex runs on the user's ChatGPT
-  // Plus/Pro subscription (no API billing); the old card's OAuth only minted a
-  // metered API key, which confused users into thinking it used their plan.
-  // OpenAIService and the openai PROVIDER_FACTORIES entry remain in place, so
-  // the provider can be restored by re-adding a catalog entry here if
-  // pay-as-you-go OpenAI API models are wanted again.
+  // OpenAI — API-key only. The OAuth/ChatGPT sign-in path was intentionally
+  // dropped from this card and lives solely on the 'codex' card, which is the
+  // only integration that runs on the ChatGPT Plus/Pro subscription. Here you
+  // paste an OpenAI API key for pay-as-you-go access to GPT models (billed at
+  // standard API rates), exactly like the Grok/Anthropic cards.
+  openai: {
+    id:          'openai',
+    sort:        4,
+    paid:        true,
+    beta:        false,
+    comingSoon:  false,
+    name:        'OpenAI',
+    description: 'Connect OpenAI GPT models with your API key for chat, reasoning, and multimodal generation. For your ChatGPT Plus/Pro subscription instead, use OpenAI Codex.',
+    category:    'AI Infrastructure',
+    icon:        'openai.svg',
+    connected:   false,
+    version:     '1.0.0',
+    lastUpdated: '2026-06-12',
+    developer:   'OpenAI',
+    formGuide:   'Paste your OpenAI API key for pay-as-you-go access (billed at standard API rates). To use your ChatGPT Plus/Pro subscription with no API billing, connect OpenAI Codex instead.',
+    properties:  [
+      {
+        key:         'api_key',
+        title:       'OpenAI API Key',
+        hint:        'Generate this in your OpenAI dashboard.',
+        type:        'password',
+        required:    true,
+        placeholder: 'sk-...',
+      },
+      {
+        key:             'model',
+        title:           'Model',
+        hint:            'Select an OpenAI model to use for completions.',
+        type:            'select',
+        required:        true,
+        placeholder:     'Select a model...',
+        selectBoxId:     'openai_models',
+        selectDependsOn: ['api_key'],
+      },
+    ],
+  },
 
   kimi: {
     id:          'kimi',
