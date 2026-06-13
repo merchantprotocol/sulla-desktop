@@ -98,8 +98,8 @@ export async function resolveTierToModelId(
   providerId: string,
   tier: ModelTier,
 ): Promise<string | undefined> {
-  // claude-code delegates model selection to the CLI — never override
-  if (providerId === 'claude-code') return undefined;
+  // claude-code / codex delegate model selection to the CLI — never override
+  if (providerId === 'claude-code' || providerId === 'codex') return undefined;
 
   try {
     const apiKey = await getApiKeyForProvider(providerId);

@@ -21,6 +21,7 @@ import { getIntegrationService } from '../services/IntegrationService';
 // Provider factory map — lazy-loaded to avoid circular imports
 const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
+  codex:         async() => { const { getCodexService } = await import('./CodexService'); return getCodexService() },
   arcee:         async() => { const { getArceeService } = await import('./ArceeService'); return getArceeService() },
   cohere:        async() => { const { getCohereService } = await import('./CohereService'); return getCohereService() },
   deepseek:      async() => { const { getDeepSeekService } = await import('./DeepSeekService'); return getDeepSeekService() },
@@ -103,6 +104,10 @@ class LLMRegistryImpl {
         // override doesn't bleed into the primary orchestrator's instance.
         const { createClaudeCodeService } = await import('./ClaudeCodeService');
         svc = createClaudeCodeService(modelOverride);
+      } else if (modelOverride && providerId === 'codex') {
+        // Same singleton concern as claude-code.
+        const { createCodexService } = await import('./CodexService');
+        svc = createCodexService(modelOverride);
       } else {
         const factory = PROVIDER_FACTORIES[providerId];
         if (!factory) {
@@ -136,8 +141,12 @@ class LLMRegistryImpl {
     const activeModelId = mps
       ? mps.getActiveModelId()
       : await SullaSettingsModel.get('activeModelId', '');
-    // 'claude-code' sentinel means "auto" — omit the override so the CLI picks freely.
-    const modelOverride = activeModelId && activeModelId !== 'claude-code' ? activeModelId : undefined;
+    // CLI-agent providers use their own provider id as the "auto" sentinel
+    // model id (see ModelProviderService.getModelsForProvider) — omit the
+    // override so the CLI picks freely. Comparing against providerId instead
+    // of a literal list keeps a model genuinely named e.g. 'codex' on some
+    // other provider working.
+    const modelOverride = activeModelId && activeModelId !== providerId ? activeModelId : undefined;
     return this.getServiceByProvider(providerId, modelOverride);
   }
 

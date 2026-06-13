@@ -82,6 +82,10 @@ export abstract class OAuthProvider {
   /** Override to post-process token responses (e.g. extract user info) */
   async onTokenReceived(_tokens: OAuthTokenSet): Promise<void> {}
 
+  /** Override to clean up provider-side credential state on disconnect
+   *  (e.g. credential files written by onTokenReceived). */
+  async onTokensRevoked(): Promise<void> {}
+
   /** Override to add per-request headers when calling the provider's API */
   buildAuthHeader(accessToken: string): Record<string, string> {
     return { Authorization: `Bearer ${ accessToken }` };

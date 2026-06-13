@@ -787,6 +787,39 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
       script: claudeCodeScript,
     });
 
+    // Install the OpenAI Codex CLI — same persistent-prefix + per-boot
+    // symlink strategy (and the same CRNG-retry rationale) as claude above.
+    const codexScript = [
+      '#!/bin/sh',
+      'PREFIX=/mnt/data/npm-global',
+      'LINK=/usr/local/bin/codex',
+      'if [ -x "$PREFIX/bin/codex" ]; then',
+      '  ln -sf "$PREFIX/bin/codex" "$LINK"',
+      '  exit 0',
+      'fi',
+      'mkdir -p "$PREFIX"',
+      'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
+      'attempt=0',
+      'while [ "$attempt" -lt 5 ]; do',
+      '  if npm install --prefix "$PREFIX" -g @openai/codex; then',
+      '    ln -sf "$PREFIX/bin/codex" "$LINK"',
+      '    exit 0',
+      '  fi',
+      '  attempt=$((attempt + 1))',
+      '  echo "[codex-install] npm install attempt $attempt failed; retrying in 5s" >&2',
+      '  sleep 5',
+      'done',
+      'echo "[codex-install] failed after 5 attempts — codex CLI will not be available" >&2',
+      'exit 1',
+    ].join('\n');
+    config.provision = config.provision.filter((p: { script?: string }) => {
+      return !(p.script ?? '').includes('@openai/codex');
+    });
+    config.provision.push({
+      mode:   'system',
+      script: codexScript,
+    });
+
     this.updateConfigPortForwards(config);
     if (currentConfig) {
       // update existing configuration
@@ -2034,6 +2067,53 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
   }
 
   /**
+   * Ensure the `codex` CLI binary is installed in the VM — same safety net
+   * as ensureClaudeBinaryInstalled (the lima.yaml provision script is the
+   * primary installer; this covers first-boot CRNG install failures and the
+   * tmpfs-wiped /usr/local symlink).
+   */
+  protected async ensureCodexBinaryInstalled() {
+    try {
+      // Fast path: already on PATH.
+      await this.execCommand({ root: false }, 'sh', '-c', '[ -x /usr/local/bin/codex ]');
+      return;
+    } catch { /* fall through */ }
+
+    try {
+      // Persistent install exists but /usr/local symlink is missing — restore it.
+      await this.execCommand({ root: false }, 'sh', '-c', '[ -x /mnt/data/npm-global/bin/codex ]');
+      await this.execCommand({ root: true }, 'ln', '-sf', '/mnt/data/npm-global/bin/codex', '/usr/local/bin/codex');
+      console.log('[Lima] codex symlink restored from persistent install');
+      return;
+    } catch { /* fall through */ }
+
+    console.log('[Lima] codex CLI missing — running npm install (1-2 min)');
+    const installScript = [
+      'PREFIX=/mnt/data/npm-global',
+      'LINK=/usr/local/bin/codex',
+      'mkdir -p "$PREFIX"',
+      'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
+      'attempt=0',
+      'while [ "$attempt" -lt 5 ]; do',
+      '  if npm install --prefix "$PREFIX" -g @openai/codex; then',
+      '    ln -sf "$PREFIX/bin/codex" "$LINK"',
+      '    exit 0',
+      '  fi',
+      '  attempt=$((attempt + 1))',
+      '  echo "[codex-install] npm install attempt $attempt failed; retrying in 5s" >&2',
+      '  sleep 5',
+      'done',
+      'exit 1',
+    ].join('\n');
+    try {
+      await this.execCommand({ root: true }, 'sh', '-c', installScript);
+      console.log('[Lima] codex CLI installed successfully');
+    } catch (err) {
+      console.warn('[Lima] Failed to install codex CLI — the Codex provider will not work until this is resolved:', err);
+    }
+  }
+
+  /**
    * Install Claude Code auth credentials into the VM.
    *
    * Supports two auth modes:
@@ -2552,7 +2632,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
           this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
           this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli()),
-          this.progressTracker.action('Verifying Claude Code CLI install', 50, this.ensureClaudeBinaryInstalled()),
+          // Chained, not parallel: both slow paths run `npm install -g` into
+          // the same /mnt/data/npm-global prefix, and concurrent global
+          // installs race on the shared lib/bin trees.
+          this.progressTracker.action('Verifying agent CLI installs', 50,
+            this.ensureClaudeBinaryInstalled().then(() => this.ensureCodexBinaryInstalled())),
           this.progressTracker.action('Configuring Claude Code', 50, this.installClaudeCode()),
           this.progressTracker.action('Installing threat-scanning proxy', 50, this.installThreatProxy()),
         ];
