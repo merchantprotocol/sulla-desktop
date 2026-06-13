@@ -22,6 +22,7 @@
 import { ObservationsModel } from '../../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { parseJson } from '../../services/JsonParseService';
+
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
 /** Max observations to inject into the system prompt. */
@@ -48,12 +49,7 @@ export async function buildObservationalMemorySection(
 
       const content = `## Memory (top-${ TOP_N } observations)
 
-Critical and high-priority facts about the user and their business. Full memory is searchable via \`search_observations\` / \`list_observations\` tools. To add or archive, use the appropriate Sulla tool:
-
-\`\`\`bash
-sulla meta/add_observational_memory '{"priority":"high","content":"…"}'
-sulla meta/remove_observational_memory '{"id":"abcd"}'
-\`\`\`
+Critical and high-priority facts about the user and their business. Full memory is searchable via \`search_observations\` / \`list_observations\` tools. To add, update, or archive observations, call the matching memory/observation tool exposed in your tool list. When updating an existing observation, pass its \`id\` to \`add_observational_memory\`.
 
 ${ lines.join('\n') }`;
 
@@ -115,12 +111,7 @@ ${ lines.join('\n') }`;
 
   const content = `## Memory (persistent observations — legacy)
 
-These are durable facts about the user and their business. Use them to stay consistent across turns. If a new observation should be stored or a stale one removed, call the appropriate Sulla tool:
-
-\`\`\`bash
-sulla meta/add_observational_memory '{"priority":"high","content":"…"}'
-sulla meta/remove_observational_memory '{"id":"abcd"}'
-\`\`\`
+These are durable facts about the user and their business. Use them to stay consistent across turns. If a new observation should be stored, an existing one updated, or a stale one archived, call the matching memory/observation tool exposed in your tool list. When updating an existing observation, pass its \`id\` to \`add_observational_memory\`.
 
 ${ lines.join('\n') }`;
 

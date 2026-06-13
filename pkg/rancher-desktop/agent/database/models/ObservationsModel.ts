@@ -27,10 +27,10 @@ export interface ObservationRecord {
 }
 
 export interface InsertObservationInput {
-  id:        string;
-  priority:  string;
-  content:   string;
-  source?:   string;
+  id:          string;
+  priority:    string;
+  content:     string;
+  source?:     string;
   /** ISO timestamp to preserve original timestamp on import */
   created_at?: string;
 }
@@ -115,9 +115,18 @@ export class ObservationsModel {
     const values: any[] = [];
     let idx = 1;
 
-    if (changes.priority !== undefined) { setClauses.push(`priority = $${ idx++ }`); values.push(changes.priority); }
-    if (changes.content  !== undefined) { setClauses.push(`content  = $${ idx++ }`); values.push(changes.content); }
-    if (changes.source   !== undefined) { setClauses.push(`source   = $${ idx++ }`); values.push(changes.source); }
+    if (changes.priority !== undefined) {
+      setClauses.push(`priority = $${ idx++ }`);
+      values.push(changes.priority);
+    }
+    if (changes.content !== undefined) {
+      setClauses.push(`content = $${ idx++ }`);
+      values.push(changes.content);
+    }
+    if (changes.source !== undefined) {
+      setClauses.push(`source = $${ idx++ }`);
+      values.push(changes.source);
+    }
 
     if (setClauses.length === 1) return null; // nothing to update
     values.push(id);
@@ -282,7 +291,7 @@ export class ObservationsModel {
    * Used by the migration runner on first boot after 0028 runs.
    */
   static async importLegacy(
-    entries: Array<{ id?: string; priority?: string; content?: string; timestamp?: string }>,
+    entries: { id?: string; priority?: string; content?: string; timestamp?: string }[],
   ): Promise<number> {
     let imported = 0;
     for (const entry of entries) {

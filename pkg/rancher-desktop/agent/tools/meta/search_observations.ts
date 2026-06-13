@@ -13,7 +13,8 @@ export class SearchObservationsWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { query, limit = 20, include_archived = false } = input;
+    const { query, limit = 20 } = input;
+    const includeArchived = Boolean(input.include_archived ?? input.includeArchived ?? false);
 
     if (!query || typeof query !== 'string' || !query.trim()) {
       return {
@@ -23,7 +24,7 @@ export class SearchObservationsWorker extends BaseTool {
     }
 
     try {
-      const rows = await ObservationsModel.search(query.trim(), Number(limit) || 20, Boolean(include_archived));
+      const rows = await ObservationsModel.search(query.trim(), Number(limit) || 20, includeArchived);
       const words = ObservationsModel.tokenizeQuery(query.trim());
       const matchDesc = words.length > 1 ? `"${ query }" (any of: ${ words.join(', ') })` : `"${ query }"`;
 

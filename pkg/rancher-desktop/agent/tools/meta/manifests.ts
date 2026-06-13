@@ -6,8 +6,10 @@ export const metaToolManifests: ToolManifest[] = [
     description: 'Use this tool to store the observations you make into long-term memory.',
     category:    'observation',
     schemaDef:   {
+      id:       { type: 'string', optional: true, description: 'Existing observation ID to update in place. Omit to add a new observation or update a duplicate by content.' },
       priority: { type: 'string', optional: true, default: '🟡', description: 'Priority tag for this observation. Any short label works — common values: 🔴 / high, 🟡 / medium, ⚪ / low.' },
       content:  { type: 'string', description: 'One sentence only — extremely concise, always include the context' },
+      source:   { type: 'string', optional: true, description: 'Optional source label for this observation.' },
     },
     operationTypes: ['create', 'read', 'update', 'delete'],
     loader:         () => import('./add_observational_memory'),

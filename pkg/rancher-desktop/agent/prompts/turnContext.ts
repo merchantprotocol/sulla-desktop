@@ -67,10 +67,10 @@ const INTAKE_TURN_DIRECTIVE = 'intake mode: continuous voice intake — never em
 
 function voiceDirectiveFor(chatMode: ChatMode): string | null {
   switch (chatMode) {
-  case 'voice':     return VOICE_TURN_DIRECTIVE;
+  case 'voice': return VOICE_TURN_DIRECTIVE;
   case 'secretary': return SECRETARY_TURN_DIRECTIVE;
-  case 'intake':    return INTAKE_TURN_DIRECTIVE;
-  default:          return null;
+  case 'intake': return INTAKE_TURN_DIRECTIVE;
+  default: return null;
   }
 }
 

@@ -13,12 +13,13 @@ export class ListObservationsWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { priority, limit = 50, include_archived = false } = input;
+    const { priority, limit = 50 } = input;
+    const includeArchived = Boolean(input.include_archived ?? input.includeArchived ?? false);
 
     try {
       let rows;
 
-      if (include_archived) {
+      if (includeArchived) {
         // When include_archived is requested use the raw search with wildcard
         // to get all rows (both active and archived).
         rows = await ObservationsModel.search('%', Number(limit) || 50, true);
