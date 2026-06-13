@@ -81,6 +81,35 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
+  codex: {
+    id:              'codex',
+    sort:            1,
+    paid:            true,
+    beta:            true,
+    comingSoon:      false,
+    connected:       false,
+    name:            'OpenAI Codex',
+    description:     'Run OpenAI\'s Codex agent inside the Sulla Desktop VM using your ChatGPT Plus/Pro subscription — no API costs.',
+    category:        'AI Infrastructure',
+    icon:            'openai.svg',
+    version:         '1.0.0',
+    lastUpdated:     '2026-06-12',
+    developer:       'OpenAI',
+    oauth:           true,
+    oauthProviderId: 'codex',
+    formGuide:       'Sign in with ChatGPT to run Codex on your ChatGPT Plus/Pro plan. Usage draws from your subscription quota, not metered API billing.',
+    properties:      [
+      {
+        key:         'model',
+        title:       'Model',
+        hint:        'Codex chooses its own model by default; this field is informational.',
+        type:        'text',
+        required:    false,
+        placeholder: 'codex',
+      },
+    ],
+  },
+
   grok: {
     id:          'grok',
     sort:        2,

@@ -1196,7 +1196,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // specific provider they want to know it failed, not get an answer from
       // a different model pretending to be the same assistant. Fallback only
       // runs when the primary is a generic/unselected provider.
-      const explicitPrimary = primaryId === 'claude-code' || primaryName === 'Claude Code';
+      const explicitPrimary = primaryId === 'claude-code' || primaryName === 'Claude Code' ||
+        primaryId === 'codex' || primaryName === 'OpenAI Codex';
       if (explicitPrimary) {
         throw new Error(`${ primaryName } failed: ${ errMsg }`);
       }

@@ -201,6 +201,16 @@ class ModelProviderService {
       ];
     }
 
+    // Codex accepts an explicit --model flag; expose the known models plus
+    // an "auto" sentinel that omits the flag and lets the CLI choose.
+    if (providerId === 'codex') {
+      return [
+        { id: 'codex',         name: 'Auto (CLI default)', description: 'Let Codex choose the best model automatically' },
+        { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex',      description: 'Latest Codex flagship model' },
+        { id: 'gpt-5-codex',   name: 'GPT-5 Codex',        description: 'Previous Codex model' },
+      ];
+    }
+
     const integration = integrations[providerId];
     if (!integration) return [];
 
