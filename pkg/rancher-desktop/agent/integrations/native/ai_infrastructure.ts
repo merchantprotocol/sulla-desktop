@@ -179,44 +179,13 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     ],
   },
 
-  openai: {
-    id:              'openai',
-    sort:            4,
-    paid:            true,
-    beta:            false,
-    comingSoon:      false,
-    name:            'OpenAI',
-    description:     'Connect OpenAI models for chat, reasoning, and multimodal generation.',
-    category:        'AI Infrastructure',
-    icon:            'openai.svg',
-    connected:       false,
-    oauth:           true,
-    oauthProviderId: 'openai',
-    version:         '1.0.0',
-    lastUpdated:     '2026-02-28 11:42:00',
-    developer:       'OpenAI',
-    formGuide:       'Paste your OpenAI API key or sign in with OAuth for unlimited access via your ChatGPT Plus/Pro subscription.',
-    properties:      [
-      {
-        key:         'api_key',
-        title:       'OpenAI API Key',
-        hint:        'Generate this in your OpenAI dashboard.',
-        type:        'password',
-        required:    true,
-        placeholder: 'sk-...',
-      },
-      {
-        key:             'model',
-        title:           'Model',
-        hint:            'Select an OpenAI model to use for completions.',
-        type:            'select',
-        required:        true,
-        placeholder:     'Select a model...',
-        selectBoxId:     'openai_models',
-        selectDependsOn: ['api_key'],
-      },
-    ],
-  },
+  // The standalone 'openai' card was removed in favor of the 'codex' card,
+  // which is the single OpenAI entry point. Codex runs on the user's ChatGPT
+  // Plus/Pro subscription (no API billing); the old card's OAuth only minted a
+  // metered API key, which confused users into thinking it used their plan.
+  // OpenAIService and the openai PROVIDER_FACTORIES entry remain in place, so
+  // the provider can be restored by re-adding a catalog entry here if
+  // pay-as-you-go OpenAI API models are wanted again.
 
   kimi: {
     id:          'kimi',
