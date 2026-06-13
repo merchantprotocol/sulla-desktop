@@ -29,5 +29,12 @@ log/*
 llm/
 training/__pycache__/validate_training_data.cpython-313.pyc
 resources/browserTabPreload.js.map
-logs/background-web-requests.log
+logs/
 .claude/
+
+# Compiled audio-driver helpers — build artifacts regenerated from the
+# tracked .c/.cpp/.swift source by scripts/build-audio-native.sh during the
+# build (scripts/build.ts → buildAudioNative), then copied to the gitignored
+# resources/darwin/. No reason to track the binaries themselves.
+/pkg/rancher-desktop/main/audio-driver/platform/darwin/capture-loopback
+/pkg/rancher-desktop/main/audio-driver/platform/darwin/create-mirror
