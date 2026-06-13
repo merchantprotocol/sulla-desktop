@@ -1,6 +1,10 @@
-// OpenAI Codex OAuth 2.0 provider — PKCE public client flow.
+// OpenAI OAuth 2.0 provider — PKCE public client flow.
 // Uses the official Codex CLI OAuth app (no client_secret needed).
-// Grants unlimited API access via ChatGPT Plus/Pro subscription.
+//
+// NOTE: this flow exchanges the ChatGPT id_token for a REGULAR platform API
+// key — usage bills at standard API rates, NOT against the ChatGPT Plus/Pro
+// subscription. For subscription-covered usage see CodexOAuth, which feeds
+// the codex CLI's auth file instead.
 
 import { OAuthProvider, type OAuthProviderConfig, type OAuthTokenSet } from '../OAuthProvider';
 import { registerOAuthProvider } from '../registry';

@@ -102,7 +102,7 @@ export class OAuthService {
     }
 
     // Start callback server (with optional fixed port/path)
-    const { redirectUri, codePromise, shutdown } = startOAuthCallbackServer({
+    const { redirectUri, codePromise, shutdown } = await startOAuthCallbackServer({
       expectedState:        state,
       fixedPort:            cfg.fixedCallbackPort,
       callbackPath:         cfg.fixedCallbackPath,

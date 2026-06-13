@@ -195,7 +195,7 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     version:         '1.0.0',
     lastUpdated:     '2026-02-28 11:42:00',
     developer:       'OpenAI',
-    formGuide:       'Paste your OpenAI API key or sign in with OAuth for unlimited access via your ChatGPT Plus/Pro subscription.',
+    formGuide:       'Paste your OpenAI API key, or sign in with ChatGPT to create one automatically. Either way, usage bills at standard OpenAI API rates. To use your ChatGPT Plus/Pro subscription instead (no API billing), connect the OpenAI Codex integration.',
     properties:      [
       {
         key:         'api_key',

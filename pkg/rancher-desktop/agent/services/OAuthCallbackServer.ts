@@ -58,12 +58,17 @@ export interface OAuthCallbackServerOptions {
 /**
  * Start an ephemeral localhost HTTP server that waits for a single OAuth callback.
  *
+ * Async because the bound port isn't known until the server's 'listening'
+ * event: server.address() is null before it fires, and random-port (port 0)
+ * providers got a redirect_uri of "http://127.0.0.1:0/..." when it was read
+ * synchronously after listen().
+ *
  * @returns The redirect_uri the server is listening on, plus a promise that resolves with the auth code.
  */
-export function startOAuthCallbackServer(
+export async function startOAuthCallbackServer(
   optionsOrState: string | OAuthCallbackServerOptions,
   timeoutMs = 300_000,
-): { redirectUri: string; codePromise: Promise<OAuthCallbackResult>; shutdown: () => void } {
+): Promise<{ redirectUri: string; codePromise: Promise<OAuthCallbackResult>; shutdown: () => void }> {
   // Support legacy call signature: startOAuthCallbackServer(state, timeoutMs)
   const opts: OAuthCallbackServerOptions = typeof optionsOrState === 'string'
     ? { expectedState: optionsOrState, timeoutMs }
@@ -133,24 +138,29 @@ export function startOAuthCallbackServer(
     cleanup();
   });
 
-  // Surface listen failures (EADDRINUSE on fixed-port providers when a
-  // previous flow is still pending) as a rejected flow instead of an
-  // unhandled 'error' event crashing the process.
+  // Listen on the configured port (0 = random) on loopback, and wait for the
+  // 'listening' event so the bound port is actually known. Listen failures
+  // (EADDRINUSE on fixed-port providers when a previous flow is still
+  // pending) reject here, surfacing as a failed flow instead of an unhandled
+  // 'error' event crashing the process.
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once('error', (err) => {
+      rejectListen(new Error(`OAuth callback server failed to listen on port ${ listenPort }: ${ err.message }`));
+    });
+    server.listen(listenPort, '127.0.0.1', () => {
+      server.removeAllListeners('error');
+      resolveListen();
+    });
+  });
+
+  // Post-listen errors surface through the flow promise.
   server.on('error', (err) => {
     rejectFn(new Error(`OAuth callback server error: ${ err.message }`));
     cleanup();
   });
 
-  // Listen on the configured port (0 = random) on loopback
-  server.listen(listenPort, '127.0.0.1');
-  // server.address() is null until the async 'listening' event fires, so it
-  // cannot be read synchronously after listen(). For fixed-port providers
-  // (e.g. the Codex OAuth app's hardcoded redirect_uri) the port is known up
-  // front — use it directly so the redirect_uri is correct.
   const address = server.address();
-  const port = listenPort !== 0
-    ? listenPort
-    : (typeof address === 'object' && address ? address.port : 0);
+  const port = typeof address === 'object' && address ? address.port : listenPort;
   const redirectUri = `http://${ hostname }:${ port }${ callbackPath }`;
 
   const timeoutHandle = setTimeout(() => {
