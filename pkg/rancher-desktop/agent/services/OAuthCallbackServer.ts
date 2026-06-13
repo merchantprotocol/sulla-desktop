@@ -133,10 +133,24 @@ export function startOAuthCallbackServer(
     cleanup();
   });
 
+  // Surface listen failures (EADDRINUSE on fixed-port providers when a
+  // previous flow is still pending) as a rejected flow instead of an
+  // unhandled 'error' event crashing the process.
+  server.on('error', (err) => {
+    rejectFn(new Error(`OAuth callback server error: ${ err.message }`));
+    cleanup();
+  });
+
   // Listen on the configured port (0 = random) on loopback
   server.listen(listenPort, '127.0.0.1');
+  // server.address() is null until the async 'listening' event fires, so it
+  // cannot be read synchronously after listen(). For fixed-port providers
+  // (e.g. the Codex OAuth app's hardcoded redirect_uri) the port is known up
+  // front — use it directly so the redirect_uri is correct.
   const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : 0;
+  const port = listenPort !== 0
+    ? listenPort
+    : (typeof address === 'object' && address ? address.port : 0);
   const redirectUri = `http://${ hostname }:${ port }${ callbackPath }`;
 
   const timeoutHandle = setTimeout(() => {

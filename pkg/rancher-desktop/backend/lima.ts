@@ -2632,8 +2632,11 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
           this.progressTracker.action('Installing image scanner', 50, this.installTrivy()),
           this.progressTracker.action('Installing credential helper', 50, this.installCredentialHelper()),
           this.progressTracker.action('Installing sulla CLI', 50, this.installSullaCli()),
-          this.progressTracker.action('Verifying Claude Code CLI install', 50, this.ensureClaudeBinaryInstalled()),
-          this.progressTracker.action('Verifying Codex CLI install', 50, this.ensureCodexBinaryInstalled()),
+          // Chained, not parallel: both slow paths run `npm install -g` into
+          // the same /mnt/data/npm-global prefix, and concurrent global
+          // installs race on the shared lib/bin trees.
+          this.progressTracker.action('Verifying agent CLI installs', 50,
+            this.ensureClaudeBinaryInstalled().then(() => this.ensureCodexBinaryInstalled())),
           this.progressTracker.action('Configuring Claude Code', 50, this.installClaudeCode()),
           this.progressTracker.action('Installing threat-scanning proxy', 50, this.installThreatProxy()),
         ];

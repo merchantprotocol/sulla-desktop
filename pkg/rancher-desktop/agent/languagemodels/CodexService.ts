@@ -168,7 +168,9 @@ export class CodexService extends BaseLanguageModel {
       const dir = path.join(paths.sullaHome, 'workspaces', 'attachments');
       fs.mkdirSync(dir, { recursive: true });
 
-      const filename = `attachment-${ Date.now() }.${ ext }`;
+      // Random suffix: two image blocks in one message save within the same
+      // millisecond, and Date.now() alone would overwrite the first.
+      const filename = `attachment-${ Date.now() }-${ crypto.randomBytes(4).toString('hex') }.${ ext }`;
       const filepath = path.join(dir, filename);
       fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
 
@@ -236,6 +238,10 @@ export class CodexService extends BaseLanguageModel {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
       if (b.type === 'text' && typeof b.text === 'string') return b.text;
+      if (b.type === 'image' && b?.source?.type === 'base64') {
+        const savedPath = this.saveImageAttachment(b);
+        return savedPath ? `[Image attached — read it at: ${ savedPath }]` : '';
+      }
       if (b.type === 'tool_use') {
         const name = b.name ?? 'tool';
         const input = b.input ? JSON.stringify(b.input) : '';
@@ -279,11 +285,15 @@ export class CodexService extends BaseLanguageModel {
    * + high-priority memories) is sent on the first turn and again only when
    * its content changes; per-turn recall/observation context always rides
    * along when present.
+   *
+   * Returns the stable-tier hash alongside the prefix; the caller commits it
+   * to lastStableContextHash only after a successful run, so changed context
+   * isn't marked "delivered" when the spawn fails.
    */
   private async buildUserMessageContextPrefix(
     state: BaseThreadState | undefined,
     opts: { convId: string; isNewSession: boolean },
-  ): Promise<string> {
+  ): Promise<{ prefix: string; stableHash: string }> {
     const stableParts: string[] = [];
 
     stableParts.push(`<platform_context>
@@ -292,7 +302,7 @@ You are operating inside Sulla Desktop — an autonomous agentic platform built 
 Rules that apply on every turn:
 - Execute tasks — don't describe what you would do, do it with tools
 - Use the Sulla CLI (\`sulla <category>/<tool>\`) for all platform operations
-- Scheduling → Sulla Workflows (\`sulla workflow/import_workflow\`), never cron
+- Scheduling → Sulla Workflows (\`sulla workflow/import_workflow\`), never CronCreate or cron
 - Git/GitHub → \`sulla github/git_push\` / \`sulla github/git_pull\`, never SSH or raw curl
 - Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
 - Recurring tasks become workflows, not one-off commands
@@ -325,7 +335,6 @@ Rules that apply on every turn:
     if (opts.isNewSession || this.lastStableContextHash.get(opts.convId) !== stableHash) {
       parts.push(stableText);
     }
-    this.lastStableContextHash.set(opts.convId, stableHash);
 
     // Recall context from subconscious middleware (may be null on first turn)
     const recallContext = (state?.metadata as any)?.recallContext;
@@ -339,8 +348,8 @@ Rules that apply on every turn:
       parts.push(`<observation_context>\n${ observationContext.trim() }\n</observation_context>`);
     }
 
-    if (parts.length === 0) return '';
-    return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;
+    if (parts.length === 0) return { prefix: '', stableHash };
+    return { prefix: `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`, stableHash };
   }
 
   /**
@@ -379,7 +388,7 @@ Rules that apply on every turn:
       throw new Error(`Codex got no extractable prompt from ${ messages.length } messages (roles=${ roles })`);
     }
 
-    const contextPrefix = await this.buildUserMessageContextPrefix(options.state, {
+    const { prefix: contextPrefix, stableHash } = await this.buildUserMessageContextPrefix(options.state, {
       convId,
       isNewSession: !existingSession,
     });
@@ -401,10 +410,17 @@ Rules that apply on every turn:
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     // Refresh ~/.codex/AGENTS.md with the full system prompt before spawning.
-    // AGENTS.md is the sole source of system context for codex.
-    import('../prompts/generateCodexMemoryFile').then(({ generateCodexMemoryFile }) => {
-      generateCodexMemoryFile().catch(() => {});
-    }).catch(() => {});
+    // AGENTS.md is the sole source of system context for codex. On a NEW
+    // session the write must land before the spawn — codex reads the file at
+    // startup, and a seed turn launched without it runs unconfigured for the
+    // lifetime of the thread (resume only sends the latest user message).
+    // Resume turns tolerate a stale file, so they don't pay the build latency.
+    const memoryFileWrite = import('../prompts/generateCodexMemoryFile')
+      .then(({ generateCodexMemoryFile }) => generateCodexMemoryFile())
+      .catch(() => {});
+    if (!existingSession) {
+      await memoryFileWrite;
+    }
 
     // The prompt is fed via stdin (`-` positional), NOT as an argv element —
     // a large transcript on the command line overflows limactl's SSH
@@ -448,27 +464,13 @@ Rules that apply on every turn:
         proc.stdin.end();
       } catch { /* stdin already closed */ }
 
-      // Heartbeat ticker — keeps the renderer informed during the cold-start
-      // gap between spawn and the first event. Cleared on first real stream
-      // event or close/error/abort.
-      let heartbeatTimer: NodeJS.Timeout | null = null;
-      const directActivity = (msg: string) => {
+      const emitActivity = (msg: string) => {
         if (!msg) return;
         try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
       };
-      const stopHeartbeat = () => {
-        if (heartbeatTimer) {
-          clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-        }
-      };
 
       proc.once('spawn', () => {
-        directActivity('Booting isolated environment…');
-        heartbeatTimer = setInterval(() => {
-          // Transient status only — tool activities and agent messages
-          // provide the real feedback once the stream starts.
-        }, 3000);
+        emitActivity('Booting isolated environment…');
       });
 
       let stdoutBuffer = '';
@@ -478,9 +480,9 @@ Rules that apply on every turn:
       let capturedSessionId: string | undefined = existingSession;
       let errored = false;
       let errorMessage = '';
+      let lastUsage: any = null;
 
       const onAbort = () => {
-        stopHeartbeat();
         // 1) Kill the host-side limactl process (closes the SSH session; with
         //    `exec` in the inner shell the remote codex usually gets SIGHUP).
         try { proc.kill('SIGTERM') } catch { /* already dead */ }
@@ -506,11 +508,6 @@ Rules that apply on every turn:
         if (options.signal.aborted) onAbort();
         else options.signal.addEventListener('abort', onAbort);
       }
-
-      const emitActivity = (msg: string) => {
-        if (!msg) return;
-        try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
-      };
 
       const pretty = (s: string) => s.length > 80 ? `${ s.slice(0, 77) }…` : s;
 
@@ -566,13 +563,11 @@ Rules that apply on every turn:
         // ── Thread-event schema (codex exec --json) ──────────────
         if (typeof parsed.type === 'string') {
           if (parsed.type === 'thread.started' && parsed.thread_id) {
-            stopHeartbeat();
             capturedSessionId = parsed.thread_id;
             emitActivity('Session started — calling model');
             return;
           }
           if (parsed.type === 'item.started' || parsed.type === 'item.completed') {
-            stopHeartbeat();
             const item = parsed.item ?? {};
             const kind = item.item_type ?? item.type;
             if (kind === 'agent_message' && parsed.type === 'item.completed') {
@@ -590,7 +585,9 @@ Rules that apply on every turn:
             return;
           }
           if (parsed.type === 'turn.completed') {
-            recordUsage(parsed.usage, this.getModel()).catch(() => { /* ignore */ });
+            // Recorded once on close — codex can emit several usage events
+            // per run (one per model call) and each carries cumulative totals.
+            lastUsage = parsed.usage;
             return;
           }
           if (parsed.type === 'turn.failed') {
@@ -612,12 +609,10 @@ Rules that apply on every turn:
 
         switch (msg.type) {
         case 'session_configured':
-          stopHeartbeat();
           if (msg.session_id) capturedSessionId = msg.session_id;
           emitActivity('Session started — calling model');
           break;
         case 'agent_message_delta':
-          stopHeartbeat();
           if (typeof msg.delta === 'string') {
             sawDelta = true;
             textCollected += msg.delta;
@@ -625,17 +620,16 @@ Rules that apply on every turn:
           }
           break;
         case 'agent_message':
-          stopHeartbeat();
           appendAgentMessage(typeof msg.message === 'string' ? msg.message : '');
           break;
         case 'exec_command_begin': {
-          stopHeartbeat();
           const cmd = Array.isArray(msg.command) ? msg.command.join(' ') : String(msg.command ?? '');
           emitActivity(cmd ? `$ ${ pretty(cmd) }` : 'Running a shell command');
           break;
         }
         case 'token_count':
-          recordUsage(msg.info?.total_token_usage ?? msg.info, this.getModel()).catch(() => { /* ignore */ });
+          // Cumulative running total — keep the latest, record once on close.
+          lastUsage = msg.info?.total_token_usage ?? msg.info;
           break;
         case 'task_complete':
           if (typeof msg.last_agent_message === 'string' && !textCollected.trim()) {
@@ -643,8 +637,13 @@ Rules that apply on every turn:
           }
           break;
         case 'error':
-        case 'stream_error':
           errored = true;
+          if (typeof msg.message === 'string' && msg.message) errorMessage = msg.message;
+          break;
+        case 'stream_error':
+          // Retryable — codex retries the model stream internally and the
+          // turn can still succeed. Keep the message for context in case the
+          // process later exits non-zero, but don't mark the run failed.
           if (typeof msg.message === 'string' && msg.message) errorMessage = msg.message;
           break;
         default:
@@ -669,21 +668,32 @@ Rules that apply on every turn:
       });
 
       proc.on('error', (err) => {
-        stopHeartbeat();
         options.signal?.removeEventListener('abort', onAbort);
         reject(err);
       });
 
       proc.on('close', (code) => {
-        stopHeartbeat();
         options.signal?.removeEventListener('abort', onAbort);
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
 
-        // Resume failure (expired/missing thread) — drop the cached id and
-        // retry once with a fresh session so the user doesn't see a dead end.
+        // Binary missing — checked BEFORE the resume heuristic: sh's
+        // "codex: not found" must not be mistaken for a dead thread (and the
+        // session must survive so the conversation resumes once codex is
+        // re-provisioned).
+        if (code === 127) {
+          reject(new Error('codex CLI is not installed in the VM yet. Restart Sulla Desktop to re-provision, or run: npm install --prefix /mnt/data/npm-global -g @openai/codex'));
+          return;
+        }
+
+        // Resume failure (expired/missing thread, or an older codex without
+        // the `exec resume` subcommand) — drop the cached id and retry once
+        // with a fresh session so the user doesn't see a dead end. The match
+        // deliberately omits generic words like 'session'/'not found':
+        // limactl's SSH-mux noise ("mux_client_request_session ... Broken
+        // pipe") lands in stderr and must not wipe a valid thread.
         const resumeFailed = existingSession && !retryWithoutSession &&
           (errored || code !== 0) &&
-          /thread|session|resume|rollout|not found/i.test(`${ errorMessage } ${ stderrBuffer }`);
+          /thread|rollout|conversation|resume/i.test(`${ errorMessage } ${ stderrBuffer.slice(-500) }`);
         if (resumeFailed) {
           log.warn(`[CodexService] Resume of "${ existingSession }" failed; retrying with a fresh session for conversationId=${ convId }`);
           this.deleteSession(convId).catch(() => {});
@@ -698,11 +708,6 @@ Rules that apply on every turn:
           this.setSession(convId, capturedSessionId).catch(() => {});
         }
 
-        if (code === 127) {
-          reject(new Error('codex CLI is not installed in the VM yet. Restart Sulla Desktop to re-provision, or run: npm install --prefix /mnt/data/npm-global -g @openai/codex'));
-          return;
-        }
-
         if (errored || (code !== 0 && !textCollected.trim())) {
           const msg = errorMessage || stderrBuffer.trim().slice(-200) || `codex exited with code ${ code }`;
           log.warn(`[CodexService] runCodex errored: ${ msg.slice(0, 200) }`);
@@ -715,6 +720,13 @@ Rules that apply on every turn:
           log.warn(`[CodexService] runCodex exited with no text (code=${ code }) stderr=${ stderrTail }`);
           reject(new Error(`Codex returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials and VM status.' }`));
           return;
+        }
+
+        // Success: commit the stable-context hash (the context was actually
+        // delivered) and record this run's final usage snapshot.
+        this.lastStableContextHash.set(convId, stableHash);
+        if (lastUsage) {
+          recordUsage(lastUsage, this.getModel()).catch(() => { /* ignore */ });
         }
 
         log.log(`[CodexService] runCodex ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);

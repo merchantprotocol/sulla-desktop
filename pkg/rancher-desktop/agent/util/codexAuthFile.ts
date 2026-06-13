@@ -65,6 +65,14 @@ export function writeCodexAuthFile(tokens: OAuthTokenSet): boolean {
   }
 }
 
+/** Delete ~/.codex/auth.json — called when the codex integration is
+ *  disconnected so the CLI stops authenticating with revoked credentials. */
+export function removeCodexAuthFile(): void {
+  try {
+    fs.unlinkSync(codexAuthPath());
+  } catch { /* already gone */ }
+}
+
 /**
  * Make sure ~/.codex/auth.json exists, rebuilding it from the stored OAuth
  * token row when missing (fresh install, wiped home dir). The file is the
@@ -75,12 +83,27 @@ export async function ensureCodexAuthFile(): Promise<boolean> {
   if (fs.existsSync(codexAuthPath())) return true;
   try {
     const { getOAuthService } = await import('../services/OAuthService');
-    const stored = await getOAuthService().getStoredTokens('codex');
-    if (!stored?.raw_response) return false;
-    const tokens = (typeof stored.raw_response === 'string'
-      ? JSON.parse(stored.raw_response)
-      : stored.raw_response) as OAuthTokenSet;
-    return writeCodexAuthFile(tokens);
+    const oauthService = getOAuthService();
+
+    // The UI's OAuth connect flow stores tokens under account id 'oauth';
+    // older/headless flows use 'default'. Prefer the integration's active
+    // account when one is set.
+    const accountIds = ['oauth', 'default'];
+    try {
+      const { getIntegrationService } = await import('../services/IntegrationService');
+      const active = await getIntegrationService().getActiveAccountId('codex');
+      if (active && !accountIds.includes(active)) accountIds.unshift(active);
+    } catch { /* fall back to the known account ids */ }
+
+    for (const accountId of accountIds) {
+      const stored = await oauthService.getStoredTokens('codex', accountId);
+      if (!stored?.raw_response) continue;
+      const tokens = (typeof stored.raw_response === 'string'
+        ? JSON.parse(stored.raw_response)
+        : stored.raw_response) as OAuthTokenSet;
+      if (writeCodexAuthFile(tokens)) return true;
+    }
+    return false;
   } catch (err) {
     console.warn('[codexAuthFile] Could not rebuild auth.json from stored tokens:', err);
     return false;

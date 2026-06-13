@@ -98,16 +98,11 @@ export const nativeAiInfrastructureIntegrations: Record<string, Integration> = {
     oauth:           true,
     oauthProviderId: 'codex',
     formGuide:       'Sign in with ChatGPT to run Codex on your ChatGPT Plus/Pro plan. Usage draws from your subscription quota, not metered API billing.',
-    properties:      [
-      {
-        key:         'model',
-        title:       'Model',
-        hint:        'Codex chooses its own model by default; this field is informational.',
-        type:        'text',
-        required:    false,
-        placeholder: 'codex',
-      },
-    ],
+    // No 'model' form property on purpose: ModelProviderService.loadStateFromDB
+    // treats the provider's 'model' form value as activeModelId, so a free-text
+    // field here would end up passed to `codex exec --model` verbatim. Model
+    // selection happens through the model picker (getModelsForProvider).
+    properties:      [],
   },
 
   grok: {

@@ -141,8 +141,12 @@ class LLMRegistryImpl {
     const activeModelId = mps
       ? mps.getActiveModelId()
       : await SullaSettingsModel.get('activeModelId', '');
-    // 'claude-code' / 'codex' sentinels mean "auto" — omit the override so the CLI picks freely.
-    const modelOverride = activeModelId && activeModelId !== 'claude-code' && activeModelId !== 'codex' ? activeModelId : undefined;
+    // CLI-agent providers use their own provider id as the "auto" sentinel
+    // model id (see ModelProviderService.getModelsForProvider) — omit the
+    // override so the CLI picks freely. Comparing against providerId instead
+    // of a literal list keeps a model genuinely named e.g. 'codex' on some
+    // other provider working.
+    const modelOverride = activeModelId && activeModelId !== providerId ? activeModelId : undefined;
     return this.getServiceByProvider(providerId, modelOverride);
   }
 

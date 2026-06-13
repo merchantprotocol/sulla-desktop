@@ -9,7 +9,7 @@
 
 import { OAuthProvider, type OAuthProviderConfig, type OAuthTokenSet } from '../OAuthProvider';
 import { registerOAuthProvider } from '../registry';
-import { writeCodexAuthFile } from '../../../util/codexAuthFile';
+import { removeCodexAuthFile, writeCodexAuthFile } from '../../../util/codexAuthFile';
 
 class CodexOAuthProvider extends OAuthProvider {
   readonly config: OAuthProviderConfig = {
@@ -43,6 +43,13 @@ class CodexOAuthProvider extends OAuthProvider {
       const { resetCodexService } = await import('../../../languagemodels/CodexService');
       resetCodexService();
     } catch { /* non-critical */ }
+  }
+
+  override async onTokensRevoked(): Promise<void> {
+    // Disconnect must actually stop authentication — the CLI would otherwise
+    // keep using (and self-refreshing) the leftover auth file forever.
+    removeCodexAuthFile();
+    console.log('[CodexOAuth] ~/.codex/auth.json removed');
   }
 }
 

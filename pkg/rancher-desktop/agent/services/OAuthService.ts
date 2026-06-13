@@ -392,6 +392,15 @@ export class OAuthService {
     const integrationService = getIntegrationService();
     await integrationService.setConnectionStatus(integrationId, false, accountId);
 
+    // Let the provider clean up credential state it materialized outside the
+    // DB (e.g. CodexOAuth's ~/.codex/auth.json) so disconnect actually stops
+    // authentication.
+    try {
+      await provider?.onTokensRevoked();
+    } catch (err) {
+      console.warn(`${ LOG_PREFIX } provider onTokensRevoked failed (non-fatal):`, err);
+    }
+
     console.log(`${ LOG_PREFIX } Tokens removed for ${ integrationId }/${ accountId }`);
   }
 
