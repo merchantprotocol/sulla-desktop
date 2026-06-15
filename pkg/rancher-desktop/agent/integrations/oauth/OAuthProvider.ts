@@ -69,6 +69,15 @@ export interface OAuthProviderConfig {
    * Defaults to '/oauth/callback' if not specified.
    */
   fixedCallbackPath?:    string;
+  /**
+   * If true, present the authorization page inside an embedded Electron
+   * BrowserWindow owned by Sulla Desktop instead of handing off to the user's
+   * default system browser. Required for providers whose credentials must be
+   * captured in-app and materialized for an in-VM consumer (e.g. the `codex`
+   * CLI reading ~/.codex/auth.json): an external browser would complete the
+   * handshake outside Sulla and the in-VM tool would never receive the result.
+   */
+  openInEmbeddedWindow?: boolean;
 }
 
 /**

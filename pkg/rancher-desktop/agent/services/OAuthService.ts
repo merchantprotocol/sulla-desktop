@@ -4,7 +4,7 @@
 
 import crypto from 'crypto';
 
-import { shell } from 'electron';
+import { BrowserWindow, shell } from 'electron';
 
 import { getIntegrationService } from './IntegrationService';
 import { startOAuthCallbackServer } from './OAuthCallbackServer';
@@ -110,16 +110,29 @@ export class OAuthService {
     });
     console.log(`${ LOG_PREFIX } Callback server listening at ${ redirectUri }`);
 
+    let authWindow: BrowserWindow | null = null;
+
     try {
       // Build authorize URL
       const authorizeUrl = this.buildAuthorizeUrl(cfg, effectiveClientId, redirectUri, state, extraScopes, codeChallenge);
-      console.log(`${ LOG_PREFIX } Opening browser for authorization...`);
 
-      // Open in user's default browser
-      await shell.openExternal(authorizeUrl);
+      if (cfg.openInEmbeddedWindow) {
+        // Render the sign-in page inside Sulla Desktop rather than handing off
+        // to the host's default browser. Required for providers whose tokens
+        // are materialized for an in-VM consumer (e.g. Codex's
+        // ~/.codex/auth.json) — an external browser would finish the handshake
+        // outside Sulla and the in-VM tool would never see the credentials.
+        console.log(`${ LOG_PREFIX } Opening embedded auth window for ${ cfg.name }...`);
+        authWindow = this.openEmbeddedAuthWindow(authorizeUrl, cfg.name);
+      } else {
+        console.log(`${ LOG_PREFIX } Opening browser for authorization...`);
+        await shell.openExternal(authorizeUrl);
+      }
 
-      // Wait for the user to complete authorization
-      const { code } = await codePromise;
+      // Wait for the user to complete authorization. The localhost callback
+      // server captures the code regardless of which browser rendered the page;
+      // when we own the window, also treat the user closing it as a cancel.
+      const { code } = await this.awaitAuthorizationCode(codePromise, authWindow);
       console.log(`${ LOG_PREFIX } Received authorization code`);
 
       // Exchange code for tokens
@@ -143,7 +156,66 @@ export class OAuthService {
     } catch (err) {
       shutdown();
       throw err;
+    } finally {
+      // Always tear down the in-app window we opened — on success (after the
+      // brief callback "you can close this" page) and on any error/cancel.
+      if (authWindow && !authWindow.isDestroyed()) {
+        authWindow.destroy();
+      }
     }
+  }
+
+  // ── Embedded auth window (in-app browser) ─────────────────────
+
+  /** Open the authorize URL in a Sulla-owned Electron window. */
+  private openEmbeddedAuthWindow(url: string, providerName: string): BrowserWindow {
+    const win = new BrowserWindow({
+      width:           820,
+      height:          720,
+      title:           `Sign in — ${ providerName }`,
+      autoHideMenuBar: true,
+      webPreferences:  {
+        nodeIntegration:  false,
+        contextIsolation: true,
+        sandbox:          true,
+      },
+    });
+    void win.loadURL(url);
+    return win;
+  }
+
+  /**
+   * Resolve with the captured auth code. When an embedded window is in use,
+   * a manual close of that window rejects as a user cancellation so the flow
+   * doesn't hang on a promise that will never resolve.
+   */
+  private awaitAuthorizationCode(
+    codePromise: Promise<{ code: string }>,
+    authWindow: BrowserWindow | null,
+  ): Promise<{ code: string }> {
+    if (!authWindow) {
+      return codePromise;
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      codePromise.then(
+        (res) => {
+          if (settled) return;
+          settled = true;
+          resolve(res);
+        },
+        (err) => {
+          if (settled) return;
+          settled = true;
+          reject(err);
+        },
+      );
+      authWindow.on('closed', () => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`${ LOG_PREFIX } Sign-in window closed before authorization completed`));
+      });
+    });
   }
 
   // ── Build authorize URL ───────────────────────────────────────
