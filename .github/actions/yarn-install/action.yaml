@@ -96,8 +96,12 @@ runs:
       # (visible on the public run page even without Actions:read).
       ann() { lvl="$1"; title="$2"; body=$(printf '%s' "$3" | tail -c 3200 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}'); echo "::${lvl} title=${title}::${body}"; }
       # Cache dirs @electron/get may stage the checksum-verified zip into.
+      # Restrict find to dirs that actually exist: under the runner's default
+      # `bash -eo pipefail`, find erroring on a missing dir (e.g. the Windows
+      # LOCALAPPDATA path on linux/mac) made `zipfile=$(find_zip)` abort the
+      # whole step right after install.js — before native extraction could run.
       caches="$HOME/.cache/electron $HOME/Library/Caches/electron ${LOCALAPPDATA:-/nonexistent}/electron/Cache"
-      find_zip() { find $caches -name 'electron-v*.zip' 2>/dev/null | head -1; }
+      find_zip() { for d in $caches; do [ -d "$d" ] && find "$d" -name 'electron-v*.zip' 2>/dev/null; done | head -1 || true; }
       # Extract the checksum-verified zip with the platform's OWN tool.
       # electron's bundled JS extractor (extract-zip) intermittently drops
       # files mid-extract on the hosted runners — leaving dist/ with a single
