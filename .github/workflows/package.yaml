@@ -15,6 +15,10 @@ defaults:
 jobs:
   package:
     strategy:
+      # One platform's intermittent electron-extract failure must not cancel
+      # the others — without this, a single unlucky runner nukes all four
+      # legs and produces zero artifacts. Each platform stands on its own.
+      fail-fast: false
       matrix:
         include:
         - platform: mac
