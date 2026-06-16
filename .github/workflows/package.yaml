@@ -15,6 +15,10 @@ defaults:
 jobs:
   package:
     strategy:
+      # One platform's intermittent electron-extract failure must not cancel
+      # the others — without this, a single unlucky runner nukes all four
+      # legs and produces zero artifacts. Each platform stands on its own.
+      fail-fast: false
       matrix:
         include:
         - platform: mac
@@ -24,7 +28,12 @@ jobs:
           arch: aarch64
           runs-on: macos-latest
         - platform: win
-          runs-on: windows-latest
+          # Pinned: windows-latest drifted to an image with VS 18, which the
+          # bundled node-gyp reports as version "undefined" and rejects ("could
+          # not find VS 2017 or newer") — failing native-addon compiles. VS 2022
+          # on windows-2022 is node-gyp-recognized. (Durable follow-up: upgrade
+          # node-gyp instead of pinning the runner.)
+          runs-on: windows-2022
         - platform: linux
           runs-on: ubuntu-22.04
     runs-on: ${{ matrix.runs-on }}

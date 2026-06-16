@@ -92,56 +92,53 @@ runs:
       set -o pipefail
       log="${RUNNER_TEMP}/electron-install.log"
       verify() { node -e "require('./node_modules/electron')" >/dev/null 2>&1; }
+      # Emit a multi-line blob as a single GitHub ::<level>:: annotation
+      # (visible on the public run page even without Actions:read).
+      ann() { lvl="$1"; title="$2"; body=$(printf '%s' "$3" | tail -c 3200 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}'); echo "::${lvl} title=${title}::${body}"; }
+      # Cache dirs @electron/get may stage the checksum-verified zip into.
+      # Restrict find to dirs that actually exist: under the runner's default
+      # `bash -eo pipefail`, find erroring on a missing dir (e.g. the Windows
+      # LOCALAPPDATA path on linux/mac) made `zipfile=$(find_zip)` abort the
+      # whole step right after install.js — before native extraction could run.
+      caches="$HOME/.cache/electron $HOME/Library/Caches/electron ${LOCALAPPDATA:-/nonexistent}/electron/Cache"
+      find_zip() { for d in $caches; do [ -d "$d" ] && find "$d" -name 'electron-v*.zip' 2>/dev/null; done | head -1 || true; }
+      # Extract the checksum-verified zip with the platform's OWN tool.
+      # electron's bundled JS extractor (extract-zip) intermittently drops
+      # files mid-extract on the hosted runners — leaving dist/ with a single
+      # file (linux) or an empty Electron.app (mac) yet exiting 0. The native
+      # tools don't have that bug: ditto keeps the app-bundle symlinks on
+      # macOS, Info-ZIP unzip keeps modes on Linux, 7z covers Windows.
+      native_extract() {
+        rm -rf node_modules/electron/dist; mkdir -p node_modules/electron/dist
+        case "$(uname -s)" in
+          Darwin) ditto -x -k "$1" node_modules/electron/dist && printf 'Electron.app/Contents/MacOS/Electron' > node_modules/electron/path.txt ;;
+          Linux)  command -v unzip >/dev/null 2>&1 || { echo "unzip missing — installing"; sudo apt-get update -qq && sudo apt-get install -y -qq unzip; }
+                  unzip -q -o "$1" -d node_modules/electron/dist && printf electron > node_modules/electron/path.txt ;;
+          *)      7z x -y "-onode_modules/electron/dist" "$1" >/dev/null && printf electron.exe > node_modules/electron/path.txt ;;
+        esac
+      }
       for attempt in 1 2 3; do
         echo "::group::electron install attempt ${attempt}"
+        # Re-download fresh each attempt: a cache hit on a previously
+        # truncated/poisoned zip would only reproduce the same broken dist.
+        # install.js re-fetches AND re-verifies the SHA-256 checksum.
+        rm -rf $caches node_modules/electron/dist node_modules/electron/path.txt
         node node_modules/electron/install.js 2>&1 | tee "$log" || true
-        if verify; then
-          echo "::endgroup::"
-          echo "electron install verified"
-          exit 0
-        fi
+        if verify; then echo "::endgroup::"; echo "electron verified via install.js (attempt ${attempt})"; exit 0; fi
         echo "::endgroup::"
-        msg=$( (tail -n 40 "$log"; echo "disk:"; df -h / | tail -1; echo "dist:"; ls -la node_modules/electron/dist/ 2>&1 | head -8) | tail -c 2800 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
-        echo "::warning title=electron install attempt ${attempt} unverified::${msg}"
-        rm -rf node_modules/electron/dist node_modules/electron/path.txt
-        if [ "${attempt}" -lt 3 ]; then
-          echo "Attempt ${attempt} unverified, retrying in 10s..."
-          sleep 10
+        # install.js left a bad dist; the downloaded zip is checksum-valid in
+        # cache — extract it natively right here instead of waiting it out.
+        zipfile=$(find_zip)
+        if [ -n "$zipfile" ]; then
+          echo "::group::native extraction (attempt ${attempt})"
+          native_extract "$zipfile" 2>&1 | tee -a "$log" || true
+          echo "::endgroup::"
+          if verify; then ann notice "electron install (native extract)" "install.js unverified; native extraction of ${zipfile} succeeded on attempt ${attempt}"; exit 0; fi
         fi
+        ann warning "electron install attempt ${attempt} unverified" "$(tail -n 25 "$log"; echo "zip: ${zipfile:-NONE FOUND}"; echo "dist:"; ls -la node_modules/electron/dist/ 2>&1 | head -10)"
+        [ "${attempt}" -lt 3 ] && sleep 10
       done
-      # Native-extractor fallback: the JS extractor (extract-zip) silently
-      # dies mid-extract on the hosted runners — observed identically on
-      # linux x64 (dist held one file) and mac arm64 (empty app scaffold).
-      # downloadArtifact caches the checksum-verified zip before extracting,
-      # so extract that zip with the platform's native tool instead:
-      # ditto preserves the app-bundle symlinks on macOS, Info-ZIP unzip
-      # preserves modes on Linux, 7z covers Windows.
-      zipfile=$(find "$HOME/.cache/electron" "$HOME/Library/Caches/electron" "${LOCALAPPDATA:-/nonexistent}/electron/Cache" -name 'electron-v*.zip' 2>/dev/null | head -1)
-      if [ -n "$zipfile" ]; then
-        echo "Falling back to native extraction of ${zipfile}"
-        rm -rf node_modules/electron/dist
-        mkdir -p node_modules/electron/dist
-        case "$(uname -s)" in
-          Darwin)
-            ditto -x -k "$zipfile" node_modules/electron/dist
-            printf 'Electron.app/Contents/MacOS/Electron' > node_modules/electron/path.txt
-            ;;
-          Linux)
-            unzip -q -o "$zipfile" -d node_modules/electron/dist
-            printf electron > node_modules/electron/path.txt
-            ;;
-          *)
-            7z x -y "-onode_modules/electron/dist" "$zipfile" >/dev/null
-            printf electron.exe > node_modules/electron/path.txt
-            ;;
-        esac
-        if verify; then
-          echo "::notice title=electron install::JS extractor unverified 3x; native extraction fallback succeeded"
-          exit 0
-        fi
-      fi
-      msg=$(tail -n 60 "$log" | tail -c 3500 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}')
-      echo "::error title=electron install failed (3 attempts + fallback)::${msg}"
+      ann error "electron install failed (3 attempts incl. native extract)" "$(tail -n 50 "$log"; echo "caches: $caches")"
       exit 1
 
   # Diagnostic probe: chrome-sandbox has been missing at the final step
