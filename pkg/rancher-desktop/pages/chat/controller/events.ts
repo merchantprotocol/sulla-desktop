@@ -23,6 +23,7 @@ export type ChatEvent =
   | { kind: 'memorySaved';        threadId: ThreadId; memoryId: string }
   | { kind: 'patchApplied';       threadId: ThreadId; messageId: MessageId }
   | { kind: 'toolApprovalResolved'; threadId: ThreadId; messageId: MessageId; approvalId: string; decision: 'approved' | 'denied'; note?: string }
+  | { kind: 'toolQuestionAnswered'; threadId: ThreadId; messageId: MessageId; questionId: string; answers: { question: string; selected: string[] }[] }
   | { kind: 'threadHydrated';     threadId: ThreadId }
   | { kind: 'threadSerialized';   threadId: ThreadId };
 

@@ -20,7 +20,7 @@ import type {
   Artifact, ArtifactKind, WorkflowPayload, HtmlPayload, CodePayload,
   Attachment,
   Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage, ToolMessage,
-  ToolApprovalMessage, PatchMessage, PatchRevertMeta, ChannelMessage, SubAgentMessage,
+  ToolApprovalMessage, ToolQuestionMessage, ToolQuestionAnswerItem, PatchMessage, PatchRevertMeta, ChannelMessage, SubAgentMessage,
   CitationMessage, MemoryMessage, ProactiveMessage, HtmlMessage, ErrorMessage,
   ModalState, ModelDescriptor, SidebarState, ConnectionState,
   PopoverState, SlashCommand, MentionTarget,
@@ -492,6 +492,29 @@ export class ChatController {
         approvalId: approvalMsg.approvalId,
         decision,
         note,
+      });
+    }
+  }
+
+  // ─── Tool question ──────────────────────────────────────────────
+  // Flips the transcript card's `status` to 'answered' and fans out a bus
+  // event so the adapter can forward the answer to the backend tool that's
+  // awaiting it (via ipcRenderer.invoke('question:resolve')). Mirrors the
+  // approval round-trip; the controller stays transport-free.
+  answerQuestion(id: MessageId, answers: ToolQuestionAnswerItem[]): void {
+    const msg = this.thread.value.messages.find(m => m.id === id);
+    if (!msg || msg.kind !== 'tool_question') return;
+    const qMsg = msg as ToolQuestionMessage;
+    if (qMsg.status !== 'pending') return;
+    this.updateMessage<ToolQuestionMessage>(id, { status: 'answered', answers });
+    this.transitionRun({ type: 'approvalResolved' });
+    if (qMsg.questionId) {
+      this.bus.emit({
+        kind:       'toolQuestionAnswered',
+        threadId:   this.thread.value.id,
+        messageId:  id,
+        questionId: qMsg.questionId,
+        answers:    answers.map(a => ({ question: a.question, selected: [...a.selected] })),
       });
     }
   }

@@ -72,6 +72,11 @@ export const defaultSettings = {
     // immediately, breaking the whole VM startup. Users can flip it off
     // in settings if they don't want sudo prompts.
     adminAccess: true,
+    // Gates the agent's access to the host machine's shell (the
+    // AppleScript→Terminal bridge and any host-exec path). Default OFF —
+    // running arbitrary host commands is powerful, so it's opt-in. When
+    // false, applescript_execute refuses Terminal and host-exec is blocked.
+    hostAccess:  false,
     debug:       false,
     extensions:  {
       allowed: {

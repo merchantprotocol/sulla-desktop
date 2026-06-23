@@ -75,6 +75,39 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./request_user_input'),
   },
   {
+    name:        'ask_user_question',
+    description: 'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min). Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question. Use when the next step depends on a decision only the user can make — picking between approaches, confirming an assumption, or supplying a missing detail. For a simple yes/no go-ahead, prefer request_user_input.',
+    category:    'meta',
+    schemaDef:   {
+      questions: {
+        type:        'array',
+        description: '1–4 questions to ask. Each renders as its own card with selectable options.',
+        items:       {
+          type:       'object',
+          properties: {
+            question:    { type: 'string', description: 'The full question text shown to the user.' },
+            header:      { type: 'string', description: 'Short label/chip shown above the question (≤ ~12 chars), e.g. "Auth method".' },
+            multiSelect: { type: 'boolean', description: 'Set true to let the user pick multiple options. Default false (single choice).' },
+            options:     {
+              type:        'array',
+              description: '2–4 distinct options the user can choose from.',
+              items:       {
+                type:       'object',
+                properties: {
+                  label:       { type: 'string', description: 'The option text the user selects.' },
+                  description: { type: 'string', description: 'Optional one-line explanation of what this option means or implies.' },
+                },
+              },
+            },
+          },
+        },
+      },
+      timeoutMs: { type: 'number', optional: true, description: 'Timeout in ms (min 5000, max 1800000, default 300000 = 5 min). On timeout resolves with no selection.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./ask_user_question'),
+  },
+  {
     name:        'file_search',
     description: 'Fast semantic search across any directory PLUS the bundled sulla-docs (agent + tool reference) by default. Faster and more comprehensive than find or grep — use this as your default search tool. Searches file contents and filenames using QMD vector indexing. Automatically indexes on first search. Pass includeSullaDocs:false to skip the sulla-docs second pass.',
     category:    'meta',

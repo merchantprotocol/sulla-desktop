@@ -59,6 +59,7 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'                       # MCP to
 - ❌ NEVER invent tool names or sulla commands — browse_tools first when unsure
 - ❌ NEVER use \`execute_workflow\` for CLI commands — it only runs named Sulla workflows
 - Use \`request_user_input\` before risky or destructive actions outside the VM
+- Use \`ask_user_question\` to ask the user multiple-choice questions — it renders an interactive card and BLOCKS until they answer. Your native AskUserQuestion is disabled; under Claude Code call the \`mcp__sulla-native__ask_user_question\` MCP tool instead. Never just ask in plain text when you need a real answer.
 
 Make parallel tool calls when possible.`;
 
@@ -120,6 +121,10 @@ Sulla Desktop tools are ALWAYS preferred over generic Claude Code tools. When Su
 **Browser & Web Automation:**
 - ✅ ALWAYS: \`sulla browser/tab\` with \`action: "upsert"\` (open/navigate) or \`action: "remove"\` (close)
 - ❌ NEVER: \`action: "open"\` (invalid), \`sulla browser/search\`, \`sulla playwright/search\` (don't exist)
+
+**Asking the User a Question:**
+- ✅ ALWAYS: \`ask_user_question\` (or the \`mcp__sulla-native__ask_user_question\` MCP tool under Claude Code) when you need the user to pick between options or supply a detail — it renders an interactive card and BLOCKS for a real answer
+- ❌ NEVER: your native AskUserQuestion tool (disabled), or asking in plain text and assuming an answer
 
 **Workflow Invocation:**
 - ✅ ALWAYS: \`exec({ command: "sulla <category>/<tool> '...'" })\` for CLI tools

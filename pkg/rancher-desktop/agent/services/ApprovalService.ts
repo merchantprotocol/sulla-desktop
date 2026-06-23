@@ -45,6 +45,39 @@ export interface ApprovalDecision {
   note?:    string;
 }
 
+// ─── Question types ─────────────────────────────────────────────
+// A richer sibling of the binary approval gate: the agent poses one or
+// more multiple-choice questions and the user picks options (or types a
+// free-form "Other"). Same park/resolve primitive, separate map and
+// resolution shape. Used by the `ask_user_question` tool (in-process) and
+// the `ask_user_question` MCP tool (claude-code's inner loop).
+
+export interface UserQuestionOption {
+  label:        string;
+  description?: string;
+}
+
+export interface UserQuestion {
+  question:     string;
+  /** Short chip/label rendered above the question. */
+  header?:      string;
+  /** When true the user may pick multiple options. */
+  multiSelect?: boolean;
+  options:      UserQuestionOption[];
+}
+
+export interface UserQuestionAnswerItem {
+  /** Echo of the question text (so callers can correlate without index). */
+  question: string;
+  /** Selected option labels and/or free-text the user typed. */
+  selected: string[];
+}
+
+export interface UserQuestionResolution {
+  status:  'answered' | 'timed_out';
+  answers: UserQuestionAnswerItem[];
+}
+
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 interface PendingEntry {
@@ -54,11 +87,18 @@ interface PendingEntry {
   createdAt: number;
 }
 
+interface PendingQuestionEntry {
+  resolve:   (resolution: UserQuestionResolution) => void;
+  timer:     ReturnType<typeof setTimeout>;
+  createdAt: number;
+}
+
 // ─── Service ────────────────────────────────────────────────────
 
 export class ApprovalService {
   private static _instance: ApprovalService | null = null;
   private readonly pending = new Map<string, PendingEntry>();
+  private readonly pendingQuestions = new Map<string, PendingQuestionEntry>();
 
   static getInstance(): ApprovalService {
     if (!this._instance) this._instance = new ApprovalService();
@@ -116,8 +156,62 @@ export class ApprovalService {
     return true;
   }
 
+  // ─── Questions ──────────────────────────────────────────────────
+
+  /** Generate a fresh question id. Callers embed this in the
+   *  ToolQuestionMessage they emit so the renderer can bounce the user's
+   *  answer back to `resolveQuestion()`. */
+  newQuestionId(): string {
+    const rand = Math.random().toString(36).slice(2, 10);
+    return `quest_${ Date.now() }_${ rand }`;
+  }
+
+  /** Park a pending question promise. Timeout resolves as `timed_out`
+   *  with no answers — the caller should treat that as "user didn't pick". */
+  parkQuestion(questionId: string, timeoutMs: number = DEFAULT_TIMEOUT_MS): Promise<UserQuestionResolution> {
+    const existing = this.pendingQuestions.get(questionId);
+    if (existing) {
+      clearTimeout(existing.timer);
+      existing.resolve({ status: 'timed_out', answers: [] });
+      this.pendingQuestions.delete(questionId);
+    }
+
+    return new Promise<UserQuestionResolution>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.pendingQuestions.delete(questionId)) {
+          resolve({ status: 'timed_out', answers: [] });
+        }
+      }, timeoutMs);
+
+      this.pendingQuestions.set(questionId, {
+        resolve,
+        timer,
+        createdAt: Date.now(),
+      });
+    });
+  }
+
+  /**
+   * Settle a pending question with the user's answers. Returns true when
+   * the id matched an outstanding question, false otherwise (stale / double
+   * submit / already timed out).
+   */
+  resolveQuestion(questionId: string, answers: UserQuestionAnswerItem[]): boolean {
+    const entry = this.pendingQuestions.get(questionId);
+    if (!entry) return false;
+    clearTimeout(entry.timer);
+    this.pendingQuestions.delete(questionId);
+    entry.resolve({ status: 'answered', answers });
+    return true;
+  }
+
   /** Test / debug helper. Not for production call-sites. */
   pendingCount(): number {
     return this.pending.size;
+  }
+
+  /** Test / debug helper. Not for production call-sites. */
+  pendingQuestionCount(): number {
+    return this.pendingQuestions.size;
   }
 }

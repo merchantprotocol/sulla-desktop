@@ -1,6 +1,39 @@
 import { BaseTool, ToolResponse } from '../base';
+import { HOST_ACCESS_DISABLED_MESSAGE, isHostAccessEnabled } from '../util/hostAccess';
 import { runCommand } from '../util/CommandRunner';
 import { broadcastComputerUseSettingsChanged } from './_broadcast';
+
+/** Terminal-emulator targets that give an agent a host shell. Driving these
+ *  is "host machine access" and is gated by the application.hostAccess
+ *  setting — unlike Mail/Notes/Calendar automation, which is not. */
+const TERMINAL_EMULATOR_APPS = new Set(['terminal', 'iterm2', 'iterm']);
+
+/**
+ * Rewrite a Terminal `do script` bridge invocation so it (1) reuses a single
+ * window instead of spawning a fresh one every call, and (2) does not steal
+ * focus. Bare `do script "<cmd>"` always opens a NEW window; appending
+ * `in window 1` (with an exists-guard) reuses the existing one. Stripping
+ * `activate` keeps Terminal from jumping to the foreground / switching Spaces.
+ */
+export function rewriteTerminalScriptForReuse(script: string): string {
+  let s = script;
+
+  // Drop standalone `activate` lines so Terminal doesn't grab focus.
+  s = s.replace(/^[ \t]*activate[ \t]*\r?\n/gim, '');
+
+  // Match `do script "<quoted>"` only when it's the whole statement (no
+  // existing `in <window/tab>` clause after the string), so we never touch
+  // a command that already targets a window or one containing the word "in".
+  const bareDoScript = /\bdo\s+script\s+("(?:[^"\\]|\\.)*")(\s*)(?=\r?\n|$)/gi;
+  if (bareDoScript.test(s)) {
+    bareDoScript.lastIndex = 0;
+    s = s.replace(bareDoScript, 'do script $1 in window 1$2');
+    // Ensure a window exists before we target `window 1`.
+    s = s.replace(/(tell\s+application\s+"Terminal"\s*\r?\n)/i, '$1if (count of windows) is 0 then reopen\n');
+  }
+
+  return s;
+}
 
 /**
  * AppleScript Execute Tool — dynamically runs AppleScript to control
@@ -24,6 +57,16 @@ export class ApplescriptExecuteWorker extends BaseTool {
       return {
         successBoolean: false,
         responseString:  'Both target_app and script are required.',
+      };
+    }
+
+    // ── Host-access gate ────────────────────────────────────────
+    // Driving a terminal emulator via osascript is a host shell escape.
+    // Block it unless the user has enabled host machine access.
+    if (TERMINAL_EMULATOR_APPS.has(String(target_app).toLowerCase()) && !isHostAccessEnabled()) {
+      return {
+        successBoolean: false,
+        responseString:  HOST_ACCESS_DISABLED_MESSAGE,
       };
     }
 
@@ -83,10 +126,16 @@ export class ApplescriptExecuteWorker extends BaseTool {
       }
     }
 
+    // ── Single-window / no-focus-steal rewrite for the Terminal bridge ──
+    let effectiveScript = script;
+    if (String(target_app).toLowerCase() === 'terminal') {
+      effectiveScript = rewriteTerminalScriptForReuse(script);
+    }
+
     // ── Execute ─────────────────────────────────────────────────
     const startedMs = Date.now();
     try {
-      const res = await runCommand('osascript', ['-e', script], {
+      const res = await runCommand('osascript', ['-e', effectiveScript], {
         timeoutMs:      10000,
         maxOutputChars: 100_000,
       });

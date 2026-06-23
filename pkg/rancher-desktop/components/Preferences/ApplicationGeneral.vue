@@ -37,6 +37,9 @@ export default defineComponent({
     isSudoAllowed(): boolean {
       return this.preferences?.application?.adminAccess ?? false;
     },
+    isHostAccessAllowed(): boolean {
+      return this.preferences?.application?.hostAccess ?? false;
+    },
     canAutoUpdate(): boolean {
       return this.preferences?.application.updater.enabled ?? false;
     },
@@ -62,6 +65,12 @@ export default defineComponent({
         :value="isSudoAllowed"
         :is-locked="isPreferenceLocked('application.adminAccess')"
         @update:value="onChange('application.adminAccess', $event)"
+      />
+      <rd-checkbox
+        label="Allow access to the host machine (run host shell commands & Terminal)"
+        :value="isHostAccessAllowed"
+        :is-locked="isPreferenceLocked('application.hostAccess')"
+        @update:value="onChange('application.hostAccess', $event)"
       />
     </rd-fieldset>
     <rd-fieldset

@@ -20,6 +20,7 @@
   <Thinking        v-else-if="msg.kind === 'thinking'"  :msg="msg" />
   <ToolCall        v-else-if="msg.kind === 'tool'"      :msg="msg" />
   <ToolApproval    v-else-if="msg.kind === 'tool_approval'" :msg="msg" />
+  <ToolQuestion    v-else-if="msg.kind === 'tool_question'" :msg="msg" />
   <PatchBlock      v-else-if="msg.kind === 'patch'"     :msg="msg" />
   <ChannelMessage  v-else-if="msg.kind === 'channel'"   :msg="msg" />
   <SubAgentBubble  v-else-if="msg.kind === 'subagent'"  :msg="msg" />
@@ -42,6 +43,7 @@ import TurnInterim     from './TurnInterim.vue';
 import Thinking        from '../thinking/Thinking.vue';
 import ToolCall        from '../tool/ToolCall.vue';
 import ToolApproval    from '../tool/ToolApproval.vue';
+import ToolQuestion    from '../tool/ToolQuestion.vue';
 import PatchBlock      from '../patch/PatchBlock.vue';
 import ChannelMessage  from '../channel/ChannelMessage.vue';
 import SubAgentBubble  from '../subagent/SubAgentBubble.vue';

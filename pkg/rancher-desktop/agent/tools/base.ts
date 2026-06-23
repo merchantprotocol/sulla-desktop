@@ -12,7 +12,7 @@ export interface ToolMetadata extends Record<string, unknown> {
 
 type FieldType = 'string' | 'number' | 'boolean' | 'enum' | 'array' | 'object';
 
-interface FieldSchema {
+export interface FieldSchema {
   type:         FieldType;
   enum?:        string[];
   items?:       FieldSchema;
@@ -23,7 +23,7 @@ interface FieldSchema {
   nullable?:    boolean;
 }
 
-type InputSchemaDef = Record<string, FieldSchema>;
+export type InputSchemaDef = Record<string, FieldSchema>;
 
 type ParsedInput = Record<string, unknown>;
 

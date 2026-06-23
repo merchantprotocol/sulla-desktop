@@ -81,6 +81,7 @@ export default class SettingsValidator {
       version:     this.checkUnchanged,
       application: {
         adminAccess: this.checkLima(this.checkBoolean),
+        hostAccess:  this.checkBoolean,
         debug:       this.checkBoolean,
         extensions:  {
           allowed: {
