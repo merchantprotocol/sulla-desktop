@@ -254,6 +254,41 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     return;
   }
 
+  // Tool question: a backend tool (in-process `ask_user_question` or the
+  // MCP `ask_user_question`) parked a pending question via ApprovalService
+  // and emitted this message so the user can choose. Content is empty by
+  // design — the questions live on `toolQuestion`. When the user answers in
+  // the transcript, the renderer fires the `question:resolve` IPC back to
+  // main, which settles the pending promise the tool is awaiting.
+  if (kindRaw === 'tool_question') {
+    const tq = data?.toolQuestion && typeof data.toolQuestion === 'object' ? data.toolQuestion as any : null;
+    const questionId = typeof tq?.questionId === 'string' ? tq.questionId.trim() : '';
+    const rawQuestions = Array.isArray(tq?.questions) ? tq.questions : [];
+    const questions = rawQuestions.map((q: any) => ({
+      question:    typeof q?.question === 'string' ? q.question : '',
+      header:      typeof q?.header === 'string' ? q.header : undefined,
+      multiSelect: q?.multiSelect === true,
+      options:     Array.isArray(q?.options)
+        ? q.options.map((o: any) => ({
+          label:       typeof o?.label === 'string' ? o.label : '',
+          description: typeof o?.description === 'string' ? o.description : undefined,
+        })).filter((o: any) => o.label)
+        : [],
+    })).filter((q: any) => q.question && q.options.length > 0);
+    if (!questionId || questions.length === 0) return;
+
+    ctx.messages.push({
+      id:        `${ Date.now() }_ws_tool_question_${ questionId }`,
+      channelId: agentId,
+      threadId:  msgThreadId,
+      role:      'assistant',
+      kind:      'tool_question',
+      content:   '',
+      toolQuestion: { questionId, questions },
+    });
+    return;
+  }
+
   // Proactive card: a backend emitter (workflow completion, sub-agent
   // async completion, heartbeat insight) is reaching out unprompted to
   // the user. Content carries the body; `data.headline` carries the
@@ -611,6 +646,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     message.channelMeta = {
       senderId:      typeof data?.senderId === 'string' ? data.senderId : 'unknown',
       senderChannel: typeof data?.senderChannel === 'string' ? data.senderChannel : '',
+      fromThreadId:  typeof data?.fromThreadId === 'string' ? data.fromThreadId : undefined,
+      toThreadId:    typeof data?.toThreadId === 'string' ? data.toThreadId : undefined,
     };
   }
 

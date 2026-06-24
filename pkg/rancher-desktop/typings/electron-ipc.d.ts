@@ -417,6 +417,14 @@ export interface IpcMainInvokeEvents {
     note?:      string;
   }) => { settled: boolean; reason?: string };
 
+  // Question gate — renderer resolves a pending user-question request that a
+  // backend tool (in-process ask_user_question or the MCP twin) parked via
+  // ApprovalService.parkQuestion.
+  'question:resolve': (payload: {
+    questionId: string;
+    answers:    { question: string; selected: string[] }[];
+  }) => { settled: boolean; reason?: string };
+
   // User-defined function catalog (scanned from ~/sulla/functions/<slug>/function.yaml)
   'functions-list': () => {
     slug:         string;

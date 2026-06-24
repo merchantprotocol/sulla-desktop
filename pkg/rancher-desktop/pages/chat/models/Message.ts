@@ -15,6 +15,7 @@ export type MessageKind =
   | 'thinking'
   | 'tool'
   | 'tool_approval'
+  | 'tool_question'
   | 'patch'
   | 'channel'       // message from another agent (Heartbeat, Workbench, Mobile)
   | 'subagent'      // sub-agent activity
@@ -97,6 +98,34 @@ export interface ToolApprovalMessage extends MessageBase {
   approvalId?: string;
   /** Optional origin tag — tool / workflow / vault / function / etc. */
   origin?:     { kind: string; [field: string]: unknown };
+}
+
+// ─── Tool question (multiple choice) ──────────────────────────────
+export interface ToolQuestionOption {
+  label:        string;
+  description?: string;
+}
+export interface ToolQuestionItem {
+  question:     string;
+  header?:      string;
+  multiSelect?: boolean;
+  options:      readonly ToolQuestionOption[];
+}
+/** One element of the user's answer — the selected option labels (and/or
+ *  free-form text) for a single question. */
+export interface ToolQuestionAnswerItem {
+  question: string;
+  selected: readonly string[];
+}
+export interface ToolQuestionMessage extends MessageBase {
+  kind:        'tool_question';
+  questions:   readonly ToolQuestionItem[];
+  status:      'pending' | 'answered' | 'timed_out';
+  /** Round-trip id sent back on answer so the backend's parked promise
+   *  (ApprovalService.parkQuestion) can settle. */
+  questionId?: string;
+  /** Populated once the user answers — mirrors what was sent back. */
+  answers?:    readonly ToolQuestionAnswerItem[];
 }
 
 // ─── Patch ────────────────────────────────────────────────────────
@@ -204,6 +233,7 @@ export type Message =
   | ThinkingMessage
   | ToolMessage
   | ToolApprovalMessage
+  | ToolQuestionMessage
   | PatchMessage
   | ChannelMessage
   | SubAgentMessage

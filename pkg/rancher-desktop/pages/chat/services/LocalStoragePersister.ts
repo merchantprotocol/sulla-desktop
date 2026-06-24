@@ -20,15 +20,26 @@ const TAB_KEY = (tabId: string) => `chat:tab:${ tabId }`;
 export class LocalStoragePersister implements ThreadPersister {
   save(state: ThreadState): void {
     try {
-      localStorage.setItem(KEY(state.thread.id), JSON.stringify(state));
+      // Compute the JSON-safe representation ONCE and reuse it for both sinks.
+      // JSON.stringify silently drops functions / Vue proxies / non-plain
+      // values; the IPC structured-clone algorithm THROWS on them instead
+      // ("An object could not be cloned"). Passing the raw reactive `state`
+      // over IPC failed whenever a message carried such a field — e.g. a
+      // channel message from another agent — even though the localStorage
+      // write below succeeded on the same data. Sending the parsed JSON-safe
+      // object makes the DB backup persist exactly what localStorage stores,
+      // so it can never choke on an un-cloneable field.
+      const json = JSON.stringify(state);
+      localStorage.setItem(KEY(state.thread.id), json);
       const index = this.readIndex();
       if (!index.includes(state.thread.id)) {
         index.unshift(state.thread.id);
         localStorage.setItem(INDEX_KEY, JSON.stringify(index));
       }
 
-      // Also save to database via IPC (fire-and-forget)
-      ipcRenderer.invoke('chat-messages:save', state.thread.id, state)
+      // Also save to database via IPC (fire-and-forget). Send the JSON-safe
+      // plain object, NOT the reactive state, so structured-clone can't fail.
+      ipcRenderer.invoke('chat-messages:save', state.thread.id, JSON.parse(json))
         .catch(err => console.error('[LocalStoragePersister] DB backup save failed:', err));
     } catch (e) { console.error('[LocalStoragePersister] save failed:', e); }
   }

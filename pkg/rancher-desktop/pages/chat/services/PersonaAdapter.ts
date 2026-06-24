@@ -21,7 +21,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import type { ChatController } from '../controller/ChatController';
 import type { Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
-  ToolMessage, ToolApprovalMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
+  ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
   PatchMessage, PatchHunk, ProactiveMessage,
 } from '../models/Message';
 import type { Attachment } from '../models/Attachment';
@@ -130,6 +130,18 @@ export class PersonaAdapter {
       }).catch(err => console.warn('[PersonaAdapter] approval:resolve failed', err));
     });
     this.stopWatchers.push(unsubscribeApproval);
+
+    // Question bridge — when the user answers a ToolQuestion card, the
+    // controller fires a `toolQuestionAnswered` bus event. Forward it to
+    // main via the `question:resolve` IPC so the backend tool awaiting the
+    // answer unblocks. Same shape as the approval bridge above.
+    const unsubscribeQuestion = this.controller.on('toolQuestionAnswered', (ev) => {
+      void ipcRenderer.invoke('question:resolve', {
+        questionId: ev.questionId,
+        answers:    ev.answers,
+      }).catch(err => console.warn('[PersonaAdapter] question:resolve failed', err));
+    });
+    this.stopWatchers.push(unsubscribeQuestion);
 
     // Speak bridge — the low-latency speak listener on the persona is the
     // canonical path for TTS. We forward every speak payload to a window
@@ -392,6 +404,20 @@ export class PersonaAdapter {
         approvalId: b.toolApproval.approvalId,
         origin:     b.toolApproval.origin,
       } satisfies ToolApprovalMessage;
+    }
+
+    // Tool question — ApprovalService parked a pending question on the
+    // backend and emitted this message. The user picks options in the
+    // ToolQuestion card; ChatController.answerQuestion fires the
+    // `question:resolve` IPC with the `questionId` so the backend tool's
+    // awaited promise settles. Status starts 'pending' on first seen.
+    if (b.kind === 'tool_question' && b.toolQuestion) {
+      return {
+        id, kind: 'tool_question', createdAt,
+        questionId: b.toolQuestion.questionId,
+        questions:  b.toolQuestion.questions,
+        status:     'pending',
+      } satisfies ToolQuestionMessage;
     }
 
     // Tool card

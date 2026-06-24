@@ -517,6 +517,12 @@ Rules that apply on every turn:
       '--verbose',
       '--include-partial-messages',
       '--dangerously-skip-permissions',
+      // Disable Claude's built-in AskUserQuestion. In headless `-p` mode it
+      // can't render an interactive prompt or pause for a real answer, so it
+      // would silently no-op. Disallowing it forces Claude to reciprocate
+      // through the sulla-native `ask_user_question` MCP tool, which DOES
+      // round-trip to the chat UI. See processLine for slip-through detection.
+      '--disallowedTools', 'AskUserQuestion',
     ];
     // Pass --model only when explicitly overridden (e.g. Sonnet for sub-agents).
     // Omitting the flag lets Claude Code use its own auto-selection (Opus for orchestration).
@@ -666,8 +672,23 @@ Rules that apply on every turn:
         case 'Task':
           if (typeof input.description === 'string') return `Task: ${ pretty(input.description) }`;
           return 'Spawning sub-task';
+        case 'AskUserQuestion':
+        case 'mcp__sulla-native__ask_user_question':
+          // The MCP twin emits its own interactive card via the WS bus; this
+          // is just the heartbeat line shown while the user is deciding.
+          return 'Asking you a question…';
         default:
           return `Using ${ name }`;
+        }
+      };
+
+      // Claude's native AskUserQuestion is disallowed on the CLI so it routes
+      // to the sulla-native MCP tool instead. If a native call ever slips
+      // through (CLI version change, flag ignored), log it loudly — the
+      // question would otherwise vanish into a headless no-op.
+      const noteIfNativeAsk = (name: string) => {
+        if (name === 'AskUserQuestion') {
+          log.warn('[ClaudeCodeService] native AskUserQuestion tool_use detected despite --disallowedTools — it will NOT round-trip. Claude should be using mcp__sulla-native__ask_user_question.');
         }
       };
 
@@ -771,7 +792,8 @@ Rules that apply on every turn:
           if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
             stopHeartbeat();
             const name = ev.content_block.name ?? 'tool';
-            emitActivity(`Using ${ name }…`);
+            noteIfNativeAsk(name);
+            emitActivity(activityForToolUse(name, ev.content_block.input));
             return;
           }
 
@@ -799,6 +821,7 @@ Rules that apply on every turn:
           const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
           for (const b of blocks) {
             if (b?.type === 'tool_use' && b.name) {
+              noteIfNativeAsk(b.name);
               emitActivity(activityForToolUse(b.name, b.input));
               emitFilePatch(b.name, b.input);
             }

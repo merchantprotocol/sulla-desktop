@@ -39,7 +39,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 
+import { ApprovalService } from '@pkg/agent/services/ApprovalService';
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
+import {
+  clampTimeout,
+  emitQuestionCardViaWs,
+  formatQuestionResolution,
+  normalizeQuestions,
+} from '@pkg/agent/tools/meta/askUserQuestionShared';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
@@ -340,6 +347,65 @@ export class MCPServerHost {
         return {
           content: [{ type: 'text' as const, text: result.responseString }],
           isError: !result.ok,
+        };
+      },
+    );
+
+    // ask_user_question — the bridge for Claude Code's interactive "ask the
+    // user" need. Claude's own native AskUserQuestion is disallowed on the
+    // CLI (see ClaudeCodeService), so when Claude wants to ask the user it
+    // reciprocates through THIS tool. The handler runs in the main process,
+    // emits the same `tool_question` card the in-process tool does, and
+    // BLOCKS on the same ApprovalService promise — the MCP HTTP request stays
+    // open until the user answers, so the round-trip works even though the
+    // CLI itself is headless.
+    server.registerTool(
+      'ask_user_question',
+      {
+        description: [
+          'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the Sulla chat (or the timeout elapses).',
+          'Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question.',
+          'Use this WHENEVER you would otherwise ask the user a question or need them to choose between options — it is the only way your question reaches the human and pauses for a real answer.',
+        ].join(' '),
+        inputSchema: {
+          questions: z.array(z.object({
+            question:    z.string().describe('The full question text shown to the user.'),
+            header:      z.string().optional().describe('Short label/chip shown above the question (≤ ~12 chars).'),
+            multiSelect: z.boolean().optional().describe('Set true to let the user pick multiple options. Default false.'),
+            options:     z.array(z.object({
+              label:       z.string().describe('The option text the user selects.'),
+              description: z.string().optional().describe('Optional one-line explanation of this option.'),
+            })).describe('2–4 distinct options the user can choose from.'),
+          })).describe('1–4 questions to ask the user.'),
+          timeoutMs: z.number().optional().describe('Timeout in ms (min 5000, max 1800000, default 300000 = 5 min).'),
+        },
+      },
+      async ({ questions, timeoutMs }) => {
+        const { questions: normalized, error } = normalizeQuestions({ questions });
+        if (error) {
+          return { content: [{ type: 'text' as const, text: error }], isError: true };
+        }
+
+        const clamped = clampTimeout(timeoutMs);
+        const approvals = ApprovalService.getInstance();
+        const questionId = approvals.newQuestionId();
+
+        const emitted = await emitQuestionCardViaWs(
+          session.state.metadata.wsChannel,
+          session.state.metadata.threadId,
+          questionId,
+          normalized,
+        );
+        if (!emitted) {
+          return {
+            content: [{ type: 'text' as const, text: 'Failed to surface the question card to the user — chat channel not ready.' }],
+            isError: true,
+          };
+        }
+
+        const resolution = await approvals.parkQuestion(questionId, clamped);
+        return {
+          content: [{ type: 'text' as const, text: formatQuestionResolution(normalized, resolution, clamped) }],
         };
       },
     );

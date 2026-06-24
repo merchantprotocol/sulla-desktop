@@ -6,6 +6,16 @@
  *   <channel:heartbeat>Are you online?</channel:heartbeat>
  *   <channel:workbench>Update task #42</channel:workbench>
  *
+ * Optional action modifiers in the opening tag:
+ *   <channel:heartbeat wake>body</channel:heartbeat>
+ *     → displays message + sends user_message to trigger a new agent turn
+ *   <channel:heartbeat interrupt>body</channel:heartbeat>
+ *     → aborts the target's running turn, then wakes with the body
+ *
+ * Without a modifier the message is display-only (chat_message, current
+ * behaviour). With wake or interrupt, a user_message is also sent so the
+ * target agent actually executes.
+ *
  * Lifecycle per LLM call:
  *   • processChunk: strips any fully-closed channel blocks from the visible
  *     stream and dispatches each to its target channel via IpcMessageBus.
@@ -13,10 +23,6 @@
  *     never leaks into the chat bubble.
  *   • processComplete: final sweep over the full content — catches any
  *     blocks that were split across chunk boundaries.
- *
- * Fire-and-forget: we do NOT wait for a reply. If the target agent
- * responds, its reply arrives on the sender's channel via the regular
- * channel_message path.
  */
 
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -26,12 +32,13 @@ import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
 // ─── Regex ──────────────────────────────────────────────────────
 
-// Matches the whole block (DOTALL). Group 1 = channel name, Group 2 = body.
-const CHANNEL_BLOCK_RE = /<channel:([\w.-]+)>([\s\S]*?)<\/channel:[\w.-]+>/gi;
+// Matches the whole block (DOTALL).
+// Group 1 = channel name, Group 2 = optional attribute string, Group 3 = body.
+const CHANNEL_BLOCK_RE = /<channel:([\w.-]+)([^>]*)>([\s\S]*?)<\/channel:[\w.-]+>/gi;
 
 // Matches a partial opening tag mid-stream, so we can truncate the
 // streamed buffer before the tag surfaces in the chat bubble.
-const CHANNEL_OPEN_PARTIAL_RE = /<channel:[\w.-]*$|<channel:[\w.-]+>[\s\S]*$/i;
+const CHANNEL_OPEN_PARTIAL_RE = /<channel:[\w.-]*$|<channel:[\w.-]+[^>]*>[\s\S]*$/i;
 
 export class ChannelTagExtractor implements Extractor {
   readonly name = 'channel';
@@ -55,13 +62,13 @@ export class ChannelTagExtractor implements Extractor {
     let visible = this.buffer;
 
     // 1) Dispatch + strip any fully-closed channel blocks.
-    visible = visible.replace(CHANNEL_BLOCK_RE, (_full, name: string, body: string) => {
+    visible = visible.replace(CHANNEL_BLOCK_RE, (_full, name: string, attrs: string, body: string) => {
       const target = String(name).trim().toLowerCase();
       const text = String(body).trim();
       const key = `${ target }::${ text }`;
       if (!text || this.dispatchedBodies.has(key)) return '';
       this.dispatchedBodies.add(key);
-      this.dispatchChannel(ctx, target, text);
+      this.dispatchChannel(ctx, target, text, String(attrs));
       return '';
     });
 
@@ -91,19 +98,19 @@ export class ChannelTagExtractor implements Extractor {
   processComplete(reply: NormalizedResponse, ctx: StreamContext): string {
     // Final sweep on the full response — catches blocks that straddled
     // chunk boundaries during streaming.
-    reply.content = reply.content.replace(CHANNEL_BLOCK_RE, (_full, name: string, body: string) => {
+    reply.content = reply.content.replace(CHANNEL_BLOCK_RE, (_full, name: string, attrs: string, body: string) => {
       const target = String(name).trim().toLowerCase();
       const text = String(body).trim();
       const key = `${ target }::${ text }`;
       if (text && !this.dispatchedBodies.has(key)) {
         this.dispatchedBodies.add(key);
-        this.dispatchChannel(ctx, target, text);
+        this.dispatchChannel(ctx, target, text, String(attrs));
       }
       return '';
     });
 
-    // Also strip any unclosed opening tag leftover.
-    reply.content = reply.content.replace(/<channel:[\w.-]+>[\s\S]*$/i, '').trim();
+    // Also strip any unclosed opening tag leftover (including attribute variants).
+    reply.content = reply.content.replace(/<channel:[\w.-]+[^>]*>[\s\S]*$/i, '').trim();
 
     return reply.content;
   }
@@ -115,12 +122,28 @@ export class ChannelTagExtractor implements Extractor {
 
   // ─── Internal ───────────────────────────────────────────────
 
-  private dispatchChannel(ctx: StreamContext, targetChannel: string, body: string): void {
+  private dispatchChannel(ctx: StreamContext, targetChannel: string, body: string, attrs: string): void {
     try {
       const senderChannel = ctx.channel || (ctx.state as any)?.metadata?.wsChannel || 'unknown';
       const senderId = senderChannel;
+      const isWake = /\bwake\b/i.test(attrs);
+      const isInterrupt = /\binterrupt\b/i.test(attrs);
+
+      // fromThreadId — the sender's current conversation thread.
+      // toThreadId  — the thread on the sender's channel that expects the reply.
+      //   For outgoing messages: this is the thread that should receive replies.
+      //   For incoming wake responses: the receiver's ChannelTagExtractor reads
+      //   state.metadata.replyToThread (set by BackendGraphWebSocketService when
+      //   processing a wake user_message) and echoes it here.
+      const fromThreadId: string = ctx.threadId || '';
+      const replyToThread: string = (ctx.state as any)?.metadata?.replyToThread || '';
+      // toThreadId is the thread that should receive the reply — if this agent
+      // was woken by someone else, reply to their thread; otherwise no specific target.
+      const toThreadId: string = replyToThread || fromThreadId || '';
 
       const ws = getWebSocketClientService();
+
+      // Always send a display-only message so the body appears in the target's UI.
       void ws.send(targetChannel, {
         type: 'chat_message',
         data: {
@@ -129,10 +152,37 @@ export class ChannelTagExtractor implements Extractor {
           role:          'assistant',
           senderId,
           senderChannel,
+          fromThreadId:  fromThreadId || undefined,
+          toThreadId:    toThreadId   || undefined,
         },
       });
 
-      console.log(`[ChannelTagExtractor] routed → channel="${ targetChannel }" from="${ senderChannel }" chars=${ body.length }`);
+      // interrupt: abort any running turn first.
+      if (isInterrupt) {
+        void ws.send(targetChannel, {
+          type: 'stop_run',
+          data: { reason: `interrupted by ${ senderChannel }` },
+        });
+      }
+
+      // wake or interrupt: send user_message to trigger execution with thread context.
+      if (isWake || isInterrupt) {
+        void ws.send(targetChannel, {
+          type: 'user_message',
+          data: {
+            content:  body,
+            metadata: {
+              source:        'channel_wake',
+              senderId,
+              senderChannel,
+              replyToThread: fromThreadId || undefined,
+            },
+          },
+        });
+      }
+
+      const action = isInterrupt ? 'interrupt+wake' : isWake ? 'wake' : 'message';
+      console.log(`[ChannelTagExtractor] routed → channel="${ targetChannel }" from="${ senderChannel }" action=${ action } fromThread=${ fromThreadId.slice(-8) } toThread=${ toThreadId.slice(-8) } chars=${ body.length }`);
     } catch (err) {
       console.warn('[ChannelTagExtractor] dispatch failed:', err);
     }

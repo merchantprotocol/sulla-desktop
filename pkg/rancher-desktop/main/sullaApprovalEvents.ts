@@ -4,14 +4,16 @@
  *   approval:resolve → settle a pending approval promise in the main
  *                      process. Fired from the renderer when the user
  *                      clicks approve/deny on a ToolApproval card.
+ *   question:resolve → settle a pending question promise. Fired from the
+ *                      renderer when the user answers a ToolQuestion card.
  *
- * Returns `{ settled: boolean }` — `false` when the approvalId didn't
- * match an outstanding request (already resolved, already timed out,
- * double-clicked, etc.). The renderer should treat either outcome as
- * "decision recorded" — the UI-side decision flip is authoritative for
- * the transcript; this handler just releases the blocked backend tool.
+ * Returns `{ settled: boolean }` — `false` when the id didn't match an
+ * outstanding request (already resolved, already timed out, double-clicked,
+ * etc.). The renderer should treat either outcome as "decision recorded" —
+ * the UI-side flip is authoritative for the transcript; these handlers just
+ * release the blocked backend tool.
  */
-import { ApprovalService } from '@pkg/agent/services/ApprovalService';
+import { ApprovalService, type UserQuestionAnswerItem } from '@pkg/agent/services/ApprovalService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -30,6 +32,25 @@ export function initSullaApprovalEvents(): void {
     }
 
     const settled = ApprovalService.getInstance().resolve(approvalId, decision, note);
+    return { settled };
+  });
+
+  ipcMainProxy.handle('question:resolve', async(_event: unknown, payload: { questionId?: string; answers?: unknown }) => {
+    const questionId = typeof payload?.questionId === 'string' ? payload.questionId.trim() : '';
+    if (!questionId) return { settled: false, reason: 'missing questionId' };
+
+    // Sanitize the answers array — { question, selected[] } items only.
+    const rawAnswers = Array.isArray(payload?.answers) ? payload.answers : [];
+    const answers: UserQuestionAnswerItem[] = rawAnswers
+      .map((a: any) => ({
+        question: typeof a?.question === 'string' ? a.question : '',
+        selected: Array.isArray(a?.selected)
+          ? a.selected.filter((s: any) => typeof s === 'string' && s.trim()).map((s: string) => s.trim())
+          : [],
+      }))
+      .filter((a: UserQuestionAnswerItem) => a.selected.length > 0);
+
+    const settled = ApprovalService.getInstance().resolveQuestion(questionId, answers);
     return { settled };
   });
 }

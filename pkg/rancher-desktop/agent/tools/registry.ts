@@ -330,7 +330,7 @@ export class ToolRegistry {
    * cannot render its prompt card or pause the loop when run via the CLI.
    */
   static readonly SLIM_PRIMARY_TOOL_NAMES = [
-    'browse_tools', 'exec', 'read_file', 'write_file', 'request_user_input',
+    'browse_tools', 'exec', 'read_file', 'write_file', 'request_user_input', 'ask_user_question',
   ];
 
   /** Resolve the slim native set to LLM schemas, skipping any unregistered names. */

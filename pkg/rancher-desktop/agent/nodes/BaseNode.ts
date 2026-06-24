@@ -1105,6 +1105,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             }
           }
         }
+
+        // Always advertise ask_user_question to the primary agent regardless
+        // of tool mode or agent allowlist. It renders an interactive card and
+        // pauses the loop until the user answers — every model should be able
+        // to ask the user a structured question. Deduped against whatever's
+        // already present (e.g. when an allowlist already includes it).
+        if (!llmTools.some((t: any) => t?.function?.name === 'ask_user_question')) {
+          const askDef = await toolRegistry.convertToolToLLM('ask_user_question');
+          if (askDef) llmTools.push(askDef);
+        }
       }
     }
 
@@ -1688,7 +1698,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // `extras` with intentionally empty content. Don't drop them here —
     // the renderer needs them to close bubbles or render cards.
     const isSentinelKind = kind === 'streaming_complete' || kind === 'thinking_complete';
-    const isStructuredKind = kind === 'citation' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'file_patch';
+    const isStructuredKind = kind === 'citation' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'tool_question' || kind === 'file_patch';
     if (!content && !isSentinelKind && !isStructuredKind) {
       return false;
     }

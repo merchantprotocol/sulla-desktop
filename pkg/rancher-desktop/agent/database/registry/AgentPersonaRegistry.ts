@@ -10,7 +10,7 @@ export interface ChatMessage {
   threadId?: string;
   role:      'user' | 'assistant' | 'error' | 'system';
   content:   string;
-  kind?:     'text' | 'tool' | 'tool_approval' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive';
+  kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive';
   image?: {
     dataUrl:      string;
     alt?:         string;
@@ -35,6 +35,8 @@ export interface ChatMessage {
   channelMeta?: {
     senderId:      string;
     senderChannel: string;
+    fromThreadId?: string;
+    toThreadId?:   string;
   };
   workflowNode?: {
     workflowRunId: string;
@@ -88,6 +90,20 @@ export interface ChatMessage {
     reason:     string;
     command:    string;
     origin?:    { kind: string; [field: string]: unknown };
+  };
+  /** Multiple-choice question surfaced as an interactive ToolQuestion card.
+   *  Populated when a backend tool (in-process `ask_user_question`) or the
+   *  MCP `ask_user_question` tool calls `ApprovalService.parkQuestion()` and
+   *  needs the user to pick before the promise settles. The `questionId`
+   *  round-trips back via the `question:resolve` IPC when the user answers. */
+  toolQuestion?: {
+    questionId: string;
+    questions:  Array<{
+      question:     string;
+      header?:      string;
+      multiSelect?: boolean;
+      options:      Array<{ label: string; description?: string }>;
+    }>;
   };
   /**
    * Full routine document published by the `workflow/display` tool to
