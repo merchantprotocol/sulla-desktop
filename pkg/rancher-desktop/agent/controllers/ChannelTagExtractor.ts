@@ -129,6 +129,18 @@ export class ChannelTagExtractor implements Extractor {
       const isWake = /\bwake\b/i.test(attrs);
       const isInterrupt = /\binterrupt\b/i.test(attrs);
 
+      // fromThreadId — the sender's current conversation thread.
+      // toThreadId  — the thread on the sender's channel that expects the reply.
+      //   For outgoing messages: this is the thread that should receive replies.
+      //   For incoming wake responses: the receiver's ChannelTagExtractor reads
+      //   state.metadata.replyToThread (set by BackendGraphWebSocketService when
+      //   processing a wake user_message) and echoes it here.
+      const fromThreadId: string = ctx.threadId || '';
+      const replyToThread: string = (ctx.state as any)?.metadata?.replyToThread || '';
+      // toThreadId is the thread that should receive the reply — if this agent
+      // was woken by someone else, reply to their thread; otherwise no specific target.
+      const toThreadId: string = replyToThread || fromThreadId || '';
+
       const ws = getWebSocketClientService();
 
       // Always send a display-only message so the body appears in the target's UI.
@@ -140,6 +152,8 @@ export class ChannelTagExtractor implements Extractor {
           role:          'assistant',
           senderId,
           senderChannel,
+          fromThreadId:  fromThreadId || undefined,
+          toThreadId:    toThreadId   || undefined,
         },
       });
 
@@ -151,7 +165,7 @@ export class ChannelTagExtractor implements Extractor {
         });
       }
 
-      // wake or interrupt: send user_message to trigger execution.
+      // wake or interrupt: send user_message to trigger execution with thread context.
       if (isWake || isInterrupt) {
         void ws.send(targetChannel, {
           type: 'user_message',
@@ -161,13 +175,14 @@ export class ChannelTagExtractor implements Extractor {
               source:        'channel_wake',
               senderId,
               senderChannel,
+              replyToThread: fromThreadId || undefined,
             },
           },
         });
       }
 
       const action = isInterrupt ? 'interrupt+wake' : isWake ? 'wake' : 'message';
-      console.log(`[ChannelTagExtractor] routed → channel="${ targetChannel }" from="${ senderChannel }" action=${ action } chars=${ body.length }`);
+      console.log(`[ChannelTagExtractor] routed → channel="${ targetChannel }" from="${ senderChannel }" action=${ action } fromThread=${ fromThreadId.slice(-8) } toThread=${ toThreadId.slice(-8) } chars=${ body.length }`);
     } catch (err) {
       console.warn('[ChannelTagExtractor] dispatch failed:', err);
     }

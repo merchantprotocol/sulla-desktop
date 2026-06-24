@@ -35,6 +35,8 @@ export interface ChatMessage {
   channelMeta?: {
     senderId:      string;
     senderChannel: string;
+    fromThreadId?: string;
+    toThreadId?:   string;
   };
   workflowNode?: {
     workflowRunId: string;

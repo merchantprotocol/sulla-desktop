@@ -331,6 +331,12 @@ export class BackendGraphWebSocketService {
       // Reset each dispatch so keyboard messages don't inherit a prior voice flag.
       (state.metadata as any).inputSource = inputSource || 'keyboard';
 
+      // Inter-agent wake: propagate replyToThread so ChannelTagExtractor on this
+      // agent can include toThreadId when routing responses back to the caller.
+      if (metadata?.replyToThread) {
+        (state.metadata as any).replyToThread = String(metadata.replyToThread);
+      }
+
       // Append user message — include image attachments as content blocks if present
       const attachments = metadata?.attachments as any[] | undefined;
       const hasAttachments = Array.isArray(attachments) && attachments.length > 0;

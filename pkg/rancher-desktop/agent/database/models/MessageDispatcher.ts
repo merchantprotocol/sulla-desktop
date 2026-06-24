@@ -646,6 +646,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     message.channelMeta = {
       senderId:      typeof data?.senderId === 'string' ? data.senderId : 'unknown',
       senderChannel: typeof data?.senderChannel === 'string' ? data.senderChannel : '',
+      fromThreadId:  typeof data?.fromThreadId === 'string' ? data.fromThreadId : undefined,
+      toThreadId:    typeof data?.toThreadId === 'string' ? data.toThreadId : undefined,
     };
   }
 
