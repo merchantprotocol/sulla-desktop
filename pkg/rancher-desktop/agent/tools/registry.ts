@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'crm', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -83,6 +83,7 @@ export class ToolRegistry {
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
     projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',
     capture:            'Capture Studio control — teleprompter (open/close/script/style), microphone + speaker loopback lifecycle, screen/camera enumeration, screenshots, recorder start/stop/status with auto-acquire.',
+    crm:                'Dynamic CRM engine — define record types, fields, relationships, views, dashboards, and widgets, and create/update/query/link records on demand. For NET-NEW custom types; the product\'s existing Contact + Opportunities/Appointments/Jobs pipelines are separate.',
     marketplace:        'Marketplace for community artifacts (skills, functions, workflows, agents, recipes) — search, info, download, scaffold, validate, publish, update, unpublish.',
     ui:                 'Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat so the user can inspect them directly.',
     // Integration catalog categories (tools executed via ActivePieces)
