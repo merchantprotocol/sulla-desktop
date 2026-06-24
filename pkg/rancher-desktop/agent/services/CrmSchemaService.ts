@@ -55,6 +55,28 @@ export interface OpResult {
   ok:    boolean;
   id?:   string;
   error?: string;
+  /** Token to pass to undo() to revert this op. Present on successful mutations. */
+  undoToken?: string;
+}
+
+export type AuditEntityType =
+  'record_type' | 'field' | 'relationship' | 'view' | 'dashboard' | 'widget' | 'record' | 'link';
+
+/** entity_type → its backing table. Used by undo() to revert generically. */
+const ENTITY_TABLE: Record<AuditEntityType, string> = {
+  record_type:  'crm_record_types',
+  field:        'crm_fields',
+  relationship: 'crm_relationships',
+  view:         'crm_views',
+  dashboard:    'crm_dashboards',
+  widget:       'crm_widgets',
+  record:       'crm_records',
+  link:         'crm_record_links',
+};
+
+/** Minimal executor both a PoolClient (in a tx) and postgresClient satisfy. */
+interface SqlExecutor {
+  query: (text: string, params?: any[]) => Promise<any>;
 }
 
 export interface FieldInput {
@@ -158,7 +180,7 @@ export class CrmSchemaService {
     }
 
     try {
-      const id = await postgresClient.transaction(async (tx) => {
+      const result = await postgresClient.transaction(async (tx) => {
         const typeId = newId();
         await tx.query(
           `INSERT INTO crm_record_types
@@ -190,10 +212,14 @@ export class CrmSchemaService {
           );
         }
 
-        return typeId;
+        const undoToken = await CrmSchemaService.writeAudit(tx, {
+          op: 'createRecordType', entityType: 'record_type', entityId: typeId,
+          after: { key: input.key, label: input.label }, tenantId,
+        });
+        return { typeId, undoToken };
       });
 
-      return { ok: true, id };
+      return { ok: true, id: result.typeId, undoToken: result.undoToken };
     } catch (err: any) {
       if (err?.code === '23505') return { ok: false, error: `record type key "${ input.key }" already exists` };
       return { ok: false, error: String(err?.message ?? err) };
@@ -208,15 +234,20 @@ export class CrmSchemaService {
       return { ok: false, error: `unknown dataType "${ input.dataType }"` };
     }
     try {
-      const id = await postgresClient.transaction(async (tx) => {
+      const result = await postgresClient.transaction(async (tx) => {
         const posRows = await tx.query(
           `SELECT COALESCE(MAX(position), -1) + 1 AS next FROM crm_fields WHERE record_type_id = $1`,
           [recordTypeId],
         );
         const position = input.position ?? posRows.rows[0]?.next ?? 0;
-        return CrmSchemaService.insertField(tx, tenantId, recordTypeId, input, position);
+        const fieldId = await CrmSchemaService.insertField(tx, tenantId, recordTypeId, input, position);
+        const undoToken = await CrmSchemaService.writeAudit(tx, {
+          op: 'addField', entityType: 'field', entityId: fieldId,
+          after: { key: input.key, recordTypeId, dataType: input.dataType }, tenantId,
+        });
+        return { fieldId, undoToken };
       });
-      return { ok: true, id };
+      return { ok: true, id: result.fieldId, undoToken: result.undoToken };
     } catch (err: any) {
       if (err?.code === '23505') return { ok: false, error: `field key "${ input.key }" already exists on this type` };
       return { ok: false, error: String(err?.message ?? err) };
@@ -239,7 +270,11 @@ export class CrmSchemaService {
         [id, tenantId, input.fromTypeId, input.toTypeId, input.cardinality,
           input.fromLabel ?? null, input.toLabel ?? null, input.key, input.isSystem ?? false],
       );
-      return { ok: true, id };
+      const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+        op: 'defineRelationship', entityType: 'relationship', entityId: id,
+        after: { key: input.key, cardinality: input.cardinality }, tenantId,
+      });
+      return { ok: true, id, undoToken };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
     }
@@ -253,7 +288,11 @@ export class CrmSchemaService {
     if (rows[0].is_system) return { ok: false, error: 'cannot archive a system record type' };
     await postgresClient.query(
       `UPDATE crm_record_types SET archived = true, updated_at = now() WHERE id = $1`, [id]);
-    return { ok: true, id };
+    const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+      op: 'archiveRecordType', entityType: 'record_type', entityId: id,
+      before: { archived: false }, tenantId: DEFAULT_TENANT_ID,
+    });
+    return { ok: true, id, undoToken };
   }
 
   // ── view / dashboard / widget / menu helpers ─────────────────────────────
@@ -270,7 +309,11 @@ export class CrmSchemaService {
        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7)`,
       [id, tenantId, recordTypeId, input.name, input.kind, JSON.stringify(input.config ?? {}), input.isSystem ?? false],
     );
-    return { ok: true, id };
+    const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+      op: 'createView', entityType: 'view', entityId: id,
+      after: { name: input.name, kind: input.kind, recordTypeId }, tenantId,
+    });
+    return { ok: true, id, undoToken };
   }
 
   static async createDashboard(
@@ -280,7 +323,7 @@ export class CrmSchemaService {
     const keyErr = validateKey(input.key);
     if (keyErr) return { ok: false, error: keyErr };
     try {
-      const id = await postgresClient.transaction(async (tx) => {
+      const result = await postgresClient.transaction(async (tx) => {
         const dashId = newId();
         await tx.query(
           `INSERT INTO crm_dashboards (id, tenant_id, key, name, icon, layout, is_system)
@@ -292,9 +335,13 @@ export class CrmSchemaService {
            VALUES ($1,$2,$3,$4,'dashboard',$5,true,$6)`,
           [newId(), tenantId, input.name, input.icon ?? null, dashId, input.isSystem ?? false],
         );
-        return dashId;
+        const undoToken = await CrmSchemaService.writeAudit(tx, {
+          op: 'createDashboard', entityType: 'dashboard', entityId: dashId,
+          after: { key: input.key, name: input.name }, tenantId,
+        });
+        return { dashId, undoToken };
       });
-      return { ok: true, id };
+      return { ok: true, id: result.dashId, undoToken: result.undoToken };
     } catch (err: any) {
       if (err?.code === '23505') return { ok: false, error: `dashboard key "${ input.key }" already exists` };
       return { ok: false, error: String(err?.message ?? err) };
@@ -313,7 +360,11 @@ export class CrmSchemaService {
        VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb)`,
       [id, tenantId, dashboardId, input.recordTypeId, input.name, input.kind, JSON.stringify(input.config ?? {})],
     );
-    return { ok: true, id };
+    const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+      op: 'createWidget', entityType: 'widget', entityId: id,
+      after: { name: input.name, kind: input.kind, dashboardId }, tenantId,
+    });
+    return { ok: true, id, undoToken };
   }
 
   // ════════════════════════════════════════════════
@@ -333,7 +384,7 @@ export class CrmSchemaService {
     createdBy?: string,
   ): Promise<OpResult> {
     try {
-      const id = await postgresClient.transaction(async (tx) => {
+      const result = await postgresClient.transaction(async (tx) => {
         const fields = await CrmSchemaService.loadFields(tx, recordTypeId);
         const byKey = new Map(fields.map(f => [f.key, f]));
         const recordId = newId();
@@ -354,9 +405,13 @@ export class CrmSchemaService {
           await CrmSchemaService.upsertFieldValue(tx, tenantId, recordId, field.id, col, raw);
         }
 
-        return recordId;
+        const undoToken = await CrmSchemaService.writeAudit(tx, {
+          op: 'createRecord', entityType: 'record', entityId: recordId,
+          after: { recordTypeId, title }, tenantId, createdBy,
+        });
+        return { recordId, undoToken };
       });
-      return { ok: true, id };
+      return { ok: true, id: result.recordId, undoToken: result.undoToken };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
     }
@@ -369,12 +424,19 @@ export class CrmSchemaService {
     tenantId = DEFAULT_TENANT_ID,
   ): Promise<OpResult> {
     try {
-      await postgresClient.transaction(async (tx) => {
+      const undoToken = await postgresClient.transaction(async (tx) => {
         const typeRows = await tx.query(`SELECT record_type_id FROM crm_records WHERE id = $1`, [recordId]);
         if (!typeRows.rows[0]) throw new Error('record not found');
         const recordTypeId = typeRows.rows[0].record_type_id;
         const fields = await CrmSchemaService.loadFields(tx, recordTypeId);
         const byKey = new Map(fields.map(f => [f.key, f]));
+
+        // Snapshot the prior values of just the keys being changed, for undo.
+        const priorAll = await CrmSchemaService.loadRecordValues(tx, recordId, fields);
+        const before: Record<string, unknown> = {};
+        for (const key of Object.keys(values)) {
+          if (byKey.has(key)) before[key] = priorAll[key] ?? null;
+        }
 
         for (const [key, raw] of Object.entries(values)) {
           const field = byKey.get(key);
@@ -392,42 +454,65 @@ export class CrmSchemaService {
           `UPDATE crm_records SET title = $2, search_text = $3, updated_at = now() WHERE id = $1`,
           [recordId, title, searchText],
         );
+
+        return CrmSchemaService.writeAudit(tx, {
+          op: 'updateRecord', entityType: 'record', entityId: recordId,
+          before, after: values, tenantId,
+        });
       });
-      return { ok: true, id: recordId };
+      return { ok: true, id: recordId, undoToken };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
     }
   }
 
   /** Soft-delete a record. No confirm — data ops are lightweight. */
-  static async archiveRecord(recordId: string): Promise<OpResult> {
+  static async archiveRecord(recordId: string, tenantId = DEFAULT_TENANT_ID): Promise<OpResult> {
     await postgresClient.query(
       `UPDATE crm_records SET archived = true, updated_at = now() WHERE id = $1`, [recordId]);
-    return { ok: true, id: recordId };
+    const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+      op: 'archiveRecord', entityType: 'record', entityId: recordId, before: { archived: false }, tenantId,
+    });
+    return { ok: true, id: recordId, undoToken };
   }
 
   /** Link two records via a relationship instance (idempotent). */
   static async link(relationshipId: string, fromRecordId: string, toRecordId: string, tenantId = DEFAULT_TENANT_ID): Promise<OpResult> {
     try {
       const id = newId();
-      await postgresClient.query(
+      const res = await postgresClient.queryWithResult(
         `INSERT INTO crm_record_links (id, tenant_id, relationship_id, from_record_id, to_record_id)
          VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT (relationship_id, from_record_id, to_record_id) DO NOTHING`,
         [id, tenantId, relationshipId, fromRecordId, toRecordId],
       );
+      // Only audit when a row was actually inserted (not a dedup no-op).
+      if ((res.rowCount ?? 0) > 0) {
+        const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+          op: 'link', entityType: 'link', entityId: id,
+          after: { relationshipId, fromRecordId, toRecordId }, tenantId,
+        });
+        return { ok: true, id, undoToken };
+      }
       return { ok: true, id };
     } catch (err: any) {
       return { ok: false, error: String(err?.message ?? err) };
     }
   }
 
-  static async unlink(relationshipId: string, fromRecordId: string, toRecordId: string): Promise<OpResult> {
-    await postgresClient.query(
+  static async unlink(relationshipId: string, fromRecordId: string, toRecordId: string, tenantId = DEFAULT_TENANT_ID): Promise<OpResult> {
+    const res = await postgresClient.queryWithResult(
       `DELETE FROM crm_record_links
        WHERE relationship_id = $1 AND from_record_id = $2 AND to_record_id = $3`,
       [relationshipId, fromRecordId, toRecordId],
     );
+    if ((res.rowCount ?? 0) > 0) {
+      const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+        op: 'unlink', entityType: 'link', entityId: null,
+        before: { relationship_id: relationshipId, from_record_id: fromRecordId, to_record_id: toRecordId }, tenantId,
+      });
+      return { ok: true, undoToken };
+    }
     return { ok: true };
   }
 
@@ -568,13 +653,95 @@ export class CrmSchemaService {
   }
 
   /**
-   * Audit hook — placeholder until a dedicated crm_audit table ships
-   * (doc 02's assumption that 0027 provides a generic audit table is wrong).
-   * Wire this to that table in a follow-up migration; for now it's a no-op
-   * so the call sites already exist when audit lands.
+   * Write one append-only audit row (crm_audit, migration 0036) and return a
+   * fresh undo_token. Runs on whatever executor is passed — a PoolClient when
+   * inside a transaction (so the audit row commits atomically with the change)
+   * or postgresClient for single-statement ops.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  private static async recordAudit(_op: string, _before: unknown, _after: unknown): Promise<void> {
-    // TODO(crm-audit): INSERT into crm_audit once migration exists; return undo_token.
+  private static async writeAudit(
+    exec: SqlExecutor,
+    a: { op: string; entityType: AuditEntityType; entityId: string | null;
+      before?: unknown; after?: unknown; tenantId: string; createdBy?: string },
+  ): Promise<string> {
+    const undoToken = `undo_${ crypto.randomUUID() }`;
+    await exec.query(
+      `INSERT INTO crm_audit
+         (id, tenant_id, undo_token, op, entity_type, entity_id, before, after, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)`,
+      [crypto.randomUUID(), a.tenantId, undoToken, a.op, a.entityType, a.entityId,
+        a.before == null ? null : JSON.stringify(a.before),
+        a.after == null ? null : JSON.stringify(a.after),
+        a.createdBy ?? null],
+    );
+    return undoToken;
+  }
+
+  /**
+   * Revert a previously-audited op by its undo_token.
+   *
+   * Reversal is generic and soft where possible:
+   *   • create* / defineRelationship → archive the created row (link → delete,
+   *     since crm_record_links has no archived column).
+   *   • archive*                     → un-archive the row.
+   *   • updateRecord                 → restore the record's prior field values
+   *                                    (and re-derive title/search_text) from
+   *                                    the `before` snapshot.
+   *   • unlink                       → re-create the link from `before`.
+   *
+   * Shallow by design: undoing a createRecordType archives the type (which
+   * also hides its auto view/menu) but does not separately delete those child
+   * rows — acceptable for the soft-delete model. Idempotent: a token already
+   * marked `undone` returns an error rather than reverting twice.
+   */
+  static async undo(undoToken: string): Promise<OpResult> {
+    try {
+      return await postgresClient.transaction(async (tx) => {
+        const res = await tx.query(
+          `SELECT * FROM crm_audit WHERE undo_token = $1 AND undone = false LIMIT 1`, [undoToken]);
+        const row = res.rows[0];
+        if (!row) return { ok: false, error: 'unknown or already-undone undo_token' };
+
+        const entityType = row.entity_type as AuditEntityType;
+        const table = ENTITY_TABLE[entityType];
+        const op = row.op as string;
+
+        if (op === 'unlink') {
+          const b = row.before ?? {};
+          await tx.query(
+            `INSERT INTO crm_record_links (id, tenant_id, relationship_id, from_record_id, to_record_id)
+             VALUES ($1,$2,$3,$4,$5)
+             ON CONFLICT (relationship_id, from_record_id, to_record_id) DO NOTHING`,
+            [crypto.randomUUID(), row.tenant_id, b.relationship_id, b.from_record_id, b.to_record_id]);
+        } else if (op === 'updateRecord') {
+          const before = (row.before ?? {}) as Record<string, unknown>;
+          const recordTypeRows = await tx.query(`SELECT record_type_id FROM crm_records WHERE id = $1`, [row.entity_id]);
+          if (recordTypeRows.rows[0]) {
+            const fields = await CrmSchemaService.loadFields(tx, recordTypeRows.rows[0].record_type_id);
+            const byKey = new Map(fields.map(f => [f.key, f]));
+            for (const [key, val] of Object.entries(before)) {
+              const field = byKey.get(key);
+              if (!field) continue;
+              const col = valueColumnFor(field.data_type);
+              if (!col) continue;
+              await CrmSchemaService.upsertFieldValue(tx, row.tenant_id, row.entity_id, field.id, col, val);
+            }
+            const { title, searchText } = CrmSchemaService.computeDenormalized(fields, before);
+            await tx.query(`UPDATE crm_records SET title=$2, search_text=$3, updated_at=now() WHERE id=$1`,
+              [row.entity_id, title, searchText]);
+          }
+        } else if (op.startsWith('archive')) {
+          await tx.query(`UPDATE ${ table } SET archived = false, updated_at = now() WHERE id = $1`, [row.entity_id]);
+        } else if (entityType === 'link') {            // a link create
+          await tx.query(`DELETE FROM ${ table } WHERE id = $1`, [row.entity_id]);
+        } else {                                        // any other create*
+          await tx.query(`UPDATE ${ table } SET archived = true, updated_at = now() WHERE id = $1`, [row.entity_id]);
+        }
+
+        await tx.query(`UPDATE crm_audit SET undone = true WHERE id = $1`, [row.id]);
+        return { ok: true, id: row.entity_id };
+      });
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
   }
 }

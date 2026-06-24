@@ -28,6 +28,7 @@ import { up as up_0032, down as down_0032 } from './0032_create_crm_records_tabl
 import { up as up_0033, down as down_0033 } from './0033_create_crm_field_values_table';
 import { up as up_0034, down as down_0034 } from './0034_create_crm_record_links_table';
 import { up as up_0035, down as down_0035 } from './0035_create_crm_presentation_tables';
+import { up as up_0036, down as down_0036 } from './0036_create_crm_audit_table';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -59,4 +60,5 @@ export const migrationsRegistry = [
   { name: '0033_create_crm_field_values_table', up: up_0033, down: down_0033 },
   { name: '0034_create_crm_record_links_table', up: up_0034, down: down_0034 },
   { name: '0035_create_crm_presentation_tables', up: up_0035, down: down_0035 },
+  { name: '0036_create_crm_audit_table',         up: up_0036, down: down_0036 },
 ] as const;
