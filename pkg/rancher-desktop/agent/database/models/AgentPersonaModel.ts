@@ -479,9 +479,11 @@ export class AgentPersonaService {
     // Drop messages that don't carry a threadId when we already have an active thread.
     // This prevents stray workflow / backend messages from leaking into the chat.
     if (!msgThreadId && myThreadId) {
-      // Allow protocol-level messages that never carry a threadId
+      // Allow protocol-level messages that never carry a threadId, and inter-agent
+      // channel_message frames (ambient — not part of any specific thread).
       const threadExempt = msg.type === 'thread_created' || msg.type === 'ack' ||
-        msg.type === 'ping' || msg.type === 'pong' || msg.type === 'subscribe';
+        msg.type === 'ping' || msg.type === 'pong' || msg.type === 'subscribe' ||
+        (msg.type === 'chat_message' && (msg.data as any)?.kind === 'channel_message');
       if (!threadExempt) {
         return;
       }
