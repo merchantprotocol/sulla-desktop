@@ -51,6 +51,15 @@ export type ViewKind = typeof VIEW_KINDS[number];
 export const WIDGET_KINDS = ['stat', 'line', 'bar', 'funnel', 'list', 'table'] as const;
 export type WidgetKind = typeof WIDGET_KINDS[number];
 
+/** Static core columns on crm_records that filter/sort may reference directly. */
+const CORE_COLUMNS = new Set(['id', 'title', 'created_at', 'updated_at']);
+
+export type FilterOp = 'eq' | 'ne' | 'in' | 'notIn' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'isSet';
+/** A scalar is shorthand for equality; an object is one or more operators. */
+export type FilterCond = string | number | boolean | null | Partial<Record<FilterOp, unknown>>;
+export type Filter = Record<string, FilterCond>;
+export interface SortSpec { field: string; dir?: 'asc' | 'desc' }
+
 export interface OpResult {
   ok:    boolean;
   id?:   string;
@@ -536,21 +545,70 @@ export class CrmSchemaService {
   }
 
   /**
-   * Fetch records of a type with their field values pivoted into a flat
-   * object keyed by field key. Simple equality filter for now (P1); the
-   * richer filter/sort compiler lands with the view renderers (P2).
+   * Fetch records of a type, compiling an optional filter + sort over the
+   * EAV field values, and pivot each result into a flat object keyed by field
+   * key. This is the query path the view renderers (table/kanban/calendar/
+   * list) and widget aggregations ride on.
+   *
+   * `filter` is keyed by field key (or a core column: id/title/created_at/
+   * updated_at). Each condition is either a scalar (equality) or an operator
+   * object: { eq|ne|in|notIn|gt|gte|lt|lte|contains|isSet }. Field conditions
+   * compile to EXISTS subqueries against crm_field_values on the field's typed
+   * column; `sort` entries compile to LEFT JOINs so missing values sort last.
    */
   static async queryRecords(
     recordTypeId: string,
-    opts: { limit?: number; tenantId?: string } = {},
+    opts: { filter?: Filter; sort?: SortSpec[]; limit?: number; tenantId?: string } = {},
   ): Promise<Array<Record<string, unknown>>> {
     const tenantId = opts.tenantId ?? DEFAULT_TENANT_ID;
     const limit = opts.limit ?? 100;
+
+    // field key → { id, data_type } for mapping filter/sort keys to columns.
+    const fieldRows = await postgresClient.query(
+      `SELECT id, key, data_type FROM crm_fields WHERE record_type_id = $1 AND archived = false`,
+      [recordTypeId],
+    );
+    const byKey = new Map<string, { id: string; data_type: DataType }>(
+      fieldRows.map((f: any) => [f.key, { id: f.id, data_type: f.data_type }]),
+    );
+
+    const params: any[] = [tenantId, recordTypeId];
+    const where: string[] = ['r.tenant_id = $1', 'r.record_type_id = $2', 'r.archived = false'];
+    const joins: string[] = [];
+    const push = (v: any): string => { params.push(v); return `$${ params.length }`; };
+
+    for (const [key, cond] of Object.entries(opts.filter ?? {})) {
+      const frag = CrmSchemaService.compileFilterCond(key, cond, byKey, push);
+      if (frag) where.push(frag);
+    }
+
+    let orderBy = 'r.created_at DESC';
+    if (opts.sort && opts.sort.length) {
+      const parts: string[] = [];
+      opts.sort.forEach((s, i) => {
+        const dir = s.dir === 'asc' ? 'ASC' : 'DESC';
+        if (CORE_COLUMNS.has(s.field)) {
+          parts.push(`r.${ s.field } ${ dir }`);
+        } else {
+          const field = byKey.get(s.field);
+          if (!field) return;
+          const col = valueColumnFor(field.data_type);
+          if (!col) return;
+          const alias = `sj${ i }`;
+          joins.push(`LEFT JOIN crm_field_values ${ alias } ON ${ alias }.record_id = r.id AND ${ alias }.field_id = ${ push(field.id) }`);
+          parts.push(`${ alias }.${ col } ${ dir } NULLS LAST`);
+        }
+      });
+      if (parts.length) orderBy = parts.join(', ');
+    }
+
+    const limitPlaceholder = push(limit);
     const records = await postgresClient.query(
-      `SELECT id, title, created_at FROM crm_records
-       WHERE tenant_id = $1 AND record_type_id = $2 AND archived = false
-       ORDER BY created_at DESC LIMIT $3`,
-      [tenantId, recordTypeId, limit],
+      `SELECT r.id, r.title, r.created_at FROM crm_records r
+       ${ joins.join('\n       ') }
+       WHERE ${ where.join(' AND ') }
+       ORDER BY ${ orderBy } LIMIT ${ limitPlaceholder }`,
+      params,
     );
     if (records.length === 0) return [];
 
@@ -572,7 +630,69 @@ export class CrmSchemaService {
       const col = valueColumnFor(v.data_type);
       target[v.key] = col ? (v as any)[col] : null;
     }
-    return Array.from(byRecord.values());
+    // Preserve the SQL ordering (Map iteration follows insertion order = record order).
+    return records.map((r: any) => byRecord.get(r.id)!);
+  }
+
+  /**
+   * Compile one filter condition into a SQL WHERE fragment (params pushed via
+   * `push`). Core columns compare directly on `r`; field keys compile to an
+   * EXISTS (or NOT EXISTS) over crm_field_values on the field's typed column.
+   * Unknown keys are skipped (return null).
+   */
+  private static compileFilterCond(
+    key: string,
+    cond: FilterCond,
+    byKey: Map<string, { id: string; data_type: DataType }>,
+    push: (v: any) => string,
+  ): string | null {
+    const isCore = CORE_COLUMNS.has(key);
+    const field = byKey.get(key);
+    if (!isCore && !field) return null;
+    const col = isCore ? null : valueColumnFor(field!.data_type);
+    if (!isCore && !col) return null;
+
+    // Build a comparison on a column expression `lhs`.
+    const cmp = (lhs: string, op: string, val: unknown): string => {
+      switch (op) {
+      case 'eq':       return `${ lhs } = ${ push(val) }`;
+      case 'ne':       return `${ lhs } <> ${ push(val) }`;
+      case 'gt':       return `${ lhs } > ${ push(val) }`;
+      case 'gte':      return `${ lhs } >= ${ push(val) }`;
+      case 'lt':       return `${ lhs } < ${ push(val) }`;
+      case 'lte':      return `${ lhs } <= ${ push(val) }`;
+      case 'in':       return `${ lhs } = ANY(${ push(val) })`;
+      case 'contains': return `${ lhs } ILIKE '%' || ${ push(val) } || '%'`;
+      default:         return `${ lhs } = ${ push(val) }`;
+      }
+    };
+
+    const exists = (inner: string): string =>
+      `EXISTS (SELECT 1 FROM crm_field_values fv WHERE fv.record_id = r.id AND fv.field_id = ${ push(field!.id) } AND ${ inner })`;
+    const notExists = (inner: string): string =>
+      `NOT EXISTS (SELECT 1 FROM crm_field_values fv WHERE fv.record_id = r.id AND fv.field_id = ${ push(field!.id) } AND ${ inner })`;
+
+    // Operator object vs. scalar (= equality).
+    if (cond !== null && typeof cond === 'object' && !Array.isArray(cond)) {
+      const o = cond as Record<string, unknown>;
+      const frags: string[] = [];
+      for (const [op, val] of Object.entries(o)) {
+        if (op === 'isSet') {
+          if (isCore) { frags.push(val ? `r.${ key } IS NOT NULL` : `r.${ key } IS NULL`); }
+          else { frags.push(val ? exists(`fv.${ col } IS NOT NULL`) : notExists(`fv.${ col } IS NOT NULL`)); }
+        } else if (op === 'ne') {
+          frags.push(isCore ? `r.${ key } <> ${ push(val) }` : notExists(cmp(`fv.${ col }`, 'eq', val)));
+        } else if (op === 'notIn') {
+          frags.push(isCore ? `NOT (r.${ key } = ANY(${ push(val) }))` : notExists(cmp(`fv.${ col }`, 'in', val)));
+        } else {
+          frags.push(isCore ? cmp(`r.${ key }`, op, val) : exists(cmp(`fv.${ col }`, op, val)));
+        }
+      }
+      return frags.length ? frags.join(' AND ') : null;
+    }
+
+    // Scalar → equality.
+    return isCore ? cmp(`r.${ key }`, 'eq', cond) : exists(cmp(`fv.${ col }`, 'eq', cond));
   }
 
   // ════════════════════════════════════════════════
