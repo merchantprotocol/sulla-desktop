@@ -278,6 +278,13 @@
         />
       </div>
     </template>
+
+    <!-- Terminal: xterm.js PTY into the Lima VM (limactl shell 0) -->
+    <template v-else-if="tabMode === 'terminal'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <TerminalTab :tab-id="props.tabId" />
+      </div>
+    </template>
   </div>
 </template>
 
@@ -299,6 +306,7 @@ import NewTabWelcome from './NewTabWelcome.vue';
 import PasswordGenerator from './PasswordGenerator.vue';
 import FileEditorTab from './FileEditorTab.vue';
 import LabsPage from './LabsPage.vue';
+import TerminalTab from './TerminalTab.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import AgentHeader from './agent/AgentHeader.vue';
@@ -325,6 +333,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   marketplace:  'Sulla Studio',
   labs:         'Labs',
   'file-editor': 'Editor',
+  terminal:     'Terminal',
 };
 
 const props = defineProps<{

@@ -515,6 +515,13 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
   if (meta && e.shiftKey && e.key === 'S') {
     e.preventDefault();
     openModeTab('secretary');
+    return;
+  }
+
+  // Cmd+` (backtick): open a terminal tab (PTY into the Lima VM)
+  if (meta && e.key === '`') {
+    e.preventDefault();
+    openModeTab('terminal');
   }
 }
 
@@ -638,6 +645,9 @@ function handleMoreMenuAction(
   case 'secretary':
     openModeTab('secretary');
     break;
+  case 'terminal':
+    openModeTab('terminal');
+    break;
   case 'history-entry': {
     if (!extra) break;
     const entry = extra as unknown as HistoryRecord;
@@ -715,6 +725,7 @@ const MODE_ICON_PATHS: Record<BrowserTabMode, string> = {
   history:      'M12 3a9 9 0 109 9M3 3v6h6M12 7v5l3 2',
   routines:     'M6 3h4v4H6zM14 3h4v4h-4zM6 17h4v4H6zM14 17h4v4h-4zM10 5h4M10 19h4M12 7v10M6 11h12',
   marketplace:  'M3 9h18l-1 10a2 2 0 01-2 2H6a2 2 0 01-2-2L3 9zM3 9l2-5h14l2 5M9 13a3 3 0 006 0',
+  terminal:     'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M13 15h4',
 };
 
 /** Build the unordered set of all tabs from their sources */

@@ -314,6 +314,18 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   SullaSettingsModel.setFallbackFilePath(fallbackPath);
   SullaSettingsModel.set('pathUserData', app.getPath('userData'), 'string');
 
+  // Start the terminal WebSocket server early (PTY into Lima VM).
+  // It has no DB/Redis dependencies and binds to 127.0.0.1 only.
+  // Shutdown is handled in sullaEnd().
+  try {
+    const { getTerminalServer } = await import('@pkg/main/terminalServer');
+
+    await getTerminalServer().start();
+    console.log('[Background] Terminal WebSocket server started on ws://127.0.0.1:6108');
+  } catch (error) {
+    console.error('[Background] Failed to start terminal WebSocket server:', error);
+  }
+
   // Sweep old browser screenshots. Non-blocking, best-effort.
   void import('@pkg/agent/tools/browser/screenshot_store')
     .then(m => m.pruneOldScreenshots())
@@ -1164,6 +1176,15 @@ export function hookSullaEnd(Electron: any, mainEvents: any, window:any) {
  */
 export async function sullaEnd(mode: 'full' | 'restart' = 'full') {
   const lifecycle = getServiceLifecycleManager();
+
+  // Stop the terminal WebSocket server (kills any live limactl shell PTYs).
+  try {
+    const { getTerminalServer } = await import('@pkg/main/terminalServer');
+
+    await getTerminalServer().stop();
+  } catch (err) {
+    console.warn('[sullaEnd] Terminal server stop failed:', err);
+  }
 
   // Suspend any in-flight workflows before the DB closes so boot recovery
   // can find and resume them on next startup.

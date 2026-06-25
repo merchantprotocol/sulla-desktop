@@ -274,7 +274,14 @@ export class ChatInterface {
 
     if (!this.hasSentMessage.value) {
       this.hasSentMessage.value = true;
-      localStorage.setItem(this.hasSentMessageKey, 'true');
+      // Persisting the "has sent" flag is a convenience only — it must NEVER
+      // abort the send. A full localStorage (QuotaExceededError) would otherwise
+      // throw here, AFTER the reactive flag flip switched the UI to the chat
+      // thread but BEFORE addUserMessage() below, leaving a blank thread and a
+      // message that never sent. Swallow the failure and proceed.
+      try {
+        localStorage.setItem(this.hasSentMessageKey, 'true');
+      } catch (e) { console.warn('[ChatInterface] could not persist hasSentMessage flag:', e); }
     }
 
     // Include attachments in metadata so the backend can build ContentBlock arrays

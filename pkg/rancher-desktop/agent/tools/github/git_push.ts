@@ -5,6 +5,13 @@ import { runCommand } from '../util/CommandRunner';
 /**
  * Git Push Tool - Push commits to a remote repository.
  * Runs inside the Lima VM for filesystem consistency with exec tool.
+ *
+ * Auth: the GitHub PAT is supplied via an ephemeral credential helper reading
+ * `GH_PAT` from the env — NOT embedded in the remote URL — so git's error/status
+ * output (which echoes the remote URL) can never leak it. `redact()` scrubs the
+ * token from anything we return, and `-c credential.helper=` resets the inherited
+ * host `gh` helper (absent in the VM) to avoid its `gh: not found` noise.
+ * Mirrors git_pull.ts.
  */
 export class GitPushWorker extends BaseTool {
   name = '';
@@ -12,6 +19,9 @@ export class GitPushWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { absolutePath, remote = 'origin', branch, tags = false, force = false } = input;
+
+    const redact = (s: string, secret?: string): string =>
+      secret ? (s || '').split(secret).join('***') : (s || '');
 
     try {
       // Get repo root
@@ -38,8 +48,11 @@ export class GitPushWorker extends BaseTool {
         targetBranch = branchResult.stdout.trim();
       }
 
-      // Fetch PAT from vault and build authenticated push target for GitHub remotes
+      // Fetch PAT from vault and build an authenticated (token-free-on-the-wire)
+      // push target for GitHub remotes.
       let pushTarget = remote;
+      let authPrefix = '';
+      let credFlags = '';
       const integrationService = getIntegrationService();
       const tokenValue = await integrationService.getIntegrationValue('github', 'token');
       const token = tokenValue?.value;
@@ -57,26 +70,29 @@ export class GitPushWorker extends BaseTool {
           if (httpsUrl.startsWith('git@github.com:')) {
             httpsUrl = `https://github.com/${ httpsUrl.slice('git@github.com:'.length) }`;
           }
-          if (httpsUrl.startsWith('https://github.com/')) {
-            httpsUrl = `https://x-access-token:${ token }@github.com/${ httpsUrl.slice('https://github.com/'.length) }`;
-          }
+          // NOTE: no token in the URL — see class docstring.
           pushTarget = `"${ httpsUrl }"`;
+
+          const helper =
+            `'!f(){ test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$GH_PAT"; }; f'`;
+          credFlags = `-c credential.helper= -c credential.helper=${ helper } `;
+          authPrefix = `GH_PAT='${ token }' GIT_TERMINAL_PROMPT=0 `;
         }
       }
 
       const forceFlag = force ? ' --force-with-lease' : '';
       const cmd = tags
-        ? `git -C "${ repoRoot }" push ${ pushTarget } --tags${ forceFlag }`
-        : `git -C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }${ forceFlag }`;
+        ? `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } --tags${ forceFlag }`
+        : `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" push ${ pushTarget } ${ targetBranch }${ forceFlag }`;
       const result = await runCommand(cmd, [], { runInLimaShell: true, timeoutMs: 120_000 });
 
       if (result.exitCode !== 0) {
-        return { successBoolean: false, responseString: `Git push failed: ${ result.stderr || result.stdout }` };
+        return { successBoolean: false, responseString: redact(`Git push failed: ${ result.stderr || result.stdout }`, token) };
       }
 
       return {
         successBoolean: true,
-        responseString: result.stderr.trim() || result.stdout.trim() || `Pushed to ${ remote }/${ targetBranch }`,
+        responseString: redact(result.stderr.trim() || result.stdout.trim() || `Pushed to ${ remote }/${ targetBranch }`, token),
       };
     } catch (error: any) {
       return { successBoolean: false, responseString: `Git push failed: ${ error.message }` };

@@ -2,7 +2,7 @@ import { reactive, readonly, ref, watch } from 'vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor';
+export type BrowserTabMode = 'welcome' | 'browser' | 'chat' | 'calendar' | 'integrations' | 'document' | 'secretary' | 'vault' | 'account' | 'history' | 'routines' | 'marketplace' | 'labs' | 'file-editor' | 'terminal';
 
 export interface BrowserTab {
   id:       string;
@@ -307,6 +307,7 @@ export function useBrowserTabs() {
     marketplace:  'Sulla Studio',
     labs:         'Labs',
     'file-editor': 'Editor',
+    terminal:     'Terminal',
   };
 
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {
