@@ -24,13 +24,14 @@ export class GitHubListBranchesWorker extends BaseTool {
     const octokit = new Octokit({ auth: tokenValue.value });
 
     try {
-      const response = await octokit.repos.listBranches({
+      // Paginate — the REST default is 30/page, which silently truncated large
+      // repos (callers couldn't see branches past the first page alphabetically).
+      const branches = await octokit.paginate(octokit.repos.listBranches, {
         owner,
         repo,
         protected: isProtected,
+        per_page: 100,
       });
-
-      const branches = response.data;
       if (!branches || branches.length === 0) {
         return {
           successBoolean: false,

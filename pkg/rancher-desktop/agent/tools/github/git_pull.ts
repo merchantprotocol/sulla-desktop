@@ -5,6 +5,15 @@ import { runCommand } from '../util/CommandRunner';
 /**
  * Git Pull Tool - Pull commits from a remote repository.
  * Runs inside the Lima VM for filesystem consistency with exec tool.
+ *
+ * Auth: the GitHub PAT is supplied to git via an ephemeral credential helper
+ * that reads it from the `GH_PAT` env var (set inline on the git invocation).
+ * The token is deliberately NOT embedded in the remote URL, so git's own error
+ * messages (which echo the remote URL) can never leak it. As defense-in-depth,
+ * `redact()` strips the token from anything we return. We also reset any
+ * inherited `credential.helper` (e.g. the host `gh` helper, which doesn't exist
+ * in the VM and otherwise spews `gh: not found` noise) and force `--no-rebase`
+ * so behaviour doesn't depend on the user's ambient `pull.rebase` config.
  */
 export class GitPullWorker extends BaseTool {
   name = '';
@@ -12,6 +21,10 @@ export class GitPullWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { absolutePath, remote = 'origin', branch } = input;
+
+    // Strip a secret from any string we hand back to the caller / logs.
+    const redact = (s: string, secret?: string): string =>
+      secret ? (s || '').split(secret).join('***') : (s || '');
 
     try {
       // Get repo root
@@ -27,8 +40,11 @@ export class GitPullWorker extends BaseTool {
 
       const repoRoot = rootResult.stdout.trim();
 
-      // Fetch PAT from vault and build authenticated pull target for GitHub remotes
+      // Fetch PAT from vault and build an authenticated (but token-free-on-the-wire)
+      // pull target for GitHub remotes.
       let pullRemote = remote;
+      let authPrefix = '';
+      let credFlags = '';
       const integrationService = getIntegrationService();
       const tokenValue = await integrationService.getIntegrationValue('github', 'token');
       const token = tokenValue?.value;
@@ -46,15 +62,21 @@ export class GitPullWorker extends BaseTool {
           if (httpsUrl.startsWith('git@github.com:')) {
             httpsUrl = `https://github.com/${ httpsUrl.slice('git@github.com:'.length) }`;
           }
-          if (httpsUrl.startsWith('https://github.com/')) {
-            httpsUrl = `https://x-access-token:${ token }@github.com/${ httpsUrl.slice('https://github.com/'.length) }`;
-          }
+          // NOTE: no token in the URL — see class docstring.
           pullRemote = `"${ httpsUrl }"`;
+
+          // Credential helper reads the PAT from $GH_PAT (set inline below). The
+          // empty `credential.helper=` first resets any inherited helper list.
+          const helper =
+            `'!f(){ test "$1" = get && printf "username=x-access-token\\npassword=%s\\n" "$GH_PAT"; }; f'`;
+          credFlags = `-c credential.helper= -c credential.helper=${ helper } `;
+          authPrefix = `GH_PAT='${ token }' GIT_TERMINAL_PROMPT=0 `;
         }
       }
 
-      // Build pull command
-      let cmd = `git -C "${ repoRoot }" pull ${ pullRemote }`;
+      // Build pull command. `--no-rebase --no-edit` keeps behaviour deterministic
+      // (merge, not rebase) regardless of the user's pull.rebase setting.
+      let cmd = `${ authPrefix }git ${ credFlags }-C "${ repoRoot }" pull --no-rebase --no-edit ${ pullRemote }`;
       if (branch) {
         cmd += ` ${ branch }`;
       }
@@ -77,10 +99,10 @@ export class GitPullWorker extends BaseTool {
           };
         }
 
-        return { successBoolean: false, responseString: `Git pull failed: ${ result.stderr || result.stdout }` };
+        return { successBoolean: false, responseString: redact(`Git pull failed: ${ result.stderr || result.stdout }`, token) };
       }
 
-      return { successBoolean: true, responseString: result.stdout.trim() || 'Pull completed successfully.' };
+      return { successBoolean: true, responseString: redact(result.stdout.trim() || 'Pull completed successfully.', token) };
     } catch (error: any) {
       return { successBoolean: false, responseString: `Git pull failed: ${ error.message }` };
     }
