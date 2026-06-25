@@ -17,6 +17,12 @@ const INDEX_KEY = 'chat:index';
 const KEY = (id: ThreadId) => `chat:thread:${ id }`;
 const TAB_KEY = (tabId: string) => `chat:tab:${ tabId }`;
 
+/** True for a localStorage quota-exceeded failure (name or legacy code 22). */
+function isQuotaError(e: unknown): boolean {
+  return e instanceof DOMException &&
+    (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22);
+}
+
 export class LocalStoragePersister implements ThreadPersister {
   save(state: ThreadState): void {
     try {
@@ -30,7 +36,7 @@ export class LocalStoragePersister implements ThreadPersister {
       // object makes the DB backup persist exactly what localStorage stores,
       // so it can never choke on an un-cloneable field.
       const json = JSON.stringify(state);
-      localStorage.setItem(KEY(state.thread.id), json);
+      this.setItemWithEviction(KEY(state.thread.id), json, state.thread.id);
       const index = this.readIndex();
       if (!index.includes(state.thread.id)) {
         index.unshift(state.thread.id);
@@ -126,6 +132,46 @@ export class LocalStoragePersister implements ThreadPersister {
    *  so subsequent reopens don't keep chasing a stale id. */
   clearTabThread(tabId: string): void {
     try { localStorage.removeItem(TAB_KEY(tabId)); } catch { /* ignore */ }
+  }
+
+  /**
+   * Write a thread blob, self-healing when localStorage is full.
+   *
+   * localStorage has no pruning of its own: the index grows unbounded and every
+   * thread ever opened keeps its `chat:thread:*` blob forever. Once the ~5-10MB
+   * quota fills, EVERY subsequent write throws QuotaExceededError. We recover by
+   * evicting the oldest threads (tail of the newest-first index) and retrying.
+   * The durable copy lives in Postgres (chat-messages:save via IPC), so evicting
+   * a localStorage blob only costs a DB round-trip on next load, never data.
+   */
+  private setItemWithEviction(key: string, value: string, keepId: ThreadId): void {
+    try {
+      localStorage.setItem(key, value);
+      return;
+    } catch (e) {
+      if (!isQuotaError(e)) throw e;
+    }
+
+    // Evict oldest threads (tail first) until the write succeeds or we run out.
+    const index = this.readIndex().filter(id => id !== keepId);
+    for (let i = index.length - 1; i >= 0; i--) {
+      const evictId = index[i];
+      localStorage.removeItem(KEY(evictId));
+      try {
+        localStorage.setItem(key, value);
+        console.warn(`[LocalStoragePersister] localStorage full — evicted ${ index.length - i } old thread(s) to make room`);
+        // Drop the evicted ids from the persisted index so they aren't chased on load.
+        const survivors = this.readIndex().filter(id => id === keepId || index.slice(0, i).includes(id));
+        try { localStorage.setItem(INDEX_KEY, JSON.stringify(survivors)); } catch { /* index write best-effort */ }
+        return;
+      } catch (e) {
+        if (!isQuotaError(e)) throw e;
+        // still full — keep evicting
+      }
+    }
+    // Couldn't fit even after evicting everything else; give up on localStorage.
+    // The DB backup below still persists this thread.
+    console.warn('[LocalStoragePersister] localStorage still full after evicting all other threads — relying on DB backup');
   }
 
   private readIndex(): ThreadId[] {
