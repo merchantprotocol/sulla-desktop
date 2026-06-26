@@ -1,3 +1,4 @@
+
 /**
  * CrmSchemaService — the guarded Schema API for the dynamic CRM.
  *
@@ -363,6 +364,12 @@ export class CrmSchemaService {
     tenantId = DEFAULT_TENANT_ID,
   ): Promise<OpResult> {
     if (!WIDGET_KINDS.includes(input.kind)) return { ok: false, error: `unknown widget kind "${ input.kind }"` };
+    // Validate parent refs up front so a bad id returns an actionable message
+    // instead of a raw Postgres FK-constraint error (crm_widgets_dashboard_id_fkey).
+    const dash = await postgresClient.query(`SELECT 1 FROM crm_dashboards WHERE id = $1`, [dashboardId]);
+    if (!dash[0]) return { ok: false, error: `dashboard "${ dashboardId }" not found — create it first with crm/create_dashboard` };
+    const rt = await postgresClient.query(`SELECT 1 FROM crm_record_types WHERE id = $1`, [input.recordTypeId]);
+    if (!rt[0]) return { ok: false, error: `record type "${ input.recordTypeId }" not found` };
     const id = newId();
     await postgresClient.query(
       `INSERT INTO crm_widgets (id, tenant_id, dashboard_id, record_type_id, name, kind, config)
