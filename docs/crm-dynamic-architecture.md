@@ -1,3 +1,4 @@
+
 # Dynamic CRM — Architecture, Use Cases & User Stories
 
 > Status: foundational. Backs the dynamic-CRM engine shipped in migrations
@@ -204,6 +205,9 @@ before adding fields, creating records, or querying.
 
 Each is a net-new vertical the product CRM doesn't cover; the agent stands it up
 end to end with no code change.
+
+> **Worked, copy-pasteable versions — exact `sulla crm/*` call sequences with
+> acceptance criteria — are in [crm-dynamic-cookbook.md](crm-dynamic-cookbook.md).**
 
 1. **Property management.** `Property`, `Unit`, `Tenant`, `Lease`,
    `MaintenanceTicket` types; relationships Property→Unit (1:N), Unit→Lease
