@@ -1,3 +1,4 @@
+
 /**
  * CrmSchemaService — the guarded Schema API for the dynamic CRM.
  *
@@ -845,7 +846,14 @@ export class CrmSchemaService {
               if (!col) continue;
               await CrmSchemaService.upsertFieldValue(tx, row.tenant_id, row.entity_id, field.id, col, val);
             }
-            const { title, searchText } = CrmSchemaService.computeDenormalized(fields, before);
+            // Recompute denormalized core from the FULL post-revert value set
+            // (loaded fresh after the upserts above), NOT the partial `before`
+            // delta. `before` holds only the fields the original update changed,
+            // so the is_title field is usually absent — feeding it to
+            // computeDenormalized() resolves title to null and blanks the
+            // record's title (and truncates search_text). Mirrors updateRecord().
+            const merged = await CrmSchemaService.loadRecordValues(tx, row.entity_id, fields);
+            const { title, searchText } = CrmSchemaService.computeDenormalized(fields, merged);
             await tx.query(`UPDATE crm_records SET title=$2, search_text=$3, updated_at=now() WHERE id=$1`,
               [row.entity_id, title, searchText]);
           }
