@@ -25,7 +25,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -435,6 +435,51 @@
               </button>
             </div>
 
+            <!-- bulk tag -->
+            <div class="relative" @click.stop>
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
+                :class="showBulkTagDropdown
+                  ? 'border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'"
+                :title="`Add tag to ${selectedIds.size} selected record${selectedIds.size === 1 ? '' : 's'}`"
+                @click="showBulkTagDropdown = !showBulkTagDropdown; bulkTagInput = ''"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                </svg>
+                Tag
+              </button>
+              <div
+                v-if="showBulkTagDropdown"
+                class="absolute top-full mt-1 left-0 z-40 w-56 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg py-2"
+              >
+                <div class="px-3 mb-2">
+                  <input
+                    v-model="bulkTagInput"
+                    type="text"
+                    placeholder="Type a tag and press Enter"
+                    class="w-full h-7 rounded-lg px-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/40"
+                    @keydown.enter.prevent="addBulkTag(bulkTagInput); showBulkTagDropdown = false"
+                    @keydown.esc.stop="showBulkTagDropdown = false"
+                  />
+                </div>
+                <template v-if="allTags.length">
+                  <p class="px-3 pb-1 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Existing tags</p>
+                  <button
+                    v-for="tag in allTags.slice(0, 10)"
+                    :key="tag"
+                    type="button"
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    @click="addBulkTag(tag); showBulkTagDropdown = false"
+                  >
+                    <svg class="h-3 w-3 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                    {{ tag }}
+                  </button>
+                </template>
+              </div>
+            </div>
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
@@ -5368,6 +5413,8 @@ interface RecordTemplate { id: string; name: string; typeKey: string; fieldValue
 const recordTemplates = ref<RecordTemplate[]>([]);
 const showTemplatePanel = ref(false);
 const showQuickFilterPanel = ref(false);
+const showBulkTagDropdown = ref(false);
+const bulkTagInput = ref('');
 const templateDraftName = ref('');
 const mergeSourceId = ref<string | null>(null);
 const mergeTargetId = ref<string | null>(null);
@@ -7146,6 +7193,16 @@ const allTags = computed((): string[] => {
   }
   return Array.from(set).sort();
 });
+
+function addBulkTag(tag: string) {
+  const t = tag.trim();
+  if (!t) return;
+  for (const id of selectedIds.value) {
+    addTag(id, t);
+  }
+  bulkTagInput.value = '';
+  showToast(`Tag "${t}" added to ${selectedIds.value.size} record${selectedIds.value.size === 1 ? '' : 's'}`);
+}
 
 function moveCardStage(record: CrmRecord, dir: 1 | -1) {
   const fieldKey = kanbanField.value?.key;
