@@ -111,6 +111,7 @@ export const crmToolManifests: ToolManifest[] = [
       is_required: { type: 'boolean', optional: true },
       is_unique:   { type: 'boolean', optional: true },
       is_title:    { type: 'boolean', optional: true, description: 'Make this the title field; auto-unsets previous title.' },
+      position:    { type: 'number', optional: true, description: 'Display order (0-based integer). Reorders the field in views.' },
     },
     operationTypes: ['update'],
     loader:         () => import('./update_field'),

@@ -1131,12 +1131,13 @@ export class CrmSchemaService {
       is_required?: boolean;
       is_unique?: boolean;
       is_title?: boolean;
+      position?: number;
     },
     tenantId = DEFAULT_TENANT_ID,
   ): Promise<OpResult> {
     try {
       const rows = await postgresClient.query(
-        `SELECT id, key, label, config, is_required, is_unique, is_title, is_system, record_type_id
+        `SELECT id, key, label, config, is_required, is_unique, is_title, is_system, position, record_type_id
          FROM crm_fields WHERE id = $1 AND tenant_id = $2 AND archived = false LIMIT 1`,
         [fieldId, tenantId],
       );
@@ -1146,7 +1147,8 @@ export class CrmSchemaService {
 
       const before = {
         label: field.label, config: field.config,
-        is_required: field.is_required, is_unique: field.is_unique, is_title: field.is_title,
+        is_required: field.is_required, is_unique: field.is_unique,
+        is_title: field.is_title, position: field.position,
       };
 
       const setParts: string[] = [];
@@ -1157,6 +1159,9 @@ export class CrmSchemaService {
       if (updates.config !== undefined) setParts.push(`config = ${ push(JSON.stringify(updates.config)) }::jsonb`);
       if (updates.is_required !== undefined) setParts.push(`is_required = ${ push(updates.is_required) }`);
       if (updates.is_unique !== undefined) setParts.push(`is_unique = ${ push(updates.is_unique) }`);
+      if (updates.position !== undefined && Number.isInteger(updates.position) && updates.position >= 0) {
+        setParts.push(`position = ${ push(updates.position) }`);
+      }
       if (updates.is_title === true) {
         await postgresClient.query(
           `UPDATE crm_fields SET is_title = false, updated_at = now()
