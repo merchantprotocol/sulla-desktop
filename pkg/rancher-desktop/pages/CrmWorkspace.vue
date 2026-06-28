@@ -3496,6 +3496,39 @@
             </div>
           </div>
 
+          <!-- activity heatmap -->
+          <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Activity heatmap</p>
+              <p class="text-[10px] text-slate-300 dark:text-slate-600">Last 16 weeks</p>
+            </div>
+            <div class="flex gap-0.5 overflow-x-auto">
+              <div v-for="(week, wi) in statsViewData.heatmapWeeks" :key="wi" class="flex flex-col gap-0.5">
+                <div
+                  v-for="cell in week"
+                  :key="cell.date"
+                  class="h-[10px] w-[10px] rounded-sm transition-all duration-150 cursor-default"
+                  :class="cell.count === 0
+                    ? 'bg-slate-100 dark:bg-slate-800'
+                    : cell.count <= Math.round(statsViewData.heatmapMax * 0.25)
+                      ? 'bg-sky-200 dark:bg-sky-900/60'
+                      : cell.count <= Math.round(statsViewData.heatmapMax * 0.6)
+                        ? 'bg-sky-400 dark:bg-sky-700'
+                        : 'bg-sky-600 dark:bg-sky-500'"
+                  :title="`${cell.date}: ${cell.count} activit${cell.count === 1 ? 'y' : 'ies'}`"
+                />
+              </div>
+            </div>
+            <div class="flex items-center justify-end gap-1 mt-2">
+              <span class="text-[10px] text-slate-300 dark:text-slate-600">Less</span>
+              <span class="h-2 w-2 rounded-sm bg-slate-100 dark:bg-slate-800" />
+              <span class="h-2 w-2 rounded-sm bg-sky-200 dark:bg-sky-900/60" />
+              <span class="h-2 w-2 rounded-sm bg-sky-400 dark:bg-sky-700" />
+              <span class="h-2 w-2 rounded-sm bg-sky-600 dark:bg-sky-500" />
+              <span class="text-[10px] text-slate-300 dark:text-slate-600">More</span>
+            </div>
+          </div>
+
           <!-- activity breakdown -->
           <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Activity breakdown</p>
@@ -8051,7 +8084,31 @@ const statsViewData = computed(() => {
   const recentCount = recs.filter((r) => (r.created_at ?? '').slice(0, 10) >= thirtyAgoStr).length;
   const weeklyRate = Math.round((recentCount / 4.3) * 10) / 10;
 
-  return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate };
+  // 16-week activity heatmap (most recent 16 cols × 7 day rows)
+  const heatmapRecIds = new Set(recs.map((r) => r.id));
+  const dateCounts: Record<string, number> = {};
+  for (const a of mockActivities) {
+    if (!heatmapRecIds.has(a.record_id)) continue;
+    const d = a.created_at.slice(0, 10);
+    dateCounts[d] = (dateCounts[d] ?? 0) + 1;
+  }
+  const hmToday = new Date(DUE_TODAY_STR);
+  const hmEndDate = new Date(hmToday);
+  hmEndDate.setDate(hmToday.getDate() + (6 - hmToday.getDay())); // end on Saturday
+  const heatmapWeeks: Array<Array<{ date: string; count: number }>> = [];
+  for (let w = 15; w >= 0; w--) {
+    const col: Array<{ date: string; count: number }> = [];
+    for (let d = 0; d < 7; d++) {
+      const cell = new Date(hmEndDate);
+      cell.setDate(hmEndDate.getDate() - w * 7 - (6 - d));
+      const iso = cell.toISOString().slice(0, 10);
+      col.push({ date: iso, count: dateCounts[iso] ?? 0 });
+    }
+    heatmapWeeks.push(col);
+  }
+  const heatmapMax = Math.max(...Object.values(dateCounts), 1);
+
+  return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
 });
 
 interface ColStatsResult {
