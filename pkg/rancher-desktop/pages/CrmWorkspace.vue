@@ -1998,6 +1998,14 @@
                               class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400"
                               :title="`${activityCountByRecord[row.record.id]} activities`"
                             >{{ activityCountByRecord[row.record.id] }}</span>
+                            <span
+                              v-if="pendingTaskCountByRecord[row.record.id]"
+                              class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400"
+                              :title="`${pendingTaskCountByRecord[row.record.id]} pending task${pendingTaskCountByRecord[row.record.id] === 1 ? '' : 's'}`"
+                            >
+                              <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+                              {{ pendingTaskCountByRecord[row.record.id] }}
+                            </span>
                             <svg
                               v-if="staleDaysFilter && staleIds.has(row.record.id)"
                               class="h-3.5 w-3.5 text-amber-400 shrink-0"
@@ -4319,6 +4327,7 @@
                 { keys: ['B'], desc: 'Board / Kanban view' },
                 { keys: ['L'], desc: 'Calendar view' },
                 { keys: ['V'], desc: 'Gallery view' },
+                { keys: ['I'], desc: 'Stats / Insights view' },
                 { keys: ['⌘', 'A'], desc: 'Select all records (table view)' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Home', 'End'], desc: 'First / last record' },
@@ -4335,6 +4344,7 @@
                 { keys: ['1'], desc: 'Details tab' },
                 { keys: ['2'], desc: 'Activity tab' },
                 { keys: ['3'], desc: 'Related tab' },
+                { keys: ['4'], desc: 'Tasks tab' },
                 { keys: ['['], desc: 'Previous record in list' },
                 { keys: [']'], desc: 'Next record in list' },
                 { keys: ['U'], desc: 'Archive / unarchive record' },
@@ -6703,6 +6713,14 @@ const activityCountByRecord = computed((): Record<string, number> => {
   const counts: Record<string, number> = {};
   for (const a of mockActivities) {
     counts[a.record_id] = (counts[a.record_id] ?? 0) + 1;
+  }
+  return counts;
+});
+
+const pendingTaskCountByRecord = computed((): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const t of mockTasks) {
+    if (!t.done) counts[t.record_id] = (counts[t.record_id] ?? 0) + 1;
   }
   return counts;
 });
