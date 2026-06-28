@@ -482,6 +482,18 @@
                 </template>
               </div>
             </div>
+            <!-- bulk duplicate -->
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
+              :title="`Duplicate ${selectedIds.size} selected record${selectedIds.size === 1 ? '' : 's'}`"
+              @click="bulkDuplicate()"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              Duplicate
+            </button>
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
@@ -6991,6 +7003,36 @@ function bulkDelete() {
   recentRecords.value = recentRecords.value.filter((r) => !ids.includes(r.id));
   selectedIds.value = new Set();
   showToast(`${ids.length} record${ids.length === 1 ? '' : 's'} deleted`, { label: 'Undo', fn: restoreBulkDeleted });
+}
+
+function bulkDuplicate() {
+  const ids = [...selectedIds.value];
+  if (!ids.length) return;
+  const newIds: string[] = [];
+  for (const id of ids) {
+    const orig = mockRecords.find((r) => r.id === id);
+    if (!orig) continue;
+    const dup: CrmRecord = {
+      id: 'dup-' + id + '-' + String(mockRecords.length),
+      record_type_key: orig.record_type_key,
+      title: 'Copy of ' + orig.title,
+      created_at: new Date().toISOString(),
+      field_values: { ...orig.field_values },
+      links: [],
+    };
+    mockRecords.push(dup);
+    mockActivities.unshift({
+      id: 'act-dup-' + dup.id,
+      record_id: dup.id,
+      type: 'change',
+      content: 'Record duplicated',
+      author: 'You',
+      created_at: dup.created_at,
+    });
+    newIds.push(dup.id);
+  }
+  selectedIds.value = new Set(newIds);
+  showToast(`${newIds.length} record${newIds.length === 1 ? '' : 's'} duplicated`);
 }
 
 function restoreBulkDeleted() {
