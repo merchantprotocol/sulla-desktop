@@ -4237,8 +4237,24 @@ const CrmCellValue = defineComponent({
       }
       if (props.dataType === 'date') {
         const d = new Date(String(props.value));
-        const fmt = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        return h('span', { class: 'tabular-nums' }, fmt);
+        const now = new Date();
+        const diffMs = d.getTime() - now.getTime();
+        const diffDays = diffMs / (1000 * 60 * 60 * 24);
+        // Strip time component for comparison (treat as date-only)
+        const isOverdue = diffDays < -0.5;
+        const isDueSoon = !isOverdue && diffDays <= 7;
+        const fmt = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+        const colorClass = isOverdue
+          ? 'text-red-500 dark:text-red-400'
+          : isDueSoon
+            ? 'text-amber-500 dark:text-amber-400'
+            : '';
+        const titleStr = isOverdue
+          ? `Overdue — ${Math.round(-diffDays)} day${Math.round(-diffDays) === 1 ? '' : 's'} ago`
+          : isDueSoon
+            ? diffDays < 1 ? 'Due today' : `Due in ${Math.round(diffDays)} day${Math.round(diffDays) === 1 ? '' : 's'}`
+            : fmt;
+        return h('span', { class: 'tabular-nums ' + colorClass, title: titleStr }, fmt);
       }
       return h('span', { class: 'truncate max-w-[180px] block' }, String(props.value));
     };
