@@ -1790,6 +1790,7 @@
                 { keys: ['P'], desc: 'Toggle pinned-only view' },
                 { keys: ['/'], desc: 'Focus search' },
                 { keys: ['R'], desc: 'Reset filters, search & sort' },
+                { keys: ['1-4'], desc: 'Switch record type (no panel open)' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Esc'], desc: 'Close panel' },
                 { keys: ['?'], desc: 'Toggle this overlay' },
@@ -3164,6 +3165,13 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (e.key === '2') { detailTab.value = 'activity'; e.preventDefault(); return; }
     if (e.key === '3') { detailTab.value = 'related'; e.preventDefault(); return; }
     if (e.key === 'c' && !e.metaKey && !e.ctrlKey) { copyRecordLink(openedRecord.value); e.preventDefault(); return; }
+  }
+  if (!inField && !openedRecord.value && !editingRecord.value && !creatingRecord.value) {
+    const idx = parseInt(e.key, 10) - 1;
+    if (idx >= 0 && idx < schema.length) {
+      selectType(schema[idx].key);
+      e.preventDefault();
+    }
   }
 }
 
