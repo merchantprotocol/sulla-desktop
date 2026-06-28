@@ -724,7 +724,7 @@
                     v-for="record in (kanbanGroups[col] ?? [])"
                     :key="record.id"
                     type="button"
-                    class="w-full text-left rounded-xl border p-3.5 shadow-sm transition-all"
+                    class="group/card w-full text-left rounded-xl border p-3.5 shadow-sm transition-all"
                     :class="openedRecord?.id === record.id
                       ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800 shadow-md'
                       : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700'"
@@ -768,6 +768,37 @@
                         >{{ record.field_values[f.key] }}</span>
                         <span v-else class="truncate text-slate-600 dark:text-slate-300">{{ formatCardValue(record.field_values[f.key], f.data_type, f.format) }}</span>
                       </div>
+                    </div>
+                    <!-- stage move controls -->
+                    <div
+                      v-if="kanbanField"
+                      class="flex items-center justify-between mt-2 opacity-0 group-hover/card:opacity-100 transition-opacity"
+                    >
+                      <button
+                        v-if="kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) > 0"
+                        type="button"
+                        class="flex items-center gap-0.5 text-xs text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded px-1 py-0.5 transition-colors"
+                        title="Move to previous stage"
+                        @click.stop="moveCardStage(record, -1)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                        </svg>
+                        Prev
+                      </button>
+                      <span v-else class="w-10" />
+                      <button
+                        v-if="kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) < kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).length - 1 && kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) >= 0"
+                        type="button"
+                        class="flex items-center gap-0.5 text-xs text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded px-1 py-0.5 transition-colors"
+                        title="Move to next stage"
+                        @click.stop="moveCardStage(record, 1)"
+                      >
+                        Next
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
                     </div>
                   </button>
 
@@ -2321,6 +2352,18 @@ function logNote(record: CrmRecord) {
   noteText.value = '';
   loggingNote.value = false;
   showToast('Note logged');
+}
+
+function moveCardStage(record: CrmRecord, dir: 1 | -1) {
+  const fieldKey = kanbanField.value?.key;
+  if (!fieldKey) return;
+  const cols = kanbanColumns.value.filter((c) => c !== KANBAN_UNASSIGNED);
+  const currentVal = String(record.field_values[fieldKey] ?? '');
+  const idx = cols.indexOf(currentVal);
+  const nextIdx = idx + dir;
+  if (nextIdx < 0 || nextIdx >= cols.length) return;
+  record.field_values[fieldKey] = cols[nextIdx];
+  showToast(`Stage: ${cols[nextIdx]}`);
 }
 
 function addLink(record: CrmRecord, target: CrmRecord) {
