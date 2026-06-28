@@ -3867,6 +3867,13 @@
           </div>
         </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="colStatsFieldKey = colHeaderMenu!.fieldKey; showColStatsModal = true; colHeaderMenu = null">
+          <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 3v18h18M7 16l4-4 4 4 4-4" />
+          </svg>
+          Column stats
+        </button>
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           @click="hiddenColumnKeys = new Set([...hiddenColumnKeys, colHeaderMenu!.fieldKey]); colHeaderMenu = null">
           <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -3939,6 +3946,71 @@
         </div>
       </div>
     </transition>
+
+    <!-- column stats modal -->
+    <Teleport to="body">
+      <div
+        v-if="showColStatsModal && colStats"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+        @click.self="showColStatsModal = false"
+      >
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[420px] max-h-[80vh] flex flex-col overflow-hidden border border-slate-200 dark:border-slate-700">
+          <!-- header -->
+          <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+            <div>
+              <h3 class="text-base font-semibold text-slate-900 dark:text-white">{{ colStats.label }}</h3>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ colStats.dataType }}</p>
+            </div>
+            <button type="button" class="rounded-lg p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showColStatsModal = false">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+            <!-- fill rate -->
+            <div>
+              <div class="flex items-center justify-between text-xs mb-1.5">
+                <span class="text-slate-500 dark:text-slate-400">Fill rate</span>
+                <span class="font-semibold text-slate-700 dark:text-slate-200">{{ colStats.filled }} / {{ colStats.total }} ({{ colStats.fillRate }}%)</span>
+              </div>
+              <div class="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                <div class="h-full rounded-full bg-sky-500 transition-all" :style="`width:${colStats.fillRate}%`" />
+              </div>
+            </div>
+            <!-- number stats -->
+            <div v-if="colStats.numMin !== undefined" class="grid grid-cols-3 gap-3">
+              <div v-for="stat in [['Min', colStats.numMin], ['Avg', colStats.numAvg], ['Max', colStats.numMax]]" :key="stat[0]" class="rounded-xl bg-slate-50 dark:bg-slate-800 p-3 text-center">
+                <div class="text-xs text-slate-400 dark:text-slate-500 mb-1">{{ stat[0] }}</div>
+                <div class="text-base font-semibold text-slate-800 dark:text-slate-100 tabular-nums">{{ stat[1] }}</div>
+              </div>
+            </div>
+            <div v-if="colStats.numSum !== undefined" class="flex items-center justify-between rounded-xl bg-slate-50 dark:bg-slate-800 px-4 py-2.5">
+              <span class="text-xs text-slate-400 dark:text-slate-500">Sum</span>
+              <span class="text-sm font-semibold tabular-nums text-slate-800 dark:text-slate-100">{{ colStats.numSum?.toLocaleString() }}</span>
+            </div>
+            <!-- distribution chart -->
+            <div v-if="colStats.distribution && colStats.distribution.length">
+              <p class="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Distribution</p>
+              <div class="space-y-1.5">
+                <div
+                  v-for="item in colStats.distribution"
+                  :key="item.label"
+                  class="flex items-center gap-2"
+                >
+                  <span class="text-xs text-slate-600 dark:text-slate-300 w-28 shrink-0 truncate">{{ item.label }}</span>
+                  <div class="flex-1 h-5 rounded-md bg-slate-100 dark:bg-slate-800 overflow-hidden relative">
+                    <div
+                      class="h-full rounded-md bg-sky-400 dark:bg-sky-600 transition-all"
+                      :style="`width:${colStats.distribution && colStats.distribution.length ? Math.round((item.count / Math.max(...colStats.distribution.map(x => x.count))) * 100) : 0}%`"
+                    />
+                    <span class="absolute inset-0 flex items-center justify-end pr-2 text-xs font-medium text-slate-600 dark:text-slate-300">{{ item.count }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- merge records modal -->
     <Teleport to="body">
@@ -4704,6 +4776,8 @@ const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
 const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
 const colHeaderMenu = ref<{ fieldKey: string; x: number; y: number } | null>(null);
+const showColStatsModal = ref(false);
+const colStatsFieldKey = ref<string | null>(null);
 const groupByField = ref<string | null>(null);
 const showAddStageInput = ref(false);
 const newStageName = ref('');
@@ -5481,6 +5555,76 @@ const tableColumnTotals = computed((): Record<string, number | null> => {
 const hasTableTotals = computed(() =>
   Object.values(tableColumnStats.value).some((v) => v !== null),
 );
+
+interface ColStatsResult {
+  label: string;
+  dataType: DataType;
+  total: number;
+  filled: number;
+  fillRate: number;
+  // per-type extras
+  numMin?: number; numMax?: number; numAvg?: number; numSum?: number; numMedian?: number;
+  distribution?: Array<{ label: string; count: number }>;
+}
+const colStats = computed((): ColStatsResult | null => {
+  const fkey = colStatsFieldKey.value;
+  if (!fkey || !selectedType.value) return null;
+  const field = allColumns.value.find((c) => c.key === fkey);
+  if (!field) return null;
+  const recs = filteredRecords.value;
+  const values = recs.map((r) => r.field_values[fkey]);
+  const filledVals = values.filter((v) => {
+    if (Array.isArray(v)) return v.length > 0;
+    return v != null && v !== '' && v !== false;
+  });
+  const base: ColStatsResult = {
+    label: field.label,
+    dataType: field.data_type,
+    total: recs.length,
+    filled: filledVals.length,
+    fillRate: recs.length ? Math.round((filledVals.length / recs.length) * 100) : 0,
+  };
+  if (field.data_type === 'number' || field.data_type === 'rating') {
+    const filtered = values.filter((v) => v != null && !isNaN(Number(v))).map(Number);
+    if (filtered.length) {
+      const sorted = [...filtered].sort((a, b) => a - b);
+      base.numMin = sorted[0];
+      base.numMax = sorted[sorted.length - 1];
+      base.numSum = filtered.reduce((a, b) => a + b, 0);
+      base.numAvg = Math.round((base.numSum / filtered.length) * 10) / 10;
+      const mid = Math.floor(sorted.length / 2);
+      base.numMedian = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    }
+    if (field.data_type === 'rating') {
+      const dist: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
+      for (const v of values) { if (v != null) { const s = String(v); if (dist[s] !== undefined) dist[s]++; } }
+      base.distribution = [1,2,3,4,5].map((n) => ({ label: '★'.repeat(n), count: dist[String(n)] }));
+    }
+  } else if (field.data_type === 'select') {
+    const dist: Record<string, number> = {};
+    for (const v of values) {
+      if (v == null || v === '') continue;
+      const s = String(v);
+      dist[s] = (dist[s] ?? 0) + 1;
+    }
+    base.distribution = Object.entries(dist).sort((a, b) => b[1] - a[1]).map(([l, c]) => ({ label: l, count: c }));
+  } else if (field.data_type === 'multi_select') {
+    const dist: Record<string, number> = {};
+    for (const v of values) {
+      const arr = Array.isArray(v) ? v : (v ? String(v).split(',').map((s) => s.trim()) : []);
+      for (const s of arr) { dist[s] = (dist[s] ?? 0) + 1; }
+    }
+    base.distribution = Object.entries(dist).sort((a, b) => b[1] - a[1]).map(([l, c]) => ({ label: l, count: c }));
+  } else if (field.data_type === 'boolean') {
+    const yes = values.filter((v) => v === true || v === 'true').length;
+    const no = values.filter((v) => v === false || v === 'false').length;
+    base.distribution = [{ label: 'Yes', count: yes }, { label: 'No', count: no }];
+  } else if (['text', 'email', 'phone', 'url'].includes(field.data_type)) {
+    const unique = new Set(values.filter((v) => v != null && v !== '').map(String)).size;
+    base.distribution = [{ label: 'Unique values', count: unique }];
+  }
+  return base;
+});
 
 function evaluateConditionalRules(record: CrmRecord): string | null {
   for (const rule of conditionalRules.value) {
