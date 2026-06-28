@@ -681,29 +681,59 @@
               </button>
             </div>
 
+            <!-- tab bar — hidden while editing -->
+            <div v-if="!editingRecord" class="flex border-b border-slate-200 dark:border-slate-700 px-5">
+              <button
+                v-for="tab in ([
+                  { key: 'details', label: 'Details' },
+                  { key: 'activity', label: 'Activity', count: recordActivities.length },
+                  { key: 'related', label: 'Related', count: openedRecord.links?.length ?? 0 },
+                ] as const)"
+                :key="tab.key"
+                type="button"
+                class="flex items-center gap-1 py-2.5 mr-5 text-xs font-medium border-b-2 transition-colors"
+                :class="detailTab === tab.key
+                  ? 'border-sky-500 text-sky-600 dark:text-sky-400'
+                  : 'border-transparent text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
+                @click="detailTab = tab.key"
+              >
+                {{ tab.label }}
+                <span
+                  v-if="tab.count"
+                  class="text-xs tabular-nums rounded-full px-1.5 py-0.5 leading-none"
+                  :class="detailTab === tab.key
+                    ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
+                >{{ tab.count }}</span>
+              </button>
+            </div>
+
             <!-- schema-driven fields -->
             <div class="flex-1 px-5 py-4 space-y-4 overflow-y-auto">
-              <div
-                v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
-                :key="field.id"
-                class="space-y-1"
-              >
-                <label class="block text-xs font-medium text-slate-400 dark:text-slate-500">
-                  {{ field.label }}
-                  <span v-if="field.is_required" class="text-red-400 ml-0.5">*</span>
-                </label>
-                <CrmFieldInput
-                  :data-type="field.data_type"
-                  :value="openedRecord.field_values[field.key]"
-                  :read-only="!editingRecord"
-                  :select-options="field.select_options ?? []"
-                  :format="field.format"
-                />
-              </div>
+              <!-- Details tab -->
+              <template v-if="editingRecord || detailTab === 'details'">
+                <div
+                  v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
+                  :key="field.id"
+                  class="space-y-1"
+                >
+                  <label class="block text-xs font-medium text-slate-400 dark:text-slate-500">
+                    {{ field.label }}
+                    <span v-if="field.is_required" class="text-red-400 ml-0.5">*</span>
+                  </label>
+                  <CrmFieldInput
+                    :data-type="field.data_type"
+                    :value="openedRecord.field_values[field.key]"
+                    :read-only="!editingRecord"
+                    :select-options="field.select_options ?? []"
+                    :format="field.format"
+                  />
+                </div>
+              </template>
 
-              <!-- activity feed -->
-              <div class="pt-2 border-t border-slate-100 dark:border-slate-800">
-                <div class="flex items-center justify-between mb-3">
+              <!-- Activity tab -->
+              <template v-else-if="detailTab === 'activity'">
+                <div class="flex items-center justify-between">
                   <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Activity</p>
                   <button
                     type="button"
@@ -727,12 +757,12 @@
                   </div>
                 </div>
                 <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No activity logged yet.</p>
-              </div>
+              </template>
 
-              <!-- related records -->
-              <div v-if="openedRecord.links?.length" class="pt-2 border-t border-slate-100 dark:border-slate-800">
-                <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Related</p>
-                <div class="space-y-1">
+              <!-- Related tab -->
+              <template v-else-if="detailTab === 'related'">
+                <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Related records</p>
+                <div v-if="openedRecord.links?.length" class="space-y-1">
                   <button
                     v-for="link in openedRecord.links"
                     :key="link.target_id"
@@ -755,7 +785,8 @@
                     </svg>
                   </button>
                 </div>
-              </div>
+                <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No related records.</p>
+              </template>
             </div>
 
             <!-- panel footer — view mode -->
@@ -1084,6 +1115,7 @@ const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
 const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
 const showColumnsMenu = ref(false);
+const detailTab = ref<'details' | 'activity' | 'related'>('details');
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -1317,6 +1349,7 @@ function openRecord(record: CrmRecord) {
   openedRecord.value = record;
   editingRecord.value = false;
   creatingRecord.value = false;
+  detailTab.value = 'details';
 }
 
 function openNewRecord(stageValue?: string) {
@@ -1358,6 +1391,7 @@ function openLinkedRecord(link: CrmLink) {
   openedRecord.value = record;
   editingRecord.value = false;
   creatingRecord.value = false;
+  detailTab.value = 'details';
 }
 
 function onKeyN(e: KeyboardEvent) {
