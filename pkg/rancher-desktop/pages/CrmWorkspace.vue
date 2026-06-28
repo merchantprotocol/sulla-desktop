@@ -3806,6 +3806,38 @@
                   </div>
                 </div>
 
+                <!-- create & link form -->
+                <div v-if="showCreateLinkForm" class="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-3 space-y-2">
+                  <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">New linked record</p>
+                  <select
+                    v-model="createLinkTypeKey"
+                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                  >
+                    <option v-for="rt in schema" :key="rt.key" :value="rt.key">{{ rt.label }}</option>
+                  </select>
+                  <input
+                    v-model="createLinkTitle"
+                    type="text"
+                    placeholder="Title…"
+                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                    @keydown.enter.prevent="commitCreateAndLink(openedRecord)"
+                    @keydown.esc.stop="showCreateLinkForm = false"
+                  />
+                  <div class="flex gap-2">
+                    <button type="button" class="flex-1 h-7 rounded-lg text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" @click="showCreateLinkForm = false">Cancel</button>
+                    <button type="button" class="flex-1 h-7 rounded-lg text-xs font-semibold bg-sky-500 hover:bg-sky-600 text-white transition-colors" :disabled="!createLinkTitle.trim()" @click="commitCreateAndLink(openedRecord)">Create & link</button>
+                  </div>
+                </div>
+                <button
+                  v-else
+                  type="button"
+                  class="w-full flex items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500 hover:text-sky-500 dark:hover:text-sky-400 transition-colors py-1"
+                  @click="showCreateLinkForm = true; createLinkTypeKey = schema[0]?.key ?? ''; createLinkTitle = ''"
+                >
+                  <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                  Create &amp; link a new record
+                </button>
+
                 <div v-if="openedRecord.links?.length" class="space-y-1">
                   <div
                     v-for="link in openedRecord.links"
@@ -6047,6 +6079,9 @@ const editFormErrors = ref<Set<string>>(new Set());
 const recentRecords = ref<CrmRecord[]>([]); // last 5 opened, newest first
 const linkQuery = ref('');
 const linkDropdownOpen = ref(false);
+const showCreateLinkForm = ref(false);
+const createLinkTypeKey = ref('');
+const createLinkTitle = ref('');
 const watchedIds = ref<Set<string>>(new Set());
 const COLOR_LABEL_PALETTE = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'] as const;
 const colorLabels = ref<Record<string, string>>({});
@@ -7913,6 +7948,7 @@ function openRecord(record: CrmRecord) {
   editingRecord.value = false;
   creatingRecord.value = false;
   detailTab.value = 'details';
+  showCreateLinkForm.value = false;
   // track in recent list (dedupe + cap at 5)
   recentRecords.value = [record, ...recentRecords.value.filter((r) => r.id !== record.id)].slice(0, 5);
 }
@@ -8177,6 +8213,30 @@ function removeLink(record: CrmRecord, targetId: string) {
   if (!record.links) return;
   record.links = record.links.filter((l) => l.target_id !== targetId);
   showToast('Link removed');
+}
+
+function commitCreateAndLink(record: CrmRecord) {
+  const title = createLinkTitle.value.trim();
+  const typeKey = createLinkTypeKey.value || schema[0]?.key;
+  if (!title || !typeKey) return;
+  const type = schema.find((t) => t.key === typeKey);
+  if (!type) return;
+  const titleField = type.fields.find((f) => f.is_title);
+  const fieldValues: Record<string, string | number | boolean | string[] | null> = {};
+  if (titleField) fieldValues[titleField.key] = title;
+  const newRecord: CrmRecord = {
+    id: 'new-' + typeKey + '-' + String(mockRecords.length),
+    record_type_key: typeKey,
+    title,
+    created_at: new Date().toISOString(),
+    field_values: fieldValues,
+    links: [],
+  };
+  mockRecords.push(newRecord);
+  addLink(record, newRecord);
+  createLinkTitle.value = '';
+  showCreateLinkForm.value = false;
+  showToast(`Created & linked ${type.label}: ${title}`);
 }
 
 function startAnnotate(fieldKey: string, recordId: string) {
