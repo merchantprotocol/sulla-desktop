@@ -1256,6 +1256,22 @@
               Format{{ conditionalRules.length ? ` (${conditionalRules.length})` : '' }}
             </button>
 
+            <!-- pin note button -->
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+              :class="typeNotes[selectedTypeKey]
+                ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/30'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+              :title="typeNotes[selectedTypeKey] ? 'Edit pinned note for this type' : 'Pin a note for this record type'"
+              @click="editingTypeNote = selectedTypeKey"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 20 20" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
+              </svg>
+              {{ typeNotes[selectedTypeKey] ? 'Note' : 'Pin note' }}
+            </button>
+
             <!-- import button -->
             <button
               type="button"
@@ -1843,6 +1859,49 @@
             >
               {{ filteredDueSoonCount }} due soon
             </span>
+          </div>
+
+          <!-- pinned type note banner -->
+          <div
+            v-if="typeNotes[selectedTypeKey] || editingTypeNote === selectedTypeKey"
+            class="mx-0 border-b border-amber-100 dark:border-amber-900/30 bg-amber-50 dark:bg-amber-950/20 px-6 py-2.5"
+          >
+            <template v-if="editingTypeNote === selectedTypeKey">
+              <div class="flex items-start gap-2">
+                <svg class="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
+                </svg>
+                <textarea
+                  ref="typeNoteInputEl"
+                  v-model="typeNoteDraft"
+                  rows="2"
+                  placeholder="Add a pinned note for this type…"
+                  class="flex-1 text-xs bg-transparent border-none outline-none resize-none text-amber-900 dark:text-amber-200 placeholder:text-amber-300 dark:placeholder:text-amber-700"
+                  @keydown.escape.prevent="editingTypeNote = null"
+                  @keydown.enter.meta.prevent="(() => { if (typeNoteDraft.trim()) { typeNotes = { ...typeNotes, [selectedTypeKey]: typeNoteDraft.trim() }; } else { const n = { ...typeNotes }; delete n[selectedTypeKey]; typeNotes = n; } editingTypeNote = null; })()"
+                />
+                <div class="flex gap-1.5 shrink-0">
+                  <button type="button" class="text-xs font-medium px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-800 text-amber-800 dark:text-amber-200 hover:bg-amber-300 dark:hover:bg-amber-700 transition-colors"
+                    @click="(() => { if (typeNoteDraft.trim()) { typeNotes = { ...typeNotes, [selectedTypeKey]: typeNoteDraft.trim() }; } else { const n = { ...typeNotes }; delete n[selectedTypeKey]; typeNotes = n; } editingTypeNote = null; })()">
+                    Save</button>
+                  <button type="button" class="text-xs text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 transition-colors"
+                    @click="editingTypeNote = null">Cancel</button>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="flex items-start gap-2 group/note">
+                <svg class="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" />
+                </svg>
+                <p class="flex-1 text-xs text-amber-800 dark:text-amber-200 leading-relaxed whitespace-pre-line">{{ typeNotes[selectedTypeKey] }}</p>
+                <div class="flex gap-1 opacity-0 group-hover/note:opacity-100 transition-opacity">
+                  <button type="button" class="text-xs text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 transition-colors" @click="editingTypeNote = selectedTypeKey">Edit</button>
+                  <button type="button" class="text-xs text-amber-400 hover:text-rose-400 dark:hover:text-rose-400 transition-colors"
+                    @click="(() => { const n = { ...typeNotes }; delete n[selectedTypeKey]; typeNotes = n; })()">Remove</button>
+                </div>
+              </div>
+            </template>
           </div>
 
           <!-- ── Table view ── -->
@@ -7015,6 +7074,13 @@ const LS_KEY_GALLERY_FIELDS = 'crm:galleryFields';
 
 const archivedIds = ref<Set<string>>(new Set());
 const showArchived = ref(false);
+const typeNotes = ref<Record<string, string>>({});
+const editingTypeNote = ref<string | null>(null);
+const typeNoteDraft = ref('');
+const typeNoteInputEl = ref<HTMLTextAreaElement | null>(null);
+watch(editingTypeNote, (v) => {
+  if (v) { typeNoteDraft.value = typeNotes.value[v] ?? ''; nextTick(() => typeNoteInputEl.value?.focus()); }
+});
 
 const filterPresets = ref<FilterPreset[]>([]);
 const showFilterPresetsPanel = ref(false);
