@@ -911,6 +911,7 @@
                   :read-only="false"
                   :select-options="field.select_options ?? []"
                   :format="field.format"
+                  @update:value="draftValues[field.key] = $event; createFormErrors.delete(field.key)"
                 />
                 <p v-if="createFormErrors.has(field.key)" class="text-xs text-red-500 dark:text-red-400">
                   This field is required.
@@ -1011,6 +1012,26 @@
               >
                 Editing
               </span>
+              <button
+                type="button"
+                :aria-label="watchedIds.has(openedRecord.id) ? 'Stop watching' : 'Watch record'"
+                :title="watchedIds.has(openedRecord.id) ? 'Stop watching this record' : 'Watch this record for changes'"
+                class="shrink-0 mt-0.5 rounded-lg p-1 transition-colors"
+                :class="watchedIds.has(openedRecord.id)
+                  ? 'text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'"
+                @click="toggleWatch(openedRecord.id)"
+              >
+                <svg
+                  class="h-4 w-4"
+                  :fill="watchedIds.has(openedRecord.id) ? 'currentColor' : 'none'"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+              </button>
               <button
                 type="button"
                 aria-label="Close"
@@ -1878,6 +1899,7 @@ const preEditSnapshot = ref<Record<string, unknown>>({});
 const recentRecords = ref<CrmRecord[]>([]); // last 5 opened, newest first
 const linkQuery = ref('');
 const linkDropdownOpen = ref(false);
+const watchedIds = ref<Set<string>>(new Set());
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2396,6 +2418,18 @@ function highlightText(text: string, query: string): Array<{ text: string; match
     { text: text.slice(idx, idx + q.length), match: true },
     text.slice(idx + q.length) ? { text: text.slice(idx + q.length), match: false } : null,
   ].filter((p): p is { text: string; match: boolean } => p !== null);
+}
+
+function toggleWatch(id: string) {
+  const next = new Set(watchedIds.value);
+  if (next.has(id)) {
+    next.delete(id);
+    showToast('Stopped watching record');
+  } else {
+    next.add(id);
+    showToast('Watching record');
+  }
+  watchedIds.value = next;
 }
 
 function moveCardStage(record: CrmRecord, dir: 1 | -1) {
