@@ -12,6 +12,7 @@
     @keydown.r.exact="onKeyR"
     @keydown.t.exact="onKeyT"
     @keydown.b.exact="onKeyB"
+    @keydown.l.exact="onKeyL"
     @keydown.s.exact="onKeyS"
     @keydown.f.exact="onKeyF"
     @keydown.g.exact="onKeyG"
@@ -974,9 +975,9 @@
               </button>
             </div>
 
-            <!-- view toggle — only when the type has a groupable select field -->
+            <!-- view toggle — table always available; board when type has select field; calendar when type has date field -->
             <div
-              v-if="canKanban"
+              v-if="canKanban || canCalendar"
               class="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden"
             >
               <button
@@ -1021,6 +1022,22 @@
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
+              </button>
+              <!-- calendar view button — only when type has a date field -->
+              <button
+                v-if="canCalendar"
+                type="button"
+                class="flex items-center gap-1.5 px-3 h-9 text-sm border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="viewMode === 'calendar'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                title="Calendar view (L)"
+                @click="viewMode = 'calendar'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                Calendar
               </button>
             </div>
 
@@ -2046,6 +2063,64 @@
           </div>
         </div>
 
+        <!-- ── Calendar view ── -->
+        <div v-if="viewMode === 'calendar' && canCalendar" class="flex-1 flex flex-col overflow-hidden">
+          <!-- calendar nav bar -->
+          <div class="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 shrink-0">
+            <button type="button" class="h-7 px-2 rounded-md text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="calPrevMonth">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <span class="font-semibold text-sm text-slate-800 dark:text-slate-200 min-w-[140px] text-center">{{ MONTH_NAMES[calendarMonth] }} {{ calendarYear }}</span>
+            <button type="button" class="h-7 px-2 rounded-md text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="calNextMonth">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+            </button>
+            <button type="button" class="h-7 px-3 rounded-md text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-colors" @click="calGoToday">Today</button>
+            <span class="ml-auto text-xs text-slate-400 dark:text-slate-500">Grouped by: <b class="text-slate-600 dark:text-slate-300">{{ calendarDateField?.label }}</b></span>
+          </div>
+          <!-- day-of-week headers -->
+          <div class="grid grid-cols-7 border-b border-slate-200 dark:border-slate-700 shrink-0">
+            <div
+              v-for="d in ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']"
+              :key="d"
+              class="px-2 py-1.5 text-center text-xs font-medium text-slate-400 dark:text-slate-500 border-r border-slate-200 dark:border-slate-700 last:border-r-0"
+            >{{ d }}</div>
+          </div>
+          <!-- calendar grid -->
+          <div class="flex-1 overflow-y-auto">
+            <div v-for="(week, wi) in calendarGrid" :key="wi" class="grid grid-cols-7 border-b border-slate-200 dark:border-slate-700 last:border-b-0 min-h-[100px]">
+              <div
+                v-for="cell in week"
+                :key="cell.date"
+                class="relative flex flex-col border-r border-slate-200 dark:border-slate-700 last:border-r-0 p-1.5 min-h-[100px]"
+                :class="cell.inMonth ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-950'"
+              >
+                <span
+                  class="text-xs font-medium mb-1 self-end w-6 h-6 flex items-center justify-center rounded-full"
+                  :class="cell.date === '2026-06-28'
+                    ? 'bg-sky-500 text-white'
+                    : cell.inMonth
+                      ? 'text-slate-700 dark:text-slate-300'
+                      : 'text-slate-300 dark:text-slate-600'"
+                >{{ cell.dayNum }}</span>
+                <div class="flex-1 space-y-0.5 overflow-hidden">
+                  <button
+                    v-for="record in cell.records.slice(0, 4)"
+                    :key="record.id"
+                    type="button"
+                    class="w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate transition-colors"
+                    :class="openedRecord?.id === record.id
+                      ? 'bg-sky-500 text-white'
+                      : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60'"
+                    :title="record.title"
+                    @click="openRecord(record)"
+                  >{{ record.title }}</button>
+                  <span v-if="cell.records.length > 4" class="block text-xs text-slate-400 dark:text-slate-500 px-1">+{{ cell.records.length - 4 }} more</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- ── New record form panel ── -->
         <transition
           enter-active-class="transition-all duration-200"
@@ -2898,6 +2973,7 @@
                 { keys: ['1-4'], desc: 'Switch record type (no panel open)' },
                 { keys: ['T'], desc: 'Table view' },
                 { keys: ['B'], desc: 'Board / Kanban view' },
+                { keys: ['L'], desc: 'Calendar view' },
                 { keys: ['⌘', 'A'], desc: 'Select all records (table view)' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Home', 'End'], desc: 'First / last record' },
@@ -4272,7 +4348,7 @@ interface SavedView {
   sortDir: 'asc' | 'desc';
   sortField2: string | null;
   sortDir2: 'asc' | 'desc';
-  viewMode: 'table' | 'kanban';
+  viewMode: 'table' | 'kanban' | 'calendar';
   hiddenCols: string[];
   showPinnedOnly: boolean;
   showWatchedOnly: boolean;
@@ -4573,7 +4649,7 @@ const searchQuery = ref('');
 const searchInputEl = ref<HTMLInputElement | null>(null);
 const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
-const viewMode = ref<'table' | 'kanban'>('table');
+const viewMode = ref<'table' | 'kanban' | 'calendar'>('table');
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
 const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
@@ -4638,7 +4714,7 @@ const bulkNoteInputEl = ref<HTMLTextAreaElement | null>(null);
 watch(showBulkNoteModal, (val) => { if (val) { bulkNoteText.value = ''; nextTick(() => bulkNoteInputEl.value?.focus()); } });
 const showBulkFieldModal = ref(false);
 const bulkFieldKey = ref<string | null>(null);
-const bulkFieldValue = ref<string | number | boolean | null>(null);
+const bulkFieldValue = ref<string | number | boolean | string[] | null>(null);
 watch(showBulkFieldModal, (val) => { if (!val) { bulkFieldKey.value = null; bulkFieldValue.value = null; } });
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const lastSelectedIdx = ref(-1);
@@ -4752,8 +4828,8 @@ const LS_KEY_SAVED_VIEWS = 'crm:savedViews';
 
 onMounted(() => {
   try {
-    const savedView = localStorage.getItem(LS_KEY_VIEW_MODE) as 'table' | 'kanban' | null;
-    if (savedView === 'table' || savedView === 'kanban') viewMode.value = savedView;
+    const savedView = localStorage.getItem(LS_KEY_VIEW_MODE) as 'table' | 'kanban' | 'calendar' | null;
+    if (savedView === 'table' || savedView === 'kanban' || savedView === 'calendar') viewMode.value = savedView;
     const savedHidden = localStorage.getItem(LS_KEY_HIDDEN_COLS);
     if (savedHidden) hiddenColumnKeys.value = new Set(JSON.parse(savedHidden) as string[]);
     const savedDensity = localStorage.getItem(LS_KEY_ROW_DENSITY) as 'comfortable' | 'compact' | null;
@@ -5222,6 +5298,72 @@ const kanbanField = computed(() =>
 );
 
 const canKanban = computed(() => kanbanField.value != null);
+
+// ── Calendar view ────────────────────────────────────────────────────────────
+const calendarYear = ref(2026);
+const calendarMonth = ref(5); // 0-indexed: 5 = June
+
+const calendarDateField = computed(() =>
+  selectedType.value?.fields.find((f) => f.data_type === 'date') ?? null,
+);
+const canCalendar = computed(() => calendarDateField.value != null);
+
+interface CalDay {
+  date: string;       // ISO yyyy-mm-dd
+  dayNum: number;
+  inMonth: boolean;
+  records: CrmRecord[];
+}
+
+const calendarGrid = computed((): CalDay[][] => {
+  const fkey = calendarDateField.value?.key;
+  const yr = calendarYear.value;
+  const mo = calendarMonth.value;
+  const firstOfMonth = new Date(yr, mo, 1);
+  const startDow = firstOfMonth.getDay(); // 0=Sun
+  // Grid starts on the Sunday at or before the 1st
+  const gridStart = new Date(yr, mo, 1 - startDow);
+  const recs = filteredRecords.value;
+
+  const weeks: CalDay[][] = [];
+  for (let w = 0; w < 6; w++) {
+    const row: CalDay[] = [];
+    for (let d = 0; d < 7; d++) {
+      const cellDate = new Date(gridStart);
+      cellDate.setDate(gridStart.getDate() + w * 7 + d);
+      const iso = cellDate.toISOString().slice(0, 10);
+      row.push({
+        date: iso,
+        dayNum: cellDate.getDate(),
+        inMonth: cellDate.getMonth() === mo,
+        records: fkey
+          ? recs.filter((r) => {
+              const v = r.field_values[fkey];
+              return typeof v === 'string' && v.slice(0, 10) === iso;
+            })
+          : [],
+      });
+    }
+    weeks.push(row);
+    if (w >= 4 && row.every((c) => !c.inMonth)) break; // trim empty 6th week
+  }
+  return weeks;
+});
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+function calPrevMonth() {
+  if (calendarMonth.value === 0) { calendarMonth.value = 11; calendarYear.value--; }
+  else calendarMonth.value--;
+}
+function calNextMonth() {
+  if (calendarMonth.value === 11) { calendarMonth.value = 0; calendarYear.value++; }
+  else calendarMonth.value++;
+}
+function calGoToday() {
+  calendarYear.value = 2026;
+  calendarMonth.value = 5; // June 2026 (session date)
+}
 
 const KANBAN_UNASSIGNED = '__unassigned__';
 
@@ -6542,6 +6684,13 @@ function onKeyB(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
   if (canKanban.value) viewMode.value = 'kanban';
+}
+
+function onKeyL(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  if (canCalendar.value) viewMode.value = 'calendar';
 }
 
 function onKeyS(e: KeyboardEvent) {
