@@ -1592,32 +1592,43 @@
                   >{{ t }}</button>
                 </div>
 
-                <div v-if="visibleActivities.length" class="space-y-2">
-                  <div v-for="act in visibleActivities" :key="act.id" class="flex gap-2.5">
-                    <span
-                      class="mt-0.5 h-6 w-6 rounded-full flex items-center justify-center shrink-0"
-                      :class="ACTIVITY_ICON_BG[act.type]"
+                <div v-if="visibleActivities.length" class="space-y-1">
+                  <template v-for="row in groupedActivities" :key="row.kind === 'label' ? row.key : row.act.id">
+                    <!-- date label -->
+                    <div
+                      v-if="row.kind === 'label'"
+                      class="flex items-center gap-2 pt-2 pb-0.5 first:pt-0"
                     >
-                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
-                        <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[act.type]" />
-                      </svg>
-                    </span>
-                    <div class="flex-1 min-w-0 pb-2 border-b border-slate-50 dark:border-slate-800/60 last:border-0 last:pb-0">
-                      <p
-                        class="text-xs leading-relaxed"
-                        :class="act.type === 'change'
-                          ? 'text-slate-400 dark:text-slate-500 font-mono'
-                          : 'text-slate-600 dark:text-slate-300'"
-                      >{{ act.content }}</p>
-                      <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                        <span
-                          class="capitalize font-medium"
-                          :class="act.type === 'change' ? 'text-amber-500 dark:text-amber-400' : ''"
-                        >{{ act.type === 'change' ? 'System' : act.author }}</span>
-                        · {{ formatRelativeTime(act.created_at) }}
-                      </p>
+                      <span class="text-xs font-semibold text-slate-400 dark:text-slate-500 shrink-0">{{ row.label }}</span>
+                      <div class="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
                     </div>
-                  </div>
+                    <!-- activity item -->
+                    <div v-else class="flex gap-2.5 py-1">
+                      <span
+                        class="mt-0.5 h-6 w-6 rounded-full flex items-center justify-center shrink-0"
+                        :class="ACTIVITY_ICON_BG[row.act.type]"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                          <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[row.act.type]" />
+                        </svg>
+                      </span>
+                      <div class="flex-1 min-w-0">
+                        <p
+                          class="text-xs leading-relaxed"
+                          :class="row.act.type === 'change'
+                            ? 'text-slate-400 dark:text-slate-500 font-mono'
+                            : 'text-slate-600 dark:text-slate-300'"
+                        >{{ row.act.content }}</p>
+                        <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                          <span
+                            class="capitalize font-medium"
+                            :class="row.act.type === 'change' ? 'text-amber-500 dark:text-amber-400' : ''"
+                          >{{ row.act.type === 'change' ? 'System' : row.act.author }}</span>
+                          · {{ formatRelativeTime(row.act.created_at) }}
+                        </p>
+                      </div>
+                    </div>
+                  </template>
                 </div>
                 <p v-else-if="activityTypeFilter !== 'all'" class="text-xs text-slate-400 dark:text-slate-500 italic">No {{ activityTypeFilter }} activity logged yet.</p>
                 <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No activity logged yet.</p>
@@ -2717,6 +2728,33 @@ const visibleActivities = computed(() =>
     ? recordActivities.value
     : recordActivities.value.filter((a) => a.type === activityTypeFilter.value),
 );
+
+type ActivityRow =
+  | { kind: 'label'; label: string; key: string }
+  | { kind: 'activity'; act: CrmActivity };
+
+const groupedActivities = computed((): ActivityRow[] => {
+  const rows: ActivityRow[] = [];
+  let lastLabel = '';
+  for (const act of visibleActivities.value) {
+    const d = new Date(act.created_at);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    const isSameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    let label: string;
+    if (isSameDay(d, today)) label = 'Today';
+    else if (isSameDay(d, yesterday)) label = 'Yesterday';
+    else label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+    if (label !== lastLabel) {
+      lastLabel = label;
+      rows.push({ kind: 'label', label, key: 'lbl-' + label });
+    }
+    rows.push({ kind: 'activity', act });
+  }
+  return rows;
+});
 
 const recordCompleteness = computed((): { filled: number; total: number; missing: string[] } => {
   if (!openedRecord.value || !selectedType.value) return { filled: 0, total: 0, missing: [] };
