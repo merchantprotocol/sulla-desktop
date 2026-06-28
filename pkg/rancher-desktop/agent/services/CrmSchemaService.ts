@@ -864,4 +864,426 @@ export class CrmSchemaService {
       return { ok: false, error: String(err?.message ?? err) };
     }
   }
+
+  /**
+   * Create multiple records of the same type in one call. Each item in `items`
+   * is a field-values map (same shape as createRecord `values`). Returns the
+   * count of successful inserts and an error list for failed items — never
+   * aborts the whole batch on a single failure.
+   */
+  static async bulkCreateRecords(
+    recordTypeId: string,
+    items: Array<Record<string, unknown>>,
+    tenantId = DEFAULT_TENANT_ID,
+    createdBy?: string,
+  ): Promise<{ created: number; errors: Array<{ index: number; error: string }> }> {
+    let created = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+    for (let i = 0; i < items.length; i++) {
+      const result = await CrmSchemaService.createRecord(recordTypeId, items[i], tenantId, createdBy);
+      if (result.ok) {
+        created++;
+      } else {
+        errors.push({ index: i, error: result.error ?? 'unknown error' });
+      }
+    }
+    return { created, errors };
+  }
+
+  // ── Read / discovery ──────────────────────────────────────────────────────
+
+  /**
+   * Full-text search across records of a type using the denormalized
+   * `search_text` column (all text field values concatenated on write).
+   * Returns hydrated records in the same shape as queryRecords.
+   */
+  static async searchRecords(
+    recordTypeId: string,
+    q: string,
+    opts: { limit?: number; tenantId?: string } = {},
+  ): Promise<Array<Record<string, unknown>>> {
+    const tenantId = opts.tenantId ?? DEFAULT_TENANT_ID;
+    const limit = opts.limit ?? 50;
+
+    const records = await postgresClient.query(
+      `SELECT r.id, r.title, r.created_at FROM crm_records r
+       WHERE r.tenant_id = $1 AND r.record_type_id = $2 AND r.archived = false
+         AND r.search_text ILIKE $3
+       ORDER BY r.created_at DESC LIMIT $4`,
+      [tenantId, recordTypeId, `%${ q }%`, limit],
+    );
+    if (!records.length) return [];
+
+    const ids = records.map((r: any) => r.id);
+    const values = await postgresClient.query(
+      `SELECT fv.record_id, f.key, f.data_type,
+              fv.value_text, fv.value_number, fv.value_bool, fv.value_datetime, fv.value_json
+       FROM crm_field_values fv
+       JOIN crm_fields f ON f.id = fv.field_id
+       WHERE fv.record_id = ANY($1)`,
+      [ids],
+    );
+
+    const byRecord = new Map<string, Record<string, unknown>>();
+    for (const r of records) byRecord.set(r.id, { id: r.id, title: r.title, created_at: r.created_at });
+    for (const v of values) {
+      const target = byRecord.get(v.record_id);
+      if (!target) continue;
+      const col = valueColumnFor(v.data_type);
+      target[v.key] = col ? (v as any)[col] : null;
+    }
+    return records.map((r: any) => byRecord.get(r.id)!);
+  }
+
+  static async describeRecordType(
+    keyOrId: string,
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<{
+    id: string; key: string; label: string; label_plural: string | null;
+    icon: string | null; color: string | null; description: string | null;
+    fields: any[]; relationships: any[];
+  } | null> {
+    let type: any = await CrmSchemaService.getRecordTypeByKey(keyOrId, tenantId);
+    if (!type) {
+      const rows = await postgresClient.query(
+        `SELECT id, key, label, label_plural, icon, color, description
+         FROM crm_record_types WHERE id = $1 AND tenant_id = $2 AND archived = false LIMIT 1`,
+        [keyOrId, tenantId],
+      );
+      type = rows[0] ?? null;
+    }
+    if (!type) return null;
+
+    const fields = await postgresClient.query(
+      `SELECT id, key, label, data_type, is_title, is_required, is_system, position, config
+       FROM crm_fields WHERE record_type_id = $1 AND archived = false ORDER BY position ASC`,
+      [type.id],
+    );
+
+    const relationships = await postgresClient.query(
+      `SELECT rel.id, rel.key, rel.cardinality,
+              ft.key AS from_type_key, tt.key AS to_type_key,
+              rel.from_label, rel.to_label
+       FROM crm_relationships rel
+       JOIN crm_record_types ft ON ft.id = rel.from_type_id
+       JOIN crm_record_types tt ON tt.id = rel.to_type_id
+       WHERE (rel.from_type_id = $1 OR rel.to_type_id = $1)
+         AND rel.tenant_id = $2 AND rel.archived = false`,
+      [type.id, tenantId],
+    );
+
+    return {
+      id: type.id, key: type.key, label: type.label,
+      label_plural: type.label_plural ?? null,
+      icon: type.icon ?? null, color: type.color ?? null,
+      description: type.description ?? null,
+      fields, relationships,
+    };
+  }
+
+  static async getRecord(
+    recordId: string,
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<Record<string, unknown> | null> {
+    const records = await postgresClient.query(
+      `SELECT r.id, r.title, r.created_at, r.record_type_id
+       FROM crm_records r WHERE r.id = $1 AND r.tenant_id = $2 AND r.archived = false LIMIT 1`,
+      [recordId, tenantId],
+    );
+    if (!records.length) return null;
+    const r = records[0];
+
+    const values = await postgresClient.query(
+      `SELECT fv.field_id, f.key, f.data_type,
+              fv.value_text, fv.value_number, fv.value_bool, fv.value_datetime, fv.value_json
+       FROM crm_field_values fv
+       JOIN crm_fields f ON f.id = fv.field_id
+       WHERE fv.record_id = $1`,
+      [recordId],
+    );
+
+    const out: Record<string, unknown> = { id: r.id, title: r.title, created_at: r.created_at };
+    for (const v of values) {
+      const col = valueColumnFor(v.data_type);
+      out[v.key] = col ? v[col] : null;
+    }
+    return out;
+  }
+
+  static async getLinkedRecords(
+    recordId: string,
+    opts: { relationshipId?: string; direction?: 'from' | 'to' | 'both'; limit?: number } = {},
+  ): Promise<any[]> {
+    const { relationshipId, direction = 'both', limit = 50 } = opts;
+    const params: any[] = [recordId];
+    const push = (v: any): string => { params.push(v); return `$${ params.length }`; };
+
+    const dirCond = direction === 'from'
+      ? 'l.from_record_id = $1'
+      : direction === 'to'
+        ? 'l.to_record_id = $1'
+        : '(l.from_record_id = $1 OR l.to_record_id = $1)';
+
+    const relCond = relationshipId ? ` AND l.relationship_id = ${ push(relationshipId) }` : '';
+    const limitPh = push(limit);
+
+    return postgresClient.query(
+      `SELECT r.id, r.title, r.created_at,
+              rt.key AS record_type_key, rt.label AS record_type_label,
+              rel.key AS relationship_key, rel.cardinality,
+              CASE WHEN l.from_record_id = $1 THEN 'outgoing' ELSE 'incoming' END AS direction
+       FROM crm_record_links l
+       JOIN crm_records r ON r.id = CASE WHEN l.from_record_id = $1 THEN l.to_record_id ELSE l.from_record_id END
+       JOIN crm_record_types rt ON rt.id = r.record_type_id
+       JOIN crm_relationships rel ON rel.id = l.relationship_id
+       WHERE ${ dirCond }${ relCond } AND r.archived = false
+       ORDER BY r.created_at DESC LIMIT ${ limitPh }`,
+      params,
+    );
+  }
+
+  static async aggregateRecords(
+    recordTypeId: string,
+    opts: {
+      metric?: 'count' | 'sum' | 'avg' | 'min' | 'max';
+      field?: string;
+      groupBy?: string;
+      filter?: Filter;
+      limit?: number;
+      tenantId?: string;
+    } = {},
+  ): Promise<Array<{ group_value?: unknown; count: number; metric: number | null }>> {
+    const tenantId = opts.tenantId ?? DEFAULT_TENANT_ID;
+    const { metric = 'count', field, groupBy, limit = 100 } = opts;
+
+    const fieldRows = await postgresClient.query(
+      `SELECT id, key, data_type FROM crm_fields WHERE record_type_id = $1 AND archived = false`,
+      [recordTypeId],
+    );
+    const byKey = new Map<string, { id: string; data_type: DataType }>(
+      fieldRows.map((f: any) => [f.key, { id: f.id, data_type: f.data_type }]),
+    );
+
+    const params: any[] = [tenantId, recordTypeId];
+    const push = (v: any): string => { params.push(v); return `$${ params.length }`; };
+    const where: string[] = ['r.tenant_id = $1', 'r.record_type_id = $2', 'r.archived = false'];
+
+    for (const [key, cond] of Object.entries(opts.filter ?? {})) {
+      const frag = CrmSchemaService.compileFilterCond(key, cond, byKey, push);
+      if (frag) where.push(frag);
+    }
+
+    let metricCol = 'NULL::numeric';
+    let metricJoin = '';
+    if (metric !== 'count' && field) {
+      const mf = byKey.get(field);
+      if (mf) {
+        const col = valueColumnFor(mf.data_type) ?? 'value_number';
+        metricJoin = `LEFT JOIN crm_field_values mfv ON mfv.record_id = r.id AND mfv.field_id = ${ push(mf.id) }`;
+        metricCol = `${ metric.toUpperCase() }(mfv.${ col })`;
+      }
+    }
+
+    let groupSelect = '';
+    let groupJoin = '';
+    let groupByClause = '';
+    if (groupBy) {
+      const gf = byKey.get(groupBy);
+      if (gf) {
+        const col = valueColumnFor(gf.data_type) ?? 'value_text';
+        groupJoin = `LEFT JOIN crm_field_values gfv ON gfv.record_id = r.id AND gfv.field_id = ${ push(gf.id) }`;
+        groupSelect = `gfv.${ col } AS group_value, `;
+        groupByClause = `GROUP BY gfv.${ col }`;
+      }
+    }
+
+    const limitPh = push(limit);
+    return postgresClient.query(
+      `SELECT ${ groupSelect }COUNT(*)::int AS count, ${ metricCol } AS metric
+       FROM crm_records r
+       ${ metricJoin }
+       ${ groupJoin }
+       WHERE ${ where.join(' AND ') }
+       ${ groupByClause }
+       ORDER BY count DESC LIMIT ${ limitPh }`,
+      params,
+    );
+  }
+
+  static async getFieldByKey(
+    recordTypeId: string,
+    key: string,
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<{ id: string; key: string; label: string; data_type: string; is_system: boolean; is_title: boolean } | null> {
+    const rows = await postgresClient.query(
+      `SELECT id, key, label, data_type, is_system, is_title
+       FROM crm_fields WHERE record_type_id = $1 AND key = $2 AND tenant_id = $3 AND archived = false LIMIT 1`,
+      [recordTypeId, key, tenantId],
+    );
+    return rows[0] ?? null;
+  }
+
+  static async updateField(
+    fieldId: string,
+    updates: {
+      label?: string;
+      config?: Record<string, unknown>;
+      is_required?: boolean;
+      is_unique?: boolean;
+      is_title?: boolean;
+    },
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<OpResult> {
+    try {
+      const rows = await postgresClient.query(
+        `SELECT id, key, label, config, is_required, is_unique, is_title, is_system, record_type_id
+         FROM crm_fields WHERE id = $1 AND tenant_id = $2 AND archived = false LIMIT 1`,
+        [fieldId, tenantId],
+      );
+      if (!rows.length) return { ok: false, error: `Field ${ fieldId } not found.` };
+      const field = rows[0];
+      if (field.is_system) return { ok: false, error: `Field "${ field.key }" is a system field and cannot be modified.` };
+
+      const before = {
+        label: field.label, config: field.config,
+        is_required: field.is_required, is_unique: field.is_unique, is_title: field.is_title,
+      };
+
+      const setParts: string[] = [];
+      const params: any[] = [fieldId, tenantId];
+      const push = (v: any): string => { params.push(v); return `$${ params.length }`; };
+
+      if (updates.label !== undefined) setParts.push(`label = ${ push(updates.label) }`);
+      if (updates.config !== undefined) setParts.push(`config = ${ push(JSON.stringify(updates.config)) }::jsonb`);
+      if (updates.is_required !== undefined) setParts.push(`is_required = ${ push(updates.is_required) }`);
+      if (updates.is_unique !== undefined) setParts.push(`is_unique = ${ push(updates.is_unique) }`);
+      if (updates.is_title === true) {
+        await postgresClient.query(
+          `UPDATE crm_fields SET is_title = false, updated_at = now()
+           WHERE record_type_id = $1 AND is_title = true AND id != $2`,
+          [field.record_type_id, fieldId],
+        );
+        setParts.push(`is_title = true`);
+      } else if (updates.is_title === false) {
+        setParts.push(`is_title = false`);
+      }
+
+      if (!setParts.length) return { ok: false, error: 'No updatable fields provided.' };
+      setParts.push('updated_at = now()');
+
+      await postgresClient.query(
+        `UPDATE crm_fields SET ${ setParts.join(', ') } WHERE id = $1 AND tenant_id = $2`,
+        params,
+      );
+
+      const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+        op: 'updateField', entityType: 'field', entityId: fieldId,
+        before, after: { ...before, ...updates }, tenantId,
+      });
+      return { ok: true, id: fieldId, undoToken };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /**
+   * Fetch recent audit rows. Filterable by entity_id (a specific record/field/
+   * etc.) and entity_type. Useful for recovering lost undo tokens or reviewing
+   * what the agent has changed.
+   */
+  static async getAuditLog(
+    opts: {
+      entityId?: string;
+      entityType?: AuditEntityType;
+      limit?: number;
+      tenantId?: string;
+    } = {},
+  ): Promise<Array<{
+    id: string; op: string; entity_type: string; entity_id: string | null;
+    undo_token: string; undone: boolean; created_at: string;
+  }>> {
+    const tenantId = opts.tenantId ?? DEFAULT_TENANT_ID;
+    const params: any[] = [tenantId];
+    const where: string[] = ['tenant_id = $1'];
+    const push = (v: any): string => { params.push(v); return `$${ params.length }`; };
+
+    if (opts.entityId) where.push(`entity_id = ${ push(opts.entityId) }`);
+    if (opts.entityType) where.push(`entity_type = ${ push(opts.entityType) }`);
+
+    const limitPh = push(opts.limit ?? 20);
+    return postgresClient.query(
+      `SELECT id, op, entity_type, entity_id, undo_token, undone, created_at
+       FROM crm_audit WHERE ${ where.join(' AND ') }
+       ORDER BY created_at DESC LIMIT ${ limitPh }`,
+      params,
+    );
+  }
+
+  /**
+   * One-shot CRM state overview — all types with field + relationship counts,
+   * plus dashboard counts. Lets the agent orient itself without looping over
+   * list_record_types + describe_record_type for every type.
+   */
+  static async getSchemaSummary(tenantId = DEFAULT_TENANT_ID): Promise<{
+    types: Array<{ id: string; key: string; label: string; field_count: number; relationship_count: number }>;
+    dashboards: Array<{ id: string; key: string; name: string; widget_count: number }>;
+  }> {
+    const [types, relCounts, dashboards] = await Promise.all([
+      postgresClient.query(
+        `SELECT rt.id, rt.key, rt.label, COUNT(f.id)::int AS field_count
+         FROM crm_record_types rt
+         LEFT JOIN crm_fields f ON f.record_type_id = rt.id AND f.archived = false
+         WHERE rt.tenant_id = $1 AND rt.archived = false
+         GROUP BY rt.id, rt.key, rt.label ORDER BY rt.label ASC`,
+        [tenantId],
+      ),
+      postgresClient.query(
+        `SELECT unnest(ARRAY[from_type_id, to_type_id]) AS type_id, COUNT(*)::int AS cnt
+         FROM crm_relationships WHERE tenant_id = $1 AND archived = false
+         GROUP BY type_id`,
+        [tenantId],
+      ),
+      CrmSchemaService.listDashboards(tenantId),
+    ]);
+
+    const relByType = new Map<string, number>();
+    for (const r of relCounts) {
+      relByType.set(r.type_id, (relByType.get(r.type_id) ?? 0) + r.cnt);
+    }
+
+    return {
+      types: types.map((t: any) => ({
+        id: t.id, key: t.key, label: t.label,
+        field_count: t.field_count,
+        relationship_count: relByType.get(t.id) ?? 0,
+      })),
+      dashboards,
+    };
+  }
+
+  static async listViews(
+    recordTypeId: string,
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<Array<{ id: string; name: string; kind: string; config: unknown; position: number }>> {
+    return postgresClient.query(
+      `SELECT id, name, kind, config, position
+       FROM crm_views WHERE record_type_id = $1 AND tenant_id = $2 AND archived = false
+       ORDER BY position ASC`,
+      [recordTypeId, tenantId],
+    );
+  }
+
+  static async listDashboards(
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<Array<{ id: string; key: string; name: string; icon: string | null; widget_count: number }>> {
+    return postgresClient.query(
+      `SELECT d.id, d.key, d.name, d.icon, COUNT(w.id)::int AS widget_count
+       FROM crm_dashboards d
+       LEFT JOIN crm_widgets w ON w.dashboard_id = d.id
+       WHERE d.tenant_id = $1 AND d.archived = false
+       GROUP BY d.id, d.key, d.name, d.icon
+       ORDER BY d.name ASC`,
+      [tenantId],
+    );
+  }
 }

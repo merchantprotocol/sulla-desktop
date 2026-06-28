@@ -29,6 +29,20 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./exec'),
   },
   {
+    name:        'exechost',
+    description: 'Run a shell command directly on the HOST macOS machine — NOT inside the Lima VM. Uses the user\'s login shell (/bin/zsh or /bin/bash) so PATH includes Homebrew, nvm, rbenv, and any other user-installed tools. Output is returned directly to the agent — no Terminal window opens. Requires "Allow access to the host machine" to be enabled in Preferences → Application → Administrative Access. Use this instead of the AppleScript→Terminal bridge whenever you need silent host execution.',
+    category:    'meta',
+    schemaDef:   {
+      command: { type: 'string', optional: true, description: 'The exact shell command to run on the host' },
+      cmd:     { type: 'string', optional: true, description: 'Alias for command' },
+      cwd:     { type: 'string', optional: true, description: 'Working directory on the host to run the command in (absolute path)' },
+      timeout: { type: 'number', optional: true, description: 'Timeout in milliseconds (default 60000)' },
+      stdin:   { type: 'string', optional: true, description: 'Optional stdin data to pipe into the command' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./exechost'),
+  },
+  {
     name:        'remove_observational_memory',
     description: 'Archive (soft-delete) a specific observational memory by its ID. The record is never hard-deleted — it is marked archived=true so the history is always recoverable.',
     category:    'observation',
