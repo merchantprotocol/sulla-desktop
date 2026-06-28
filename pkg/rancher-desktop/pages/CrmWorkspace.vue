@@ -3802,6 +3802,24 @@
               <template v-else-if="detailTab === 'related'">
                 <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Related records</p>
 
+                <!-- linked record summary pills by type -->
+                <div v-if="linkedRecordSummary.length" class="flex flex-wrap gap-1.5 -mt-1 mb-1">
+                  <div
+                    v-for="grp in linkedRecordSummary"
+                    :key="grp.typeKey"
+                    class="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700"
+                  >
+                    <span
+                      class="h-4 w-4 rounded flex items-center justify-center shrink-0"
+                      :style="{ background: (schema.find(rt => rt.key === grp.typeKey)?.color ?? '#64748b') + '22', color: schema.find(rt => rt.key === grp.typeKey)?.color ?? '#64748b' }"
+                    >
+                      <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === grp.typeKey)?.icon ?? 'folder']" class="h-2.5 w-2.5" />
+                    </span>
+                    <span class="font-medium text-slate-700 dark:text-slate-300">{{ grp.count }} {{ grp.count === 1 ? (schema.find(rt => rt.key === grp.typeKey)?.label ?? grp.typeKey) : grp.label }}</span>
+                    <span v-if="grp.currencyTotal" class="text-emerald-600 dark:text-emerald-400 font-medium">{{ grp.currencyTotal }}</span>
+                  </div>
+                </div>
+
                 <!-- quick link search -->
                 <div class="relative">
                   <div class="relative">
@@ -7674,6 +7692,32 @@ const inverseLinks = computed((): CrmRecord[] => {
   return mockRecords.filter(
     (r) => r.id !== id && r.links?.some((l) => l.target_id === id),
   );
+});
+
+const linkedRecordSummary = computed((): Array<{ typeKey: string; label: string; count: number; currencyTotal: string | null }> => {
+  const links = openedRecord.value?.links ?? [];
+  if (!links.length) return [];
+  const byType: Record<string, { count: number; currencySum: number; hasCurrency: boolean }> = {};
+  for (const link of links) {
+    if (!byType[link.target_type]) byType[link.target_type] = { count: 0, currencySum: 0, hasCurrency: false };
+    byType[link.target_type].count++;
+    const rt = schema.find((t) => t.key === link.target_type);
+    const currField = rt?.fields.find((f) => f.format === 'currency' && f.data_type === 'number');
+    if (currField) {
+      const rec = mockRecords.find((r) => r.id === link.target_id);
+      const v = rec?.field_values[currField.key];
+      if (typeof v === 'number') { byType[link.target_type].currencySum += v; byType[link.target_type].hasCurrency = true; }
+    }
+  }
+  return Object.entries(byType).map(([typeKey, { count, currencySum, hasCurrency }]) => {
+    const rt = schema.find((t) => t.key === typeKey);
+    const fmt = currencySum >= 1_000_000
+      ? '$' + (currencySum / 1_000_000).toFixed(1) + 'M'
+      : currencySum >= 1_000
+        ? '$' + Math.round(currencySum / 1_000) + 'k'
+        : currencySum > 0 ? '$' + currencySum : null;
+    return { typeKey, label: rt?.label_plural ?? typeKey, count, currencyTotal: hasCurrency ? fmt : null };
+  });
 });
 
 const paletteResults = computed(() => {
