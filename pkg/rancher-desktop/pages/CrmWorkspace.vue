@@ -1121,6 +1121,29 @@
         </div>
       </div>
     </transition>
+
+    <!-- toast notifications -->
+    <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
+      <transition-group
+        enter-active-class="transition-all duration-200"
+        enter-from-class="opacity-0 translate-y-2 scale-95"
+        enter-to-class="opacity-100 translate-y-0 scale-100"
+        leave-active-class="transition-all duration-150"
+        leave-from-class="opacity-100 translate-y-0 scale-100"
+        leave-to-class="opacity-0 translate-y-1 scale-95"
+      >
+        <div
+          v-for="toast in toasts"
+          :key="toast.id"
+          class="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium shadow-lg bg-slate-900 dark:bg-slate-800 text-white border border-slate-700 dark:border-slate-600"
+        >
+          <svg class="h-3.5 w-3.5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+          {{ toast.message }}
+        </div>
+      </transition-group>
+    </div>
   </div>
 </template>
 
@@ -1409,6 +1432,7 @@ const titleInputEl = ref<HTMLInputElement | null>(null);
 watch(editingTitle, (val) => { if (val) nextTick(() => titleInputEl.value?.select()); });
 const cellDraftValue = ref<string | number | boolean | null>(null);
 const showShortcuts = ref(false);
+const toasts = ref<Array<{ id: string; message: string }>>([]);
 const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
 
 // ── Computed ───────────────────────────────────────────────────────────────
@@ -1754,6 +1778,7 @@ function saveNewRecord() {
   }
   createFormErrors.value = new Set();
   creatingRecord.value = false;
+  showToast(`${selectedType.value?.label ?? 'Record'} created`);
 }
 
 function logNote(record: CrmRecord) {
@@ -1769,6 +1794,7 @@ function logNote(record: CrmRecord) {
   });
   noteText.value = '';
   loggingNote.value = false;
+  showToast('Note logged');
 }
 
 function cycleSelectField(record: CrmRecord, field: CrmField) {
@@ -1790,6 +1816,7 @@ function duplicateRecord(record: CrmRecord) {
   };
   mockRecords.push(newRecord);
   openRecord(newRecord);
+  showToast('Record duplicated');
 }
 
 function goBack() {
@@ -1879,6 +1906,14 @@ function onKeyArrow(dir: 1 | -1) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+function showToast(message: string) {
+  const id = 'toast-' + String(toasts.value.length) + '-' + String(Date.now()).slice(-5);
+  toasts.value.push({ id, message });
+  setTimeout(() => {
+    toasts.value = toasts.value.filter((t) => t.id !== id);
+  }, 2500);
+}
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
