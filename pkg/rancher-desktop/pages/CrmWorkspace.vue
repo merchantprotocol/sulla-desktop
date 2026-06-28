@@ -14,6 +14,7 @@
     @keydown.b.exact="onKeyB"
     @keydown.s.exact="onKeyS"
     @keydown.f.exact="onKeyF"
+    @keydown.g.exact="onKeyG"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -1984,6 +1985,7 @@
                 { keys: ['/'], desc: 'Focus search' },
                 { keys: ['R'], desc: 'Reset filters, search & sort' },
                 { keys: ['F'], desc: 'Open filter picker' },
+                { keys: ['G'], desc: 'Toggle row density (table view)' },
                 { keys: ['1-4'], desc: 'Switch record type (no panel open)' },
                 { keys: ['T'], desc: 'Table view' },
                 { keys: ['B'], desc: 'Board / Kanban view' },
@@ -3661,6 +3663,16 @@ function onKeyF(e: KeyboardEvent) {
   showFilterDropdown.value = !showFilterDropdown.value;
   filterPickerField.value = null;
   e.preventDefault();
+}
+
+function onKeyG(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  if (viewMode.value === 'table') {
+    rowDensity.value = rowDensity.value === 'comfortable' ? 'compact' : 'comfortable';
+    e.preventDefault();
+  }
 }
 
 function startEditing(record: CrmRecord) {
