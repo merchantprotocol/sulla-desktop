@@ -172,6 +172,27 @@
               </svg>
               {{ [...selectedIds].every(id => pinnedIds.has(id)) ? 'Unpin' : 'Pin' }}
             </button>
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
+              :class="[...selectedIds].every(id => watchedIds.has(id))
+                ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/40'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'"
+              :title="[...selectedIds].every(id => watchedIds.has(id)) ? `Unwatch ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}` : `Watch ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}`"
+              @click="bulkWatchToggle"
+            >
+              <svg
+                class="h-4 w-4"
+                :fill="[...selectedIds].every(id => watchedIds.has(id)) ? 'currentColor' : 'none'"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              {{ [...selectedIds].every(id => watchedIds.has(id)) ? 'Unwatch' : 'Watch' }}
+            </button>
             <!-- bulk move to stage — visible when type has a select/stage field -->
             <div v-if="kanbanField" class="relative" @click.stop>
               <button
@@ -2715,6 +2736,18 @@ function bulkPinToggle() {
   }
   pinnedIds.value = next;
   showToast(allPinned ? `Unpinned ${ids.length} record${ids.length === 1 ? '' : 's'}` : `Pinned ${ids.length} record${ids.length === 1 ? '' : 's'}`);
+}
+
+function bulkWatchToggle() {
+  const ids = [...selectedIds.value];
+  const allWatched = ids.every((id) => watchedIds.value.has(id));
+  const next = new Set(watchedIds.value);
+  for (const id of ids) {
+    if (allWatched) next.delete(id);
+    else next.add(id);
+  }
+  watchedIds.value = next;
+  showToast(allWatched ? `Unwatching ${ids.length} record${ids.length === 1 ? '' : 's'}` : `Watching ${ids.length} record${ids.length === 1 ? '' : 's'}`);
 }
 
 function bulkMoveToStage(stage: string) {
