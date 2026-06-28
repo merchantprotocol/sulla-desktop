@@ -406,19 +406,30 @@
             class="w-80 shrink-0 flex flex-col border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-y-auto"
           >
             <!-- panel header -->
-            <div class="flex items-center gap-2 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-              <h3 class="flex-1 text-sm font-semibold text-slate-900 dark:text-white truncate">
-                {{ openedRecord.title }}
-              </h3>
+            <div class="flex items-start gap-2 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+              <div class="flex-1 min-w-0">
+                <p class="mb-1">
+                  <span
+                    class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium"
+                    :style="{ background: (selectedType?.color ?? '#3b82f6') + '22', color: selectedType?.color ?? '#3b82f6' }"
+                  >
+                    <component :is="ICON_COMPONENTS[selectedType?.icon ?? 'user']" class="h-2.5 w-2.5" />
+                    {{ selectedType?.label }}
+                  </span>
+                </p>
+                <h3 class="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                  {{ openedRecord.title }}
+                </h3>
+              </div>
               <span
                 v-if="editingRecord"
-                class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400"
+                class="shrink-0 mt-0.5 rounded-full px-2 py-0.5 text-xs font-medium bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400"
               >
                 Editing
               </span>
               <button
                 type="button"
-                class="shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
+                class="shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
                 @click="openedRecord = null; editingRecord = false"
               >
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
