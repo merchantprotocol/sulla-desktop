@@ -14,7 +14,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit()"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu()"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -586,6 +586,7 @@
                     ? 'bg-sky-50 dark:bg-sky-950/20'
                     : 'hover:bg-white dark:hover:bg-slate-900'"
                   @click="openRecord(record)"
+                  @contextmenu.prevent="openContextMenu(record, $event)"
                 >
                   <!-- row checkbox -->
                   <td class="pl-6 pr-2" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'" @click.stop>
@@ -1689,6 +1690,78 @@
       </div>
     </transition>
 
+    <!-- table row context menu -->
+    <transition
+      enter-active-class="transition-all duration-100"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-75"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="contextMenuRecord"
+        class="fixed z-50 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1"
+        :style="{ top: `${contextMenuPos.y}px`, left: `${contextMenuPos.x}px` }"
+        @click.stop
+      >
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="openRecord(contextMenuRecord); closeContextMenu()"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+          Open
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="duplicateRecord(contextMenuRecord); closeContextMenu()"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          Duplicate
+        </button>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="togglePin(contextMenuRecord.id); closeContextMenu()"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0" :class="pinnedIds.has(contextMenuRecord.id) ? 'text-amber-500' : 'text-slate-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+          </svg>
+          {{ pinnedIds.has(contextMenuRecord.id) ? 'Unpin' : 'Pin' }}
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="toggleWatch(contextMenuRecord.id); closeContextMenu()"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0" :class="watchedIds.has(contextMenuRecord.id) ? 'text-sky-500' : 'text-slate-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+          {{ watchedIds.has(contextMenuRecord.id) ? 'Unwatch' : 'Watch' }}
+        </button>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          disabled
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 dark:text-red-500 opacity-50 cursor-not-allowed"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          Delete
+        </button>
+      </div>
+    </transition>
+
     <!-- toast notifications -->
     <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
       <transition-group
@@ -2009,6 +2082,8 @@ const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
 const showColumnsMenu = ref(false);
 const detailTab = ref<'details' | 'activity' | 'related'>('details');
+const contextMenuRecord = ref<CrmRecord | null>(null);
+const contextMenuPos = ref({ x: 0, y: 0 });
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const loggingNote = ref(false);
 const noteText = ref('');
@@ -2349,6 +2424,20 @@ const allSelected = computed(
 );
 
 // ── Actions ────────────────────────────────────────────────────────────────
+
+function openContextMenu(record: CrmRecord, e: MouseEvent) {
+  contextMenuRecord.value = record;
+  const menuW = 192;
+  const menuH = 200;
+  contextMenuPos.value = {
+    x: Math.min(e.clientX, window.innerWidth - menuW - 8),
+    y: Math.min(e.clientY, window.innerHeight - menuH - 8),
+  };
+}
+
+function closeContextMenu() {
+  contextMenuRecord.value = null;
+}
 
 function toggleSelect(id: string) {
   const next = new Set(selectedIds.value);
