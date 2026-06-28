@@ -2202,7 +2202,7 @@
                             @click.stop="toggleRowExpand(record.id)"
                           >{{ expandedRowIds.has(record.id) ? 'less' : 'more' }}</button>
                         </template>
-                        <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                        <CrmCellValue v-else :value="col.data_type === 'formula' ? (evaluateFormula(record, col) as number) : record.field_values[col.key]" :data-type="col.data_type === 'formula' ? 'number' : col.data_type" :format="col.format" />
                         <!-- funnel icon on select cells to hint at click-to-filter -->
                         <span
                           v-if="col.data_type === 'select' && record.field_values[col.key]"
@@ -4016,6 +4016,14 @@
                     >
                       — set value
                     </button>
+                  </template>
+                  <template v-else-if="field.data_type === 'formula'">
+                    <div class="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                      <span class="text-sm tabular-nums font-medium text-slate-700 dark:text-slate-300">
+                        {{ (() => { const v = evaluateFormula(openedRecord, field); if (typeof v === 'number') { return field.format === 'currency' ? '$' + v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : field.format === 'percent' ? v + '%' : String(v); } return String(v); })() }}
+                      </span>
+                      <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-1" :title="field.formula_expression">= {{ field.formula_expression }}</span>
+                    </div>
                   </template>
                   <CrmFieldInput
                     v-else
@@ -6342,7 +6350,7 @@ const { isDark, toggleTheme } = useTheme();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select' | 'rating';
+type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select' | 'rating' | 'formula';
 type IconKey = 'user' | 'building' | 'chart' | 'target' | 'check' | 'folder' | 'tag' | 'list' | 'layers' | 'star';
 
 type FieldFormat = 'currency' | 'percent' | 'progress' | undefined;
@@ -6359,6 +6367,7 @@ interface CrmField {
   select_option_colors?: Record<string, string>;
   format?: FieldFormat;
   default_value?: string;
+  formula_expression?: string;
   visible_when?: { fieldKey: string; operator: 'eq' | 'neq' | 'empty' | 'not_empty'; value: string };
 }
 
@@ -6494,6 +6503,7 @@ const DATA_TYPE_ICONS: Record<DataType, string> = {
   select:       'M4 6h16M4 10h16M4 14h16M4 18h16',
   multi_select: 'M9 12l2 2 4-4M4 6h16M4 10h8M4 14h8M4 18h5',
   rating:       'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z',
+  formula:      'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z',
 };
 
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
@@ -6531,6 +6541,7 @@ const schema = reactive<CrmRecordType[]>([
       { id: 'f_dl3', key: 'amount',      label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2, format: 'currency' },
       { id: 'f_dl4', key: 'close_date',  label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3 },
       { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4, format: 'progress' },
+      { id: 'f_dl6', key: 'expected_value', label: 'Expected value', data_type: 'formula', is_title: false, is_required: false, position: 5, format: 'currency', formula_expression: '{amount} * {probability} / 100' },
     ],
   },
   {
@@ -10293,6 +10304,32 @@ function formatCardValue(val: string | number | boolean | string[] | null | unde
   }
   if (dataType === 'date') return new Date(String(val)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   return String(val);
+}
+
+function evaluateFormula(record: { field_values: Record<string, unknown> }, field: CrmField): number | string {
+  const expr = field.formula_expression ?? '';
+  if (!expr) return '—';
+  // Resolve {field_key} references to numeric values
+  const resolved = expr.replace(/\{([^}]+)\}/g, (_m, key: string) => {
+    const v = record.field_values[key.trim()];
+    const n = Number(v);
+    return isNaN(n) ? '0' : String(n);
+  });
+  // Tokenize and evaluate left-to-right (no precedence — simple linear expressions only)
+  const tokens = resolved.match(/-?[\d.]+|[+\-*/]/g);
+  if (!tokens || tokens.length < 1) return '?';
+  let result = parseFloat(tokens[0]);
+  if (isNaN(result)) return '?';
+  for (let i = 1; i < tokens.length - 1; i += 2) {
+    const op = tokens[i];
+    const right = parseFloat(tokens[i + 1]);
+    if (isNaN(right)) return '?';
+    if (op === '+') result += right;
+    else if (op === '-') result -= right;
+    else if (op === '*') result *= right;
+    else if (op === '/') result = right !== 0 ? result / right : 0;
+  }
+  return Math.round(result * 100) / 100;
 }
 
 // ── Inline sub-components ──────────────────────────────────────────────────
