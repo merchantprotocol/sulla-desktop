@@ -30,7 +30,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -2292,6 +2292,20 @@
                         <svg class="h-3.5 w-3.5" :fill="watchedIds.has(record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                           <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded p-0.5 transition-colors"
+                        :class="quickNoteRecordId === record.id
+                          ? 'text-sky-500'
+                          : 'invisible group-hover:visible text-slate-300 dark:text-slate-600 hover:text-sky-400 dark:hover:text-sky-400'"
+                        aria-label="Quick note"
+                        title="Log a quick note"
+                        @click.stop="openQuickNote(record.id, $event)"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                         </svg>
                       </button>
                       <button
@@ -6043,6 +6057,50 @@
       </div>
     </Teleport>
 
+    <!-- quick-note popover -->
+    <teleport to="body">
+      <transition
+        enter-active-class="transition-all duration-150"
+        enter-from-class="opacity-0 scale-95 -translate-y-1"
+        enter-to-class="opacity-100 scale-100 translate-y-0"
+        leave-active-class="transition-all duration-100"
+        leave-from-class="opacity-100 scale-100 translate-y-0"
+        leave-to-class="opacity-0 scale-95 -translate-y-1"
+      >
+        <div
+          v-if="quickNoteRecordId"
+          class="fixed z-[200] w-72 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-3 flex flex-col gap-2"
+          :style="{ top: quickNotePos.top + 'px', left: quickNotePos.left + 'px' }"
+          @click.stop
+        >
+          <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">
+            Log a note · <span class="font-normal">{{ mockRecords.find(r => r.id === quickNoteRecordId)?.title ?? '' }}</span>
+          </p>
+          <textarea
+            ref="quickNoteInputEl"
+            v-model="quickNoteText"
+            rows="3"
+            placeholder="Add a note…"
+            class="w-full resize-none rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+            @keydown.enter.meta.prevent="submitQuickNote"
+            @keydown.escape.prevent="quickNoteRecordId = null"
+          />
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] text-slate-400 dark:text-slate-500">Cmd+Enter to save · Esc to close</span>
+            <div class="flex gap-1.5">
+              <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="quickNoteRecordId = null">Cancel</button>
+              <button
+                type="button"
+                class="text-xs font-medium px-2.5 py-1 rounded-lg bg-sky-500 hover:bg-sky-600 text-white transition-colors disabled:opacity-40"
+                :disabled="!quickNoteText.trim()"
+                @click="submitQuickNote"
+              >Save</button>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </teleport>
+
     <!-- toast notifications -->
     <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
       <transition-group
@@ -6634,6 +6692,35 @@ const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
 const detailPanelExpanded = ref<false | 'wide' | 'full'>(false);
 const newTaskDraft = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
+const quickNoteRecordId = ref<string | null>(null);
+const quickNoteText = ref('');
+const quickNotePos = ref({ top: 0, left: 0 });
+const quickNoteInputEl = ref<HTMLTextAreaElement | null>(null);
+watch(quickNoteRecordId, (v) => { if (v) { quickNoteText.value = ''; nextTick(() => quickNoteInputEl.value?.focus()); } });
+
+function openQuickNote(recordId: string, evt: MouseEvent) {
+  const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
+  quickNotePos.value = { top: rect.bottom + 6, left: Math.max(rect.right - 280, 8) };
+  quickNoteRecordId.value = quickNoteRecordId.value === recordId ? null : recordId;
+}
+
+function submitQuickNote() {
+  const rid = quickNoteRecordId.value;
+  const text = quickNoteText.value.trim();
+  if (!rid || !text) return;
+  mockActivities.push({
+    id: 'a_qn_' + String(mockActivities.length) + '_' + String(Date.now()).slice(-5),
+    record_id: rid,
+    type: 'note',
+    content: text,
+    author: 'JB',
+    created_at: new Date().toISOString(),
+  });
+  const rec = mockRecords.find((r) => r.id === rid);
+  if (rec) rec.updated_at = new Date().toISOString();
+  quickNoteRecordId.value = null;
+  showToast('Note added');
+}
 const kanbanCompact = ref(false);
 const customOrder = ref<string[]>([]);
 const dragSrcId = ref<string | null>(null);
