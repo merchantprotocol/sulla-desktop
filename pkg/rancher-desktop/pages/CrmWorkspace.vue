@@ -859,7 +859,7 @@
                       type="checkbox"
                       :checked="selectedIds.has(record.id)"
                       class="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer"
-                      @change="toggleSelect(record.id)"
+                      @click="onCheckboxClick(record, idx, $event)"
                     >
                   </td>
                   <td
@@ -2698,6 +2698,7 @@ const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
 const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
+const lastSelectedIdx = ref(-1);
 const loggingNote = ref(false);
 const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
 watch(loggingNote, (val) => { if (val) nextTick(() => activityTextareaEl.value?.focus()); });
@@ -3155,16 +3156,37 @@ function toggleSelect(id: string) {
   selectedIds.value = next;
 }
 
+function onCheckboxClick(record: CrmRecord, idx: number, e: MouseEvent) {
+  e.stopPropagation();
+  if (e.shiftKey && lastSelectedIdx.value >= 0) {
+    const lo = Math.min(lastSelectedIdx.value, idx);
+    const hi = Math.max(lastSelectedIdx.value, idx);
+    const adding = !selectedIds.value.has(record.id);
+    const next = new Set(selectedIds.value);
+    for (let i = lo; i <= hi; i++) {
+      const r = filteredRecords.value[i];
+      if (r) { if (adding) next.add(r.id); else next.delete(r.id); }
+    }
+    selectedIds.value = next;
+  } else {
+    toggleSelect(record.id);
+  }
+  lastSelectedIdx.value = idx;
+}
+
 function toggleAll() {
   if (allSelected.value) {
     selectedIds.value = new Set();
+    lastSelectedIdx.value = -1;
   } else {
     selectedIds.value = new Set(filteredRecords.value.map((r) => r.id));
+    lastSelectedIdx.value = filteredRecords.value.length - 1;
   }
 }
 
 function clearSelection() {
   selectedIds.value = new Set();
+  lastSelectedIdx.value = -1;
 }
 
 function togglePin(id: string) {
