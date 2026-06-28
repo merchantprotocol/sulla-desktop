@@ -978,7 +978,21 @@
                       </button>
                     </div>
                   </th>
-                  <th class="w-10 px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800" />
+                  <th class="w-20 px-3 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-right">
+                    <button
+                      type="button"
+                      class="text-xs font-semibold uppercase tracking-wide transition-colors select-none"
+                      :class="sortField === '__activity_count__'
+                        ? 'text-sky-600 dark:text-sky-400'
+                        : 'text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400'"
+                      title="Sort by activity count"
+                      @click="toggleSort('__activity_count__')"
+                    >
+                      <svg class="h-3 w-3 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1103,6 +1117,13 @@
                   </td>
                   <td class="w-20 px-3" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                     <div class="flex items-center justify-end gap-1">
+                      <button
+                        v-if="activityCountByRecord[record.id]"
+                        type="button"
+                        class="shrink-0 h-4 min-w-[1rem] rounded-full px-1 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-sky-100 dark:hover:bg-sky-900/30 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                        :title="`${activityCountByRecord[record.id]} activit${activityCountByRecord[record.id] === 1 ? 'y' : 'ies'}`"
+                        @click.stop="openRecord(record); nextTick(() => { detailTab = 'activity'; })"
+                      >{{ activityCountByRecord[record.id] }}</button>
                       <button
                         type="button"
                         class="rounded p-0.5 transition-colors"
@@ -3096,6 +3117,14 @@ const recordCountByType = computed(() => {
   return counts;
 });
 
+const activityCountByRecord = computed((): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const a of mockActivities) {
+    counts[a.record_id] = (counts[a.record_id] ?? 0) + 1;
+  }
+  return counts;
+});
+
 const stageDistribution = computed((): Array<{ label: string; count: number; pct: number }> => {
   if (!kanbanField.value) return [];
   const fieldKey = kanbanField.value.key;
@@ -3145,6 +3174,7 @@ const activeSortLabel = computed(() => {
   if (!sortField.value) return null;
   if (sortField.value === '__created_at__') return 'Added';
   if (sortField.value === '__updated_at__') return 'Updated';
+  if (sortField.value === '__activity_count__') return 'Activity';
   return allColumns.value.find((c) => c.key === sortField.value)?.label ?? sortField.value;
 });
 
@@ -3196,6 +3226,10 @@ const filteredRecords = computed(() => {
         const bt = b.updated_at ? new Date(b.updated_at).getTime() : new Date(b.created_at).getTime();
         return (at - bt) * dir;
       });
+    } else if (key === '__activity_count__') {
+      result = [...result].sort((a, b) =>
+        ((activityCountByRecord.value[a.id] ?? 0) - (activityCountByRecord.value[b.id] ?? 0)) * dir,
+      );
     } else {
       const col = selectedType.value?.fields.find((f) => f.key === key);
       result = [...result].sort((a, b) => {
