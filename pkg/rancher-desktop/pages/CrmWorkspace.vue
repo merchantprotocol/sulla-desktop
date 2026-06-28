@@ -806,21 +806,39 @@
                     </button>
                   </th>
                   <th class="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap">
-                    <button
-                      type="button"
-                      class="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide transition-colors select-none"
-                      :class="sortField === '__created_at__'
-                        ? 'text-sky-600 dark:text-sky-400'
-                        : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
-                      @click="toggleSort('__created_at__')"
-                    >
-                      Added
-                      <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                        <path v-if="sortField === '__created_at__' && sortDir === 'asc'" stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
-                        <path v-else-if="sortField === '__created_at__' && sortDir === 'desc'" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
-                        <path v-else stroke-linecap="round" stroke-linejoin="round" class="opacity-30" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
-                      </svg>
-                    </button>
+                    <div class="flex items-center gap-2">
+                      <button
+                        type="button"
+                        class="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide transition-colors select-none"
+                        :class="sortField === '__created_at__'
+                          ? 'text-sky-600 dark:text-sky-400'
+                          : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
+                        @click="toggleSort('__created_at__')"
+                      >
+                        Added
+                        <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path v-if="sortField === '__created_at__' && sortDir === 'asc'" stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                          <path v-else-if="sortField === '__created_at__' && sortDir === 'desc'" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                          <path v-else stroke-linecap="round" stroke-linejoin="round" class="opacity-30" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide transition-colors select-none"
+                        :class="sortField === '__updated_at__'
+                          ? 'text-sky-600 dark:text-sky-400'
+                          : 'text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400'"
+                        title="Sort by last updated"
+                        @click="toggleSort('__updated_at__')"
+                      >
+                        / Upd
+                        <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path v-if="sortField === '__updated_at__' && sortDir === 'asc'" stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                          <path v-else-if="sortField === '__updated_at__' && sortDir === 'desc'" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                          <path v-else stroke-linecap="round" stroke-linejoin="round" class="opacity-30" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                        </svg>
+                      </button>
+                    </div>
                   </th>
                   <th class="w-10 px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800" />
                 </tr>
@@ -939,9 +957,10 @@
                         ? 'text-rose-300 dark:text-rose-800'
                         : 'text-slate-400 dark:text-slate-500',
                     ]"
-                    :title="formatDate(record.created_at)"
+                    :title="record.updated_at ? `Added ${formatDate(record.created_at)} · Updated ${formatDate(record.updated_at)}` : formatDate(record.created_at)"
                   >
-                    {{ formatAge(record.created_at) }}
+                    <div>{{ formatAge(record.updated_at ?? record.created_at) }}</div>
+                    <div v-if="record.updated_at" class="text-[10px] text-slate-300 dark:text-slate-700 leading-none mt-0.5">upd</div>
                   </td>
                   <td class="w-20 px-3" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                     <div class="flex items-center justify-end gap-1">
@@ -2810,6 +2829,7 @@ const visibleColumns = computed(() =>
 const activeSortLabel = computed(() => {
   if (!sortField.value) return null;
   if (sortField.value === '__created_at__') return 'Added';
+  if (sortField.value === '__updated_at__') return 'Updated';
   return allColumns.value.find((c) => c.key === sortField.value)?.label ?? sortField.value;
 });
 
@@ -2844,6 +2864,12 @@ const filteredRecords = computed(() => {
       result = [...result].sort((a, b) =>
         (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir,
       );
+    } else if (key === '__updated_at__') {
+      result = [...result].sort((a, b) => {
+        const at = a.updated_at ? new Date(a.updated_at).getTime() : new Date(a.created_at).getTime();
+        const bt = b.updated_at ? new Date(b.updated_at).getTime() : new Date(b.created_at).getTime();
+        return (at - bt) * dir;
+      });
     } else {
       const col = selectedType.value?.fields.find((f) => f.key === key);
       result = [...result].sort((a, b) => {
