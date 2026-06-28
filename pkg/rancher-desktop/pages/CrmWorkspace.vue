@@ -77,6 +77,26 @@
             </span>
             <button
               type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
+              :class="[...selectedIds].every(id => pinnedIds.has(id))
+                ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'"
+              :title="[...selectedIds].every(id => pinnedIds.has(id)) ? `Unpin ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}` : `Pin ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}`"
+              @click="bulkPinToggle"
+            >
+              <svg
+                class="h-4 w-4"
+                :fill="[...selectedIds].every(id => pinnedIds.has(id)) ? 'currentColor' : 'none'"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                stroke-width="1.8"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+              {{ [...selectedIds].every(id => pinnedIds.has(id)) ? 'Unpin' : 'Pin' }}
+            </button>
+            <button
+              type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
               title="Archive selected (coming soon)"
             >
@@ -1922,6 +1942,18 @@ function togglePin(id: string) {
   if (next.has(id)) next.delete(id);
   else next.add(id);
   pinnedIds.value = next;
+}
+
+function bulkPinToggle() {
+  const ids = [...selectedIds.value];
+  const allPinned = ids.every((id) => pinnedIds.value.has(id));
+  const next = new Set(pinnedIds.value);
+  for (const id of ids) {
+    if (allPinned) next.delete(id);
+    else next.add(id);
+  }
+  pinnedIds.value = next;
+  showToast(allPinned ? `Unpinned ${ids.length} record${ids.length === 1 ? '' : 's'}` : `Pinned ${ids.length} record${ids.length === 1 ? '' : 's'}`);
 }
 
 function toggleFilter(fieldKey: string, value: string) {
