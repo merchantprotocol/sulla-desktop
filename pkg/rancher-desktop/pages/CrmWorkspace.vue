@@ -1158,6 +1158,38 @@
               </button>
             </div>
 
+            <!-- stage pipeline indicator -->
+            <div
+              v-if="kanbanField && !editingRecord && openedRecord.field_values[kanbanField.key] != null"
+              class="flex items-center gap-px px-5 py-2.5 border-b border-slate-100 dark:border-slate-800/80 overflow-x-auto no-scrollbar"
+            >
+              <template v-for="(stage, idx) in (kanbanField.select_options ?? [])" :key="stage">
+                <button
+                  type="button"
+                  class="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-all"
+                  :class="openedRecord.field_values[kanbanField.key] === stage
+                    ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 ring-1 ring-sky-300 dark:ring-sky-700'
+                    : (kanbanField.select_options ?? []).indexOf(String(openedRecord.field_values[kanbanField.key])) > idx
+                      ? 'text-slate-400 dark:text-slate-500 line-through opacity-60'
+                      : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                  :title="`Move to ${stage}`"
+                  @click="openedRecord.field_values[kanbanField.key] = stage; showToast(`Stage: ${stage}`)"
+                >
+                  {{ stage }}
+                </button>
+                <svg
+                  v-if="idx < (kanbanField.select_options ?? []).length - 1"
+                  class="h-3 w-3 shrink-0 text-slate-200 dark:text-slate-700"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              </template>
+            </div>
+
             <!-- record completeness bar -->
             <div
               v-if="!editingRecord && recordCompleteness.total > 0"
