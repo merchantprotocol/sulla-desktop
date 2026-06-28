@@ -7,6 +7,8 @@
     @keydown.n.exact="onKeyN"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
+    @keydown.meta.enter.exact.prevent="onKeySave"
+    @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
     @click="showColumnsMenu = false; cancelCellEdit()"
   >
@@ -967,6 +969,10 @@
                 { keys: ['Enter'], desc: 'Commit cell edit' },
                 { keys: ['Esc'], desc: 'Cancel cell edit' },
               ]},
+              { heading: 'Forms', items: [
+                { keys: ['⌘', 'Enter'], desc: 'Save new record / edits' },
+                { keys: ['Esc'], desc: 'Discard / close panel' },
+              ]},
             ]" :key="group.heading">
               <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 pt-3 pb-1 first:pt-0">{{ group.heading }}</p>
               <div v-for="item in group.items" :key="item.desc" class="flex items-center justify-between py-1.5">
@@ -1611,6 +1617,11 @@ function onKeyN(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   openNewRecord();
+}
+
+function onKeySave() {
+  if (creatingRecord.value) { creatingRecord.value = false; return; }
+  if (editingRecord.value) { editingRecord.value = false; }
 }
 
 function onKeyArrow(dir: 1 | -1) {
