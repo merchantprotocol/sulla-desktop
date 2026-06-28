@@ -321,6 +321,39 @@ export const crmToolManifests: ToolManifest[] = [
     loader:         () => import('./create_dashboard'),
   },
   {
+    name:        'archive_view',
+    description: 'Soft-delete a saved view. Requires confirm:true. Reverses via undo or by recreating the view. Cannot archive system views.',
+    category:    'crm',
+    schemaDef:   {
+      view_id: { type: 'string', description: 'View id to archive (from list_views).' },
+      confirm: { type: 'boolean', description: 'Must be true to proceed.' },
+    },
+    operationTypes: ['delete'],
+    loader:         () => import('./archive_view'),
+  },
+  {
+    name:        'archive_dashboard',
+    description: 'Soft-delete a dashboard (and hides its widgets). Requires confirm:true. Cannot archive system dashboards.',
+    category:    'crm',
+    schemaDef:   {
+      dashboard_id: { type: 'string', description: 'Dashboard id to archive (from list_dashboards).' },
+      confirm:      { type: 'boolean', description: 'Must be true to proceed.' },
+    },
+    operationTypes: ['delete'],
+    loader:         () => import('./archive_dashboard'),
+  },
+  {
+    name:        'archive_widget',
+    description: 'Soft-delete a widget from a dashboard. Requires confirm:true. Reverses via undo.',
+    category:    'crm',
+    schemaDef:   {
+      widget_id: { type: 'string', description: 'Widget id to archive (from list_widgets).' },
+      confirm:   { type: 'boolean', description: 'Must be true to proceed.' },
+    },
+    operationTypes: ['delete'],
+    loader:         () => import('./archive_widget'),
+  },
+  {
     name:        'list_widgets',
     description: 'List widgets in a dashboard (id, name, kind, record type). Call before create_widget to avoid duplicates.',
     category:    'crm',
