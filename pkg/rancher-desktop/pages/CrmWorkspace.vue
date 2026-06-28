@@ -1235,6 +1235,15 @@
                               : selectBadgeClass(row.label)"
                           >{{ row.label }}</span>
                           <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ row.count }}</span>
+                          <template v-for="col in visibleColumns.filter(c => c.data_type === 'number' && groupedStats[row.key]?.[c.key]?.count)" :key="col.key">
+                            <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">·</span>
+                            <span
+                              class="text-xs tabular-nums font-medium text-slate-500 dark:text-slate-400"
+                              :title="`${col.label}: Σ ${groupedStats[row.key][col.key].sum.toLocaleString()} · avg ${(groupedStats[row.key][col.key].sum / groupedStats[row.key][col.key].count).toLocaleString(undefined, { maximumFractionDigits: 1 })}`"
+                            >
+                              {{ col.format === 'currency' ? '$' : '' }}{{ groupedStats[row.key][col.key].sum >= 1000 ? (groupedStats[row.key][col.key].sum / 1000).toFixed(1) + 'k' : groupedStats[row.key][col.key].sum }}
+                            </span>
+                          </template>
                         </div>
                       </td>
                     </tr>
@@ -3982,6 +3991,24 @@ const groupedTableRows = computed((): GroupRow[] | null => {
     }
   }
   return rows;
+});
+
+const groupedStats = computed((): Record<string, Record<string, { sum: number; count: number }>> => {
+  if (!groupByField.value) return {};
+  const fkey = groupByField.value;
+  const numericCols = visibleColumns.value.filter((c) => c.data_type === 'number');
+  if (!numericCols.length) return {};
+  const stats: Record<string, Record<string, { sum: number; count: number }>> = {};
+  for (const r of filteredRecords.value) {
+    const gk = r.field_values[fkey] != null && String(r.field_values[fkey]) !== '' ? String(r.field_values[fkey]) : '__ungrouped__';
+    if (!stats[gk]) stats[gk] = {};
+    for (const col of numericCols) {
+      if (!stats[gk][col.key]) stats[gk][col.key] = { sum: 0, count: 0 };
+      const v = Number(r.field_values[col.key]);
+      if (!isNaN(v) && r.field_values[col.key] != null) { stats[gk][col.key].sum += v; stats[gk][col.key].count++; }
+    }
+  }
+  return stats;
 });
 
 function toggleGroupCollapse(key: string) {
