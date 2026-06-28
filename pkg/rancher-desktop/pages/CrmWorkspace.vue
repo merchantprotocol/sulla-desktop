@@ -1994,6 +1994,7 @@
                 { keys: ['W'], desc: 'Watch / unwatch record' },
                 { keys: ['C'], desc: 'Copy record link' },
                 { keys: ['A'], desc: 'Open activity compose' },
+                { keys: ['Del'], desc: 'Delete record (with undo toast)' },
                 { keys: ['1'], desc: 'Details tab' },
                 { keys: ['2'], desc: 'Activity tab' },
                 { keys: ['3'], desc: 'Related tab' },
@@ -3570,6 +3571,11 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (e.key === 'a' && !e.metaKey && !e.ctrlKey) {
       detailTab.value = 'activity';
       loggingNote.value = true;
+      e.preventDefault();
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !e.metaKey && !e.ctrlKey) {
+      deleteRecord(openedRecord.value);
       e.preventDefault();
       return;
     }
