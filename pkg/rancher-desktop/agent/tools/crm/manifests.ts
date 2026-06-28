@@ -156,6 +156,18 @@ export const crmToolManifests: ToolManifest[] = [
     loader:         () => import('./query_records'),
   },
   {
+    name:        'search_records',
+    description: 'Full-text search over records of a type using the denormalized search_text index (all text-type field values concatenated). Returns hydrated records. Use when you know a keyword but not the exact field value.',
+    category:    'crm',
+    schemaDef:   {
+      record_type: { type: 'string', description: 'Record type key or id.' },
+      q:           { type: 'string', description: 'Search query (min 2 chars). Matched with ILIKE against all text fields.' },
+      limit:       { type: 'number', optional: true, description: 'Max results (default 50, cap 200).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./search_records'),
+  },
+  {
     name:        'get_record',
     description: 'Get a single record by id with all field values hydrated. Use after get_linked_records returns an id and you need the full details.',
     category:    'crm',

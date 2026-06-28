@@ -867,6 +867,49 @@ export class CrmSchemaService {
 
   // ── Read / discovery ──────────────────────────────────────────────────────
 
+  /**
+   * Full-text search across records of a type using the denormalized
+   * `search_text` column (all text field values concatenated on write).
+   * Returns hydrated records in the same shape as queryRecords.
+   */
+  static async searchRecords(
+    recordTypeId: string,
+    q: string,
+    opts: { limit?: number; tenantId?: string } = {},
+  ): Promise<Array<Record<string, unknown>>> {
+    const tenantId = opts.tenantId ?? DEFAULT_TENANT_ID;
+    const limit = opts.limit ?? 50;
+
+    const records = await postgresClient.query(
+      `SELECT r.id, r.title, r.created_at FROM crm_records r
+       WHERE r.tenant_id = $1 AND r.record_type_id = $2 AND r.archived = false
+         AND r.search_text ILIKE $3
+       ORDER BY r.created_at DESC LIMIT $4`,
+      [tenantId, recordTypeId, `%${ q }%`, limit],
+    );
+    if (!records.length) return [];
+
+    const ids = records.map((r: any) => r.id);
+    const values = await postgresClient.query(
+      `SELECT fv.record_id, f.key, f.data_type,
+              fv.value_text, fv.value_number, fv.value_bool, fv.value_datetime, fv.value_json
+       FROM crm_field_values fv
+       JOIN crm_fields f ON f.id = fv.field_id
+       WHERE fv.record_id = ANY($1)`,
+      [ids],
+    );
+
+    const byRecord = new Map<string, Record<string, unknown>>();
+    for (const r of records) byRecord.set(r.id, { id: r.id, title: r.title, created_at: r.created_at });
+    for (const v of values) {
+      const target = byRecord.get(v.record_id);
+      if (!target) continue;
+      const col = valueColumnFor(v.data_type);
+      target[v.key] = col ? (v as any)[col] : null;
+    }
+    return records.map((r: any) => byRecord.get(r.id)!);
+  }
+
   static async describeRecordType(
     keyOrId: string,
     tenantId = DEFAULT_TENANT_ID,
