@@ -196,6 +196,34 @@
               </button>
             </div>
 
+            <!-- pinned filter chip -->
+            <div
+              v-if="pinnedCountForType > 0"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none transition-colors"
+              :class="showPinnedOnly
+                ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-300 dark:border-amber-700'
+                : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-amber-300 dark:hover:border-amber-700 hover:text-amber-500 dark:hover:text-amber-400'"
+              :title="showPinnedOnly ? 'Show all records' : `Show ${pinnedCountForType} pinned record${pinnedCountForType === 1 ? '' : 's'} only`"
+              @click="showPinnedOnly = !showPinnedOnly"
+            >
+              <svg class="h-3 w-3 shrink-0" :fill="showPinnedOnly ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+              <span>{{ showPinnedOnly ? 'Pinned only' : `${pinnedCountForType} pinned` }}</span>
+              <button
+                v-if="showPinnedOnly"
+                type="button"
+                class="ml-0.5 rounded-full hover:bg-amber-200 dark:hover:bg-amber-800 p-0.5 transition-colors"
+                aria-label="Show all records"
+                title="Show all records"
+                @click.stop="showPinnedOnly = false"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
             <!-- export button -->
             <button
               type="button"
@@ -535,16 +563,36 @@
                   <td class="px-4 text-xs tabular-nums text-slate-400 dark:text-slate-500 whitespace-nowrap" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                     {{ formatDate(record.created_at) }}
                   </td>
-                  <td class="w-10 px-3 text-right" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
-                    <button
-                      type="button"
-                      class="invisible group-hover:visible text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-0.5 transition-colors"
-                      @click.stop="openRecord(record)"
-                    >
-                      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
+                  <td class="w-20 px-3" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
+                    <div class="flex items-center justify-end gap-1">
+                      <button
+                        type="button"
+                        class="rounded p-0.5 transition-colors"
+                        :class="pinnedIds.has(record.id)
+                          ? 'text-amber-400 hover:text-amber-500'
+                          : 'invisible group-hover:visible text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400'"
+                        :title="pinnedIds.has(record.id) ? 'Unpin record' : 'Pin record'"
+                        :aria-label="pinnedIds.has(record.id) ? 'Unpin record' : 'Pin record'"
+                        @click.stop="togglePin(record.id)"
+                      >
+                        <svg v-if="pinnedIds.has(record.id)" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                        <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="invisible group-hover:visible text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-0.5 transition-colors"
+                        aria-label="Open record"
+                        @click.stop="openRecord(record)"
+                      >
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </div>
                   </td>
                 </tr>
 
@@ -616,9 +664,26 @@
                   >
                     <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug mb-2 line-clamp-2 flex items-start gap-1.5">
                       <span class="flex-1">{{ record.title }}</span>
+                      <button
+                        type="button"
+                        class="shrink-0 mt-0.5 rounded transition-colors"
+                        :class="pinnedIds.has(record.id)
+                          ? 'text-amber-400 hover:text-amber-500'
+                          : 'text-slate-200 dark:text-slate-700 hover:text-amber-400 dark:hover:text-amber-400'"
+                        :title="pinnedIds.has(record.id) ? 'Unpin' : 'Pin'"
+                        :aria-label="pinnedIds.has(record.id) ? 'Unpin record' : 'Pin record'"
+                        @click.stop="togglePin(record.id)"
+                      >
+                        <svg v-if="pinnedIds.has(record.id)" class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                        <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                      </button>
                       <span
                         v-if="record.links?.length"
-                        class="shrink-0 mt-0.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                        class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
                       >{{ record.links.length }}</span>
                     </p>
                     <div class="space-y-1">
@@ -1528,6 +1593,8 @@ const paletteQuery = ref('');
 const paletteIdx = ref(0);
 const paletteInputEl = ref<HTMLInputElement | null>(null);
 const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
+const pinnedIds = ref<Set<string>>(new Set());
+const showPinnedOnly = ref(false);
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -1564,10 +1631,14 @@ const activeSortLabel = computed(() => {
   return allColumns.value.find((c) => c.key === sortField.value)?.label ?? sortField.value;
 });
 
+const pinnedCountForType = computed(() =>
+  mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value && pinnedIds.value.has(r.id)).length,
+);
+
 const filteredRecords = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
   const recs = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
-  let filtered = q
+  let result: CrmRecord[] = q
     ? recs.filter((r) =>
         r.title.toLowerCase().includes(q) ||
         Object.values(r.field_values).some((v) => v != null && String(v).toLowerCase().includes(q))
@@ -1575,37 +1646,48 @@ const filteredRecords = computed(() => {
     : recs;
 
   if (activeFilters.value.length) {
-    filtered = filtered.filter((r) =>
+    result = result.filter((r) =>
       activeFilters.value.every((f) => String(r.field_values[f.fieldKey] ?? '') === f.value),
     );
   }
 
-  if (!sortField.value) return filtered;
+  if (sortField.value) {
+    const key = sortField.value;
+    const dir = sortDir.value === 'asc' ? 1 : -1;
 
-  const key = sortField.value;
-  const dir = sortDir.value === 'asc' ? 1 : -1;
-
-  if (key === '__created_at__') {
-    return [...filtered].sort((a, b) =>
-      (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir,
-    );
+    if (key === '__created_at__') {
+      result = [...result].sort((a, b) =>
+        (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir,
+      );
+    } else {
+      const col = selectedType.value?.fields.find((f) => f.key === key);
+      result = [...result].sort((a, b) => {
+        const av = a.field_values[key];
+        const bv = b.field_values[key];
+        if (av == null && bv == null) return 0;
+        if (av == null) return dir;
+        if (bv == null) return -dir;
+        if (col?.data_type === 'number') return (Number(av) - Number(bv)) * dir;
+        if (col?.data_type === 'boolean') return ((av ? 1 : 0) - (bv ? 1 : 0)) * dir;
+        if (col?.data_type === 'date') {
+          return (new Date(String(av)).getTime() - new Date(String(bv)).getTime()) * dir;
+        }
+        return String(av).localeCompare(String(bv)) * dir;
+      });
+    }
   }
 
-  const col = selectedType.value?.fields.find((f) => f.key === key);
-
-  return [...filtered].sort((a, b) => {
-    const av = a.field_values[key];
-    const bv = b.field_values[key];
-    if (av == null && bv == null) return 0;
-    if (av == null) return dir;
-    if (bv == null) return -dir;
-    if (col?.data_type === 'number') return (Number(av) - Number(bv)) * dir;
-    if (col?.data_type === 'boolean') return ((av ? 1 : 0) - (bv ? 1 : 0)) * dir;
-    if (col?.data_type === 'date') {
-      return (new Date(String(av)).getTime() - new Date(String(bv)).getTime()) * dir;
+  if (pinnedIds.value.size) {
+    if (showPinnedOnly.value) {
+      result = result.filter((r) => pinnedIds.value.has(r.id));
+    } else {
+      const pinned = result.filter((r) => pinnedIds.value.has(r.id));
+      const rest = result.filter((r) => !pinnedIds.value.has(r.id));
+      result = [...pinned, ...rest];
     }
-    return String(av).localeCompare(String(bv)) * dir;
-  });
+  }
+
+  return result;
 });
 
 // The first select field drives the kanban grouping dimension
@@ -1754,6 +1836,13 @@ function clearSelection() {
   selectedIds.value = new Set();
 }
 
+function togglePin(id: string) {
+  const next = new Set(pinnedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  pinnedIds.value = next;
+}
+
 function toggleFilter(fieldKey: string, value: string) {
   const idx = activeFilters.value.findIndex((f) => f.fieldKey === fieldKey && f.value === value);
   if (idx >= 0) {
@@ -1804,6 +1893,7 @@ function selectType(key: string) {
   hiddenColumnKeys.value = new Set();
   showColumnsMenu.value = false;
   activeFilters.value = [];
+  showPinnedOnly.value = false;
   createFormErrors.value = new Set();
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
