@@ -2142,17 +2142,29 @@
               <div
                 v-for="cell in week"
                 :key="cell.date"
-                class="relative flex flex-col border-r border-slate-200 dark:border-slate-700 last:border-r-0 p-1.5 min-h-[100px]"
+                class="group relative flex flex-col border-r border-slate-200 dark:border-slate-700 last:border-r-0 p-1.5 min-h-[100px]"
                 :class="cell.inMonth ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-950'"
               >
-                <span
-                  class="text-xs font-medium mb-1 self-end w-6 h-6 flex items-center justify-center rounded-full"
-                  :class="cell.date === '2026-06-28'
-                    ? 'bg-sky-500 text-white'
-                    : cell.inMonth
-                      ? 'text-slate-700 dark:text-slate-300'
-                      : 'text-slate-300 dark:text-slate-600'"
-                >{{ cell.dayNum }}</span>
+                <div class="flex items-start justify-between mb-1">
+                  <button
+                    v-if="cell.inMonth"
+                    type="button"
+                    class="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-950/50 transition-all"
+                    title="Add record on this day"
+                    @click.stop="calendarDateField && openNewRecord(undefined, { [calendarDateField.key]: cell.date })"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                  </button>
+                  <span v-else class="w-5 h-5" />
+                  <span
+                    class="text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full"
+                    :class="cell.date === '2026-06-28'
+                      ? 'bg-sky-500 text-white'
+                      : cell.inMonth
+                        ? 'text-slate-700 dark:text-slate-300'
+                        : 'text-slate-300 dark:text-slate-600'"
+                  >{{ cell.dayNum }}</span>
+                </div>
                 <div class="flex-1 space-y-0.5 overflow-hidden">
                   <button
                     v-for="record in cell.records.slice(0, 4)"
@@ -6405,10 +6417,13 @@ function openRecord(record: CrmRecord) {
   recentRecords.value = [record, ...recentRecords.value.filter((r) => r.id !== record.id)].slice(0, 5);
 }
 
-function openNewRecord(stageValue?: string) {
+function openNewRecord(stageValue?: string, extraDraft?: Record<string, string | number | boolean | string[] | null>) {
   openedRecord.value = null;
   const fieldKey = kanbanField.value?.key;
-  draftValues.value = fieldKey && stageValue ? { [fieldKey]: stageValue } : {};
+  draftValues.value = {
+    ...(fieldKey && stageValue ? { [fieldKey]: stageValue } : {}),
+    ...(extraDraft ?? {}),
+  };
   createFormErrors.value = new Set();
   creatingRecord.value = true;
 }
