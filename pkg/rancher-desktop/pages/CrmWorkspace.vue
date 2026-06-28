@@ -903,6 +903,11 @@ const CrmCellValue = defineComponent({
           class: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
         }, String(props.value));
       }
+      if (props.dataType === 'date') {
+        const d = new Date(String(props.value));
+        const fmt = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        return h('span', { class: 'tabular-nums' }, fmt);
+      }
       return h('span', { class: 'truncate max-w-[180px] block' }, String(props.value));
     };
   },
@@ -945,6 +950,17 @@ const CrmFieldInput = defineComponent({
           h('option', { value: '' }, '— select —'),
           ...opts.map((o) => h('option', { value: o, selected: String(val) === o }, o)),
         ]);
+      }
+      if (props.readOnly && props.dataType === 'date') {
+        const fmt = val != null && val !== ''
+          ? new Date(String(val)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          : '';
+        return h('input', {
+          type: 'text',
+          value: fmt,
+          readonly: true,
+          class: baseClass + ' opacity-80 cursor-default',
+        });
       }
       if (props.readOnly && props.dataType === 'number' && props.format) {
         let displayVal = '';
