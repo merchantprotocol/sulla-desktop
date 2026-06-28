@@ -836,8 +836,7 @@ const recordCountByType = computed(() => {
 const visibleColumns = computed(() =>
   (selectedType.value?.fields ?? [])
     .slice()
-    .sort((a, b) => a.position - b.position)
-    .filter((_, i) => i < 5),
+    .sort((a, b) => a.position - b.position),
 );
 
 const filteredRecords = computed(() => {
