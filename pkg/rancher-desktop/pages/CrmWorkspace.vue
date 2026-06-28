@@ -149,16 +149,24 @@
               </button>
             </div>
 
-            <!-- filter button — placeholder -->
+            <!-- filter button — clears filters when active -->
             <button
               type="button"
-              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-              title="Filter records"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+              :class="activeFilters.length
+                ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/40'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+              :title="activeFilters.length ? `Clear ${activeFilters.length} active filter${activeFilters.length > 1 ? 's' : ''}` : 'Filter records'"
+              @click="activeFilters.length ? clearFilters() : undefined"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
               </svg>
               Filter
+              <span
+                v-if="activeFilters.length"
+                class="inline-flex items-center justify-center h-4 min-w-[1rem] rounded-full px-1 text-xs font-semibold bg-sky-500 text-white"
+              >{{ activeFilters.length }}</span>
             </button>
 
             <!-- export button — placeholder -->
