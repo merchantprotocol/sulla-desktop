@@ -790,6 +790,23 @@
               </transition>
             </div>
 
+            <!-- conditional formatting button — table view only -->
+            <button
+              v-if="viewMode === 'table'"
+              type="button"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+              :class="conditionalRules.length
+                ? 'border-purple-300 dark:border-purple-700 bg-purple-50 dark:bg-purple-950/30 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/30'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+              :title="conditionalRules.length ? `${conditionalRules.length} formatting rule${conditionalRules.length === 1 ? '' : 's'} active` : 'Conditional row formatting'"
+              @click="showFormatPanel = true"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+              </svg>
+              Format{{ conditionalRules.length ? ` (${conditionalRules.length})` : '' }}
+            </button>
+
             <!-- import button -->
             <button
               type="button"
@@ -1303,7 +1320,7 @@
                         :class="openedRecord?.id === row.record.id
                           ? 'bg-sky-50 dark:bg-sky-950/20'
                           : 'hover:bg-white dark:hover:bg-slate-900'"
-                        :style="colorLabels[row.record.id] ? { boxShadow: `inset 3px 0 0 ${colorLabels[row.record.id]}` } : undefined"
+                        :style="(() => { const cl = colorLabels[row.record.id]; const cr = evaluateConditionalRules(row.record); return { ...(cl ? { boxShadow: `inset 3px 0 0 ${cl}` } : {}), ...(cr ? { background: cr + '18' } : {}) }; })()"
                         :data-record-id="row.record.id"
                         @click="openRecord(row.record)"
                         @contextmenu.prevent="openContextMenu(row.record, $event)"
@@ -1354,7 +1371,7 @@
                   :class="openedRecord?.id === record.id
                     ? 'bg-sky-50 dark:bg-sky-950/20'
                     : 'hover:bg-white dark:hover:bg-slate-900'"
-                  :style="colorLabels[record.id] ? { boxShadow: `inset 3px 0 0 ${colorLabels[record.id]}` } : undefined"
+                  :style="(() => { const cl = colorLabels[record.id]; const cr = evaluateConditionalRules(record); return { ...(cl ? { boxShadow: `inset 3px 0 0 ${cl}` } : {}), ...(cr ? { background: cr + '18' } : {}) }; })()"
                   :data-record-id="record.id"
                   @click="openRecord(record)"
                   @contextmenu.prevent="openContextMenu(record, $event)"
@@ -3154,6 +3171,79 @@
       </div>
     </transition>
 
+    <!-- conditional formatting panel -->
+    <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div v-if="showFormatPanel" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="showFormatPanel = false">
+        <div class="w-full max-w-xl rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col max-h-[80vh]">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h3 class="text-base font-semibold text-slate-900 dark:text-white">Conditional row formatting</h3>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Highlight rows automatically based on field values</p>
+            </div>
+            <button type="button" class="rounded-lg p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showFormatPanel = false">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="flex-1 overflow-auto p-6 space-y-3">
+            <div
+              v-for="(rule, ri) in conditionalRules"
+              :key="rule.id"
+              class="flex items-center gap-2 p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50"
+            >
+              <span class="h-3.5 w-3.5 rounded-full shrink-0 border border-white/40 shadow-sm" :style="{ background: rule.color }" />
+              <select v-model="rule.fieldKey" class="flex-1 h-7 rounded-lg px-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-400">
+                <option v-for="f in selectedType?.fields ?? []" :key="f.key" :value="f.key">{{ f.label }}</option>
+              </select>
+              <select v-model="rule.operator" class="w-32 h-7 rounded-lg px-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-400">
+                <option value="equals">equals</option>
+                <option value="not_equals">not equals</option>
+                <option value="contains">contains</option>
+                <option value="gt">greater than</option>
+                <option value="lt">less than</option>
+                <option value="is_empty">is empty</option>
+                <option value="is_not_empty">is not empty</option>
+              </select>
+              <input
+                v-if="!['is_empty', 'is_not_empty'].includes(rule.operator)"
+                v-model="rule.value"
+                type="text"
+                placeholder="value"
+                class="w-24 h-7 rounded-lg px-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-400"
+              >
+              <span v-else class="w-24" />
+              <div class="flex items-center gap-0.5">
+                <button
+                  v-for="c in COLOR_LABEL_PALETTE"
+                  :key="c"
+                  type="button"
+                  class="h-4 w-4 rounded-full transition-transform hover:scale-125"
+                  :style="{ background: c, boxShadow: rule.color === c ? `0 0 0 1.5px white, 0 0 0 3px ${c}` : 'none' }"
+                  @click="rule.color = c"
+                />
+              </div>
+              <button type="button" class="h-6 w-6 rounded text-slate-400 hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors flex items-center justify-center shrink-0" @click="conditionalRules.splice(ri, 1)">
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div v-if="!conditionalRules.length" class="text-center py-6 text-sm text-slate-400 dark:text-slate-500">
+              No formatting rules yet. Add one below.
+            </div>
+          </div>
+          <div class="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors"
+              @click="conditionalRules.push({ id: String(Date.now()), fieldKey: selectedType?.fields[0]?.key ?? '', operator: 'equals', value: '', color: COLOR_LABEL_PALETTE[0] })"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+              Add rule
+            </button>
+            <button type="button" class="h-8 px-4 rounded-xl text-sm font-medium text-white bg-purple-500 hover:bg-purple-600 transition-colors" @click="showFormatPanel = false">Done</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <!-- CSV import modal -->
     <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100" leave-to-class="opacity-0">
       <div v-if="showImportModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="showImportModal = false">
@@ -3974,6 +4064,9 @@ const colorLabelFilter = ref<string | null>(null);
 const staleDaysFilter = ref<number | null>(null);
 const showStaleDropdown = ref(false);
 const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
+interface ConditionalRule { id: string; fieldKey: string; operator: 'equals' | 'not_equals' | 'contains' | 'gt' | 'lt' | 'is_empty' | 'is_not_empty'; value: string; color: string }
+const conditionalRules = ref<ConditionalRule[]>([]);
+const showFormatPanel = ref(false);
 const groupMenu = ref<{ key: string; label: string; count: number; x: number; y: number } | null>(null);
 const wipLimits = ref<Record<string, number>>({});
 const kanbanColMenu = ref<{ col: string; x: number; y: number } | null>(null);
@@ -4556,6 +4649,24 @@ const tableColumnTotals = computed((): Record<string, number | null> => {
 const hasTableTotals = computed(() =>
   Object.values(tableColumnStats.value).some((v) => v !== null),
 );
+
+function evaluateConditionalRules(record: CrmRecord): string | null {
+  for (const rule of conditionalRules.value) {
+    const rawVal = record.field_values[rule.fieldKey];
+    const strVal = rawVal != null ? String(rawVal).toLowerCase() : '';
+    const ruleVal = rule.value.toLowerCase();
+    let match = false;
+    if (rule.operator === 'equals') match = strVal === ruleVal;
+    else if (rule.operator === 'not_equals') match = strVal !== ruleVal;
+    else if (rule.operator === 'contains') match = strVal.includes(ruleVal);
+    else if (rule.operator === 'gt') match = Number(rawVal) > Number(rule.value);
+    else if (rule.operator === 'lt') match = Number(rawVal) < Number(rule.value);
+    else if (rule.operator === 'is_empty') match = rawVal == null || strVal === '';
+    else if (rule.operator === 'is_not_empty') match = rawVal != null && strVal !== '';
+    if (match) return rule.color;
+  }
+  return null;
+}
 
 const importPreviewRows = computed((): Array<Record<string, string>> => {
   const rows = importHeaderRow.value ? importParsed.value.slice(1) : importParsed.value;
