@@ -792,6 +792,41 @@
               </transition>
             </div>
 
+            <!-- tag filter — only when tags exist -->
+            <div v-if="allTags.length" class="relative">
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+                :class="tagFilter
+                  ? 'border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/30 text-teal-600 dark:text-teal-400 hover:bg-teal-100 dark:hover:bg-teal-900/30'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+                :title="tagFilter ? `Filtered by tag: ${tagFilter}` : 'Filter by tag'"
+                @click.stop="$event.currentTarget.nextElementSibling?.classList.toggle('hidden')"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-5 5a2 2 0 01-2.828 0l-7-7A2 2 0 013 10V5a2 2 0 012-2z" />
+                </svg>
+                {{ tagFilter ?? 'Tags' }}
+                <svg v-if="tagFilter" class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" @click.stop="tagFilter = null">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+              <div class="hidden absolute top-full left-0 mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 min-w-[140px]">
+                <button
+                  v-for="t in allTags"
+                  :key="t"
+                  type="button"
+                  class="flex items-center gap-2 w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                  :class="tagFilter === t ? 'text-teal-600 dark:text-teal-400 font-medium' : 'text-slate-700 dark:text-slate-300'"
+                  @click="tagFilter = tagFilter === t ? null : t; $event.currentTarget.closest('.relative')?.querySelector('.hidden')?.classList.add('hidden')"
+                >
+                  <svg v-if="tagFilter === t" class="h-3.5 w-3.5 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                  <span v-else class="h-3.5 w-3.5" />
+                  {{ t }}
+                </button>
+              </div>
+            </div>
+
             <!-- conditional formatting button — table view only -->
             <button
               v-if="viewMode === 'table'"
@@ -2248,6 +2283,51 @@
               <span class="shrink-0 tabular-nums text-xs text-slate-400 dark:text-slate-500">
                 {{ completenessPercent }}%
               </span>
+            </div>
+
+            <!-- tags row -->
+            <div class="flex flex-wrap items-center gap-1.5 px-5 py-2 border-b border-slate-100 dark:border-slate-800/80 min-h-[36px]">
+              <span
+                v-for="tag in (recordTags[openedRecord.id] ?? [])"
+                :key="tag"
+                class="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+              >
+                {{ tag }}
+                <button
+                  type="button"
+                  class="ml-0.5 rounded-full hover:text-rose-500 dark:hover:text-rose-400 transition-colors leading-none"
+                  :aria-label="`Remove tag ${tag}`"
+                  @click="removeTag(openedRecord.id, tag)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </span>
+              <template v-if="showTagInput">
+                <input
+                  ref="tagInputEl"
+                  v-model="tagInput"
+                  type="text"
+                  class="h-6 px-2 rounded-full text-xs border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 outline-none focus:border-sky-400 dark:focus:border-sky-500 w-24"
+                  placeholder="Add tag..."
+                  @keydown.enter.prevent="addTag(openedRecord.id, tagInput); tagInput = ''; showTagInput = false"
+                  @keydown.escape="showTagInput = false; tagInput = ''"
+                  @blur="if(tagInput.trim()) { addTag(openedRecord.id, tagInput); tagInput = ''; } showTagInput = false"
+                />
+              </template>
+              <button
+                v-else
+                type="button"
+                class="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                title="Add tag"
+                @click="showTagInput = true; $nextTick(() => { (tagInputEl as HTMLInputElement | null)?.focus(); })"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Tag
+              </button>
             </div>
 
             <!-- tab bar — hidden while editing -->
@@ -4121,6 +4201,10 @@ const watchedIds = ref<Set<string>>(new Set());
 const COLOR_LABEL_PALETTE = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'] as const;
 const colorLabels = ref<Record<string, string>>({});
 const colorLabelFilter = ref<string | null>(null);
+const recordTags = ref<Record<string, string[]>>({});
+const tagFilter = ref<string | null>(null);
+const tagInput = ref('');
+const showTagInput = ref(false);
 const staleDaysFilter = ref<number | null>(null);
 const showStaleDropdown = ref(false);
 const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
@@ -4155,6 +4239,7 @@ const showInlineAdd = ref(false);
 const inlineAddTitle = ref('');
 const inlineAddInputEl = ref<HTMLInputElement | null>(null);
 watch(showInlineAdd, (val) => { if (val) nextTick(() => inlineAddInputEl.value?.focus()); });
+const tagInputEl = ref<HTMLInputElement | null>(null);
 
 // ── localStorage persistence ────────────────────────────────────────────────
 const LS_KEY_VIEW_MODE = 'crm:viewMode';
@@ -4377,6 +4462,11 @@ const filteredRecords = computed(() => {
   if (colorLabelFilter.value) {
     const fc = colorLabelFilter.value;
     result = result.filter((r) => colorLabels.value[r.id] === fc);
+  }
+
+  if (tagFilter.value) {
+    const ft = tagFilter.value;
+    result = result.filter((r) => (recordTags.value[r.id] ?? []).includes(ft));
   }
 
   if (staleDaysFilter.value) {
@@ -5110,6 +5200,8 @@ function selectType(key: string) {
   showInlineAdd.value = false;
   inlineAddTitle.value = '';
   colorLabelFilter.value = null;
+  tagFilter.value = null;
+  showTagInput.value = false;
   staleDaysFilter.value = null;
   createdPreset.value = null;
   draftValues.value = {};
@@ -5336,6 +5428,28 @@ function setColorLabel(recordId: string, color: string) {
   if (color) { colorLabels.value = { ...colorLabels.value, [recordId]: color }; }
   else { const next = { ...colorLabels.value }; delete next[recordId]; colorLabels.value = next; }
 }
+
+function addTag(recordId: string, tag: string) {
+  const t = tag.trim().toLowerCase();
+  if (!t) return;
+  const existing = recordTags.value[recordId] ?? [];
+  if (existing.includes(t)) return;
+  recordTags.value = { ...recordTags.value, [recordId]: [...existing, t] };
+}
+
+function removeTag(recordId: string, tag: string) {
+  const existing = recordTags.value[recordId] ?? [];
+  const next = existing.filter((x) => x !== tag);
+  recordTags.value = { ...recordTags.value, [recordId]: next };
+}
+
+const allTags = computed((): string[] => {
+  const set = new Set<string>();
+  for (const tags of Object.values(recordTags.value)) {
+    for (const t of tags) set.add(t);
+  }
+  return Array.from(set).sort();
+});
 
 function moveCardStage(record: CrmRecord, dir: 1 | -1) {
   const fieldKey = kanbanField.value?.key;
@@ -5711,6 +5825,7 @@ function onKeyR(e: KeyboardEvent) {
   showIncompleteOnly.value = false;
   groupByField.value = null;
   colorLabelFilter.value = null;
+  tagFilter.value = null;
   staleDaysFilter.value = null;
   createdPreset.value = null;
   if (hadState) showToast('View reset');
