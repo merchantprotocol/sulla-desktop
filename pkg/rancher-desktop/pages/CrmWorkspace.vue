@@ -862,6 +862,37 @@
               >{{ label }}</button>
             </div>
 
+            <!-- overdue / due-soon filters — only when a date field exists -->
+            <template v-if="dueDateField">
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+                :class="showOverdueOnly
+                  ? 'border-rose-300 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                :title="showOverdueOnly ? 'Clear overdue filter' : `Show overdue records (${overdueIds.size} total)`"
+                @click="showOverdueOnly = !showOverdueOnly; showDueSoonOnly = false"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Overdue<span v-if="overdueIds.size" class="ml-1 text-xs tabular-nums opacity-70">({{ overdueIds.size }})</span>
+              </button>
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+                :class="showDueSoonOnly
+                  ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                :title="showDueSoonOnly ? 'Clear due-soon filter' : `Show records due within 7 days (${dueSoonIds.size} total)`"
+                @click="showDueSoonOnly = !showDueSoonOnly; showOverdueOnly = false"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Due soon<span v-if="dueSoonIds.size" class="ml-1 text-xs tabular-nums opacity-70">({{ dueSoonIds.size }})</span>
+              </button>
+            </template>
             <!-- stale records filter -->
             <div class="relative">
               <button
@@ -1826,6 +1857,23 @@
                       >
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
+                      <!-- due-date urgency badges -->
+                      <svg
+                        v-if="overdueIds.has(record.id)"
+                        class="h-3.5 w-3.5 text-rose-400 shrink-0"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
+                        :title="`Overdue — ${dueDateField?.label}: ${record.field_values[dueDateField?.key ?? '']}`"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <svg
+                        v-else-if="dueSoonIds.has(record.id)"
+                        class="h-3.5 w-3.5 text-amber-400 shrink-0"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
+                        :title="`Due soon — ${dueDateField?.label}: ${record.field_values[dueDateField?.key ?? '']}`"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
                       <button
                         type="button"
                         class="rounded p-0.5 transition-colors"
@@ -2098,6 +2146,20 @@
                         </svg>
                       </button>
                     </p>
+                    <!-- urgency chip for kanban cards -->
+                    <span
+                      v-if="!kanbanCompact && (overdueIds.has(record.id) || dueSoonIds.has(record.id))"
+                      class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium mb-1.5"
+                      :class="overdueIds.has(record.id)
+                        ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400'
+                        : 'bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400'"
+                    >
+                      <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path v-if="overdueIds.has(record.id)" stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        <path v-else stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {{ overdueIds.has(record.id) ? 'Overdue' : 'Due soon' }}
+                    </span>
                     <div v-if="!kanbanCompact" class="space-y-1">
                       <div
                         v-for="f in kanbanCardFields"
@@ -2435,7 +2497,22 @@
                   </button>
                 </div>
                 <!-- title -->
-                <p class="text-sm font-semibold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-3">{{ record.title }}</p>
+                <p class="text-sm font-semibold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-1.5">{{ record.title }}</p>
+                <!-- urgency chip -->
+                <div v-if="overdueIds.has(record.id) || dueSoonIds.has(record.id)" class="mb-2.5">
+                  <span
+                    class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+                    :class="overdueIds.has(record.id)
+                      ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400'
+                      : 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400'"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path v-if="overdueIds.has(record.id)" stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      <path v-else stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {{ overdueIds.has(record.id) ? 'Overdue' : 'Due soon' }}
+                  </span>
+                </div>
                 <!-- preview fields -->
                 <div v-if="galleryPreviewFields.length" class="space-y-1.5 mb-3">
                   <div
@@ -5401,6 +5478,44 @@ const lastActivityByRecord = computed((): Record<string, number> => {
   return stamps;
 });
 
+// Due-date urgency — first date field in type is used as the due-date proxy
+const DUE_TODAY_STR = new Date().toISOString().slice(0, 10);
+const DUE_SOON_STR = (() => {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  return d.toISOString().slice(0, 10);
+})();
+
+const dueDateField = computed(() =>
+  selectedType.value?.fields.find((f) => f.data_type === 'date') ?? null,
+);
+// These use all type records (not filteredRecords) to avoid circular dependency
+const overdueIds = computed((): Set<string> => {
+  const df = dueDateField.value;
+  if (!df) return new Set();
+  return new Set(
+    mockRecords
+      .filter((r) => r.record_type_key === selectedTypeKey.value && typeof r.field_values[df.key] === 'string' && String(r.field_values[df.key]) < DUE_TODAY_STR)
+      .map((r) => r.id),
+  );
+});
+const dueSoonIds = computed((): Set<string> => {
+  const df = dueDateField.value;
+  if (!df) return new Set();
+  return new Set(
+    mockRecords
+      .filter((r) => {
+        if (r.record_type_key !== selectedTypeKey.value) return false;
+        const v = r.field_values[df.key];
+        return typeof v === 'string' && String(v) >= DUE_TODAY_STR && String(v) <= DUE_SOON_STR;
+      })
+      .map((r) => r.id),
+  );
+});
+
+const showOverdueOnly = ref(false);
+const showDueSoonOnly = ref(false);
+
 const staleIds = computed((): Set<string> => {
   const days = staleDaysFilter.value;
   if (!days) return new Set();
@@ -5619,6 +5734,19 @@ const filteredRecords = computed(() => {
     result = result.filter((r) => {
       const last = lastActivityByRecord.value[r.id] ?? new Date(r.created_at).getTime();
       return last < cutoff;
+    });
+  }
+
+  if (showOverdueOnly.value && dueDateField.value) {
+    const dfKey = dueDateField.value.key;
+    result = result.filter((r) => typeof r.field_values[dfKey] === 'string' && String(r.field_values[dfKey]) < DUE_TODAY_STR);
+  }
+
+  if (showDueSoonOnly.value && dueDateField.value) {
+    const dfKey = dueDateField.value.key;
+    result = result.filter((r) => {
+      const v = r.field_values[dfKey];
+      return typeof v === 'string' && String(v) >= DUE_TODAY_STR && String(v) <= DUE_SOON_STR;
     });
   }
 
@@ -6763,6 +6891,8 @@ function selectType(key: string) {
   tagFilter.value = null;
   showTagInput.value = false;
   staleDaysFilter.value = null;
+  showOverdueOnly.value = false;
+  showDueSoonOnly.value = false;
   createdPreset.value = null;
   customOrder.value = [];
   columnWidths.value = {};
