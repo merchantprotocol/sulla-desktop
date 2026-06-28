@@ -880,6 +880,17 @@
                 >
                   Edit
                 </button>
+                <button
+                  type="button"
+                  aria-label="Duplicate record"
+                  title="Duplicate record"
+                  class="rounded-lg py-2 px-3 text-sm font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  @click="duplicateRecord(openedRecord)"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </button>
                 <button type="button" aria-label="Delete record" title="Delete record" class="rounded-lg py-2 px-3 text-sm font-medium text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors">
                   <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -1534,6 +1545,19 @@ function openNewRecord(stageValue?: string) {
   const fieldKey = kanbanField.value?.key;
   draftValues.value = fieldKey && stageValue ? { [fieldKey]: stageValue } : {};
   creatingRecord.value = true;
+}
+
+function duplicateRecord(record: CrmRecord) {
+  const newRecord: CrmRecord = {
+    id: 'dup-' + record.id + '-' + String(mockRecords.length),
+    record_type_key: record.record_type_key,
+    title: 'Copy of ' + record.title,
+    created_at: new Date().toISOString(),
+    field_values: { ...record.field_values },
+    links: [],
+  };
+  mockRecords.push(newRecord);
+  openRecord(newRecord);
 }
 
 function goBack() {
