@@ -535,12 +535,13 @@
                       :class="activeFilters.some(f => f.fieldKey === filterPickerField && f.value === opt)
                         ? 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30'
                         : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
-                      @click="toggleFilter(filterPickerField, opt); showFilterDropdown = false"
+                      @click="toggleFilter(filterPickerField, opt)"
                     >
-                      <span
-                        class="h-2 w-2 rounded-full shrink-0"
-                        :class="stageDot(opt)"
-                      />
+                      <svg
+                        v-if="activeFilters.some(f => f.fieldKey === filterPickerField && f.value === opt)"
+                        class="h-3 w-3 text-sky-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"
+                      ><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      <span v-else class="h-2 w-2 rounded-full shrink-0 mt-0.5" :class="stageDot(opt)" />
                       {{ opt }}
                     </button>
                   </template>
@@ -4280,9 +4281,18 @@ const filteredRecords = computed(() => {
     : recs;
 
   if (activeFilters.value.length) {
-    result = result.filter((r) =>
-      activeFilters.value.every((f) => String(r.field_values[f.fieldKey] ?? '') === f.value),
-    );
+    const byField = new Map<string, string[]>();
+    for (const f of activeFilters.value) {
+      const existing = byField.get(f.fieldKey) ?? [];
+      existing.push(f.value);
+      byField.set(f.fieldKey, existing);
+    }
+    result = result.filter((r) => {
+      for (const [fk, vals] of byField) {
+        if (!vals.some((v) => String(r.field_values[fk] ?? '') === v)) return false;
+      }
+      return true;
+    });
   }
 
   const ftEntries = Object.entries(fieldTextFilters.value).filter(([, v]) => v.trim());
