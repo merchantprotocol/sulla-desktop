@@ -273,6 +273,26 @@
               </button>
             </div>
 
+            <!-- stage distribution mini bar -->
+            <div
+              v-if="stageDistribution.length && viewMode === 'table'"
+              class="flex items-center gap-1"
+              title="Stage distribution — click to filter"
+            >
+              <div class="flex h-1.5 rounded-full overflow-hidden gap-px" style="width: 72px">
+                <button
+                  v-for="seg in stageDistribution"
+                  :key="seg.label"
+                  type="button"
+                  class="h-full rounded-full transition-opacity hover:opacity-80"
+                  :class="[stageSegmentBg(seg.label), activeFilters.some(f => f.value === seg.label) ? 'ring-1 ring-offset-1 ring-current' : '']"
+                  :style="{ width: `${seg.pct}%` }"
+                  :title="`${seg.label}: ${seg.count} (${seg.pct}%) — click to filter`"
+                  @click="toggleFilter(kanbanField?.key ?? '', seg.label)"
+                />
+              </div>
+            </div>
+
             <!-- export button -->
             <button
               type="button"
@@ -1829,6 +1849,16 @@ const STAGE_ORDER: Record<string, string[]> = {
   company: ['Education', 'Marketing', 'Consulting', 'Technology', 'Finance', 'Healthcare', 'Other'],
 };
 
+// Tailwind bg color for stage distribution bar segments
+function stageSegmentBg(val: string): string {
+  const v = val.toLowerCase();
+  if (['won', 'active', 'converted', 'done'].some((k) => v.includes(k))) return 'bg-emerald-400 dark:bg-emerald-500';
+  if (['lost', 'churn', 'inactive'].some((k) => v.includes(k))) return 'bg-rose-400 dark:bg-rose-500';
+  if (['negotiat', 'qualif', 'proposal'].some((k) => v.includes(k))) return 'bg-violet-400 dark:bg-violet-500';
+  if (['lead', 'webinar', 'linkedin', 'referral', 'paid', 'organic', 'direct'].some((k) => v.includes(k))) return 'bg-amber-400 dark:bg-amber-500';
+  return 'bg-sky-400 dark:bg-sky-500';
+}
+
 // Tailwind classes for select badge pills — semantic color by value keyword
 function selectBadgeClass(val: string): string {
   const v = val.toLowerCase();
@@ -1924,6 +1954,23 @@ const recordCountByType = computed(() => {
     if (counts[r.record_type_key] != null) counts[r.record_type_key]++;
   }
   return counts;
+});
+
+const stageDistribution = computed((): Array<{ label: string; count: number; pct: number }> => {
+  if (!kanbanField.value) return [];
+  const fieldKey = kanbanField.value.key;
+  const recs = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
+  const counts: Record<string, number> = {};
+  for (const r of recs) {
+    const val = String(r.field_values[fieldKey] ?? '');
+    if (val) counts[val] = (counts[val] ?? 0) + 1;
+  }
+  const order = STAGE_ORDER[selectedTypeKey.value] ?? Object.keys(counts);
+  const total = Object.values(counts).reduce((s, n) => s + n, 0);
+  if (!total) return [];
+  return order
+    .filter((s) => counts[s] != null)
+    .map((s) => ({ label: s, count: counts[s], pct: Math.round((counts[s] / total) * 100) }));
 });
 
 const completenessRateByType = computed((): Record<string, number> => {
