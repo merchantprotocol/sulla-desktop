@@ -3446,6 +3446,11 @@
               <span class="shrink-0 tabular-nums text-xs text-slate-400 dark:text-slate-500">
                 {{ completenessPercent }}%
               </span>
+              <span
+                class="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold leading-none"
+                :class="recordHealthScore.grade === 'A' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400' : recordHealthScore.grade === 'B' ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400' : recordHealthScore.grade === 'C' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400' : 'bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400'"
+                :title="`Health score: ${recordHealthScore.score}/100 · Completeness ${completenessPercent}% · ${openedRecord && lastActivityByRecord[openedRecord.id] ? 'Activity within range' : 'No activity logged'} · ${openedRecord?.links?.length ?? 0} link(s)`"
+              >{{ recordHealthScore.grade }}</span>
             </div>
 
             <!-- tags row -->
@@ -7405,6 +7410,25 @@ const completenessPercent = computed(() =>
     ? 0
     : Math.round((recordCompleteness.value.filled / recordCompleteness.value.total) * 100),
 );
+
+const recordHealthScore = computed((): { score: number; grade: 'A' | 'B' | 'C' | 'D' } => {
+  const rec = openedRecord.value;
+  if (!rec) return { score: 0, grade: 'D' };
+  const completenessPoints = completenessPercent.value * 0.5;
+  const lastTs = lastActivityByRecord.value[rec.id];
+  const todayMs = new Date(DUE_TODAY_STR).getTime();
+  let recencyPoints = 0;
+  if (lastTs) {
+    const daysAgo = (todayMs - lastTs) / 86_400_000;
+    if (daysAgo <= 7) recencyPoints = 30;
+    else if (daysAgo <= 30) recencyPoints = 20;
+    else if (daysAgo <= 90) recencyPoints = 10;
+  }
+  const linkPoints = (rec.links?.length ?? 0) > 0 ? 20 : 0;
+  const score = Math.round(completenessPoints + recencyPoints + linkPoints);
+  const grade: 'A' | 'B' | 'C' | 'D' = score >= 80 ? 'A' : score >= 60 ? 'B' : score >= 40 ? 'C' : 'D';
+  return { score, grade };
+});
 
 const previewFields = computed(() =>
   (selectedType.value?.fields ?? [])
