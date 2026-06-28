@@ -23,7 +23,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1218,6 +1218,7 @@
                       v-if="row.kind === 'header'"
                       class="bg-slate-50 dark:bg-slate-950 cursor-pointer select-none"
                       @click="toggleGroupCollapse(row.key)"
+                      @contextmenu.prevent="groupMenu = { key: row.key, label: row.label, count: row.count, x: $event.clientX, y: $event.clientY }"
                     >
                       <td :colspan="visibleColumns.length + 3" class="px-5 py-1.5">
                         <div class="flex items-center gap-2">
@@ -2823,6 +2824,71 @@
       </div>
     </transition>
 
+    <!-- group header context menu -->
+    <transition
+      enter-active-class="transition-all duration-100"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-75"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="groupMenu"
+        class="fixed z-50 w-52 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1"
+        :style="{ top: `${Math.min(groupMenu.y, window.innerHeight - 220)}px`, left: `${Math.min(groupMenu.x, window.innerWidth - 220)}px` }"
+        @click.stop
+      >
+        <p class="px-3 pt-1.5 pb-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
+          {{ groupMenu.label === '__ungrouped__' ? 'No value' : groupMenu.label }}
+          <span class="font-normal text-slate-300 dark:text-slate-600">({{ groupMenu.count }})</span>
+        </p>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="selectGroupRecords(groupMenu.key); groupMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+          Select all in group
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="toggleGroupCollapse(groupMenu.key); groupMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path v-if="collapsedGroups.has(groupMenu.key)" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+            <path v-else stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+          {{ collapsedGroups.has(groupMenu.key) ? 'Expand group' : 'Collapse group' }}
+        </button>
+        <template v-if="kanbanField && groupMenu.key !== '__ungrouped__'">
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <p class="px-3 pt-1.5 pb-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Move all to</p>
+          <button
+            v-for="stage in (kanbanField?.select_options ?? []).filter(s => s !== groupMenu!.key)"
+            :key="stage"
+            type="button"
+            class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="moveGroupToStage(groupMenu!.key, stage); groupMenu = null"
+          >
+            <span class="h-2 w-2 rounded-full shrink-0" :style="{ background: stageColorHex(stage) }" />
+            {{ stage }}
+          </button>
+        </template>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors text-red-400 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400"
+          @click="deleteGroupRecords(groupMenu.key); groupMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+          Delete all in group
+        </button>
+      </div>
+    </transition>
+
     <!-- table row context menu -->
     <transition
       enter-active-class="transition-all duration-100"
@@ -3656,6 +3722,7 @@ const colorLabels = ref<Record<string, string>>({});
 const colorLabelFilter = ref<string | null>(null);
 const staleDaysFilter = ref<number | null>(null);
 const showStaleDropdown = ref(false);
+const groupMenu = ref<{ key: string; label: string; count: number; x: number; y: number } | null>(null);
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -4015,6 +4082,63 @@ function toggleGroupCollapse(key: string) {
   const next = new Set(collapsedGroups.value);
   if (next.has(key)) next.delete(key); else next.add(key);
   collapsedGroups.value = next;
+}
+
+function selectGroupRecords(groupKey: string) {
+  if (!groupByField.value) return;
+  const fkey = groupByField.value;
+  const recs = filteredRecords.value.filter((r) => {
+    const v = r.field_values[fkey];
+    const k = v != null && String(v) !== '' ? String(v) : '__ungrouped__';
+    return k === groupKey;
+  });
+  const next = new Set(selectedIds.value);
+  recs.forEach((r) => next.add(r.id));
+  selectedIds.value = next;
+}
+
+function moveGroupToStage(groupKey: string, targetStage: string) {
+  if (!groupByField.value) return;
+  const fkey = groupByField.value;
+  const recs = filteredRecords.value.filter((r) => {
+    const v = r.field_values[fkey];
+    const k = v != null && String(v) !== '' ? String(v) : '__ungrouped__';
+    return k === groupKey;
+  });
+  recs.forEach((r) => { r.field_values[fkey] = targetStage; });
+  showToast(`Moved ${recs.length} record${recs.length === 1 ? '' : 's'} to ${targetStage}`);
+}
+
+function deleteGroupRecords(groupKey: string) {
+  if (!groupByField.value) return;
+  const fkey = groupByField.value;
+  const recs = filteredRecords.value.filter((r) => {
+    const v = r.field_values[fkey];
+    const k = v != null && String(v) !== '' ? String(v) : '__ungrouped__';
+    return k === groupKey;
+  });
+  const ids = new Set(recs.map((r) => r.id));
+  const removed = recs.slice();
+  for (let i = mockRecords.length - 1; i >= 0; i--) {
+    if (ids.has(mockRecords[i].id)) mockRecords.splice(i, 1);
+  }
+  if (openedRecord.value && ids.has(openedRecord.value.id)) openedRecord.value = null;
+  selectedIds.value = new Set([...selectedIds.value].filter((id) => !ids.has(id)));
+  showToast(`Deleted ${removed.length} record${removed.length === 1 ? '' : 's'}`, {
+    label: 'Undo',
+    fn: () => { removed.forEach((r) => mockRecords.push(r)); },
+  });
+}
+
+function stageColorHex(stage: string): string {
+  const cls = selectBadgeClass(stage);
+  if (cls.includes('green')) return '#22c55e';
+  if (cls.includes('blue')) return '#3b82f6';
+  if (cls.includes('amber') || cls.includes('yellow')) return '#f59e0b';
+  if (cls.includes('red') || cls.includes('rose')) return '#ef4444';
+  if (cls.includes('purple') || cls.includes('violet')) return '#8b5cf6';
+  if (cls.includes('teal') || cls.includes('cyan')) return '#06b6d4';
+  return '#94a3b8';
 }
 
 function commitAddStage() {
