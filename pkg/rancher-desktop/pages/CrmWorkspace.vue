@@ -1714,8 +1714,12 @@
             <div v-if="!editingRecord" class="px-5 py-4 border-t border-slate-200 dark:border-slate-700 space-y-2">
               <p class="text-xs text-slate-400 dark:text-slate-500">
                 Created {{ formatDate(openedRecord.created_at) }}
+                <template v-if="openedRecord.updated_at">
+                  <span class="mx-1 opacity-50">·</span>
+                  Updated {{ formatAge(openedRecord.updated_at) }}
+                </template>
                 <template v-if="filteredRecords.length > 1 && openedRecordIndex >= 0">
-                  · {{ openedRecordIndex + 1 }} of {{ filteredRecords.length }}
+                  <span class="mx-1 opacity-50">·</span>{{ openedRecordIndex + 1 }} of {{ filteredRecords.length }}
                 </template>
               </p>
               <div class="flex gap-2">
@@ -2141,6 +2145,7 @@ interface CrmRecord {
   title: string;
   field_values: Record<string, string | number | boolean | null>;
   created_at: string;
+  updated_at?: string;
   links?: CrmLink[];
 }
 
@@ -3363,6 +3368,7 @@ function saveEditing(record: CrmRecord) {
   }
   preEditSnapshot.value = {};
   editingRecord.value = false;
+  record.updated_at = new Date().toISOString();
 }
 
 function onKeyE(e: KeyboardEvent) {
