@@ -200,7 +200,10 @@
                 <tr
                   v-for="record in filteredRecords"
                   :key="record.id"
-                  class="group cursor-pointer hover:bg-white dark:hover:bg-slate-900 transition-colors"
+                  class="group cursor-pointer transition-colors"
+                  :class="openedRecord?.id === record.id
+                    ? 'bg-sky-50 dark:bg-sky-950/20'
+                    : 'hover:bg-white dark:hover:bg-slate-900'"
                   @click="openRecord(record)"
                 >
                   <td
