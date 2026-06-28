@@ -502,6 +502,34 @@
                   :format="field.format"
                 />
               </div>
+
+              <!-- related records -->
+              <div v-if="openedRecord.links?.length" class="pt-2 border-t border-slate-100 dark:border-slate-800">
+                <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Related</p>
+                <div class="space-y-1">
+                  <button
+                    v-for="link in openedRecord.links"
+                    :key="link.target_id"
+                    type="button"
+                    class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-left transition-colors"
+                    @click="openLinkedRecord(link)"
+                  >
+                    <span
+                      class="h-5 w-5 rounded flex items-center justify-center shrink-0"
+                      :style="{ background: (schema.find(rt => rt.key === link.target_type)?.color ?? '#64748b') + '22', color: schema.find(rt => rt.key === link.target_type)?.color ?? '#64748b' }"
+                    >
+                      <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === link.target_type)?.icon ?? 'user']" class="h-3 w-3" />
+                    </span>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{{ link.target_title }}</p>
+                      <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ link.target_type }}</p>
+                    </div>
+                    <svg class="h-3.5 w-3.5 text-slate-300 dark:text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
             </div>
 
             <!-- panel footer — view mode -->
@@ -590,12 +618,19 @@ interface CrmRecordType {
   fields: CrmField[];
 }
 
+interface CrmLink {
+  target_id: string;
+  target_type: string;
+  target_title: string;
+}
+
 interface CrmRecord {
   id: string;
   record_type_key: string;
   title: string;
   field_values: Record<string, string | number | boolean | null>;
   created_at: string;
+  links?: CrmLink[];
 }
 
 // ── Icon components (memoized — one component per icon key) ───────────────
@@ -673,33 +708,45 @@ const schema: CrmRecordType[] = [
 const mockRecords: CrmRecord[] = [
   // Contacts
   { id: 'r1', record_type_key: 'contact', title: 'Jordan Mitchell', created_at: '2026-05-12T14:22:00Z',
-    field_values: { full_name: 'Jordan Mitchell', email: 'jordan@apexcoaching.com', phone: '+1 555-0142', company: 'Apex Coaching', status: 'Active' } },
+    field_values: { full_name: 'Jordan Mitchell', email: 'jordan@apexcoaching.com', phone: '+1 555-0142', company: 'Apex Coaching', status: 'Active' },
+    links: [{ target_id: 'r5', target_type: 'company', target_title: 'Apex Coaching' }, { target_id: 'r8', target_type: 'deal', target_title: 'Apex Coaching — Q3 Expansion' }] },
   { id: 'r2', record_type_key: 'contact', title: 'Priya Sharma', created_at: '2026-05-28T09:04:00Z',
-    field_values: { full_name: 'Priya Sharma', email: 'priya@scalelab.io', phone: '+1 555-0271', company: 'ScaleLab', status: 'Lead' } },
+    field_values: { full_name: 'Priya Sharma', email: 'priya@scalelab.io', phone: '+1 555-0271', company: 'ScaleLab', status: 'Lead' },
+    links: [{ target_id: 'r6', target_type: 'company', target_title: 'ScaleLab' }, { target_id: 'r9', target_type: 'deal', target_title: 'ScaleLab Renewal' }] },
   { id: 'r3', record_type_key: 'contact', title: 'Marcus Tran', created_at: '2026-06-01T11:50:00Z',
-    field_values: { full_name: 'Marcus Tran', email: 'marcus@growthforge.co', phone: null, company: 'GrowthForge', status: 'Active' } },
+    field_values: { full_name: 'Marcus Tran', email: 'marcus@growthforge.co', phone: null, company: 'GrowthForge', status: 'Active' },
+    links: [{ target_id: 'r7', target_type: 'company', target_title: 'GrowthForge' }, { target_id: 'r13', target_type: 'deal', target_title: 'GrowthForge Pilot' }] },
   { id: 'r4', record_type_key: 'contact', title: 'Sara Okonkwo', created_at: '2026-06-10T16:33:00Z',
-    field_values: { full_name: 'Sara Okonkwo', email: 'sara@funnelworks.com', phone: '+1 555-0389', company: 'FunnelWorks', status: 'Churned' } },
+    field_values: { full_name: 'Sara Okonkwo', email: 'sara@funnelworks.com', phone: '+1 555-0389', company: 'FunnelWorks', status: 'Churned' },
+    links: [{ target_id: 'r17', target_type: 'company', target_title: 'FunnelWorks' }, { target_id: 'r14', target_type: 'deal', target_title: 'FunnelWorks Enterprise' }] },
   // Companies
   { id: 'r5', record_type_key: 'company', title: 'Apex Coaching', created_at: '2026-04-18T08:00:00Z',
-    field_values: { name: 'Apex Coaching', domain: 'apexcoaching.com', industry: 'Education', employees: 24, annual_rev: 4200000 } },
+    field_values: { name: 'Apex Coaching', domain: 'apexcoaching.com', industry: 'Education', employees: 24, annual_rev: 4200000 },
+    links: [{ target_id: 'r1', target_type: 'contact', target_title: 'Jordan Mitchell' }, { target_id: 'r8', target_type: 'deal', target_title: 'Apex Coaching — Q3 Expansion' }] },
   { id: 'r6', record_type_key: 'company', title: 'ScaleLab', created_at: '2026-04-22T10:15:00Z',
-    field_values: { name: 'ScaleLab', domain: 'scalelab.io', industry: 'Marketing', employees: 11, annual_rev: 1800000 } },
+    field_values: { name: 'ScaleLab', domain: 'scalelab.io', industry: 'Marketing', employees: 11, annual_rev: 1800000 },
+    links: [{ target_id: 'r2', target_type: 'contact', target_title: 'Priya Sharma' }, { target_id: 'r9', target_type: 'deal', target_title: 'ScaleLab Renewal' }] },
   { id: 'r7', record_type_key: 'company', title: 'GrowthForge', created_at: '2026-05-05T14:30:00Z',
-    field_values: { name: 'GrowthForge', domain: 'growthforge.co', industry: 'Consulting', employees: 7, annual_rev: 920000 } },
+    field_values: { name: 'GrowthForge', domain: 'growthforge.co', industry: 'Consulting', employees: 7, annual_rev: 920000 },
+    links: [{ target_id: 'r3', target_type: 'contact', target_title: 'Marcus Tran' }, { target_id: 'r13', target_type: 'deal', target_title: 'GrowthForge Pilot' }] },
   // Deals
   { id: 'r8', record_type_key: 'deal', title: 'Apex Coaching — Q3 Expansion', created_at: '2026-06-02T13:00:00Z',
-    field_values: { name: 'Apex Coaching — Q3 Expansion', stage: 'Proposal', amount: 48000, close_date: '2026-07-31', probability: 65 } },
+    field_values: { name: 'Apex Coaching — Q3 Expansion', stage: 'Proposal', amount: 48000, close_date: '2026-07-31', probability: 65 },
+    links: [{ target_id: 'r1', target_type: 'contact', target_title: 'Jordan Mitchell' }, { target_id: 'r5', target_type: 'company', target_title: 'Apex Coaching' }] },
   { id: 'r9', record_type_key: 'deal', title: 'ScaleLab Renewal', created_at: '2026-06-15T09:45:00Z',
-    field_values: { name: 'ScaleLab Renewal', stage: 'Negotiation', amount: 24000, close_date: '2026-07-01', probability: 80 } },
+    field_values: { name: 'ScaleLab Renewal', stage: 'Negotiation', amount: 24000, close_date: '2026-07-01', probability: 80 },
+    links: [{ target_id: 'r2', target_type: 'contact', target_title: 'Priya Sharma' }, { target_id: 'r6', target_type: 'company', target_title: 'ScaleLab' }] },
   { id: 'r13', record_type_key: 'deal', title: 'GrowthForge Pilot', created_at: '2026-06-10T10:00:00Z',
-    field_values: { name: 'GrowthForge Pilot', stage: 'Qualified', amount: 12000, close_date: '2026-08-15', probability: 40 } },
+    field_values: { name: 'GrowthForge Pilot', stage: 'Qualified', amount: 12000, close_date: '2026-08-15', probability: 40 },
+    links: [{ target_id: 'r3', target_type: 'contact', target_title: 'Marcus Tran' }, { target_id: 'r7', target_type: 'company', target_title: 'GrowthForge' }] },
   { id: 'r14', record_type_key: 'deal', title: 'FunnelWorks Enterprise', created_at: '2026-06-18T15:00:00Z',
-    field_values: { name: 'FunnelWorks Enterprise', stage: 'Lead', amount: 96000, close_date: '2026-09-30', probability: 20 } },
+    field_values: { name: 'FunnelWorks Enterprise', stage: 'Lead', amount: 96000, close_date: '2026-09-30', probability: 20 },
+    links: [{ target_id: 'r4', target_type: 'contact', target_title: 'Sara Okonkwo' }, { target_id: 'r17', target_type: 'company', target_title: 'FunnelWorks' }] },
   { id: 'r15', record_type_key: 'deal', title: 'TechSprint Coaching', created_at: '2026-06-22T09:00:00Z',
     field_values: { name: 'TechSprint Coaching', stage: 'Closed Won', amount: 18000, close_date: '2026-06-30', probability: 100 } },
   { id: 'r16', record_type_key: 'deal', title: 'MarketMind Advisory', created_at: '2026-06-24T11:00:00Z',
-    field_values: { name: 'MarketMind Advisory', stage: 'Proposal', amount: 36000, close_date: '2026-08-01', probability: 55 } },
+    field_values: { name: 'MarketMind Advisory', stage: 'Proposal', amount: 36000, close_date: '2026-08-01', probability: 55 },
+    links: [{ target_id: 'r20', target_type: 'contact', target_title: 'Aisha Patel' }, { target_id: 'r18', target_type: 'company', target_title: 'MarketMind' }] },
   // Companies (cont.)
   { id: 'r17', record_type_key: 'company', title: 'FunnelWorks', created_at: '2026-05-14T09:30:00Z',
     field_values: { name: 'FunnelWorks', domain: 'funnelworks.com', industry: 'Marketing', employees: 18, annual_rev: 2400000 } },
@@ -944,6 +991,24 @@ function openNewRecord() {
   openedRecord.value = null;
   draftValues.value = {};
   creatingRecord.value = true;
+}
+
+function openLinkedRecord(link: CrmLink) {
+  const record = mockRecords.find((r) => r.id === link.target_id);
+  if (!record) return;
+  if (link.target_type !== selectedTypeKey.value) {
+    selectedTypeKey.value = link.target_type;
+    searchQuery.value = '';
+    sortField.value = null;
+    sortDir.value = 'asc';
+    const newType = schema.find((rt) => rt.key === link.target_type);
+    if (!newType?.fields.some((f) => f.data_type === 'select')) {
+      viewMode.value = 'table';
+    }
+  }
+  openedRecord.value = record;
+  editingRecord.value = false;
+  creatingRecord.value = false;
 }
 
 function onKeyN(e: KeyboardEvent) {
