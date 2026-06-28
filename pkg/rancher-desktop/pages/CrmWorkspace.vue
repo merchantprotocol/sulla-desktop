@@ -71,6 +71,7 @@
                 <template v-else>
                   {{ filteredRecords.length }} record{{ filteredRecords.length === 1 ? '' : 's' }}
                 </template>
+                <template v-if="recordsTotal"> · {{ recordsTotal }}</template>
               </p>
             </div>
 
@@ -841,6 +842,18 @@ const kanbanGroups = computed((): Record<string, CrmRecord[]> => {
     }
   }
   return groups;
+});
+
+// Aggregate total for types with a currency field — shown in toolbar as "6 records · $234k"
+const recordsTotal = computed((): string | null => {
+  const currencyField = selectedType.value?.fields.find((f) => f.format === 'currency');
+  if (!currencyField) return null;
+  const total = filteredRecords.value.reduce((sum, r) => {
+    const v = r.field_values[currencyField.key];
+    return sum + (v != null ? Number(v) : 0);
+  }, 0);
+  if (total === 0) return null;
+  return formatCardValue(total, 'number', 'currency');
 });
 
 // Per-column currency totals for types that have a currency field (e.g. deal.amount)
