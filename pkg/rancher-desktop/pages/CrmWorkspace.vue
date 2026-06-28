@@ -674,6 +674,34 @@
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+              <!-- operator chips — shown when field:value tokens are detected -->
+              <transition
+                enter-active-class="transition-all duration-150"
+                enter-from-class="opacity-0 -translate-y-1"
+                enter-to-class="opacity-100 translate-y-0"
+                leave-active-class="transition-all duration-100"
+                leave-from-class="opacity-100 translate-y-0"
+                leave-to-class="opacity-0 -translate-y-1"
+              >
+                <div
+                  v-if="parsedSearch.ops.length"
+                  class="absolute left-0 top-full mt-1.5 z-20 flex flex-wrap items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg rounded-xl px-2.5 py-2 min-w-max"
+                >
+                  <span class="text-[10px] text-slate-400 dark:text-slate-500 font-medium mr-0.5">Filtering by:</span>
+                  <span
+                    v-for="op in parsedSearch.ops"
+                    :key="op.key + op.value"
+                    class="inline-flex items-center gap-1 text-[10px] bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 rounded-md px-1.5 py-0.5 border border-sky-200 dark:border-sky-800 font-mono"
+                    :title="`${op.fieldLabel} contains &quot;${op.value}&quot;`"
+                  >
+                    <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
+                    </svg>
+                    {{ op.fieldLabel }}:{{ op.value }}
+                  </span>
+                  <span class="text-[9px] text-slate-300 dark:text-slate-600 ml-1">Tip: stage:Active · due_date:today</span>
+                </div>
+              </transition>
             </div>
 
             <!-- quick filter panel toggle -->
@@ -7583,8 +7611,32 @@ const archivedCountForType = computed(() =>
   mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value && archivedIds.value.has(r.id)).length,
 );
 
+// Parses `field_key:value` operator tokens out of the search query so they
+// can drive dedicated field filters rather than loose substring matching.
+const parsedSearch = computed((): { ops: Array<{ key: string; fieldLabel: string; value: string }>; text: string } => {
+  const raw = searchQuery.value.trim();
+  const rt = selectedType.value;
+  if (!rt || !raw.includes(':')) return { ops: [], text: raw };
+  const ops: Array<{ key: string; fieldLabel: string; value: string }> = [];
+  const text = raw
+    .replace(/\b([\w_]+):(\S+)/g, (match: string, rawKey: string, value: string) => {
+      const field = rt.fields.find(
+        (f) => f.key === rawKey || f.label.toLowerCase() === rawKey.toLowerCase(),
+      );
+      if (field) {
+        ops.push({ key: field.key, fieldLabel: field.label, value });
+        return '';
+      }
+      return match;
+    })
+    .replace(/\s+/g, ' ')
+    .trim();
+  return { ops, text };
+});
+
 const filteredRecords = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase();
+  const { ops: searchOps, text: searchText } = parsedSearch.value;
+  const q = searchText.toLowerCase();
   const todayStr = DUE_TODAY_STR;
   const recs = mockRecords.filter((r) => {
     if (r.record_type_key !== selectedTypeKey.value) return false;
@@ -7604,6 +7656,23 @@ const filteredRecords = computed(() => {
         })
       )
     : recs;
+
+  // search operator filters: `field_key:value` tokens parsed from the search bar
+  if (searchOps.length) {
+    result = result.filter((r) =>
+      searchOps.every(({ key, value }) => {
+        const fv = r.field_values[key];
+        const lv = value.toLowerCase();
+        if (lv === 'empty') return fv == null || fv === '' || (Array.isArray(fv) && !fv.length);
+        if (lv === 'not-empty' || lv === '!empty') return fv != null && fv !== '' && !(Array.isArray(fv) && !fv.length);
+        if (lv === 'today') return typeof fv === 'string' && fv.slice(0, 10) === DUE_TODAY_STR;
+        if (lv === 'true' || lv === 'yes') return fv === true || fv === 'true';
+        if (lv === 'false' || lv === 'no') return fv === false || fv === 'false';
+        const strFv = Array.isArray(fv) ? fv.map(String).join(',') : String(fv ?? '');
+        return strFv.toLowerCase().includes(lv);
+      }),
+    );
+  }
 
   if (activeFilters.value.length) {
     const byField = new Map<string, string[]>();
