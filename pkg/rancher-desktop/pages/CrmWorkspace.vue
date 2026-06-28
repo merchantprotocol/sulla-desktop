@@ -1382,8 +1382,22 @@
                     </button>
                   </div>
                 </div>
-                <div v-if="recordActivities.length" class="space-y-2">
-                  <div v-for="act in recordActivities" :key="act.id" class="flex gap-2.5">
+                <!-- activity type filter chips -->
+                <div v-if="recordActivities.length > 1" class="flex items-center gap-1 flex-wrap">
+                  <button
+                    v-for="t in ['all', 'note', 'email', 'call', 'meeting', 'change'] as const"
+                    :key="t"
+                    type="button"
+                    class="rounded-full px-2 py-0.5 text-xs font-medium transition-colors capitalize"
+                    :class="activityTypeFilter === t
+                      ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 ring-1 ring-sky-300 dark:ring-sky-700'
+                      : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300'"
+                    @click="activityTypeFilter = t"
+                  >{{ t }}</button>
+                </div>
+
+                <div v-if="visibleActivities.length" class="space-y-2">
+                  <div v-for="act in visibleActivities" :key="act.id" class="flex gap-2.5">
                     <span
                       class="mt-0.5 h-6 w-6 rounded-full flex items-center justify-center shrink-0"
                       :class="ACTIVITY_ICON_BG[act.type]"
@@ -1409,6 +1423,7 @@
                     </div>
                   </div>
                 </div>
+                <p v-else-if="activityTypeFilter !== 'all'" class="text-xs text-slate-400 dark:text-slate-500 italic">No {{ activityTypeFilter }} activity logged yet.</p>
                 <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No activity logged yet.</p>
               </template>
 
@@ -2437,6 +2452,14 @@ const recordActivities = computed(() =>
         .filter((a) => a.record_id === openedRecord.value!.id)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     : [],
+);
+
+const activityTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
+
+const visibleActivities = computed(() =>
+  activityTypeFilter.value === 'all'
+    ? recordActivities.value
+    : recordActivities.value.filter((a) => a.type === activityTypeFilter.value),
 );
 
 const recordCompleteness = computed((): { filled: number; total: number; missing: string[] } => {
