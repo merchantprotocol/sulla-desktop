@@ -986,6 +986,7 @@
                   :class="openedRecord?.id === record.id
                     ? 'bg-sky-50 dark:bg-sky-950/20'
                     : 'hover:bg-white dark:hover:bg-slate-900'"
+                  :data-record-id="record.id"
                   @click="openRecord(record)"
                   @contextmenu.prevent="openContextMenu(record, $event)"
                 >
@@ -4288,7 +4289,13 @@ function onKeyArrow(dir: 1 | -1) {
   const records = filteredRecords.value;
   const idx = records.findIndex((r) => r.id === openedRecord.value?.id);
   const next = records[idx + dir];
-  if (next) openRecord(next);
+  if (next) {
+    openRecord(next);
+    nextTick(() => {
+      const el = document.querySelector(`[data-record-id="${next.id}"]`);
+      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
