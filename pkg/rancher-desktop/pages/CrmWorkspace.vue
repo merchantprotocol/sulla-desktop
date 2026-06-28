@@ -169,6 +169,42 @@
               Export
             </button>
 
+            <!-- row density toggle — table view only -->
+            <div
+              v-if="viewMode === 'table'"
+              class="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden"
+              title="Row density"
+            >
+              <button
+                type="button"
+                class="flex items-center px-2.5 h-9 transition-colors"
+                :class="rowDensity === 'comfortable'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                  : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                title="Comfortable rows"
+                @click="rowDensity = 'comfortable'"
+              >
+                <!-- 3 wide rows icon -->
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="flex items-center px-2.5 h-9 border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="rowDensity === 'compact'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                  : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                title="Compact rows"
+                @click="rowDensity = 'compact'"
+              >
+                <!-- 5 narrow rows icon -->
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 5h16M4 8.5h16M4 12h16M4 15.5h16M4 19h16" />
+                </svg>
+              </button>
+            </div>
+
             <!-- view toggle — only when the type has a groupable select field -->
             <div
               v-if="canKanban"
@@ -298,7 +334,7 @@
                   @click="openRecord(record)"
                 >
                   <!-- row checkbox -->
-                  <td class="pl-6 pr-2 py-3" @click.stop>
+                  <td class="pl-6 pr-2" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'" @click.stop>
                     <input
                       type="checkbox"
                       :checked="selectedIds.has(record.id)"
@@ -309,10 +345,13 @@
                   <td
                     v-for="col in visibleColumns"
                     :key="col.key"
-                    class="px-4 py-3 text-sm"
-                    :class="col.is_title
-                      ? 'font-medium text-slate-900 dark:text-white'
-                      : 'text-slate-600 dark:text-slate-400'"
+                    class="px-4 text-sm"
+                    :class="[
+                      rowDensity === 'compact' ? 'py-1.5' : 'py-3',
+                      col.is_title
+                        ? 'font-medium text-slate-900 dark:text-white'
+                        : 'text-slate-600 dark:text-slate-400',
+                    ]"
                   >
                     <div v-if="col.is_title" class="flex items-center gap-1.5">
                       <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
@@ -323,10 +362,10 @@
                     </div>
                     <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                   </td>
-                  <td class="px-4 py-3 text-xs tabular-nums text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                  <td class="px-4 text-xs tabular-nums text-slate-400 dark:text-slate-500 whitespace-nowrap" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                     {{ formatDate(record.created_at) }}
                   </td>
-                  <td class="w-10 px-3 py-3 text-right">
+                  <td class="w-10 px-3 text-right" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                     <button
                       type="button"
                       class="invisible group-hover:visible text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-0.5 transition-colors"
@@ -979,6 +1018,7 @@ const searchQuery = ref('');
 const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
 const viewMode = ref<'table' | 'kanban'>('table');
+const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
 const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
 const sortField = ref<string | null>(null);
