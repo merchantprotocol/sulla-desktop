@@ -640,8 +640,8 @@ const mockRecords: CrmRecord[] = [
 const STAGE_ORDER: Record<string, string[]> = {
   deal:    ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'],
   contact: ['Lead', 'Prospect', 'Active', 'Churned'],
-  lead:    ['Webinar', 'LinkedIn', 'Referral', 'Qualified', 'Converted'],
-  company: ['Education', 'Marketing', 'Consulting', 'Technology', 'Other'],
+  lead:    ['Webinar', 'LinkedIn', 'Referral', 'Paid Social', 'Organic', 'Direct'],
+  company: ['Education', 'Marketing', 'Consulting', 'Technology', 'Finance', 'Healthcare', 'Other'],
 };
 
 // dot color per semantic stage value
