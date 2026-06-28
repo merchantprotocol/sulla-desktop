@@ -2329,6 +2329,23 @@
                   >{{ (kanbanGroups[col] ?? []).length }}</span>
                 </div>
 
+                <!-- column completion bar -->
+                <div
+                  v-if="!collapsedColumns.has(col) && (kanbanGroups[col] ?? []).length > 0"
+                  class="h-1 rounded-full bg-slate-100 dark:bg-slate-800 mb-2.5 overflow-hidden"
+                  :title="`${kanbanColCompletionPct[col] ?? 0}% of records fully filled`"
+                >
+                  <div
+                    class="h-full rounded-full transition-all duration-300"
+                    :class="(kanbanColCompletionPct[col] ?? 0) === 100
+                      ? 'bg-emerald-400 dark:bg-emerald-500'
+                      : (kanbanColCompletionPct[col] ?? 0) >= 50
+                        ? 'bg-sky-400 dark:bg-sky-500'
+                        : 'bg-slate-300 dark:bg-slate-600'"
+                    :style="{ width: `${kanbanColCompletionPct[col] ?? 0}%` }"
+                  />
+                </div>
+
                 <!-- cards -->
                 <div v-if="!collapsedColumns.has(col)" class="flex-1 space-y-2 overflow-y-auto pb-2 pr-0.5">
                   <button
@@ -6591,6 +6608,16 @@ const kanbanGroupsTotal = computed((): Record<string, number> => {
     }
   }
   return totals;
+});
+
+const kanbanColCompletionPct = computed((): Record<string, number> => {
+  const result: Record<string, number> = {};
+  for (const [col, records] of Object.entries(kanbanGroups.value)) {
+    if (!records.length) { result[col] = 0; continue; }
+    const done = records.filter((r) => recordCompleteness(r) === 100).length;
+    result[col] = Math.round((done / records.length) * 100);
+  }
+  return result;
 });
 
 const pinnedInView = computed(() =>
