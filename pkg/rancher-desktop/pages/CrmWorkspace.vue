@@ -5,6 +5,7 @@
     tabindex="-1"
     @keydown.esc="onKeyEsc"
     @keydown.n.exact="onKeyN"
+    @keydown.d.exact="onKeyD"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -1006,6 +1007,7 @@
             <template v-for="group in [
               { heading: 'Navigation', items: [
                 { keys: ['N'], desc: 'New record' },
+                { keys: ['D'], desc: 'Duplicate open record' },
                 { keys: ['/'], desc: 'Focus search' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Esc'], desc: 'Close panel' },
@@ -1697,6 +1699,14 @@ function onKeyN(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   openNewRecord();
+}
+
+function onKeyD(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (openedRecord.value && !editingRecord.value && !creatingRecord.value) {
+    duplicateRecord(openedRecord.value);
+  }
 }
 
 function onKeySave() {
