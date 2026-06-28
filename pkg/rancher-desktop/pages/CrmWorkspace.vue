@@ -15,6 +15,7 @@
     @keydown.s.exact="onKeyS"
     @keydown.f.exact="onKeyF"
     @keydown.g.exact="onKeyG"
+    @keydown.x.exact="onKeyX"
     @keydown.bracket-left.exact="onKeyBracketLeft"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
@@ -2722,6 +2723,7 @@
                 { keys: ['W'], desc: 'Watch / unwatch record' },
                 { keys: ['C'], desc: 'Copy record link' },
                 { keys: ['A'], desc: 'Open activity compose' },
+                { keys: ['X'], desc: 'Expand / compress detail panel' },
                 { keys: ['Del'], desc: 'Delete record (with undo toast)' },
                 { keys: ['1'], desc: 'Details tab' },
                 { keys: ['2'], desc: 'Activity tab' },
@@ -5719,6 +5721,14 @@ function onKeyS(e: KeyboardEvent) {
     bulkStageDropdown.value = !bulkStageDropdown.value;
     e.preventDefault();
   }
+}
+
+function onKeyX(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (!openedRecord.value || editingRecord.value || creatingRecord.value) return;
+  detailPanelExpanded.value = detailPanelExpanded.value === false ? 'wide' : detailPanelExpanded.value === 'wide' ? 'full' : false;
+  e.preventDefault();
 }
 
 function onKeyF(e: KeyboardEvent) {
