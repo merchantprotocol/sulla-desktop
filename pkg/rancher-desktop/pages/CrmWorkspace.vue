@@ -1322,14 +1322,25 @@
                     @drop.prevent="dropColReorder(col.key)"
                     @dragend="() => { colDragSrc = null; colDragOver = null; }"
                   >
+                    <input
+                      v-if="editingColKey === col.key"
+                      data-col-rename-input
+                      v-model="editingColLabel"
+                      class="w-full min-w-0 text-xs font-semibold uppercase tracking-wide bg-white dark:bg-slate-900 border border-sky-400 dark:border-sky-500 rounded px-1 py-0.5 outline-none text-sky-600 dark:text-sky-400"
+                      @keydown.enter.stop="commitColRename()"
+                      @keydown.esc.stop="editingColKey = null"
+                      @blur="commitColRename()"
+                    />
                     <button
+                      v-else
                       type="button"
                       class="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide transition-colors select-none"
                       :class="sortField === col.key || sortField2 === col.key
                         ? 'text-sky-600 dark:text-sky-400'
                         : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
-                      :title="sortField2 && sortField !== col.key && sortField2 !== col.key ? 'Shift+click to add as secondary sort' : undefined"
+                      :title="sortField2 && sortField !== col.key && sortField2 !== col.key ? 'Shift+click to add as secondary sort' : 'Double-click to rename'"
                       @click="toggleSort(col.key, $event.shiftKey)"
+                      @dblclick.stop="startColRename(col)"
                     >
                       {{ col.label }}
                       <!-- secondary sort badge -->
@@ -4791,6 +4802,8 @@ const showColStatsModal = ref(false);
 const colStatsFieldKey = ref<string | null>(null);
 const colDragSrc = ref<string | null>(null);
 const colDragOver = ref<string | null>(null);
+const editingColKey = ref<string | null>(null);
+const editingColLabel = ref('');
 const groupByField = ref<string | null>(null);
 const showAddStageInput = ref(false);
 const newStageName = ref('');
@@ -5823,6 +5836,23 @@ const contextMenuSelectFilters = computed(() => {
   }
   return items;
 });
+
+function startColRename(col: CrmField) {
+  editingColKey.value = col.key;
+  editingColLabel.value = col.label;
+  nextTick(() => {
+    document.querySelector<HTMLInputElement>('[data-col-rename-input]')?.select();
+  });
+}
+function commitColRename() {
+  const key = editingColKey.value;
+  editingColKey.value = null;
+  if (!key || !selectedType.value) return;
+  const trimmed = editingColLabel.value.trim();
+  if (!trimmed) return;
+  const field = selectedType.value.fields.find((f) => f.key === key);
+  if (field) field.label = trimmed;
+}
 
 function dropColReorder(targetKey: string) {
   const src = colDragSrc.value;
