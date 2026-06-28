@@ -332,6 +332,26 @@
               </div>
             </div>
 
+            <!-- bulk color label -->
+            <div class="relative flex items-center gap-1 h-8 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-900/60" title="Set color label for selected records">
+              <button
+                v-for="c in COLOR_LABEL_PALETTE"
+                :key="c"
+                type="button"
+                class="h-3.5 w-3.5 rounded-full transition-transform hover:scale-125 focus:outline-none flex-shrink-0"
+                :style="{ background: c }"
+                @click="[...selectedIds].forEach(id => setColorLabel(id, c))"
+              />
+              <button
+                type="button"
+                class="h-3.5 w-3.5 rounded-full flex items-center justify-center text-slate-400 border border-slate-300 dark:border-slate-600 hover:text-slate-600 transition-colors"
+                title="Clear color labels"
+                @click="[...selectedIds].forEach(id => setColorLabel(id, ''))"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
