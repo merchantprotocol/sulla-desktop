@@ -4091,6 +4091,7 @@
                           <option value="number">Number</option>
                           <option value="select">Select</option>
                           <option value="multi_select">Multi-select</option>
+                          <option value="rating">Rating (1-5 stars)</option>
                           <option value="date">Date</option>
                           <option value="boolean">Boolean</option>
                           <option value="email">Email</option>
@@ -4287,7 +4288,7 @@ const { isDark, toggleTheme } = useTheme();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select';
+type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select' | 'rating';
 type IconKey = 'user' | 'building' | 'chart' | 'target' | 'check' | 'folder' | 'tag' | 'list' | 'layers' | 'star';
 
 type FieldFormat = 'currency' | 'percent' | 'progress' | undefined;
@@ -4409,6 +4410,7 @@ const DATA_TYPE_ICONS: Record<DataType, string> = {
   date:    'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
   select:       'M4 6h16M4 10h16M4 14h16M4 18h16',
   multi_select: 'M9 12l2 2 4-4M4 6h16M4 10h8M4 14h8M4 18h5',
+  rating:       'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z',
 };
 
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
@@ -4457,6 +4459,7 @@ const schema = reactive<CrmRecordType[]>([
       { id: 'f_ld3', key: 'source',    label: 'Source',    data_type: 'select',  is_title: false, is_required: false, position: 2, select_options: ['Webinar', 'LinkedIn', 'Referral', 'Paid Social', 'Organic', 'Direct'] },
       { id: 'f_ld4', key: 'score',     label: 'Score',     data_type: 'number',  is_title: false, is_required: false, position: 3, format: 'progress' },
       { id: 'f_ld5', key: 'converted', label: 'Converted', data_type: 'boolean', is_title: false, is_required: false, position: 4 },
+      { id: 'f_ld6', key: 'quality',   label: 'Quality',   data_type: 'rating',  is_title: false, is_required: false, position: 5 },
     ],
   },
   {
@@ -4530,13 +4533,13 @@ const mockRecords = reactive<CrmRecord[]>([
     field_values: { full_name: 'Aisha Patel', email: 'aisha@marketmind.co', phone: null, company: 'MarketMind', status: 'Lead' } },
   // Leads
   { id: 'r10', record_type_key: 'lead', title: 'Alex Rivera', created_at: '2026-06-20T11:20:00Z',
-    field_values: { name: 'Alex Rivera', email: 'alex@creativehq.io', source: 'Webinar', score: 82, converted: false } },
+    field_values: { name: 'Alex Rivera', email: 'alex@creativehq.io', source: 'Webinar', score: 82, converted: false, quality: 4 } },
   { id: 'r11', record_type_key: 'lead', title: 'Nina Kowalski', created_at: '2026-06-21T15:10:00Z',
-    field_values: { name: 'Nina Kowalski', email: 'nina@marketmind.co', source: 'LinkedIn', score: 91, converted: true } },
+    field_values: { name: 'Nina Kowalski', email: 'nina@marketmind.co', source: 'LinkedIn', score: 91, converted: true, quality: 5 } },
   { id: 'r12', record_type_key: 'lead', title: 'David Chen', created_at: '2026-06-22T08:55:00Z',
-    field_values: { name: 'David Chen', email: 'dchen@techsprint.dev', source: 'Referral', score: 74, converted: false } },
+    field_values: { name: 'David Chen', email: 'dchen@techsprint.dev', source: 'Referral', score: 74, converted: false, quality: 3 } },
   { id: 'r21', record_type_key: 'lead', title: 'Chris Nakamura', created_at: '2026-06-25T09:30:00Z',
-    field_values: { name: 'Chris Nakamura', email: 'chris@organicflow.io', source: 'Organic', score: 68, converted: false } },
+    field_values: { name: 'Chris Nakamura', email: 'chris@organicflow.io', source: 'Organic', score: 68, converted: false, quality: 2 } },
   // Work Items — current project board (2026-06-28)
   { id: 'wi1',  record_type_key: 'work_item', title: 'CRM dynamic architecture — 34-tool surface + Kanban', created_at: '2026-06-20T08:00:00Z',
     field_values: { title: 'CRM dynamic architecture — 34-tool surface + Kanban', status: 'Done', priority: 'P1 High', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'feat/exechost-tool — 197 commits ahead of main. Full CRM workspace with schema-driven types, Kanban, table, list, gallery views.' }, links: [] },
@@ -7086,6 +7089,11 @@ function formatCardValue(val: string | number | boolean | string[] | null | unde
     if (format === 'progress') return n + '%';
     return n.toLocaleString();
   }
+  if (dataType === 'rating') {
+    const n = Number(val);
+    if (!n) return '—';
+    return '★'.repeat(Math.max(0, Math.min(5, n))) + '☆'.repeat(Math.max(0, 5 - Math.min(5, n)));
+  }
   if (dataType === 'date') return new Date(String(val)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   return String(val);
 }
@@ -7100,6 +7108,16 @@ const CrmCellValue = defineComponent({
   },
   setup(props) {
     return () => {
+      if (props.dataType === 'rating') {
+        const n = props.value != null ? Number(props.value) : 0;
+        if (!n) return h('span', { class: 'text-slate-300 dark:text-slate-600' }, '—');
+        return h('span', { class: 'flex items-center gap-0.5 leading-none' },
+          [1,2,3,4,5].map((i) => h('span', {
+            key: i,
+            class: 'text-base ' + (i <= n ? 'text-amber-400' : 'text-slate-200 dark:text-slate-700'),
+          }, '★')),
+        );
+      }
       if (props.dataType === 'multi_select') {
         const arr = Array.isArray(props.value) ? props.value : (props.value ? [String(props.value)] : []);
         if (!arr.length) return h('span', { class: 'text-slate-300 dark:text-slate-600' }, '—');
@@ -7206,6 +7224,7 @@ const CrmCellEditor = defineComponent({
   emits: ['commit', 'cancel'],
   setup(props, { emit }) {
     const elRef = ref<HTMLInputElement | HTMLSelectElement | null>(null);
+    const hoverStar = ref(0);
     onMounted(() => (elRef.value as HTMLElement | null)?.focus());
     return () => {
       const cellClass = 'w-full rounded px-1.5 py-0.5 text-sm bg-white dark:bg-slate-950 border border-sky-400 dark:border-sky-500 text-slate-900 dark:text-slate-100 outline-none focus:ring-1 focus:ring-sky-400/40';
@@ -7249,6 +7268,23 @@ const CrmCellEditor = defineComponent({
           title: 'Enter values separated by commas',
         });
       }
+      if (props.dataType === 'rating') {
+        const cur = val ? Number(val) : 0;
+        const display = hoverStar.value || cur;
+        return h('span', {
+          class: 'inline-flex items-center gap-0.5 px-1 leading-none outline-none',
+          tabIndex: 0,
+          onKeydown: (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); emit('cancel'); } },
+          onMouseleave: () => { hoverStar.value = 0; },
+        }, [1,2,3,4,5].map((i) => h('button', {
+          key: i,
+          type: 'button',
+          class: 'text-xl leading-none transition-colors focus:outline-none ' + (i <= display ? 'text-amber-400' : 'text-slate-200 dark:text-slate-700'),
+          onMouseenter: () => { hoverStar.value = i; },
+          onMousedown: (e: MouseEvent) => e.preventDefault(),
+          onClick: () => emit('commit', i === cur ? null : i),
+        }, '★')));
+      }
       const inputType = props.dataType === 'number' ? 'number'
         : props.dataType === 'date' ? 'date'
         : props.dataType === 'email' ? 'email'
@@ -7273,6 +7309,19 @@ const CrmFieldInput = defineComponent({
     return () => {
       const baseClass = 'w-full rounded-lg px-3 py-2 text-sm border bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100';
       const val = props.value;
+      if (props.dataType === 'rating') {
+        const cur = val ? Number(val) : 0;
+        return h('div', { class: 'flex items-center gap-1 py-1' },
+          [1,2,3,4,5].map((i) => h('button', {
+            key: i,
+            type: 'button',
+            class: 'text-2xl leading-none transition-colors focus:outline-none ' + (i <= cur ? 'text-amber-400' : 'text-slate-200 dark:text-slate-700')
+              + (props.readOnly ? ' cursor-default' : ' hover:text-amber-300 cursor-pointer'),
+            disabled: props.readOnly,
+            onClick: props.readOnly ? undefined : () => emit('update:value', i === cur ? null : i),
+          }, '★')),
+        );
+      }
       if (props.dataType === 'multi_select') {
         const current: string[] = Array.isArray(val) ? val : (val ? String(val).split(',').map((s) => s.trim()).filter(Boolean) : []);
         if (props.readOnly) {
