@@ -873,10 +873,30 @@
 
           <!-- active filter pills -->
           <div
-            v-if="activeFilters.length"
+            v-if="activeFilters.length || groupByField"
             class="flex items-center gap-2 px-6 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-950/50 flex-wrap"
           >
-            <span class="text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">Filtered by:</span>
+            <!-- group-by chip -->
+            <div
+              v-if="groupByField"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300"
+            >
+              <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16" />
+              </svg>
+              <span>Grouped by: <b>{{ allColumns.find(c => c.key === groupByField)?.label }}</b></span>
+              <button
+                type="button"
+                class="ml-0.5 text-violet-400 hover:text-violet-600 dark:hover:text-violet-200 transition-colors leading-none"
+                aria-label="Clear grouping"
+                @click="groupByField = null"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <span v-if="activeFilters.length" class="text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">Filtered by:</span>
             <div
               v-for="f in activeFilters"
               :key="f.fieldKey + ':' + f.value"
@@ -1007,6 +1027,75 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                <!-- group header rows when grouping is active -->
+                <template v-if="groupedTableRows">
+                  <template v-for="row in groupedTableRows" :key="row.kind === 'header' ? 'grp-' + row.key : row.record.id">
+                    <!-- group header -->
+                    <tr
+                      v-if="row.kind === 'header'"
+                      class="bg-slate-50 dark:bg-slate-950 cursor-pointer select-none"
+                      @click="toggleGroupCollapse(row.key)"
+                    >
+                      <td :colspan="visibleColumns.length + 3" class="px-5 py-1.5">
+                        <div class="flex items-center gap-2">
+                          <svg
+                            class="h-3.5 w-3.5 text-slate-400 transition-transform"
+                            :class="collapsedGroups.has(row.key) ? '-rotate-90' : ''"
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"
+                          >
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                          </svg>
+                          <span
+                            class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                            :class="row.key === '__ungrouped__'
+                              ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 italic'
+                              : selectBadgeClass(row.label)"
+                          >{{ row.label }}</span>
+                          <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ row.count }}</span>
+                        </div>
+                      </td>
+                    </tr>
+                    <!-- group record row (computed already excludes collapsed groups) -->
+                    <template v-else>
+                      <tr
+                        class="group cursor-pointer transition-colors"
+                        :class="openedRecord?.id === row.record.id
+                          ? 'bg-sky-50 dark:bg-sky-950/20'
+                          : 'hover:bg-white dark:hover:bg-slate-900'"
+                        :data-record-id="row.record.id"
+                        @click="openRecord(row.record)"
+                        @contextmenu.prevent="openContextMenu(row.record, $event)"
+                      >
+                        <td class="pl-6 pr-2" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'" @click.stop>
+                          <input
+                            type="checkbox"
+                            :checked="selectedIds.has(row.record.id)"
+                            class="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer"
+                            @click="onCheckboxClick(row.record, row.idxInFiltered, $event)"
+                          >
+                        </td>
+                        <td v-for="col in visibleColumns" :key="col.key" class="px-4" :class="[rowDensity === 'compact' ? 'py-1.5' : 'py-3']">
+                          <CrmCellValue :value="row.record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                        </td>
+                        <td class="px-4" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
+                          <span
+                            v-if="activityCountByRecord[row.record.id]"
+                            class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400"
+                            :title="`${activityCountByRecord[row.record.id]} activities`"
+                          >{{ activityCountByRecord[row.record.id] }}</span>
+                        </td>
+                        <td class="w-10 px-4 opacity-0 group-hover:opacity-100 transition-opacity" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
+                          <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded transition-colors" title="Open record" @click.stop="openRecord(row.record)">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                          </button>
+                        </td>
+                      </tr>
+                    </template>
+                  </template>
+                </template>
+
+                <!-- normal (non-grouped) rows -->
+                <template v-else>
                 <template v-for="(record, idx) in filteredRecords" :key="record.id">
                 <tr
                   class="group cursor-pointer transition-colors"
@@ -1201,6 +1290,7 @@
                   </td>
                 </tr>
                 </template>
+                </template><!-- end non-grouped -->
 
                 <tr v-if="filteredRecords.length === 0">
                   <td
@@ -2680,6 +2770,13 @@
             </svg>
             Filter by this field
           </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="groupByField = groupByField === colHeaderMenu!.fieldKey ? null : colHeaderMenu!.fieldKey; colHeaderMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16" />
+            </svg>
+            {{ groupByField === colHeaderMenu?.fieldKey ? 'Clear grouping' : 'Group by this field' }}
+          </button>
         </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
@@ -3132,6 +3229,9 @@ const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
 const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
 const colHeaderMenu = ref<{ fieldKey: string; x: number; y: number } | null>(null);
+const groupByField = ref<string | null>(null);
+const collapsedGroups = ref<Set<string>>(new Set());
+watch(groupByField, () => { collapsedGroups.value = new Set(); });
 const showBulkNoteModal = ref(false);
 const bulkNoteText = ref('');
 const bulkNoteInputEl = ref<HTMLTextAreaElement | null>(null);
@@ -3404,6 +3504,51 @@ const filteredRecords = computed(() => {
 
   return result;
 });
+
+// Row grouping for table view — null means no grouping active
+type GroupRow = { kind: 'header'; key: string; label: string; count: number } | { kind: 'record'; record: CrmRecord; idxInFiltered: number };
+const groupedTableRows = computed((): GroupRow[] | null => {
+  if (!groupByField.value || viewMode.value !== 'table') return null;
+  const fkey = groupByField.value;
+  const field = allColumns.value.find((c) => c.key === fkey);
+  const opts = field?.select_options ?? [];
+  const ungrouped: CrmRecord[] = [];
+  const byVal: Record<string, CrmRecord[]> = {};
+  for (const r of filteredRecords.value) {
+    const v = r.field_values[fkey];
+    if (v == null || String(v) === '') { ungrouped.push(r); continue; }
+    const k = String(v);
+    if (!byVal[k]) byVal[k] = [];
+    byVal[k].push(r);
+  }
+  const order = opts.length ? opts : Object.keys(byVal);
+  const rows: GroupRow[] = [];
+  for (const opt of order) {
+    const recs = byVal[opt];
+    if (!recs?.length) continue;
+    rows.push({ kind: 'header', key: opt, label: opt, count: recs.length });
+    if (!collapsedGroups.value.has(opt)) {
+      for (const r of recs) {
+        rows.push({ kind: 'record', record: r, idxInFiltered: filteredRecords.value.indexOf(r) });
+      }
+    }
+  }
+  if (ungrouped.length) {
+    rows.push({ kind: 'header', key: '__ungrouped__', label: 'No value', count: ungrouped.length });
+    if (!collapsedGroups.value.has('__ungrouped__')) {
+      for (const r of ungrouped) {
+        rows.push({ kind: 'record', record: r, idxInFiltered: filteredRecords.value.indexOf(r) });
+      }
+    }
+  }
+  return rows;
+});
+
+function toggleGroupCollapse(key: string) {
+  const next = new Set(collapsedGroups.value);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  collapsedGroups.value = next;
+}
 
 // The first select field drives the kanban grouping dimension
 const kanbanField = computed(() =>
