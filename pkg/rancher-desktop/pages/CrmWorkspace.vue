@@ -3894,6 +3894,29 @@
                   <span class="mx-1 opacity-50">·</span>{{ openedRecordIndex + 1 }} of {{ filteredRecords.length }}
                 </template>
               </p>
+              <!-- prev / next navigation row -->
+              <div v-if="filteredRecords.length > 1 && openedRecordIndex >= 0" class="flex items-center gap-1">
+                <button
+                  type="button"
+                  class="flex-1 flex items-center justify-center gap-1 h-7 rounded-lg text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                  title="Previous record  [  "
+                  :disabled="openedRecordIndex <= 0"
+                  @click="openRecord(filteredRecords[openedRecordIndex - 1])"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  class="flex-1 flex items-center justify-center gap-1 h-7 rounded-lg text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+                  title="Next record  ]  "
+                  :disabled="openedRecordIndex >= filteredRecords.length - 1"
+                  @click="openRecord(filteredRecords[openedRecordIndex + 1])"
+                >
+                  Next
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                </button>
+              </div>
               <div class="flex gap-2">
                 <button
                   type="button"
@@ -4015,6 +4038,8 @@
                 { keys: ['1'], desc: 'Details tab' },
                 { keys: ['2'], desc: 'Activity tab' },
                 { keys: ['3'], desc: 'Related tab' },
+                { keys: ['['], desc: 'Previous record in list' },
+                { keys: [']'], desc: 'Next record in list' },
               ]},
               { heading: 'Gallery', items: [
                 { keys: ['Click'], desc: 'Open record detail' },
@@ -8469,6 +8494,8 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (e.key === '1') { detailTab.value = 'details'; e.preventDefault(); return; }
     if (e.key === '2') { detailTab.value = 'activity'; e.preventDefault(); return; }
     if (e.key === '3') { detailTab.value = 'related'; e.preventDefault(); return; }
+    if (e.key === '[' && openedRecordIndex.value > 0) { openRecord(filteredRecords.value[openedRecordIndex.value - 1]); e.preventDefault(); return; }
+    if (e.key === ']' && openedRecordIndex.value < filteredRecords.value.length - 1) { openRecord(filteredRecords.value[openedRecordIndex.value + 1]); e.preventDefault(); return; }
     if (e.key === 'c' && !e.metaKey && !e.ctrlKey) { copyRecordLink(openedRecord.value); e.preventDefault(); return; }
     if (e.key === 'a' && !e.metaKey && !e.ctrlKey) {
       detailTab.value = 'activity';
