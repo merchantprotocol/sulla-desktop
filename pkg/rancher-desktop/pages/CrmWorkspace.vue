@@ -78,10 +78,20 @@
               <div
                 v-for="rt in schema"
                 :key="rt.id"
+                draggable="true"
                 class="group/type flex items-center rounded-lg transition-colors"
-                :class="selectedTypeKey === rt.key
-                  ? 'bg-slate-100 dark:bg-slate-800'
-                  : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                :class="[
+                  selectedTypeKey === rt.key
+                    ? 'bg-slate-100 dark:bg-slate-800'
+                    : 'hover:bg-slate-50 dark:hover:bg-slate-800/60',
+                  sidebarTypeDragOver === rt.key && sidebarTypeDragSrc !== rt.key ? 'ring-1 ring-sky-400 ring-inset' : '',
+                  sidebarTypeDragSrc === rt.key ? 'opacity-40' : '',
+                ]"
+                @dragstart="(e) => { sidebarTypeDragSrc = rt.key; e.dataTransfer && (e.dataTransfer.effectAllowed = 'move'); }"
+                @dragover.prevent="sidebarTypeDragOver = rt.key"
+                @dragleave="sidebarTypeDragOver = null"
+                @drop.prevent="dropSidebarTypeReorder(rt.key)"
+                @dragend="() => { sidebarTypeDragSrc = null; sidebarTypeDragOver = null; }"
               >
                 <button
                   type="button"
@@ -5758,6 +5768,8 @@ const colDragSrc = ref<string | null>(null);
 const colDragOver = ref<string | null>(null);
 const schemaDragSrc = ref<string | null>(null);
 const schemaDragOver = ref<string | null>(null);
+const sidebarTypeDragSrc = ref<string | null>(null);
+const sidebarTypeDragOver = ref<string | null>(null);
 const editingColKey = ref<string | null>(null);
 const editingColLabel = ref('');
 const groupByField = ref<string | null>(null);
@@ -7055,6 +7067,18 @@ function dropSchemaReorder(targetId: string) {
   const [moved] = ordered.splice(srcIdx, 1);
   ordered.splice(tgtIdx, 0, moved);
   ordered.forEach((f, i) => { f.position = i; });
+}
+
+function dropSidebarTypeReorder(targetKey: string) {
+  const src = sidebarTypeDragSrc.value;
+  sidebarTypeDragSrc.value = null;
+  sidebarTypeDragOver.value = null;
+  if (!src || src === targetKey) return;
+  const srcIdx = schema.findIndex((t) => t.key === src);
+  const tgtIdx = schema.findIndex((t) => t.key === targetKey);
+  if (srcIdx === -1 || tgtIdx === -1) return;
+  const [moved] = schema.splice(srcIdx, 1);
+  schema.splice(tgtIdx, 0, moved);
 }
 
 function openColHeaderMenu(fieldKey: string, e: MouseEvent) {
