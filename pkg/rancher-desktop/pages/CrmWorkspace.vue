@@ -960,6 +960,21 @@
                 </svg>
                 Board
               </button>
+              <!-- kanban compact toggle -->
+              <button
+                v-if="viewMode === 'kanban'"
+                type="button"
+                class="flex items-center gap-1 px-2 h-9 text-xs border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="kanbanCompact
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                  : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                title="Toggle compact kanban cards"
+                @click="kanbanCompact = !kanbanCompact"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
             </div>
 
             <!-- save view popover -->
@@ -1737,14 +1752,15 @@
                     v-for="record in (kanbanGroups[col] ?? [])"
                     :key="record.id"
                     type="button"
-                    class="group/card w-full text-left rounded-xl border p-3.5 shadow-sm transition-all"
-                    :class="openedRecord?.id === record.id
+                    class="group/card w-full text-left rounded-xl border shadow-sm transition-all"
+                    :class="[openedRecord?.id === record.id
                       ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800 shadow-md'
-                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700'"
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700',
+                      kanbanCompact ? 'p-2' : 'p-3.5']"
                     :style="colorLabels[record.id] ? { borderTopColor: colorLabels[record.id], borderTopWidth: '3px' } : undefined"
                     @click="openRecord(record)"
                   >
-                    <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug mb-2 line-clamp-2 flex items-start gap-1.5">
+                    <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug line-clamp-2 flex items-start gap-1.5" :class="kanbanCompact ? 'mb-0' : 'mb-2'">
                       <span class="flex-1">
                         <template v-if="searchQuery.trim()">
                           <template v-for="(part, pi) in highlightText(record.title, searchQuery.trim())" :key="pi">
@@ -1787,7 +1803,7 @@
                         </svg>
                       </button>
                     </p>
-                    <div class="space-y-1">
+                    <div v-if="!kanbanCompact" class="space-y-1">
                       <div
                         v-for="f in kanbanCardFields"
                         :key="f.key"
@@ -1803,7 +1819,7 @@
                       </div>
                     </div>
                     <!-- card hover actions: stage move + pin + watch -->
-                    <div class="flex items-center justify-between mt-2 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                    <div v-if="!kanbanCompact" class="flex items-center justify-between mt-2 opacity-0 group-hover/card:opacity-100 transition-opacity">
                       <!-- prev stage -->
                       <button
                         v-if="kanbanField && kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) > 0"
@@ -4109,6 +4125,7 @@ const staleDaysFilter = ref<number | null>(null);
 const showStaleDropdown = ref(false);
 const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
 const detailPanelExpanded = ref<false | 'wide' | 'full'>(false);
+const kanbanCompact = ref(false);
 interface ConditionalRule { id: string; fieldKey: string; operator: 'equals' | 'not_equals' | 'contains' | 'gt' | 'lt' | 'is_empty' | 'is_not_empty'; value: string; color: string }
 const conditionalRules = ref<ConditionalRule[]>([]);
 const showFormatPanel = ref(false);
