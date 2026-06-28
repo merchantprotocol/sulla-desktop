@@ -25,7 +25,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1028,6 +1028,96 @@
                   {{ t }}
                 </button>
               </div>
+            </div>
+
+            <!-- filter presets -->
+            <div class="relative" @click.stop>
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+                :class="typeFilterPresets.length
+                  ? 'border-indigo-200 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+                :title="typeFilterPresets.length ? `${typeFilterPresets.length} saved filter preset${typeFilterPresets.length === 1 ? '' : 's'}` : 'Save or apply filter presets'"
+                @click="showFilterPresetsPanel = !showFilterPresetsPanel; filterPresetNameInput = ''"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+                Presets<span v-if="typeFilterPresets.length" class="ml-1 text-xs tabular-nums opacity-70">({{ typeFilterPresets.length }})</span>
+              </button>
+              <transition
+                enter-active-class="transition-all duration-150"
+                enter-from-class="opacity-0 scale-95 -translate-y-1"
+                enter-to-class="opacity-100 scale-100 translate-y-0"
+                leave-active-class="transition-all duration-100"
+                leave-from-class="opacity-100 scale-100 translate-y-0"
+                leave-to-class="opacity-0 scale-95 -translate-y-1"
+              >
+                <div
+                  v-if="showFilterPresetsPanel"
+                  class="absolute top-full right-0 mt-1 z-50 w-64 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden"
+                  @click.stop
+                >
+                  <!-- save current as preset — only shown when filters are active -->
+                  <div v-if="hasAnyFilter" class="p-3 border-b border-slate-100 dark:border-slate-800">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Save current filters</p>
+                    <div class="flex gap-2">
+                      <input
+                        v-model="filterPresetNameInput"
+                        type="text"
+                        placeholder="Preset name…"
+                        class="flex-1 min-w-0 text-sm rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 px-2.5 py-1.5 outline-none focus:border-indigo-400 dark:focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200 dark:focus:ring-indigo-800"
+                        @keydown.enter.prevent="saveFilterPreset"
+                        @keydown.esc.stop="showFilterPresetsPanel = false"
+                      />
+                      <button
+                        type="button"
+                        :disabled="!filterPresetNameInput.trim()"
+                        class="shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                        :class="filterPresetNameInput.trim()
+                          ? 'bg-indigo-500 hover:bg-indigo-600 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'"
+                        @click="saveFilterPreset"
+                      >Save</button>
+                    </div>
+                  </div>
+                  <!-- no active filters — prompt to set some first -->
+                  <div v-else-if="!typeFilterPresets.length" class="p-4 text-center">
+                    <p class="text-sm text-slate-400 dark:text-slate-500">Apply some filters first, then save them here as a named preset.</p>
+                  </div>
+                  <!-- saved presets list -->
+                  <div v-if="typeFilterPresets.length" class="max-h-64 overflow-y-auto">
+                    <p class="px-3 pt-3 pb-1.5 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Saved presets</p>
+                    <div
+                      v-for="preset in typeFilterPresets"
+                      :key="preset.id"
+                      class="group/fp flex items-center gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      <button
+                        type="button"
+                        class="flex-1 min-w-0 text-left text-sm text-slate-700 dark:text-slate-300 truncate"
+                        :title="`Apply preset: ${preset.name}`"
+                        @click="applyFilterPreset(preset)"
+                      >{{ preset.name }}</button>
+                      <button
+                        type="button"
+                        class="shrink-0 opacity-0 group-hover/fp:opacity-100 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-all"
+                        :title="`Delete preset: ${preset.name}`"
+                        @click="deleteFilterPreset(preset.id)"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <!-- no presets yet but filters active -->
+                  <div v-else class="pb-3 px-3">
+                    <p class="text-xs text-slate-400 dark:text-slate-500">No saved presets yet for this record type.</p>
+                  </div>
+                </div>
+              </transition>
             </div>
 
             <!-- conditional formatting button — table view only -->
@@ -5038,6 +5128,23 @@ interface SavedView {
   groupByField: string | null;
 }
 
+interface FilterPreset {
+  id: string;
+  name: string;
+  typeKey: string;
+  filters: Array<{ fieldKey: string; value: string }>;
+  fieldTextFilters: Record<string, string>;
+  numberMinFilters: Record<string, number | null>;
+  numberMaxFilters: Record<string, number | null>;
+  dateAfterFilters: Record<string, string | null>;
+  dateBeforeFilters: Record<string, string | null>;
+  showOverdueOnly: boolean;
+  showDueSoonOnly: boolean;
+  showPinnedOnly: boolean;
+  showWatchedOnly: boolean;
+  showIncompleteOnly: boolean;
+}
+
 // ── Icon components (memoized — one component per icon key) ───────────────
 
 const ICON_PATHS: Record<IconKey, string> = {
@@ -5522,9 +5629,14 @@ const LS_KEY_HIDDEN_COLS = 'crm:hiddenCols';
 const LS_KEY_ROW_DENSITY = 'crm:rowDensity';
 const LS_KEY_SAVED_VIEWS = 'crm:savedViews';
 const LS_KEY_ARCHIVED = 'crm:archivedIds';
+const LS_KEY_FILTER_PRESETS = 'crm:filterPresets';
 
 const archivedIds = ref<Set<string>>(new Set());
 const showArchived = ref(false);
+
+const filterPresets = ref<FilterPreset[]>([]);
+const showFilterPresetsPanel = ref(false);
+const filterPresetNameInput = ref('');
 
 onMounted(() => {
   try {
@@ -5538,6 +5650,8 @@ onMounted(() => {
     if (sv) savedViews.value = JSON.parse(sv) as SavedView[];
     const sa = localStorage.getItem(LS_KEY_ARCHIVED);
     if (sa) archivedIds.value = new Set(JSON.parse(sa) as string[]);
+    const fp = localStorage.getItem(LS_KEY_FILTER_PRESETS);
+    if (fp) filterPresets.value = JSON.parse(fp) as FilterPreset[];
   } catch { /* storage not available */ }
 });
 
@@ -5546,6 +5660,7 @@ watch(hiddenColumnKeys, (val) => { try { localStorage.setItem(LS_KEY_HIDDEN_COLS
 watch(rowDensity, (val) => { try { localStorage.setItem(LS_KEY_ROW_DENSITY, val); } catch { /* ignore */ } });
 watch(savedViews, (val) => { try { localStorage.setItem(LS_KEY_SAVED_VIEWS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
 watch(archivedIds, (val) => { try { localStorage.setItem(LS_KEY_ARCHIVED, JSON.stringify([...val])); } catch { /* ignore */ } }, { deep: true });
+watch(filterPresets, (val) => { try { localStorage.setItem(LS_KEY_FILTER_PRESETS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -5639,6 +5754,24 @@ const filteredDueSoonCount = computed(() =>
   dueDateField.value
     ? filteredRecords.value.filter((r) => dueSoonIds.value.has(r.id)).length
     : 0,
+);
+
+const hasAnyFilter = computed(() =>
+  activeFilters.value.length > 0 ||
+  Object.values(fieldTextFilters.value).some((v) => v.trim()) ||
+  Object.values(numberMinFilters.value).some((v) => v != null) ||
+  Object.values(numberMaxFilters.value).some((v) => v != null) ||
+  Object.values(dateAfterFilters.value).some((v) => v) ||
+  Object.values(dateBeforeFilters.value).some((v) => v) ||
+  showOverdueOnly.value ||
+  showDueSoonOnly.value ||
+  showPinnedOnly.value ||
+  showWatchedOnly.value ||
+  showIncompleteOnly.value,
+);
+
+const typeFilterPresets = computed(() =>
+  filterPresets.value.filter((p) => p.typeKey === selectedTypeKey.value),
 );
 
 const staleIds = computed((): Set<string> => {
@@ -6850,6 +6983,56 @@ function clearFilters() {
   numberMaxFilters.value = {};
   dateAfterFilters.value = {};
   dateBeforeFilters.value = {};
+  showOverdueOnly.value = false;
+  showDueSoonOnly.value = false;
+  showPinnedOnly.value = false;
+  showWatchedOnly.value = false;
+  showIncompleteOnly.value = false;
+}
+
+function saveFilterPreset() {
+  const name = filterPresetNameInput.value.trim();
+  if (!name) return;
+  const preset: FilterPreset = {
+    id: 'fp-' + String(Date.now()),
+    name,
+    typeKey: selectedTypeKey.value,
+    filters: activeFilters.value.slice(),
+    fieldTextFilters: { ...fieldTextFilters.value },
+    numberMinFilters: { ...numberMinFilters.value },
+    numberMaxFilters: { ...numberMaxFilters.value },
+    dateAfterFilters: { ...dateAfterFilters.value },
+    dateBeforeFilters: { ...dateBeforeFilters.value },
+    showOverdueOnly: showOverdueOnly.value,
+    showDueSoonOnly: showDueSoonOnly.value,
+    showPinnedOnly: showPinnedOnly.value,
+    showWatchedOnly: showWatchedOnly.value,
+    showIncompleteOnly: showIncompleteOnly.value,
+  };
+  filterPresets.value = [...filterPresets.value, preset];
+  filterPresetNameInput.value = '';
+  showFilterPresetsPanel.value = false;
+  showToast(`Preset "${name}" saved`);
+}
+
+function applyFilterPreset(preset: FilterPreset) {
+  activeFilters.value = preset.filters.slice();
+  fieldTextFilters.value = { ...preset.fieldTextFilters };
+  numberMinFilters.value = { ...preset.numberMinFilters };
+  numberMaxFilters.value = { ...preset.numberMaxFilters };
+  dateAfterFilters.value = { ...preset.dateAfterFilters };
+  dateBeforeFilters.value = { ...preset.dateBeforeFilters };
+  showOverdueOnly.value = preset.showOverdueOnly;
+  showDueSoonOnly.value = preset.showDueSoonOnly;
+  showPinnedOnly.value = preset.showPinnedOnly;
+  showWatchedOnly.value = preset.showWatchedOnly;
+  showIncompleteOnly.value = preset.showIncompleteOnly;
+  showFilterPresetsPanel.value = false;
+  showToast(`Preset "${preset.name}" applied`);
+}
+
+function deleteFilterPreset(id: string) {
+  filterPresets.value = filterPresets.value.filter((p) => p.id !== id);
 }
 
 function startCellEdit(record: CrmRecord, col: CrmField) {
