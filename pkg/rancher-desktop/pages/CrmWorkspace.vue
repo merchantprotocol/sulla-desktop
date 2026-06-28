@@ -28,7 +28,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -5131,12 +5131,57 @@
               <!-- FIELDS MODE -->
               <template v-if="schemaEditorMode === 'fields'">
                 <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
-                  <span
-                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                    :style="{ background: (selectedType?.color ?? '#6366f1') + '22', color: selectedType?.color ?? '#6366f1' }"
-                  >
-                    <component :is="ICON_COMPONENTS[selectedType?.icon ?? 'folder']" class="h-4 w-4" />
-                  </span>
+                  <div class="relative shrink-0">
+                    <button
+                      type="button"
+                      class="flex h-8 w-8 items-center justify-center rounded-lg ring-2 ring-transparent hover:ring-slate-300 dark:hover:ring-slate-600 transition-all"
+                      :style="{ background: (selectedType?.color ?? '#6366f1') + '22', color: selectedType?.color ?? '#6366f1' }"
+                      title="Change type icon &amp; color"
+                      @click.stop="showTypeIconColorPicker = !showTypeIconColorPicker"
+                    >
+                      <component :is="ICON_COMPONENTS[selectedType?.icon ?? 'folder']" class="h-4 w-4" />
+                    </button>
+                    <!-- icon + color picker popover -->
+                    <div
+                      v-if="showTypeIconColorPicker && selectedType"
+                      class="absolute top-full left-0 mt-1.5 z-50 w-56 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl p-3 space-y-3"
+                    >
+                      <div>
+                        <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1.5">Color</p>
+                        <div class="flex flex-wrap gap-1.5">
+                          <button
+                            v-for="c in SCHEMA_COLOR_PRESETS"
+                            :key="c"
+                            type="button"
+                            class="h-5 w-5 rounded-full transition-transform hover:scale-125 focus:outline-none"
+                            :style="{ background: c, boxShadow: selectedType.color === c ? `0 0 0 2px white, 0 0 0 3.5px ${c}` : undefined }"
+                            :aria-label="`Set type color: ${c}`"
+                            @click.stop="selectedType.color = c"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1.5">Icon</p>
+                        <div class="flex flex-wrap gap-1.5">
+                          <button
+                            v-for="ico in SCHEMA_ICON_OPTIONS"
+                            :key="ico"
+                            type="button"
+                            class="h-7 w-7 rounded-lg flex items-center justify-center transition-colors"
+                            :class="selectedType.icon === ico
+                              ? 'ring-2 ring-offset-1 ring-violet-400'
+                              : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
+                            :style="selectedType.icon === ico ? { background: (selectedType.color ?? '#6366f1') + '22', color: selectedType.color ?? '#6366f1' } : undefined"
+                            :aria-label="`Set icon: ${ico}`"
+                            @click.stop="selectedType.icon = ico as IconKey"
+                          >
+                            <component :is="ICON_COMPONENTS[ico]" class="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      <button type="button" class="w-full text-xs text-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors py-0.5" @click.stop="showTypeIconColorPicker = false">Done</button>
+                    </div>
+                  </div>
                   <div class="flex-1 min-w-0">
                     <template v-if="schemaTypeLabelDraft !== null">
                       <input
@@ -6031,6 +6076,7 @@ const schemaEditorMode = ref<'fields' | 'new-type'>('fields');
 const showAddFieldForm = ref(false);
 const schemaTypeLabelDraft = ref<string | null>(null);
 const schemaTypeLabelInputEl = ref<HTMLInputElement | null>(null);
+const showTypeIconColorPicker = ref(false);
 const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
 const SCHEMA_ICON_OPTIONS: IconKey[] = ['user', 'building', 'chart', 'target', 'check', 'folder', 'tag', 'list', 'layers', 'star'];
@@ -7759,6 +7805,7 @@ function selectType(key: string) {
   showIncompleteOnly.value = false;
   createFormErrors.value = new Set();
   colAggOverrides.value = {};
+  showTypeIconColorPicker.value = false;
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
