@@ -928,8 +928,13 @@
                 :key="col"
                 class="flex flex-col w-64 shrink-0"
               >
-                <!-- column header -->
-                <div class="flex items-center gap-2 px-1 mb-3">
+                <!-- column header — sky accent when the open record lives in this column -->
+                <div
+                  class="flex items-center gap-2 px-2 py-1 mb-3 rounded-lg transition-colors"
+                  :class="openedRecord && kanbanField && String(openedRecord.field_values[kanbanField.key] ?? (col === KANBAN_UNASSIGNED ? col : '')) === col
+                    ? 'bg-sky-50 dark:bg-sky-950/20 ring-1 ring-sky-200 dark:ring-sky-800/60'
+                    : ''"
+                >
                   <span
                     class="h-2 w-2 rounded-full shrink-0"
                     :class="col === KANBAN_UNASSIGNED ? 'bg-slate-300 dark:bg-slate-600' : stageDot(col)"
