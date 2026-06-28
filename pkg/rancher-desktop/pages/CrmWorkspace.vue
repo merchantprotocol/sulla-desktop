@@ -672,6 +672,32 @@
               {{ collapsedGroups.size ? 'Expand all' : 'Collapse all' }}
             </button>
 
+            <!-- color label filter — only visible when any record in this type has a color label -->
+            <div
+              v-if="usedColorLabels.length"
+              class="flex items-center gap-1 h-9 px-2.5 rounded-lg border transition-colors"
+              :class="colorLabelFilter ? 'border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800' : 'border-slate-200 dark:border-slate-700'"
+              :title="colorLabelFilter ? 'Filtering by color label — click to clear' : 'Filter by color label'"
+            >
+              <button
+                v-for="c in usedColorLabels"
+                :key="c"
+                type="button"
+                class="h-4 w-4 rounded-full transition-transform hover:scale-125 focus:outline-none flex-shrink-0"
+                :style="{ background: c, boxShadow: colorLabelFilter === c ? `0 0 0 2px white, 0 0 0 3.5px ${c}` : 'none' }"
+                @click="colorLabelFilter = colorLabelFilter === c ? null : c"
+              />
+              <button
+                v-if="colorLabelFilter"
+                type="button"
+                class="ml-0.5 h-3.5 w-3.5 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                title="Clear color filter"
+                @click="colorLabelFilter = null"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
             <!-- export button -->
             <button
               type="button"
@@ -3543,6 +3569,7 @@ const linkDropdownOpen = ref(false);
 const watchedIds = ref<Set<string>>(new Set());
 const COLOR_LABEL_PALETTE = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'] as const;
 const colorLabels = ref<Record<string, string>>({});
+const colorLabelFilter = ref<string | null>(null);
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3586,6 +3613,11 @@ watch(savedViews, (val) => { try { localStorage.setItem(LS_KEY_SAVED_VIEWS, JSON
 const selectedType = computed(() =>
   schema.find((rt) => rt.key === selectedTypeKey.value) ?? null,
 );
+
+const usedColorLabels = computed(() => {
+  const typeRecs = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
+  return COLOR_LABEL_PALETTE.filter((c) => typeRecs.some((r) => colorLabels.value[r.id] === c));
+});
 
 const watchedRecords = computed(() =>
   mockRecords.filter((r) => watchedIds.value.has(r.id)),
@@ -3747,6 +3779,11 @@ const filteredRecords = computed(() => {
       }
       return true;
     });
+  }
+
+  if (colorLabelFilter.value) {
+    const fc = colorLabelFilter.value;
+    result = result.filter((r) => colorLabels.value[r.id] === fc);
   }
 
   if (sortField.value) {
@@ -4334,6 +4371,7 @@ function selectType(key: string) {
   creatingRecord.value = false;
   showInlineAdd.value = false;
   inlineAddTitle.value = '';
+  colorLabelFilter.value = null;
   draftValues.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
@@ -4908,6 +4946,7 @@ function onKeyR(e: KeyboardEvent) {
   showWatchedOnly.value = false;
   showIncompleteOnly.value = false;
   groupByField.value = null;
+  colorLabelFilter.value = null;
   if (hadState) showToast('View reset');
 }
 
