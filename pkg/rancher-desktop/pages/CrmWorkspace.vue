@@ -295,6 +295,17 @@
             </button>
             <button
               type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-red-200 dark:border-red-900 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+              :title="`Delete ${selectedIds.size} selected record${selectedIds.size === 1 ? '' : 's'}`"
+              @click="bulkDelete"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete
+            </button>
+            <button
+              type="button"
               class="h-8 px-3 rounded-lg text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               @click="clearSelection"
             >
@@ -2554,6 +2565,13 @@ const deletedSnapshot = ref<{
   wasWatched: boolean;
 } | null>(null);
 let deletedSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+const bulkDeletedSnapshot = ref<Array<{
+  record: CrmRecord;
+  idx: number;
+  wasPinned: boolean;
+  wasWatched: boolean;
+}> | null>(null);
+let bulkDeletedSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 const detailTab = ref<'details' | 'activity' | 'related'>('details');
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
@@ -3085,6 +3103,55 @@ function bulkMoveToStage(stage: string) {
   }
   bulkStageDropdown.value = false;
   showToast(`Moved ${ids.length} record${ids.length === 1 ? '' : 's'} to ${stage}`);
+}
+
+function bulkDelete() {
+  const ids = [...selectedIds.value];
+  if (!ids.length) return;
+  const snapshots = ids.map((id) => {
+    const record = mockRecords.find((r) => r.id === id);
+    if (!record) return null;
+    return {
+      record,
+      idx: mockRecords.indexOf(record),
+      wasPinned: pinnedIds.value.has(id),
+      wasWatched: watchedIds.value.has(id),
+    };
+  }).filter((s): s is NonNullable<typeof s> => s !== null);
+  if (bulkDeletedSnapshotTimer) clearTimeout(bulkDeletedSnapshotTimer);
+  bulkDeletedSnapshot.value = snapshots;
+  bulkDeletedSnapshotTimer = setTimeout(() => { bulkDeletedSnapshot.value = null; }, 5000);
+  // Remove all selected records (in reverse index order to keep splicing stable)
+  const sortedByIdx = snapshots.slice().sort((a, b) => b.idx - a.idx);
+  for (const s of sortedByIdx) {
+    const cur = mockRecords.indexOf(s.record);
+    if (cur >= 0) mockRecords.splice(cur, 1);
+  }
+  if (openedRecord.value && ids.includes(openedRecord.value.id)) closePanel();
+  const nextPinned = new Set(pinnedIds.value);
+  const nextWatched = new Set(watchedIds.value);
+  for (const id of ids) { nextPinned.delete(id); nextWatched.delete(id); }
+  pinnedIds.value = nextPinned;
+  watchedIds.value = nextWatched;
+  recentRecords.value = recentRecords.value.filter((r) => !ids.includes(r.id));
+  selectedIds.value = new Set();
+  showToast(`${ids.length} record${ids.length === 1 ? '' : 's'} deleted`, { label: 'Undo', fn: restoreBulkDeleted });
+}
+
+function restoreBulkDeleted() {
+  const snaps = bulkDeletedSnapshot.value;
+  if (!snaps || !snaps.length) return;
+  if (bulkDeletedSnapshotTimer) clearTimeout(bulkDeletedSnapshotTimer);
+  bulkDeletedSnapshot.value = null;
+  // Re-insert in original index order (ascending)
+  const sorted = snaps.slice().sort((a, b) => a.idx - b.idx);
+  for (const s of sorted) {
+    const insertIdx = Math.min(s.idx, mockRecords.length);
+    mockRecords.splice(insertIdx, 0, s.record);
+    if (s.wasPinned) { const next = new Set(pinnedIds.value); next.add(s.record.id); pinnedIds.value = next; }
+    if (s.wasWatched) { const next = new Set(watchedIds.value); next.add(s.record.id); watchedIds.value = next; }
+  }
+  showToast('Delete undone');
 }
 
 function toggleFilter(fieldKey: string, value: string) {
