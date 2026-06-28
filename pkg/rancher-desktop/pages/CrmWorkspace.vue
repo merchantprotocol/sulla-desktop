@@ -23,7 +23,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1623,12 +1623,14 @@
                   class="flex items-center gap-2 px-2 py-1 mb-3 rounded-lg transition-colors cursor-pointer select-none"
                   :class="[
                     collapsedColumns.has(col) ? 'flex-col gap-1 h-auto px-1' : '',
+                    wipLimits[col] && (kanbanGroups[col] ?? []).length > wipLimits[col] ? 'bg-red-50/60 dark:bg-red-950/10 ring-1 ring-red-200 dark:ring-red-900/40' : '',
                     openedRecord && kanbanField && String(openedRecord.field_values[kanbanField.key] ?? (col === KANBAN_UNASSIGNED ? col : '')) === col
                       ? 'bg-sky-50 dark:bg-sky-950/20 ring-1 ring-sky-200 dark:ring-sky-800/60'
                       : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
                   ]"
                   :title="collapsedColumns.has(col) ? `Expand ${col === KANBAN_UNASSIGNED ? 'Unassigned' : col}` : `Collapse ${col === KANBAN_UNASSIGNED ? 'Unassigned' : col}`"
                   @click="toggleColumnCollapse(col)"
+                  @contextmenu.prevent="kanbanColMenu = { col, x: $event.clientX, y: $event.clientY }"
                 >
                   <span
                     class="h-2 w-2 rounded-full shrink-0"
@@ -1643,12 +1645,17 @@
                   </span>
                   <span
                     v-if="!collapsedColumns.has(col)"
-                    class="ml-auto text-xs tabular-nums text-slate-400 dark:text-slate-500 font-medium shrink-0"
+                    class="ml-auto text-xs tabular-nums font-medium shrink-0 flex items-center gap-1"
+                    :class="wipLimits[col] && (kanbanGroups[col] ?? []).length > wipLimits[col] ? 'text-red-500 dark:text-red-400' : 'text-slate-400 dark:text-slate-500'"
                   >
                     <template v-if="(searchQuery || activeFilters.length) && (kanbanGroups[col] ?? []).length !== (kanbanGroupsTotal[col] ?? 0)">
                       <span class="text-sky-500 dark:text-sky-400">{{ (kanbanGroups[col] ?? []).length }}</span> of {{ kanbanGroupsTotal[col] ?? 0 }}
                     </template>
                     <template v-else>{{ (kanbanGroups[col] ?? []).length }}</template>
+                    <template v-if="wipLimits[col]">
+                      <span class="opacity-50">/</span>{{ wipLimits[col] }}
+                      <svg v-if="(kanbanGroups[col] ?? []).length > wipLimits[col]" class="h-3 w-3 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
+                    </template>
                     <template v-if="kanbanColumnTotals[col]"> · {{ kanbanColumnTotals[col] }}</template>
                   </span>
                   <span
@@ -2899,6 +2906,89 @@
       </div>
     </transition>
 
+    <!-- kanban column context menu -->
+    <transition
+      enter-active-class="transition-all duration-100"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-75"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="kanbanColMenu"
+        class="fixed z-50 w-52 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1"
+        :style="{ top: `${Math.min(kanbanColMenu.y, window.innerHeight - 200)}px`, left: `${Math.min(kanbanColMenu.x, window.innerWidth - 220)}px` }"
+        @click.stop
+      >
+        <p class="px-3 pt-1.5 pb-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">{{ kanbanColMenu.col === KANBAN_UNASSIGNED ? 'Unassigned' : kanbanColMenu.col }}</p>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <!-- WIP limit input -->
+        <div class="px-3 py-2">
+          <p class="text-xs text-slate-500 dark:text-slate-400 mb-1.5">WIP limit</p>
+          <div class="flex items-center gap-2">
+            <input
+              v-if="wipLimitEditing === kanbanColMenu.col"
+              ref="wipLimitInputEl"
+              v-model="wipLimitDraft"
+              type="number"
+              min="1"
+              placeholder="Max cards"
+              class="w-full h-7 rounded-lg px-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+              @keydown.enter.prevent="commitWipLimit(kanbanColMenu!.col)"
+              @keydown.esc.stop="wipLimitEditing = null"
+            >
+            <template v-else>
+              <span class="text-sm font-medium tabular-nums" :class="wipLimits[kanbanColMenu.col] ? 'text-slate-700 dark:text-slate-300' : 'text-slate-400 dark:text-slate-500 italic'">
+                {{ wipLimits[kanbanColMenu.col] ?? 'None' }}
+              </span>
+            </template>
+            <button
+              v-if="wipLimitEditing !== kanbanColMenu.col"
+              type="button"
+              class="h-6 px-2 rounded text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30 hover:bg-sky-100 dark:hover:bg-sky-900/30 transition-colors shrink-0"
+              @click="wipLimitEditing = kanbanColMenu!.col; wipLimitDraft = String(wipLimits[kanbanColMenu!.col] ?? '')"
+            >Set</button>
+            <button
+              v-else
+              type="button"
+              class="h-6 px-2 rounded text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30 hover:bg-sky-100 dark:hover:bg-sky-900/30 transition-colors shrink-0"
+              @click="commitWipLimit(kanbanColMenu!.col)"
+            >Save</button>
+            <button
+              v-if="wipLimits[kanbanColMenu.col] && wipLimitEditing !== kanbanColMenu.col"
+              type="button"
+              class="h-6 w-6 rounded flex items-center justify-center text-slate-400 hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors shrink-0"
+              title="Clear WIP limit"
+              @click="delete wipLimits[kanbanColMenu!.col]; kanbanColMenu = null"
+            >
+              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+        </div>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="openNewRecord(kanbanColMenu!.col === KANBAN_UNASSIGNED ? undefined : kanbanColMenu!.col); kanbanColMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+          New card in column
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="toggleColumnCollapse(kanbanColMenu!.col); kanbanColMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path v-if="collapsedColumns.has(kanbanColMenu!.col)" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+            <path v-else stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+          {{ collapsedColumns.has(kanbanColMenu!.col) ? 'Expand column' : 'Collapse column' }}
+        </button>
+      </div>
+    </transition>
+
     <!-- table row context menu -->
     <transition
       enter-active-class="transition-all duration-100"
@@ -3733,6 +3823,12 @@ const colorLabelFilter = ref<string | null>(null);
 const staleDaysFilter = ref<number | null>(null);
 const showStaleDropdown = ref(false);
 const groupMenu = ref<{ key: string; label: string; count: number; x: number; y: number } | null>(null);
+const wipLimits = ref<Record<string, number>>({});
+const kanbanColMenu = ref<{ col: string; x: number; y: number } | null>(null);
+const wipLimitEditing = ref<string | null>(null);
+const wipLimitDraft = ref('');
+const wipLimitInputEl = ref<HTMLInputElement | null>(null);
+watch(wipLimitEditing, (val) => { if (val) nextTick(() => wipLimitInputEl.value?.focus()); });
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -4138,6 +4234,13 @@ function deleteGroupRecords(groupKey: string) {
     label: 'Undo',
     fn: () => { removed.forEach((r) => mockRecords.push(r)); },
   });
+}
+
+function commitWipLimit(col: string) {
+  const n = parseInt(wipLimitDraft.value, 10);
+  if (n > 0) { wipLimits.value = { ...wipLimits.value, [col]: n }; }
+  wipLimitEditing.value = null;
+  wipLimitDraft.value = '';
 }
 
 function stageColorHex(stage: string): string {
