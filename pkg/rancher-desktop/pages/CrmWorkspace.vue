@@ -3480,7 +3480,7 @@
                 v-for="tab in ([
                   { key: 'details', label: 'Details' },
                   { key: 'activity', label: 'Activity', count: recordActivities.length },
-                  { key: 'related', label: 'Related', count: openedRecord.links?.length ?? 0 },
+                  { key: 'related', label: 'Related', count: (openedRecord.links?.length ?? 0) + inverseLinks.length },
                 ] as const)"
                 :key="tab.key"
                 type="button"
@@ -3846,6 +3846,39 @@
                   </div>
                 </div>
                 <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No related records yet — use the search above to link some.</p>
+
+                <!-- inverse/backlinks — records that link TO this one -->
+                <template v-if="inverseLinks.length">
+                  <p class="text-xs font-semibold uppercase tracking-widest text-slate-300 dark:text-slate-600 mt-4 mb-1">Linked from</p>
+                  <div class="space-y-1">
+                    <div
+                      v-for="r in inverseLinks"
+                      :key="r.id"
+                      class="group/backlink flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      <span
+                        class="h-5 w-5 rounded flex items-center justify-center shrink-0"
+                        :style="{ background: (schema.find(rt => rt.key === r.record_type_key)?.color ?? '#64748b') + '22', color: schema.find(rt => rt.key === r.record_type_key)?.color ?? '#64748b' }"
+                      >
+                        <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === r.record_type_key)?.icon ?? 'user']" class="h-3 w-3" />
+                      </span>
+                      <div class="flex-1 min-w-0">
+                        <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{{ r.title }}</p>
+                        <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ schema.find(rt => rt.key === r.record_type_key)?.label }}</p>
+                      </div>
+                      <button
+                        type="button"
+                        class="shrink-0 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 rounded p-0.5 transition-colors"
+                        aria-label="Open linked record"
+                        @click="openRecord(r)"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </template>
               </template>
             </div>
 
@@ -7113,6 +7146,14 @@ const linkResults = computed(() => {
         Object.values(r.field_values).some((v) => v != null && String(v).toLowerCase().includes(q)))
     )
     .slice(0, 6);
+});
+
+const inverseLinks = computed((): CrmRecord[] => {
+  const id = openedRecord.value?.id;
+  if (!id) return [];
+  return mockRecords.filter(
+    (r) => r.id !== id && r.links?.some((l) => l.target_id === id),
+  );
 });
 
 const paletteResults = computed(() => {
