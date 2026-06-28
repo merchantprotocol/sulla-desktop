@@ -1579,15 +1579,25 @@
               <!-- column totals footer — only when at least one numeric column exists -->
               <tfoot v-if="hasTableTotals && filteredRecords.length > 1">
                 <tr class="bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800">
-                  <td class="pl-6 pr-2 py-2" />
+                  <td class="pl-6 pr-2 py-2">
+                    <button
+                      type="button"
+                      class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
+                      :title="`Click to cycle: ${COL_STAT_MODES.join(' → ')}`"
+                      @click="colStatMode = COL_STAT_MODES[(COL_STAT_MODES.indexOf(colStatMode) + 1) % COL_STAT_MODES.length]"
+                    >{{ colStatMode }}</button>
+                  </td>
                   <td
                     v-for="col in visibleColumns"
                     :key="col.key"
                     class="px-4 py-2 text-xs font-medium"
-                    :class="tableColumnTotals[col.key] !== null ? 'text-slate-700 dark:text-slate-300 tabular-nums' : 'text-transparent'"
+                    :class="tableColumnStats[col.key] !== null ? 'text-slate-700 dark:text-slate-300 tabular-nums' : 'text-transparent'"
                   >
-                    <span v-if="tableColumnTotals[col.key] !== null" :title="`Total: ${tableColumnTotals[col.key]}`">
-                      {{ formatCardValue(tableColumnTotals[col.key], 'number', col.format) }}
+                    <span
+                      v-if="tableColumnStats[col.key] !== null"
+                      :title="`Sum: ${tableColumnStats[col.key]!.sum.toLocaleString()} · Avg: ${tableColumnStats[col.key]!.avg.toLocaleString(undefined, { maximumFractionDigits: 1 })} · Min: ${tableColumnStats[col.key]!.min.toLocaleString()} · Max: ${tableColumnStats[col.key]!.max.toLocaleString()} · Count: ${tableColumnStats[col.key]!.count}`"
+                    >
+                      {{ colStatMode === 'count' ? tableColumnStats[col.key]!.count : formatCardValue(tableColumnTotals[col.key], 'number', col.format) }}
                     </span>
                   </td>
                   <!-- Added column -->
@@ -4244,20 +4254,33 @@ const kanbanColumnTotals = computed((): Record<string, string | null> => {
   return result;
 });
 
+type ColStatMode = 'sum' | 'avg' | 'min' | 'max' | 'count';
+const colStatMode = ref<ColStatMode>('sum');
+const COL_STAT_MODES: ColStatMode[] = ['sum', 'avg', 'min', 'max', 'count'];
+
+const tableColumnStats = computed((): Record<string, { sum: number; avg: number; min: number; max: number; count: number } | null> => {
+  const stats: Record<string, { sum: number; avg: number; min: number; max: number; count: number } | null> = {};
+  for (const col of visibleColumns.value) {
+    if (col.data_type !== 'number') { stats[col.key] = null; continue; }
+    const vals = filteredRecords.value.map((r) => r.field_values[col.key]).filter((v) => v != null).map(Number).filter((v) => !isNaN(v));
+    if (!vals.length) { stats[col.key] = null; continue; }
+    const sum = vals.reduce((a, b) => a + b, 0);
+    stats[col.key] = { sum, avg: sum / vals.length, min: Math.min(...vals), max: Math.max(...vals), count: vals.length };
+  }
+  return stats;
+});
+
 const tableColumnTotals = computed((): Record<string, number | null> => {
   const totals: Record<string, number | null> = {};
   for (const col of visibleColumns.value) {
-    if (col.data_type !== 'number') { totals[col.key] = null; continue; }
-    totals[col.key] = filteredRecords.value.reduce((s, r) => {
-      const v = r.field_values[col.key];
-      return s + (v != null ? Number(v) : 0);
-    }, 0);
+    const s = tableColumnStats.value[col.key];
+    totals[col.key] = s ? s[colStatMode.value] : null;
   }
   return totals;
 });
 
 const hasTableTotals = computed(() =>
-  Object.values(tableColumnTotals.value).some((v) => v !== null),
+  Object.values(tableColumnStats.value).some((v) => v !== null),
 );
 
 // Secondary fields shown on each kanban card (first 2 non-title, non-groupBy fields)
