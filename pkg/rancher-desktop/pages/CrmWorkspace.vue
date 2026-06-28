@@ -1420,13 +1420,19 @@
                 <template v-for="(record, idx) in filteredRecords" :key="record.id">
                 <tr
                   class="group cursor-pointer transition-colors"
-                  :class="openedRecord?.id === record.id
+                  :class="[openedRecord?.id === record.id
                     ? 'bg-sky-50 dark:bg-sky-950/20'
-                    : 'hover:bg-white dark:hover:bg-slate-900'"
-                  :style="(() => { const cl = colorLabels[record.id]; const cr = evaluateConditionalRules(record); return { ...(cl ? { boxShadow: `inset 3px 0 0 ${cl}` } : {}), ...(cr ? { background: cr + '18' } : {}) }; })()"
+                    : 'hover:bg-white dark:hover:bg-slate-900',
+                    dragOverId === record.id && dragSrcId !== record.id ? 'ring-inset ring-2 ring-sky-400' : '']"
+                  :style="(() => { const cl = colorLabels[record.id]; const cr = evaluateConditionalRules(record); return { ...(cl ? { boxShadow: `inset 3px 0 0 ${cl}` } : {}), ...(cr ? { background: cr + '18' } : {}), opacity: dragSrcId === record.id ? '0.4' : undefined }; })()"
                   :data-record-id="record.id"
+                  draggable="true"
                   @click="openRecord(record)"
                   @contextmenu.prevent="openContextMenu(record, $event)"
+                  @dragstart="onRowDragStart($event, record.id)"
+                  @dragover="onRowDragOver($event, record.id)"
+                  @drop="onRowDrop($event, record.id)"
+                  @dragend="onRowDragEnd"
                 >
                   <!-- row checkbox -->
                   <td class="pl-6 pr-2" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'" @click.stop>
@@ -4210,6 +4216,9 @@ const showStaleDropdown = ref(false);
 const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
 const detailPanelExpanded = ref<false | 'wide' | 'full'>(false);
 const kanbanCompact = ref(false);
+const customOrder = ref<string[]>([]);
+const dragSrcId = ref<string | null>(null);
+const dragOverId = ref<string | null>(null);
 interface ConditionalRule { id: string; fieldKey: string; operator: 'equals' | 'not_equals' | 'contains' | 'gt' | 'lt' | 'is_empty' | 'is_not_empty'; value: string; color: string }
 const conditionalRules = ref<ConditionalRule[]>([]);
 const showFormatPanel = ref(false);
@@ -4547,6 +4556,18 @@ const filteredRecords = computed(() => {
         return v == null || (typeof v === 'string' && v.trim() === '');
       }),
     );
+  }
+
+  if (!sortField.value && customOrder.value.length) {
+    const order = customOrder.value;
+    result = [...result].sort((a, b) => {
+      const ai = order.indexOf(a.id);
+      const bi = order.indexOf(b.id);
+      if (ai === -1 && bi === -1) return 0;
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
   }
 
   return result;
@@ -5204,6 +5225,7 @@ function selectType(key: string) {
   showTagInput.value = false;
   staleDaysFilter.value = null;
   createdPreset.value = null;
+  customOrder.value = [];
   draftValues.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
@@ -5524,6 +5546,38 @@ async function copyRecordLink(record: CrmRecord) {
   } catch {
     // silent fail in non-secure context
   }
+}
+
+function onRowDragStart(e: DragEvent, id: string) {
+  dragSrcId.value = id;
+  if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); }
+}
+
+function onRowDragOver(e: DragEvent, id: string) {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  dragOverId.value = id;
+}
+
+function onRowDrop(e: DragEvent, targetId: string) {
+  e.preventDefault();
+  const srcId = dragSrcId.value;
+  dragSrcId.value = null;
+  dragOverId.value = null;
+  if (!srcId || srcId === targetId) return;
+  const ids = filteredRecords.value.map((r) => r.id);
+  const order = customOrder.value.length ? [...customOrder.value] : [...ids];
+  const srcIdx = order.indexOf(srcId);
+  const tgtIdx = order.indexOf(targetId);
+  if (srcIdx === -1 || tgtIdx === -1) return;
+  order.splice(srcIdx, 1);
+  order.splice(tgtIdx, 0, srcId);
+  customOrder.value = order;
+}
+
+function onRowDragEnd() {
+  dragSrcId.value = null;
+  dragOverId.value = null;
 }
 
 async function copyRecordAsText(record: CrmRecord) {
