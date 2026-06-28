@@ -8086,6 +8086,12 @@ function saveNewRecord() {
   // Build the record from draftValues
   const titleField = type?.fields.find((f) => f.is_title);
   const title = titleField ? String(draftValues.value[titleField.key] ?? '').trim() || `New ${type?.label ?? 'Record'}` : `New ${type?.label ?? 'Record'}`;
+  // Duplicate detection — warn (non-blocking) if a similar title exists in the same type
+  const titleNorm = title.toLowerCase().replace(/\s+/g, ' ').trim();
+  const dupMatch = mockRecords.find((r) =>
+    r.record_type_key === selectedTypeKey.value &&
+    r.title.toLowerCase().replace(/\s+/g, ' ').trim() === titleNorm,
+  );
   const newRecord: CrmRecord = {
     id: 'new-' + selectedTypeKey.value + '-' + String(mockRecords.length),
     record_type_key: selectedTypeKey.value,
@@ -8106,7 +8112,11 @@ function saveNewRecord() {
   creatingRecord.value = false;
   draftValues.value = {};
   openRecord(newRecord);
-  showToast(`${type?.label ?? 'Record'} created`);
+  if (dupMatch) {
+    showToast(`Possible duplicate — "${dupMatch.title}" already exists`, { label: 'View existing', fn: () => openRecord(dupMatch) });
+  } else {
+    showToast(`${type?.label ?? 'Record'} created`);
+  }
 }
 
 function startKanbanInlineAdd(col: string) {
