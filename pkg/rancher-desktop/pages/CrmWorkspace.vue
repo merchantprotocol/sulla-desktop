@@ -81,6 +81,34 @@
             </button>
           </div>
 
+          <!-- watching section -->
+          <div v-if="watchedRecords.length" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
+            <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+              Watching
+            </p>
+            <button
+              v-for="rec in watchedRecords"
+              :key="rec.id"
+              type="button"
+              class="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors text-xs"
+              :class="openedRecord?.id === rec.id
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
+                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'"
+              @click="openFromPalette(rec)"
+            >
+              <span
+                class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold select-none"
+                :style="{ background: (schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6') + '22', color: schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6' }"
+              >{{ recordInitials(rec.title) }}</span>
+              <span class="flex-1 truncate">{{ rec.title }}</span>
+              <!-- eye icon indicates watched state -->
+              <svg class="shrink-0 h-3 w-3 text-sky-400 dark:text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+          </div>
+
           <div class="px-2 py-3 border-t border-slate-200 dark:border-slate-700">
             <button
               type="button"
@@ -2022,6 +2050,10 @@ watch(creatingRecord, (val) => { if (val) nextTick(() => newRecordTitleInputEl.v
 
 const selectedType = computed(() =>
   schema.find((rt) => rt.key === selectedTypeKey.value) ?? null,
+);
+
+const watchedRecords = computed(() =>
+  mockRecords.filter((r) => watchedIds.value.has(r.id)),
 );
 
 const totalRecordsForType = computed(() =>
