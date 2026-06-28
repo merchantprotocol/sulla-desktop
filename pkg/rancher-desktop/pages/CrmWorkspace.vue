@@ -5689,9 +5689,33 @@ function startCellEdit(record: CrmRecord, col: CrmField) {
   cellDraftValue.value = record.field_values[col.key] ?? null;
 }
 
-function commitCellEdit() {
+function commitCellEdit(newValue: string | number | boolean | null) {
+  const cell = editingCell.value;
   editingCell.value = null;
   cellDraftValue.value = null;
+  if (!cell) return;
+  const record = mockRecords.find((r) => r.id === cell.recordId);
+  if (!record) return;
+  const oldValue = record.field_values[cell.fieldKey];
+  if (newValue === oldValue) return;
+  record.field_values[cell.fieldKey] = newValue;
+  record.updated_at = new Date().toISOString();
+  // keep title in sync when the title field is edited inline
+  const type = schema.find((t) => t.key === record.record_type_key);
+  const titleField = type?.fields.find((f) => f.is_title);
+  if (titleField?.key === cell.fieldKey && newValue != null) record.title = String(newValue);
+  // append a change activity so the audit trail reflects the edit
+  const col = type?.fields.find((f) => f.key === cell.fieldKey);
+  if (col) {
+    mockActivities.push({
+      id: 'a_chg_' + String(mockActivities.length) + '_' + String(Date.now()).slice(-6),
+      record_id: record.id,
+      type: 'change',
+      content: `${col.label}: ${oldValue ?? '(empty)'} → ${newValue ?? '(empty)'}`,
+      author: 'JB',
+      created_at: new Date().toISOString(),
+    });
+  }
 }
 
 function cancelCellEdit() {
@@ -6995,13 +7019,24 @@ const CrmCellEditor = defineComponent({
     return () => {
       const cellClass = 'w-full rounded px-1.5 py-0.5 text-sm bg-white dark:bg-slate-950 border border-sky-400 dark:border-sky-500 text-slate-900 dark:text-slate-100 outline-none focus:ring-1 focus:ring-sky-400/40';
       const val = props.value;
+      function emitCommit() {
+        const el = elRef.value;
+        if (!el) { emit('commit', null); return; }
+        const raw = (el as HTMLInputElement | HTMLSelectElement).value;
+        if (props.dataType === 'number') {
+          const n = parseFloat(raw);
+          emit('commit', raw === '' ? null : (isNaN(n) ? null : n));
+        } else {
+          emit('commit', raw === '' ? null : raw);
+        }
+      }
       const common = {
         ref: elRef,
         onKeydown: (e: KeyboardEvent) => {
-          if (e.key === 'Enter') { e.preventDefault(); emit('commit'); }
+          if (e.key === 'Enter') { e.preventDefault(); emitCommit(); }
           if (e.key === 'Escape') { e.stopPropagation(); emit('cancel'); }
         },
-        onBlur: () => emit('commit'),
+        onBlur: emitCommit,
       };
       if (props.dataType === 'select') {
         return h('select', { ...common, class: cellClass + ' cursor-pointer appearance-none' }, [
