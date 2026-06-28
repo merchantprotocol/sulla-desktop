@@ -24,7 +24,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1073,6 +1073,44 @@
               </transition>
             </div>
 
+            <!-- templates button + dropdown -->
+            <div v-if="recordTemplates.filter(t => t.typeKey === selectedTypeKey).length" class="relative">
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border border-violet-200 dark:border-violet-700 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors"
+                title="Create from template"
+                @click.stop="showTemplatePanel = !showTemplatePanel"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Templates
+              </button>
+              <div
+                v-if="showTemplatePanel"
+                class="absolute top-full right-0 mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg py-1.5 min-w-[200px]"
+                @click.stop
+              >
+                <p class="px-3 pt-0.5 pb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Templates</p>
+                <button
+                  v-for="tmpl in recordTemplates.filter(t => t.typeKey === selectedTypeKey)"
+                  :key="tmpl.id"
+                  type="button"
+                  class="flex items-center justify-between w-full px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                  @click="applyTemplate(tmpl)"
+                >
+                  <span class="truncate">{{ tmpl.name }}</span>
+                  <button
+                    type="button"
+                    class="ml-2 shrink-0 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 rounded transition-colors"
+                    :aria-label="`Delete template ${tmpl.name}`"
+                    @click.stop="deleteTemplate(tmpl.id)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </button>
+              </div>
+            </div>
             <button
               type="button"
               class="flex items-center gap-1.5 h-9 px-4 rounded-lg text-sm font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors"
@@ -2177,6 +2215,18 @@
                     : 'bg-red-50 dark:bg-red-950/30 text-red-500 dark:text-red-400'"
                 :title="`${recordCompleteness(openedRecord)}% of fields filled`"
               >{{ recordCompleteness(openedRecord) }}%</span>
+              <!-- save as template -->
+              <button
+                type="button"
+                aria-label="Save as template"
+                title="Save this record as a template"
+                class="shrink-0 mt-0.5 text-slate-400 hover:text-violet-500 dark:hover:text-violet-400 rounded-lg p-1 transition-colors"
+                @click="templateDraftName = openedRecord.title; saveAsTemplate(openedRecord)"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </button>
               <!-- copy as text -->
               <button
                 type="button"
@@ -4309,6 +4359,10 @@ const wipLimitDraft = ref('');
 const wipLimitInputEl = ref<HTMLInputElement | null>(null);
 watch(wipLimitEditing, (val) => { if (val) nextTick(() => wipLimitInputEl.value?.focus()); });
 const showMergeModal = ref(false);
+interface RecordTemplate { id: string; name: string; typeKey: string; fieldValues: Record<string, unknown> }
+const recordTemplates = ref<RecordTemplate[]>([]);
+const showTemplatePanel = ref(false);
+const templateDraftName = ref('');
 const mergeSourceId = ref<string | null>(null);
 const mergeTargetId = ref<string | null>(null);
 const mergeFieldChoices = ref<Record<string, 'primary' | 'secondary'>>({});
@@ -5296,6 +5350,41 @@ function toggleColumnVisibility(key: string) {
   if (next.has(key)) next.delete(key);
   else next.add(key);
   hiddenColumnKeys.value = next;
+}
+
+function saveAsTemplate(record: CrmRecord) {
+  const name = templateDraftName.value.trim() || record.title;
+  if (!name) return;
+  const tmpl: RecordTemplate = {
+    id: 'tmpl-' + String(Date.now()),
+    name,
+    typeKey: record.record_type_key,
+    fieldValues: { ...record.field_values },
+  };
+  recordTemplates.value = [...recordTemplates.value, tmpl];
+  templateDraftName.value = '';
+  showToast(`Template "${name}" saved`);
+}
+
+function applyTemplate(tmpl: RecordTemplate) {
+  const type = schema.find((t) => t.key === tmpl.typeKey);
+  const titleField = type?.fields.find((f) => f.is_title);
+  const newRecord: CrmRecord = {
+    id: 'new-tmpl-' + String(mockRecords.length),
+    record_type_key: tmpl.typeKey,
+    title: String(tmpl.fieldValues[titleField?.key ?? ''] ?? 'New record'),
+    created_at: new Date().toISOString(),
+    field_values: { ...tmpl.fieldValues },
+    links: [],
+  };
+  mockRecords.push(newRecord);
+  openRecord(newRecord);
+  showTemplatePanel.value = false;
+  showToast(`Created from template "${tmpl.name}"`);
+}
+
+function deleteTemplate(id: string) {
+  recordTemplates.value = recordTemplates.value.filter((t) => t.id !== id);
 }
 
 function openMergeModal(primaryId: string, secondaryId: string) {
