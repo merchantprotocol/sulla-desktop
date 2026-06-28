@@ -7,7 +7,7 @@
     @keydown.n.exact="onKeyN"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
-    @click="showColumnsMenu = false"
+    @click="showColumnsMenu = false; cancelCellEdit()"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -417,7 +417,33 @@
                         class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
                       >{{ record.links.length }}</span>
                     </div>
-                    <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                    <!-- inline cell editor (non-title columns) -->
+                    <template v-else>
+                      <div v-if="editingCell?.recordId === record.id && editingCell?.fieldKey === col.key" @click.stop>
+                        <CrmCellEditor
+                          :data-type="col.data_type"
+                          :value="cellDraftValue"
+                          :select-options="col.select_options ?? []"
+                          @commit="commitCellEdit"
+                          @cancel="cancelCellEdit"
+                        />
+                      </div>
+                      <div
+                        v-else
+                        class="group/cell relative"
+                        @dblclick.stop="startCellEdit(record, col)"
+                      >
+                        <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                        <span
+                          v-if="col.data_type !== 'boolean'"
+                          class="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover/cell:opacity-40 transition-opacity pointer-events-none"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                        </span>
+                      </div>
+                    </template>
                   </td>
                   <td class="px-4 text-xs tabular-nums text-slate-400 dark:text-slate-500 whitespace-nowrap" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                     {{ formatDate(record.created_at) }}
@@ -843,7 +869,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, defineComponent, h } from 'vue';
+import { ref, computed, defineComponent, h, onMounted } from 'vue';
 import AgentHeader from '@pkg/pages/agent/AgentHeader.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 
@@ -1116,6 +1142,8 @@ const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
 const showColumnsMenu = ref(false);
 const detailTab = ref<'details' | 'activity' | 'related'>('details');
+const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
+const cellDraftValue = ref<string | number | boolean | null>(null);
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -1294,6 +1322,22 @@ function toggleAll() {
 
 function clearSelection() {
   selectedIds.value = new Set();
+}
+
+function startCellEdit(record: CrmRecord, col: CrmField) {
+  if (editingRecord.value || col.is_title || col.data_type === 'boolean') return;
+  editingCell.value = { recordId: record.id, fieldKey: col.key };
+  cellDraftValue.value = record.field_values[col.key] ?? null;
+}
+
+function commitCellEdit() {
+  editingCell.value = null;
+  cellDraftValue.value = null;
+}
+
+function cancelCellEdit() {
+  editingCell.value = null;
+  cellDraftValue.value = null;
 }
 
 function toggleColumnVisibility(key: string) {
@@ -1511,6 +1555,44 @@ const CrmCellValue = defineComponent({
         return h('span', { class: 'tabular-nums' }, fmt);
       }
       return h('span', { class: 'truncate max-w-[180px] block' }, String(props.value));
+    };
+  },
+});
+
+const CrmCellEditor = defineComponent({
+  props: {
+    value: { type: [String, Number, Boolean, null] as unknown as () => string | number | boolean | null, default: null },
+    dataType: { type: String as () => DataType, required: true },
+    selectOptions: { type: Array as () => string[], default: () => [] },
+  },
+  emits: ['commit', 'cancel'],
+  setup(props, { emit }) {
+    const elRef = ref<HTMLInputElement | HTMLSelectElement | null>(null);
+    onMounted(() => (elRef.value as HTMLElement | null)?.focus());
+    return () => {
+      const cellClass = 'w-full rounded px-1.5 py-0.5 text-sm bg-white dark:bg-slate-950 border border-sky-400 dark:border-sky-500 text-slate-900 dark:text-slate-100 outline-none focus:ring-1 focus:ring-sky-400/40';
+      const val = props.value;
+      const common = {
+        ref: elRef,
+        onKeydown: (e: KeyboardEvent) => {
+          if (e.key === 'Enter') { e.preventDefault(); emit('commit'); }
+          if (e.key === 'Escape') { e.stopPropagation(); emit('cancel'); }
+        },
+        onBlur: () => emit('commit'),
+      };
+      if (props.dataType === 'select') {
+        return h('select', { ...common, class: cellClass + ' cursor-pointer appearance-none' }, [
+          h('option', { value: '' }, '— select —'),
+          ...props.selectOptions.map((o: string) => h('option', { value: o, selected: String(val) === o }, o)),
+        ]);
+      }
+      const inputType = props.dataType === 'number' ? 'number'
+        : props.dataType === 'date' ? 'date'
+        : props.dataType === 'email' ? 'email'
+        : props.dataType === 'phone' ? 'tel'
+        : props.dataType === 'url' ? 'url'
+        : 'text';
+      return h('input', { ...common, type: inputType, value: val != null ? String(val) : '', class: cellClass });
     };
   },
 });
