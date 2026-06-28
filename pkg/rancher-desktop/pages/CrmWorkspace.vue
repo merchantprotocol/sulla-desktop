@@ -1728,11 +1728,8 @@
                 <button
                   type="button"
                   aria-label="Delete record"
-                  :title="pendingDeleteId === openedRecord.id ? 'Click again to confirm delete' : 'Delete record'"
-                  class="rounded-lg py-2 px-3 text-sm font-medium transition-colors"
-                  :class="pendingDeleteId === openedRecord.id
-                    ? 'bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400'
-                    : 'text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30'"
+                  title="Delete record"
+                  class="rounded-lg py-2 px-3 text-sm font-medium transition-colors text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
                   @click="deleteRecord(openedRecord)"
                 >
                   <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -2040,16 +2037,13 @@
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button
           type="button"
-          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
-          :class="pendingDeleteId === contextMenuRecord.id
-            ? 'bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 font-medium'
-            : 'text-red-400 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400'"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors text-red-400 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400"
           @click="deleteRecord(contextMenuRecord)"
         >
           <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
-          {{ pendingDeleteId === contextMenuRecord.id ? 'Confirm delete' : 'Delete' }}
+          Delete
         </button>
       </div>
     </transition>
@@ -2068,11 +2062,17 @@
           v-for="toast in toasts"
           :key="toast.id"
           class="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium shadow-lg bg-slate-900 dark:bg-slate-800 text-white border border-slate-700 dark:border-slate-600"
+          :class="toast.action ? 'pointer-events-auto' : ''"
         >
           <svg class="h-3.5 w-3.5 text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
             <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
           </svg>
           {{ toast.message }}
+          <button
+            v-if="toast.action"
+            class="ml-1 text-sky-400 hover:text-sky-300 font-semibold text-xs uppercase tracking-wide transition-colors"
+            @click.stop="toast.action.fn(); toasts = toasts.filter(t => t.id !== toast.id)"
+          >{{ toast.action.label }}</button>
         </div>
       </transition-group>
     </div>
@@ -2376,6 +2376,13 @@ const showColumnsMenu = ref(false);
 const sidebarCollapsed = ref(false);
 const pendingDeleteId = ref<string | null>(null);
 let pendingDeleteTimer: ReturnType<typeof setTimeout> | null = null;
+const deletedSnapshot = ref<{
+  record: CrmRecord;
+  idx: number;
+  wasPinned: boolean;
+  wasWatched: boolean;
+} | null>(null);
+let deletedSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 const detailTab = ref<'details' | 'activity' | 'related'>('details');
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
@@ -2393,7 +2400,7 @@ watch(showPalette, (val) => {
 });
 const cellDraftValue = ref<string | number | boolean | null>(null);
 const showShortcuts = ref(false);
-const toasts = ref<Array<{ id: string; message: string }>>([]);
+const toasts = ref<Array<{ id: string; message: string; action?: { label: string; fn: () => void } }>>([]);
 const showPalette = ref(false);
 const paletteQuery = ref('');
 const paletteIdx = ref(0);
@@ -3132,27 +3139,35 @@ function cycleSelectField(record: CrmRecord, field: CrmField) {
 }
 
 function deleteRecord(record: CrmRecord) {
-  if (pendingDeleteId.value !== record.id) {
-    // First click — arm the confirmation
-    pendingDeleteId.value = record.id;
-    if (pendingDeleteTimer) clearTimeout(pendingDeleteTimer);
-    pendingDeleteTimer = setTimeout(() => { pendingDeleteId.value = null; }, 3000);
-    showToast('Click again to confirm delete');
-    return;
-  }
-  // Second click — execute delete
   if (pendingDeleteTimer) clearTimeout(pendingDeleteTimer);
   pendingDeleteId.value = null;
   const idx = mockRecords.indexOf(record);
+  const wasPinned = pinnedIds.value.has(record.id);
+  const wasWatched = watchedIds.value.has(record.id);
+  // Snapshot for undo
+  if (deletedSnapshotTimer) clearTimeout(deletedSnapshotTimer);
+  deletedSnapshot.value = { record, idx: Math.max(0, idx), wasPinned, wasWatched };
+  deletedSnapshotTimer = setTimeout(() => { deletedSnapshot.value = null; }, 5000);
   if (idx >= 0) mockRecords.splice(idx, 1);
   if (openedRecord.value?.id === record.id) closePanel();
-  // Clean up associated state
   const nextPinned = new Set(pinnedIds.value); nextPinned.delete(record.id); pinnedIds.value = nextPinned;
   const nextWatched = new Set(watchedIds.value); nextWatched.delete(record.id); watchedIds.value = nextWatched;
   const nextSelected = new Set(selectedIds.value); nextSelected.delete(record.id); selectedIds.value = nextSelected;
   recentRecords.value = recentRecords.value.filter((r) => r.id !== record.id);
   closeContextMenu();
-  showToast('Record deleted');
+  showToast('Record deleted', { label: 'Undo', fn: restoreDeletedRecord });
+}
+
+function restoreDeletedRecord() {
+  const snap = deletedSnapshot.value;
+  if (!snap) return;
+  if (deletedSnapshotTimer) clearTimeout(deletedSnapshotTimer);
+  deletedSnapshot.value = null;
+  const insertIdx = Math.min(snap.idx, mockRecords.length);
+  mockRecords.splice(insertIdx, 0, snap.record);
+  if (snap.wasPinned) { const next = new Set(pinnedIds.value); next.add(snap.record.id); pinnedIds.value = next; }
+  if (snap.wasWatched) { const next = new Set(watchedIds.value); next.add(snap.record.id); watchedIds.value = next; }
+  showToast('Delete undone');
 }
 
 function duplicateRecord(record: CrmRecord) {
@@ -3352,12 +3367,12 @@ function onKeyArrow(dir: 1 | -1) {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function showToast(message: string) {
-  const id = 'toast-' + String(toasts.value.length) + '-' + String(Date.now()).slice(-5);
-  toasts.value.push({ id, message });
+function showToast(message: string, action?: { label: string; fn: () => void }) {
+  const id = 'toast-' + String(toasts.value.length) + '-' + String(Math.floor(Math.random() * 99999));
+  toasts.value.push({ id, message, action });
   setTimeout(() => {
     toasts.value = toasts.value.filter((t) => t.id !== id);
-  }, 2500);
+  }, action ? 5000 : 2500);
 }
 
 function exportCsv(records?: CrmRecord[]) {
