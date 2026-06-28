@@ -924,13 +924,11 @@
                         <span v-else class="truncate text-slate-600 dark:text-slate-300">{{ formatCardValue(record.field_values[f.key], f.data_type, f.format) }}</span>
                       </div>
                     </div>
-                    <!-- stage move controls -->
-                    <div
-                      v-if="kanbanField"
-                      class="flex items-center justify-between mt-2 opacity-0 group-hover/card:opacity-100 transition-opacity"
-                    >
+                    <!-- card hover actions: stage move + pin + watch -->
+                    <div class="flex items-center justify-between mt-2 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                      <!-- prev stage -->
                       <button
-                        v-if="kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) > 0"
+                        v-if="kanbanField && kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) > 0"
                         type="button"
                         class="flex items-center gap-0.5 text-xs text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded px-1 py-0.5 transition-colors"
                         title="Move to previous stage"
@@ -942,8 +940,39 @@
                         Prev
                       </button>
                       <span v-else class="w-10" />
+                      <!-- pin + watch quick actions -->
+                      <div class="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          class="rounded p-1 transition-colors"
+                          :class="pinnedIds.has(record.id)
+                            ? 'text-amber-500 hover:text-amber-400'
+                            : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400'"
+                          :title="pinnedIds.has(record.id) ? 'Unpin' : 'Pin'"
+                          @click.stop="togglePin(record.id)"
+                        >
+                          <svg class="h-3 w-3" :fill="pinnedIds.has(record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="rounded p-1 transition-colors"
+                          :class="watchedIds.has(record.id)
+                            ? 'text-sky-500 hover:text-sky-400'
+                            : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400'"
+                          :title="watchedIds.has(record.id) ? 'Unwatch' : 'Watch'"
+                          @click.stop="toggleWatch(record.id)"
+                        >
+                          <svg class="h-3 w-3" :fill="watchedIds.has(record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        </button>
+                      </div>
+                      <!-- next stage -->
                       <button
-                        v-if="kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) < kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).length - 1 && kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) >= 0"
+                        v-if="kanbanField && kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) < kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).length - 1 && kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) >= 0"
                         type="button"
                         class="flex items-center gap-0.5 text-xs text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded px-1 py-0.5 transition-colors"
                         title="Move to next stage"
