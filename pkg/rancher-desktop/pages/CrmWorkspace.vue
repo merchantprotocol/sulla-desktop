@@ -823,6 +823,26 @@
                   </td>
                 </tr>
               </tbody>
+              <!-- column totals footer — only when at least one numeric column exists -->
+              <tfoot v-if="hasTableTotals && filteredRecords.length > 1">
+                <tr class="bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800">
+                  <td class="pl-6 pr-2 py-2" />
+                  <td
+                    v-for="col in visibleColumns"
+                    :key="col.key"
+                    class="px-4 py-2 text-xs font-medium"
+                    :class="tableColumnTotals[col.key] !== null ? 'text-slate-700 dark:text-slate-300 tabular-nums' : 'text-transparent'"
+                  >
+                    <span v-if="tableColumnTotals[col.key] !== null" :title="`Total: ${tableColumnTotals[col.key]}`">
+                      {{ formatCardValue(tableColumnTotals[col.key], 'number', col.format) }}
+                    </span>
+                  </td>
+                  <!-- Added column -->
+                  <td class="px-4 py-2" />
+                  <!-- action column -->
+                  <td class="w-10 px-4 py-2" />
+                </tr>
+              </tfoot>
             </table>
           </div>
 
@@ -2488,6 +2508,22 @@ const kanbanColumnTotals = computed((): Record<string, string | null> => {
   }
   return result;
 });
+
+const tableColumnTotals = computed((): Record<string, number | null> => {
+  const totals: Record<string, number | null> = {};
+  for (const col of visibleColumns.value) {
+    if (col.data_type !== 'number') { totals[col.key] = null; continue; }
+    totals[col.key] = filteredRecords.value.reduce((s, r) => {
+      const v = r.field_values[col.key];
+      return s + (v != null ? Number(v) : 0);
+    }, 0);
+  }
+  return totals;
+});
+
+const hasTableTotals = computed(() =>
+  Object.values(tableColumnTotals.value).some((v) => v !== null),
+);
 
 // Secondary fields shown on each kanban card (first 2 non-title, non-groupBy fields)
 const kanbanCardFields = computed(() => {
