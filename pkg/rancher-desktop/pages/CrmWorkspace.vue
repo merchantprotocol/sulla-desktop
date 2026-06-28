@@ -5105,7 +5105,25 @@
                     <component :is="ICON_COMPONENTS[selectedType?.icon ?? 'folder']" class="h-4 w-4" />
                   </span>
                   <div class="flex-1 min-w-0">
-                    <h3 class="text-sm font-semibold text-slate-900 dark:text-white truncate">{{ selectedType?.label ?? 'Type' }} — Fields</h3>
+                    <template v-if="schemaTypeLabelDraft !== null">
+                      <input
+                        ref="schemaTypeLabelInputEl"
+                        v-model="schemaTypeLabelDraft"
+                        type="text"
+                        class="w-full text-sm font-semibold rounded px-1 py-0.5 bg-white dark:bg-slate-800 border border-violet-400 text-slate-900 dark:text-white focus:outline-none"
+                        @keydown.enter.prevent="commitSchemaTypeRename"
+                        @keydown.esc.stop="schemaTypeLabelDraft = null"
+                        @blur="commitSchemaTypeRename"
+                        @click.stop
+                      />
+                    </template>
+                    <template v-else>
+                      <h3
+                        class="text-sm font-semibold text-slate-900 dark:text-white truncate cursor-text hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+                        title="Double-click to rename type"
+                        @dblclick.stop="startSchemaTypeRename"
+                      >{{ selectedType?.label ?? 'Type' }} — Fields</h3>
+                    </template>
                     <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ selectedType?.fields.length ?? 0 }} fields · {{ recordCountByType[selectedTypeKey] ?? 0 }} records</p>
                   </div>
                   <button type="button" class="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showSchemaEditor = false">
@@ -5967,6 +5985,8 @@ let previewTimer: ReturnType<typeof setTimeout> | null = null;
 const showSchemaEditor = ref(false);
 const schemaEditorMode = ref<'fields' | 'new-type'>('fields');
 const showAddFieldForm = ref(false);
+const schemaTypeLabelDraft = ref<string | null>(null);
+const schemaTypeLabelInputEl = ref<HTMLInputElement | null>(null);
 const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
 const SCHEMA_ICON_OPTIONS: IconKey[] = ['user', 'building', 'chart', 'target', 'check', 'folder', 'tag', 'list', 'layers', 'star'];
@@ -8641,6 +8661,27 @@ function openSchemaEditor(mode: 'fields' | 'new-type' = 'fields') {
   newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '' };
   newTypeDraft.value = { label: '', key: '', icon: 'folder', color: '#6366f1' };
   showSchemaEditor.value = true;
+}
+
+function startSchemaTypeRename() {
+  const type = schema.find((t) => t.key === selectedTypeKey.value);
+  if (!type) return;
+  schemaTypeLabelDraft.value = type.label;
+  nextTick(() => { schemaTypeLabelInputEl.value?.select(); });
+}
+
+function commitSchemaTypeRename() {
+  const draft = schemaTypeLabelDraft.value?.trim();
+  schemaTypeLabelDraft.value = null;
+  if (!draft) return;
+  const type = schema.find((t) => t.key === selectedTypeKey.value);
+  if (!type) return;
+  const prev = type.label;
+  type.label = draft;
+  if (!type.label_plural || type.label_plural === prev + 's' || type.label_plural === prev) {
+    type.label_plural = draft.endsWith('s') ? draft : draft + 's';
+  }
+  showToast(`Renamed to "${draft}"`);
 }
 
 function addFieldToCurrentType() {
