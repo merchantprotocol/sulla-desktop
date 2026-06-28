@@ -80,6 +80,33 @@ export const crmToolManifests: ToolManifest[] = [
     operationTypes: ['delete'],
     loader:         () => import('./archive_record_type'),
   },
+  {
+    name:        'describe_record_type',
+    description: 'Return a record type\'s full field schema + all relationships. Call this before add_field, create_record, or query_records to see what already exists.',
+    category:    'crm',
+    schemaDef:   {
+      record_type: { type: 'string', description: 'Record type key or id.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./describe_record_type'),
+  },
+  {
+    name:        'update_field',
+    description: 'Patch a field\'s label, config (e.g. select options), is_required, is_unique, or is_title. Accepts field_id directly OR { record_type, field_key } for lookup. Cannot modify system fields, key, or data_type.',
+    category:    'crm',
+    schemaDef:   {
+      field_id:    { type: 'string', optional: true, description: 'Field id to update (preferred).' },
+      record_type: { type: 'string', optional: true, description: 'Record type key or id (used with field_key).' },
+      field_key:   { type: 'string', optional: true, description: 'Field key to look up within the record type.' },
+      label:       { type: 'string', optional: true },
+      config:      { type: 'object', optional: true, description: 'Type-specific config, e.g. select options.' },
+      is_required: { type: 'boolean', optional: true },
+      is_unique:   { type: 'boolean', optional: true },
+      is_title:    { type: 'boolean', optional: true, description: 'Make this the title field; auto-unsets previous title.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./update_field'),
+  },
 
   // ── Data (records) ───────────────────────────────────────────────────────
   {
@@ -129,6 +156,31 @@ export const crmToolManifests: ToolManifest[] = [
     loader:         () => import('./query_records'),
   },
   {
+    name:        'get_record',
+    description: 'Get a single record by id with all field values hydrated. Use after get_linked_records returns an id and you need the full details.',
+    category:    'crm',
+    schemaDef:   {
+      record_id: { type: 'string', description: 'Record id to fetch.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./get_record'),
+  },
+  {
+    name:        'aggregate_records',
+    description: 'Run COUNT / SUM / AVG / MIN / MAX over records of a type. Supports optional groupBy (returns one row per distinct value) and the same filter DSL as query_records. metric ∈ count|sum|avg|min|max (default count). sum/avg/min/max require a { field } key.',
+    category:    'crm',
+    schemaDef:   {
+      record_type: { type: 'string', description: 'Record type key or id.' },
+      metric:      { type: 'enum', enum: ['count', 'sum', 'avg', 'min', 'max'], optional: true, description: 'Aggregation function (default count).' },
+      field:       { type: 'string', optional: true, description: 'Field key to aggregate (required for sum/avg/min/max).' },
+      group_by:    { type: 'string', optional: true, description: 'Field key to group results by.' },
+      filter:      { type: 'object', optional: true, description: 'Same filter DSL as query_records.' },
+      limit:       { type: 'number', optional: true, description: 'Max groups to return (default 100).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./aggregate_records'),
+  },
+  {
     name:        'undo',
     description: 'Revert a previous CRM mutation by its undo token (from an earlier op\'s [undo:...] tag). Reverses create/update/archive/link ops; idempotent.',
     category:    'crm',
@@ -163,7 +215,40 @@ export const crmToolManifests: ToolManifest[] = [
     loader:         () => import('./unlink_records'),
   },
 
+  // ── Relationships ────────────────────────────────────────────────────────
+  {
+    name:        'get_linked_records',
+    description: 'Traverse crm_record_links from/to a record. Returns linked record id/title/type/relationship/direction. Optional: filter by relationship_id or direction ("from"|"to"|"both", default "both").',
+    category:    'crm',
+    schemaDef:   {
+      record_id:       { type: 'string', description: 'Record id whose links to traverse.' },
+      relationship_id: { type: 'string', optional: true, description: 'Restrict to one relationship type.' },
+      direction:       { type: 'enum', enum: ['from', 'to', 'both'], optional: true, description: 'Link direction (default "both").' },
+      limit:           { type: 'number', optional: true, description: 'Max links to return (default 50).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./get_linked_records'),
+  },
+
   // ── Presentation (views / dashboards / widgets) ──────────────────────────
+  {
+    name:        'list_views',
+    description: 'List saved views for a record type (id, name, kind). Call before create_view to avoid duplicates.',
+    category:    'crm',
+    schemaDef:   {
+      record_type: { type: 'string', description: 'Record type key or id.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_views'),
+  },
+  {
+    name:        'list_dashboards',
+    description: 'List dashboards for the tenant with widget counts. Call before create_dashboard to avoid duplicates.',
+    category:    'crm',
+    schemaDef:   {},
+    operationTypes: ['read'],
+    loader:         () => import('./list_dashboards'),
+  },
   {
     name:        'create_view',
     description: 'Create a saved view for a record type. kind ∈ table|kanban|calendar|list|gallery. config carries view options (groupBy, fields, etc.).',
