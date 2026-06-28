@@ -236,6 +236,44 @@
             </button>
           </div>
 
+          <!-- global activity feed (hidden when collapsed) -->
+          <div v-if="globalRecentActivities.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
+            <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+              Activity
+            </p>
+            <button
+              v-for="item in globalRecentActivities"
+              :key="item.activity.id"
+              type="button"
+              class="w-full flex items-start gap-2 px-3 py-1.5 rounded-lg text-left transition-colors group"
+              :class="openedRecord?.id === item.record?.id
+                ? 'bg-slate-100 dark:bg-slate-800'
+                : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+              @click="item.record && (openFromPalette(item.record), nextTick(() => { detailTab = 'activity'; }))"
+            >
+              <!-- activity type icon -->
+              <span
+                class="shrink-0 mt-0.5 h-5 w-5 rounded-full flex items-center justify-center"
+                :class="ACTIVITY_ICON_BG[item.activity.type]"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[item.activity.type]" />
+                </svg>
+              </span>
+              <span class="flex-1 min-w-0">
+                <!-- record name in type color -->
+                <span
+                  class="block text-xs font-medium truncate leading-tight"
+                  :style="item.rt ? { color: item.rt.color } : {}"
+                >{{ item.record?.title ?? '—' }}</span>
+                <!-- truncated content -->
+                <span class="block text-[10px] leading-tight text-slate-400 dark:text-slate-500 truncate mt-0.5">{{ item.activity.content.slice(0, 42) }}{{ item.activity.content.length > 42 ? '…' : '' }}</span>
+              </span>
+              <!-- age label -->
+              <span class="shrink-0 text-[10px] text-slate-300 dark:text-slate-600 group-hover:text-slate-400 dark:group-hover:text-slate-500 mt-0.5 tabular-nums">{{ item.ageLabel }}</span>
+            </button>
+          </div>
+
           <div class="px-2 py-3 border-t border-slate-200 dark:border-slate-700 flex flex-col gap-1">
             <button
               v-if="!sidebarCollapsed"
@@ -6732,6 +6770,20 @@ const lastActivityByRecord = computed((): Record<string, number> => {
     if (!stamps[a.record_id] || t > stamps[a.record_id]) stamps[a.record_id] = t;
   }
   return stamps;
+});
+
+const globalRecentActivities = computed(() => {
+  const sorted = [...mockActivities].sort((a, b) =>
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
+  return sorted.slice(0, 6).map((a) => {
+    const rec = mockRecords.find((r) => r.id === a.record_id) ?? null;
+    const rt = rec ? schema.find((s) => s.key === rec.record_type_key) ?? null : null;
+    const ageMs = new Date(DUE_TODAY_STR).getTime() - new Date(a.created_at).getTime();
+    const ageDays = Math.floor(ageMs / 86_400_000);
+    const ageLabel = ageDays === 0 ? 'today' : ageDays === 1 ? '1d ago' : `${ageDays}d ago`;
+    return { activity: a, record: rec, rt, ageLabel };
+  }).filter((item) => item.record !== null);
 });
 
 // Due-date urgency — first date field in type is used as the due-date proxy
