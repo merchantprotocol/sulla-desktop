@@ -1833,6 +1833,7 @@
                 { keys: ['1-4'], desc: 'Switch record type (no panel open)' },
                 { keys: ['T'], desc: 'Table view' },
                 { keys: ['B'], desc: 'Board / Kanban view' },
+                { keys: ['⌘', 'A'], desc: 'Select all records (table view)' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Esc'], desc: 'Close panel' },
                 { keys: ['?'], desc: 'Toggle this overlay' },
@@ -3309,6 +3310,11 @@ function onGlobalKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
     e.preventDefault();
     showPalette.value = !showPalette.value;
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'a' && !inField && viewMode.value === 'table' && !openedRecord.value && !editingRecord.value && !creatingRecord.value) {
+    e.preventDefault();
+    toggleAll();
     return;
   }
   if (!inField && openedRecord.value && !editingRecord.value) {
