@@ -1236,6 +1236,7 @@
                     v-for="col in visibleColumns"
                     :key="col.key"
                     class="relative px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap"
+                    :class="pinnedColumnKeys.has(col.key) ? 'sticky z-10 shadow-[2px_0_4px_rgba(0,0,0,0.06)]' : ''"
                     :style="columnWidths[col.key] ? { width: `${columnWidths[col.key]}px`, minWidth: `${columnWidths[col.key]}px` } : undefined"
                     @contextmenu.prevent="openColHeaderMenu(col.key, $event)"
                   >
@@ -1459,6 +1460,7 @@
                       col.is_title
                         ? 'font-medium text-slate-900 dark:text-white'
                         : 'text-slate-600 dark:text-slate-400',
+                      pinnedColumnKeys.has(col.key) ? 'sticky z-[1] bg-inherit shadow-[2px_0_4px_rgba(0,0,0,0.04)]' : '',
                     ]"
                   >
                     <div
@@ -3614,6 +3616,14 @@
             Filter by this field
           </button>
           <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="togglePinColumn(colHeaderMenu!.fieldKey); colHeaderMenu = null"
+          >
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+            </svg>
+            {{ pinnedColumnKeys.has(colHeaderMenu?.fieldKey ?? '') ? 'Unpin column' : 'Pin column to left' }}
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
             @click="groupByField = groupByField === colHeaderMenu!.fieldKey ? null : colHeaderMenu!.fieldKey; colHeaderMenu = null">
             <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16" />
@@ -4128,6 +4138,7 @@ const dateAfterFilters = ref<Record<string, string | null>>({});
 const dateBeforeFilters = ref<Record<string, string | null>>({});
 const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
+const pinnedColumnKeys = ref<Set<string>>(new Set());
 const columnWidths = ref<Record<string, number>>({});
 let colResizeDragKey: string | null = null;
 let colResizeDragStart = 0;
@@ -4383,9 +4394,12 @@ const allColumns = computed(() =>
     .sort((a, b) => a.position - b.position),
 );
 
-const visibleColumns = computed(() =>
-  allColumns.value.filter((c) => !hiddenColumnKeys.value.has(c.key)),
-);
+const visibleColumns = computed(() => {
+  const cols = allColumns.value.filter((c) => !hiddenColumnKeys.value.has(c.key));
+  const pinned = cols.filter((c) => pinnedColumnKeys.value.has(c.key));
+  const rest = cols.filter((c) => !pinnedColumnKeys.value.has(c.key));
+  return [...pinned, ...rest];
+});
 
 const activeSortLabel = computed(() => {
   if (!sortField.value) return null;
@@ -5223,6 +5237,13 @@ function toggleColumnVisibility(key: string) {
   hiddenColumnKeys.value = next;
 }
 
+function togglePinColumn(key: string) {
+  const next = new Set(pinnedColumnKeys.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  pinnedColumnKeys.value = next;
+}
+
 function onColResizeMouseDown(e: MouseEvent, colKey: string, currentWidth: number) {
   e.preventDefault();
   colResizeDragKey = colKey;
@@ -5258,6 +5279,7 @@ function selectType(key: string) {
   createdPreset.value = null;
   customOrder.value = [];
   columnWidths.value = {};
+  pinnedColumnKeys.value = new Set();
   draftValues.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
