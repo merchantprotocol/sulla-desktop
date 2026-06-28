@@ -20,7 +20,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1156,6 +1156,17 @@
                         v-if="record.links?.length"
                         class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
                       >{{ record.links.length }}</span>
+                      <button
+                        type="button"
+                        class="shrink-0 mt-0.5 rounded p-0.5 text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400 transition-colors opacity-0 group-hover/card:opacity-100"
+                        title="More actions"
+                        aria-label="More actions"
+                        @click.stop="kanbanCardMenu = kanbanCardMenu?.recordId === record.id ? null : { recordId: record.id, x: $event.clientX, y: $event.clientY }"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                          <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+                        </svg>
+                      </button>
                     </p>
                     <div class="space-y-1">
                       <div
@@ -2171,6 +2182,52 @@
       </div>
     </transition>
 
+    <!-- kanban card overflow menu -->
+    <transition
+      enter-active-class="transition-all duration-100"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-75"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="kanbanCardMenu"
+        class="fixed z-50 w-44 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden py-1"
+        :style="{ top: `${Math.min(kanbanCardMenu.y, window.innerHeight - 200)}px`, left: `${Math.min(kanbanCardMenu.x, window.innerWidth - 180)}px` }"
+        @click.stop
+      >
+        <template v-if="mockRecords.find(r => r.id === kanbanCardMenu?.recordId) as CrmRecord | undefined">
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" @click="openRecord(mockRecords.find(r => r.id === kanbanCardMenu!.recordId)!); kanbanCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+            Open
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" @click="duplicateRecord(mockRecords.find(r => r.id === kanbanCardMenu!.recordId)!); kanbanCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+            Duplicate
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
+            :class="pinnedIds.has(kanbanCardMenu.recordId) ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+            @click="togglePin(kanbanCardMenu!.recordId); kanbanCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0" :fill="pinnedIds.has(kanbanCardMenu.recordId) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+            {{ pinnedIds.has(kanbanCardMenu.recordId) ? 'Unpin' : 'Pin' }}
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
+            :class="watchedIds.has(kanbanCardMenu.recordId) ? 'text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/20' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+            @click="toggleWatch(kanbanCardMenu!.recordId); kanbanCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0" :fill="watchedIds.has(kanbanCardMenu.recordId) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+            {{ watchedIds.has(kanbanCardMenu.recordId) ? 'Unwatch' : 'Watch' }}
+          </button>
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+            @click="deleteRecord(mockRecords.find(r => r.id === kanbanCardMenu!.recordId)!); kanbanCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            Delete
+          </button>
+        </template>
+      </div>
+    </transition>
+
     <!-- table row context menu -->
     <transition
       enter-active-class="transition-all duration-100"
@@ -2604,6 +2661,7 @@ const bulkStageDropdown = ref(false);
 const collapsedColumns = ref<Set<string>>(new Set());
 const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
+const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const loggingNote = ref(false);
 const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
