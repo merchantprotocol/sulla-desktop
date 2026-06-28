@@ -1574,9 +1574,12 @@
                   class="space-y-1 group/field"
                 >
                   <div class="flex items-center gap-1">
-                    <label class="flex-1 text-xs font-medium text-slate-400 dark:text-slate-500">
+                    <label class="flex-1 flex items-center gap-1 text-xs font-medium text-slate-400 dark:text-slate-500">
+                      <svg class="h-3 w-3 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                        <path stroke-linecap="round" stroke-linejoin="round" :d="DATA_TYPE_ICONS[field.data_type] ?? DATA_TYPE_ICONS['text']" />
+                      </svg>
                       {{ field.label }}
-                      <span v-if="field.is_required" class="text-red-400 ml-0.5">*</span>
+                      <span v-if="field.is_required" class="text-red-400">*</span>
                     </label>
                     <template v-if="!editingRecord">
                       <!-- copy field value -->
@@ -2357,6 +2360,17 @@ const ACTIVITY_ICON_BG: Record<CrmActivity['type'], string> = {
   call:    'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400',
   meeting: 'bg-violet-50 dark:bg-violet-950/40 text-violet-500 dark:text-violet-400',
   change:  'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400',
+};
+
+const DATA_TYPE_ICONS: Record<DataType, string> = {
+  text:    'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+  number:  'M7 20l4-16m2 16l4-16M6 9h14M4 15h14',
+  email:   'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+  phone:   'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z',
+  url:     'M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1',
+  boolean: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
+  date:    'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+  select:  'M4 6h16M4 10h16M4 14h16M4 18h16',
 };
 
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
