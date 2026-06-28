@@ -6481,6 +6481,12 @@ const DUE_SOON_STR = (() => {
   return d.toISOString().slice(0, 10);
 })();
 
+function dateOffset(days: number): string {
+  const d = new Date(DUE_TODAY_STR);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 const dueDateField = computed(() =>
   selectedType.value?.fields.find((f) => f.data_type === 'date') ?? null,
 );
@@ -9781,6 +9787,37 @@ const CrmFieldInput = defineComponent({
           h('div', { class: 'h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden' }, [
             h('div', { class: 'h-full rounded-full transition-all', style: `width:${pct}%;background:${color}` }),
           ]),
+        ]);
+      }
+      if (props.dataType === 'date' && !props.readOnly) {
+        const datePresets = [
+          { label: 'Today', v: DUE_TODAY_STR },
+          { label: 'Tomorrow', v: dateOffset(1) },
+          { label: '+1 wk', v: dateOffset(7) },
+          { label: '+1 mo', v: dateOffset(30) },
+        ];
+        const curDateStr = val != null ? String(val) : '';
+        return h('div', { class: 'space-y-1.5' }, [
+          h('div', { class: 'flex gap-1 flex-wrap' },
+            datePresets.map((p) => h('button', {
+              key: p.label,
+              type: 'button',
+              class: 'text-[10px] px-1.5 py-0.5 rounded border transition-colors '
+                + (curDateStr === p.v
+                  ? 'bg-sky-500 border-sky-500 text-white'
+                  : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-sky-400 hover:text-sky-600 dark:hover:text-sky-400'),
+              onClick: () => emit('update:value', curDateStr === p.v ? null : p.v),
+            }, p.label)),
+          ),
+          h('input', {
+            type: 'date',
+            value: curDateStr,
+            class: baseClass,
+            onInput: (e: Event) => {
+              const raw = (e.target as HTMLInputElement).value;
+              emit('update:value', raw === '' ? null : raw);
+            },
+          }),
         ]);
       }
       const inputType = props.dataType === 'number' ? 'number'
