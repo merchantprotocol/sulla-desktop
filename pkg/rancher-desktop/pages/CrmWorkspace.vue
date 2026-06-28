@@ -822,7 +822,7 @@
                     @keydown.esc.stop="showSaveViewPopover = false"
                   />
                   <div class="text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
-                    Saves: type, filters, sort{{ activeFilters.length ? ` (${activeFilters.length} filter${activeFilters.length === 1 ? '' : 's'})` : '' }}{{ sortField ? `, sorted by ${activeSortLabel}` : '' }}, view mode
+                    Saves: type, filters{{ activeFilters.length ? ` (${activeFilters.length})` : '' }}{{ showPinnedOnly ? ', pinned-only' : '' }}{{ showWatchedOnly ? ', watching-only' : '' }}{{ showIncompleteOnly ? ', incomplete-only' : '' }}{{ sortField ? `, sort: ${activeSortLabel}` : '' }}, view mode
                   </div>
                   <div class="flex gap-2">
                     <button
@@ -2715,6 +2715,7 @@ interface SavedView {
   hiddenCols: string[];
   showPinnedOnly: boolean;
   showWatchedOnly: boolean;
+  showIncompleteOnly: boolean;
 }
 
 // ── Icon components (memoized — one component per icon key) ───────────────
@@ -4018,6 +4019,7 @@ function saveCurrentView() {
     hiddenCols: [...hiddenColumnKeys.value],
     showPinnedOnly: showPinnedOnly.value,
     showWatchedOnly: showWatchedOnly.value,
+    showIncompleteOnly: showIncompleteOnly.value,
   };
   savedViews.value = [...savedViews.value, view];
   showSaveViewPopover.value = false;
@@ -4033,6 +4035,7 @@ function applySavedView(view: SavedView) {
   hiddenColumnKeys.value = new Set(view.hiddenCols);
   showPinnedOnly.value = view.showPinnedOnly;
   showWatchedOnly.value = view.showWatchedOnly;
+  showIncompleteOnly.value = view.showIncompleteOnly ?? false;
   searchQuery.value = '';
   closePanel();
 }
