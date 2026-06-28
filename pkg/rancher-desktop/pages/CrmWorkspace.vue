@@ -1136,6 +1136,18 @@
               >
                 Editing
               </span>
+              <!-- copy record link -->
+              <button
+                type="button"
+                aria-label="Copy record link"
+                title="Copy link to this record (C)"
+                class="shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
+                @click="copyRecordLink(openedRecord)"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                </svg>
+              </button>
               <button
                 type="button"
                 :aria-label="watchedIds.has(openedRecord.id) ? 'Stop watching' : 'Watch record'"
@@ -1645,6 +1657,7 @@
               { heading: 'Detail Panel', items: [
                 { keys: ['E'], desc: 'Edit record' },
                 { keys: ['W'], desc: 'Watch / unwatch record' },
+                { keys: ['C'], desc: 'Copy record link' },
                 { keys: ['1'], desc: 'Details tab' },
                 { keys: ['2'], desc: 'Activity tab' },
                 { keys: ['3'], desc: 'Related tab' },
@@ -2885,6 +2898,15 @@ async function copyFieldValue(value: unknown) {
   }
 }
 
+async function copyRecordLink(record: CrmRecord) {
+  try {
+    await navigator.clipboard.writeText(`crm://record/${record.id}`);
+    showToast('Link copied');
+  } catch {
+    // silent fail in non-secure context
+  }
+}
+
 function cycleSelectField(record: CrmRecord, field: CrmField) {
   const opts = field.select_options ?? [];
   if (!opts.length) return;
@@ -2972,6 +2994,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (e.key === '1') { detailTab.value = 'details'; e.preventDefault(); return; }
     if (e.key === '2') { detailTab.value = 'activity'; e.preventDefault(); return; }
     if (e.key === '3') { detailTab.value = 'related'; e.preventDefault(); return; }
+    if (e.key === 'c' && !e.metaKey && !e.ctrlKey) { copyRecordLink(openedRecord.value); e.preventDefault(); return; }
   }
 }
 
