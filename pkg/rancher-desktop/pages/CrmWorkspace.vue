@@ -3,7 +3,7 @@
     class="text-sm font-sans page-root h-full"
     :class="{ dark: isDark }"
     tabindex="-1"
-    @keydown.esc="openedRecord = null"
+    @keydown.esc="openedRecord = null; creatingRecord = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -268,6 +268,76 @@
           </div>
         </div>
 
+        <!-- ── New record form panel ── -->
+        <transition
+          enter-active-class="transition-all duration-200"
+          enter-from-class="translate-x-4 opacity-0"
+          enter-to-class="translate-x-0 opacity-100"
+          leave-active-class="transition-all duration-150"
+          leave-from-class="translate-x-0 opacity-100"
+          leave-to-class="translate-x-4 opacity-0"
+        >
+          <aside
+            v-if="creatingRecord && !openedRecord"
+            class="w-80 shrink-0 flex flex-col border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+          >
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+              <h3 class="text-sm font-semibold text-slate-900 dark:text-white">
+                New {{ selectedType?.label ?? 'Record' }}
+              </h3>
+              <button
+                type="button"
+                class="ml-2 shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
+                @click="creatingRecord = false"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div class="flex-1 px-5 py-4 space-y-4 overflow-y-auto">
+              <div
+                v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
+                :key="field.id"
+                class="space-y-1"
+              >
+                <label class="block text-xs font-medium text-slate-400 dark:text-slate-500">
+                  {{ field.label }}
+                  <span v-if="field.is_required" class="text-red-400 ml-0.5">*</span>
+                </label>
+                <CrmFieldInput
+                  :data-type="field.data_type"
+                  :value="draftValues[field.key] ?? null"
+                  :read-only="false"
+                />
+              </div>
+            </div>
+
+            <div class="px-5 py-4 border-t border-slate-200 dark:border-slate-700">
+              <p class="text-xs text-slate-400 dark:text-slate-500 mb-3">
+                Fields marked <span class="text-red-400">*</span> are required.
+              </p>
+              <div class="flex gap-2">
+                <button
+                  type="button"
+                  class="flex-1 rounded-lg py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors"
+                  @click="creatingRecord = false"
+                >
+                  Save {{ selectedType?.label ?? 'Record' }}
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg py-2 px-3 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                  @click="creatingRecord = false"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </aside>
+        </transition>
+
         <!-- ── Record detail panel ── -->
         <transition
           enter-active-class="transition-all duration-200"
@@ -517,6 +587,8 @@ const selectedTypeKey = ref<string>(schema[0].key);
 const searchQuery = ref('');
 const openedRecord = ref<CrmRecord | null>(null);
 const viewMode = ref<'table' | 'kanban'>('table');
+const creatingRecord = ref(false);
+const draftValues = ref<Record<string, string | number | boolean | null>>({});
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -592,6 +664,8 @@ function selectType(key: string) {
   selectedTypeKey.value = key;
   searchQuery.value = '';
   openedRecord.value = null;
+  creatingRecord.value = false;
+  draftValues.value = {};
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
@@ -601,10 +675,13 @@ function selectType(key: string) {
 
 function openRecord(record: CrmRecord) {
   openedRecord.value = record;
+  creatingRecord.value = false;
 }
 
 function openNewRecord() {
   openedRecord.value = null;
+  draftValues.value = {};
+  creatingRecord.value = true;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
