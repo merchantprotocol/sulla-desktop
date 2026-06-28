@@ -23,7 +23,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -698,6 +698,63 @@
               </button>
             </div>
 
+            <!-- stale records filter -->
+            <div class="relative">
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+                :class="staleDaysFilter
+                  ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/30'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+                :title="staleDaysFilter ? `Showing records with no activity in ${staleDaysFilter}+ days` : 'Show stale records'"
+                @click.stop="showStaleDropdown = !showStaleDropdown"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {{ staleDaysFilter ? `Stale ${staleDaysFilter}d` : 'Stale' }}
+              </button>
+              <transition
+                enter-active-class="transition-all duration-150"
+                enter-from-class="opacity-0 scale-95 -translate-y-1"
+                enter-to-class="opacity-100 scale-100 translate-y-0"
+                leave-active-class="transition-all duration-100"
+                leave-from-class="opacity-100 scale-100 translate-y-0"
+                leave-to-class="opacity-0 scale-95 -translate-y-1"
+              >
+                <div
+                  v-if="showStaleDropdown"
+                  class="absolute top-full right-0 mt-1 z-40 w-40 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg py-1"
+                  @click.stop
+                >
+                  <p class="px-3 pt-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">No activity in</p>
+                  <button
+                    v-for="days in [7, 14, 30, 60]"
+                    :key="days"
+                    type="button"
+                    class="w-full flex items-center justify-between px-3 py-2 text-sm transition-colors"
+                    :class="staleDaysFilter === days
+                      ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20'
+                      : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                    @click="staleDaysFilter = staleDaysFilter === days ? null : days; showStaleDropdown = false"
+                  >
+                    {{ days }}+ days
+                    <svg v-if="staleDaysFilter === days" class="h-3.5 w-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                  </button>
+                  <div v-if="staleDaysFilter" class="border-t border-slate-100 dark:border-slate-800 mt-1 pt-1">
+                    <button
+                      type="button"
+                      class="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                      @click="staleDaysFilter = null; showStaleDropdown = false"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              </transition>
+            </div>
+
             <!-- export button -->
             <button
               type="button"
@@ -1205,11 +1262,21 @@
                           <CrmCellValue :value="row.record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                         </td>
                         <td class="px-4" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
-                          <span
-                            v-if="activityCountByRecord[row.record.id]"
-                            class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400"
-                            :title="`${activityCountByRecord[row.record.id]} activities`"
-                          >{{ activityCountByRecord[row.record.id] }}</span>
+                          <div class="flex items-center gap-1.5">
+                            <span
+                              v-if="activityCountByRecord[row.record.id]"
+                              class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400"
+                              :title="`${activityCountByRecord[row.record.id]} activities`"
+                            >{{ activityCountByRecord[row.record.id] }}</span>
+                            <svg
+                              v-if="staleDaysFilter && staleIds.has(row.record.id)"
+                              class="h-3.5 w-3.5 text-amber-400 shrink-0"
+                              fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
+                              :title="`No activity in ${staleDaysFilter}+ days`"
+                            >
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </div>
                         </td>
                         <td class="w-10 px-4 opacity-0 group-hover:opacity-100 transition-opacity" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                           <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded transition-colors" title="Open record" @click.stop="openRecord(row.record)">
@@ -1364,6 +1431,14 @@
                         :title="`${activityCountByRecord[record.id]} activit${activityCountByRecord[record.id] === 1 ? 'y' : 'ies'}`"
                         @click.stop="openRecord(record); nextTick(() => { detailTab = 'activity'; })"
                       >{{ activityCountByRecord[record.id] }}</button>
+                      <svg
+                        v-if="staleDaysFilter && staleIds.has(record.id)"
+                        class="h-3.5 w-3.5 text-amber-400 shrink-0"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
+                        :title="`No activity in ${staleDaysFilter}+ days`"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
                       <button
                         type="button"
                         class="rounded p-0.5 transition-colors"
@@ -3570,6 +3645,8 @@ const watchedIds = ref<Set<string>>(new Set());
 const COLOR_LABEL_PALETTE = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'] as const;
 const colorLabels = ref<Record<string, string>>({});
 const colorLabelFilter = ref<string | null>(null);
+const staleDaysFilter = ref<number | null>(null);
+const showStaleDropdown = ref(false);
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3651,6 +3728,18 @@ const lastActivityByRecord = computed((): Record<string, number> => {
     if (!stamps[a.record_id] || t > stamps[a.record_id]) stamps[a.record_id] = t;
   }
   return stamps;
+});
+
+const staleIds = computed((): Set<string> => {
+  const days = staleDaysFilter.value;
+  if (!days) return new Set();
+  const cutoff = Date.now() - days * 86_400_000;
+  const out = new Set<string>();
+  for (const r of mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value)) {
+    const last = lastActivityByRecord.value[r.id] ?? new Date(r.created_at).getTime();
+    if (last < cutoff) out.add(r.id);
+  }
+  return out;
 });
 
 const stageDistribution = computed((): Array<{ label: string; count: number; pct: number }> => {
@@ -3784,6 +3873,14 @@ const filteredRecords = computed(() => {
   if (colorLabelFilter.value) {
     const fc = colorLabelFilter.value;
     result = result.filter((r) => colorLabels.value[r.id] === fc);
+  }
+
+  if (staleDaysFilter.value) {
+    const cutoff = Date.now() - staleDaysFilter.value * 86_400_000;
+    result = result.filter((r) => {
+      const last = lastActivityByRecord.value[r.id] ?? new Date(r.created_at).getTime();
+      return last < cutoff;
+    });
   }
 
   if (sortField.value) {
@@ -4372,6 +4469,7 @@ function selectType(key: string) {
   showInlineAdd.value = false;
   inlineAddTitle.value = '';
   colorLabelFilter.value = null;
+  staleDaysFilter.value = null;
   draftValues.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
@@ -4947,6 +5045,7 @@ function onKeyR(e: KeyboardEvent) {
   showIncompleteOnly.value = false;
   groupByField.value = null;
   colorLabelFilter.value = null;
+  staleDaysFilter.value = null;
   if (hadState) showToast('View reset');
 }
 
