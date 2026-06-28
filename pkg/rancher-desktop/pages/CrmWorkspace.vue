@@ -21,7 +21,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -112,6 +112,40 @@
               </div>
             </template>
           </nav>
+
+          <!-- saved views (hidden when collapsed) -->
+          <div v-if="savedViews.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
+            <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+              Views
+            </p>
+            <div
+              v-for="sv in savedViews"
+              :key="sv.id"
+              class="group/sv flex items-center rounded-lg transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60"
+            >
+              <button
+                type="button"
+                class="flex-1 flex items-center gap-2 px-3 py-1.5 text-left text-xs min-w-0 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+                @click="applySavedView(sv)"
+              >
+                <svg class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+                <span class="truncate">{{ sv.name }}</span>
+                <span class="shrink-0 text-xs text-slate-300 dark:text-slate-700 font-medium capitalize">{{ sv.typeKey }}</span>
+              </button>
+              <button
+                type="button"
+                class="shrink-0 mr-2 h-4 w-4 rounded flex items-center justify-center opacity-0 group-hover/sv:opacity-100 transition-all text-slate-400 hover:text-red-400 dark:hover:text-red-400"
+                :title="`Delete '${sv.name}'`"
+                @click.stop="deleteSavedView(sv.id)"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          </div>
 
           <!-- recent records (hidden when collapsed) -->
           <div v-if="recentRecords.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
@@ -708,6 +742,67 @@
                 </svg>
                 Board
               </button>
+            </div>
+
+            <!-- save view popover -->
+            <div class="relative" @click.stop>
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+                :class="showSaveViewPopover
+                  ? 'border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+                title="Save this view"
+                @click="showSaveViewPopover = !showSaveViewPopover"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+              </button>
+              <transition
+                enter-active-class="transition-all duration-150"
+                enter-from-class="opacity-0 scale-95 -translate-y-1"
+                enter-to-class="opacity-100 scale-100 translate-y-0"
+                leave-active-class="transition-all duration-100"
+                leave-from-class="opacity-100 scale-100 translate-y-0"
+                leave-to-class="opacity-0 scale-95 -translate-y-1"
+              >
+                <div
+                  v-if="showSaveViewPopover"
+                  class="absolute top-full right-0 mt-1 z-40 w-64 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg p-3 space-y-2"
+                >
+                  <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">Save current view</p>
+                  <input
+                    ref="saveViewInputEl"
+                    v-model="saveViewName"
+                    type="text"
+                    placeholder="View name…"
+                    class="h-8 w-full rounded-lg px-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/40"
+                    @keydown.enter.prevent="saveCurrentView"
+                    @keydown.esc.stop="showSaveViewPopover = false"
+                  />
+                  <div class="text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
+                    Saves: type, filters, sort{{ activeFilters.length ? ` (${activeFilters.length} filter${activeFilters.length === 1 ? '' : 's'})` : '' }}{{ sortField ? `, sorted by ${activeSortLabel}` : '' }}, view mode
+                  </div>
+                  <div class="flex gap-2">
+                    <button
+                      type="button"
+                      class="flex-1 h-8 rounded-lg text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors disabled:opacity-40"
+                      :disabled="!saveViewName.trim()"
+                      @click="saveCurrentView"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      class="h-8 px-3 rounded-lg text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      @click="showSaveViewPopover = false"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </transition>
             </div>
 
             <button
@@ -2427,6 +2522,19 @@ interface CrmActivity {
   created_at: string;
 }
 
+interface SavedView {
+  id: string;
+  name: string;
+  typeKey: string;
+  filters: Array<{ fieldKey: string; value: string }>;
+  sortField: string | null;
+  sortDir: 'asc' | 'desc';
+  viewMode: 'table' | 'kanban';
+  hiddenCols: string[];
+  showPinnedOnly: boolean;
+  showWatchedOnly: boolean;
+}
+
 // ── Icon components (memoized — one component per icon key) ───────────────
 
 const ICON_PATHS: Record<IconKey, string> = {
@@ -2699,6 +2807,13 @@ const filterPickerField = ref<string | null>(null);
 const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const lastSelectedIdx = ref(-1);
+const savedViews = ref<SavedView[]>([]);
+const showSaveViewPopover = ref(false);
+const saveViewName = ref('');
+const saveViewInputEl = ref<HTMLInputElement | null>(null);
+watch(showSaveViewPopover, (val) => {
+  if (val) { saveViewName.value = ''; nextTick(() => saveViewInputEl.value?.focus()); }
+});
 const loggingNote = ref(false);
 const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
 watch(loggingNote, (val) => { if (val) nextTick(() => activityTextareaEl.value?.focus()); });
@@ -2743,6 +2858,7 @@ watch(creatingRecord, (val) => { if (val) nextTick(() => newRecordTitleInputEl.v
 const LS_KEY_VIEW_MODE = 'crm:viewMode';
 const LS_KEY_HIDDEN_COLS = 'crm:hiddenCols';
 const LS_KEY_ROW_DENSITY = 'crm:rowDensity';
+const LS_KEY_SAVED_VIEWS = 'crm:savedViews';
 
 onMounted(() => {
   try {
@@ -2752,12 +2868,15 @@ onMounted(() => {
     if (savedHidden) hiddenColumnKeys.value = new Set(JSON.parse(savedHidden) as string[]);
     const savedDensity = localStorage.getItem(LS_KEY_ROW_DENSITY) as 'comfortable' | 'compact' | null;
     if (savedDensity === 'comfortable' || savedDensity === 'compact') rowDensity.value = savedDensity;
+    const sv = localStorage.getItem(LS_KEY_SAVED_VIEWS);
+    if (sv) savedViews.value = JSON.parse(sv) as SavedView[];
   } catch { /* storage not available */ }
 });
 
 watch(viewMode, (val) => { try { localStorage.setItem(LS_KEY_VIEW_MODE, val); } catch { /* ignore */ } });
 watch(hiddenColumnKeys, (val) => { try { localStorage.setItem(LS_KEY_HIDDEN_COLS, JSON.stringify([...val])); } catch { /* ignore */ } });
 watch(rowDensity, (val) => { try { localStorage.setItem(LS_KEY_ROW_DENSITY, val); } catch { /* ignore */ } });
+watch(savedViews, (val) => { try { localStorage.setItem(LS_KEY_SAVED_VIEWS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -3627,6 +3746,43 @@ function restoreDeletedRecord() {
   if (snap.wasPinned) { const next = new Set(pinnedIds.value); next.add(snap.record.id); pinnedIds.value = next; }
   if (snap.wasWatched) { const next = new Set(watchedIds.value); next.add(snap.record.id); watchedIds.value = next; }
   showToast('Delete undone');
+}
+
+function saveCurrentView() {
+  const name = saveViewName.value.trim();
+  if (!name) return;
+  const view: SavedView = {
+    id: 'sv-' + String(Date.now()) + '-' + String(savedViews.value.length),
+    name,
+    typeKey: selectedTypeKey.value,
+    filters: activeFilters.value.slice(),
+    sortField: sortField.value,
+    sortDir: sortDir.value,
+    viewMode: viewMode.value,
+    hiddenCols: [...hiddenColumnKeys.value],
+    showPinnedOnly: showPinnedOnly.value,
+    showWatchedOnly: showWatchedOnly.value,
+  };
+  savedViews.value = [...savedViews.value, view];
+  showSaveViewPopover.value = false;
+  showToast('View saved');
+}
+
+function applySavedView(view: SavedView) {
+  selectedTypeKey.value = view.typeKey;
+  activeFilters.value = view.filters.slice();
+  sortField.value = view.sortField;
+  sortDir.value = view.sortDir;
+  viewMode.value = view.viewMode;
+  hiddenColumnKeys.value = new Set(view.hiddenCols);
+  showPinnedOnly.value = view.showPinnedOnly;
+  showWatchedOnly.value = view.showWatchedOnly;
+  searchQuery.value = '';
+  closePanel();
+}
+
+function deleteSavedView(id: string) {
+  savedViews.value = savedViews.value.filter((v) => v.id !== id);
 }
 
 function duplicateRecord(record: CrmRecord) {
