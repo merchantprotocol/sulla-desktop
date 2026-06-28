@@ -1567,8 +1567,30 @@
             />
             <kbd class="text-xs text-slate-400 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 font-mono">esc</kbd>
           </div>
+          <!-- quick-create chips — shown when no query -->
+          <div v-if="!paletteQuery.trim()" class="px-4 pt-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+            <p class="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-2">Create</p>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="rt in schema"
+                :key="rt.key"
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium border transition-colors"
+                :style="{ borderColor: rt.color + '55', color: rt.color, background: rt.color + '11' }"
+                @click="showPalette = false; selectedTypeKey = rt.key; openNewRecord()"
+              >
+                <component :is="ICON_COMPONENTS[rt.icon]" class="h-3 w-3" />
+                New {{ rt.label }}
+              </button>
+            </div>
+          </div>
+
           <!-- results -->
-          <div class="py-2 max-h-80 overflow-y-auto">
+          <div class="max-h-72 overflow-y-auto">
+            <p
+              v-if="!paletteQuery.trim()"
+              class="px-4 pt-3 pb-1 text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wide"
+            >Recent</p>
             <button
               v-for="(record, idx) in paletteResults"
               :key="record.id"
