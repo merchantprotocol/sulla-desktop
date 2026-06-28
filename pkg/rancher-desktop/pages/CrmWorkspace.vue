@@ -113,7 +113,10 @@
                     :class="(completenessRateByType[rt.key] ?? 0) >= 80 ? 'bg-emerald-400 dark:bg-emerald-500' : (completenessRateByType[rt.key] ?? 0) >= 50 ? 'bg-amber-400 dark:bg-amber-500' : 'bg-rose-400 dark:bg-rose-500'"
                     :title="`${completenessRateByType[rt.key] ?? 0}% of ${rt.label_plural.toLowerCase()} fully complete`"
                   />
-                  <span class="text-xs text-slate-400 dark:text-slate-500 tabular-nums group-hover/type:opacity-0 transition-opacity">{{ recordCountByType[rt.key] ?? 0 }}</span>
+                  <span
+                    class="text-xs text-slate-400 dark:text-slate-500 tabular-nums group-hover/type:opacity-0 transition-opacity"
+                    :title="typeCurrencyQuickStat[rt.key] ? `${recordCountByType[rt.key] ?? 0} records · ${typeCurrencyQuickStat[rt.key]} total` : undefined"
+                  >{{ typeCurrencyQuickStat[rt.key] ?? (recordCountByType[rt.key] ?? 0) }}</span>
                 </button>
                 <!-- quick-create + button, appears on hover -->
                 <button
@@ -6403,6 +6406,26 @@ const stageDistribution = computed((): Array<{ label: string; count: number; pct
   return order
     .filter((s) => counts[s] != null)
     .map((s) => ({ label: s, count: counts[s], pct: Math.round((counts[s] / total) * 100) }));
+});
+
+// For types with a currency field, show the pipeline sum in the sidebar
+const typeCurrencyQuickStat = computed((): Record<string, string | null> => {
+  const result: Record<string, string | null> = {};
+  for (const rt of schema) {
+    const currField = rt.fields.find((f) => f.format === 'currency' && f.data_type === 'number');
+    if (!currField) { result[rt.key] = null; continue; }
+    const recs = mockRecords.filter((r) => r.record_type_key === rt.key);
+    const sum = recs.reduce((acc, r) => {
+      const v = r.field_values[currField.key];
+      return acc + (typeof v === 'number' ? v : 0);
+    }, 0);
+    result[rt.key] = sum >= 1_000_000
+      ? '$' + (sum / 1_000_000).toFixed(1) + 'M'
+      : sum >= 1_000
+        ? '$' + Math.round(sum / 1_000) + 'k'
+        : '$' + sum;
+  }
+  return result;
 });
 
 const completenessRateByType = computed((): Record<string, number> => {
