@@ -1162,6 +1162,7 @@
                         :class="openedRecord?.id === row.record.id
                           ? 'bg-sky-50 dark:bg-sky-950/20'
                           : 'hover:bg-white dark:hover:bg-slate-900'"
+                        :style="colorLabels[row.record.id] ? { boxShadow: `inset 3px 0 0 ${colorLabels[row.record.id]}` } : undefined"
                         :data-record-id="row.record.id"
                         @click="openRecord(row.record)"
                         @contextmenu.prevent="openContextMenu(row.record, $event)"
@@ -1202,6 +1203,7 @@
                   :class="openedRecord?.id === record.id
                     ? 'bg-sky-50 dark:bg-sky-950/20'
                     : 'hover:bg-white dark:hover:bg-slate-900'"
+                  :style="colorLabels[record.id] ? { boxShadow: `inset 3px 0 0 ${colorLabels[record.id]}` } : undefined"
                   :data-record-id="record.id"
                   @click="openRecord(record)"
                   @contextmenu.prevent="openContextMenu(record, $event)"
@@ -1516,6 +1518,7 @@
                     :class="openedRecord?.id === record.id
                       ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800 shadow-md'
                       : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700'"
+                    :style="colorLabels[record.id] ? { borderTopColor: colorLabels[record.id], borderTopWidth: '3px' } : undefined"
                     @click="openRecord(record)"
                   >
                     <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug mb-2 line-clamp-2 flex items-start gap-1.5">
@@ -2763,6 +2766,29 @@
           </button>
         </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <div class="px-3 pt-1.5 pb-2">
+          <p class="pb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Color label</p>
+          <div class="flex items-center gap-1.5">
+            <button
+              v-for="c in COLOR_LABEL_PALETTE"
+              :key="c"
+              type="button"
+              class="h-4 w-4 rounded-full transition-transform hover:scale-125 focus:outline-none"
+              :style="{ background: c, boxShadow: colorLabels[contextMenuRecord.id] === c ? `0 0 0 2px white, 0 0 0 3.5px ${c}` : 'none' }"
+              @click="setColorLabel(contextMenuRecord.id, colorLabels[contextMenuRecord.id] === c ? '' : c)"
+            />
+            <button
+              v-if="colorLabels[contextMenuRecord.id]"
+              type="button"
+              class="ml-1 h-4 w-4 rounded-full flex items-center justify-center text-slate-400 border border-slate-300 dark:border-slate-600 hover:text-slate-600 transition-colors"
+              title="Clear label"
+              @click="setColorLabel(contextMenuRecord.id, '')"
+            >
+              <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+        </div>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button
           type="button"
           class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors text-red-400 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400"
@@ -3487,6 +3513,8 @@ const recentRecords = ref<CrmRecord[]>([]); // last 5 opened, newest first
 const linkQuery = ref('');
 const linkDropdownOpen = ref(false);
 const watchedIds = ref<Set<string>>(new Set());
+const COLOR_LABEL_PALETTE = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'] as const;
+const colorLabels = ref<Record<string, string>>({});
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -4469,6 +4497,11 @@ function toggleWatch(id: string) {
     showToast('Watching record');
   }
   watchedIds.value = next;
+}
+
+function setColorLabel(recordId: string, color: string) {
+  if (color) { colorLabels.value = { ...colorLabels.value, [recordId]: color }; }
+  else { const next = { ...colorLabels.value }; delete next[recordId]; colorLabels.value = next; }
 }
 
 function moveCardStage(record: CrmRecord, dir: 1 | -1) {
