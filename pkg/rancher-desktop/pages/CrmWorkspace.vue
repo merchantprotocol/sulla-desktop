@@ -1419,21 +1419,49 @@
                   </td>
                 </tr>
                 <!-- inline quick-add row -->
-                <tr
-                  v-if="!creatingRecord"
-                  class="group/addrow"
-                >
+                <tr v-if="!creatingRecord && !showInlineAdd" class="group/addrow">
                   <td :colspan="visibleColumns.length + 3" class="px-6 py-1.5">
                     <button
                       type="button"
                       class="flex items-center gap-1.5 text-xs text-slate-300 dark:text-slate-700 hover:text-sky-500 dark:hover:text-sky-400 transition-colors py-1"
-                      @click="openNewRecord()"
+                      @click="showInlineAdd = true"
                     >
                       <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
                       </svg>
                       Add {{ selectedType?.label ?? 'record' }}
                     </button>
+                  </td>
+                </tr>
+                <!-- inline add input row -->
+                <tr v-else-if="showInlineAdd" class="bg-sky-50/50 dark:bg-sky-950/10">
+                  <td class="pl-6 pr-2 py-2" />
+                  <td :colspan="visibleColumns.length + 1" class="px-3 py-2">
+                    <input
+                      ref="inlineAddInputEl"
+                      v-model="inlineAddTitle"
+                      type="text"
+                      :placeholder="`New ${selectedType?.label ?? 'record'} title…`"
+                      class="w-full rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-slate-900 border border-sky-300 dark:border-sky-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                      @keydown.enter.prevent="commitInlineAdd"
+                      @keydown.esc.stop="showInlineAdd = false; inlineAddTitle = ''"
+                    >
+                  </td>
+                  <td class="pr-4 py-2">
+                    <div class="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        class="h-7 px-2.5 rounded-lg text-xs font-medium bg-sky-500 hover:bg-sky-600 text-white transition-colors"
+                        @click="commitInlineAdd"
+                      >Save</button>
+                      <button
+                        type="button"
+                        class="h-7 px-2 rounded-lg text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        @click="showInlineAdd = false; inlineAddTitle = ''"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -3524,6 +3552,10 @@ watch(annotatingField, (val) => { if (val) nextTick(() => annotationInputEl.valu
 
 const newRecordTitleInputEl = ref<HTMLInputElement | null>(null);
 watch(creatingRecord, (val) => { if (val) nextTick(() => newRecordTitleInputEl.value?.focus()); });
+const showInlineAdd = ref(false);
+const inlineAddTitle = ref('');
+const inlineAddInputEl = ref<HTMLInputElement | null>(null);
+watch(showInlineAdd, (val) => { if (val) nextTick(() => inlineAddInputEl.value?.focus()); });
 
 // ── localStorage persistence ────────────────────────────────────────────────
 const LS_KEY_VIEW_MODE = 'crm:viewMode';
@@ -4300,6 +4332,8 @@ function selectType(key: string) {
   openedRecord.value = null;
   editingRecord.value = false;
   creatingRecord.value = false;
+  showInlineAdd.value = false;
+  inlineAddTitle.value = '';
   draftValues.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
@@ -4443,6 +4477,26 @@ function saveNewRecord() {
   });
   creatingRecord.value = false;
   draftValues.value = {};
+  openRecord(newRecord);
+  showToast(`${type?.label ?? 'Record'} created`);
+}
+
+function commitInlineAdd() {
+  const title = inlineAddTitle.value.trim();
+  showInlineAdd.value = false;
+  inlineAddTitle.value = '';
+  if (!title) return;
+  const type = selectedType.value;
+  const titleField = type?.fields.find((f) => f.is_title);
+  const newRecord: CrmRecord = {
+    id: 'new-' + selectedTypeKey.value + '-' + String(mockRecords.length),
+    record_type_key: selectedTypeKey.value,
+    title,
+    created_at: new Date().toISOString(),
+    field_values: titleField ? { [titleField.key]: title } : {},
+    links: [],
+  };
+  mockRecords.push(newRecord);
   openRecord(newRecord);
   showToast(`${type?.label ?? 'Record'} created`);
 }
