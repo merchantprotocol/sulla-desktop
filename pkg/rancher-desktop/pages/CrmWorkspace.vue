@@ -170,6 +170,29 @@
               >{{ activeFilters.length }}</span>
             </button>
 
+            <!-- active sort chip -->
+            <div
+              v-if="sortField && viewMode === 'table'"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800"
+            >
+              <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path v-if="sortDir === 'asc'" stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                <path v-else stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+              <span>{{ activeSortLabel }}</span>
+              <button
+                type="button"
+                class="ml-0.5 rounded-full hover:bg-violet-200 dark:hover:bg-violet-800 p-0.5 transition-colors"
+                aria-label="Clear sort"
+                title="Clear sort"
+                @click.stop="sortField = null; sortDir = 'asc'"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
             <!-- export button — placeholder -->
             <button
               type="button"
@@ -1329,6 +1352,12 @@ const allColumns = computed(() =>
 const visibleColumns = computed(() =>
   allColumns.value.filter((c) => !hiddenColumnKeys.value.has(c.key)),
 );
+
+const activeSortLabel = computed(() => {
+  if (!sortField.value) return null;
+  if (sortField.value === '__created_at__') return 'Added';
+  return allColumns.value.find((c) => c.key === sortField.value)?.label ?? sortField.value;
+});
 
 const filteredRecords = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
