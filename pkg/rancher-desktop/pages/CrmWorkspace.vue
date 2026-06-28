@@ -4,6 +4,7 @@
     :class="{ dark: isDark }"
     tabindex="-1"
     @keydown.esc="openedRecord = null; creatingRecord = false; editingRecord = false"
+    @keydown.n.exact="onKeyN"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -809,6 +810,12 @@ function openNewRecord() {
   openedRecord.value = null;
   draftValues.value = {};
   creatingRecord.value = true;
+}
+
+function onKeyN(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  openNewRecord();
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
