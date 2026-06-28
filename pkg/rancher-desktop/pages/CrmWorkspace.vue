@@ -1105,7 +1105,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, defineComponent, h, onMounted } from 'vue';
+import { ref, reactive, computed, defineComponent, h, onMounted } from 'vue';
 import AgentHeader from '@pkg/pages/agent/AgentHeader.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 
@@ -1308,7 +1308,7 @@ const mockRecords: CrmRecord[] = [
 
 // ── Mock activity feed ─────────────────────────────────────────────────────
 
-const mockActivities: CrmActivity[] = [
+const mockActivities = reactive<CrmActivity[]>([
   { id: 'a1',  record_id: 'r1',  type: 'call',    content: 'Discovery call — Jordan confirmed Q3 budget. Warm to expansion.', author: 'JB', created_at: '2026-06-25T14:30:00Z' },
   { id: 'a2',  record_id: 'r1',  type: 'email',   content: 'Sent proposal deck and pricing overview.', author: 'JB', created_at: '2026-06-20T11:00:00Z' },
   { id: 'a3',  record_id: 'r1',  type: 'note',    content: 'Met at MastermindLive event. Strong referral potential.', author: 'JB', created_at: '2026-05-14T09:00:00Z' },
@@ -1325,7 +1325,7 @@ const mockActivities: CrmActivity[] = [
   { id: 'a16', record_id: 'r16', type: 'meeting', content: 'Discovery meeting with Aisha. Strong alignment on advisory scope.', author: 'JB', created_at: '2026-06-25T10:00:00Z' },
   { id: 'a12', record_id: 'r10', type: 'note',    content: 'High score on webinar quiz. Followed up via email — no reply yet.', author: 'JB', created_at: '2026-06-21T12:00:00Z' },
   { id: 'a13', record_id: 'r11', type: 'call',    content: 'Converted — signed up for $1 Pool same day as first outreach.', author: 'JB', created_at: '2026-06-22T14:00:00Z' },
-];
+]);
 
 // ── Kanban stage ordering per record type ─────────────────────────────────
 
