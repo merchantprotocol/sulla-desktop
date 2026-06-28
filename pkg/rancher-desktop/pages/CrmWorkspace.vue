@@ -873,7 +873,7 @@
 
           <!-- active filter pills -->
           <div
-            v-if="activeFilters.length || groupByField || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null)"
+            v-if="activeFilters.length || groupByField || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null) || Object.values(dateAfterFilters).some(v => v) || Object.values(dateBeforeFilters).some(v => v)"
             class="flex items-center gap-2 px-6 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-950/50 flex-wrap"
           >
             <!-- group-by chip -->
@@ -896,7 +896,7 @@
                 </svg>
               </button>
             </div>
-            <span v-if="activeFilters.length || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null)" class="text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">Filtered by:</span>
+            <span v-if="activeFilters.length || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null) || Object.values(dateAfterFilters).some(v => v) || Object.values(dateBeforeFilters).some(v => v)" class="text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">Filtered by:</span>
             <!-- select-field filter chips -->
             <div
               v-for="f in activeFilters"
@@ -966,6 +966,29 @@
                   :aria-label="`Remove ${fkey} max filter`"
                   @click="numberMaxFilters = { ...numberMaxFilters, [fkey]: null }"
                 >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </template>
+            <!-- date range filter chips -->
+            <template v-for="(val, fkey) in dateAfterFilters" :key="'dafter:' + fkey">
+              <div
+                v-if="val"
+                class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300"
+              >
+                <span>{{ allColumns.find(c => c.key === fkey)?.label }} <b>after {{ val }}</b></span>
+                <button type="button" class="ml-0.5 text-teal-400 hover:text-teal-600 dark:hover:text-teal-200 transition-colors leading-none" @click="dateAfterFilters = { ...dateAfterFilters, [fkey]: null }">
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </template>
+            <template v-for="(val, fkey) in dateBeforeFilters" :key="'dbefore:' + fkey">
+              <div
+                v-if="val"
+                class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300"
+              >
+                <span>{{ allColumns.find(c => c.key === fkey)?.label }} <b>before {{ val }}</b></span>
+                <button type="button" class="ml-0.5 text-teal-400 hover:text-teal-600 dark:hover:text-teal-200 transition-colors leading-none" @click="dateBeforeFilters = { ...dateBeforeFilters, [fkey]: null }">
                   <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
@@ -2887,6 +2910,34 @@
             </div>
           </div>
         </template>
+        <template v-if="allColumns.find(c => c.key === colHeaderMenu?.fieldKey)?.data_type === 'date'">
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <div class="px-3 py-2 space-y-1.5">
+            <p class="text-xs text-slate-400 dark:text-slate-500 font-medium">Date range:</p>
+            <div class="space-y-1">
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-slate-400 dark:text-slate-500 w-10 shrink-0">After</span>
+                <input
+                  type="date"
+                  :value="dateAfterFilters[colHeaderMenu?.fieldKey ?? ''] ?? ''"
+                  class="h-7 flex-1 rounded-lg px-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                  @input="dateAfterFilters = { ...dateAfterFilters, [colHeaderMenu!.fieldKey]: ($event.target as HTMLInputElement).value || null }"
+                  @click.stop
+                />
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-slate-400 dark:text-slate-500 w-10 shrink-0">Before</span>
+                <input
+                  type="date"
+                  :value="dateBeforeFilters[colHeaderMenu?.fieldKey ?? ''] ?? ''"
+                  class="h-7 flex-1 rounded-lg px-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                  @input="dateBeforeFilters = { ...dateBeforeFilters, [colHeaderMenu!.fieldKey]: ($event.target as HTMLInputElement).value || null }"
+                  @click.stop
+                />
+              </div>
+            </div>
+          </div>
+        </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           @click="hiddenColumnKeys = new Set([...hiddenColumnKeys, colHeaderMenu!.fieldKey]); colHeaderMenu = null">
@@ -3317,6 +3368,8 @@ const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
 const fieldTextFilters = ref<Record<string, string>>({});
 const numberMinFilters = ref<Record<string, number | null>>({});
 const numberMaxFilters = ref<Record<string, number | null>>({});
+const dateAfterFilters = ref<Record<string, string | null>>({});
+const dateBeforeFilters = ref<Record<string, string | null>>({});
 const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
 const showColumnsMenu = ref(false);
@@ -3577,6 +3630,24 @@ const filteredRecords = computed(() => {
       }
       for (const [k, max] of nMaxE) {
         if (max != null && Number(r.field_values[k] ?? 0) > max) return false;
+      }
+      return true;
+    });
+  }
+
+  const dAfterE = Object.entries(dateAfterFilters.value).filter(([, v]) => v);
+  const dBeforeE = Object.entries(dateBeforeFilters.value).filter(([, v]) => v);
+  if (dAfterE.length || dBeforeE.length) {
+    result = result.filter((r) => {
+      for (const [k, after] of dAfterE) {
+        if (!after) continue;
+        const rv = r.field_values[k];
+        if (!rv || new Date(String(rv)) < new Date(after)) return false;
+      }
+      for (const [k, before] of dBeforeE) {
+        if (!before) continue;
+        const rv = r.field_values[k];
+        if (!rv || new Date(String(rv)) > new Date(before)) return false;
       }
       return true;
     });
@@ -4121,6 +4192,8 @@ function clearFilters() {
   fieldTextFilters.value = {};
   numberMinFilters.value = {};
   numberMaxFilters.value = {};
+  dateAfterFilters.value = {};
+  dateBeforeFilters.value = {};
 }
 
 function startCellEdit(record: CrmRecord, col: CrmField) {
@@ -4685,12 +4758,14 @@ function onKeyR(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
-  const hadState = searchQuery.value || activeFilters.value.length || Object.values(fieldTextFilters.value).some(v => v.trim()) || Object.values(numberMinFilters.value).some(v => v != null) || Object.values(numberMaxFilters.value).some(v => v != null) || sortField.value || showPinnedOnly.value || showWatchedOnly.value || showIncompleteOnly.value || groupByField.value;
+  const hadState = searchQuery.value || activeFilters.value.length || Object.values(fieldTextFilters.value).some(v => v.trim()) || Object.values(numberMinFilters.value).some(v => v != null) || Object.values(numberMaxFilters.value).some(v => v != null) || Object.values(dateAfterFilters.value).some(v => v) || Object.values(dateBeforeFilters.value).some(v => v) || sortField.value || showPinnedOnly.value || showWatchedOnly.value || showIncompleteOnly.value || groupByField.value;
   searchQuery.value = '';
   activeFilters.value = [];
   fieldTextFilters.value = {};
   numberMinFilters.value = {};
   numberMaxFilters.value = {};
+  dateAfterFilters.value = {};
+  dateBeforeFilters.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
   sortField2.value = null;
