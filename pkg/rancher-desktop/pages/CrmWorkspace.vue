@@ -418,6 +418,7 @@
                   :value="openedRecord.field_values[field.key]"
                   :read-only="!editingRecord"
                   :select-options="field.select_options ?? []"
+                  :format="field.format"
                 />
               </div>
             </div>
@@ -861,6 +862,7 @@ const CrmFieldInput = defineComponent({
     dataType: { type: String as () => DataType, required: true },
     readOnly: { type: Boolean, default: false },
     selectOptions: { type: Array as () => string[], default: () => [] },
+    format: { type: String as () => FieldFormat, default: undefined },
   },
   setup(props) {
     return () => {
@@ -891,6 +893,23 @@ const CrmFieldInput = defineComponent({
           h('option', { value: '' }, '— select —'),
           ...opts.map((o) => h('option', { value: o, selected: String(val) === o }, o)),
         ]);
+      }
+      if (props.readOnly && props.dataType === 'number' && props.format) {
+        let displayVal = '';
+        if (val != null && val !== '') {
+          const n = Number(val);
+          if (props.format === 'currency') {
+            displayVal = '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+          } else if (props.format === 'percent') {
+            displayVal = n + '%';
+          }
+        }
+        return h('input', {
+          type: 'text',
+          value: displayVal,
+          readonly: true,
+          class: baseClass + ' opacity-80 cursor-default tabular-nums',
+        });
       }
       return h('input', {
         type: props.dataType === 'number' ? 'number' : props.dataType === 'date' ? 'date' : 'text',
