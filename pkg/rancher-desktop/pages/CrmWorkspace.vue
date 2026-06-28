@@ -616,7 +616,12 @@
                         class="flex items-center gap-1.5 text-xs"
                       >
                         <span class="text-slate-400 dark:text-slate-500 shrink-0">{{ f.label }}:</span>
-                        <span class="truncate text-slate-600 dark:text-slate-300">{{ formatCardValue(record.field_values[f.key], f.data_type, f.format) }}</span>
+                        <span
+                          v-if="f.data_type === 'select' && record.field_values[f.key]"
+                          class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-medium shrink-0"
+                          :class="selectBadgeClass(String(record.field_values[f.key]))"
+                        >{{ record.field_values[f.key] }}</span>
+                        <span v-else class="truncate text-slate-600 dark:text-slate-300">{{ formatCardValue(record.field_values[f.key], f.data_type, f.format) }}</span>
                       </div>
                     </div>
                   </button>
