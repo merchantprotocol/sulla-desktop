@@ -276,7 +276,10 @@
                     v-for="record in (kanbanGroups[col] ?? [])"
                     :key="record.id"
                     type="button"
-                    class="w-full text-left rounded-xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 p-3.5 shadow-sm hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+                    class="w-full text-left rounded-xl border p-3.5 shadow-sm transition-all"
+                    :class="openedRecord?.id === record.id
+                      ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800 shadow-md'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700'"
                     @click="openRecord(record)"
                   >
                     <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug mb-2 line-clamp-2">
