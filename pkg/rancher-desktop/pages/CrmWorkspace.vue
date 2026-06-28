@@ -5328,7 +5328,23 @@
                       </span>
                       <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-1.5">
-                          <span class="text-sm font-medium text-slate-900 dark:text-white truncate">{{ field.label }}</span>
+                          <input
+                            v-if="fieldLabelDraftId === field.id"
+                            ref="fieldLabelInputEl"
+                            v-model="fieldLabelDraft"
+                            type="text"
+                            class="text-sm font-medium rounded px-1 py-0.5 bg-white dark:bg-slate-800 border border-violet-400 text-slate-900 dark:text-white focus:outline-none w-36"
+                            @keydown.enter.prevent="commitFieldLabelRename"
+                            @keydown.esc.stop="fieldLabelDraftId = null"
+                            @blur="commitFieldLabelRename"
+                            @click.stop
+                          />
+                          <span
+                            v-else
+                            class="text-sm font-medium text-slate-900 dark:text-white truncate cursor-text hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+                            title="Double-click to rename field"
+                            @dblclick.stop="startFieldLabelRename(field)"
+                          >{{ field.label }}</span>
                           <span v-if="field.is_title" class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 whitespace-nowrap">Title</span>
                           <button
                             v-if="field.is_required && !field.is_title"
@@ -6242,6 +6258,9 @@ const schemaEditorMode = ref<'fields' | 'new-type'>('fields');
 const showAddFieldForm = ref(false);
 const schemaTypeLabelDraft = ref<string | null>(null);
 const schemaTypeLabelInputEl = ref<HTMLInputElement | null>(null);
+const fieldLabelDraftId = ref<string | null>(null);
+const fieldLabelDraft = ref('');
+const fieldLabelInputEl = ref<HTMLInputElement | null>(null);
 const showTypeIconColorPicker = ref(false);
 const visibilityRuleFieldId = ref<string | null>(null);
 const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' });
@@ -9049,6 +9068,23 @@ function commitSchemaTypeRename() {
     type.label_plural = draft.endsWith('s') ? draft : draft + 's';
   }
   showToast(`Renamed to "${draft}"`);
+}
+
+function startFieldLabelRename(field: CrmField) {
+  fieldLabelDraftId.value = field.id;
+  fieldLabelDraft.value = field.label;
+  nextTick(() => { fieldLabelInputEl.value?.select(); });
+}
+
+function commitFieldLabelRename() {
+  const id = fieldLabelDraftId.value;
+  const draft = fieldLabelDraft.value.trim();
+  fieldLabelDraftId.value = null;
+  if (!id || !draft) return;
+  const field = (selectedType.value?.fields ?? []).find((f) => f.id === id);
+  if (!field || field.label === draft) return;
+  field.label = draft;
+  showToast(`Field renamed to "${draft}"`);
 }
 
 function addFieldToCurrentType() {
