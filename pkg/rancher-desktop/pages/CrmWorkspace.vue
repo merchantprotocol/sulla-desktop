@@ -313,7 +313,17 @@
                 <template v-else>
                   {{ filteredRecords.length }} record{{ filteredRecords.length === 1 ? '' : 's' }}
                 </template>
-                <template v-if="recordsTotal"> · {{ recordsTotal }}</template>
+                <template v-if="pinnedInView > 0">
+                  <span class="mx-1 opacity-40">·</span>
+                  <span class="text-amber-500 dark:text-amber-400">{{ pinnedInView }} pinned</span>
+                </template>
+                <template v-if="watchedInView > 0">
+                  <span class="mx-1 opacity-40">·</span>
+                  <span class="text-sky-500 dark:text-sky-400">{{ watchedInView }} watching</span>
+                </template>
+                <template v-if="recordsTotal">
+                  <span class="mx-1 opacity-40">·</span>{{ recordsTotal }}
+                </template>
               </p>
             </div>
 
@@ -2614,6 +2624,13 @@ const kanbanGroupsTotal = computed((): Record<string, number> => {
   }
   return totals;
 });
+
+const pinnedInView = computed(() =>
+  filteredRecords.value.filter((r) => pinnedIds.value.has(r.id)).length,
+);
+const watchedInView = computed(() =>
+  filteredRecords.value.filter((r) => watchedIds.value.has(r.id)).length,
+);
 
 // Aggregate total for types with a currency field — shown in toolbar as "6 records · $234k"
 const recordsTotal = computed((): string | null => {
