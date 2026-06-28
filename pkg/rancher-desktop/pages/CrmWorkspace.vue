@@ -12,6 +12,7 @@
     @keydown.r.exact="onKeyR"
     @keydown.t.exact="onKeyT"
     @keydown.b.exact="onKeyB"
+    @keydown.s.exact="onKeyS"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -1835,6 +1836,7 @@
                 { keys: ['Enter'], desc: 'Commit cell edit' },
                 { keys: ['Esc'], desc: 'Cancel cell edit' },
                 { keys: ['Right-click'], desc: 'Row context menu' },
+                { keys: ['S'], desc: 'Bulk move to stage (when rows selected)' },
               ]},
               { heading: 'Forms', items: [
                 { keys: ['⌘', 'Enter'], desc: 'Save new record / edits' },
@@ -3324,6 +3326,16 @@ function onKeyB(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
   if (canKanban.value) viewMode.value = 'kanban';
+}
+
+function onKeyS(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value || openedRecord.value) return;
+  if (selectedIds.value.size > 0 && kanbanField.value) {
+    bulkStageDropdown.value = !bulkStageDropdown.value;
+    e.preventDefault();
+  }
 }
 
 function startEditing(record: CrmRecord) {
