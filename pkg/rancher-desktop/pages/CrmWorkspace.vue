@@ -3,7 +3,7 @@
     class="text-sm font-sans page-root h-full"
     :class="{ dark: isDark }"
     tabindex="-1"
-    @keydown.esc="openedRecord = null; creatingRecord = false"
+    @keydown.esc="openedRecord = null; creatingRecord = false; editingRecord = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -353,14 +353,20 @@
             class="w-80 shrink-0 flex flex-col border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-y-auto"
           >
             <!-- panel header -->
-            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-              <h3 class="text-sm font-semibold text-slate-900 dark:text-white truncate">
+            <div class="flex items-center gap-2 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+              <h3 class="flex-1 text-sm font-semibold text-slate-900 dark:text-white truncate">
                 {{ openedRecord.title }}
               </h3>
+              <span
+                v-if="editingRecord"
+                class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400"
+              >
+                Editing
+              </span>
               <button
                 type="button"
-                class="ml-2 shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
-                @click="openedRecord = null"
+                class="shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
+                @click="openedRecord = null; editingRecord = false"
               >
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -369,9 +375,9 @@
             </div>
 
             <!-- schema-driven fields -->
-            <div class="flex-1 px-5 py-4 space-y-4">
+            <div class="flex-1 px-5 py-4 space-y-4 overflow-y-auto">
               <div
-                v-for="field in selectedType?.fields ?? []"
+                v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
                 :key="field.id"
                 class="space-y-1"
               >
@@ -382,25 +388,52 @@
                 <CrmFieldInput
                   :data-type="field.data_type"
                   :value="openedRecord.field_values[field.key]"
-                  :read-only="true"
+                  :read-only="!editingRecord"
                   :select-options="field.select_options ?? []"
                 />
               </div>
             </div>
 
-            <!-- panel footer -->
-            <div class="px-5 py-4 border-t border-slate-200 dark:border-slate-700 space-y-2">
+            <!-- panel footer — view mode -->
+            <div v-if="!editingRecord" class="px-5 py-4 border-t border-slate-200 dark:border-slate-700 space-y-2">
               <p class="text-xs text-slate-400 dark:text-slate-500">
                 Created {{ formatDate(openedRecord.created_at) }}
               </p>
               <div class="flex gap-2">
-                <button type="button" class="flex-1 rounded-lg py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                <button
+                  type="button"
+                  class="flex-1 rounded-lg py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                  @click="editingRecord = true"
+                >
                   Edit
                 </button>
                 <button type="button" class="rounded-lg py-2 px-3 text-sm font-medium text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors">
                   <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                   </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- panel footer — edit mode -->
+            <div v-else class="px-5 py-4 border-t border-slate-200 dark:border-slate-700 space-y-2">
+              <p class="text-xs text-slate-400 dark:text-slate-500">
+                Fields marked <span class="text-red-400">*</span> are required.
+              </p>
+              <div class="flex gap-2">
+                <button
+                  type="button"
+                  class="flex-1 rounded-lg py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors"
+                  @click="editingRecord = false"
+                >
+                  Save changes
+                </button>
+                <button
+                  type="button"
+                  class="rounded-lg py-2 px-3 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                  @click="editingRecord = false"
+                >
+                  Discard
                 </button>
               </div>
             </div>
@@ -589,6 +622,7 @@ function stageDot(stage: string): string {
 const selectedTypeKey = ref<string>(schema[0].key);
 const searchQuery = ref('');
 const openedRecord = ref<CrmRecord | null>(null);
+const editingRecord = ref(false);
 const viewMode = ref<'table' | 'kanban'>('table');
 const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
@@ -667,6 +701,7 @@ function selectType(key: string) {
   selectedTypeKey.value = key;
   searchQuery.value = '';
   openedRecord.value = null;
+  editingRecord.value = false;
   creatingRecord.value = false;
   draftValues.value = {};
   // If the new type has no groupable field, fall back to table view
@@ -678,6 +713,7 @@ function selectType(key: string) {
 
 function openRecord(record: CrmRecord) {
   openedRecord.value = record;
+  editingRecord.value = false;
   creatingRecord.value = false;
 }
 
