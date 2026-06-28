@@ -2646,17 +2646,50 @@
         <div v-if="viewMode === 'calendar' && canCalendar" class="flex-1 flex flex-col overflow-hidden">
           <!-- calendar nav bar -->
           <div class="flex items-center gap-3 px-4 py-2.5 border-b border-slate-200 dark:border-slate-700 shrink-0">
-            <button type="button" class="h-7 px-2 rounded-md text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="calPrevMonth">
+            <button
+              type="button"
+              class="h-7 px-2 rounded-md text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              @click="calendarViewMode === 'week' ? calPrevWeek() : calPrevMonth()"
+            >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
             </button>
-            <span class="font-semibold text-sm text-slate-800 dark:text-slate-200 min-w-[140px] text-center">{{ MONTH_NAMES[calendarMonth] }} {{ calendarYear }}</span>
-            <button type="button" class="h-7 px-2 rounded-md text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="calNextMonth">
+            <span class="font-semibold text-sm text-slate-800 dark:text-slate-200 min-w-[180px] text-center">
+              {{ calendarViewMode === 'week' ? calWeekLabel : `${MONTH_NAMES[calendarMonth]} ${calendarYear}` }}
+            </span>
+            <button
+              type="button"
+              class="h-7 px-2 rounded-md text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              @click="calendarViewMode === 'week' ? calNextWeek() : calNextMonth()"
+            >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
             </button>
-            <button type="button" class="h-7 px-3 rounded-md text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-colors" @click="calGoToday">Today</button>
+            <button
+              type="button"
+              class="h-7 px-3 rounded-md text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-colors"
+              @click="calendarViewMode === 'week' ? calGoTodayWeek() : calGoToday()"
+            >Today</button>
+            <!-- month / week toggle -->
+            <div class="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden ml-2">
+              <button
+                type="button"
+                class="h-7 px-2.5 text-xs transition-colors"
+                :class="calendarViewMode === 'month'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold'
+                  : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                @click="calendarViewMode = 'month'"
+              >Month</button>
+              <button
+                type="button"
+                class="h-7 px-2.5 text-xs border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="calendarViewMode === 'week'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold'
+                  : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                @click="calendarViewMode = 'week'"
+              >Week</button>
+            </div>
             <span class="ml-auto text-xs text-slate-400 dark:text-slate-500">Grouped by: <b class="text-slate-600 dark:text-slate-300">{{ calendarDateField?.label }}</b></span>
           </div>
-          <!-- day-of-week headers -->
+          <!-- day-of-week headers (shared by both modes) -->
           <div class="grid grid-cols-7 border-b border-slate-200 dark:border-slate-700 shrink-0">
             <div
               v-for="d in ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']"
@@ -2664,8 +2697,8 @@
               class="px-2 py-1.5 text-center text-xs font-medium text-slate-400 dark:text-slate-500 border-r border-slate-200 dark:border-slate-700 last:border-r-0"
             >{{ d }}</div>
           </div>
-          <!-- calendar grid -->
-          <div class="flex-1 overflow-y-auto">
+          <!-- MONTH grid -->
+          <div v-if="calendarViewMode === 'month'" class="flex-1 overflow-y-auto">
             <div v-for="(week, wi) in calendarGrid" :key="wi" class="grid grid-cols-7 border-b border-slate-200 dark:border-slate-700 last:border-b-0 min-h-[100px]">
               <div
                 v-for="cell in week"
@@ -2718,6 +2751,57 @@
                     class="block text-xs text-slate-400 dark:text-slate-500 px-1 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
                     @click.stop="calOverflowDate = cell.date; calOverflowPos = { x: $event.clientX, y: $event.clientY }"
                   >+{{ cell.records.length - 4 }} more</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- WEEK grid -->
+          <div v-else class="flex-1 overflow-y-auto">
+            <div class="grid grid-cols-7 h-full min-h-[420px]">
+              <div
+                v-for="cell in calWeekDays"
+                :key="cell.date"
+                class="group flex flex-col border-r border-slate-200 dark:border-slate-700 last:border-r-0 bg-white dark:bg-slate-900"
+                :class="cell.date === DUE_TODAY_STR ? 'bg-sky-50/40 dark:bg-sky-950/10' : ''"
+              >
+                <!-- day header -->
+                <div class="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-800 shrink-0">
+                  <span
+                    class="text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full"
+                    :class="cell.date === DUE_TODAY_STR
+                      ? 'bg-sky-500 text-white'
+                      : 'text-slate-700 dark:text-slate-300'"
+                  >{{ cell.dayNum }}</span>
+                  <button
+                    type="button"
+                    class="opacity-0 group-hover:opacity-100 h-5 w-5 flex items-center justify-center rounded text-slate-400 hover:text-sky-500 hover:bg-sky-50 dark:hover:bg-sky-950/50 transition-all"
+                    title="Add record on this day"
+                    @click.stop="calendarDateField && openNewRecord(undefined, { [calendarDateField.key]: cell.date })"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                  </button>
+                </div>
+                <!-- events -->
+                <div class="flex-1 overflow-y-auto px-2 py-2 space-y-1">
+                  <button
+                    v-for="record in cell.records"
+                    :key="record.id"
+                    type="button"
+                    class="w-full text-left text-xs px-2 py-1.5 rounded-lg truncate transition-colors font-medium"
+                    :class="openedRecord?.id === record.id
+                      ? 'text-white'
+                      : colorLabels[record.id]
+                        ? 'text-white hover:opacity-90'
+                        : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60'"
+                    :style="openedRecord?.id === record.id
+                      ? { background: colorLabels[record.id] ?? '#0ea5e9' }
+                      : colorLabels[record.id]
+                        ? { background: colorLabels[record.id] }
+                        : undefined"
+                    :title="record.title"
+                    @click="openRecord(record)"
+                  >{{ record.title }}</button>
+                  <div v-if="!cell.records.length" class="text-xs text-slate-200 dark:text-slate-700 text-center py-6 select-none">—</div>
                 </div>
               </div>
             </div>
@@ -6640,6 +6724,44 @@ function calGoToday() {
   calendarYear.value = 2026;
   calendarMonth.value = 5; // June 2026 (session date)
 }
+
+const calendarViewMode = ref<'month' | 'week'>('month');
+const calWeekOffset = ref(0);
+
+const calWeekDays = computed((): CalDay[] => {
+  const fkey = calendarDateField.value?.key;
+  const today = new Date(DUE_TODAY_STR + 'T00:00:00');
+  const sundayBack = today.getDay() === 0 ? 0 : -today.getDay();
+  const recs = filteredRecords.value;
+  return Array.from({ length: 7 }, (_, d) => {
+    const cellDate = new Date(today);
+    cellDate.setDate(today.getDate() + sundayBack + calWeekOffset.value * 7 + d);
+    const iso = cellDate.toISOString().slice(0, 10);
+    return {
+      date: iso,
+      dayNum: cellDate.getDate(),
+      inMonth: true,
+      records: fkey ? recs.filter((r) => { const v = r.field_values[fkey]; return typeof v === 'string' && v.slice(0, 10) === iso; }) : [],
+    };
+  });
+});
+
+const calWeekLabel = computed(() => {
+  if (!calWeekDays.value.length) return '';
+  const first = calWeekDays.value[0];
+  const last = calWeekDays.value[6];
+  const fd = new Date(first.date + 'T00:00:00');
+  const ld = new Date(last.date + 'T00:00:00');
+  const fmo = MONTH_NAMES[fd.getMonth()].slice(0, 3);
+  const lmo = MONTH_NAMES[ld.getMonth()].slice(0, 3);
+  return fd.getMonth() === ld.getMonth()
+    ? `${fmo} ${first.dayNum} – ${last.dayNum}, ${fd.getFullYear()}`
+    : `${fmo} ${first.dayNum} – ${lmo} ${last.dayNum}, ${ld.getFullYear()}`;
+});
+
+function calPrevWeek() { calWeekOffset.value--; }
+function calNextWeek() { calWeekOffset.value++; }
+function calGoTodayWeek() { calWeekOffset.value = 0; }
 
 const KANBAN_UNASSIGNED = '__unassigned__';
 
