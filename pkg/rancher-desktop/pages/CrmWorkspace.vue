@@ -249,6 +249,17 @@
             </button>
             <button
               type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
+              :title="`Set a field for ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}`"
+              @click="showBulkFieldModal = true"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+              </svg>
+              Set field
+            </button>
+            <button
+              type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
               :class="[...selectedIds].every(id => pinnedIds.has(id))
                 ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
@@ -2534,6 +2545,78 @@
       </div>
     </transition>
 
+    <!-- bulk field fill modal -->
+    <transition
+      enter-active-class="transition-all duration-150"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition-all duration-100"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="showBulkFieldModal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+        @click.self="showBulkFieldModal = false"
+      >
+        <div class="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <p class="text-sm font-semibold text-slate-900 dark:text-white">
+              Set field for {{ selectedIds.size }} record{{ selectedIds.size === 1 ? '' : 's' }}
+            </p>
+            <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" @click="showBulkFieldModal = false">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <!-- step 1: field picker -->
+          <template v-if="!bulkFieldKey">
+            <p class="text-xs text-slate-400 dark:text-slate-500">Pick a field to update:</p>
+            <div class="space-y-1 max-h-52 overflow-y-auto">
+              <button
+                v-for="col in allColumns.filter(c => !c.is_title)"
+                :key="col.key"
+                type="button"
+                class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                @click="bulkFieldKey = col.key; bulkFieldValue = null"
+              >
+                <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" :d="DATA_TYPE_ICONS[col.data_type] ?? DATA_TYPE_ICONS['text']" />
+                </svg>
+                {{ col.label }}
+              </button>
+            </div>
+          </template>
+          <!-- step 2: value editor -->
+          <template v-else>
+            <div class="flex items-center gap-2">
+              <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" @click="bulkFieldKey = null; bulkFieldValue = null">
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
+              </button>
+              <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                {{ allColumns.find(c => c.key === bulkFieldKey)?.label }}
+              </p>
+            </div>
+            <CrmFieldInput
+              :data-type="allColumns.find(c => c.key === bulkFieldKey)?.data_type ?? 'text'"
+              :value="bulkFieldValue"
+              :read-only="false"
+              :select-options="allColumns.find(c => c.key === bulkFieldKey)?.select_options ?? []"
+              :format="allColumns.find(c => c.key === bulkFieldKey)?.format"
+              @update:value="bulkFieldValue = $event"
+            />
+            <div class="flex gap-2 justify-end">
+              <button type="button" class="h-8 px-3 rounded-lg text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showBulkFieldModal = false">
+                Cancel
+              </button>
+              <button type="button" class="h-8 px-4 rounded-lg text-sm font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors" @click="submitBulkFieldFill">
+                Apply to {{ selectedIds.size }} record{{ selectedIds.size === 1 ? '' : 's' }}
+              </button>
+            </div>
+          </template>
+        </div>
+      </div>
+    </transition>
+
     <!-- column header context menu -->
     <transition
       enter-active-class="transition-all duration-100"
@@ -3031,6 +3114,10 @@ const showBulkNoteModal = ref(false);
 const bulkNoteText = ref('');
 const bulkNoteInputEl = ref<HTMLTextAreaElement | null>(null);
 watch(showBulkNoteModal, (val) => { if (val) { bulkNoteText.value = ''; nextTick(() => bulkNoteInputEl.value?.focus()); } });
+const showBulkFieldModal = ref(false);
+const bulkFieldKey = ref<string | null>(null);
+const bulkFieldValue = ref<string | number | boolean | null>(null);
+watch(showBulkFieldModal, (val) => { if (!val) { bulkFieldKey.value = null; bulkFieldValue.value = null; } });
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const lastSelectedIdx = ref(-1);
 const savedViews = ref<SavedView[]>([]);
@@ -4045,6 +4132,33 @@ function restoreDeletedRecord() {
   if (snap.wasPinned) { const next = new Set(pinnedIds.value); next.add(snap.record.id); pinnedIds.value = next; }
   if (snap.wasWatched) { const next = new Set(watchedIds.value); next.add(snap.record.id); watchedIds.value = next; }
   showToast('Delete undone');
+}
+
+function submitBulkFieldFill() {
+  const key = bulkFieldKey.value;
+  if (!key) return;
+  const ids = [...selectedIds.value];
+  const field = allColumns.value.find((c) => c.key === key);
+  const now = new Date().toISOString();
+  for (const id of ids) {
+    const rec = mockRecords.find((r) => r.id === id);
+    if (!rec) continue;
+    const prev = rec.field_values[key];
+    rec.field_values[key] = bulkFieldValue.value;
+    rec.updated_at = now;
+    if (String(prev ?? '') !== String(bulkFieldValue.value ?? '')) {
+      mockActivities.unshift({
+        id: 'act-bff-' + id + '-' + String(mockActivities.length),
+        record_id: id,
+        type: 'change',
+        content: `${field?.label ?? key}: ${prev ?? '—'} → ${bulkFieldValue.value ?? '—'}`,
+        author: 'You',
+        created_at: now,
+      });
+    }
+  }
+  showBulkFieldModal.value = false;
+  showToast(`${field?.label ?? key} updated for ${ids.length} record${ids.length === 1 ? '' : 's'}`);
 }
 
 function submitBulkNote() {
