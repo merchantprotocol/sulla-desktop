@@ -14,7 +14,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu()"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -153,6 +153,39 @@
               </svg>
               {{ [...selectedIds].every(id => pinnedIds.has(id)) ? 'Unpin' : 'Pin' }}
             </button>
+            <!-- bulk move to stage — visible when type has a select/stage field -->
+            <div v-if="kanbanField" class="relative" @click.stop>
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
+                :title="`Move ${selectedIds.size} selected record${selectedIds.size === 1 ? '' : 's'} to a stage`"
+                @click="bulkStageDropdown = !bulkStageDropdown"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                Move to stage
+                <svg class="h-3 w-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div
+                v-if="bulkStageDropdown"
+                class="absolute top-full mt-1 left-0 z-30 min-w-max rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1"
+              >
+                <button
+                  v-for="stage in kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED)"
+                  :key="stage"
+                  type="button"
+                  class="w-full flex items-center gap-2 px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors whitespace-nowrap"
+                  @click="bulkMoveToStage(stage)"
+                >
+                  <span class="h-2 w-2 rounded-full shrink-0" :class="stageDot(stage)" />
+                  {{ stage }}
+                </button>
+              </div>
+            </div>
+
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
@@ -1537,6 +1570,7 @@
                 { keys: ['Dbl-click'], desc: 'Edit cell inline' },
                 { keys: ['Enter'], desc: 'Commit cell edit' },
                 { keys: ['Esc'], desc: 'Cancel cell edit' },
+                { keys: ['Right-click'], desc: 'Row context menu' },
               ]},
               { heading: 'Forms', items: [
                 { keys: ['⌘', 'Enter'], desc: 'Save new record / edits' },
@@ -2084,6 +2118,7 @@ const showColumnsMenu = ref(false);
 const detailTab = ref<'details' | 'activity' | 'related'>('details');
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
+const bulkStageDropdown = ref(false);
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const loggingNote = ref(false);
 const noteText = ref('');
@@ -2490,6 +2525,17 @@ function bulkPinToggle() {
   }
   pinnedIds.value = next;
   showToast(allPinned ? `Unpinned ${ids.length} record${ids.length === 1 ? '' : 's'}` : `Pinned ${ids.length} record${ids.length === 1 ? '' : 's'}`);
+}
+
+function bulkMoveToStage(stage: string) {
+  const fieldKey = kanbanField.value?.key;
+  if (!fieldKey) return;
+  const ids = [...selectedIds.value];
+  for (const r of mockRecords) {
+    if (ids.includes(r.id)) r.field_values[fieldKey] = stage;
+  }
+  bulkStageDropdown.value = false;
+  showToast(`Moved ${ids.length} record${ids.length === 1 ? '' : 's'} to ${stage}`);
 }
 
 function toggleFilter(fieldKey: string, value: string) {
