@@ -501,7 +501,7 @@
                   <template v-if="!filterPickerField">
                     <p class="px-3 pt-2.5 pb-1 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Filter by</p>
                     <button
-                      v-for="col in allColumns.filter(c => c.data_type === 'select' && (c.select_options?.length ?? 0) > 0)"
+                      v-for="col in allColumns.filter(c => (c.data_type === 'select' || c.data_type === 'multi_select') && (c.select_options?.length ?? 0) > 0)"
                       :key="col.key"
                       type="button"
                       class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
@@ -4014,6 +4014,7 @@
                           <option value="text">Text</option>
                           <option value="number">Number</option>
                           <option value="select">Select</option>
+                          <option value="multi_select">Multi-select</option>
                           <option value="date">Date</option>
                           <option value="boolean">Boolean</option>
                           <option value="email">Email</option>
@@ -4022,7 +4023,7 @@
                         </select>
                       </div>
                     </div>
-                    <div v-if="newFieldDraft.data_type === 'select'">
+                    <div v-if="newFieldDraft.data_type === 'select' || newFieldDraft.data_type === 'multi_select'">
                       <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Options (comma-separated)</label>
                       <input
                         v-model="newFieldDraft.select_options_raw"
@@ -4210,7 +4211,7 @@ const { isDark, toggleTheme } = useTheme();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select';
+type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select';
 type IconKey = 'user' | 'building' | 'chart' | 'target' | 'check' | 'folder' | 'tag' | 'list' | 'layers' | 'star';
 
 type FieldFormat = 'currency' | 'percent' | undefined;
@@ -4247,7 +4248,7 @@ interface CrmRecord {
   id: string;
   record_type_key: string;
   title: string;
-  field_values: Record<string, string | number | boolean | null>;
+  field_values: Record<string, string | number | boolean | string[] | null>;
   created_at: string;
   updated_at?: string;
   links?: CrmLink[];
@@ -4330,7 +4331,8 @@ const DATA_TYPE_ICONS: Record<DataType, string> = {
   url:     'M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1',
   boolean: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
   date:    'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
-  select:  'M4 6h16M4 10h16M4 14h16M4 18h16',
+  select:       'M4 6h16M4 10h16M4 14h16M4 18h16',
+  multi_select: 'M9 12l2 2 4-4M4 6h16M4 10h8M4 14h8M4 18h5',
 };
 
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
@@ -4354,8 +4356,9 @@ const schema = reactive<CrmRecordType[]>([
       { id: 'f_co1', key: 'name',        label: 'Name',         data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
       { id: 'f_co2', key: 'domain',      label: 'Domain',       data_type: 'url',    is_title: false, is_required: false, position: 1 },
       { id: 'f_co3', key: 'industry',    label: 'Industry',     data_type: 'select', is_title: false, is_required: false, position: 2, select_options: ['Education', 'Marketing', 'Consulting', 'Technology', 'Finance', 'Healthcare', 'Other'] },
-      { id: 'f_co4', key: 'employees',   label: 'Employees',    data_type: 'number', is_title: false, is_required: false, position: 3 },
-      { id: 'f_co5', key: 'annual_rev',  label: 'Annual rev.',  data_type: 'number', is_title: false, is_required: false, position: 4, format: 'currency' },
+      { id: 'f_co4', key: 'employees',   label: 'Employees',    data_type: 'number',       is_title: false, is_required: false, position: 3 },
+      { id: 'f_co5', key: 'annual_rev',  label: 'Annual rev.',  data_type: 'number',       is_title: false, is_required: false, position: 4, format: 'currency' },
+      { id: 'f_co6', key: 'products',    label: 'Products',     data_type: 'multi_select', is_title: false, is_required: false, position: 5, select_options: ['CRM', 'Email Marketing', 'Landing Pages', 'Analytics', 'Automation', 'Webinars', 'Coaching Portal'] },
     ],
   },
   {
@@ -4413,13 +4416,13 @@ const mockRecords = reactive<CrmRecord[]>([
     links: [{ target_id: 'r17', target_type: 'company', target_title: 'FunnelWorks' }, { target_id: 'r14', target_type: 'deal', target_title: 'FunnelWorks Enterprise' }] },
   // Companies
   { id: 'r5', record_type_key: 'company', title: 'Apex Coaching', created_at: '2026-04-18T08:00:00Z',
-    field_values: { name: 'Apex Coaching', domain: 'apexcoaching.com', industry: 'Education', employees: 24, annual_rev: 4200000 },
+    field_values: { name: 'Apex Coaching', domain: 'apexcoaching.com', industry: 'Education', employees: 24, annual_rev: 4200000, products: ['Coaching Portal', 'Email Marketing'] },
     links: [{ target_id: 'r1', target_type: 'contact', target_title: 'Jordan Mitchell' }, { target_id: 'r8', target_type: 'deal', target_title: 'Apex Coaching — Q3 Expansion' }] },
   { id: 'r6', record_type_key: 'company', title: 'ScaleLab', created_at: '2026-04-22T10:15:00Z',
-    field_values: { name: 'ScaleLab', domain: 'scalelab.io', industry: 'Marketing', employees: 11, annual_rev: 1800000 },
+    field_values: { name: 'ScaleLab', domain: 'scalelab.io', industry: 'Marketing', employees: 11, annual_rev: 1800000, products: ['CRM', 'Landing Pages', 'Analytics'] },
     links: [{ target_id: 'r2', target_type: 'contact', target_title: 'Priya Sharma' }, { target_id: 'r9', target_type: 'deal', target_title: 'ScaleLab Renewal' }] },
   { id: 'r7', record_type_key: 'company', title: 'GrowthForge', created_at: '2026-05-05T14:30:00Z',
-    field_values: { name: 'GrowthForge', domain: 'growthforge.co', industry: 'Consulting', employees: 7, annual_rev: 920000 },
+    field_values: { name: 'GrowthForge', domain: 'growthforge.co', industry: 'Consulting', employees: 7, annual_rev: 920000, products: ['CRM', 'Automation', 'Webinars'] },
     links: [{ target_id: 'r3', target_type: 'contact', target_title: 'Marcus Tran' }, { target_id: 'r13', target_type: 'deal', target_title: 'GrowthForge Pilot' }] },
   // Deals
   { id: 'r8', record_type_key: 'deal', title: 'Apex Coaching — Q3 Expansion', created_at: '2026-06-02T13:00:00Z',
@@ -4441,9 +4444,9 @@ const mockRecords = reactive<CrmRecord[]>([
     links: [{ target_id: 'r20', target_type: 'contact', target_title: 'Aisha Patel' }, { target_id: 'r18', target_type: 'company', target_title: 'MarketMind' }] },
   // Companies (cont.)
   { id: 'r17', record_type_key: 'company', title: 'FunnelWorks', created_at: '2026-05-14T09:30:00Z',
-    field_values: { name: 'FunnelWorks', domain: 'funnelworks.com', industry: 'Marketing', employees: 18, annual_rev: 2400000 } },
+    field_values: { name: 'FunnelWorks', domain: 'funnelworks.com', industry: 'Marketing', employees: 18, annual_rev: 2400000, products: ['Landing Pages', 'Email Marketing', 'Analytics'] } },
   { id: 'r18', record_type_key: 'company', title: 'MarketMind', created_at: '2026-05-20T11:00:00Z',
-    field_values: { name: 'MarketMind', domain: 'marketmind.co', industry: 'Consulting', employees: 5, annual_rev: 680000 } },
+    field_values: { name: 'MarketMind', domain: 'marketmind.co', industry: 'Consulting', employees: 5, annual_rev: 680000, products: ['CRM'] } },
   // Contacts (cont.)
   { id: 'r19', record_type_key: 'contact', title: 'Ryan Torres', created_at: '2026-06-14T10:00:00Z',
     field_values: { full_name: 'Ryan Torres', email: 'ryan@funnelworks.com', phone: '+1 555-0412', company: 'FunnelWorks', status: 'Prospect' } },
@@ -4902,7 +4905,11 @@ const filteredRecords = computed(() => {
   let result: CrmRecord[] = q
     ? recs.filter((r) =>
         r.title.toLowerCase().includes(q) ||
-        Object.values(r.field_values).some((v) => v != null && String(v).toLowerCase().includes(q))
+        Object.values(r.field_values).some((v) => {
+          if (v == null) return false;
+          if (Array.isArray(v)) return v.some((s) => s.toLowerCase().includes(q));
+          return String(v).toLowerCase().includes(q);
+        })
       )
     : recs;
 
@@ -4915,7 +4922,11 @@ const filteredRecords = computed(() => {
     }
     result = result.filter((r) => {
       for (const [fk, vals] of byField) {
-        if (!vals.some((v) => String(r.field_values[fk] ?? '') === v)) return false;
+        const fv = r.field_values[fk];
+        const matches = Array.isArray(fv)
+          ? vals.some((v) => fv.includes(v))
+          : vals.some((v) => String(fv ?? '') === v);
+        if (!matches) return false;
       }
       return true;
     });
@@ -5424,7 +5435,8 @@ const recordCompleteness = computed((): { filled: number; total: number; missing
   let filled = 0;
   for (const f of fields) {
     const v = openedRecord.value.field_values[f.key];
-    if (v != null && (typeof v !== 'string' || v.trim() !== '')) {
+    const isFilled = Array.isArray(v) ? v.length > 0 : (v != null && (typeof v !== 'string' || v.trim() !== ''));
+    if (isFilled) {
       filled++;
     } else {
       missing.push(f.label);
@@ -5498,9 +5510,16 @@ const contextMenuSelectFilters = computed(() => {
   if (!contextMenuRecord.value) return [];
   const record = contextMenuRecord.value;
   const fields = selectedType.value?.fields ?? [];
-  return fields
-    .filter((f) => f.data_type === 'select' && record.field_values[f.key] != null)
-    .map((f) => ({ fieldKey: f.key, label: f.label, value: String(record.field_values[f.key]) }));
+  const items: Array<{ fieldKey: string; label: string; value: string }> = [];
+  for (const f of fields) {
+    if (f.data_type === 'select' && record.field_values[f.key] != null) {
+      items.push({ fieldKey: f.key, label: f.label, value: String(record.field_values[f.key]) });
+    } else if (f.data_type === 'multi_select') {
+      const arr = Array.isArray(record.field_values[f.key]) ? record.field_values[f.key] as string[] : [];
+      for (const v of arr) items.push({ fieldKey: f.key, label: f.label, value: v });
+    }
+  }
+  return items;
 });
 
 function openColHeaderMenu(fieldKey: string, e: MouseEvent) {
@@ -5689,7 +5708,7 @@ function startCellEdit(record: CrmRecord, col: CrmField) {
   cellDraftValue.value = record.field_values[col.key] ?? null;
 }
 
-function commitCellEdit(newValue: string | number | boolean | null) {
+function commitCellEdit(newValue: string | number | boolean | string[] | null) {
   const cell = editingCell.value;
   editingCell.value = null;
   cellDraftValue.value = null;
@@ -6223,6 +6242,7 @@ function recordCompleteness(record: CrmRecord): number {
   if (!fields.length) return 100;
   const filled = fields.filter((f) => {
     const v = record.field_values[f.key];
+    if (Array.isArray(v)) return v.length > 0;
     return v != null && String(v).trim() !== '';
   }).length;
   return Math.round((filled / fields.length) * 100);
@@ -6710,7 +6730,7 @@ function addFieldToCurrentType() {
   const type = schema.find((t) => t.key === selectedTypeKey.value);
   if (!type) return;
   if (type.fields.some((f) => f.key === key)) { showToast('A field with that key already exists'); return; }
-  const opts = draft.data_type === 'select'
+  const opts = (draft.data_type === 'select' || draft.data_type === 'multi_select')
     ? draft.select_options_raw.split(',').map((s) => s.trim()).filter(Boolean)
     : undefined;
   type.fields.push({
@@ -6848,7 +6868,7 @@ function exportCsv(records?: CrmRecord[]) {
   const cols = allColumns.value;
   const headers = [...cols.map((c) => c.label), 'Created'];
   const escape = (v: unknown) => {
-    const s = v == null ? '' : String(v);
+    const s = Array.isArray(v) ? v.join('; ') : (v == null ? '' : String(v));
     return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const rows = recs.map((r) => [
@@ -6903,8 +6923,9 @@ function formatRelativeTime(iso: string): string {
   return formatDate(iso);
 }
 
-function formatCardValue(val: string | number | boolean | null | undefined, dataType: DataType, format?: FieldFormat): string {
+function formatCardValue(val: string | number | boolean | string[] | null | undefined, dataType: DataType, format?: FieldFormat): string {
   if (val == null || val === '') return '—';
+  if (Array.isArray(val)) return val.length ? val.join(', ') : '—';
   if (dataType === 'number') {
     const n = Number(val);
     if (format === 'currency') {
@@ -6923,12 +6944,22 @@ function formatCardValue(val: string | number | boolean | null | undefined, data
 
 const CrmCellValue = defineComponent({
   props: {
-    value: { type: [String, Number, Boolean, null] as unknown as () => string | number | boolean | null, default: null },
+    value: { type: [String, Number, Boolean, Array, null] as unknown as () => string | number | boolean | string[] | null, default: null },
     dataType: { type: String as () => DataType, required: true },
     format: { type: String as () => FieldFormat, default: undefined },
   },
   setup(props) {
     return () => {
+      if (props.dataType === 'multi_select') {
+        const arr = Array.isArray(props.value) ? props.value : (props.value ? [String(props.value)] : []);
+        if (!arr.length) return h('span', { class: 'text-slate-300 dark:text-slate-600' }, '—');
+        return h('span', { class: 'flex flex-wrap gap-0.5' },
+          arr.map((tag) => h('span', {
+            key: tag,
+            class: 'inline-flex items-center rounded-full px-1.5 py-0 text-xs font-medium bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800',
+          }, tag)),
+        );
+      }
       if (props.value == null || props.value === '') {
         return h('span', { class: 'text-slate-300 dark:text-slate-600' }, '—');
       }
@@ -7008,7 +7039,7 @@ const CrmCellValue = defineComponent({
 
 const CrmCellEditor = defineComponent({
   props: {
-    value: { type: [String, Number, Boolean, null] as unknown as () => string | number | boolean | null, default: null },
+    value: { type: [String, Number, Boolean, Array, null] as unknown as () => string | number | boolean | string[] | null, default: null },
     dataType: { type: String as () => DataType, required: true },
     selectOptions: { type: Array as () => string[], default: () => [] },
   },
@@ -7023,7 +7054,10 @@ const CrmCellEditor = defineComponent({
         const el = elRef.value;
         if (!el) { emit('commit', null); return; }
         const raw = (el as HTMLInputElement | HTMLSelectElement).value;
-        if (props.dataType === 'number') {
+        if (props.dataType === 'multi_select') {
+          const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+          emit('commit', parts.length ? parts : null);
+        } else if (props.dataType === 'number') {
           const n = parseFloat(raw);
           emit('commit', raw === '' ? null : (isNaN(n) ? null : n));
         } else {
@@ -7044,6 +7078,17 @@ const CrmCellEditor = defineComponent({
           ...props.selectOptions.map((o: string) => h('option', { value: o, selected: String(val) === o }, o)),
         ]);
       }
+      if (props.dataType === 'multi_select') {
+        const current = Array.isArray(val) ? val : (val ? String(val).split(',').map((s) => s.trim()) : []);
+        return h('input', {
+          ...common,
+          type: 'text',
+          value: current.join(', '),
+          placeholder: 'Comma-separated values',
+          class: cellClass,
+          title: 'Enter values separated by commas',
+        });
+      }
       const inputType = props.dataType === 'number' ? 'number'
         : props.dataType === 'date' ? 'date'
         : props.dataType === 'email' ? 'email'
@@ -7057,7 +7102,7 @@ const CrmCellEditor = defineComponent({
 
 const CrmFieldInput = defineComponent({
   props: {
-    value: { type: [String, Number, Boolean, null] as unknown as () => string | number | boolean | null, default: null },
+    value: { type: [String, Number, Boolean, Array, null] as unknown as () => string | number | boolean | string[] | null, default: null },
     dataType: { type: String as () => DataType, required: true },
     readOnly: { type: Boolean, default: false },
     selectOptions: { type: Array as () => string[], default: () => [] },
@@ -7068,6 +7113,37 @@ const CrmFieldInput = defineComponent({
     return () => {
       const baseClass = 'w-full rounded-lg px-3 py-2 text-sm border bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100';
       const val = props.value;
+      if (props.dataType === 'multi_select') {
+        const current: string[] = Array.isArray(val) ? val : (val ? String(val).split(',').map((s) => s.trim()).filter(Boolean) : []);
+        if (props.readOnly) {
+          if (!current.length) return h('span', { class: 'text-slate-300 dark:text-slate-600 text-sm' }, '—');
+          return h('span', { class: 'flex flex-wrap gap-1' },
+            current.map((tag) => h('span', {
+              key: tag,
+              class: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800',
+            }, tag)),
+          );
+        }
+        return h('div', { class: 'flex flex-wrap gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2' }, [
+          ...props.selectOptions.map((opt) => {
+            const checked = current.includes(opt);
+            return h('label', {
+              key: opt,
+              class: 'inline-flex items-center gap-1.5 cursor-pointer select-none',
+            }, [
+              h('div', {
+                class: `h-4 w-4 rounded border-2 flex-shrink-0 flex items-center justify-center ${checked ? 'bg-sky-500 border-sky-500' : 'border-slate-300 dark:border-slate-600'}`,
+                onClick: () => {
+                  const next = checked ? current.filter((x) => x !== opt) : [...current, opt];
+                  emit('update:value', next.length ? next : null);
+                },
+              }, checked ? h('svg', { class: 'h-2.5 w-2.5 text-white', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24', 'stroke-width': '3' },
+                [h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', d: 'M5 13l4 4L19 7' })]) : null),
+              h('span', { class: 'text-sm text-slate-700 dark:text-slate-300' }, opt),
+            ]);
+          }),
+        ]);
+      }
       if (props.dataType === 'boolean') {
         return h('div', {
           class: 'flex items-center gap-2 py-1' + (props.readOnly ? '' : ' cursor-pointer select-none'),
