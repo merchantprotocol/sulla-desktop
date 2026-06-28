@@ -2943,7 +2943,8 @@ function openNewRecord(stageValue?: string) {
 }
 
 function saveNewRecord() {
-  const required = (selectedType.value?.fields ?? []).filter((f) => f.is_required);
+  const type = selectedType.value;
+  const required = (type?.fields ?? []).filter((f) => f.is_required);
   const missing = required
     .filter((f) => {
       const v = draftValues.value[f.key];
@@ -2955,8 +2956,30 @@ function saveNewRecord() {
     return;
   }
   createFormErrors.value = new Set();
+  // Build the record from draftValues
+  const titleField = type?.fields.find((f) => f.is_title);
+  const title = titleField ? String(draftValues.value[titleField.key] ?? '').trim() || `New ${type?.label ?? 'Record'}` : `New ${type?.label ?? 'Record'}`;
+  const newRecord: CrmRecord = {
+    id: 'new-' + selectedTypeKey.value + '-' + String(mockRecords.length),
+    record_type_key: selectedTypeKey.value,
+    title,
+    created_at: new Date().toISOString(),
+    field_values: { ...draftValues.value },
+    links: [],
+  };
+  mockRecords.push(newRecord);
+  mockActivities.unshift({
+    id: 'act-create-' + newRecord.id,
+    record_id: newRecord.id,
+    type: 'change',
+    content: 'Record created',
+    author: 'You',
+    created_at: newRecord.created_at,
+  });
   creatingRecord.value = false;
-  showToast(`${selectedType.value?.label ?? 'Record'} created`);
+  draftValues.value = {};
+  openRecord(newRecord);
+  showToast(`${type?.label ?? 'Record'} created`);
 }
 
 function openFromPalette(record: CrmRecord) {
