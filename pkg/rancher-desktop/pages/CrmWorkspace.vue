@@ -589,7 +589,10 @@
                   />
                   <span class="text-xs font-semibold text-slate-700 dark:text-slate-300 truncate">{{ col }}</span>
                   <span class="ml-auto text-xs tabular-nums text-slate-400 dark:text-slate-500 font-medium shrink-0">
-                    {{ (kanbanGroups[col] ?? []).length }}
+                    <template v-if="(searchQuery || activeFilters.length) && (kanbanGroups[col] ?? []).length !== (kanbanGroupsTotal[col] ?? 0)">
+                      <span class="text-sky-500 dark:text-sky-400">{{ (kanbanGroups[col] ?? []).length }}</span> of {{ kanbanGroupsTotal[col] ?? 0 }}
+                    </template>
+                    <template v-else>{{ (kanbanGroups[col] ?? []).length }}</template>
                     <template v-if="kanbanColumnTotals[col]"> · {{ kanbanColumnTotals[col] }}</template>
                   </span>
                 </div>
@@ -1468,6 +1471,19 @@ const kanbanGroups = computed((): Record<string, CrmRecord[]> => {
     }
   }
   return groups;
+});
+
+const kanbanGroupsTotal = computed((): Record<string, number> => {
+  if (!kanbanField.value) return {};
+  const fieldKey = kanbanField.value.key;
+  const totals: Record<string, number> = {};
+  for (const col of kanbanColumns.value) totals[col] = 0;
+  const typeRecs = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
+  for (const r of typeRecs) {
+    const val = (r.field_values[fieldKey] as string) ?? '';
+    if (Object.prototype.hasOwnProperty.call(totals, val)) totals[val]++;
+  }
+  return totals;
 });
 
 // Aggregate total for types with a currency field — shown in toolbar as "6 records · $234k"
