@@ -264,8 +264,9 @@
                     :class="stageDot(col)"
                   />
                   <span class="text-xs font-semibold text-slate-700 dark:text-slate-300 truncate">{{ col }}</span>
-                  <span class="ml-auto text-xs tabular-nums text-slate-400 dark:text-slate-500 font-medium">
+                  <span class="ml-auto text-xs tabular-nums text-slate-400 dark:text-slate-500 font-medium shrink-0">
                     {{ (kanbanGroups[col] ?? []).length }}
+                    <template v-if="kanbanColumnTotals[col]"> · {{ kanbanColumnTotals[col] }}</template>
                   </span>
                 </div>
 
@@ -786,6 +787,22 @@ const kanbanGroups = computed((): Record<string, CrmRecord[]> => {
     }
   }
   return groups;
+});
+
+// Per-column currency totals for types that have a currency field (e.g. deal.amount)
+const kanbanColumnTotals = computed((): Record<string, string | null> => {
+  const currencyField = selectedType.value?.fields.find((f) => f.format === 'currency');
+  if (!currencyField) return {};
+  const result: Record<string, string | null> = {};
+  for (const col of kanbanColumns.value) {
+    const records = kanbanGroups.value[col] ?? [];
+    const sum = records.reduce((acc, r) => {
+      const v = r.field_values[currencyField.key];
+      return acc + (v != null ? Number(v) : 0);
+    }, 0);
+    result[col] = sum > 0 ? formatCardValue(sum, 'number', 'currency') : null;
+  }
+  return result;
 });
 
 // Secondary fields shown on each kanban card (first 2 non-title, non-groupBy fields)
