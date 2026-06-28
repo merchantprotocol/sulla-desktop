@@ -3725,7 +3725,19 @@ function startTitleEdit(record: CrmRecord) {
 
 function commitTitleEdit(record: CrmRecord) {
   const trimmed = titleDraft.value.trim();
-  if (trimmed) record.title = trimmed;
+  if (trimmed && trimmed !== record.title) {
+    const prev = record.title;
+    record.title = trimmed;
+    record.updated_at = new Date().toISOString();
+    mockActivities.unshift({
+      id: 'act-chg-title-' + String(mockActivities.length),
+      record_id: record.id,
+      type: 'change',
+      content: `Name: ${prev} → ${trimmed}`,
+      author: 'You',
+      created_at: new Date().toISOString(),
+    });
+  }
   editingTitle.value = false;
 }
 
