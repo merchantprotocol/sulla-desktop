@@ -7,6 +7,7 @@
     @keydown.n.exact="onKeyN"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
+    @click="showColumnsMenu = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -168,6 +169,62 @@
               </svg>
               Export
             </button>
+
+            <!-- columns toggle — table view only -->
+            <div v-if="viewMode === 'table'" class="relative">
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+                :class="hiddenColumnKeys.size
+                  ? 'border-sky-400 dark:border-sky-500 text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30 hover:bg-sky-100 dark:hover:bg-sky-950/50'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+                title="Show / hide columns"
+                @click.stop="showColumnsMenu = !showColumnsMenu"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                </svg>
+                Columns<template v-if="hiddenColumnKeys.size"> ({{ hiddenColumnKeys.size }} hidden)</template>
+              </button>
+
+              <!-- columns dropdown -->
+              <div
+                v-if="showColumnsMenu"
+                class="absolute right-0 top-full mt-1 z-30 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1"
+                @click.stop
+              >
+                <div class="px-3 py-2 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide border-b border-slate-100 dark:border-slate-800">
+                  Fields
+                </div>
+                <label
+                  v-for="col in allColumns"
+                  :key="col.key"
+                  class="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer select-none"
+                  :class="col.is_title
+                    ? 'text-slate-400 dark:text-slate-600 cursor-not-allowed'
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                >
+                  <input
+                    type="checkbox"
+                    :checked="!hiddenColumnKeys.has(col.key)"
+                    :disabled="col.is_title"
+                    class="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                    @change="toggleColumnVisibility(col.key)"
+                  >
+                  {{ col.label }}
+                  <span v-if="col.is_title" class="ml-auto text-xs text-slate-300 dark:text-slate-700">Title</span>
+                </label>
+                <div class="px-3 py-2 border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    type="button"
+                    class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                    @click="hiddenColumnKeys = new Set()"
+                  >
+                    Show all
+                  </button>
+                </div>
+              </div>
+            </div>
 
             <!-- row density toggle — table view only -->
             <div
@@ -1025,6 +1082,8 @@ const sortField = ref<string | null>(null);
 const sortDir = ref<'asc' | 'desc'>('asc');
 const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
 const selectedIds = ref<Set<string>>(new Set());
+const hiddenColumnKeys = ref<Set<string>>(new Set());
+const showColumnsMenu = ref(false);
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -1045,10 +1104,14 @@ const recordCountByType = computed(() => {
   return counts;
 });
 
-const visibleColumns = computed(() =>
+const allColumns = computed(() =>
   (selectedType.value?.fields ?? [])
     .slice()
     .sort((a, b) => a.position - b.position),
+);
+
+const visibleColumns = computed(() =>
+  allColumns.value.filter((c) => !hiddenColumnKeys.value.has(c.key)),
 );
 
 const filteredRecords = computed(() => {
@@ -1201,6 +1264,13 @@ function clearSelection() {
   selectedIds.value = new Set();
 }
 
+function toggleColumnVisibility(key: string) {
+  const next = new Set(hiddenColumnKeys.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  hiddenColumnKeys.value = next;
+}
+
 function selectType(key: string) {
   selectedTypeKey.value = key;
   searchQuery.value = '';
@@ -1212,6 +1282,8 @@ function selectType(key: string) {
   sortDir.value = 'asc';
   navigationStack.value = [];
   selectedIds.value = new Set();
+  hiddenColumnKeys.value = new Set();
+  showColumnsMenu.value = false;
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
