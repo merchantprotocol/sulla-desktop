@@ -3066,6 +3066,8 @@
                 { keys: ['Right-click'], desc: 'Row context menu (filter by value)' },
                 { keys: ['Right-click', 'col'], desc: 'Column menu (sort / group / hide)' },
                 { keys: ['⇧', 'click col'], desc: 'Add secondary sort column' },
+                { keys: ['Dbl-click', 'col'], desc: 'Rename column in-place' },
+                { keys: ['Drag', 'col'], desc: 'Reorder columns' },
                 { keys: ['S'], desc: 'Bulk move to stage (when rows selected)' },
               ]},
               { heading: 'Forms', items: [
@@ -4184,8 +4186,22 @@
                     <div
                       v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
                       :key="field.id"
-                      class="flex items-center gap-3 px-5 py-3 group/field"
+                      draggable="true"
+                      class="flex items-center gap-3 px-5 py-3 group/field cursor-grab active:cursor-grabbing transition-colors"
+                      :class="[
+                        schemaDragOver === field.id && schemaDragSrc !== field.id ? 'border-t-2 border-t-sky-400' : '',
+                        schemaDragSrc === field.id ? 'opacity-40' : '',
+                      ]"
+                      @dragstart.stop="(e) => { schemaDragSrc = field.id; e.dataTransfer && (e.dataTransfer.effectAllowed = 'move'); }"
+                      @dragover.prevent="schemaDragOver = field.id"
+                      @dragleave="schemaDragOver = null"
+                      @drop.prevent="dropSchemaReorder(field.id)"
+                      @dragend="() => { schemaDragSrc = null; schemaDragOver = null; }"
                     >
+                      <!-- drag handle -->
+                      <span class="shrink-0 text-slate-200 dark:text-slate-700 group-hover/field:text-slate-300 dark:group-hover/field:text-slate-600 transition-colors cursor-grab">
+                        <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
+                      </span>
                       <!-- data_type icon -->
                       <span class="shrink-0 h-7 w-7 rounded-md flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
                         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -4882,6 +4898,8 @@ const showColStatsModal = ref(false);
 const colStatsFieldKey = ref<string | null>(null);
 const colDragSrc = ref<string | null>(null);
 const colDragOver = ref<string | null>(null);
+const schemaDragSrc = ref<string | null>(null);
+const schemaDragOver = ref<string | null>(null);
 const editingColKey = ref<string | null>(null);
 const editingColLabel = ref('');
 const groupByField = ref<string | null>(null);
@@ -5967,6 +5985,21 @@ function dropColReorder(targetKey: string) {
   const ordered = [...fields].sort((a, b) => a.position - b.position);
   const srcIdx = ordered.findIndex((f) => f.key === src);
   const tgtIdx = ordered.findIndex((f) => f.key === targetKey);
+  if (srcIdx === -1 || tgtIdx === -1) return;
+  const [moved] = ordered.splice(srcIdx, 1);
+  ordered.splice(tgtIdx, 0, moved);
+  ordered.forEach((f, i) => { f.position = i; });
+}
+
+function dropSchemaReorder(targetId: string) {
+  const src = schemaDragSrc.value;
+  schemaDragSrc.value = null;
+  schemaDragOver.value = null;
+  if (!src || src === targetId || !selectedType.value) return;
+  const fields = selectedType.value.fields;
+  const ordered = [...fields].sort((a, b) => a.position - b.position);
+  const srcIdx = ordered.findIndex((f) => f.id === src);
+  const tgtIdx = ordered.findIndex((f) => f.id === targetId);
   if (srcIdx === -1 || tgtIdx === -1) return;
   const [moved] = ordered.splice(srcIdx, 1);
   ordered.splice(tgtIdx, 0, moved);
