@@ -1093,6 +1093,7 @@
           <div class="px-5 py-3 space-y-0.5">
             <template v-for="group in [
               { heading: 'Navigation', items: [
+                { keys: ['⌘', 'K'], desc: 'Command palette' },
                 { keys: ['N'], desc: 'New record' },
                 { keys: ['D'], desc: 'Duplicate open record' },
                 { keys: ['/'], desc: 'Focus search' },
@@ -1130,6 +1131,76 @@
           </div>
           <div class="px-5 py-3 border-t border-slate-100 dark:border-slate-800">
             <p class="text-xs text-slate-400 dark:text-slate-500">Press <kbd class="inline-flex items-center rounded px-1 py-0.5 text-xs font-mono bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">?</kbd> to toggle this overlay</p>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- command palette — ⌘K -->
+    <transition
+      enter-active-class="transition-all duration-150"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-100"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="showPalette"
+        class="fixed inset-0 z-50 flex items-start justify-center pt-24 bg-black/50"
+        @click.self="showPalette = false"
+      >
+        <div class="w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
+          <!-- search input -->
+          <div class="flex items-center gap-3 px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+            <svg class="h-4 w-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+            </svg>
+            <input
+              ref="paletteInputEl"
+              v-model="paletteQuery"
+              type="text"
+              placeholder="Search all records…"
+              class="flex-1 text-sm bg-transparent text-slate-900 dark:text-white placeholder-slate-400 outline-none"
+              @keydown.arrow-down.prevent="paletteIdx = Math.min(paletteIdx + 1, paletteResults.length - 1)"
+              @keydown.arrow-up.prevent="paletteIdx = Math.max(paletteIdx - 1, 0)"
+              @keydown.enter.prevent="paletteResults[paletteIdx] && openFromPalette(paletteResults[paletteIdx])"
+              @keydown.esc.stop="showPalette = false"
+            />
+            <kbd class="text-xs text-slate-400 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 font-mono">esc</kbd>
+          </div>
+          <!-- results -->
+          <div class="py-2 max-h-80 overflow-y-auto">
+            <button
+              v-for="(record, idx) in paletteResults"
+              :key="record.id"
+              type="button"
+              class="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
+              :class="idx === paletteIdx ? 'bg-sky-50 dark:bg-sky-950/30' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'"
+              @mouseenter="paletteIdx = idx"
+              @click="openFromPalette(record)"
+            >
+              <div
+                class="shrink-0 h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold"
+                :style="{ background: (schema.find(t => t.key === record.record_type_key)?.color ?? '#3b82f6') + '22', color: schema.find(t => t.key === record.record_type_key)?.color ?? '#3b82f6' }"
+              >
+                {{ recordInitials(record.title) }}
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-slate-900 dark:text-white truncate">{{ record.title }}</p>
+                <p class="text-xs text-slate-400 dark:text-slate-500 truncate">{{ schema.find(t => t.key === record.record_type_key)?.label }}</p>
+              </div>
+              <svg v-if="idx === paletteIdx" class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+            <p v-if="!paletteResults.length" class="px-4 py-8 text-center text-sm text-slate-400 dark:text-slate-500">No records found</p>
+          </div>
+          <div class="px-4 py-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-3 text-xs text-slate-400 dark:text-slate-500">
+            <span><kbd class="font-mono">↑↓</kbd> navigate</span>
+            <span><kbd class="font-mono">↵</kbd> open</span>
+            <span><kbd class="font-mono">esc</kbd> close</span>
+            <span class="ml-auto"><kbd class="font-mono">⌘K</kbd> toggle</span>
           </div>
         </div>
       </div>
@@ -1443,9 +1514,16 @@ const editingTitle = ref(false);
 const titleDraft = ref('');
 const titleInputEl = ref<HTMLInputElement | null>(null);
 watch(editingTitle, (val) => { if (val) nextTick(() => titleInputEl.value?.select()); });
+watch(showPalette, (val) => {
+  if (val) { paletteQuery.value = ''; paletteIdx.value = 0; nextTick(() => paletteInputEl.value?.focus()); }
+});
 const cellDraftValue = ref<string | number | boolean | null>(null);
 const showShortcuts = ref(false);
 const toasts = ref<Array<{ id: string; message: string }>>([]);
+const showPalette = ref(false);
+const paletteQuery = ref('');
+const paletteIdx = ref(0);
+const paletteInputEl = ref<HTMLInputElement | null>(null);
 const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
 
 // ── Computed ───────────────────────────────────────────────────────────────
@@ -1635,6 +1713,17 @@ const recordActivities = computed(() =>
     : [],
 );
 
+const paletteResults = computed(() => {
+  const q = paletteQuery.value.trim().toLowerCase();
+  if (!q) return mockRecords.slice(0, 8);
+  return mockRecords
+    .filter((r) =>
+      r.title.toLowerCase().includes(q) ||
+      Object.values(r.field_values).some((v) => v != null && String(v).toLowerCase().includes(q)),
+    )
+    .slice(0, 8);
+});
+
 const allSelected = computed(
   () =>
     filteredRecords.value.length > 0 &&
@@ -1794,6 +1883,18 @@ function saveNewRecord() {
   showToast(`${selectedType.value?.label ?? 'Record'} created`);
 }
 
+function openFromPalette(record: CrmRecord) {
+  showPalette.value = false;
+  if (record.record_type_key !== selectedTypeKey.value) {
+    selectedTypeKey.value = record.record_type_key;
+    searchQuery.value = '';
+    sortField.value = null;
+    sortDir.value = 'asc';
+    viewMode.value = 'table';
+  }
+  nextTick(() => openRecord(record));
+}
+
 function logNote(record: CrmRecord) {
   const text = noteText.value.trim();
   if (!text) return;
@@ -1886,6 +1987,11 @@ function onGlobalKeydown(e: KeyboardEvent) {
   if (e.key === '/' && !inField) {
     e.preventDefault();
     searchInputEl.value?.focus();
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    showPalette.value = !showPalette.value;
     return;
   }
   if (!inField && openedRecord.value && !editingRecord.value) {
