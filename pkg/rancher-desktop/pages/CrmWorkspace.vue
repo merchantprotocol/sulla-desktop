@@ -1106,11 +1106,23 @@
                     class="px-4 text-xs tabular-nums whitespace-nowrap"
                     :class="[
                       rowDensity === 'compact' ? 'py-1.5' : 'py-3',
-                      (Date.now() - new Date(record.created_at).getTime()) > 30 * 24 * 60 * 60 * 1000
-                        ? 'text-rose-300 dark:text-rose-800'
-                        : 'text-slate-400 dark:text-slate-500',
+                      (() => {
+                        const lastActive = lastActivityByRecord[record.id]
+                          ?? (record.updated_at ? new Date(record.updated_at).getTime() : null)
+                          ?? new Date(record.created_at).getTime();
+                        const daysSince = (Date.now() - lastActive) / (1000 * 60 * 60 * 24);
+                        return daysSince > 60
+                          ? 'text-rose-400 dark:text-rose-600'
+                          : daysSince > 30
+                            ? 'text-amber-400 dark:text-amber-600'
+                            : 'text-slate-400 dark:text-slate-500';
+                      })(),
                     ]"
-                    :title="record.updated_at ? `Added ${formatDate(record.created_at)} · Updated ${formatDate(record.updated_at)}` : formatDate(record.created_at)"
+                    :title="(() => {
+                      const lastTs = lastActivityByRecord[record.id];
+                      const base = record.updated_at ? `Added ${formatDate(record.created_at)} · Updated ${formatDate(record.updated_at)}` : formatDate(record.created_at);
+                      return lastTs ? `${base} · Last activity ${formatAge(new Date(lastTs).toISOString())}` : base;
+                    })()"
                   >
                     <div>{{ formatAge(record.updated_at ?? record.created_at) }}</div>
                     <div v-if="record.updated_at" class="text-[10px] text-slate-300 dark:text-slate-700 leading-none mt-0.5">upd</div>
@@ -3123,6 +3135,15 @@ const activityCountByRecord = computed((): Record<string, number> => {
     counts[a.record_id] = (counts[a.record_id] ?? 0) + 1;
   }
   return counts;
+});
+
+const lastActivityByRecord = computed((): Record<string, number> => {
+  const stamps: Record<string, number> = {};
+  for (const a of mockActivities) {
+    const t = new Date(a.created_at).getTime();
+    if (!stamps[a.record_id] || t > stamps[a.record_id]) stamps[a.record_id] = t;
+  }
+  return stamps;
 });
 
 const stageDistribution = computed((): Array<{ label: string; count: number; pct: number }> => {
