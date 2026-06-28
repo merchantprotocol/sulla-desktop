@@ -3506,7 +3506,7 @@
               <!-- Details tab -->
               <template v-if="editingRecord || detailTab === 'details'">
                 <div
-                  v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
+                  v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position).filter(f => fieldIsVisible(f, openedRecord))"
                   :key="field.id"
                   class="space-y-1 group/field"
                 >
@@ -5304,8 +5304,22 @@
                           {{ field.key }} · {{ field.data_type }}
                           <template v-if="field.select_options?.length"> · {{ field.select_options.join(', ') }}</template>
                           <template v-if="field.default_value"> · <span class="text-violet-400 dark:text-violet-500">default: {{ field.default_value }}</span></template>
+                          <template v-if="field.visible_when"> · <span class="text-sky-400 dark:text-sky-500">if {{ (selectedType?.fields.find(f => f.key === field.visible_when!.fieldKey)?.label ?? field.visible_when.fieldKey) }} {{ field.visible_when.operator === 'eq' ? '=' : field.visible_when.operator === 'neq' ? '≠' : field.visible_when.operator === 'empty' ? 'empty' : '≠ empty' }}{{ field.visible_when.value ? ' ' + field.visible_when.value : '' }}</span></template>
                         </div>
                       </div>
+                      <!-- visibility rule button -->
+                      <button
+                        v-if="!field.is_title"
+                        type="button"
+                        class="shrink-0 h-7 w-7 rounded-md flex items-center justify-center transition-all opacity-0 group-hover/field:opacity-100"
+                        :class="field.visible_when
+                          ? 'text-sky-400 dark:text-sky-500 bg-sky-50 dark:bg-sky-950/30'
+                          : 'text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/20'"
+                        :title="field.visible_when ? 'Edit visibility rule' : 'Add visibility rule'"
+                        @click.stop="visibilityRuleFieldId = visibilityRuleFieldId === field.id ? null : field.id"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                      </button>
                       <!-- delete button — hidden for title/required fields -->
                       <button
                         v-if="!field.is_title && !field.is_required"
@@ -5316,7 +5330,53 @@
                       >
                         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                       </button>
-                      <span v-else class="shrink-0 h-7 w-7" />
+                      <span v-else-if="field.is_title" class="shrink-0 h-7 w-7" />
+                    </div>
+                    <!-- visibility rule editor — shown inline below field row -->
+                    <div
+                      v-if="visibilityRuleFieldId === field.id && !field.is_title"
+                      class="mx-5 mb-2 rounded-lg border border-sky-200 dark:border-sky-900/60 bg-sky-50/60 dark:bg-sky-950/20 p-3 space-y-2"
+                      @click.stop
+                    >
+                      <p class="text-[10px] font-semibold uppercase tracking-widest text-sky-500 dark:text-sky-400">Visibility rule</p>
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <span class="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap">Show when</span>
+                        <select
+                          :value="field.visible_when?.fieldKey ?? ''"
+                          class="text-xs px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                          @change="(e) => { const fk = (e.target as HTMLSelectElement).value; if (!fk) { field.visible_when = undefined; return; } field.visible_when = { fieldKey: fk, operator: field.visible_when?.operator ?? 'eq', value: field.visible_when?.value ?? '' }; }"
+                        >
+                          <option value="">— pick field —</option>
+                          <option
+                            v-for="f2 in (selectedType?.fields ?? []).filter(f2 => f2.id !== field.id)"
+                            :key="f2.key"
+                            :value="f2.key"
+                          >{{ f2.label }}</option>
+                        </select>
+                        <select
+                          v-if="field.visible_when"
+                          :value="field.visible_when.operator"
+                          class="text-xs px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                          @change="(e) => { if (field.visible_when) field.visible_when = { ...field.visible_when, operator: (e.target as HTMLSelectElement).value as 'eq' | 'neq' | 'empty' | 'not_empty' }; }"
+                        >
+                          <option value="eq">= equals</option>
+                          <option value="neq">≠ not equals</option>
+                          <option value="empty">is empty</option>
+                          <option value="not_empty">is not empty</option>
+                        </select>
+                        <input
+                          v-if="field.visible_when && (field.visible_when.operator === 'eq' || field.visible_when.operator === 'neq')"
+                          :value="field.visible_when.value"
+                          type="text"
+                          placeholder="value"
+                          class="flex-1 min-w-0 text-xs px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                          @input="(e) => { if (field.visible_when) field.visible_when = { ...field.visible_when, value: (e.target as HTMLInputElement).value }; }"
+                        />
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <button v-if="field.visible_when" type="button" class="text-xs text-rose-400 hover:text-rose-500 transition-colors" @click="field.visible_when = undefined">Clear rule</button>
+                        <button type="button" class="ml-auto text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="visibilityRuleFieldId = null">Done</button>
+                      </div>
                     </div>
                   </div>
 
@@ -5590,6 +5650,7 @@ interface CrmField {
   select_options?: string[];
   format?: FieldFormat;
   default_value?: string;
+  visible_when?: { fieldKey: string; operator: 'eq' | 'neq' | 'empty' | 'not_empty'; value: string };
 }
 
 interface CrmRecordType {
@@ -6137,6 +6198,7 @@ const showAddFieldForm = ref(false);
 const schemaTypeLabelDraft = ref<string | null>(null);
 const schemaTypeLabelInputEl = ref<HTMLInputElement | null>(null);
 const showTypeIconColorPicker = ref(false);
+const visibilityRuleFieldId = ref<string | null>(null);
 const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
 const SCHEMA_ICON_OPTIONS: IconKey[] = ['user', 'building', 'chart', 'target', 'check', 'folder', 'tag', 'list', 'layers', 'star'];
@@ -7866,6 +7928,7 @@ function selectType(key: string) {
   createFormErrors.value = new Set();
   colAggOverrides.value = {};
   showTypeIconColorPicker.value = false;
+  visibilityRuleFieldId.value = null;
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
@@ -8337,6 +8400,18 @@ function recordCompleteness(record: CrmRecord): number {
     return v != null && String(v).trim() !== '';
   }).length;
   return Math.round((filled / fields.length) * 100);
+}
+
+function fieldIsVisible(field: CrmField, record: CrmRecord): boolean {
+  const cond = field.visible_when;
+  if (!cond) return true;
+  const rawVal = record.field_values[cond.fieldKey];
+  const strVal = rawVal == null ? '' : String(rawVal);
+  if (cond.operator === 'empty') return strVal === '';
+  if (cond.operator === 'not_empty') return strVal !== '';
+  if (cond.operator === 'eq') return strVal === cond.value;
+  if (cond.operator === 'neq') return strVal !== cond.value;
+  return true;
 }
 
 function cycleSelectField(record: CrmRecord, field: CrmField) {
