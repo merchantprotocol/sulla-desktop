@@ -675,6 +675,20 @@ const STAGE_ORDER: Record<string, string[]> = {
   company: ['Education', 'Marketing', 'Consulting', 'Technology', 'Finance', 'Healthcare', 'Other'],
 };
 
+// Tailwind classes for select badge pills — semantic color by value keyword
+function selectBadgeClass(val: string): string {
+  const v = val.toLowerCase();
+  if (['won', 'active', 'converted', 'done'].some((k) => v.includes(k)))
+    return 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400';
+  if (['lost', 'churn', 'inactive'].some((k) => v.includes(k)))
+    return 'bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400';
+  if (['negotiat', 'qualif', 'proposal'].some((k) => v.includes(k)))
+    return 'bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-400';
+  if (['lead', 'prospect', 'webinar', 'referral', 'linkedin', 'paid', 'organic', 'direct'].some((k) => v.includes(k)))
+    return 'bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-500';
+  return 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300';
+}
+
 // dot color per semantic stage value
 function stageDot(stage: string): string {
   const s = stage.toLowerCase();
@@ -944,7 +958,7 @@ const CrmCellValue = defineComponent({
       }
       if (props.dataType === 'select') {
         return h('span', {
-          class: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
+          class: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' + selectBadgeClass(String(props.value)),
         }, String(props.value));
       }
       if (props.dataType === 'date') {
