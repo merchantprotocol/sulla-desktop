@@ -2606,21 +2606,39 @@
                 class="grid gap-4"
                 :style="{ gridTemplateColumns: `repeat(${galleryColCount}, minmax(0, 1fr))` }"
               >
-                <button
+                <div
                   v-for="record in group.records"
                   :key="record.id"
-                  type="button"
-                  class="group/gc text-left rounded-xl border shadow-sm transition-all overflow-hidden flex flex-col"
-                  :class="openedRecord?.id === record.id
-                    ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800 shadow-md ring-1 ring-sky-200 dark:ring-sky-800'
-                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700'"
+                  role="button"
+                  tabindex="0"
+                  class="group/gc text-left rounded-xl border shadow-sm transition-all overflow-hidden flex flex-col cursor-pointer"
+                  :class="[
+                    selectedIds.has(record.id)
+                      ? 'ring-2 ring-sky-400 dark:ring-sky-500 border-sky-300 dark:border-sky-700'
+                      : openedRecord?.id === record.id
+                        ? 'border-sky-200 dark:border-sky-800 shadow-md ring-1 ring-sky-200 dark:ring-sky-800'
+                        : 'border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700',
+                    selectedIds.has(record.id) || openedRecord?.id === record.id
+                      ? 'bg-sky-50 dark:bg-sky-950/30'
+                      : 'bg-white dark:bg-slate-900',
+                  ]"
                   @click="openRecord(record)"
+                  @keydown.enter="openRecord(record)"
                   @contextmenu.prevent="openContextMenu(record, $event)"
                 >
                   <div v-if="colorLabels[record.id] || evaluateConditionalRules(record)" class="h-1.5 w-full shrink-0" :style="{ background: colorLabels[record.id] || evaluateConditionalRules(record) }" />
                   <div class="flex-1 flex flex-col p-4">
-                    <div class="flex items-start justify-between gap-2 mb-3">
+                    <div class="flex items-start gap-2 mb-3">
+                      <input
+                        type="checkbox"
+                        class="mt-1 h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer shrink-0 transition-opacity"
+                        :class="selectedIds.has(record.id) ? 'opacity-100' : 'opacity-0 group-hover/gc:opacity-100'"
+                        :checked="selectedIds.has(record.id)"
+                        :aria-label="`Select ${record.title}`"
+                        @click.stop="toggleSelect(record.id)"
+                      />
                       <div class="h-9 w-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 select-none" :style="{ background: (selectedType?.color ?? '#3b82f6') + '22', color: selectedType?.color ?? '#3b82f6' }">{{ recordInitials(record.title) }}</div>
+                      <div class="flex-1" />
                       <button type="button" class="shrink-0 mt-1 rounded transition-colors" :class="pinnedIds.has(record.id) ? 'text-amber-400' : 'text-slate-200 dark:text-slate-700 hover:text-amber-400 dark:hover:text-amber-400 opacity-0 group-hover/gc:opacity-100'" :title="pinnedIds.has(record.id) ? 'Unpin' : 'Pin'" :aria-label="pinnedIds.has(record.id) ? 'Unpin record' : 'Pin record'" @click.stop="togglePin(record.id)">
                         <svg v-if="pinnedIds.has(record.id)" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
                         <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
@@ -2642,7 +2660,7 @@
                       </div>
                     </div>
                   </div>
-                </button>
+                </div>
               </div>
             </section>
             <!-- ghost add card below all groups -->
@@ -2656,15 +2674,24 @@
             class="grid gap-4"
             :style="{ gridTemplateColumns: `repeat(${galleryColCount}, minmax(0, 1fr))` }"
           >
-            <button
-              v-for="record in filteredRecords"
+            <div
+              v-for="(record, idx) in filteredRecords"
               :key="record.id"
-              type="button"
-              class="group/gc text-left rounded-xl border shadow-sm transition-all overflow-hidden flex flex-col"
-              :class="openedRecord?.id === record.id
-                ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800 shadow-md ring-1 ring-sky-200 dark:ring-sky-800'
-                : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700'"
+              role="button"
+              tabindex="0"
+              class="group/gc text-left rounded-xl border shadow-sm transition-all overflow-hidden flex flex-col cursor-pointer"
+              :class="[
+                selectedIds.has(record.id)
+                  ? 'ring-2 ring-sky-400 dark:ring-sky-500 border-sky-300 dark:border-sky-700'
+                  : openedRecord?.id === record.id
+                    ? 'border-sky-200 dark:border-sky-800 shadow-md ring-1 ring-sky-200 dark:ring-sky-800'
+                    : 'border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700',
+                selectedIds.has(record.id) || openedRecord?.id === record.id
+                  ? 'bg-sky-50 dark:bg-sky-950/30'
+                  : 'bg-white dark:bg-slate-900',
+              ]"
               @click="openRecord(record)"
+              @keydown.enter="openRecord(record)"
               @contextmenu.prevent="openContextMenu(record, $event)"
             >
               <!-- color stripe at top -->
@@ -2674,12 +2701,21 @@
                 :style="{ background: colorLabels[record.id] || evaluateConditionalRules(record) }"
               />
               <div class="flex-1 flex flex-col p-4">
-                <!-- avatar + pin row -->
-                <div class="flex items-start justify-between gap-2 mb-3">
+                <!-- checkbox + avatar + pin row -->
+                <div class="flex items-start gap-2 mb-3">
+                  <input
+                    type="checkbox"
+                    class="mt-1 h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer shrink-0 transition-opacity"
+                    :class="selectedIds.has(record.id) ? 'opacity-100' : 'opacity-0 group-hover/gc:opacity-100'"
+                    :checked="selectedIds.has(record.id)"
+                    :aria-label="`Select ${record.title}`"
+                    @click.stop="onCheckboxClick(record, idx, $event)"
+                  />
                   <div
                     class="h-9 w-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 select-none"
                     :style="{ background: (selectedType?.color ?? '#3b82f6') + '22', color: selectedType?.color ?? '#3b82f6' }"
                   >{{ recordInitials(record.title) }}</div>
+                  <div class="flex-1" />
                   <button
                     type="button"
                     class="shrink-0 mt-1 rounded transition-colors"
@@ -2750,7 +2786,7 @@
                   </div>
                 </div>
               </div>
-            </button>
+            </div>
             <!-- ghost add-record card -->
             <button
               type="button"
