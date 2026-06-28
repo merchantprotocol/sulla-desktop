@@ -895,11 +895,34 @@
                   <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Activity</p>
                   <button
                     type="button"
-                    class="text-xs text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300 transition-colors"
-                    title="Log activity (coming soon)"
+                    class="text-xs transition-colors"
+                    :class="loggingNote ? 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300' : 'text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300'"
+                    @click="loggingNote = !loggingNote; noteText = ''"
                   >
-                    + Log
+                    {{ loggingNote ? 'Cancel' : '+ Log note' }}
                   </button>
+                </div>
+                <!-- note compose area -->
+                <div v-if="loggingNote" class="space-y-2">
+                  <textarea
+                    v-model="noteText"
+                    rows="3"
+                    placeholder="Add a note…"
+                    class="w-full rounded-lg px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                    @keydown.meta.enter.prevent="logNote(openedRecord)"
+                    @keydown.ctrl.enter.prevent="logNote(openedRecord)"
+                  />
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs text-slate-400 dark:text-slate-500">⌘ Enter to save</span>
+                    <button
+                      type="button"
+                      class="rounded-lg px-3 py-1.5 text-xs font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors disabled:opacity-40"
+                      :disabled="!noteText.trim()"
+                      @click="logNote(openedRecord)"
+                    >
+                      Save note
+                    </button>
+                  </div>
                 </div>
                 <div v-if="recordActivities.length" class="space-y-3">
                   <div v-for="act in recordActivities" :key="act.id" class="flex gap-2.5">
@@ -1356,6 +1379,8 @@ const hiddenColumnKeys = ref<Set<string>>(new Set());
 const showColumnsMenu = ref(false);
 const detailTab = ref<'details' | 'activity' | 'related'>('details');
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
+const loggingNote = ref(false);
+const noteText = ref('');
 const cellDraftValue = ref<string | number | boolean | null>(null);
 const showShortcuts = ref(false);
 const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
@@ -1642,6 +1667,8 @@ function closePanel() {
   creatingRecord.value = false;
   navigationStack.value = [];
   createFormErrors.value = new Set();
+  loggingNote.value = false;
+  noteText.value = '';
 }
 
 function openRecord(record: CrmRecord) {
@@ -1674,6 +1701,21 @@ function saveNewRecord() {
   }
   createFormErrors.value = new Set();
   creatingRecord.value = false;
+}
+
+function logNote(record: CrmRecord) {
+  const text = noteText.value.trim();
+  if (!text) return;
+  mockActivities.unshift({
+    id: 'act-' + String(mockActivities.length),
+    record_id: record.id,
+    type: 'note',
+    content: text,
+    author: 'You',
+    created_at: new Date().toISOString(),
+  });
+  noteText.value = '';
+  loggingNote.value = false;
 }
 
 function cycleSelectField(record: CrmRecord, field: CrmField) {
