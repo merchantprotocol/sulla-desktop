@@ -918,6 +918,30 @@ const CrmCellValue = defineComponent({
         }
         return h('span', { class: 'tabular-nums' }, display);
       }
+      if (props.dataType === 'email') {
+        return h('a', {
+          href: 'mailto:' + String(props.value),
+          class: 'text-sky-600 dark:text-sky-400 hover:underline truncate max-w-[180px] block',
+          onClick: (e: Event) => e.stopPropagation(),
+        }, String(props.value));
+      }
+      if (props.dataType === 'url') {
+        const href = String(props.value).startsWith('http') ? String(props.value) : 'https://' + String(props.value);
+        return h('a', {
+          href,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          class: 'text-sky-600 dark:text-sky-400 hover:underline truncate max-w-[180px] block',
+          onClick: (e: Event) => e.stopPropagation(),
+        }, String(props.value));
+      }
+      if (props.dataType === 'phone') {
+        return h('a', {
+          href: 'tel:' + String(props.value),
+          class: 'text-sky-600 dark:text-sky-400 hover:underline tabular-nums',
+          onClick: (e: Event) => e.stopPropagation(),
+        }, String(props.value));
+      }
       if (props.dataType === 'select') {
         return h('span', {
           class: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
