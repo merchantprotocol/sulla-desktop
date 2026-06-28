@@ -1126,7 +1126,15 @@
                     @click="openRecord(record)"
                   >
                     <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug mb-2 line-clamp-2 flex items-start gap-1.5">
-                      <span class="flex-1">{{ record.title }}</span>
+                      <span class="flex-1">
+                        <template v-if="searchQuery.trim()">
+                          <template v-for="(part, pi) in highlightText(record.title, searchQuery.trim())" :key="pi">
+                            <mark v-if="part.match" class="bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-100 rounded-sm not-italic">{{ part.text }}</mark>
+                            <span v-else>{{ part.text }}</span>
+                          </template>
+                        </template>
+                        <template v-else>{{ record.title }}</template>
+                      </span>
                       <button
                         type="button"
                         class="shrink-0 mt-0.5 rounded transition-colors"
