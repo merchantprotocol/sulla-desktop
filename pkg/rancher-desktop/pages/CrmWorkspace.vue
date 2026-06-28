@@ -1000,10 +1000,7 @@ function openLinkedRecord(link: CrmLink) {
     searchQuery.value = '';
     sortField.value = null;
     sortDir.value = 'asc';
-    const newType = schema.find((rt) => rt.key === link.target_type);
-    if (!newType?.fields.some((f) => f.data_type === 'select')) {
-      viewMode.value = 'table';
-    }
+    viewMode.value = 'table';
   }
   openedRecord.value = record;
   editingRecord.value = false;
