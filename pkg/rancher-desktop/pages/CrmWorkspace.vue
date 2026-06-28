@@ -755,6 +755,19 @@
               </transition>
             </div>
 
+            <!-- import button -->
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+              title="Import records from CSV"
+              @click="openImportModal"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l4-4m0 0l4 4m-4-4v12" />
+              </svg>
+              Import
+            </button>
+
             <!-- export button -->
             <button
               type="button"
@@ -3106,6 +3119,109 @@
       </div>
     </transition>
 
+    <!-- CSV import modal -->
+    <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div v-if="showImportModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="showImportModal = false">
+        <div class="w-full max-w-2xl rounded-2xl bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden flex flex-col max-h-[85vh]">
+          <!-- header -->
+          <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h3 class="text-base font-semibold text-slate-900 dark:text-white">Import {{ selectedType?.label ?? 'records' }}</h3>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Step {{ importStep === 'paste' ? '1' : importStep === 'map' ? '2' : '3' }} of 3 — {{ importStep === 'paste' ? 'Paste CSV data' : importStep === 'map' ? 'Map columns to fields' : 'Preview & confirm' }}</p>
+            </div>
+            <button type="button" class="rounded-lg p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showImportModal = false">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+
+          <!-- step 1: paste CSV -->
+          <div v-if="importStep === 'paste'" class="flex-1 overflow-auto p-6 space-y-4">
+            <div class="flex items-center gap-3">
+              <label class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 cursor-pointer select-none">
+                <input v-model="importHeaderRow" type="checkbox" class="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer">
+                First row is a header
+              </label>
+            </div>
+            <textarea
+              v-model="importCsvText"
+              class="w-full h-64 rounded-xl px-4 py-3 text-sm font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+              placeholder="Paste CSV data here&#10;e.g.:&#10;Name,Email,Company&#10;John Smith,john@acme.com,Acme Corp&#10;Jane Doe,jane@startup.io,Startup Inc"
+            />
+          </div>
+
+          <!-- step 2: column mapping -->
+          <div v-else-if="importStep === 'map'" class="flex-1 overflow-auto p-6">
+            <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">Map each CSV column to a record field, or leave as "Skip" to ignore.</p>
+            <div class="space-y-2">
+              <div v-for="(header, i) in (importHeaderRow ? importParsed[0] : importParsed[0]?.map((_, j) => `Column ${j + 1}`))" :key="i" class="flex items-center gap-3">
+                <span class="w-40 text-sm font-medium text-slate-700 dark:text-slate-300 truncate shrink-0">{{ importHeaderRow ? importParsed[0][i] : `Column ${i + 1}` }}</span>
+                <span class="text-slate-300 dark:text-slate-600">→</span>
+                <select
+                  v-model="importMapping[i]"
+                  class="flex-1 h-8 rounded-lg px-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                >
+                  <option value="">Skip</option>
+                  <option v-for="f in selectedType?.fields ?? []" :key="f.key" :value="f.key">{{ f.label }}</option>
+                  <option value="__title__">Title (record name)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- step 3: preview -->
+          <div v-else class="flex-1 overflow-auto p-6">
+            <p class="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              Ready to import <strong class="text-slate-700 dark:text-slate-300">{{ importPreviewRows.length }}</strong> record{{ importPreviewRows.length === 1 ? '' : 's' }}. Here is a preview of the first {{ Math.min(5, importPreviewRows.length) }}:
+            </p>
+            <div class="space-y-2">
+              <div
+                v-for="(row, ri) in importPreviewRows.slice(0, 5)"
+                :key="ri"
+                class="rounded-lg border border-slate-200 dark:border-slate-700 px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50"
+              >
+                <p class="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{{ row.__title__ ?? `Record ${ri + 1}` }}</p>
+                <div class="flex flex-wrap gap-2 mt-1">
+                  <span v-for="(val, key) in row" :key="key" class="text-xs text-slate-500 dark:text-slate-400">
+                    <span class="font-medium text-slate-600 dark:text-slate-300">{{ selectedType?.fields.find(f => f.key === key)?.label ?? key }}:</span> {{ val }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- footer actions -->
+          <div class="px-6 py-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
+            <button v-if="importStep !== 'paste'" type="button" class="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors" @click="importStep = importStep === 'preview' ? 'map' : 'paste'">
+              Back
+            </button>
+            <span v-else />
+            <div class="flex items-center gap-2">
+              <button type="button" class="h-9 px-4 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showImportModal = false">Cancel</button>
+              <button
+                v-if="importStep === 'paste'"
+                type="button"
+                class="h-9 px-4 rounded-xl text-sm font-semibold bg-sky-500 hover:bg-sky-600 text-white transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                :disabled="!importCsvText.trim()"
+                @click="parseImportCsv"
+              >Next: Map fields</button>
+              <button
+                v-else-if="importStep === 'map'"
+                type="button"
+                class="h-9 px-4 rounded-xl text-sm font-semibold bg-sky-500 hover:bg-sky-600 text-white transition-colors"
+                @click="importStep = 'preview'"
+              >Next: Preview</button>
+              <button
+                v-else
+                type="button"
+                class="h-9 px-4 rounded-xl text-sm font-semibold bg-sky-500 hover:bg-sky-600 text-white transition-colors"
+                @click="commitImport"
+              >Import {{ importPreviewRows.length }} record{{ importPreviewRows.length === 1 ? '' : 's' }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <!-- bulk field fill modal -->
     <transition
       enter-active-class="transition-all duration-150"
@@ -3829,6 +3945,12 @@ const wipLimitEditing = ref<string | null>(null);
 const wipLimitDraft = ref('');
 const wipLimitInputEl = ref<HTMLInputElement | null>(null);
 watch(wipLimitEditing, (val) => { if (val) nextTick(() => wipLimitInputEl.value?.focus()); });
+const showImportModal = ref(false);
+const importStep = ref<'paste' | 'map' | 'preview'>('paste');
+const importCsvText = ref('');
+const importParsed = ref<string[][]>([]);
+const importMapping = ref<Record<number, string>>({});
+const importHeaderRow = ref(true);
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -4385,6 +4507,17 @@ const tableColumnTotals = computed((): Record<string, number | null> => {
 const hasTableTotals = computed(() =>
   Object.values(tableColumnStats.value).some((v) => v !== null),
 );
+
+const importPreviewRows = computed((): Array<Record<string, string>> => {
+  const rows = importHeaderRow.value ? importParsed.value.slice(1) : importParsed.value;
+  return rows.filter((r) => r.some((c) => c.trim())).map((row) => {
+    const obj: Record<string, string> = {};
+    for (const [colIdx, fieldKey] of Object.entries(importMapping.value)) {
+      if (fieldKey) obj[fieldKey] = row[Number(colIdx)] ?? '';
+    }
+    return obj;
+  });
+});
 
 // Secondary fields shown on each kanban card (first 2 non-title, non-groupBy fields)
 const kanbanCardFields = computed(() => {
@@ -5498,6 +5631,72 @@ function showToast(message: string, action?: { label: string; fn: () => void }) 
   setTimeout(() => {
     toasts.value = toasts.value.filter((t) => t.id !== id);
   }, action ? 5000 : 2500);
+}
+
+function openImportModal() {
+  importStep.value = 'paste';
+  importCsvText.value = '';
+  importParsed.value = [];
+  importMapping.value = {};
+  importHeaderRow.value = true;
+  showImportModal.value = true;
+}
+
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === ',' && !inQuotes) { result.push(current); current = ''; continue; }
+    current += ch;
+  }
+  result.push(current);
+  return result;
+}
+
+function parseImportCsv() {
+  const lines = importCsvText.value.trim().split('\n').filter((l) => l.trim());
+  importParsed.value = lines.map(parseCsvLine);
+  if (!importParsed.value.length) return;
+  importMapping.value = {};
+  const headers = importHeaderRow.value ? importParsed.value[0] : [];
+  const fields = selectedType.value?.fields ?? [];
+  for (let i = 0; i < importParsed.value[0].length; i++) {
+    const hdr = (headers[i] ?? '').trim().toLowerCase();
+    const matched = fields.find((f) => f.label.toLowerCase() === hdr || f.key === hdr);
+    if (matched) { importMapping.value[i] = matched.key; }
+    else if (/^name|^title|^full.?name/.test(hdr)) { importMapping.value[i] = '__title__'; }
+    else { importMapping.value[i] = ''; }
+  }
+  importStep.value = 'map';
+}
+
+function commitImport() {
+  const type = selectedType.value;
+  const titleField = type?.fields.find((f) => f.is_title);
+  let created = 0;
+  for (const row of importPreviewRows.value) {
+    const rawTitle = row['__title__'] ?? (titleField ? row[titleField.key] : '') ?? '';
+    const title = rawTitle.trim() || `Imported ${type?.label ?? 'record'} ${String(mockRecords.length + 1)}`;
+    const fieldVals: Record<string, string | number | boolean | null> = {};
+    for (const [k, v] of Object.entries(row)) {
+      if (k === '__title__') { if (titleField) fieldVals[titleField.key] = v; continue; }
+      fieldVals[k] = v;
+    }
+    mockRecords.push({
+      id: 'import-' + selectedTypeKey.value + '-' + String(mockRecords.length),
+      record_type_key: selectedTypeKey.value,
+      title,
+      created_at: new Date().toISOString(),
+      field_values: fieldVals,
+      links: [],
+    });
+    created++;
+  }
+  showImportModal.value = false;
+  showToast(`Imported ${created} record${created === 1 ? '' : 's'}`);
 }
 
 function exportCsv(records?: CrmRecord[]) {
