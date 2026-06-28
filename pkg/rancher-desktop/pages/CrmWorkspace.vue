@@ -683,7 +683,17 @@
                           ? toggleFilter(col.key, String(record.field_values[col.key]))
                           : undefined"
                       >
-                        <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                        <!-- highlight matching text in text-like cells when search is active -->
+                        <span
+                          v-if="searchQuery.trim() && ['text', 'email', 'phone', 'url'].includes(col.data_type) && record.field_values[col.key]"
+                          class="truncate"
+                        >
+                          <template v-for="(part, j) in highlightText(String(record.field_values[col.key] ?? ''), searchQuery.trim())" :key="j">
+                            <mark v-if="part.match" class="bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-100 rounded-sm not-italic">{{ part.text }}</mark>
+                            <span v-else>{{ part.text }}</span>
+                          </template>
+                        </span>
+                        <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                         <!-- funnel icon on select cells to hint at click-to-filter -->
                         <span
                           v-if="col.data_type === 'select' && record.field_values[col.key]"
