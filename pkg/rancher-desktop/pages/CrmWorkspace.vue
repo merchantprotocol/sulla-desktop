@@ -3,7 +3,7 @@
     class="text-sm font-sans page-root h-full"
     :class="{ dark: isDark }"
     tabindex="-1"
-    @keydown.esc="openedRecord = null; creatingRecord = false; editingRecord = false"
+    @keydown.esc="closePanel"
     @keydown.n.exact="onKeyN"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
@@ -118,6 +118,18 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
               </svg>
               Filter
+            </button>
+
+            <!-- export button — placeholder -->
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+              title="Export as CSV (coming soon)"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Export
             </button>
 
             <!-- view toggle — only when the type has a groupable select field -->
@@ -246,7 +258,14 @@
                       ? 'font-medium text-slate-900 dark:text-white'
                       : 'text-slate-600 dark:text-slate-400'"
                   >
-                    <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                    <div v-if="col.is_title" class="flex items-center gap-1.5">
+                      <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                      <span
+                        v-if="record.links?.length"
+                        class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                      >{{ record.links.length }}</span>
+                    </div>
+                    <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                   </td>
                   <td class="px-4 py-3 text-xs tabular-nums text-slate-400 dark:text-slate-500 whitespace-nowrap">
                     {{ formatDate(record.created_at) }}
@@ -468,6 +487,17 @@
             <!-- panel header -->
             <div class="flex items-start gap-2 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
               <div class="flex-1 min-w-0">
+                <button
+                  v-if="navigationStack.length"
+                  type="button"
+                  class="flex items-center gap-1 mb-2 text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors max-w-full"
+                  @click="goBack"
+                >
+                  <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                  </svg>
+                  <span class="truncate">{{ navigationStack[navigationStack.length - 1].record.title }}</span>
+                </button>
                 <p class="mb-1">
                   <span
                     class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium"
@@ -491,7 +521,7 @@
                 type="button"
                 aria-label="Close"
                 class="shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
-                @click="openedRecord = null; editingRecord = false"
+                @click="closePanel"
               >
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -897,6 +927,7 @@ const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
 const sortField = ref<string | null>(null);
 const sortDir = ref<'asc' | 'desc'>('asc');
+const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -1057,6 +1088,7 @@ function selectType(key: string) {
   draftValues.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
+  navigationStack.value = [];
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
@@ -1078,7 +1110,15 @@ function toggleSort(fieldKey: string) {
   }
 }
 
+function closePanel() {
+  openedRecord.value = null;
+  editingRecord.value = false;
+  creatingRecord.value = false;
+  navigationStack.value = [];
+}
+
 function openRecord(record: CrmRecord) {
+  navigationStack.value = [];
   openedRecord.value = record;
   editingRecord.value = false;
   creatingRecord.value = false;
@@ -1090,9 +1130,28 @@ function openNewRecord() {
   creatingRecord.value = true;
 }
 
+function goBack() {
+  const prev = navigationStack.value[navigationStack.value.length - 1];
+  if (!prev) return;
+  navigationStack.value = navigationStack.value.slice(0, -1);
+  if (prev.typeKey !== selectedTypeKey.value) {
+    selectedTypeKey.value = prev.typeKey;
+    searchQuery.value = '';
+    sortField.value = null;
+    sortDir.value = 'asc';
+    viewMode.value = 'table';
+  }
+  openedRecord.value = prev.record;
+  editingRecord.value = false;
+  creatingRecord.value = false;
+}
+
 function openLinkedRecord(link: CrmLink) {
   const record = mockRecords.find((r) => r.id === link.target_id);
   if (!record) return;
+  if (openedRecord.value) {
+    navigationStack.value = [...navigationStack.value, { record: openedRecord.value, typeKey: selectedTypeKey.value }];
+  }
   if (link.target_type !== selectedTypeKey.value) {
     selectedTypeKey.value = link.target_type;
     searchQuery.value = '';
