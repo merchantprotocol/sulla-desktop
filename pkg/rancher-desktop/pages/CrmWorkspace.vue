@@ -873,7 +873,7 @@
 
           <!-- active filter pills -->
           <div
-            v-if="activeFilters.length || groupByField || Object.values(fieldTextFilters).some(v => v.trim())"
+            v-if="activeFilters.length || groupByField || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null)"
             class="flex items-center gap-2 px-6 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-950/50 flex-wrap"
           >
             <!-- group-by chip -->
@@ -896,7 +896,7 @@
                 </svg>
               </button>
             </div>
-            <span v-if="activeFilters.length || Object.values(fieldTextFilters).some(v => v.trim())" class="text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">Filtered by:</span>
+            <span v-if="activeFilters.length || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null)" class="text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">Filtered by:</span>
             <!-- select-field filter chips -->
             <div
               v-for="f in activeFilters"
@@ -934,6 +934,39 @@
                   <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                   </svg>
+                </button>
+              </div>
+            </template>
+            <!-- number range filter chips -->
+            <template v-for="(minVal, fkey) in numberMinFilters" :key="'nmin:' + fkey">
+              <div
+                v-if="minVal != null"
+                class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 text-orange-700 dark:text-orange-300"
+              >
+                <span>{{ allColumns.find(c => c.key === fkey)?.label }} <b>≥ {{ minVal }}</b></span>
+                <button
+                  type="button"
+                  class="ml-0.5 text-orange-400 hover:text-orange-600 dark:hover:text-orange-200 transition-colors leading-none"
+                  :aria-label="`Remove ${fkey} min filter`"
+                  @click="numberMinFilters = { ...numberMinFilters, [fkey]: null }"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </template>
+            <template v-for="(maxVal, fkey) in numberMaxFilters" :key="'nmax:' + fkey">
+              <div
+                v-if="maxVal != null"
+                class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 text-orange-700 dark:text-orange-300"
+              >
+                <span>{{ allColumns.find(c => c.key === fkey)?.label }} <b>≤ {{ maxVal }}</b></span>
+                <button
+                  type="button"
+                  class="ml-0.5 text-orange-400 hover:text-orange-600 dark:hover:text-orange-200 transition-colors leading-none"
+                  :aria-label="`Remove ${fkey} max filter`"
+                  @click="numberMaxFilters = { ...numberMaxFilters, [fkey]: null }"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
             </template>
@@ -2827,6 +2860,33 @@
             </div>
           </div>
         </template>
+        <template v-if="allColumns.find(c => c.key === colHeaderMenu?.fieldKey)?.data_type === 'number'">
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <div class="px-3 py-2 space-y-1.5">
+            <p class="text-xs text-slate-400 dark:text-slate-500 font-medium">Number range:</p>
+            <div class="flex items-center gap-1.5">
+              <input
+                type="number"
+                placeholder="Min"
+                :value="numberMinFilters[colHeaderMenu?.fieldKey ?? ''] ?? ''"
+                class="h-7 w-full rounded-lg px-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                @input="numberMinFilters = { ...numberMinFilters, [colHeaderMenu!.fieldKey]: ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null }"
+                @keydown.enter.stop="colHeaderMenu = null"
+                @click.stop
+              />
+              <span class="text-xs text-slate-400 shrink-0">–</span>
+              <input
+                type="number"
+                placeholder="Max"
+                :value="numberMaxFilters[colHeaderMenu?.fieldKey ?? ''] ?? ''"
+                class="h-7 w-full rounded-lg px-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                @input="numberMaxFilters = { ...numberMaxFilters, [colHeaderMenu!.fieldKey]: ($event.target as HTMLInputElement).value ? Number(($event.target as HTMLInputElement).value) : null }"
+                @keydown.enter.stop="colHeaderMenu = null"
+                @click.stop
+              />
+            </div>
+          </div>
+        </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           @click="hiddenColumnKeys = new Set([...hiddenColumnKeys, colHeaderMenu!.fieldKey]); colHeaderMenu = null">
@@ -3255,6 +3315,8 @@ const sortField2 = ref<string | null>(null);
 const sortDir2 = ref<'asc' | 'desc'>('asc');
 const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
 const fieldTextFilters = ref<Record<string, string>>({});
+const numberMinFilters = ref<Record<string, number | null>>({});
+const numberMaxFilters = ref<Record<string, number | null>>({});
 const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
 const showColumnsMenu = ref(false);
@@ -3504,6 +3566,20 @@ const filteredRecords = computed(() => {
         String(r.field_values[k] ?? r.title ?? '').toLowerCase().includes(q.toLowerCase()),
       ),
     );
+  }
+
+  const nMinE = Object.entries(numberMinFilters.value).filter(([, v]) => v != null);
+  const nMaxE = Object.entries(numberMaxFilters.value).filter(([, v]) => v != null);
+  if (nMinE.length || nMaxE.length) {
+    result = result.filter((r) => {
+      for (const [k, min] of nMinE) {
+        if (min != null && Number(r.field_values[k] ?? 0) < min) return false;
+      }
+      for (const [k, max] of nMaxE) {
+        if (max != null && Number(r.field_values[k] ?? 0) > max) return false;
+      }
+      return true;
+    });
   }
 
   if (sortField.value) {
@@ -4043,6 +4119,8 @@ function toggleFilter(fieldKey: string, value: string) {
 function clearFilters() {
   activeFilters.value = [];
   fieldTextFilters.value = {};
+  numberMinFilters.value = {};
+  numberMaxFilters.value = {};
 }
 
 function startCellEdit(record: CrmRecord, col: CrmField) {
@@ -4607,10 +4685,12 @@ function onKeyR(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
-  const hadState = searchQuery.value || activeFilters.value.length || Object.values(fieldTextFilters.value).some(v => v.trim()) || sortField.value || showPinnedOnly.value || showWatchedOnly.value || showIncompleteOnly.value || groupByField.value;
+  const hadState = searchQuery.value || activeFilters.value.length || Object.values(fieldTextFilters.value).some(v => v.trim()) || Object.values(numberMinFilters.value).some(v => v != null) || Object.values(numberMaxFilters.value).some(v => v != null) || sortField.value || showPinnedOnly.value || showWatchedOnly.value || showIncompleteOnly.value || groupByField.value;
   searchQuery.value = '';
   activeFilters.value = [];
   fieldTextFilters.value = {};
+  numberMinFilters.value = {};
+  numberMaxFilters.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
   sortField2.value = null;
