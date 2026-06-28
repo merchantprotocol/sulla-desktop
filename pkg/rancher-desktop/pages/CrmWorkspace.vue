@@ -835,7 +835,7 @@
                     @keydown.esc.stop="showSaveViewPopover = false"
                   />
                   <div class="text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
-                    Saves: type, filters{{ activeFilters.length ? ` (${activeFilters.length})` : '' }}{{ showPinnedOnly ? ', pinned-only' : '' }}{{ showWatchedOnly ? ', watching-only' : '' }}{{ showIncompleteOnly ? ', incomplete-only' : '' }}{{ sortField ? `, sort: ${activeSortLabel}` : '' }}, view mode
+                    Saves: type, filters{{ activeFilters.length ? ` (${activeFilters.length})` : '' }}{{ showPinnedOnly ? ', pinned-only' : '' }}{{ showWatchedOnly ? ', watching-only' : '' }}{{ showIncompleteOnly ? ', incomplete-only' : '' }}{{ groupByField ? `, grouped by ${allColumns.find(c => c.key === groupByField)?.label}` : '' }}{{ sortField ? `, sort: ${activeSortLabel}` : '' }}, view mode
                   </div>
                   <div class="flex gap-2">
                     <button
@@ -2956,6 +2956,7 @@ interface SavedView {
   showPinnedOnly: boolean;
   showWatchedOnly: boolean;
   showIncompleteOnly: boolean;
+  groupByField: string | null;
 }
 
 // ── Icon components (memoized — one component per icon key) ───────────────
@@ -4371,6 +4372,7 @@ function saveCurrentView() {
     showPinnedOnly: showPinnedOnly.value,
     showWatchedOnly: showWatchedOnly.value,
     showIncompleteOnly: showIncompleteOnly.value,
+    groupByField: groupByField.value,
   };
   savedViews.value = [...savedViews.value, view];
   showSaveViewPopover.value = false;
@@ -4387,6 +4389,7 @@ function applySavedView(view: SavedView) {
   showPinnedOnly.value = view.showPinnedOnly;
   showWatchedOnly.value = view.showWatchedOnly;
   showIncompleteOnly.value = view.showIncompleteOnly ?? false;
+  groupByField.value = view.groupByField ?? null;
   searchQuery.value = '';
   closePanel();
 }
