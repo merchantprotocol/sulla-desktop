@@ -3285,6 +3285,50 @@
             </div>
           </div>
 
+          <!-- pipeline funnel -->
+          <div v-if="statsViewData.pipelineFunnel" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-4">Pipeline</p>
+            <div class="space-y-1.5">
+              <div
+                v-for="(step, idx) in statsViewData.pipelineFunnel"
+                :key="step.stage"
+                class="flex items-center gap-3 group"
+              >
+                <!-- stage label -->
+                <div class="w-28 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right leading-tight">{{ step.stage }}</div>
+                <!-- funnel bar -->
+                <div class="flex-1 relative h-7 rounded overflow-hidden bg-slate-100 dark:bg-slate-800">
+                  <div
+                    class="absolute inset-y-0 left-0 rounded transition-all duration-500 flex items-center"
+                    :style="{ width: `${step.widthPct}%`, background: step.color + (idx === 0 ? 'ff' : 'cc') }"
+                  >
+                    <span
+                      v-if="step.count > 0"
+                      class="px-2 text-white text-xs font-semibold tabular-nums truncate leading-none"
+                    >{{ step.count }}</span>
+                  </div>
+                  <!-- count when bar too narrow to show it -->
+                  <span
+                    v-if="step.count === 0"
+                    class="absolute inset-y-0 left-2 flex items-center text-xs text-slate-400 dark:text-slate-500 tabular-nums"
+                  >0</span>
+                </div>
+                <!-- pct + value -->
+                <div class="shrink-0 text-right w-20">
+                  <span class="text-xs tabular-nums text-slate-500 dark:text-slate-400">{{ step.pct }}%</span>
+                  <span v-if="step.value" class="block text-[10px] tabular-nums text-slate-400 dark:text-slate-500 leading-tight">{{ step.value }}</span>
+                </div>
+              </div>
+            </div>
+            <!-- conversion summary: first to last -->
+            <div v-if="statsViewData.pipelineFunnel.length >= 2" class="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs text-slate-400 dark:text-slate-500">
+              <span>{{ statsViewData.pipelineFunnel[0].stage }} → {{ statsViewData.pipelineFunnel[statsViewData.pipelineFunnel.length - 1].stage }}</span>
+              <span class="tabular-nums font-medium" :class="statsViewData.pipelineFunnel[statsViewData.pipelineFunnel.length - 1].pct >= 20 ? 'text-emerald-500' : 'text-slate-500 dark:text-slate-400'">
+                {{ statsViewData.pipelineFunnel[0].count > 0 ? Math.round((statsViewData.pipelineFunnel[statsViewData.pipelineFunnel.length - 1].count / statsViewData.pipelineFunnel[0].count) * 100) : 0 }}% conversion
+              </span>
+            </div>
+          </div>
+
           <!-- number field summaries -->
           <div v-if="statsViewData.numberCards.length" class="grid grid-cols-2 gap-4">
             <div
@@ -7694,7 +7738,45 @@ const statsViewData = computed(() => {
     return rt.fields.every((f) => { const v = r.field_values[f.key]; return v != null && (typeof v !== 'string' || v.trim() !== ''); });
   }).length / total) * 100) : 0;
 
-  return { total, completeness, selectCharts, numberCards, activityCounts };
+  // pipeline funnel — uses first select field in declaration order
+  const funnelField = rt.fields.find((f) => f.data_type === 'select') ?? null;
+  const currencyField = rt.fields.find((f) => f.data_type === 'number' && f.format === 'currency') ?? null;
+  const pipelineFunnel: Array<{ stage: string; count: number; pct: number; widthPct: number; value: string | null; color: string }> | null =
+    funnelField && (funnelField.select_options?.length ?? 0) > 1
+      ? (() => {
+          const stages = funnelField.select_options ?? [];
+          const stageCounts: Record<string, number> = {};
+          const stageValues: Record<string, number> = {};
+          for (const s of stages) { stageCounts[s] = 0; stageValues[s] = 0; }
+          for (const r of recs) {
+            const sv = r.field_values[funnelField.key];
+            if (sv != null && String(sv) !== '' && stageCounts[String(sv)] != null) {
+              stageCounts[String(sv)]++;
+              if (currencyField) {
+                const cv = Number(r.field_values[currencyField.key]);
+                if (!isNaN(cv)) stageValues[String(sv)] += cv;
+              }
+            }
+          }
+          const topCount = Math.max(...Object.values(stageCounts), 1);
+          return stages.map((s) => {
+            const count = stageCounts[s];
+            const val = currencyField && stageValues[s] > 0
+              ? '$' + (stageValues[s] >= 1_000_000 ? Math.round(stageValues[s] / 1_000_000 * 10) / 10 + 'M' : stageValues[s] >= 1_000 ? Math.round(stageValues[s] / 1_000) + 'k' : String(stageValues[s]))
+              : null;
+            return {
+              stage: s,
+              count,
+              pct: total > 0 ? Math.round((count / total) * 100) : 0,
+              widthPct: Math.round((count / topCount) * 100),
+              value: val,
+              color: funnelField.select_option_colors?.[s] ?? '#6366f1',
+            };
+          });
+        })()
+      : null;
+
+  return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel };
 });
 
 interface ColStatsResult {
