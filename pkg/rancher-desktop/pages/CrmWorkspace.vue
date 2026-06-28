@@ -310,6 +310,7 @@
                   :data-type="field.data_type"
                   :value="draftValues[field.key] ?? null"
                   :read-only="false"
+                  :select-options="field.select_options ?? []"
                 />
               </div>
             </div>
@@ -382,6 +383,7 @@
                   :data-type="field.data_type"
                   :value="openedRecord.field_values[field.key]"
                   :read-only="true"
+                  :select-options="field.select_options ?? []"
                 />
               </div>
             </div>
@@ -429,6 +431,7 @@ interface CrmField {
   is_title: boolean;
   is_required: boolean;
   position: number;
+  select_options?: string[];
 }
 
 interface CrmRecordType {
@@ -482,7 +485,7 @@ const schema: CrmRecordType[] = [
       { id: 'f_cn2', key: 'email',      label: 'Email',      data_type: 'email',  is_title: false, is_required: true,  position: 1 },
       { id: 'f_cn3', key: 'phone',      label: 'Phone',      data_type: 'phone',  is_title: false, is_required: false, position: 2 },
       { id: 'f_cn4', key: 'company',    label: 'Company',    data_type: 'text',   is_title: false, is_required: false, position: 3 },
-      { id: 'f_cn5', key: 'status',     label: 'Status',     data_type: 'select', is_title: false, is_required: false, position: 4 },
+      { id: 'f_cn5', key: 'status',     label: 'Status',     data_type: 'select', is_title: false, is_required: false, position: 4, select_options: ['Lead', 'Prospect', 'Active', 'Churned'] },
     ],
   },
   {
@@ -491,7 +494,7 @@ const schema: CrmRecordType[] = [
     fields: [
       { id: 'f_co1', key: 'name',        label: 'Name',         data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
       { id: 'f_co2', key: 'domain',      label: 'Domain',       data_type: 'url',    is_title: false, is_required: false, position: 1 },
-      { id: 'f_co3', key: 'industry',    label: 'Industry',     data_type: 'select', is_title: false, is_required: false, position: 2 },
+      { id: 'f_co3', key: 'industry',    label: 'Industry',     data_type: 'select', is_title: false, is_required: false, position: 2, select_options: ['Education', 'Marketing', 'Consulting', 'Technology', 'Finance', 'Healthcare', 'Other'] },
       { id: 'f_co4', key: 'employees',   label: 'Employees',    data_type: 'number', is_title: false, is_required: false, position: 3 },
       { id: 'f_co5', key: 'annual_rev',  label: 'Annual rev.',  data_type: 'number', is_title: false, is_required: false, position: 4 },
     ],
@@ -501,7 +504,7 @@ const schema: CrmRecordType[] = [
     icon: 'chart', color: '#10b981', record_count: 9,
     fields: [
       { id: 'f_dl1', key: 'name',        label: 'Deal name',  data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
-      { id: 'f_dl2', key: 'stage',       label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1 },
+      { id: 'f_dl2', key: 'stage',       label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'] },
       { id: 'f_dl3', key: 'amount',      label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2 },
       { id: 'f_dl4', key: 'close_date',  label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3 },
       { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4 },
@@ -513,7 +516,7 @@ const schema: CrmRecordType[] = [
     fields: [
       { id: 'f_ld1', key: 'name',      label: 'Name',      data_type: 'text',    is_title: true,  is_required: true,  position: 0 },
       { id: 'f_ld2', key: 'email',     label: 'Email',     data_type: 'email',   is_title: false, is_required: false, position: 1 },
-      { id: 'f_ld3', key: 'source',    label: 'Source',    data_type: 'select',  is_title: false, is_required: false, position: 2 },
+      { id: 'f_ld3', key: 'source',    label: 'Source',    data_type: 'select',  is_title: false, is_required: false, position: 2, select_options: ['Webinar', 'LinkedIn', 'Referral', 'Paid Social', 'Organic', 'Direct'] },
       { id: 'f_ld4', key: 'score',     label: 'Score',     data_type: 'number',  is_title: false, is_required: false, position: 3 },
       { id: 'f_ld5', key: 'converted', label: 'Converted', data_type: 'boolean', is_title: false, is_required: false, position: 4 },
     ],
@@ -738,6 +741,7 @@ const CrmFieldInput = defineComponent({
     value: { type: [String, Number, Boolean, null] as unknown as () => string | number | boolean | null, default: null },
     dataType: { type: String as () => DataType, required: true },
     readOnly: { type: Boolean, default: false },
+    selectOptions: { type: Array as () => string[], default: () => [] },
   },
   setup(props) {
     return () => {
@@ -750,6 +754,23 @@ const CrmFieldInput = defineComponent({
           }, val ? h('svg', { class: 'h-3 w-3 text-white', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24', 'stroke-width': '3' },
             [h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', d: 'M5 13l4 4L19 7' })]) : null),
           h('span', { class: 'text-sm text-slate-700 dark:text-slate-300' }, val ? 'Yes' : 'No'),
+        ]);
+      }
+      if (props.dataType === 'select') {
+        const opts = props.selectOptions;
+        if (props.readOnly) {
+          return h('select', {
+            disabled: true,
+            class: baseClass + ' opacity-80 cursor-default appearance-none',
+          }, [
+            h('option', { value: val != null ? String(val) : '', selected: true }, val != null ? String(val) : '—'),
+          ]);
+        }
+        return h('select', {
+          class: baseClass + ' appearance-none cursor-pointer',
+        }, [
+          h('option', { value: '' }, '— select —'),
+          ...opts.map((o) => h('option', { value: o, selected: String(val) === o }, o)),
         ]);
       }
       return h('input', {
