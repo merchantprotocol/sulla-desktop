@@ -18,6 +18,8 @@
     @keydown.bracket-left.exact="onKeyBracketLeft"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
+    @keydown.home.exact.prevent="onKeyHome"
+    @keydown.end.exact.prevent="onKeyEnd"
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
@@ -2192,6 +2194,7 @@
                 { keys: ['B'], desc: 'Board / Kanban view' },
                 { keys: ['⌘', 'A'], desc: 'Select all records (table view)' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
+                { keys: ['Home', 'End'], desc: 'First / last record' },
                 { keys: ['Esc'], desc: 'Close panel' },
                 { keys: ['?'], desc: 'Toggle this overlay' },
               ]},
@@ -4297,6 +4300,32 @@ function onKeyArrow(dir: 1 | -1) {
     nextTick(() => {
       const el = document.querySelector(`[data-record-id="${next.id}"]`);
       el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+}
+
+function onKeyHome() {
+  if (!openedRecord.value || viewMode.value !== 'table') return;
+  const tag = document.activeElement?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  const first = filteredRecords.value[0];
+  if (first && first.id !== openedRecord.value?.id) {
+    openRecord(first);
+    nextTick(() => {
+      document.querySelector(`[data-record-id="${first.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+}
+
+function onKeyEnd() {
+  if (!openedRecord.value || viewMode.value !== 'table') return;
+  const tag = document.activeElement?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  const last = filteredRecords.value[filteredRecords.value.length - 1];
+  if (last && last.id !== openedRecord.value?.id) {
+    openRecord(last);
+    nextTick(() => {
+      document.querySelector(`[data-record-id="${last.id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
   }
 }
