@@ -1352,20 +1352,46 @@
                 <div class="flex items-center justify-between">
                   <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Activity</p>
                   <button
+                    v-if="loggingNote"
                     type="button"
-                    class="text-xs transition-colors"
-                    :class="loggingNote ? 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300' : 'text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300'"
-                    @click="loggingNote = !loggingNote; noteText = ''"
+                    class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                    @click="loggingNote = false; noteText = ''"
+                  >Cancel</button>
+                </div>
+                <!-- quick log action buttons -->
+                <div v-if="!loggingNote" class="flex items-center gap-1.5">
+                  <button
+                    v-for="qt in ([['note', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z', 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'], ['call', 'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z', 'text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 dark:hover:text-emerald-400'], ['email', 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z', 'text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300'], ['meeting', 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', 'text-violet-500 hover:text-violet-400 dark:text-violet-400 dark:hover:text-violet-300']] as [string, string, string][])"
+                    :key="qt[0]"
+                    type="button"
+                    class="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors capitalize"
+                    :class="qt[2]"
+                    :title="`Log ${qt[0]}`"
+                    @click="noteType = (qt[0] as 'note' | 'email' | 'call' | 'meeting'); loggingNote = true; noteText = ''"
                   >
-                    {{ loggingNote ? 'Cancel' : '+ Log note' }}
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                      <path stroke-linecap="round" stroke-linejoin="round" :d="qt[1]" />
+                    </svg>
+                    {{ qt[0] }}
                   </button>
                 </div>
-                <!-- note compose area -->
+                <!-- compose area -->
                 <div v-if="loggingNote" class="space-y-2">
+                  <div class="flex items-center gap-2">
+                    <span
+                      class="h-5 w-5 rounded-full flex items-center justify-center shrink-0"
+                      :class="ACTIVITY_ICON_BG[noteType]"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                        <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[noteType]" />
+                      </svg>
+                    </span>
+                    <span class="text-xs font-medium text-slate-500 dark:text-slate-400 capitalize">{{ noteType }}</span>
+                  </div>
                   <textarea
                     v-model="noteText"
                     rows="3"
-                    placeholder="Add a note…"
+                    :placeholder="`Add ${noteType === 'note' ? 'a' : 'an'} ${noteType}…`"
                     class="w-full rounded-lg px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
                     @keydown.meta.enter.prevent="logNote(openedRecord)"
                     @keydown.ctrl.enter.prevent="logNote(openedRecord)"
@@ -1378,7 +1404,7 @@
                       :disabled="!noteText.trim()"
                       @click="logNote(openedRecord)"
                     >
-                      Save note
+                      Save {{ noteType }}
                     </button>
                   </div>
                 </div>
@@ -2179,6 +2205,7 @@ const bulkStageDropdown = ref(false);
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const loggingNote = ref(false);
 const noteText = ref('');
+const noteType = ref<'note' | 'email' | 'call' | 'meeting'>('note');
 const editingTitle = ref(false);
 const titleDraft = ref('');
 const titleInputEl = ref<HTMLInputElement | null>(null);
@@ -2758,14 +2785,14 @@ function logNote(record: CrmRecord) {
   mockActivities.unshift({
     id: 'act-' + String(mockActivities.length),
     record_id: record.id,
-    type: 'note',
+    type: noteType.value,
     content: text,
     author: 'You',
     created_at: new Date().toISOString(),
   });
   noteText.value = '';
   loggingNote.value = false;
-  showToast('Note logged');
+  showToast(`${noteType.value.charAt(0).toUpperCase() + noteType.value.slice(1)} logged`);
 }
 
 function highlightText(text: string, query: string): Array<{ text: string; match: boolean }> {
