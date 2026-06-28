@@ -13,6 +13,7 @@
     @keydown.t.exact="onKeyT"
     @keydown.b.exact="onKeyB"
     @keydown.s.exact="onKeyS"
+    @keydown.f.exact="onKeyF"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -1953,6 +1954,7 @@
                 { keys: ['P'], desc: 'Toggle pinned-only view' },
                 { keys: ['/'], desc: 'Focus search' },
                 { keys: ['R'], desc: 'Reset filters, search & sort' },
+                { keys: ['F'], desc: 'Open filter picker' },
                 { keys: ['1-4'], desc: 'Switch record type (no panel open)' },
                 { keys: ['T'], desc: 'Table view' },
                 { keys: ['B'], desc: 'Board / Kanban view' },
@@ -2584,6 +2586,26 @@ watch(annotatingField, (val) => { if (val) nextTick(() => annotationInputEl.valu
 
 const newRecordTitleInputEl = ref<HTMLInputElement | null>(null);
 watch(creatingRecord, (val) => { if (val) nextTick(() => newRecordTitleInputEl.value?.focus()); });
+
+// ── localStorage persistence ────────────────────────────────────────────────
+const LS_KEY_VIEW_MODE = 'crm:viewMode';
+const LS_KEY_HIDDEN_COLS = 'crm:hiddenCols';
+const LS_KEY_ROW_DENSITY = 'crm:rowDensity';
+
+onMounted(() => {
+  try {
+    const savedView = localStorage.getItem(LS_KEY_VIEW_MODE) as 'table' | 'kanban' | null;
+    if (savedView === 'table' || savedView === 'kanban') viewMode.value = savedView;
+    const savedHidden = localStorage.getItem(LS_KEY_HIDDEN_COLS);
+    if (savedHidden) hiddenColumnKeys.value = new Set(JSON.parse(savedHidden) as string[]);
+    const savedDensity = localStorage.getItem(LS_KEY_ROW_DENSITY) as 'comfortable' | 'compact' | null;
+    if (savedDensity === 'comfortable' || savedDensity === 'compact') rowDensity.value = savedDensity;
+  } catch { /* storage not available */ }
+});
+
+watch(viewMode, (val) => { try { localStorage.setItem(LS_KEY_VIEW_MODE, val); } catch { /* ignore */ } });
+watch(hiddenColumnKeys, (val) => { try { localStorage.setItem(LS_KEY_HIDDEN_COLS, JSON.stringify([...val])); } catch { /* ignore */ } });
+watch(rowDensity, (val) => { try { localStorage.setItem(LS_KEY_ROW_DENSITY, val); } catch { /* ignore */ } });
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -3528,6 +3550,15 @@ function onKeyS(e: KeyboardEvent) {
     bulkStageDropdown.value = !bulkStageDropdown.value;
     e.preventDefault();
   }
+}
+
+function onKeyF(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  showFilterDropdown.value = !showFilterDropdown.value;
+  filterPickerField.value = null;
+  e.preventDefault();
 }
 
 function startEditing(record: CrmRecord) {
