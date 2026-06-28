@@ -1261,6 +1261,21 @@ export class CrmSchemaService {
     };
   }
 
+  /** List widgets for a dashboard, joined with record type key for context. */
+  static async listWidgets(
+    dashboardId: string,
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<Array<{ id: string; name: string; kind: string; record_type_key: string | null; record_type_id: string | null; config: unknown }>> {
+    return postgresClient.query(
+      `SELECT w.id, w.name, w.kind, w.record_type_id, rt.key AS record_type_key, w.config
+       FROM crm_widgets w
+       LEFT JOIN crm_record_types rt ON rt.id = w.record_type_id
+       WHERE w.dashboard_id = $1 AND w.tenant_id = $2
+       ORDER BY w.id ASC`,
+      [dashboardId, tenantId],
+    );
+  }
+
   static async listViews(
     recordTypeId: string,
     tenantId = DEFAULT_TENANT_ID,

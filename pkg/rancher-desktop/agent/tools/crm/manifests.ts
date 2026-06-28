@@ -320,6 +320,16 @@ export const crmToolManifests: ToolManifest[] = [
     loader:         () => import('./create_dashboard'),
   },
   {
+    name:        'list_widgets',
+    description: 'List widgets in a dashboard (id, name, kind, record type). Call before create_widget to avoid duplicates.',
+    category:    'crm',
+    schemaDef:   {
+      dashboard_id: { type: 'string', description: 'Dashboard id (from list_dashboards or create_dashboard).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_widgets'),
+  },
+  {
     name:        'create_widget',
     description: 'Add a widget to a dashboard. kind ∈ stat|line|bar|funnel|list|table, driven by a record type. config carries the metric/grouping options.',
     category:    'crm',
