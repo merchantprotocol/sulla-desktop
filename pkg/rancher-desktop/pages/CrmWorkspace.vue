@@ -2247,23 +2247,33 @@
                   <td class="pl-6 pr-2 py-2">
                     <button
                       type="button"
-                      class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
-                      :title="`Click to cycle: ${COL_STAT_MODES.join(' → ')}`"
-                      @click="colStatMode = COL_STAT_MODES[(COL_STAT_MODES.indexOf(colStatMode) + 1) % COL_STAT_MODES.length]"
+                      class="text-[10px] font-semibold uppercase tracking-wider transition-colors"
+                      :class="Object.keys(colAggOverrides).length
+                        ? 'text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300'
+                        : 'text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300'"
+                      :title="Object.keys(colAggOverrides).length ? 'Click to reset all columns to global mode' : `Global mode: click to cycle (${COL_STAT_MODES.join(' → ')})`"
+                      @click="Object.keys(colAggOverrides).length ? colAggOverrides = {} : colStatMode = COL_STAT_MODES[(COL_STAT_MODES.indexOf(colStatMode) + 1) % COL_STAT_MODES.length]"
                     >{{ colStatMode }}</button>
                   </td>
                   <td
                     v-for="col in visibleColumns"
                     :key="col.key"
-                    class="px-4 py-2 text-xs font-medium"
-                    :class="tableColumnStats[col.key] !== null ? 'text-slate-700 dark:text-slate-300 tabular-nums' : 'text-transparent'"
+                    class="px-4 py-2 text-xs"
+                    :class="tableColumnStats[col.key] !== null ? 'text-slate-700 dark:text-slate-300' : ''"
                   >
-                    <span
+                    <button
                       v-if="tableColumnStats[col.key] !== null"
-                      :title="`Sum: ${tableColumnStats[col.key]!.sum.toLocaleString()} · Avg: ${tableColumnStats[col.key]!.avg.toLocaleString(undefined, { maximumFractionDigits: 1 })} · Min: ${tableColumnStats[col.key]!.min.toLocaleString()} · Max: ${tableColumnStats[col.key]!.max.toLocaleString()} · Count: ${tableColumnStats[col.key]!.count}`"
+                      type="button"
+                      class="group/agg flex flex-col items-start gap-0.5 w-full text-left tabular-nums font-medium hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+                      :title="`${colAggOverrides[col.key] ?? colStatMode}: click to cycle per-column · Sum: ${tableColumnStats[col.key]!.sum.toLocaleString()} · Avg: ${tableColumnStats[col.key]!.avg.toLocaleString(undefined, { maximumFractionDigits: 1 })} · Min: ${tableColumnStats[col.key]!.min.toLocaleString()} · Max: ${tableColumnStats[col.key]!.max.toLocaleString()} · Count: ${tableColumnStats[col.key]!.count}`"
+                      @click="(() => { const cur = colAggOverrides[col.key] ?? colStatMode; const next = COL_STAT_MODES[(COL_STAT_MODES.indexOf(cur) + 1) % COL_STAT_MODES.length]; colAggOverrides = { ...colAggOverrides, [col.key]: next }; })()"
                     >
-                      {{ colStatMode === 'count' ? tableColumnStats[col.key]!.count : formatCardValue(tableColumnTotals[col.key], 'number', col.format) }}
-                    </span>
+                      <span>{{ (colAggOverrides[col.key] ?? colStatMode) === 'count' ? tableColumnStats[col.key]!.count : formatCardValue(tableColumnTotals[col.key], 'number', col.format) }}</span>
+                      <span
+                        class="text-[10px] font-semibold uppercase tracking-wider opacity-0 group-hover/agg:opacity-100 transition-opacity"
+                        :class="colAggOverrides[col.key] ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'"
+                      >{{ colAggOverrides[col.key] ?? colStatMode }}</span>
+                    </button>
                   </td>
                   <!-- Added column -->
                   <td class="px-4 py-2" />
@@ -6658,6 +6668,7 @@ const kanbanColumnTotals = computed((): Record<string, string | null> => {
 type ColStatMode = 'sum' | 'avg' | 'min' | 'max' | 'count';
 const colStatMode = ref<ColStatMode>('sum');
 const COL_STAT_MODES: ColStatMode[] = ['sum', 'avg', 'min', 'max', 'count'];
+const colAggOverrides = ref<Record<string, ColStatMode>>({});
 
 const tableColumnStats = computed((): Record<string, { sum: number; avg: number; min: number; max: number; count: number } | null> => {
   const stats: Record<string, { sum: number; avg: number; min: number; max: number; count: number } | null> = {};
@@ -6675,7 +6686,8 @@ const tableColumnTotals = computed((): Record<string, number | null> => {
   const totals: Record<string, number | null> = {};
   for (const col of visibleColumns.value) {
     const s = tableColumnStats.value[col.key];
-    totals[col.key] = s ? s[colStatMode.value] : null;
+    const mode = colAggOverrides.value[col.key] ?? colStatMode.value;
+    totals[col.key] = s ? s[mode] : null;
   }
   return totals;
 });
@@ -7469,6 +7481,7 @@ function selectType(key: string) {
   showWatchedOnly.value = false;
   showIncompleteOnly.value = false;
   createFormErrors.value = new Set();
+  colAggOverrides.value = {};
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
