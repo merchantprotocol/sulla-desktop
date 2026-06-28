@@ -29,7 +29,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1931,7 +1931,8 @@
                             class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
                             :class="row.key === '__ungrouped__'
                               ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 italic'
-                              : selectBadgeClass(row.label)"
+                              : getOptionStyle(allColumns.find(c => c.key === groupByField), row.label) ? '' : selectBadgeClass(row.label)"
+                            :style="row.key !== '__ungrouped__' ? getOptionStyle(allColumns.find(c => c.key === groupByField), row.label) : undefined"
                           >{{ row.label }}</span>
                           <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ row.count }}</span>
                           <template v-for="col in visibleColumns.filter(c => c.data_type === 'number' && groupedStats[row.key]?.[c.key]?.count)" :key="col.key">
@@ -2079,6 +2080,7 @@
                           :data-type="col.data_type"
                           :value="cellDraftValue"
                           :select-options="col.select_options ?? []"
+                          :option-colors="col.select_option_colors ?? {}"
                           @commit="commitCellEdit"
                           @cancel="cancelCellEdit"
                         />
@@ -2516,7 +2518,8 @@
                         <span
                           v-if="f.data_type === 'select' && record.field_values[f.key]"
                           class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-medium shrink-0"
-                          :class="selectBadgeClass(String(record.field_values[f.key]))"
+                          :class="getOptionStyle(f, String(record.field_values[f.key])) ? '' : selectBadgeClass(String(record.field_values[f.key]))"
+                          :style="getOptionStyle(f, String(record.field_values[f.key]))"
                         >{{ record.field_values[f.key] }}</span>
                         <span v-else class="truncate text-slate-600 dark:text-slate-300">{{ formatCardValue(record.field_values[f.key], f.data_type, f.format) }}</span>
                       </div>
@@ -3580,7 +3583,8 @@
                       v-if="openedRecord.field_values[field.key]"
                       type="button"
                       class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 cursor-pointer"
-                      :class="selectBadgeClass(String(openedRecord.field_values[field.key]))"
+                      :class="getOptionStyle(field, String(openedRecord.field_values[field.key])) ? '' : selectBadgeClass(String(openedRecord.field_values[field.key]))"
+                      :style="getOptionStyle(field, String(openedRecord.field_values[field.key]))"
                       :title="`Click to cycle ${field.label} (${field.select_options?.join(' → ')})`"
                       @click="cycleSelectField(openedRecord, field)"
                     >
@@ -4286,7 +4290,8 @@
             <span
               v-if="f.data_type === 'select' && previewRecord.field_values[f.key]"
               class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-medium truncate"
-              :class="selectBadgeClass(String(previewRecord.field_values[f.key]))"
+              :class="getOptionStyle(f, String(previewRecord.field_values[f.key])) ? '' : selectBadgeClass(String(previewRecord.field_values[f.key]))"
+              :style="getOptionStyle(f, String(previewRecord.field_values[f.key]))"
             >{{ previewRecord.field_values[f.key] }}</span>
             <span v-else class="text-xs text-slate-600 dark:text-slate-300 truncate flex-1">
               {{ formatCardValue(previewRecord.field_values[f.key] as string | number | boolean | null, f.data_type, f.format) || '—' }}
@@ -5368,7 +5373,26 @@
                         </div>
                         <div class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 font-mono truncate">
                           {{ field.key }} · {{ field.data_type }}
-                          <template v-if="field.select_options?.length"> · {{ field.select_options.join(', ') }}</template>
+                          <template v-if="field.select_options?.length"> ·
+                            <span
+                              v-for="opt in field.select_options"
+                              :key="opt"
+                              class="inline-flex items-center gap-0.5 mr-0.5"
+                            >
+                              <span
+                                class="inline-block h-2 w-2 rounded-full border border-white/40"
+                                :style="field.select_option_colors?.[opt] ? { background: field.select_option_colors[opt] } : { background: '#94a3b8' }"
+                              />
+                            </span>
+                            <button
+                              type="button"
+                              class="ml-0.5 opacity-0 group-hover/field:opacity-100 text-slate-400 hover:text-violet-500 dark:hover:text-violet-400 transition-all"
+                              title="Edit option colors"
+                              @click.stop="editOptionColorsFieldId = editOptionColorsFieldId === field.id ? null : field.id"
+                            >
+                              <svg class="h-3 w-3 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>
+                            </button>
+                          </template>
                           <template v-if="field.default_value"> · <span class="text-violet-400 dark:text-violet-500">default: {{ field.default_value }}</span></template>
                           <template v-if="field.visible_when"> · <span class="text-sky-400 dark:text-sky-500">if {{ (selectedType?.fields.find(f => f.key === field.visible_when!.fieldKey)?.label ?? field.visible_when.fieldKey) }} {{ field.visible_when.operator === 'eq' ? '=' : field.visible_when.operator === 'neq' ? '≠' : field.visible_when.operator === 'empty' ? 'empty' : '≠ empty' }}{{ field.visible_when.value ? ' ' + field.visible_when.value : '' }}</span></template>
                         </div>
@@ -5444,6 +5468,47 @@
                         <button type="button" class="ml-auto text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="visibilityRuleFieldId = null">Done</button>
                       </div>
                     </div>
+                  </div>
+
+                  <!-- option color editor -->
+                  <div
+                    v-if="editOptionColorsFieldId && selectedType?.fields.find(f => f.id === editOptionColorsFieldId)?.select_options?.length"
+                    class="mx-5 mb-3 px-3 py-3 rounded-lg border border-violet-200 dark:border-violet-800/50 bg-violet-50 dark:bg-violet-950/20 space-y-2"
+                    @click.stop
+                  >
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-violet-500 dark:text-violet-400">Option colors</p>
+                    <div
+                      v-for="opt in selectedType.fields.find(f => f.id === editOptionColorsFieldId)?.select_options ?? []"
+                      :key="opt"
+                      class="flex items-center gap-2"
+                    >
+                      <span
+                        class="h-4 w-4 rounded-full border border-white/40 shrink-0"
+                        :style="{ background: selectedType.fields.find(f => f.id === editOptionColorsFieldId)?.select_option_colors?.[opt] ?? '#94a3b8' }"
+                      />
+                      <span class="text-xs text-slate-700 dark:text-slate-300 w-24 truncate shrink-0">{{ opt }}</span>
+                      <div class="flex items-center gap-1 flex-wrap">
+                        <button
+                          v-for="hex in OPTION_COLORS"
+                          :key="hex"
+                          type="button"
+                          class="h-4 w-4 rounded-full border-2 transition-transform hover:scale-110"
+                          :style="{ background: hex }"
+                          :class="selectedType.fields.find(f => f.id === editOptionColorsFieldId)?.select_option_colors?.[opt] === hex ? 'border-white dark:border-slate-900 scale-110' : 'border-transparent'"
+                          :title="hex"
+                          @click.stop="(() => { const f = selectedType.fields.find(ff => ff.id === editOptionColorsFieldId); if (f) { if (!f.select_option_colors) f.select_option_colors = {}; f.select_option_colors = { ...f.select_option_colors, [opt]: hex }; } })()"
+                        />
+                        <button
+                          type="button"
+                          class="h-4 w-4 rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-slate-300 dark:text-slate-600 hover:border-rose-400 hover:text-rose-400 transition-colors flex items-center justify-center"
+                          title="Clear color"
+                          @click.stop="(() => { const f = selectedType.fields.find(ff => ff.id === editOptionColorsFieldId); if (f?.select_option_colors) { const c = { ...f.select_option_colors }; delete c[opt]; f.select_option_colors = c; } })()"
+                        >
+                          <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      </div>
+                    </div>
+                    <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="editOptionColorsFieldId = null">Done</button>
                   </div>
 
                   <!-- add field form -->
@@ -5714,6 +5779,7 @@ interface CrmField {
   is_required: boolean;
   position: number;
   select_options?: string[];
+  select_option_colors?: Record<string, string>;
   format?: FieldFormat;
   default_value?: string;
   visible_when?: { fieldKey: string; operator: 'eq' | 'neq' | 'empty' | 'not_empty'; value: string };
@@ -5855,7 +5921,7 @@ const schema = reactive<CrmRecordType[]>([
       { id: 'f_cn2', key: 'email',      label: 'Email',      data_type: 'email',  is_title: false, is_required: true,  position: 1 },
       { id: 'f_cn3', key: 'phone',      label: 'Phone',      data_type: 'phone',  is_title: false, is_required: false, position: 2 },
       { id: 'f_cn4', key: 'company',    label: 'Company',    data_type: 'text',   is_title: false, is_required: false, position: 3 },
-      { id: 'f_cn5', key: 'status',     label: 'Status',     data_type: 'select', is_title: false, is_required: false, position: 4, select_options: ['Lead', 'Prospect', 'Active', 'Churned'] },
+      { id: 'f_cn5', key: 'status',     label: 'Status',     data_type: 'select', is_title: false, is_required: false, position: 4, select_options: ['Lead', 'Prospect', 'Active', 'Churned'], select_option_colors: { Lead: '#f97316', Prospect: '#8b5cf6', Active: '#22c55e', Churned: '#ef4444' } },
     ],
   },
   {
@@ -5875,7 +5941,7 @@ const schema = reactive<CrmRecordType[]>([
     icon: 'chart', color: '#10b981',
     fields: [
       { id: 'f_dl1', key: 'name',        label: 'Deal name',  data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
-      { id: 'f_dl2', key: 'stage',       label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'] },
+      { id: 'f_dl2', key: 'stage',       label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'], select_option_colors: { Lead: '#f97316', Qualified: '#8b5cf6', Proposal: '#3b82f6', Negotiation: '#eab308', 'Closed Won': '#22c55e', 'Closed Lost': '#ef4444' } },
       { id: 'f_dl3', key: 'amount',      label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2, format: 'currency' },
       { id: 'f_dl4', key: 'close_date',  label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3 },
       { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4, format: 'progress' },
@@ -5898,8 +5964,8 @@ const schema = reactive<CrmRecordType[]>([
     icon: 'check', color: '#6366f1',
     fields: [
       { id: 'f_wi1', key: 'title',       label: 'Title',      data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
-      { id: 'f_wi2', key: 'status',      label: 'Status',     data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Todo', 'In Progress', 'In Review', 'Done', 'Blocked'] },
-      { id: 'f_wi3', key: 'priority',    label: 'Priority',   data_type: 'select', is_title: false, is_required: false, position: 2, select_options: ['P0 Critical', 'P1 High', 'P2 Medium', 'P3 Low'] },
+      { id: 'f_wi2', key: 'status',      label: 'Status',     data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Todo', 'In Progress', 'In Review', 'Done', 'Blocked'], select_option_colors: { Todo: '#94a3b8', 'In Progress': '#3b82f6', 'In Review': '#8b5cf6', Done: '#22c55e', Blocked: '#ef4444' } },
+      { id: 'f_wi3', key: 'priority',    label: 'Priority',   data_type: 'select', is_title: false, is_required: false, position: 2, select_options: ['P0 Critical', 'P1 High', 'P2 Medium', 'P3 Low'], select_option_colors: { 'P0 Critical': '#ef4444', 'P1 High': '#f97316', 'P2 Medium': '#eab308', 'P3 Low': '#94a3b8' } },
       { id: 'f_wi4', key: 'project',     label: 'Project',    data_type: 'select', is_title: false, is_required: false, position: 3, select_options: ['Sulla Desktop', 'TrueQualify', 'DataRipple', 'Sulla Mobile'] },
       { id: 'f_wi5', key: 'assignee',    label: 'Assignee',   data_type: 'text',   is_title: false, is_required: false, position: 4 },
       { id: 'f_wi6', key: 'due_date',    label: 'Due date',   data_type: 'date',   is_title: false, is_required: false, position: 5 },
@@ -6049,6 +6115,14 @@ function stageSegmentBg(val: string): string {
   if (['negotiat', 'qualif', 'proposal'].some((k) => v.includes(k))) return 'bg-violet-400 dark:bg-violet-500';
   if (['lead', 'webinar', 'linkedin', 'referral', 'paid', 'organic', 'direct'].some((k) => v.includes(k))) return 'bg-amber-400 dark:bg-amber-500';
   return 'bg-sky-400 dark:bg-sky-500';
+}
+
+const OPTION_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899'];
+
+function getOptionStyle(field: CrmField | undefined, val: string): { background: string; color: string } | undefined {
+  const hex = field?.select_option_colors?.[val];
+  if (!hex) return undefined;
+  return { background: hex + '26', color: hex };
 }
 
 // Tailwind classes for select badge pills — semantic color by value keyword
@@ -6268,6 +6342,7 @@ const fieldLabelDraft = ref('');
 const fieldLabelInputEl = ref<HTMLInputElement | null>(null);
 const showTypeIconColorPicker = ref(false);
 const visibilityRuleFieldId = ref<string | null>(null);
+const editOptionColorsFieldId = ref<string | null>(null);
 const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
 const SCHEMA_ICON_OPTIONS: IconKey[] = ['user', 'building', 'chart', 'target', 'check', 'folder', 'tag', 'list', 'layers', 'star'];
@@ -8054,6 +8129,7 @@ function selectType(key: string) {
   colAggOverrides.value = {};
   showTypeIconColorPicker.value = false;
   visibilityRuleFieldId.value = null;
+  editOptionColorsFieldId.value = null;
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
@@ -9423,8 +9499,10 @@ const CrmCellValue = defineComponent({
         }, String(props.value));
       }
       if (props.dataType === 'select') {
+        const optStyle = getOptionStyle({ select_option_colors: props.optionColors } as CrmField, String(props.value));
         return h('span', {
-          class: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' + selectBadgeClass(String(props.value)),
+          class: optStyle ? 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium' : 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' + selectBadgeClass(String(props.value)),
+          style: optStyle,
         }, String(props.value));
       }
       if (props.dataType === 'date') {
@@ -9458,6 +9536,7 @@ const CrmCellEditor = defineComponent({
     value: { type: [String, Number, Boolean, Array, null] as unknown as () => string | number | boolean | string[] | null, default: null },
     dataType: { type: String as () => DataType, required: true },
     selectOptions: { type: Array as () => string[], default: () => [] },
+    optionColors: { type: Object as () => Record<string, string>, default: () => ({}) },
   },
   emits: ['commit', 'cancel'],
   setup(props, { emit }) {
@@ -9609,8 +9688,10 @@ const CrmFieldInput = defineComponent({
           if (val == null || val === '') {
             return h('span', { class: 'text-slate-300 dark:text-slate-600 text-sm' }, '—');
           }
+          const optStyle2 = getOptionStyle({ select_option_colors: props.optionColors } as CrmField, String(val));
           return h('span', {
-            class: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' + selectBadgeClass(String(val)),
+            class: optStyle2 ? 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium' : 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' + selectBadgeClass(String(val)),
+            style: optStyle2,
           }, String(val));
         }
         return h('select', {
