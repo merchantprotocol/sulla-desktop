@@ -2040,7 +2040,8 @@
         >
           <aside
             v-if="openedRecord"
-            class="w-80 shrink-0 flex flex-col border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden"
+            class="shrink-0 flex flex-col border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden transition-all duration-200"
+            :class="detailPanelExpanded === 'full' ? 'w-full' : detailPanelExpanded === 'wide' ? 'w-[560px]' : 'w-80'"
           >
             <!-- panel header -->
             <div class="flex items-start gap-3 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
@@ -2151,6 +2152,23 @@
                   stroke-width="2"
                 >
                   <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+              </button>
+              <!-- expand / compress panel button -->
+              <button
+                type="button"
+                class="shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
+                :title="detailPanelExpanded === 'full' ? 'Compress panel' : detailPanelExpanded === 'wide' ? 'Full width' : 'Expand panel'"
+                @click="detailPanelExpanded = detailPanelExpanded === false ? 'wide' : detailPanelExpanded === 'wide' ? 'full' : false"
+              >
+                <svg v-if="!detailPanelExpanded" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                </svg>
+                <svg v-else-if="detailPanelExpanded === 'wide'" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0 0l-5-5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                </svg>
+                <svg v-else class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 9L4 4m0 0v4m0-4h4m11 0h-4m4 0v4m0-4l-5 5M9 15l-5 5m0 0v-4m0 4h4m11 0h-4m4 0v-4m0 4l-5-5" />
                 </svg>
               </button>
               <button
@@ -4088,6 +4106,7 @@ const colorLabelFilter = ref<string | null>(null);
 const staleDaysFilter = ref<number | null>(null);
 const showStaleDropdown = ref(false);
 const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
+const detailPanelExpanded = ref<false | 'wide' | 'full'>(false);
 interface ConditionalRule { id: string; fieldKey: string; operator: 'equals' | 'not_equals' | 'contains' | 'gt' | 'lt' | 'is_empty' | 'is_not_empty'; value: string; color: string }
 const conditionalRules = ref<ConditionalRule[]>([]);
 const showFormatPanel = ref(false);
@@ -5161,6 +5180,7 @@ function closePanel() {
   editingTitle.value = false;
   annotatingField.value = null;
   annotationDraft.value = '';
+  detailPanelExpanded.value = false;
 }
 
 function openRecord(record: CrmRecord) {
