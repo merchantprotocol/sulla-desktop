@@ -4102,6 +4102,19 @@ const schema = reactive<CrmRecordType[]>([
       { id: 'f_ld5', key: 'converted', label: 'Converted', data_type: 'boolean', is_title: false, is_required: false, position: 4 },
     ],
   },
+  {
+    id: 'rt_work_item', key: 'work_item', label: 'Work Item', label_plural: 'Work Items',
+    icon: 'check', color: '#6366f1',
+    fields: [
+      { id: 'f_wi1', key: 'title',       label: 'Title',      data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
+      { id: 'f_wi2', key: 'status',      label: 'Status',     data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Todo', 'In Progress', 'In Review', 'Done', 'Blocked'] },
+      { id: 'f_wi3', key: 'priority',    label: 'Priority',   data_type: 'select', is_title: false, is_required: false, position: 2, select_options: ['P0 Critical', 'P1 High', 'P2 Medium', 'P3 Low'] },
+      { id: 'f_wi4', key: 'project',     label: 'Project',    data_type: 'select', is_title: false, is_required: false, position: 3, select_options: ['Sulla Desktop', 'TrueQualify', 'DataRipple', 'Sulla Mobile'] },
+      { id: 'f_wi5', key: 'assignee',    label: 'Assignee',   data_type: 'text',   is_title: false, is_required: false, position: 4 },
+      { id: 'f_wi6', key: 'due_date',    label: 'Due date',   data_type: 'date',   is_title: false, is_required: false, position: 5 },
+      { id: 'f_wi7', key: 'description', label: 'Notes',      data_type: 'text',   is_title: false, is_required: false, position: 6 },
+    ],
+  },
 ]);
 
 // ── Mock records ───────────────────────────────────────────────────────────
@@ -4167,6 +4180,43 @@ const mockRecords = reactive<CrmRecord[]>([
     field_values: { name: 'David Chen', email: 'dchen@techsprint.dev', source: 'Referral', score: 74, converted: false } },
   { id: 'r21', record_type_key: 'lead', title: 'Chris Nakamura', created_at: '2026-06-25T09:30:00Z',
     field_values: { name: 'Chris Nakamura', email: 'chris@organicflow.io', source: 'Organic', score: 68, converted: false } },
+  // Work Items — current project board (2026-06-28)
+  { id: 'wi1',  record_type_key: 'work_item', title: 'CRM dynamic architecture — 34-tool surface + Kanban', created_at: '2026-06-20T08:00:00Z',
+    field_values: { title: 'CRM dynamic architecture — 34-tool surface + Kanban', status: 'Done', priority: 'P1 High', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'feat/exechost-tool — 197 commits ahead of main. Full CRM workspace with schema-driven types, Kanban, table, list, gallery views.' }, links: [] },
+  { id: 'wi2',  record_type_key: 'work_item', title: 'Push notifications — Tier 2 (call + voicemail alerts)', created_at: '2026-06-21T09:00:00Z',
+    field_values: { title: 'Push notifications — Tier 2 (call + voicemail alerts)', status: 'Done', priority: 'P0 Critical', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-26', description: 'Tiers 0–2 complete. Call screen + voicemail push alerts wired up.' }, links: [] },
+  { id: 'wi3',  record_type_key: 'work_item', title: 'BLACK-1 Tier A — JWT + JTI + Clerk super-admin gate', created_at: '2026-06-24T10:00:00Z',
+    field_values: { title: 'BLACK-1 Tier A — JWT + JTI + Clerk super-admin gate', status: 'In Review', priority: 'P0 Critical', project: 'DataRipple', assignee: 'Heartbeat', due_date: '2026-06-28', description: 'feat/black-1-tier-a-auth-security — 18 tests passing. Awaits explicit push approval (XHNI).' }, links: [] },
+  { id: 'wi4',  record_type_key: 'work_item', title: 'Relay server persistence — scribeRelayTurn() sync', created_at: '2026-06-20T11:00:00Z',
+    field_values: { title: 'Relay server persistence — scribeRelayTurn() sync', status: 'In Review', priority: 'P1 High', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-28', description: 'feat/relay-server-persistence — desktop authoritative scribe via syncMirror.ts. Unpushed, pending review.' }, links: [] },
+  { id: 'wi5',  record_type_key: 'work_item', title: 'CRM Kanban compact card mode', created_at: '2026-06-27T08:00:00Z',
+    field_values: { title: 'CRM Kanban compact card mode', status: 'Done', priority: 'P2 Medium', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'Toggle compact/full card density on the Kanban board. Commit afee29fe4.' }, links: [] },
+  { id: 'wi6',  record_type_key: 'work_item', title: 'CRM record tags + tag filter bar', created_at: '2026-06-27T08:30:00Z',
+    field_values: { title: 'CRM record tags + tag filter bar', status: 'Done', priority: 'P2 Medium', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'Per-record tag system with inline add/remove, allTags computed, filter in filteredRecords. Commit 49aaa5bd3.' }, links: [] },
+  { id: 'wi7',  record_type_key: 'work_item', title: 'CRM table row drag-to-reorder', created_at: '2026-06-27T09:00:00Z',
+    field_values: { title: 'CRM table row drag-to-reorder', status: 'Done', priority: 'P2 Medium', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'HTML5 drag API on table rows with visual drop indicator + customOrder ref. Commit 5f4b09c49.' }, links: [] },
+  { id: 'wi8',  record_type_key: 'work_item', title: 'CRM column resize drag handles', created_at: '2026-06-27T09:30:00Z',
+    field_values: { title: 'CRM column resize drag handles', status: 'Done', priority: 'P2 Medium', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'Resize handle on each column header th; columnWidths ref; mousemove listener on window. Commit cbc311fff.' }, links: [] },
+  { id: 'wi9',  record_type_key: 'work_item', title: 'CRM column pinning / sticky freeze', created_at: '2026-06-27T10:00:00Z',
+    field_values: { title: 'CRM column pinning / sticky freeze', status: 'Done', priority: 'P2 Medium', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'Pin columns to left with CSS sticky + z-index. pinnedColumnKeys ref; visibleColumns sorts pinned first. Commit 7a3b78e8e.' }, links: [] },
+  { id: 'wi10', record_type_key: 'work_item', title: 'CRM record merge dialog (Teleport)', created_at: '2026-06-27T10:30:00Z',
+    field_values: { title: 'CRM record merge dialog (Teleport)', status: 'Done', priority: 'P2 Medium', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'Field-by-field merge chooser via <Teleport to="body">. Auto-picks non-empty source. Commit f91c3cba4.' }, links: [] },
+  { id: 'wi11', record_type_key: 'work_item', title: 'CRM record templates — save & apply', created_at: '2026-06-27T11:00:00Z',
+    field_values: { title: 'CRM record templates — save & apply', status: 'Done', priority: 'P2 Medium', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'Save current record as named template; apply template to create pre-filled records. Commit 3c7286731.' }, links: [] },
+  { id: 'wi12', record_type_key: 'work_item', title: 'CRM inline row expand for long text', created_at: '2026-06-27T11:30:00Z',
+    field_values: { title: 'CRM inline row expand for long text', status: 'Done', priority: 'P3 Low', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'Text >80 chars gets "more/less" toggle in table cells. expandedRowIds Set ref. Commit 85fdaa0da.' }, links: [] },
+  { id: 'wi13', record_type_key: 'work_item', title: 'CRM scroll position memory per type', created_at: '2026-06-27T12:00:00Z',
+    field_values: { title: 'CRM scroll position memory per type', status: 'Done', priority: 'P3 Low', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-27', description: 'scrollPositions ref keyed by typeKey; @scroll.passive writes position; selectType() restores via nextTick. Commit 61ca3cd28.' }, links: [] },
+  { id: 'wi14', record_type_key: 'work_item', title: 'TrueQualify website copy — 9 mismatch fixes', created_at: '2026-06-28T00:00:00Z',
+    field_values: { title: 'TrueQualify website copy — 9 mismatch fixes', status: 'Done', priority: 'P1 High', project: 'TrueQualify', assignee: 'Heartbeat', due_date: '2026-06-28', description: 'home.tsx, pricing.tsx: CAC channel copy, trust logos, testimonial, plan model, FAQ endpoint names. Commit cda0043.' }, links: [] },
+  { id: 'wi15', record_type_key: 'work_item', title: 'TrueQualify team members tab reformat', created_at: '2026-06-28T01:00:00Z',
+    field_values: { title: 'TrueQualify team members tab reformat', status: 'Done', priority: 'P2 Medium', project: 'TrueQualify', assignee: 'Heartbeat', due_date: '2026-06-28', description: 'Avatar color variety, "you" badge, joinedAt date in meta, Owner lock-badge replaces disabled dropdown. Commit be2569a.' }, links: [] },
+  { id: 'wi16', record_type_key: 'work_item', title: 'CRM work_item record type + project board seed', created_at: '2026-06-28T01:27:00Z',
+    field_values: { title: 'CRM work_item record type + project board seed', status: 'In Progress', priority: 'P2 Medium', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-06-28', description: 'Adding work_item type to CRM schema with status/priority/project fields + seeding 18 work items reflecting current sprint.' }, links: [] },
+  { id: 'wi17', record_type_key: 'work_item', title: 'CRM field_definitions CRUD endpoints (seMX)', created_at: '2026-06-28T02:00:00Z',
+    field_values: { title: 'CRM field_definitions CRUD endpoints (seMX)', status: 'Todo', priority: 'P1 High', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-07-05', description: 'Runtime field creation/editing via UI — schema-driven type builder for Jonathon\'s AI-driven CRM vision.' }, links: [] },
+  { id: 'wi18', record_type_key: 'work_item', title: 'CRM record_types runtime creation (seMX)', created_at: '2026-06-28T02:00:00Z',
+    field_values: { title: 'CRM record_types runtime creation (seMX)', status: 'Todo', priority: 'P1 High', project: 'Sulla Desktop', assignee: 'Heartbeat', due_date: '2026-07-05', description: 'Allow users to create new record types at runtime — complete the dynamic CRM architecture end-to-end.' }, links: [] },
 ]);
 
 // ── Mock activity feed ─────────────────────────────────────────────────────
@@ -4193,10 +4243,11 @@ const mockActivities = reactive<CrmActivity[]>([
 // ── Kanban stage ordering per record type ─────────────────────────────────
 
 const STAGE_ORDER: Record<string, string[]> = {
-  deal:    ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'],
-  contact: ['Lead', 'Prospect', 'Active', 'Churned'],
-  lead:    ['Webinar', 'LinkedIn', 'Referral', 'Paid Social', 'Organic', 'Direct'],
-  company: ['Education', 'Marketing', 'Consulting', 'Technology', 'Finance', 'Healthcare', 'Other'],
+  deal:      ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'],
+  contact:   ['Lead', 'Prospect', 'Active', 'Churned'],
+  lead:      ['Webinar', 'LinkedIn', 'Referral', 'Paid Social', 'Organic', 'Direct'],
+  company:   ['Education', 'Marketing', 'Consulting', 'Technology', 'Finance', 'Healthcare', 'Other'],
+  work_item: ['Todo', 'In Progress', 'In Review', 'Done', 'Blocked'],
 };
 
 // Tailwind bg color for stage distribution bar segments
