@@ -5201,6 +5201,7 @@
                         <div class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 font-mono truncate">
                           {{ field.key }} · {{ field.data_type }}
                           <template v-if="field.select_options?.length"> · {{ field.select_options.join(', ') }}</template>
+                          <template v-if="field.default_value"> · <span class="text-violet-400 dark:text-violet-500">default: {{ field.default_value }}</span></template>
                         </div>
                       </div>
                       <!-- delete button — hidden for title/required fields -->
@@ -5256,6 +5257,15 @@
                         v-model="newFieldDraft.select_options_raw"
                         type="text"
                         placeholder="Option A, Option B, Option C"
+                        class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400"
+                      />
+                    </div>
+                    <div v-if="newFieldDraft.data_type !== 'boolean'">
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Default value <span class="font-normal opacity-60">(optional)</span></label>
+                      <input
+                        v-model="newFieldDraft.default_value"
+                        type="text"
+                        :placeholder="newFieldDraft.data_type === 'number' ? 'e.g. 0' : newFieldDraft.data_type === 'date' ? 'e.g. 2026-01-01' : newFieldDraft.data_type === 'select' || newFieldDraft.data_type === 'multi_select' ? 'e.g. Option A' : newFieldDraft.data_type === 'rating' ? '1–5' : 'e.g. Default text'"
                         class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400"
                       />
                     </div>
@@ -5477,6 +5487,7 @@ interface CrmField {
   position: number;
   select_options?: string[];
   format?: FieldFormat;
+  default_value?: string;
 }
 
 interface CrmRecordType {
@@ -6020,7 +6031,7 @@ const schemaEditorMode = ref<'fields' | 'new-type'>('fields');
 const showAddFieldForm = ref(false);
 const schemaTypeLabelDraft = ref<string | null>(null);
 const schemaTypeLabelInputEl = ref<HTMLInputElement | null>(null);
-const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '' });
+const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
 const SCHEMA_ICON_OPTIONS: IconKey[] = ['user', 'building', 'chart', 'target', 'check', 'folder', 'tag', 'list', 'layers', 'star'];
 const SCHEMA_COLOR_PRESETS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#6366f1', '#ec4899', '#ef4444', '#14b8a6', '#f97316', '#64748b'];
@@ -7837,7 +7848,12 @@ function openRecord(record: CrmRecord) {
 function openNewRecord(stageValue?: string, extraDraft?: Record<string, string | number | boolean | string[] | null>) {
   openedRecord.value = null;
   const fieldKey = kanbanField.value?.key;
+  const defaults: Record<string, string | number | boolean | string[] | null> = {};
+  for (const f of (selectedType.value?.fields ?? [])) {
+    if (f.default_value != null && f.default_value !== '') defaults[f.key] = f.default_value;
+  }
   draftValues.value = {
+    ...defaults,
     ...(fieldKey && stageValue ? { [fieldKey]: stageValue } : {}),
     ...(extraDraft ?? {}),
   };
@@ -8699,7 +8715,7 @@ function showToast(message: string, action?: { label: string; fn: () => void }) 
 function openSchemaEditor(mode: 'fields' | 'new-type' = 'fields') {
   schemaEditorMode.value = mode;
   showAddFieldForm.value = false;
-  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '' };
+  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' };
   newTypeDraft.value = { label: '', key: '', icon: 'folder', color: '#6366f1' };
   showSchemaEditor.value = true;
 }
@@ -8745,8 +8761,9 @@ function addFieldToCurrentType() {
     is_required: false,
     position: type.fields.length,
     ...(opts?.length ? { select_options: opts } : {}),
+    ...(draft.default_value.trim() ? { default_value: draft.default_value.trim() } : {}),
   });
-  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '' };
+  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' };
   showAddFieldForm.value = false;
   showToast(`Field "${label}" added to ${type.label}`);
 }
