@@ -238,7 +238,7 @@
                   <td
                     v-for="col in visibleColumns"
                     :key="col.key"
-                    class="px-4 py-3 text-sm first:pl-6 last:pr-6"
+                    class="px-4 py-3 text-sm first:pl-6"
                     :class="col.is_title
                       ? 'font-medium text-slate-900 dark:text-white'
                       : 'text-slate-600 dark:text-slate-400'"
