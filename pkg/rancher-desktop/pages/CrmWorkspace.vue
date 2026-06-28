@@ -13,6 +13,7 @@
     @keydown.t.exact="onKeyT"
     @keydown.b.exact="onKeyB"
     @keydown.l.exact="onKeyL"
+    @keydown.v.exact="onKeyV"
     @keydown.s.exact="onKeyS"
     @keydown.f.exact="onKeyF"
     @keydown.g.exact="onKeyG"
@@ -2598,7 +2599,7 @@
                   <span v-else class="w-5 h-5" />
                   <span
                     class="text-xs font-medium w-6 h-6 flex items-center justify-center rounded-full"
-                    :class="cell.date === '2026-06-28'
+                    :class="cell.date === DUE_TODAY_STR
                       ? 'bg-sky-500 text-white'
                       : cell.inMonth
                         ? 'text-slate-700 dark:text-slate-300'
@@ -2612,8 +2613,15 @@
                     type="button"
                     class="w-full text-left text-xs px-1.5 py-0.5 rounded-md truncate transition-colors"
                     :class="openedRecord?.id === record.id
-                      ? 'bg-sky-500 text-white'
-                      : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60'"
+                      ? 'text-white'
+                      : colorLabels[record.id]
+                        ? 'text-white hover:opacity-90'
+                        : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60'"
+                    :style="openedRecord?.id === record.id
+                      ? { background: colorLabels[record.id] ?? '#0ea5e9' }
+                      : colorLabels[record.id]
+                        ? { background: colorLabels[record.id] }
+                        : undefined"
                     :title="record.title"
                     @click="openRecord(record)"
                   >{{ record.title }}</button>
@@ -3770,6 +3778,7 @@
                 { keys: ['T'], desc: 'Table view' },
                 { keys: ['B'], desc: 'Board / Kanban view' },
                 { keys: ['L'], desc: 'Calendar view' },
+                { keys: ['V'], desc: 'Gallery view' },
                 { keys: ['⌘', 'A'], desc: 'Select all records (table view)' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Home', 'End'], desc: 'First / last record' },
@@ -8161,6 +8170,13 @@ function onKeyL(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
   if (canCalendar.value) viewMode.value = 'calendar';
+}
+
+function onKeyV(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  viewMode.value = 'gallery';
 }
 
 function onKeyS(e: KeyboardEvent) {
