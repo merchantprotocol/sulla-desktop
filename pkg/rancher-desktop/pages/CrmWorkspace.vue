@@ -2215,7 +2215,7 @@ const schema: CrmRecordType[] = [
 
 // ── Mock records ───────────────────────────────────────────────────────────
 
-const mockRecords: CrmRecord[] = [
+const mockRecords = reactive<CrmRecord[]>([
   // Contacts
   { id: 'r1', record_type_key: 'contact', title: 'Jordan Mitchell', created_at: '2026-05-12T14:22:00Z',
     field_values: { full_name: 'Jordan Mitchell', email: 'jordan@apexcoaching.com', phone: '+1 555-0142', company: 'Apex Coaching', status: 'Active' },
@@ -2276,7 +2276,7 @@ const mockRecords: CrmRecord[] = [
     field_values: { name: 'David Chen', email: 'dchen@techsprint.dev', source: 'Referral', score: 74, converted: false } },
   { id: 'r21', record_type_key: 'lead', title: 'Chris Nakamura', created_at: '2026-06-25T09:30:00Z',
     field_values: { name: 'Chris Nakamura', email: 'chris@organicflow.io', source: 'Organic', score: 68, converted: false } },
-];
+]);
 
 // ── Mock activity feed ─────────────────────────────────────────────────────
 
