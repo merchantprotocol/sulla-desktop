@@ -369,7 +369,8 @@
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
-              title="Archive selected (coming soon)"
+              :title="`Archive ${selectedIds.size} selected record${selectedIds.size === 1 ? '' : 's'}`"
+              @click="archiveSelected()"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8" />
@@ -665,6 +666,34 @@
                 aria-label="Show all records"
                 title="Show all records"
                 @click.stop="showIncompleteOnly = false"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <!-- archived filter chip -->
+            <div
+              v-if="archivedCountForType > 0"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none transition-colors"
+              :class="showArchived
+                ? 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-400 dark:border-slate-500'
+                : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
+              :title="showArchived ? 'Back to active records' : `Show ${archivedCountForType} archived record${archivedCountForType === 1 ? '' : 's'}`"
+              @click="showArchived = !showArchived"
+            >
+              <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8" />
+              </svg>
+              <span>{{ showArchived ? 'Archived' : `${archivedCountForType} archived` }}</span>
+              <button
+                v-if="showArchived"
+                type="button"
+                class="ml-0.5 rounded-full hover:bg-slate-300 dark:hover:bg-slate-600 p-0.5 transition-colors"
+                aria-label="Back to active records"
+                title="Back to active records"
+                @click.stop="showArchived = false"
               >
                 <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -3433,6 +3462,16 @@
         <button
           type="button"
           class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="archivedIds.has(contextMenuRecord.id) ? unarchiveRecord(contextMenuRecord.id) : archiveRecord(contextMenuRecord.id); closeContextMenu()"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8" />
+          </svg>
+          {{ archivedIds.has(contextMenuRecord.id) ? 'Unarchive' : 'Archive' }}
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           @click="togglePin(contextMenuRecord.id); closeContextMenu()"
         >
           <svg class="h-3.5 w-3.5 shrink-0" :class="pinnedIds.has(contextMenuRecord.id) ? 'text-amber-500' : 'text-slate-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -4928,6 +4967,10 @@ const LS_KEY_VIEW_MODE = 'crm:viewMode';
 const LS_KEY_HIDDEN_COLS = 'crm:hiddenCols';
 const LS_KEY_ROW_DENSITY = 'crm:rowDensity';
 const LS_KEY_SAVED_VIEWS = 'crm:savedViews';
+const LS_KEY_ARCHIVED = 'crm:archivedIds';
+
+const archivedIds = ref<Set<string>>(new Set());
+const showArchived = ref(false);
 
 onMounted(() => {
   try {
@@ -4939,6 +4982,8 @@ onMounted(() => {
     if (savedDensity === 'comfortable' || savedDensity === 'compact') rowDensity.value = savedDensity;
     const sv = localStorage.getItem(LS_KEY_SAVED_VIEWS);
     if (sv) savedViews.value = JSON.parse(sv) as SavedView[];
+    const sa = localStorage.getItem(LS_KEY_ARCHIVED);
+    if (sa) archivedIds.value = new Set(JSON.parse(sa) as string[]);
   } catch { /* storage not available */ }
 });
 
@@ -4946,6 +4991,7 @@ watch(viewMode, (val) => { try { localStorage.setItem(LS_KEY_VIEW_MODE, val); } 
 watch(hiddenColumnKeys, (val) => { try { localStorage.setItem(LS_KEY_HIDDEN_COLS, JSON.stringify([...val])); } catch { /* ignore */ } });
 watch(rowDensity, (val) => { try { localStorage.setItem(LS_KEY_ROW_DENSITY, val); } catch { /* ignore */ } });
 watch(savedViews, (val) => { try { localStorage.setItem(LS_KEY_SAVED_VIEWS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
+watch(archivedIds, (val) => { try { localStorage.setItem(LS_KEY_ARCHIVED, JSON.stringify([...val])); } catch { /* ignore */ } }, { deep: true });
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -5077,10 +5123,16 @@ const incompleteCountForType = computed(() => {
     });
   }).length;
 });
+const archivedCountForType = computed(() =>
+  mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value && archivedIds.value.has(r.id)).length,
+);
 
 const filteredRecords = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
-  const recs = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
+  const recs = mockRecords.filter((r) => {
+    if (r.record_type_key !== selectedTypeKey.value) return false;
+    return showArchived.value ? archivedIds.value.has(r.id) : !archivedIds.value.has(r.id);
+  });
   let result: CrmRecord[] = q
     ? recs.filter((r) =>
         r.title.toLowerCase().includes(q) ||
@@ -6029,6 +6081,42 @@ function restoreBulkDeleted() {
     if (s.wasWatched) { const next = new Set(watchedIds.value); next.add(s.record.id); watchedIds.value = next; }
   }
   showToast('Delete undone');
+}
+
+function archiveSelected() {
+  const ids = [...selectedIds.value];
+  if (!ids.length) return;
+  const next = new Set(archivedIds.value);
+  for (const id of ids) next.add(id);
+  archivedIds.value = next;
+  if (openedRecord.value && ids.includes(openedRecord.value.id)) closePanel();
+  selectedIds.value = new Set();
+  showToast(`${ids.length} record${ids.length === 1 ? '' : 's'} archived`, {
+    label: 'Undo',
+    fn: () => {
+      const restored = new Set(archivedIds.value);
+      for (const id of ids) restored.delete(id);
+      archivedIds.value = restored;
+    },
+  });
+}
+
+function archiveRecord(id: string) {
+  const next = new Set(archivedIds.value);
+  next.add(id);
+  archivedIds.value = next;
+  if (openedRecord.value?.id === id) closePanel();
+  showToast('Record archived', {
+    label: 'Undo',
+    fn: () => unarchiveRecord(id),
+  });
+}
+
+function unarchiveRecord(id: string) {
+  const next = new Set(archivedIds.value);
+  next.delete(id);
+  archivedIds.value = next;
+  showToast('Record unarchived');
 }
 
 function toggleFilter(fieldKey: string, value: string) {
