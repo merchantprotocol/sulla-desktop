@@ -1104,8 +1104,14 @@ const CrmFieldInput = defineComponent({
           class: baseClass + ' opacity-80 cursor-default tabular-nums',
         });
       }
+      const inputType = props.dataType === 'number' ? 'number'
+        : props.dataType === 'date' ? 'date'
+        : props.dataType === 'email' ? 'email'
+        : props.dataType === 'phone' ? 'tel'
+        : props.dataType === 'url' ? 'url'
+        : 'text';
       return h('input', {
-        type: props.dataType === 'number' ? 'number' : props.dataType === 'date' ? 'date' : 'text',
+        type: inputType,
         value: val != null ? String(val) : '',
         readonly: props.readOnly,
         class: baseClass + (props.readOnly ? ' opacity-80 cursor-default' : ''),
