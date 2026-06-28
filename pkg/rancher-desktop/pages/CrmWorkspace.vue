@@ -545,7 +545,6 @@ interface CrmRecordType {
   label_plural: string;
   icon: IconKey;
   color: string;
-  record_count: number;
   fields: CrmField[];
 }
 
@@ -583,7 +582,7 @@ const ICON_COMPONENTS = Object.fromEntries(
 const schema: CrmRecordType[] = [
   {
     id: 'rt_contact', key: 'contact', label: 'Contact', label_plural: 'Contacts',
-    icon: 'user', color: '#3b82f6', record_count: 42,
+    icon: 'user', color: '#3b82f6',
     fields: [
       { id: 'f_cn1', key: 'full_name',  label: 'Full name',  data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
       { id: 'f_cn2', key: 'email',      label: 'Email',      data_type: 'email',  is_title: false, is_required: true,  position: 1 },
@@ -594,7 +593,7 @@ const schema: CrmRecordType[] = [
   },
   {
     id: 'rt_company', key: 'company', label: 'Company', label_plural: 'Companies',
-    icon: 'building', color: '#8b5cf6', record_count: 18,
+    icon: 'building', color: '#8b5cf6',
     fields: [
       { id: 'f_co1', key: 'name',        label: 'Name',         data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
       { id: 'f_co2', key: 'domain',      label: 'Domain',       data_type: 'url',    is_title: false, is_required: false, position: 1 },
@@ -605,7 +604,7 @@ const schema: CrmRecordType[] = [
   },
   {
     id: 'rt_deal', key: 'deal', label: 'Deal', label_plural: 'Deals',
-    icon: 'chart', color: '#10b981', record_count: 9,
+    icon: 'chart', color: '#10b981',
     fields: [
       { id: 'f_dl1', key: 'name',        label: 'Deal name',  data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
       { id: 'f_dl2', key: 'stage',       label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'] },
@@ -616,7 +615,7 @@ const schema: CrmRecordType[] = [
   },
   {
     id: 'rt_lead', key: 'lead', label: 'Lead', label_plural: 'Leads',
-    icon: 'target', color: '#f59e0b', record_count: 31,
+    icon: 'target', color: '#f59e0b',
     fields: [
       { id: 'f_ld1', key: 'name',      label: 'Name',      data_type: 'text',    is_title: true,  is_required: true,  position: 0 },
       { id: 'f_ld2', key: 'email',     label: 'Email',     data_type: 'email',   is_title: false, is_required: false, position: 1 },
