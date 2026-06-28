@@ -194,11 +194,12 @@
               </button>
             </div>
 
-            <!-- export button — placeholder -->
+            <!-- export button -->
             <button
               type="button"
               class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-              title="Export as CSV (coming soon)"
+              :title="`Export ${filteredRecords.length} record${filteredRecords.length === 1 ? '' : 's'} as CSV`"
+              @click="exportCsv"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -1931,6 +1932,28 @@ function showToast(message: string) {
   setTimeout(() => {
     toasts.value = toasts.value.filter((t) => t.id !== id);
   }, 2500);
+}
+
+function exportCsv() {
+  const cols = allColumns.value;
+  const headers = [...cols.map((c) => c.label), 'Created'];
+  const escape = (v: unknown) => {
+    const s = v == null ? '' : String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const rows = filteredRecords.value.map((r) => [
+    ...cols.map((c) => escape(r.field_values[c.key])),
+    escape(formatDate(r.created_at)),
+  ]);
+  const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${selectedType.value?.label_plural ?? 'records'}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${filteredRecords.value.length} records`);
 }
 
 function recordInitials(title: string): string {
