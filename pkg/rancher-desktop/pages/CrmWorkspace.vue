@@ -21,7 +21,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -898,6 +898,7 @@
                     v-for="col in visibleColumns"
                     :key="col.key"
                     class="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap"
+                    @contextmenu.prevent="openColHeaderMenu(col.key, $event)"
                   >
                     <button
                       type="button"
@@ -2459,6 +2460,59 @@
       </div>
     </transition>
 
+    <!-- column header context menu -->
+    <transition
+      enter-active-class="transition-all duration-100"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-75"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="colHeaderMenu"
+        class="fixed z-50 w-44 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1"
+        :style="{ top: `${colHeaderMenu.y}px`, left: `${colHeaderMenu.x}px` }"
+        @click.stop
+      >
+        <p class="px-3 pt-2 pb-1 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider truncate">
+          {{ allColumns.find(c => c.key === colHeaderMenu?.fieldKey)?.label ?? colHeaderMenu.fieldKey }}
+        </p>
+        <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="sortField = colHeaderMenu!.fieldKey; sortDir = 'asc'; colHeaderMenu = null">
+          <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+          </svg>
+          Sort A → Z
+        </button>
+        <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="sortField = colHeaderMenu!.fieldKey; sortDir = 'desc'; colHeaderMenu = null">
+          <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+          Sort Z → A
+        </button>
+        <template v-if="allColumns.find(c => c.key === colHeaderMenu?.fieldKey)?.data_type === 'select'">
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="filterPickerField = colHeaderMenu!.fieldKey; showFilterDropdown = true; colHeaderMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+            </svg>
+            Filter by this field
+          </button>
+        </template>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="hiddenColumnKeys = new Set([...hiddenColumnKeys, colHeaderMenu!.fieldKey]); colHeaderMenu = null">
+          <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+          </svg>
+          Hide column
+        </button>
+      </div>
+    </transition>
+
     <!-- toast notifications -->
     <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
       <transition-group
@@ -2834,6 +2888,7 @@ const collapsedColumns = ref<Set<string>>(new Set());
 const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
 const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
+const colHeaderMenu = ref<{ fieldKey: string; x: number; y: number } | null>(null);
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const lastSelectedIdx = ref(-1);
 const savedViews = ref<SavedView[]>([]);
@@ -3317,6 +3372,16 @@ function openContextMenu(record: CrmRecord, e: MouseEvent) {
 
 function closeContextMenu() {
   contextMenuRecord.value = null;
+}
+
+function openColHeaderMenu(fieldKey: string, e: MouseEvent) {
+  const menuW = 180;
+  const menuH = 160;
+  colHeaderMenu.value = {
+    fieldKey,
+    x: Math.min(e.clientX, window.innerWidth - menuW - 8),
+    y: Math.min(e.clientY, window.innerHeight - menuH - 8),
+  };
 }
 
 function toggleSelect(id: string) {
