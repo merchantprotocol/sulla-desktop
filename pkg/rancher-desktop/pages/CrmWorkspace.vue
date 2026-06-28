@@ -693,9 +693,8 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                <template v-for="(record, idx) in filteredRecords" :key="record.id">
                 <tr
-                  v-for="record in filteredRecords"
-                  :key="record.id"
                   class="group cursor-pointer transition-colors"
                   :class="openedRecord?.id === record.id
                     ? 'bg-sky-50 dark:bg-sky-950/20'
@@ -843,6 +842,15 @@
                     </div>
                   </td>
                 </tr>
+                <!-- pinned/unpinned separator — shows after the last pinned record -->
+                <tr
+                  v-if="!showPinnedOnly && pinnedIds.has(record.id) && idx < filteredRecords.length - 1 && !pinnedIds.has(filteredRecords[idx + 1]?.id ?? '')"
+                >
+                  <td :colspan="visibleColumns.length + 3" class="p-0">
+                    <div class="h-px bg-amber-200 dark:bg-amber-800/40 mx-4" />
+                  </td>
+                </tr>
+                </template>
 
                 <tr v-if="filteredRecords.length === 0">
                   <td
