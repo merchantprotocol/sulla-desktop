@@ -1256,7 +1256,12 @@
           </div>
 
           <!-- ── Table view ── -->
-          <div v-if="viewMode === 'table'" class="flex-1 overflow-auto">
+          <div
+            v-if="viewMode === 'table'"
+            ref="tableScrollEl"
+            class="flex-1 overflow-auto"
+            @scroll.passive="scrollPositions[selectedTypeKey] = ($event.target as HTMLElement).scrollTop"
+          >
             <table class="min-w-full border-separate border-spacing-0">
               <thead class="sticky top-0 z-10">
                 <tr>
@@ -4255,6 +4260,8 @@ const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
 const pinnedColumnKeys = ref<Set<string>>(new Set());
 const expandedRowIds = ref<Set<string>>(new Set());
+const tableScrollEl = ref<HTMLElement | null>(null);
+const scrollPositions = ref<Record<string, number>>({});
 const columnWidths = ref<Record<string, number>>({});
 let colResizeDragKey: string | null = null;
 let colResizeDragStart = 0;
@@ -5465,7 +5472,9 @@ function onColResizeMouseDown(e: MouseEvent, colKey: string, currentWidth: numbe
 }
 
 function selectType(key: string) {
+  const savedScroll = scrollPositions.value[key] ?? 0;
   selectedTypeKey.value = key;
+  nextTick(() => { if (tableScrollEl.value) tableScrollEl.value.scrollTop = savedScroll; });
   searchQuery.value = '';
   openedRecord.value = null;
   editingRecord.value = false;
