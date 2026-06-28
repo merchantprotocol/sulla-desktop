@@ -6,6 +6,7 @@
     @keydown.esc="onKeyEsc"
     @keydown.n.exact="onKeyN"
     @keydown.d.exact="onKeyD"
+    @keydown.e.exact="onKeyE"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -87,7 +88,8 @@
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
-              title="Export selected (coming soon)"
+              :title="`Export ${selectedIds.size} selected record${selectedIds.size === 1 ? '' : 's'} as CSV`"
+              @click="exportCsv(filteredRecords.filter(r => selectedIds.has(r.id)))"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -1102,6 +1104,7 @@
                 { keys: ['?'], desc: 'Toggle this overlay' },
               ]},
               { heading: 'Detail Panel', items: [
+                { keys: ['E'], desc: 'Edit record' },
                 { keys: ['1'], desc: 'Details tab' },
                 { keys: ['2'], desc: 'Activity tab' },
                 { keys: ['3'], desc: 'Related tab' },
@@ -2015,6 +2018,14 @@ function onKeyD(e: KeyboardEvent) {
   }
 }
 
+function onKeyE(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (openedRecord.value && !editingRecord.value && !creatingRecord.value) {
+    editingRecord.value = true;
+  }
+}
+
 function onKeySave() {
   if (creatingRecord.value) { saveNewRecord(); return; }
   if (editingRecord.value) { editingRecord.value = false; }
@@ -2040,14 +2051,15 @@ function showToast(message: string) {
   }, 2500);
 }
 
-function exportCsv() {
+function exportCsv(records?: CrmRecord[]) {
+  const recs = records ?? filteredRecords.value;
   const cols = allColumns.value;
   const headers = [...cols.map((c) => c.label), 'Created'];
   const escape = (v: unknown) => {
     const s = v == null ? '' : String(v);
     return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
   };
-  const rows = filteredRecords.value.map((r) => [
+  const rows = recs.map((r) => [
     ...cols.map((c) => escape(r.field_values[c.key])),
     escape(formatDate(r.created_at)),
   ]);
@@ -2059,7 +2071,7 @@ function exportCsv() {
   a.download = `${selectedType.value?.label_plural ?? 'records'}.csv`;
   a.click();
   URL.revokeObjectURL(url);
-  showToast(`Exported ${filteredRecords.value.length} records`);
+  showToast(`Exported ${recs.length} record${recs.length === 1 ? '' : 's'}`);
 }
 
 function recordInitials(title: string): string {
