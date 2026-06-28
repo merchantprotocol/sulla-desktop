@@ -2957,6 +2957,8 @@ interface SavedView {
   filters: Array<{ fieldKey: string; value: string }>;
   sortField: string | null;
   sortDir: 'asc' | 'desc';
+  sortField2: string | null;
+  sortDir2: 'asc' | 'desc';
   viewMode: 'table' | 'kanban';
   hiddenCols: string[];
   showPinnedOnly: boolean;
@@ -4388,6 +4390,8 @@ function saveCurrentView() {
     filters: activeFilters.value.slice(),
     sortField: sortField.value,
     sortDir: sortDir.value,
+    sortField2: sortField2.value,
+    sortDir2: sortDir2.value,
     viewMode: viewMode.value,
     hiddenCols: [...hiddenColumnKeys.value],
     showPinnedOnly: showPinnedOnly.value,
@@ -4405,6 +4409,8 @@ function applySavedView(view: SavedView) {
   activeFilters.value = view.filters.slice();
   sortField.value = view.sortField;
   sortDir.value = view.sortDir;
+  sortField2.value = view.sortField2 ?? null;
+  sortDir2.value = view.sortDir2 ?? 'asc';
   viewMode.value = view.viewMode;
   hiddenColumnKeys.value = new Set(view.hiddenCols);
   showPinnedOnly.value = view.showPinnedOnly;
