@@ -923,8 +923,30 @@
             </div>
 
             <div class="flex-1 px-5 py-4 space-y-4 overflow-y-auto">
+              <!-- Autofocused title input — always rendered at top, excluded from field loop below -->
               <div
-                v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
+                v-if="selectedType?.fields.find(f => f.is_title)"
+                class="pb-1 border-b border-slate-100 dark:border-slate-800"
+              >
+                <input
+                  ref="newRecordTitleInputEl"
+                  type="text"
+                  :value="draftValues[selectedType?.fields.find(f => f.is_title)?.key ?? ''] ?? ''"
+                  :placeholder="`${selectedType?.label ?? 'Record'} name`"
+                  class="w-full text-base font-semibold text-slate-900 dark:text-white bg-transparent outline-none placeholder:text-slate-300 dark:placeholder:text-slate-600"
+                  @input="draftValues[selectedType?.fields.find(f => f.is_title)?.key ?? ''] = ($event.target as HTMLInputElement).value; createFormErrors.delete(selectedType?.fields.find(f => f.is_title)?.key ?? '')"
+                  @keydown.enter.prevent="saveNewRecord"
+                />
+                <p
+                  v-if="createFormErrors.has(selectedType?.fields.find(f => f.is_title)?.key ?? '')"
+                  class="text-xs text-red-500 dark:text-red-400 mt-1"
+                >
+                  This field is required.
+                </p>
+              </div>
+
+              <div
+                v-for="field in (selectedType?.fields ?? []).filter(f => !f.is_title).slice().sort((a, b) => a.position - b.position)"
                 :key="field.id"
                 class="space-y-1"
               >
@@ -1970,6 +1992,9 @@ let previewTimer: ReturnType<typeof setTimeout> | null = null;
 const annotationDraft = ref('');
 const annotationInputEl = ref<HTMLInputElement | null>(null);
 watch(annotatingField, (val) => { if (val) nextTick(() => annotationInputEl.value?.focus()); });
+
+const newRecordTitleInputEl = ref<HTMLInputElement | null>(null);
+watch(creatingRecord, (val) => { if (val) nextTick(() => newRecordTitleInputEl.value?.focus()); });
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
