@@ -552,7 +552,13 @@
                         : 'text-slate-600 dark:text-slate-400',
                     ]"
                   >
-                    <div v-if="col.is_title" class="flex items-center gap-1.5">
+                    <div
+                      v-if="col.is_title"
+                      class="flex items-center gap-1.5"
+                      @mouseenter="showPreview($event, record)"
+                      @mousemove="updatePreviewPos"
+                      @mouseleave="hidePreview"
+                    >
                       <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                       <span
                         v-if="record.links?.length"
@@ -1371,6 +1377,41 @@
       </div>
     </transition>
 
+    <!-- row hover preview card -->
+    <transition
+      enter-active-class="transition-all duration-150"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-100"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="previewRecord && !openedRecord"
+        class="fixed z-40 pointer-events-none rounded-xl border shadow-xl p-3 w-52 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700"
+        :style="{ top: `${previewPos.y}px`, left: `${previewPos.x}px` }"
+      >
+        <p class="text-xs font-semibold text-slate-900 dark:text-white truncate mb-2">{{ previewRecord.title }}</p>
+        <div class="space-y-1.5">
+          <div
+            v-for="f in previewFields"
+            :key="f.key"
+            class="flex items-center gap-2"
+          >
+            <span class="shrink-0 text-xs text-slate-400 dark:text-slate-500 w-16 truncate">{{ f.label }}</span>
+            <span
+              v-if="f.data_type === 'select' && previewRecord.field_values[f.key]"
+              class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-medium truncate"
+              :class="selectBadgeClass(String(previewRecord.field_values[f.key]))"
+            >{{ previewRecord.field_values[f.key] }}</span>
+            <span v-else class="text-xs text-slate-600 dark:text-slate-300 truncate flex-1">
+              {{ formatCardValue(previewRecord.field_values[f.key] as string | number | boolean | null, f.data_type, f.format) || '—' }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <!-- toast notifications -->
     <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
       <transition-group
@@ -1695,6 +1736,9 @@ const showPinnedOnly = ref(false);
 const fieldAnnotations = ref<Record<string, string>>({});
 const annotatingField = ref<string | null>(null);
 const recentRecords = ref<CrmRecord[]>([]); // last 5 opened, newest first
+const previewRecord = ref<CrmRecord | null>(null);
+const previewPos = ref({ x: 0, y: 0 });
+let previewTimer: ReturnType<typeof setTimeout> | null = null;
 const annotationDraft = ref('');
 const annotationInputEl = ref<HTMLInputElement | null>(null);
 watch(annotatingField, (val) => { if (val) nextTick(() => annotationInputEl.value?.focus()); });
@@ -1923,6 +1967,14 @@ const completenessPercent = computed(() =>
     : Math.round((recordCompleteness.value.filled / recordCompleteness.value.total) * 100),
 );
 
+const previewFields = computed(() =>
+  (selectedType.value?.fields ?? [])
+    .filter((f) => !f.is_title)
+    .slice()
+    .sort((a, b) => a.position - b.position)
+    .slice(0, 3),
+);
+
 const paletteResults = computed(() => {
   const q = paletteQuery.value.trim().toLowerCase();
   if (!q) return mockRecords.slice(0, 8);
@@ -1966,6 +2018,21 @@ function togglePin(id: string) {
   if (next.has(id)) next.delete(id);
   else next.add(id);
   pinnedIds.value = next;
+}
+
+function showPreview(e: MouseEvent, record: CrmRecord) {
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    previewRecord.value = record;
+    previewPos.value = { x: e.clientX + 14, y: e.clientY - 8 };
+  }, 350);
+}
+function updatePreviewPos(e: MouseEvent) {
+  previewPos.value = { x: e.clientX + 14, y: e.clientY - 8 };
+}
+function hidePreview() {
+  if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
+  previewRecord.value = null;
 }
 
 function bulkPinToggle() {
