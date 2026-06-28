@@ -1374,7 +1374,7 @@
 
           <!-- active filter pills -->
           <div
-            v-if="activeFilters.length || groupByField || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null) || Object.values(dateAfterFilters).some(v => v) || Object.values(dateBeforeFilters).some(v => v)"
+            v-if="activeFilters.length || groupByField || showOverdueOnly || showDueSoonOnly || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null) || Object.values(dateAfterFilters).some(v => v) || Object.values(dateBeforeFilters).some(v => v)"
             class="flex items-center gap-2 px-6 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-950/50 flex-wrap"
           >
             <!-- group-by chip -->
@@ -1494,6 +1494,43 @@
                 </button>
               </div>
             </template>
+            <!-- overdue filter chip -->
+            <div
+              v-if="showOverdueOnly"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300"
+            >
+              <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span>Overdue</span>
+              <button
+                type="button"
+                class="ml-0.5 text-rose-400 hover:text-rose-600 dark:hover:text-rose-200 transition-colors leading-none"
+                aria-label="Clear overdue filter"
+                @click="showOverdueOnly = false"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <!-- due-soon filter chip -->
+            <div
+              v-if="showDueSoonOnly"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300"
+            >
+              <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <circle cx="12" cy="12" r="9" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 7v5l3 3" />
+              </svg>
+              <span>Due soon</span>
+              <button
+                type="button"
+                class="ml-0.5 text-amber-400 hover:text-amber-600 dark:hover:text-amber-200 transition-colors leading-none"
+                aria-label="Clear due-soon filter"
+                @click="showDueSoonOnly = false"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
             <button
               type="button"
               class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors ml-1"
@@ -1501,6 +1538,36 @@
             >
               Clear all
             </button>
+          </div>
+
+          <!-- ── Record count status bar ── -->
+          <div
+            v-if="selectedType"
+            class="flex items-center gap-4 px-6 py-1.5 border-b border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-400 dark:text-slate-500 select-none"
+          >
+            <span class="tabular-nums">
+              {{ filteredRecords.length === 1 ? '1 record' : `${filteredRecords.length} records` }}
+              <template v-if="filteredRecords.length !== mockRecords.filter(r => r.record_type_key === selectedTypeKey).length">
+                <span class="opacity-60"> of {{ mockRecords.filter(r => r.record_type_key === selectedTypeKey).length }}</span>
+              </template>
+            </span>
+            <span v-if="selectedIds.size" class="text-sky-500 dark:text-sky-400 font-medium tabular-nums">{{ selectedIds.size }} selected</span>
+            <span
+              v-if="filteredOverdueCount > 0 && !showOverdueOnly"
+              class="text-rose-400 dark:text-rose-500 tabular-nums cursor-pointer hover:text-rose-600 dark:hover:text-rose-300 transition-colors"
+              title="Show overdue only"
+              @click="showOverdueOnly = true; showDueSoonOnly = false"
+            >
+              {{ filteredOverdueCount }} overdue
+            </span>
+            <span
+              v-if="filteredDueSoonCount > 0 && !showDueSoonOnly"
+              class="text-amber-400 dark:text-amber-500 tabular-nums cursor-pointer hover:text-amber-600 dark:hover:text-amber-300 transition-colors"
+              title="Show due-soon only"
+              @click="showDueSoonOnly = true; showOverdueOnly = false"
+            >
+              {{ filteredDueSoonCount }} due soon
+            </span>
           </div>
 
           <!-- ── Table view ── -->
@@ -5562,6 +5629,17 @@ const dueSoonIds = computed((): Set<string> => {
 
 const showOverdueOnly = ref(false);
 const showDueSoonOnly = ref(false);
+
+const filteredOverdueCount = computed(() =>
+  dueDateField.value
+    ? filteredRecords.value.filter((r) => overdueIds.value.has(r.id)).length
+    : 0,
+);
+const filteredDueSoonCount = computed(() =>
+  dueDateField.value
+    ? filteredRecords.value.filter((r) => dueSoonIds.value.has(r.id)).length
+    : 0,
+);
 
 const staleIds = computed((): Set<string> => {
   const days = staleDaysFilter.value;
