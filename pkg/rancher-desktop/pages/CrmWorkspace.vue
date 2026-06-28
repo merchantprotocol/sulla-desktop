@@ -38,7 +38,7 @@
                 <component :is="ICON_COMPONENTS[rt.icon]" class="h-3.5 w-3.5" />
               </span>
               <span class="flex-1 truncate text-sm">{{ rt.label_plural }}</span>
-              <span class="text-xs text-slate-400 dark:text-slate-500 tabular-nums">{{ rt.record_count }}</span>
+              <span class="text-xs text-slate-400 dark:text-slate-500 tabular-nums">{{ recordCountByType[rt.key] ?? 0 }}</span>
             </button>
           </nav>
 
@@ -676,6 +676,15 @@ const selectedType = computed(() =>
 const totalRecordsForType = computed(() =>
   mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).length,
 );
+
+const recordCountByType = computed(() => {
+  const counts: Record<string, number> = {};
+  for (const rt of schema) counts[rt.key] = 0;
+  for (const r of mockRecords) {
+    if (counts[r.record_type_key] != null) counts[r.record_type_key]++;
+  }
+  return counts;
+});
 
 const visibleColumns = computed(() =>
   (selectedType.value?.fields ?? [])
