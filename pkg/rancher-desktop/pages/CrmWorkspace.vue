@@ -519,6 +519,34 @@
                 />
               </div>
 
+              <!-- activity feed -->
+              <div class="pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div class="flex items-center justify-between mb-3">
+                  <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Activity</p>
+                  <button
+                    type="button"
+                    class="text-xs text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300 transition-colors"
+                    title="Log activity (coming soon)"
+                  >
+                    + Log
+                  </button>
+                </div>
+                <div v-if="recordActivities.length" class="space-y-3">
+                  <div v-for="act in recordActivities" :key="act.id" class="flex gap-2.5">
+                    <span class="mt-0.5 h-6 w-6 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 text-slate-500 dark:text-slate-400">
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                        <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[act.type]" />
+                      </svg>
+                    </span>
+                    <div class="flex-1 min-w-0 pb-3 border-b border-slate-50 dark:border-slate-800/60 last:border-0 last:pb-0">
+                      <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{{ act.content }}</p>
+                      <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">{{ act.author }} · {{ formatRelativeTime(act.created_at) }}</p>
+                    </div>
+                  </div>
+                </div>
+                <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No activity logged yet.</p>
+              </div>
+
               <!-- related records -->
               <div v-if="openedRecord.links?.length" class="pt-2 border-t border-slate-100 dark:border-slate-800">
                 <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Related</p>
@@ -552,6 +580,9 @@
             <div v-if="!editingRecord" class="px-5 py-4 border-t border-slate-200 dark:border-slate-700 space-y-2">
               <p class="text-xs text-slate-400 dark:text-slate-500">
                 Created {{ formatDate(openedRecord.created_at) }}
+                <template v-if="filteredRecords.length > 1 && openedRecordIndex >= 0">
+                  · {{ openedRecordIndex + 1 }} of {{ filteredRecords.length }}
+                </template>
               </p>
               <div class="flex gap-2">
                 <button
@@ -649,6 +680,15 @@ interface CrmRecord {
   links?: CrmLink[];
 }
 
+interface CrmActivity {
+  id: string;
+  record_id: string;
+  type: 'note' | 'email' | 'call' | 'meeting';
+  content: string;
+  author: string;
+  created_at: string;
+}
+
 // ── Icon components (memoized — one component per icon key) ───────────────
 
 const ICON_PATHS: Record<IconKey, string> = {
@@ -669,6 +709,13 @@ const ICON_COMPONENTS = Object.fromEntries(
     }),
   ]),
 ) as Record<IconKey, ReturnType<typeof defineComponent>>;
+
+const ACTIVITY_ICONS: Record<CrmActivity['type'], string> = {
+  note:    'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z',
+  email:   'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
+  call:    'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z',
+  meeting: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+};
 
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
 
@@ -782,6 +829,27 @@ const mockRecords: CrmRecord[] = [
     field_values: { name: 'David Chen', email: 'dchen@techsprint.dev', source: 'Referral', score: 74, converted: false } },
   { id: 'r21', record_type_key: 'lead', title: 'Chris Nakamura', created_at: '2026-06-25T09:30:00Z',
     field_values: { name: 'Chris Nakamura', email: 'chris@organicflow.io', source: 'Organic', score: 68, converted: false } },
+];
+
+// ── Mock activity feed ─────────────────────────────────────────────────────
+
+const mockActivities: CrmActivity[] = [
+  { id: 'a1',  record_id: 'r1',  type: 'call',    content: 'Discovery call — Jordan confirmed Q3 budget. Warm to expansion.', author: 'JB', created_at: '2026-06-25T14:30:00Z' },
+  { id: 'a2',  record_id: 'r1',  type: 'email',   content: 'Sent proposal deck and pricing overview.', author: 'JB', created_at: '2026-06-20T11:00:00Z' },
+  { id: 'a3',  record_id: 'r1',  type: 'note',    content: 'Met at MastermindLive event. Strong referral potential.', author: 'JB', created_at: '2026-05-14T09:00:00Z' },
+  { id: 'a4',  record_id: 'r2',  type: 'email',   content: 'Intro email sent. Priya responded same day — high intent.', author: 'JB', created_at: '2026-06-22T10:00:00Z' },
+  { id: 'a5',  record_id: 'r2',  type: 'meeting', content: 'Demo completed. Requested custom implementation timeline.', author: 'JB', created_at: '2026-06-17T15:00:00Z' },
+  { id: 'a14', record_id: 'r3',  type: 'call',    content: 'Intro call — interested in pilot program, forwarded to Deals.', author: 'JB', created_at: '2026-06-05T10:30:00Z' },
+  { id: 'a15', record_id: 'r4',  type: 'note',    content: 'Account churned. Cited budget constraints; open to returning Q1 2027.', author: 'JB', created_at: '2026-06-12T11:00:00Z' },
+  { id: 'a11', record_id: 'r5',  type: 'note',    content: 'HQ visit confirmed for Q3. Will meet Jordan and 3 dept heads.', author: 'JB', created_at: '2026-06-12T09:00:00Z' },
+  { id: 'a6',  record_id: 'r8',  type: 'note',    content: 'Proposal reviewed. Legal sign-off expected by July 15.', author: 'JB', created_at: '2026-06-26T09:30:00Z' },
+  { id: 'a7',  record_id: 'r8',  type: 'call',    content: 'Contract review call. Two minor revisions requested.', author: 'JB', created_at: '2026-06-18T14:00:00Z' },
+  { id: 'a8',  record_id: 'r8',  type: 'email',   content: 'Sent revised proposal with updated scope and pricing.', author: 'JB', created_at: '2026-06-10T11:00:00Z' },
+  { id: 'a9',  record_id: 'r9',  type: 'call',    content: 'Negotiation call. Agreed to waive onboarding fee.', author: 'JB', created_at: '2026-06-24T16:00:00Z' },
+  { id: 'a10', record_id: 'r9',  type: 'email',   content: 'Renewal terms sent. 15% YoY increase + new feature tier.', author: 'JB', created_at: '2026-06-15T10:00:00Z' },
+  { id: 'a16', record_id: 'r16', type: 'meeting', content: 'Discovery meeting with Aisha. Strong alignment on advisory scope.', author: 'JB', created_at: '2026-06-25T10:00:00Z' },
+  { id: 'a12', record_id: 'r10', type: 'note',    content: 'High score on webinar quiz. Followed up via email — no reply yet.', author: 'JB', created_at: '2026-06-21T12:00:00Z' },
+  { id: 'a13', record_id: 'r11', type: 'call',    content: 'Converted — signed up for $1 Pool same day as first outreach.', author: 'JB', created_at: '2026-06-22T14:00:00Z' },
 ];
 
 // ── Kanban stage ordering per record type ─────────────────────────────────
@@ -964,6 +1032,20 @@ const kanbanCardFields = computed(() => {
     .slice(0, 2);
 });
 
+const openedRecordIndex = computed(() =>
+  openedRecord.value
+    ? filteredRecords.value.findIndex((r) => r.id === openedRecord.value!.id)
+    : -1,
+);
+
+const recordActivities = computed(() =>
+  openedRecord.value
+    ? mockActivities
+        .filter((a) => a.record_id === openedRecord.value!.id)
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    : [],
+);
+
 // ── Actions ────────────────────────────────────────────────────────────────
 
 function selectType(key: string) {
@@ -1043,6 +1125,18 @@ function onKeyArrow(dir: 1 | -1) {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatRelativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return formatDate(iso);
 }
 
 function formatCardValue(val: string | number | boolean | null | undefined, dataType: DataType, format?: FieldFormat): string {
