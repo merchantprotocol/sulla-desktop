@@ -142,9 +142,37 @@
                   <th
                     v-for="col in visibleColumns"
                     :key="col.key"
-                    class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 first:pl-6 last:pr-6 whitespace-nowrap"
+                    class="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 first:pl-6 last:pr-6 whitespace-nowrap"
                   >
-                    {{ col.label }}
+                    <button
+                      type="button"
+                      class="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide transition-colors select-none"
+                      :class="sortField === col.key
+                        ? 'text-sky-600 dark:text-sky-400'
+                        : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
+                      @click="toggleSort(col.key)"
+                    >
+                      {{ col.label }}
+                      <!-- sort indicator -->
+                      <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path
+                          v-if="sortField === col.key && sortDir === 'asc'"
+                          stroke-linecap="round" stroke-linejoin="round"
+                          d="M5 15l7-7 7 7"
+                        />
+                        <path
+                          v-else-if="sortField === col.key && sortDir === 'desc'"
+                          stroke-linecap="round" stroke-linejoin="round"
+                          d="M19 9l-7 7-7-7"
+                        />
+                        <path
+                          v-else
+                          stroke-linecap="round" stroke-linejoin="round"
+                          class="opacity-30"
+                          d="M8 9l4-4 4 4M8 15l4 4 4-4"
+                        />
+                      </svg>
+                    </button>
                   </th>
                   <th class="w-10 px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800" />
                 </tr>
@@ -629,6 +657,8 @@ const editingRecord = ref(false);
 const viewMode = ref<'table' | 'kanban'>('table');
 const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
+const sortField = ref<string | null>(null);
+const sortDir = ref<'asc' | 'desc'>('asc');
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -646,13 +676,32 @@ const visibleColumns = computed(() =>
 const filteredRecords = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
   const recs = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
-  if (!q) return recs;
-  return recs.filter((r) =>
-    r.title.toLowerCase().includes(q) ||
-    Object.values(r.field_values).some(
-      (v) => v != null && String(v).toLowerCase().includes(q),
-    ),
-  );
+  const filtered = q
+    ? recs.filter((r) =>
+        r.title.toLowerCase().includes(q) ||
+        Object.values(r.field_values).some((v) => v != null && String(v).toLowerCase().includes(q))
+      )
+    : recs;
+
+  if (!sortField.value) return filtered;
+
+  const key = sortField.value;
+  const dir = sortDir.value === 'asc' ? 1 : -1;
+  const col = selectedType.value?.fields.find((f) => f.key === key);
+
+  return [...filtered].sort((a, b) => {
+    const av = a.field_values[key];
+    const bv = b.field_values[key];
+    if (av == null && bv == null) return 0;
+    if (av == null) return dir;
+    if (bv == null) return -dir;
+    if (col?.data_type === 'number') return (Number(av) - Number(bv)) * dir;
+    if (col?.data_type === 'boolean') return ((av ? 1 : 0) - (bv ? 1 : 0)) * dir;
+    if (col?.data_type === 'date') {
+      return (new Date(String(av)).getTime() - new Date(String(bv)).getTime()) * dir;
+    }
+    return String(av).localeCompare(String(bv)) * dir;
+  });
 });
 
 // The first select field drives the kanban grouping dimension
@@ -707,10 +756,26 @@ function selectType(key: string) {
   editingRecord.value = false;
   creatingRecord.value = false;
   draftValues.value = {};
+  sortField.value = null;
+  sortDir.value = 'asc';
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
     viewMode.value = 'table';
+  }
+}
+
+function toggleSort(fieldKey: string) {
+  if (sortField.value === fieldKey) {
+    if (sortDir.value === 'asc') {
+      sortDir.value = 'desc';
+    } else {
+      sortField.value = null;
+      sortDir.value = 'asc';
+    }
+  } else {
+    sortField.value = fieldKey;
+    sortDir.value = 'asc';
   }
 }
 
