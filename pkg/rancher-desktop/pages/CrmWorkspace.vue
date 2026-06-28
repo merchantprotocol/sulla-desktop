@@ -3509,6 +3509,7 @@
                   { key: 'details', label: 'Details' },
                   { key: 'activity', label: 'Activity', count: recordActivities.length },
                   { key: 'related', label: 'Related', count: (openedRecord.links?.length ?? 0) + inverseLinks.length },
+                  { key: 'tasks', label: 'Tasks', count: recordTasksPendingCount },
                 ] as const)"
                 :key="tab.key"
                 type="button"
@@ -3941,6 +3942,85 @@
                     </div>
                   </div>
                 </template>
+              </template>
+
+              <!-- Tasks tab -->
+              <template v-else-if="detailTab === 'tasks'">
+                <!-- quick add -->
+                <div class="flex gap-2">
+                  <input
+                    ref="taskInputEl"
+                    v-model="newTaskDraft"
+                    type="text"
+                    placeholder="Add a task and press Enter…"
+                    class="flex-1 text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400"
+                    @keydown.enter.prevent="addTask"
+                  />
+                  <button
+                    type="button"
+                    class="h-9 px-3 rounded-lg text-sm font-medium bg-sky-600 hover:bg-sky-500 text-white transition-colors disabled:opacity-40"
+                    :disabled="!newTaskDraft.trim()"
+                    @click="addTask"
+                  >Add</button>
+                </div>
+
+                <!-- task list -->
+                <div v-if="recordTasks.length" class="space-y-1 mt-1">
+                  <div
+                    v-for="task in recordTasks"
+                    :key="task.id"
+                    class="group flex items-start gap-2.5 rounded-lg px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+                  >
+                    <button
+                      type="button"
+                      class="mt-0.5 flex-shrink-0 h-4 w-4 rounded border-2 transition-colors flex items-center justify-center"
+                      :class="task.done
+                        ? 'bg-emerald-500 border-emerald-500 text-white'
+                        : 'border-slate-300 dark:border-slate-600 hover:border-emerald-400'"
+                      @click="toggleTask(task.id)"
+                    >
+                      <svg v-if="task.done" class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </button>
+                    <div class="flex-1 min-w-0">
+                      <p
+                        class="text-sm leading-snug"
+                        :class="task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300'"
+                      >{{ task.text }}</p>
+                      <p v-if="task.due_date" class="text-xs mt-0.5"
+                        :class="task.due_date < DUE_TODAY_STR ? 'text-red-400 dark:text-red-500' : task.due_date <= DUE_SOON_STR ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
+                      >Due {{ task.due_date }}</p>
+                    </div>
+                    <button
+                      type="button"
+                      class="shrink-0 mt-0.5 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                      title="Delete task"
+                      @click="deleteTask(task.id)"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- empty state -->
+                <p v-else class="text-sm text-slate-400 dark:text-slate-600 text-center pt-4">No tasks yet</p>
+
+                <!-- progress bar when tasks exist -->
+                <div v-if="recordTasks.length" class="mt-3">
+                  <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs text-slate-400 dark:text-slate-500">{{ recordTasks.filter(t => t.done).length }} / {{ recordTasks.length }} done</span>
+                    <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ Math.round((recordTasks.filter(t => t.done).length / recordTasks.length) * 100) }}%</span>
+                  </div>
+                  <div class="h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div
+                      class="h-full rounded-full bg-emerald-400 dark:bg-emerald-500 transition-all duration-300"
+                      :style="{ width: `${Math.round((recordTasks.filter(t => t.done).length / recordTasks.length) * 100)}%` }"
+                    />
+                  </div>
+                </div>
               </template>
             </div>
 
@@ -5823,6 +5903,15 @@ interface CrmActivity {
   created_at: string;
 }
 
+interface CrmTask {
+  id: string;
+  record_id: string;
+  text: string;
+  done: boolean;
+  created_at: string;
+  due_date?: string;
+}
+
 interface SavedView {
   id: string;
   name: string;
@@ -6100,6 +6189,15 @@ const mockActivities = reactive<CrmActivity[]>([
   { id: 'a13', record_id: 'r11', type: 'call',    content: 'Converted — signed up for $1 Pool same day as first outreach.', author: 'JB', created_at: '2026-06-22T14:00:00Z' },
 ]);
 
+const mockTasks = reactive<CrmTask[]>([
+  { id: 'tk1', record_id: 'r1',  text: 'Send follow-up proposal PDF', done: false, created_at: '2026-06-25T10:00:00Z', due_date: dateOffset(2) },
+  { id: 'tk2', record_id: 'r1',  text: 'Schedule Q3 kick-off call', done: false, created_at: '2026-06-25T10:01:00Z' },
+  { id: 'tk3', record_id: 'r1',  text: 'Update CRM with call notes', done: true,  created_at: '2026-06-24T09:00:00Z' },
+  { id: 'tk4', record_id: 'r8',  text: 'Confirm legal sign-off timeline', done: false, created_at: '2026-06-26T09:00:00Z', due_date: dateOffset(5) },
+  { id: 'tk5', record_id: 'r8',  text: 'Send revised contract PDF', done: true,  created_at: '2026-06-20T11:00:00Z' },
+  { id: 'tk6', record_id: 'r9',  text: 'Process renewal agreement',  done: false, created_at: '2026-06-24T15:00:00Z', due_date: dateOffset(3) },
+]);
+
 // ── Kanban stage ordering per record type ─────────────────────────────────
 
 const STAGE_ORDER: Record<string, string[]> = {
@@ -6205,7 +6303,7 @@ const bulkDeletedSnapshot = ref<Array<{
   wasWatched: boolean;
 }> | null>(null);
 let bulkDeletedSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
-const detailTab = ref<'details' | 'activity' | 'related'>('details');
+const detailTab = ref<'details' | 'activity' | 'related' | 'tasks'>('details');
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
 const bulkStageDropdown = ref(false);
@@ -6299,6 +6397,8 @@ const staleDaysFilter = ref<number | null>(null);
 const showStaleDropdown = ref(false);
 const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
 const detailPanelExpanded = ref<false | 'wide' | 'full'>(false);
+const newTaskDraft = ref('');
+const taskInputEl = ref<HTMLInputElement | null>(null);
 const kanbanCompact = ref(false);
 const customOrder = ref<string[]>([]);
 const dragSrcId = ref<string | null>(null);
@@ -7433,6 +7533,19 @@ const recordActivities = computed(() =>
     : [],
 );
 
+const recordTasks = computed(() =>
+  openedRecord.value
+    ? mockTasks
+        .filter((t) => t.record_id === openedRecord.value!.id)
+        .sort((a, b) => {
+          if (a.done !== b.done) return a.done ? 1 : -1;
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        })
+    : [],
+);
+
+const recordTasksPendingCount = computed(() => recordTasks.value.filter((t) => !t.done).length);
+
 const activityTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const activitySearchQuery = ref('');
 
@@ -8222,6 +8335,7 @@ function openRecord(record: CrmRecord) {
   creatingRecord.value = false;
   detailTab.value = 'details';
   showCreateLinkForm.value = false;
+  newTaskDraft.value = '';
   // track in recent list (dedupe + cap at 5)
   recentRecords.value = [record, ...recentRecords.value.filter((r) => r.id !== record.id)].slice(0, 5);
 }
@@ -8393,6 +8507,31 @@ function deleteActivity(actId: string) {
       mockActivities.splice(idx, 0, removed);
     },
   });
+}
+
+function addTask() {
+  const text = newTaskDraft.value.trim();
+  if (!text || !openedRecord.value) return;
+  mockTasks.push({
+    id: 'tk-' + String(mockTasks.length) + '-' + String(Date.now()).slice(-5),
+    record_id: openedRecord.value.id,
+    text,
+    done: false,
+    created_at: new Date().toISOString(),
+  });
+  newTaskDraft.value = '';
+}
+
+function toggleTask(id: string) {
+  const task = mockTasks.find((t) => t.id === id);
+  if (task) task.done = !task.done;
+}
+
+function deleteTask(id: string) {
+  const idx = mockTasks.findIndex((t) => t.id === id);
+  if (idx === -1) return;
+  const [removed] = mockTasks.splice(idx, 1);
+  showToast('Task deleted', { label: 'Undo', fn: () => { mockTasks.splice(idx, 0, removed); } });
 }
 
 function highlightText(text: string, query: string): Array<{ text: string; match: boolean }> {
@@ -8849,6 +8988,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (e.key === '1') { detailTab.value = 'details'; e.preventDefault(); return; }
     if (e.key === '2') { detailTab.value = 'activity'; e.preventDefault(); return; }
     if (e.key === '3') { detailTab.value = 'related'; e.preventDefault(); return; }
+    if (e.key === '4') { detailTab.value = 'tasks'; e.preventDefault(); return; }
     if (e.key === '[' && openedRecordIndex.value > 0) { openRecord(filteredRecords.value[openedRecordIndex.value - 1]); e.preventDefault(); return; }
     if (e.key === ']' && openedRecordIndex.value < filteredRecords.value.length - 1) { openRecord(filteredRecords.value[openedRecordIndex.value + 1]); e.preventDefault(); return; }
     if (e.key === 'c' && !e.metaKey && !e.ctrlKey) { copyRecordLink(openedRecord.value); e.preventDefault(); return; }
