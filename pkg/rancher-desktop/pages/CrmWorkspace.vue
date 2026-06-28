@@ -18,6 +18,7 @@
     @keydown.s.exact="onKeyS"
     @keydown.f.exact="onKeyF"
     @keydown.g.exact="onKeyG"
+    @keydown.i.exact="onKeyI"
     @keydown.x.exact="onKeyX"
     @keydown.bracket-left.exact="onKeyBracketLeft"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
@@ -1390,6 +1391,21 @@
                   <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
                 </svg>
                 Gallery
+              </button>
+              <!-- stats/insights view button -->
+              <button
+                type="button"
+                class="flex items-center gap-1.5 px-3 h-9 text-sm border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="viewMode === 'stats'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                title="Stats view (I)"
+                @click="viewMode = 'stats'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                Stats
               </button>
               <!-- gallery column-count picker — shown only in gallery mode -->
               <template v-if="viewMode === 'gallery'">
@@ -3201,6 +3217,110 @@
             </div>
           </aside>
         </transition>
+
+        <!-- ── Stats/Insights view ── -->
+        <div v-if="viewMode === 'stats' && statsViewData" class="flex-1 overflow-y-auto p-6 space-y-6">
+          <!-- top summary cards -->
+          <div class="grid grid-cols-3 gap-4">
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Total records</p>
+              <p class="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">{{ statsViewData.total }}</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ selectedType?.label_plural }}</p>
+            </div>
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Completeness</p>
+              <p class="text-2xl font-bold tabular-nums" :class="statsViewData.completeness >= 80 ? 'text-emerald-500' : statsViewData.completeness >= 50 ? 'text-amber-500' : 'text-rose-500'">{{ statsViewData.completeness }}%</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">of records fully filled</p>
+            </div>
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Activity</p>
+              <p class="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">{{ Object.values(statsViewData.activityCounts).reduce((a, b) => a + b, 0) }}</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">total logged items</p>
+            </div>
+          </div>
+
+          <!-- number field summaries -->
+          <div v-if="statsViewData.numberCards.length" class="grid grid-cols-2 gap-4">
+            <div
+              v-for="card in statsViewData.numberCards"
+              :key="card.field.id"
+              class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+            >
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">{{ card.field.label }}</p>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">Sum</p>
+                  <p class="text-lg font-semibold tabular-nums text-slate-900 dark:text-white">{{ card.field.format === 'currency' ? '$' + (card.sum >= 1000 ? Math.round(card.sum / 1000) + 'k' : card.sum) : card.sum.toLocaleString() }}</p>
+                </div>
+                <div>
+                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">Avg</p>
+                  <p class="text-lg font-semibold tabular-nums text-slate-900 dark:text-white">{{ card.field.format === 'currency' ? '$' + card.avg : card.avg }}</p>
+                </div>
+                <div>
+                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">Min</p>
+                  <p class="text-sm tabular-nums text-slate-600 dark:text-slate-400">{{ card.min.toLocaleString() }}</p>
+                </div>
+                <div>
+                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">Max</p>
+                  <p class="text-sm tabular-nums text-slate-600 dark:text-slate-400">{{ card.max.toLocaleString() }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- select field distribution charts -->
+          <div class="space-y-4">
+            <div
+              v-for="chart in statsViewData.selectCharts"
+              :key="chart.field.id"
+              class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4"
+            >
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">{{ chart.field.label }}</p>
+              <div v-if="chart.bars.length" class="space-y-2">
+                <div
+                  v-for="bar in chart.bars"
+                  :key="bar.label"
+                  class="flex items-center gap-2"
+                >
+                  <div class="w-28 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right">{{ bar.label }}</div>
+                  <div class="flex-1 h-5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div
+                      class="h-full rounded-full transition-all duration-300"
+                      :style="{ width: `${bar.barPct}%`, background: chart.field.select_option_colors?.[bar.label] ?? '#6366f1' }"
+                    />
+                  </div>
+                  <span class="text-xs tabular-nums text-slate-500 dark:text-slate-400 w-12 text-right shrink-0">{{ bar.count }} <span class="opacity-60">({{ bar.pct }}%)</span></span>
+                </div>
+              </div>
+              <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No data</p>
+            </div>
+          </div>
+
+          <!-- activity breakdown -->
+          <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Activity breakdown</p>
+            <div class="flex gap-4 flex-wrap">
+              <div
+                v-for="(count, type) in statsViewData.activityCounts"
+                :key="type"
+                class="flex items-center gap-2"
+              >
+                <span
+                  class="h-6 w-6 rounded-full flex items-center justify-center text-xs shrink-0"
+                  :class="ACTIVITY_ICON_BG[type as CrmActivity['type']]"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[type as CrmActivity['type']]" />
+                  </svg>
+                </span>
+                <div>
+                  <p class="text-sm font-semibold tabular-nums text-slate-900 dark:text-white">{{ count }}</p>
+                  <p class="text-[10px] capitalize text-slate-400 dark:text-slate-500">{{ type }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <!-- ── Record detail panel ── -->
         <transition
@@ -6281,7 +6401,7 @@ const searchQuery = ref('');
 const searchInputEl = ref<HTMLInputElement | null>(null);
 const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
-const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery'>('table');
+const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats'>('table');
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
@@ -7447,6 +7567,65 @@ const tableColumnTotals = computed((): Record<string, number | null> => {
 const hasTableTotals = computed(() =>
   Object.values(tableColumnStats.value).some((v) => v !== null),
 );
+
+const statsViewData = computed(() => {
+  const rt = selectedType.value;
+  if (!rt) return null;
+  const recs = mockRecords.filter((r) => r.record_type_key === rt.key);
+  const total = recs.length;
+
+  const selectCharts = rt.fields
+    .filter((f) => f.data_type === 'select' || f.data_type === 'multi_select')
+    .map((f) => {
+      const counts: Record<string, number> = {};
+      for (const opt of (f.select_options ?? [])) counts[opt] = 0;
+      for (const r of recs) {
+        const v = r.field_values[f.key];
+        if (f.data_type === 'multi_select') {
+          const arr: string[] = Array.isArray(v) ? v : (v ? String(v).split(',').map((s) => s.trim()).filter(Boolean) : []);
+          for (const tag of arr) { if (counts[tag] != null) counts[tag]++; else counts[tag] = 1; }
+        } else if (v != null && v !== '') {
+          const s = String(v);
+          if (counts[s] != null) counts[s]++; else counts[s] = 1;
+        }
+      }
+      const max = Math.max(...Object.values(counts), 1);
+      return {
+        field: f,
+        bars: Object.entries(counts)
+          .filter(([, c]) => c > 0)
+          .sort(([, a], [, b]) => b - a)
+          .map(([label, count]) => ({ label, count, pct: Math.round((count / total) * 100), barPct: Math.round((count / max) * 100) })),
+      };
+    });
+
+  const numberCards = rt.fields
+    .filter((f) => f.data_type === 'number' && f.format !== 'progress')
+    .map((f) => {
+      const vals = recs.map((r) => r.field_values[f.key]).filter((v) => v != null && !isNaN(Number(v))).map(Number);
+      if (!vals.length) return null;
+      const sum = vals.reduce((a, b) => a + b, 0);
+      const avg = sum / vals.length;
+      const min = Math.min(...vals);
+      const max = Math.max(...vals);
+      return { field: f, sum, avg: Math.round(avg * 10) / 10, min, max, count: vals.length };
+    })
+    .filter(Boolean) as Array<{ field: CrmField; sum: number; avg: number; min: number; max: number; count: number }>;
+
+  const activityCounts = { note: 0, email: 0, call: 0, meeting: 0, change: 0 };
+  const recIds = new Set(recs.map((r) => r.id));
+  for (const a of mockActivities) {
+    if (recIds.has(a.record_id) && a.type in activityCounts) {
+      activityCounts[a.type as keyof typeof activityCounts]++;
+    }
+  }
+
+  const completeness = total > 0 ? Math.round((recs.filter((r) => {
+    return rt.fields.every((f) => { const v = r.field_values[f.key]; return v != null && (typeof v !== 'string' || v.trim() !== ''); });
+  }).length / total) * 100) : 0;
+
+  return { total, completeness, selectCharts, numberCards, activityCounts };
+});
 
 interface ColStatsResult {
   label: string;
@@ -9147,6 +9326,13 @@ function onKeyV(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
   viewMode.value = 'gallery';
+}
+
+function onKeyI(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  viewMode.value = 'stats';
 }
 
 function onKeyS(e: KeyboardEvent) {
