@@ -947,21 +947,27 @@
                     <button
                       type="button"
                       class="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide transition-colors select-none"
-                      :class="sortField === col.key
+                      :class="sortField === col.key || sortField2 === col.key
                         ? 'text-sky-600 dark:text-sky-400'
                         : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
-                      @click="toggleSort(col.key)"
+                      :title="sortField2 && sortField !== col.key && sortField2 !== col.key ? 'Shift+click to add as secondary sort' : undefined"
+                      @click="toggleSort(col.key, $event.shiftKey)"
                     >
                       {{ col.label }}
+                      <!-- secondary sort badge -->
+                      <span
+                        v-if="sortField2 === col.key"
+                        class="inline-flex items-center rounded px-0.5 text-[9px] font-bold leading-none bg-sky-100 dark:bg-sky-900/40 text-sky-500 dark:text-sky-400"
+                      >2</span>
                       <!-- sort indicator -->
                       <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                         <path
-                          v-if="sortField === col.key && sortDir === 'asc'"
+                          v-if="(sortField === col.key && sortDir === 'asc') || (sortField2 === col.key && sortDir2 === 'asc')"
                           stroke-linecap="round" stroke-linejoin="round"
                           d="M5 15l7-7 7 7"
                         />
                         <path
-                          v-else-if="sortField === col.key && sortDir === 'desc'"
+                          v-else-if="(sortField === col.key && sortDir === 'desc') || (sortField2 === col.key && sortDir2 === 'desc')"
                           stroke-linecap="round" stroke-linejoin="round"
                           d="M19 9l-7 7-7-7"
                         />
@@ -2748,14 +2754,14 @@
           {{ allColumns.find(c => c.key === colHeaderMenu?.fieldKey)?.label ?? colHeaderMenu.fieldKey }}
         </p>
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-          @click="sortField = colHeaderMenu!.fieldKey; sortDir = 'asc'; colHeaderMenu = null">
+          @click="sortField = colHeaderMenu!.fieldKey; sortDir = 'asc'; sortField2 = null; sortDir2 = 'asc'; colHeaderMenu = null">
           <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
           </svg>
           Sort A → Z
         </button>
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-          @click="sortField = colHeaderMenu!.fieldKey; sortDir = 'desc'; colHeaderMenu = null">
+          @click="sortField = colHeaderMenu!.fieldKey; sortDir = 'desc'; sortField2 = null; sortDir2 = 'asc'; colHeaderMenu = null">
           <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
@@ -3200,6 +3206,8 @@ const draftValues = ref<Record<string, string | number | boolean | null>>({});
 const createFormErrors = ref<Set<string>>(new Set());
 const sortField = ref<string | null>(null);
 const sortDir = ref<'asc' | 'desc'>('asc');
+const sortField2 = ref<string | null>(null);
+const sortDir2 = ref<'asc' | 'desc'>('asc');
 const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
 const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
@@ -3444,39 +3452,38 @@ const filteredRecords = computed(() => {
   }
 
   if (sortField.value) {
-    const key = sortField.value;
-    const dir = sortDir.value === 'asc' ? 1 : -1;
-
-    if (key === '__created_at__') {
-      result = [...result].sort((a, b) =>
-        (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir,
-      );
-    } else if (key === '__updated_at__') {
-      result = [...result].sort((a, b) => {
-        const at = a.updated_at ? new Date(a.updated_at).getTime() : new Date(a.created_at).getTime();
-        const bt = b.updated_at ? new Date(b.updated_at).getTime() : new Date(b.created_at).getTime();
-        return (at - bt) * dir;
-      });
-    } else if (key === '__activity_count__') {
-      result = [...result].sort((a, b) =>
-        ((activityCountByRecord.value[a.id] ?? 0) - (activityCountByRecord.value[b.id] ?? 0)) * dir,
-      );
-    } else {
-      const col = selectedType.value?.fields.find((f) => f.key === key);
-      result = [...result].sort((a, b) => {
-        const av = a.field_values[key];
-        const bv = b.field_values[key];
-        if (av == null && bv == null) return 0;
-        if (av == null) return dir;
-        if (bv == null) return -dir;
-        if (col?.data_type === 'number') return (Number(av) - Number(bv)) * dir;
-        if (col?.data_type === 'boolean') return ((av ? 1 : 0) - (bv ? 1 : 0)) * dir;
-        if (col?.data_type === 'date') {
-          return (new Date(String(av)).getTime() - new Date(String(bv)).getTime()) * dir;
-        }
-        return String(av).localeCompare(String(bv)) * dir;
-      });
-    }
+    const fields = selectedType.value?.fields;
+    const colFor = (key: string) => fields?.find((f) => f.key === key);
+    const numVal = (r: CrmRecord, key: string): number => {
+      if (key === '__created_at__') return new Date(r.created_at).getTime();
+      if (key === '__updated_at__') return r.updated_at ? new Date(r.updated_at).getTime() : new Date(r.created_at).getTime();
+      if (key === '__activity_count__') return activityCountByRecord.value[r.id] ?? 0;
+      return 0;
+    };
+    const strVal = (r: CrmRecord, key: string): string | number | boolean | null => r.field_values[key] ?? null;
+    const cmpOne = (a: CrmRecord, b: CrmRecord, key: string, dir: number): number => {
+      if (['__created_at__', '__updated_at__', '__activity_count__'].includes(key)) {
+        return (numVal(a, key) - numVal(b, key)) * dir;
+      }
+      const col = colFor(key);
+      const av = strVal(a, key);
+      const bv = strVal(b, key);
+      if (av == null && bv == null) return 0;
+      if (av == null) return dir;
+      if (bv == null) return -dir;
+      if (col?.data_type === 'number') return (Number(av) - Number(bv)) * dir;
+      if (col?.data_type === 'boolean') return ((av ? 1 : 0) - (bv ? 1 : 0)) * dir;
+      if (col?.data_type === 'date') return (new Date(String(av)).getTime() - new Date(String(bv)).getTime()) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    };
+    const dir1 = sortDir.value === 'asc' ? 1 : -1;
+    const key2 = sortField2.value;
+    const dir2 = sortDir2.value === 'asc' ? 1 : -1;
+    result = [...result].sort((a, b) => {
+      const p = cmpOne(a, b, sortField.value!, dir1);
+      if (p !== 0 || !key2) return p;
+      return cmpOne(a, b, key2, dir2);
+    });
   }
 
   if (showWatchedOnly.value && watchedIds.value.size) {
@@ -4014,6 +4021,8 @@ function selectType(key: string) {
   draftValues.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
+  sortField2.value = null;
+  sortDir2.value = 'asc';
   navigationStack.value = [];
   selectedIds.value = new Set();
   hiddenColumnKeys.value = new Set();
@@ -4030,14 +4039,26 @@ function selectType(key: string) {
   }
 }
 
-function toggleSort(fieldKey: string) {
-  if (sortField.value === fieldKey) {
-    if (sortDir.value === 'asc') {
-      sortDir.value = 'desc';
+function toggleSort(fieldKey: string, shift = false) {
+  if (shift && sortField.value && sortField.value !== fieldKey) {
+    // shift-click: cycle secondary sort
+    if (sortField2.value === fieldKey) {
+      if (sortDir2.value === 'asc') { sortDir2.value = 'desc'; }
+      else { sortField2.value = null; sortDir2.value = 'asc'; }
     } else {
-      sortField.value = null;
-      sortDir.value = 'asc';
+      sortField2.value = fieldKey;
+      sortDir2.value = 'asc';
     }
+    return;
+  }
+  // primary sort — also clear secondary if we're switching fields
+  if (sortField.value !== fieldKey) {
+    sortField2.value = null;
+    sortDir2.value = 'asc';
+  }
+  if (sortField.value === fieldKey) {
+    if (sortDir.value === 'asc') { sortDir.value = 'desc'; }
+    else { sortField.value = null; sortDir.value = 'asc'; sortField2.value = null; sortDir2.value = 'asc'; }
   } else {
     sortField.value = fieldKey;
     sortDir.value = 'asc';
