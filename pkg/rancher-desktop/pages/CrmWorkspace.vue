@@ -670,7 +670,10 @@
                 :key="field.id"
                 class="space-y-1"
               >
-                <label class="block text-xs font-medium text-slate-400 dark:text-slate-500">
+                <label
+                  class="block text-xs font-medium transition-colors"
+                  :class="createFormErrors.has(field.key) ? 'text-red-500 dark:text-red-400' : 'text-slate-400 dark:text-slate-500'"
+                >
                   {{ field.label }}
                   <span v-if="field.is_required" class="text-red-400 ml-0.5">*</span>
                 </label>
@@ -681,6 +684,9 @@
                   :select-options="field.select_options ?? []"
                   :format="field.format"
                 />
+                <p v-if="createFormErrors.has(field.key)" class="text-xs text-red-500 dark:text-red-400">
+                  This field is required.
+                </p>
               </div>
             </div>
 
@@ -692,14 +698,14 @@
                 <button
                   type="button"
                   class="flex-1 rounded-lg py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors"
-                  @click="creatingRecord = false"
+                  @click="saveNewRecord"
                 >
                   Save {{ selectedType?.label ?? 'Record' }}
                 </button>
                 <button
                   type="button"
                   class="rounded-lg py-2 px-3 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                  @click="creatingRecord = false"
+                  @click="closePanel"
                 >
                   Cancel
                 </button>
@@ -1271,6 +1277,7 @@ const viewMode = ref<'table' | 'kanban'>('table');
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
 const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
+const createFormErrors = ref<Set<string>>(new Set());
 const sortField = ref<string | null>(null);
 const sortDir = ref<'asc' | 'desc'>('asc');
 const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
@@ -1518,6 +1525,7 @@ function selectType(key: string) {
   hiddenColumnKeys.value = new Set();
   showColumnsMenu.value = false;
   activeFilters.value = [];
+  createFormErrors.value = new Set();
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
@@ -1544,6 +1552,7 @@ function closePanel() {
   editingRecord.value = false;
   creatingRecord.value = false;
   navigationStack.value = [];
+  createFormErrors.value = new Set();
 }
 
 function openRecord(record: CrmRecord) {
@@ -1558,7 +1567,24 @@ function openNewRecord(stageValue?: string) {
   openedRecord.value = null;
   const fieldKey = kanbanField.value?.key;
   draftValues.value = fieldKey && stageValue ? { [fieldKey]: stageValue } : {};
+  createFormErrors.value = new Set();
   creatingRecord.value = true;
+}
+
+function saveNewRecord() {
+  const required = (selectedType.value?.fields ?? []).filter((f) => f.is_required);
+  const missing = required
+    .filter((f) => {
+      const v = draftValues.value[f.key];
+      return v == null || String(v).trim() === '';
+    })
+    .map((f) => f.key);
+  if (missing.length) {
+    createFormErrors.value = new Set(missing);
+    return;
+  }
+  createFormErrors.value = new Set();
+  creatingRecord.value = false;
 }
 
 function duplicateRecord(record: CrmRecord) {
@@ -1628,7 +1654,7 @@ function onKeyN(e: KeyboardEvent) {
 }
 
 function onKeySave() {
-  if (creatingRecord.value) { creatingRecord.value = false; return; }
+  if (creatingRecord.value) { saveNewRecord(); return; }
   if (editingRecord.value) { editingRecord.value = false; }
 }
 
