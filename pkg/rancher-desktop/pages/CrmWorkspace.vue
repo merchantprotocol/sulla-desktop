@@ -240,6 +240,75 @@
           </div>
         </aside>
 
+        <!-- ── Quick filter panel ── -->
+        <transition
+          enter-active-class="transition-all duration-200"
+          enter-from-class="-translate-x-full opacity-0"
+          enter-to-class="translate-x-0 opacity-100"
+          leave-active-class="transition-all duration-150"
+          leave-from-class="translate-x-0 opacity-100"
+          leave-to-class="-translate-x-full opacity-0"
+        >
+          <aside
+            v-if="showQuickFilterPanel && quickFilterFieldStats.length"
+            class="shrink-0 w-52 flex flex-col border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-y-auto"
+            @click.stop
+          >
+            <!-- header -->
+            <div class="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700 shrink-0">
+              <span class="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">Filters</span>
+              <button
+                v-if="activeFilters.length"
+                type="button"
+                class="text-xs text-rose-500 dark:text-rose-400 hover:text-rose-600 dark:hover:text-rose-300 transition-colors"
+                @click="clearFilters()"
+              >Clear all</button>
+            </div>
+            <!-- per-field sections -->
+            <div class="flex-1 overflow-y-auto">
+              <div
+                v-for="field in quickFilterFieldStats"
+                :key="field.key"
+                class="border-b border-slate-100 dark:border-slate-800 last:border-b-0"
+              >
+                <p class="px-4 pt-3 pb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">{{ field.label }}</p>
+                <div class="px-2 pb-2 space-y-0.5">
+                  <button
+                    v-for="opt in field.options"
+                    :key="opt.value"
+                    type="button"
+                    class="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm transition-colors"
+                    :class="opt.active
+                      ? 'bg-sky-50 dark:bg-sky-950/30 text-sky-700 dark:text-sky-300'
+                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                    @click="toggleFilter(field.key, opt.value)"
+                  >
+                    <!-- checkbox indicator -->
+                    <span
+                      class="shrink-0 h-3.5 w-3.5 rounded flex items-center justify-center border transition-colors"
+                      :class="opt.active
+                        ? 'bg-sky-500 border-sky-500'
+                        : 'border-slate-300 dark:border-slate-600'"
+                    >
+                      <svg v-if="opt.active" class="h-2.5 w-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </span>
+                    <!-- stage dot for select fields -->
+                    <span
+                      v-if="field.dataType === 'select'"
+                      class="shrink-0 h-1.5 w-1.5 rounded-full"
+                      :class="stageDot(opt.value)"
+                    />
+                    <span class="flex-1 truncate text-left">{{ opt.value }}</span>
+                    <span class="shrink-0 text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ opt.count }}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </aside>
+        </transition>
+
         <!-- ── Main content ── -->
         <div class="flex flex-col flex-1 min-w-0 bg-slate-50 dark:bg-slate-950">
           <!-- bulk action bar — visible when rows are checked in table view -->
@@ -466,6 +535,22 @@
               </button>
             </div>
 
+            <!-- quick filter panel toggle -->
+            <button
+              v-if="quickFilterFieldStats.length"
+              type="button"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+              :class="showQuickFilterPanel
+                ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+              title="Toggle filter panel"
+              @click.stop="showQuickFilterPanel = !showQuickFilterPanel"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16" />
+              </svg>
+              Filters
+            </button>
             <!-- filter button + dropdown -->
             <div class="relative">
               <button
@@ -5205,6 +5290,7 @@ const showMergeModal = ref(false);
 interface RecordTemplate { id: string; name: string; typeKey: string; fieldValues: Record<string, unknown> }
 const recordTemplates = ref<RecordTemplate[]>([]);
 const showTemplatePanel = ref(false);
+const showQuickFilterPanel = ref(false);
 const templateDraftName = ref('');
 const mergeSourceId = ref<string | null>(null);
 const mergeTargetId = ref<string | null>(null);
@@ -5360,6 +5446,43 @@ const completenessRateByType = computed((): Record<string, number> => {
     rates[rt.key] = Math.round((fullyComplete / recs.length) * 100);
   }
   return rates;
+});
+
+// Quick-filter panel — per-field value counts across all current type records
+const quickFilterFieldStats = computed((): Array<{
+  key: string; label: string; dataType: DataType;
+  options: Array<{ value: string; count: number; active: boolean }>;
+}> => {
+  if (!selectedType.value) return [];
+  const typeRecs = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
+  return [...selectedType.value.fields]
+    .filter((f) => f.data_type === 'select' || f.data_type === 'multi_select')
+    .sort((a, b) => a.position - b.position)
+    .map((f) => {
+      const counts: Record<string, number> = {};
+      for (const r of typeRecs) {
+        const v = r.field_values[f.key];
+        if (v == null) continue;
+        const vals = Array.isArray(v) ? v : [String(v)];
+        for (const val of vals) {
+          if (val) counts[val] = (counts[val] ?? 0) + 1;
+        }
+      }
+      const opts = (f.select_options ?? []).length
+        ? (f.select_options ?? []).filter((o) => counts[o] != null)
+        : Object.keys(counts);
+      return {
+        key: f.key,
+        label: f.label,
+        dataType: f.data_type,
+        options: opts.map((o) => ({
+          value: o,
+          count: counts[o] ?? 0,
+          active: activeFilters.value.some((af) => af.fieldKey === f.key && af.value === o),
+        })),
+      };
+    })
+    .filter((f) => f.options.length > 0);
 });
 
 const allColumns = computed(() =>
