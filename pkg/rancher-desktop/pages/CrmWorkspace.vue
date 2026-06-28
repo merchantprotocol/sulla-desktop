@@ -8,6 +8,7 @@
     @keydown.d.exact="onKeyD"
     @keydown.e.exact="onKeyE"
     @keydown.p.exact="onKeyP"
+    @keydown.w.exact="onKeyW"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -1255,16 +1256,30 @@
                     </button>
                   </div>
                 </div>
-                <div v-if="recordActivities.length" class="space-y-3">
+                <div v-if="recordActivities.length" class="space-y-2">
                   <div v-for="act in recordActivities" :key="act.id" class="flex gap-2.5">
-                    <span class="mt-0.5 h-6 w-6 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 text-slate-500 dark:text-slate-400">
+                    <span
+                      class="mt-0.5 h-6 w-6 rounded-full flex items-center justify-center shrink-0"
+                      :class="ACTIVITY_ICON_BG[act.type]"
+                    >
                       <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
                         <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[act.type]" />
                       </svg>
                     </span>
-                    <div class="flex-1 min-w-0 pb-3 border-b border-slate-50 dark:border-slate-800/60 last:border-0 last:pb-0">
-                      <p class="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{{ act.content }}</p>
-                      <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">{{ act.author }} · {{ formatRelativeTime(act.created_at) }}</p>
+                    <div class="flex-1 min-w-0 pb-2 border-b border-slate-50 dark:border-slate-800/60 last:border-0 last:pb-0">
+                      <p
+                        class="text-xs leading-relaxed"
+                        :class="act.type === 'change'
+                          ? 'text-slate-400 dark:text-slate-500 font-mono'
+                          : 'text-slate-600 dark:text-slate-300'"
+                      >{{ act.content }}</p>
+                      <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                        <span
+                          class="capitalize font-medium"
+                          :class="act.type === 'change' ? 'text-amber-500 dark:text-amber-400' : ''"
+                        >{{ act.type === 'change' ? 'System' : act.author }}</span>
+                        · {{ formatRelativeTime(act.created_at) }}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1462,6 +1477,7 @@
               ]},
               { heading: 'Detail Panel', items: [
                 { keys: ['E'], desc: 'Edit record' },
+                { keys: ['W'], desc: 'Watch / unwatch record' },
                 { keys: ['1'], desc: 'Details tab' },
                 { keys: ['2'], desc: 'Activity tab' },
                 { keys: ['3'], desc: 'Related tab' },
@@ -1680,7 +1696,7 @@ interface CrmRecord {
 interface CrmActivity {
   id: string;
   record_id: string;
-  type: 'note' | 'email' | 'call' | 'meeting';
+  type: 'note' | 'email' | 'call' | 'meeting' | 'change';
   content: string;
   author: string;
   created_at: string;
@@ -1712,6 +1728,15 @@ const ACTIVITY_ICONS: Record<CrmActivity['type'], string> = {
   email:   'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
   call:    'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z',
   meeting: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+  change:  'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+};
+
+const ACTIVITY_ICON_BG: Record<CrmActivity['type'], string> = {
+  note:    'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400',
+  email:   'bg-sky-50 dark:bg-sky-950/40 text-sky-500 dark:text-sky-400',
+  call:    'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400',
+  meeting: 'bg-violet-50 dark:bg-violet-950/40 text-violet-500 dark:text-violet-400',
+  change:  'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400',
 };
 
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
@@ -2674,7 +2699,7 @@ function saveEditing(record: CrmRecord) {
       mockActivities.unshift({
         id: 'act-chg-' + String(mockActivities.length),
         record_id: record.id,
-        type: 'note',
+        type: 'change',
         content: `${f.label}: ${beforeStr || '—'} → ${afterStr || '—'}`,
         author: 'You',
         created_at: new Date().toISOString(),
@@ -2698,6 +2723,14 @@ function onKeyP(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (pinnedCountForType.value > 0) {
     showPinnedOnly.value = !showPinnedOnly.value;
+  }
+}
+
+function onKeyW(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (openedRecord.value && !editingRecord.value && !creatingRecord.value) {
+    toggleWatch(openedRecord.value.id);
   }
 }
 
