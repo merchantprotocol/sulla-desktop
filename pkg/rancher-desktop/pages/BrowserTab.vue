@@ -128,6 +128,12 @@
       </div>
     </template>
 
+    <template v-else-if="tabMode === 'crm'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <CrmWorkspace />
+      </div>
+    </template>
+
     <template v-else-if="tabMode === 'integrations'">
       <div class="flex-1 min-h-0 overflow-auto">
         <AgentIntegrations
@@ -293,6 +299,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
 
 import AccountEditor from './AccountEditor.vue';
 import AgentCalendar from './AgentCalendar.vue';
+import CrmWorkspace from './CrmWorkspace.vue';
 import AgentConnectedAccounts from './AgentConnectedAccounts.vue';
 import AgentIntegrationDetail from './AgentIntegrationDetail.vue';
 import AgentIntegrations from './AgentIntegrations.vue';
