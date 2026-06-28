@@ -1266,6 +1266,82 @@ export class CrmSchemaService {
     };
   }
 
+  /**
+   * Patch a record type's display metadata — label, label_plural, icon, color,
+   * description, or position. Cannot change the key (stable API identifier) or
+   * touch system types. Writes an audit row and returns an undo token.
+   */
+  static async updateRecordType(
+    recordTypeId: string,
+    updates: {
+      label?: string;
+      label_plural?: string;
+      icon?: string;
+      color?: string;
+      description?: string;
+      position?: number;
+    },
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<OpResult> {
+    try {
+      const rows = await postgresClient.query(
+        `SELECT id, key, label, label_plural, icon, color, description, position, is_system
+         FROM crm_record_types WHERE id = $1 AND tenant_id = $2 AND archived = false LIMIT 1`,
+        [recordTypeId, tenantId],
+      );
+      if (!rows.length) return { ok: false, error: `Record type ${ recordTypeId } not found.` };
+      const type = rows[0];
+      if (type.is_system) return { ok: false, error: `Record type "${ type.key }" is a system type and cannot be modified.` };
+
+      const before = {
+        label: type.label, label_plural: type.label_plural,
+        icon: type.icon, color: type.color, description: type.description, position: type.position,
+      };
+
+      const setParts: string[] = [];
+      const params: any[] = [recordTypeId, tenantId];
+      const push = (v: any): string => { params.push(v); return `$${ params.length }`; };
+
+      if (updates.label !== undefined) setParts.push(`label = ${ push(updates.label) }`);
+      if (updates.label_plural !== undefined) setParts.push(`label_plural = ${ push(updates.label_plural) }`);
+      if (updates.icon !== undefined) setParts.push(`icon = ${ push(updates.icon) }`);
+      if (updates.color !== undefined) setParts.push(`color = ${ push(updates.color) }`);
+      if (updates.description !== undefined) setParts.push(`description = ${ push(updates.description) }`);
+      if (updates.position !== undefined && Number.isInteger(updates.position) && updates.position >= 0) {
+        setParts.push(`position = ${ push(updates.position) }`);
+      }
+
+      if (!setParts.length) return { ok: false, error: 'No updatable properties provided.' };
+      setParts.push('updated_at = now()');
+
+      await postgresClient.query(
+        `UPDATE crm_record_types SET ${ setParts.join(', ') } WHERE id = $1 AND tenant_id = $2`,
+        params,
+      );
+
+      const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+        op: 'updateRecordType', entityType: 'record_type', entityId: recordTypeId,
+        before, after: { ...before, ...updates }, tenantId,
+      });
+      return { ok: true, id: recordTypeId, undoToken };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** List left-nav menu items, ordered by position, with target info. */
+  static async listMenuItems(tenantId = DEFAULT_TENANT_ID): Promise<Array<{
+    id: string; label: string; icon: string | null; target_type: string;
+    target_id: string | null; target_url: string | null; position: number; is_system: boolean; auto_created: boolean;
+  }>> {
+    return postgresClient.query(
+      `SELECT id, label, icon, target_type, target_id, target_url, position, is_system, auto_created
+       FROM crm_menu_items WHERE tenant_id = $1 AND archived = false
+       ORDER BY position ASC`,
+      [tenantId],
+    );
+  }
+
   static async archiveView(viewId: string, tenantId = DEFAULT_TENANT_ID): Promise<OpResult> {
     try {
       const rows = await postgresClient.query(

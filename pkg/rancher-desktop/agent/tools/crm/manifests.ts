@@ -70,6 +70,22 @@ export const crmToolManifests: ToolManifest[] = [
     loader:         () => import('./define_relationship'),
   },
   {
+    name:        'update_record_type',
+    description: 'Patch a record type\'s display metadata — label, label_plural, icon, color, description, or position. Cannot change the key or touch system types.',
+    category:    'crm',
+    schemaDef:   {
+      record_type:  { type: 'string', description: 'Record type key or id.' },
+      label:        { type: 'string', optional: true, description: 'Singular display label.' },
+      label_plural: { type: 'string', optional: true, description: 'Plural label (e.g. "Properties").' },
+      icon:         { type: 'string', optional: true },
+      color:        { type: 'string', optional: true, description: 'Hex accent color.' },
+      description:  { type: 'string', optional: true },
+      position:     { type: 'number', optional: true, description: 'Nav/list display order (0-based).' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./update_record_type'),
+  },
+  {
     name:        'archive_record_type',
     description: 'Archive (soft-delete) a record type and hide its records. Destructive — requires confirm:true. Reversible via the audit/undo log.',
     category:    'crm',
@@ -276,6 +292,14 @@ export const crmToolManifests: ToolManifest[] = [
   },
 
   // ── Presentation (views / dashboards / widgets) ──────────────────────────
+  {
+    name:        'list_menu_items',
+    description: 'List the left-nav menu items in display order (label, target type/id, position, is_system, auto_created). Useful to see what auto-created entries exist after creating record types.',
+    category:    'crm',
+    schemaDef:   {},
+    operationTypes: ['read'],
+    loader:         () => import('./list_menu_items'),
+  },
   {
     name:        'list_views',
     description: 'List saved views for a record type (id, name, kind). Call before create_view to avoid duplicates.',
