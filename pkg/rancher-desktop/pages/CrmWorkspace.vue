@@ -51,6 +51,29 @@
             </button>
           </nav>
 
+          <!-- recent records -->
+          <div v-if="recentRecords.length" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
+            <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+              Recent
+            </p>
+            <button
+              v-for="rec in recentRecords"
+              :key="rec.id"
+              type="button"
+              class="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors text-xs"
+              :class="openedRecord?.id === rec.id
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
+                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'"
+              @click="openFromPalette(rec)"
+            >
+              <span
+                class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold select-none"
+                :style="{ background: (schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6') + '22', color: schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6' }"
+              >{{ recordInitials(rec.title) }}</span>
+              <span class="flex-1 truncate">{{ rec.title }}</span>
+            </button>
+          </div>
+
           <div class="px-2 py-3 border-t border-slate-200 dark:border-slate-700">
             <button
               type="button"
@@ -1671,6 +1694,7 @@ const pinnedIds = ref<Set<string>>(new Set());
 const showPinnedOnly = ref(false);
 const fieldAnnotations = ref<Record<string, string>>({});
 const annotatingField = ref<string | null>(null);
+const recentRecords = ref<CrmRecord[]>([]); // last 5 opened, newest first
 const annotationDraft = ref('');
 const annotationInputEl = ref<HTMLInputElement | null>(null);
 watch(annotatingField, (val) => { if (val) nextTick(() => annotationInputEl.value?.focus()); });
@@ -2064,6 +2088,8 @@ function openRecord(record: CrmRecord) {
   editingRecord.value = false;
   creatingRecord.value = false;
   detailTab.value = 'details';
+  // track in recent list (dedupe + cap at 5)
+  recentRecords.value = [record, ...recentRecords.value.filter((r) => r.id !== record.id)].slice(0, 5);
 }
 
 function openNewRecord(stageValue?: string) {
