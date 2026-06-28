@@ -5330,7 +5330,20 @@
                         <div class="flex items-center gap-1.5">
                           <span class="text-sm font-medium text-slate-900 dark:text-white truncate">{{ field.label }}</span>
                           <span v-if="field.is_title" class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 whitespace-nowrap">Title</span>
-                          <span v-if="field.is_required" class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 whitespace-nowrap">Required</span>
+                          <button
+                            v-if="field.is_required && !field.is_title"
+                            type="button"
+                            class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 whitespace-nowrap hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
+                            title="Click to make optional"
+                            @click.stop="field.is_required = false"
+                          >Required</button>
+                          <button
+                            v-else-if="!field.is_required && !field.is_title"
+                            type="button"
+                            class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full opacity-0 group-hover/field:opacity-100 bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500 whitespace-nowrap hover:bg-amber-50 dark:hover:bg-amber-950/30 hover:text-amber-600 dark:hover:text-amber-400 transition-all"
+                            title="Click to make required"
+                            @click.stop="field.is_required = true"
+                          >Optional</button>
                         </div>
                         <div class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 font-mono truncate">
                           {{ field.key }} · {{ field.data_type }}
