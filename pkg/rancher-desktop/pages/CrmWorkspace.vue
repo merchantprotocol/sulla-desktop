@@ -27,7 +27,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd()"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -2972,12 +2972,51 @@
           >
             <!-- panel header -->
             <div class="flex items-start gap-3 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
-              <!-- record avatar -->
-              <div
-                class="shrink-0 mt-0.5 h-9 w-9 rounded-full flex items-center justify-center text-xs font-bold select-none"
-                :style="{ background: (selectedType?.color ?? '#3b82f6') + '22', color: selectedType?.color ?? '#3b82f6' }"
-              >
-                {{ recordInitials(openedRecord.title) }}
+              <!-- record avatar — click to set color label -->
+              <div class="relative shrink-0 mt-0.5" @click.stop>
+                <button
+                  type="button"
+                  class="h-9 w-9 rounded-full flex items-center justify-center text-xs font-bold select-none transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                  :style="{
+                    background: colorLabels[openedRecord.id] ? colorLabels[openedRecord.id] + '33' : (selectedType?.color ?? '#3b82f6') + '22',
+                    color: colorLabels[openedRecord.id] ?? (selectedType?.color ?? '#3b82f6'),
+                    boxShadow: colorLabels[openedRecord.id] ? `0 0 0 2px ${colorLabels[openedRecord.id]}` : undefined,
+                  }"
+                  :title="colorLabels[openedRecord.id] ? 'Change color label (click)' : 'Set color label (click)'"
+                  @click="showDetailColorPicker = !showDetailColorPicker"
+                >{{ recordInitials(openedRecord.title) }}</button>
+                <!-- color picker popover -->
+                <transition
+                  enter-active-class="transition-all duration-150"
+                  enter-from-class="opacity-0 scale-90 -translate-y-1"
+                  enter-to-class="opacity-100 scale-100 translate-y-0"
+                  leave-active-class="transition-all duration-100"
+                  leave-from-class="opacity-100 scale-100 translate-y-0"
+                  leave-to-class="opacity-0 scale-90 -translate-y-1"
+                >
+                  <div
+                    v-if="showDetailColorPicker"
+                    class="absolute top-full left-0 mt-1.5 z-50 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl p-2.5"
+                  >
+                    <div class="flex items-center gap-1.5 mb-2">
+                      <button
+                        v-for="c in COLOR_LABEL_PALETTE"
+                        :key="c"
+                        type="button"
+                        class="h-5 w-5 rounded-full transition-transform hover:scale-125 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-sky-400"
+                        :style="{ background: c, boxShadow: colorLabels[openedRecord.id] === c ? `0 0 0 2px white, 0 0 0 3.5px ${c}` : undefined }"
+                        :aria-label="`Set color label: ${c}`"
+                        @click="setColorLabel(openedRecord.id, colorLabels[openedRecord.id] === c ? '' : c); showDetailColorPicker = false"
+                      />
+                    </div>
+                    <button
+                      v-if="colorLabels[openedRecord.id]"
+                      type="button"
+                      class="w-full text-xs text-center text-slate-400 dark:text-slate-500 hover:text-rose-500 dark:hover:text-rose-400 transition-colors py-0.5"
+                      @click="setColorLabel(openedRecord.id, ''); showDetailColorPicker = false"
+                    >Remove label</button>
+                  </div>
+                </transition>
               </div>
               <div class="flex-1 min-w-0">
                 <button
@@ -5651,6 +5690,7 @@ const recordTags = ref<Record<string, string[]>>({});
 const tagFilter = ref<string | null>(null);
 const tagInput = ref('');
 const showTagInput = ref(false);
+const showDetailColorPicker = ref(false);
 const staleDaysFilter = ref<number | null>(null);
 const showStaleDropdown = ref(false);
 const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
