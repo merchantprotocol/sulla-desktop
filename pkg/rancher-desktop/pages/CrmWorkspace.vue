@@ -1743,6 +1743,7 @@
                 <span class="opacity-60"> of {{ mockRecords.filter(r => r.record_type_key === selectedTypeKey).length }}</span>
               </template>
             </span>
+            <span v-if="filteredCurrencyTotal" class="tabular-nums text-emerald-500 dark:text-emerald-400" :title="`Sum of ${filteredCurrencyTotal.label} across ${filteredRecords.length} visible records`">{{ filteredCurrencyTotal.sum }}</span>
             <span v-if="selectedIds.size" class="text-sky-500 dark:text-sky-400 font-medium tabular-nums">{{ selectedIds.size }} selected</span>
             <span
               v-if="filteredOverdueCount > 0 && !showOverdueOnly"
@@ -6313,6 +6314,23 @@ const watchedRecords = computed(() =>
 const totalRecordsForType = computed(() =>
   mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).length,
 );
+
+// Sum of the first currency-format field in filteredRecords — shown in the info bar
+const filteredCurrencyTotal = computed((): { label: string; sum: string } | null => {
+  const currField = selectedType.value?.fields.find((f) => f.format === 'currency' && f.data_type === 'number');
+  if (!currField) return null;
+  const sum = filteredRecords.value.reduce((acc, r) => {
+    const v = r.field_values[currField.key];
+    return acc + (typeof v === 'number' ? v : 0);
+  }, 0);
+  if (sum === 0) return null;
+  const fmt = sum >= 1_000_000
+    ? '$' + (sum / 1_000_000).toFixed(1) + 'M'
+    : sum >= 1_000
+      ? '$' + Math.round(sum / 1_000) + 'k'
+      : '$' + sum;
+  return { label: currField.label, sum: fmt };
+});
 
 const recordCountByType = computed(() => {
   const counts: Record<string, number> = {};
