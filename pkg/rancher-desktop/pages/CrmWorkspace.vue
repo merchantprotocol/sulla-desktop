@@ -995,6 +995,20 @@ const CrmFieldInput = defineComponent({
           ...opts.map((o) => h('option', { value: o, selected: String(val) === o }, o)),
         ]);
       }
+      if (props.readOnly && (props.dataType === 'email' || props.dataType === 'phone' || props.dataType === 'url')) {
+        if (val == null || val === '') {
+          return h('span', { class: baseClass + ' opacity-60 cursor-default inline-flex items-center' }, '—');
+        }
+        const href = props.dataType === 'email' ? 'mailto:' + String(val)
+          : props.dataType === 'phone' ? 'tel:' + String(val)
+          : String(val).startsWith('http') ? String(val) : 'https://' + String(val);
+        return h('a', {
+          href,
+          target: props.dataType === 'url' ? '_blank' : undefined,
+          rel: props.dataType === 'url' ? 'noopener noreferrer' : undefined,
+          class: baseClass + ' text-sky-600 dark:text-sky-400 hover:underline inline-flex items-center opacity-90',
+        }, String(val));
+      }
       if (props.readOnly && props.dataType === 'date') {
         const fmt = val != null && val !== ''
           ? new Date(String(val)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
