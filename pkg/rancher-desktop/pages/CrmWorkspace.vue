@@ -775,7 +775,14 @@
             class="w-80 shrink-0 flex flex-col border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden"
           >
             <!-- panel header -->
-            <div class="flex items-start gap-2 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+            <div class="flex items-start gap-3 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
+              <!-- record avatar -->
+              <div
+                class="shrink-0 mt-0.5 h-9 w-9 rounded-full flex items-center justify-center text-xs font-bold select-none"
+                :style="{ background: (selectedType?.color ?? '#3b82f6') + '22', color: selectedType?.color ?? '#3b82f6' }"
+              >
+                {{ recordInitials(openedRecord.title) }}
+              </div>
               <div class="flex-1 min-w-0">
                 <button
                   v-if="navigationStack.length"
@@ -1091,6 +1098,11 @@
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Esc'], desc: 'Close panel' },
                 { keys: ['?'], desc: 'Toggle this overlay' },
+              ]},
+              { heading: 'Detail Panel', items: [
+                { keys: ['1'], desc: 'Details tab' },
+                { keys: ['2'], desc: 'Activity tab' },
+                { keys: ['3'], desc: 'Related tab' },
               ]},
               { heading: 'Table', items: [
                 { keys: ['Dbl-click'], desc: 'Edit cell inline' },
@@ -1873,6 +1885,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
   if (e.key === '/' && !inField) {
     e.preventDefault();
     searchInputEl.value?.focus();
+    return;
+  }
+  if (!inField && openedRecord.value && !editingRecord.value) {
+    if (e.key === '1') { detailTab.value = 'details'; e.preventDefault(); return; }
+    if (e.key === '2') { detailTab.value = 'activity'; e.preventDefault(); return; }
+    if (e.key === '3') { detailTab.value = 'related'; e.preventDefault(); return; }
   }
 }
 
@@ -1913,6 +1931,13 @@ function showToast(message: string) {
   setTimeout(() => {
     toasts.value = toasts.value.filter((t) => t.id !== id);
   }, 2500);
+}
+
+function recordInitials(title: string): string {
+  const words = title.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
 }
 
 function formatDate(iso: string): string {
