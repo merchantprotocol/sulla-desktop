@@ -560,7 +560,16 @@
                       @mousemove="updatePreviewPos"
                       @mouseleave="hidePreview"
                     >
-                      <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                      <span v-if="searchQuery.trim()" class="truncate max-w-[180px]">
+                        <template v-for="(part, i) in highlightText(String(record.field_values[col.key] ?? ''), searchQuery.trim())" :key="i">
+                          <mark
+                            v-if="part.match"
+                            class="bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-100 rounded-sm not-italic"
+                          >{{ part.text }}</mark>
+                          <span v-else>{{ part.text }}</span>
+                        </template>
+                      </span>
+                      <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                       <span
                         v-if="record.links?.length"
                         class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
@@ -2352,6 +2361,18 @@ function logNote(record: CrmRecord) {
   noteText.value = '';
   loggingNote.value = false;
   showToast('Note logged');
+}
+
+function highlightText(text: string, query: string): Array<{ text: string; match: boolean }> {
+  if (!query) return [{ text, match: false }];
+  const q = query.toLowerCase();
+  const idx = text.toLowerCase().indexOf(q);
+  if (idx === -1) return [{ text, match: false }];
+  return [
+    text.slice(0, idx) ? { text: text.slice(0, idx), match: false } : null,
+    { text: text.slice(idx, idx + q.length), match: true },
+    text.slice(idx + q.length) ? { text: text.slice(idx + q.length), match: false } : null,
+  ].filter((p): p is { text: string; match: boolean } => p !== null);
 }
 
 function moveCardStage(record: CrmRecord, dir: 1 | -1) {
