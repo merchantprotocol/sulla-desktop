@@ -4323,15 +4323,48 @@
                     <span class="text-xs font-medium text-slate-500 dark:text-slate-400 capitalize">{{ noteType }}</span>
                     <span v-if="noteText.startsWith('> ')" class="text-xs text-sky-400 dark:text-sky-500">· replying</span>
                   </div>
-                  <textarea
-                    ref="activityTextareaEl"
-                    v-model="noteText"
-                    rows="3"
-                    :placeholder="`Add ${noteType === 'note' ? 'a' : 'an'} ${noteType}…`"
-                    class="w-full rounded-lg px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
-                    @keydown.meta.enter.prevent="logNote(openedRecord)"
-                    @keydown.ctrl.enter.prevent="logNote(openedRecord)"
-                  />
+                  <div class="relative">
+                    <textarea
+                      ref="activityTextareaEl"
+                      v-model="noteText"
+                      rows="3"
+                      :placeholder="`Add ${noteType === 'note' ? 'a' : 'an'} ${noteType}… (type @ to mention a record)`"
+                      class="w-full rounded-lg px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                      @keydown.meta.enter.prevent="logNote(openedRecord)"
+                      @keydown.ctrl.enter.prevent="logNote(openedRecord)"
+                      @keydown.escape.prevent="atMentionOpen ? atMentionOpen = false : null"
+                      @keydown.arrow-down.prevent="atMentionOpen && (atMentionIdx = Math.min(atMentionIdx + 1, atMentionResults.length - 1))"
+                      @keydown.arrow-up.prevent="atMentionOpen && (atMentionIdx = Math.max(atMentionIdx - 1, 0))"
+                      @keydown.enter.exact="atMentionOpen ? ($event.preventDefault(), atMentionResults[atMentionIdx] && insertMention(atMentionResults[atMentionIdx].record), atMentionOpen = false) : null"
+                      @input="handleNoteInput"
+                      @blur="setTimeout(() => { atMentionOpen = false }, 150)"
+                    />
+                    <!-- @mention picker -->
+                    <div
+                      v-if="atMentionOpen && atMentionResults.length"
+                      class="absolute left-0 bottom-full mb-1 z-30 w-72 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl overflow-hidden"
+                    >
+                      <div class="px-3 py-1.5 border-b border-slate-100 dark:border-slate-800">
+                        <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Mention a record</p>
+                      </div>
+                      <ul class="py-1 max-h-52 overflow-y-auto">
+                        <li
+                          v-for="(item, i) in atMentionResults"
+                          :key="item.record.id"
+                          class="flex items-center gap-2.5 px-3 py-1.5 cursor-pointer text-sm transition-colors"
+                          :class="i === atMentionIdx ? 'bg-sky-50 dark:bg-sky-950/30 text-slate-900 dark:text-white' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                          @mousedown.prevent="insertMention(item.record)"
+                        >
+                          <span
+                            class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold"
+                            :style="{ background: item.rt?.color ?? '#6366f1' }"
+                          >{{ item.record.title.slice(0, 1).toUpperCase() }}</span>
+                          <span class="flex-1 truncate">{{ item.record.title }}</span>
+                          <span class="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">{{ item.rt?.label }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                   <div class="flex items-center justify-between">
                     <span class="text-xs text-slate-400 dark:text-slate-500">⌘ Enter to save</span>
                     <button
@@ -4407,7 +4440,24 @@
                           :class="row.act.type === 'change'
                             ? 'text-slate-400 dark:text-slate-500 font-mono'
                             : 'text-slate-600 dark:text-slate-300'"
-                        >{{ row.act.content }}</p>
+                        >
+                          <template v-for="(part, pi) in parseActivityContent(row.act.content)" :key="pi">
+                            <button
+                              v-if="part.type === 'mention'"
+                              type="button"
+                              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/30 transition-colors mx-0.5 align-middle"
+                              :title="part.record ? `Open ${part.text}` : `Record &quot;${part.text}&quot; not found`"
+                              :class="!part.record ? 'opacity-50 cursor-default' : ''"
+                              @click="part.record && openFromPalette(part.record)"
+                            >
+                              <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                              </svg>
+                              {{ part.text }}
+                            </button>
+                            <span v-else>{{ part.text }}</span>
+                          </template>
+                        </p>
                         <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
                           <span
                             class="capitalize font-medium"
@@ -7100,6 +7150,73 @@ const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
 watch(loggingNote, (val) => { if (val) nextTick(() => activityTextareaEl.value?.focus()); });
 const noteText = ref('');
 const noteType = ref<'note' | 'email' | 'call' | 'meeting'>('note');
+const atMentionOpen = ref(false);
+const atMentionQuery = ref('');
+const atMentionIdx = ref(0);
+const atMentionResults = computed(() => {
+  if (!atMentionOpen.value) return [];
+  const q = atMentionQuery.value.toLowerCase();
+  return mockRecords
+    .filter((r) => !q || r.title.toLowerCase().includes(q))
+    .slice(0, 7)
+    .map((r) => ({ record: r, rt: schema.find((s) => s.key === r.record_type_key) }));
+});
+
+function handleNoteInput(evt: Event) {
+  const el = evt.target as HTMLTextAreaElement;
+  const val = el.value;
+  const cursor = el.selectionStart ?? val.length;
+  // scan back from cursor for '@' within 40 chars
+  const segment = val.slice(Math.max(0, cursor - 40), cursor);
+  const atIdx = segment.lastIndexOf('@');
+  if (atIdx !== -1) {
+    const after = segment.slice(atIdx + 1);
+    // Only trigger if after the @ is word characters (no spaces)
+    if (/^[\w ]{0,30}$/.test(after)) {
+      atMentionQuery.value = after.trim();
+      atMentionIdx.value = 0;
+      atMentionOpen.value = true;
+      return;
+    }
+  }
+  atMentionOpen.value = false;
+}
+
+function insertMention(record: { id: string; title: string }) {
+  const el = activityTextareaEl.value;
+  if (!el) return;
+  const val = noteText.value;
+  const cursor = el.selectionStart ?? val.length;
+  const before = val.slice(0, cursor);
+  const atIdx = before.lastIndexOf('@');
+  if (atIdx === -1) return;
+  const after = val.slice(cursor);
+  noteText.value = before.slice(0, atIdx) + `[[${record.title}]]` + after;
+  atMentionOpen.value = false;
+  nextTick(() => {
+    const pos = atIdx + record.title.length + 4;
+    el.setSelectionRange(pos, pos);
+    el.focus();
+  });
+}
+
+// Parse [[record title]] mentions in activity content into parts for rendering
+function parseActivityContent(content: string): Array<{ type: 'text' | 'mention'; text: string; record: CrmRecord | null }> {
+  const parts: Array<{ type: 'text' | 'mention'; text: string; record: CrmRecord | null }> = [];
+  const re = /\[\[([^\]]+)\]\]/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    if (match.index > last) parts.push({ type: 'text', text: content.slice(last, match.index), record: null });
+    const title = match[1];
+    const rec = mockRecords.find((r) => r.title === title) ?? null;
+    parts.push({ type: 'mention', text: title, record: rec });
+    last = match.index + match[0].length;
+  }
+  if (last < content.length) parts.push({ type: 'text', text: content.slice(last), record: null });
+  return parts;
+}
+
 const editingTitle = ref(false);
 const titleDraft = ref('');
 const titleInputEl = ref<HTMLInputElement | null>(null);
