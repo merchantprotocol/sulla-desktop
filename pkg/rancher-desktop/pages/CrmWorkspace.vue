@@ -64,7 +64,12 @@
                 {{ selectedType?.label_plural ?? 'CRM' }}
               </h1>
               <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                {{ filteredRecords.length }} record{{ filteredRecords.length === 1 ? '' : 's' }}
+                <template v-if="searchQuery.trim() && filteredRecords.length !== totalRecordsForType">
+                  {{ filteredRecords.length }} of {{ totalRecordsForType }} record{{ totalRecordsForType === 1 ? '' : 's' }}
+                </template>
+                <template v-else>
+                  {{ filteredRecords.length }} record{{ filteredRecords.length === 1 ? '' : 's' }}
+                </template>
               </p>
             </div>
 
@@ -665,6 +670,10 @@ const sortDir = ref<'asc' | 'desc'>('asc');
 
 const selectedType = computed(() =>
   schema.find((rt) => rt.key === selectedTypeKey.value) ?? null,
+);
+
+const totalRecordsForType = computed(() =>
+  mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).length,
 );
 
 const visibleColumns = computed(() =>
