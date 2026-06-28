@@ -910,6 +910,24 @@
               </button>
             </div>
 
+            <!-- record completeness bar -->
+            <div
+              v-if="!editingRecord && recordCompleteness.total > 0"
+              class="flex items-center gap-2.5 px-5 py-2 border-b border-slate-100 dark:border-slate-800/80"
+              :title="`${recordCompleteness.filled} of ${recordCompleteness.total} fields filled${recordCompleteness.missing.length ? '\nMissing: ' + recordCompleteness.missing.join(', ') : ''}`"
+            >
+              <div class="flex-1 h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                <div
+                  class="h-full rounded-full transition-all duration-300"
+                  :class="completenessPercent >= 80 ? 'bg-emerald-400 dark:bg-emerald-500' : completenessPercent >= 50 ? 'bg-amber-400 dark:bg-amber-500' : 'bg-rose-400 dark:bg-rose-500'"
+                  :style="{ width: `${completenessPercent}%` }"
+                />
+              </div>
+              <span class="shrink-0 tabular-nums text-xs text-slate-400 dark:text-slate-500">
+                {{ completenessPercent }}%
+              </span>
+            </div>
+
             <!-- tab bar — hidden while editing -->
             <div v-if="!editingRecord" class="flex border-b border-slate-200 dark:border-slate-700 px-5">
               <button
@@ -1837,6 +1855,28 @@ const recordActivities = computed(() =>
         .filter((a) => a.record_id === openedRecord.value!.id)
         .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     : [],
+);
+
+const recordCompleteness = computed((): { filled: number; total: number; missing: string[] } => {
+  if (!openedRecord.value || !selectedType.value) return { filled: 0, total: 0, missing: [] };
+  const fields = selectedType.value.fields;
+  const missing: string[] = [];
+  let filled = 0;
+  for (const f of fields) {
+    const v = openedRecord.value.field_values[f.key];
+    if (v != null && (typeof v !== 'string' || v.trim() !== '')) {
+      filled++;
+    } else {
+      missing.push(f.label);
+    }
+  }
+  return { filled, total: fields.length, missing };
+});
+
+const completenessPercent = computed(() =>
+  recordCompleteness.value.total === 0
+    ? 0
+    : Math.round((recordCompleteness.value.filled / recordCompleteness.value.total) * 100),
 );
 
 const paletteResults = computed(() => {
