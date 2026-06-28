@@ -9,6 +9,7 @@
     @keydown.e.exact="onKeyE"
     @keydown.p.exact="onKeyP"
     @keydown.w.exact="onKeyW"
+    @keydown.r.exact="onKeyR"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -1688,6 +1689,7 @@
                 { keys: ['D'], desc: 'Duplicate open record' },
                 { keys: ['P'], desc: 'Toggle pinned-only view' },
                 { keys: ['/'], desc: 'Focus search' },
+                { keys: ['R'], desc: 'Reset filters, search & sort' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Esc'], desc: 'Close panel' },
                 { keys: ['?'], desc: 'Toggle this overlay' },
@@ -3064,6 +3066,17 @@ function onKeyD(e: KeyboardEvent) {
   if (openedRecord.value && !editingRecord.value && !creatingRecord.value) {
     duplicateRecord(openedRecord.value);
   }
+}
+
+function onKeyR(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  const hadState = searchQuery.value || activeFilters.value.length || sortField.value;
+  searchQuery.value = '';
+  activeFilters.value = [];
+  sortField.value = null;
+  if (hadState) showToast('View reset');
 }
 
 function startEditing(record: CrmRecord) {
