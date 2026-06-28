@@ -430,6 +430,35 @@
               </button>
             </div>
 
+            <!-- watching filter chip -->
+            <div
+              v-if="watchedCountForType > 0"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none transition-colors"
+              :class="showWatchedOnly
+                ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 border border-sky-300 dark:border-sky-700'
+                : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-sky-300 dark:hover:border-sky-700 hover:text-sky-500 dark:hover:text-sky-400'"
+              :title="showWatchedOnly ? 'Show all records' : `Show ${watchedCountForType} watched record${watchedCountForType === 1 ? '' : 's'} only`"
+              @click="showWatchedOnly = !showWatchedOnly"
+            >
+              <svg class="h-3 w-3 shrink-0" :fill="showWatchedOnly ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+              <span>{{ showWatchedOnly ? 'Watching only' : `${watchedCountForType} watching` }}</span>
+              <button
+                v-if="showWatchedOnly"
+                type="button"
+                class="ml-0.5 rounded-full hover:bg-sky-200 dark:hover:bg-sky-800 p-0.5 transition-colors"
+                aria-label="Show all records"
+                title="Show all records"
+                @click.stop="showWatchedOnly = false"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
             <!-- stage distribution mini bar -->
             <div
               v-if="stageDistribution.length && viewMode === 'table'"
@@ -2459,6 +2488,7 @@ const paletteInputEl = ref<HTMLInputElement | null>(null);
 const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
 const pinnedIds = ref<Set<string>>(new Set());
 const showPinnedOnly = ref(false);
+const showWatchedOnly = ref(false);
 const fieldAnnotations = ref<Record<string, string>>({});
 const annotatingField = ref<string | null>(null);
 const preEditSnapshot = ref<Record<string, unknown>>({});
@@ -2553,6 +2583,9 @@ const activeSortLabel = computed(() => {
 const pinnedCountForType = computed(() =>
   mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value && pinnedIds.value.has(r.id)).length,
 );
+const watchedCountForType = computed(() =>
+  mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value && watchedIds.value.has(r.id)).length,
+);
 
 const filteredRecords = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
@@ -2594,6 +2627,10 @@ const filteredRecords = computed(() => {
         return String(av).localeCompare(String(bv)) * dir;
       });
     }
+  }
+
+  if (showWatchedOnly.value && watchedIds.value.size) {
+    result = result.filter((r) => watchedIds.value.has(r.id));
   }
 
   if (pinnedIds.value.size) {
@@ -2985,6 +3022,7 @@ function selectType(key: string) {
   showColumnsMenu.value = false;
   activeFilters.value = [];
   showPinnedOnly.value = false;
+  showWatchedOnly.value = false;
   createFormErrors.value = new Set();
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
@@ -3380,10 +3418,12 @@ function onKeyR(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
-  const hadState = searchQuery.value || activeFilters.value.length || sortField.value;
+  const hadState = searchQuery.value || activeFilters.value.length || sortField.value || showPinnedOnly.value || showWatchedOnly.value;
   searchQuery.value = '';
   activeFilters.value = [];
   sortField.value = null;
+  showPinnedOnly.value = false;
+  showWatchedOnly.value = false;
   if (hadState) showToast('View reset');
 }
 
