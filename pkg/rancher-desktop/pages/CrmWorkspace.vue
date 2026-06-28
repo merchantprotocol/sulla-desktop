@@ -48,6 +48,11 @@
                 <component :is="ICON_COMPONENTS[rt.icon]" class="h-3.5 w-3.5" />
               </span>
               <span class="flex-1 truncate text-sm">{{ rt.label_plural }}</span>
+              <span
+                class="shrink-0 h-1.5 w-1.5 rounded-full"
+                :class="(completenessRateByType[rt.key] ?? 0) >= 80 ? 'bg-emerald-400 dark:bg-emerald-500' : (completenessRateByType[rt.key] ?? 0) >= 50 ? 'bg-amber-400 dark:bg-amber-500' : 'bg-rose-400 dark:bg-rose-500'"
+                :title="`${completenessRateByType[rt.key] ?? 0}% of ${rt.label_plural.toLowerCase()} fully complete`"
+              />
               <span class="text-xs text-slate-400 dark:text-slate-500 tabular-nums">{{ recordCountByType[rt.key] ?? 0 }}</span>
             </button>
           </nav>
@@ -1897,6 +1902,24 @@ const recordCountByType = computed(() => {
     if (counts[r.record_type_key] != null) counts[r.record_type_key]++;
   }
   return counts;
+});
+
+const completenessRateByType = computed((): Record<string, number> => {
+  const rates: Record<string, number> = {};
+  for (const rt of schema) {
+    const recs = mockRecords.filter((r) => r.record_type_key === rt.key);
+    if (!recs.length || !rt.fields.length) { rates[rt.key] = 100; continue; }
+    let fullyComplete = 0;
+    for (const r of recs) {
+      const allFilled = rt.fields.every((f) => {
+        const v = r.field_values[f.key];
+        return v != null && (typeof v !== 'string' || v.trim() !== '');
+      });
+      if (allFilled) fullyComplete++;
+    }
+    rates[rt.key] = Math.round((fullyComplete / recs.length) * 100);
+  }
+  return rates;
 });
 
 const allColumns = computed(() =>
