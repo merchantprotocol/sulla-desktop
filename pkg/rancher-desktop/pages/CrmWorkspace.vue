@@ -236,6 +236,17 @@
             </span>
             <button
               type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
+              :title="`Log a note for ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}`"
+              @click="showBulkNoteModal = true"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Log note
+            </button>
+            <button
+              type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
               :class="[...selectedIds].every(id => pinnedIds.has(id))
                 ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
@@ -2537,6 +2548,69 @@
       </div>
     </transition>
 
+    <!-- bulk note modal -->
+    <transition
+      enter-active-class="transition-all duration-150"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition-all duration-100"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="showBulkNoteModal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+        @click.self="showBulkNoteModal = false"
+      >
+        <div class="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl p-5 space-y-3">
+          <div class="flex items-center justify-between">
+            <p class="text-sm font-semibold text-slate-900 dark:text-white">
+              Log note for {{ selectedIds.size }} record{{ selectedIds.size === 1 ? '' : 's' }}
+            </p>
+            <button
+              type="button"
+              class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+              @click="showBulkNoteModal = false"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <textarea
+            ref="bulkNoteInputEl"
+            v-model="bulkNoteText"
+            rows="4"
+            placeholder="Write a note that will be logged for all selected records…"
+            class="w-full rounded-lg px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+            @keydown.meta.enter.prevent="submitBulkNote"
+            @keydown.ctrl.enter.prevent="submitBulkNote"
+            @keydown.esc.stop="showBulkNoteModal = false"
+          />
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400 dark:text-slate-500">⌘ Enter to save</span>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="h-8 px-3 rounded-lg text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                @click="showBulkNoteModal = false"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="h-8 px-4 rounded-lg text-sm font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors disabled:opacity-40"
+                :disabled="!bulkNoteText.trim()"
+                @click="submitBulkNote"
+              >
+                Log note
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <!-- toast notifications -->
     <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
       <transition-group
@@ -2913,6 +2987,10 @@ const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
 const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
 const colHeaderMenu = ref<{ fieldKey: string; x: number; y: number } | null>(null);
+const showBulkNoteModal = ref(false);
+const bulkNoteText = ref('');
+const bulkNoteInputEl = ref<HTMLTextAreaElement | null>(null);
+watch(showBulkNoteModal, (val) => { if (val) { bulkNoteText.value = ''; nextTick(() => bulkNoteInputEl.value?.focus()); } });
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const lastSelectedIdx = ref(-1);
 const savedViews = ref<SavedView[]>([]);
@@ -3892,6 +3970,25 @@ function restoreDeletedRecord() {
   if (snap.wasPinned) { const next = new Set(pinnedIds.value); next.add(snap.record.id); pinnedIds.value = next; }
   if (snap.wasWatched) { const next = new Set(watchedIds.value); next.add(snap.record.id); watchedIds.value = next; }
   showToast('Delete undone');
+}
+
+function submitBulkNote() {
+  const text = bulkNoteText.value.trim();
+  if (!text) return;
+  const ids = [...selectedIds.value];
+  const now = new Date().toISOString();
+  for (const id of ids) {
+    mockActivities.unshift({
+      id: 'act-bulk-' + id + '-' + String(mockActivities.length),
+      record_id: id,
+      type: 'note',
+      content: text,
+      author: 'You',
+      created_at: now,
+    });
+  }
+  showBulkNoteModal.value = false;
+  showToast(`Note logged for ${ids.length} record${ids.length === 1 ? '' : 's'}`);
 }
 
 function saveCurrentView() {
