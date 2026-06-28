@@ -584,6 +584,35 @@
               </button>
             </div>
 
+            <!-- incomplete filter chip -->
+            <div
+              v-if="incompleteCountForType > 0"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium cursor-pointer select-none transition-colors"
+              :class="showIncompleteOnly
+                ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-700'
+                : 'bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:border-rose-300 dark:hover:border-rose-700 hover:text-rose-500 dark:hover:text-rose-400'"
+              :title="showIncompleteOnly ? 'Show all records' : `Show ${incompleteCountForType} incomplete record${incompleteCountForType === 1 ? '' : 's'} only`"
+              @click="showIncompleteOnly = !showIncompleteOnly"
+            >
+              <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <circle cx="12" cy="12" r="10" />
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4M12 16h.01" />
+              </svg>
+              <span>{{ showIncompleteOnly ? 'Incomplete only' : `${incompleteCountForType} incomplete` }}</span>
+              <button
+                v-if="showIncompleteOnly"
+                type="button"
+                class="ml-0.5 rounded-full hover:bg-rose-200 dark:hover:bg-rose-800 p-0.5 transition-colors"
+                aria-label="Show all records"
+                title="Show all records"
+                @click.stop="showIncompleteOnly = false"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
             <!-- stage distribution mini bar -->
             <div
               v-if="stageDistribution.length && viewMode === 'table'"
@@ -2837,6 +2866,7 @@ const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
 const pinnedIds = ref<Set<string>>(new Set());
 const showPinnedOnly = ref(false);
 const showWatchedOnly = ref(false);
+const showIncompleteOnly = ref(false);
 const fieldAnnotations = ref<Record<string, string>>({});
 const annotatingField = ref<string | null>(null);
 const preEditSnapshot = ref<Record<string, unknown>>({});
@@ -2959,6 +2989,17 @@ const pinnedCountForType = computed(() =>
 const watchedCountForType = computed(() =>
   mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value && watchedIds.value.has(r.id)).length,
 );
+const incompleteCountForType = computed(() => {
+  const fields = selectedType.value?.fields ?? [];
+  if (!fields.length) return 0;
+  return mockRecords.filter((r) => {
+    if (r.record_type_key !== selectedTypeKey.value) return false;
+    return fields.some((f) => {
+      const v = r.field_values[f.key];
+      return v == null || (typeof v === 'string' && v.trim() === '');
+    });
+  }).length;
+});
 
 const filteredRecords = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
@@ -3020,6 +3061,16 @@ const filteredRecords = computed(() => {
       const rest = result.filter((r) => !pinnedIds.value.has(r.id));
       result = [...pinned, ...rest];
     }
+  }
+
+  if (showIncompleteOnly.value) {
+    const fields = selectedType.value?.fields ?? [];
+    result = result.filter((r) =>
+      fields.some((f) => {
+        const v = r.field_values[f.key];
+        return v == null || (typeof v === 'string' && v.trim() === '');
+      }),
+    );
   }
 
   return result;
@@ -3472,6 +3523,7 @@ function selectType(key: string) {
   activeFilters.value = [];
   showPinnedOnly.value = false;
   showWatchedOnly.value = false;
+  showIncompleteOnly.value = false;
   createFormErrors.value = new Set();
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
@@ -3909,12 +3961,13 @@ function onKeyR(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
-  const hadState = searchQuery.value || activeFilters.value.length || sortField.value || showPinnedOnly.value || showWatchedOnly.value;
+  const hadState = searchQuery.value || activeFilters.value.length || sortField.value || showPinnedOnly.value || showWatchedOnly.value || showIncompleteOnly.value;
   searchQuery.value = '';
   activeFilters.value = [];
   sortField.value = null;
   showPinnedOnly.value = false;
   showWatchedOnly.value = false;
+  showIncompleteOnly.value = false;
   if (hadState) showToast('View reset');
 }
 
