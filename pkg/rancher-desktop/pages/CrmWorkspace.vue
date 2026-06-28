@@ -105,11 +105,22 @@
                 <button
                   type="button"
                   :title="`New ${rt.label}`"
-                  class="shrink-0 mr-2 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/type:opacity-100 transition-all text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  class="shrink-0 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/type:opacity-100 transition-all text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
                   @click.stop="selectType(rt.key); openNewRecord()"
                 >
                   <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                </button>
+                <!-- edit fields gear button, appears on hover -->
+                <button
+                  type="button"
+                  :title="`Edit ${rt.label} fields`"
+                  class="shrink-0 mr-2 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/type:opacity-100 transition-all text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  @click.stop="selectType(rt.key); openSchemaEditor('fields')"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
                 </button>
               </div>
@@ -205,8 +216,9 @@
             <button
               v-if="!sidebarCollapsed"
               type="button"
-              class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-700 dark:hover:text-slate-200 transition-colors text-sm"
-              title="Add a new record type"
+              class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-violet-600 dark:hover:text-violet-400 transition-colors text-sm"
+              title="Create a new record type"
+              @click="openSchemaEditor('new-type')"
             >
               <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
@@ -3898,6 +3910,266 @@
       </div>
     </Teleport>
 
+    <!-- ============ SCHEMA EDITOR PANEL ============ -->
+    <Teleport to="body">
+      <transition
+        enter-active-class="transition-all duration-200 ease-out"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition-all duration-150 ease-in"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div v-if="showSchemaEditor" class="fixed inset-0 z-50 flex">
+          <!-- backdrop -->
+          <div class="absolute inset-0 bg-black/40 backdrop-blur-[1px]" @click="showSchemaEditor = false" />
+          <!-- slide-over panel -->
+          <transition
+            enter-active-class="transition-transform duration-200 ease-out"
+            enter-from-class="translate-x-full"
+            enter-to-class="translate-x-0"
+            leave-active-class="transition-transform duration-150 ease-in"
+            leave-from-class="translate-x-0"
+            leave-to-class="translate-x-full"
+          >
+            <div v-if="showSchemaEditor" class="ml-auto relative w-[480px] h-full bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-700 flex flex-col shadow-2xl overflow-hidden">
+
+              <!-- FIELDS MODE -->
+              <template v-if="schemaEditorMode === 'fields'">
+                <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                  <span
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+                    :style="{ background: (selectedType?.color ?? '#6366f1') + '22', color: selectedType?.color ?? '#6366f1' }"
+                  >
+                    <component :is="ICON_COMPONENTS[selectedType?.icon ?? 'folder']" class="h-4 w-4" />
+                  </span>
+                  <div class="flex-1 min-w-0">
+                    <h3 class="text-sm font-semibold text-slate-900 dark:text-white truncate">{{ selectedType?.label ?? 'Type' }} — Fields</h3>
+                    <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ selectedType?.fields.length ?? 0 }} fields · {{ recordCountByType[selectedTypeKey] ?? 0 }} records</p>
+                  </div>
+                  <button type="button" class="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showSchemaEditor = false">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+
+                <!-- field list -->
+                <div class="flex-1 overflow-y-auto">
+                  <div class="divide-y divide-slate-100 dark:divide-slate-800">
+                    <div
+                      v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
+                      :key="field.id"
+                      class="flex items-center gap-3 px-5 py-3 group/field"
+                    >
+                      <!-- data_type icon -->
+                      <span class="shrink-0 h-7 w-7 rounded-md flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" :d="DATA_TYPE_ICONS[field.data_type]" />
+                        </svg>
+                      </span>
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-1.5">
+                          <span class="text-sm font-medium text-slate-900 dark:text-white truncate">{{ field.label }}</span>
+                          <span v-if="field.is_title" class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 whitespace-nowrap">Title</span>
+                          <span v-if="field.is_required" class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 whitespace-nowrap">Required</span>
+                        </div>
+                        <div class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 font-mono truncate">
+                          {{ field.key }} · {{ field.data_type }}
+                          <template v-if="field.select_options?.length"> · {{ field.select_options.join(', ') }}</template>
+                        </div>
+                      </div>
+                      <!-- delete button — hidden for title/required fields -->
+                      <button
+                        v-if="!field.is_title && !field.is_required"
+                        type="button"
+                        class="shrink-0 h-7 w-7 rounded-md flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 opacity-0 group-hover/field:opacity-100 transition-all"
+                        title="Remove field"
+                        @click="removeFieldFromType(selectedTypeKey, field.id)"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                      <span v-else class="shrink-0 h-7 w-7" />
+                    </div>
+                  </div>
+
+                  <!-- add field form -->
+                  <div v-if="showAddFieldForm" class="px-5 py-4 border-t border-slate-100 dark:border-slate-800 space-y-3 bg-slate-50 dark:bg-slate-800/40">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">New field</p>
+                    <div class="flex gap-2">
+                      <div class="flex-1">
+                        <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Label</label>
+                        <input
+                          v-model="newFieldDraft.label"
+                          type="text"
+                          placeholder="e.g. Close date"
+                          class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400"
+                          @keydown.enter="addFieldToCurrentType"
+                        />
+                      </div>
+                      <div>
+                        <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Type</label>
+                        <select
+                          v-model="newFieldDraft.data_type"
+                          class="text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                        >
+                          <option value="text">Text</option>
+                          <option value="number">Number</option>
+                          <option value="select">Select</option>
+                          <option value="date">Date</option>
+                          <option value="boolean">Boolean</option>
+                          <option value="email">Email</option>
+                          <option value="phone">Phone</option>
+                          <option value="url">URL</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div v-if="newFieldDraft.data_type === 'select'">
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Options (comma-separated)</label>
+                      <input
+                        v-model="newFieldDraft.select_options_raw"
+                        type="text"
+                        placeholder="Option A, Option B, Option C"
+                        class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400"
+                      />
+                    </div>
+                    <div class="flex gap-2">
+                      <button type="button" class="flex-1 h-8 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" @click="showAddFieldForm = false">Cancel</button>
+                      <button type="button" class="flex-1 h-8 rounded-lg text-sm font-semibold bg-violet-500 hover:bg-violet-600 text-white transition-colors" @click="addFieldToCurrentType">Add field</button>
+                    </div>
+                  </div>
+
+                  <!-- + add field trigger -->
+                  <div v-if="!showAddFieldForm" class="px-5 py-3 border-t border-slate-100 dark:border-slate-800">
+                    <button type="button" class="w-full flex items-center gap-2 text-sm text-slate-400 hover:text-violet-500 dark:hover:text-violet-400 transition-colors py-1" @click="showAddFieldForm = true">
+                      <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                      Add field
+                    </button>
+                  </div>
+                </div>
+
+                <!-- danger zone footer -->
+                <div class="px-5 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/20">
+                  <div class="flex items-center justify-between">
+                    <button
+                      type="button"
+                      class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
+                      @click="schemaEditorMode = 'new-type'; showAddFieldForm = false"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                      New type
+                    </button>
+                    <button
+                      type="button"
+                      class="flex items-center gap-1.5 text-xs transition-colors"
+                      :class="(recordCountByType[selectedTypeKey] ?? 0) > 0
+                        ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                        : 'text-red-400 hover:text-red-500'"
+                      :title="(recordCountByType[selectedTypeKey] ?? 0) > 0 ? 'Remove all records first' : 'Permanently delete this type'"
+                      :disabled="(recordCountByType[selectedTypeKey] ?? 0) > 0"
+                      @click="deleteRecordType(selectedTypeKey)"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                      Delete type
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- NEW TYPE MODE -->
+              <template v-else>
+                <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                  <h3 class="flex-1 text-sm font-semibold text-slate-900 dark:text-white">New record type</h3>
+                  <button type="button" class="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showSchemaEditor = false">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+                <div class="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+                  <div>
+                    <label class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide block mb-2">Type name</label>
+                    <input
+                      v-model="newTypeDraft.label"
+                      type="text"
+                      placeholder="e.g. Project, Event, Invoice"
+                      class="w-full text-sm px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400"
+                      @keydown.enter="addNewRecordType"
+                    />
+                    <p class="text-xs text-slate-400 dark:text-slate-500 mt-1.5">
+                      Key: <span class="font-mono text-slate-600 dark:text-slate-300">{{ newTypeDraft.key || (newTypeDraft.label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_') || '…') }}</span>
+                    </p>
+                  </div>
+
+                  <div>
+                    <label class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide block mb-2">Icon</label>
+                    <div class="grid grid-cols-5 gap-2">
+                      <button
+                        v-for="ico in SCHEMA_ICON_OPTIONS"
+                        :key="ico"
+                        type="button"
+                        class="flex items-center justify-center h-10 rounded-lg border-2 transition-all"
+                        :class="newTypeDraft.icon === ico
+                          ? 'border-violet-400 bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400'
+                          : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-slate-300 dark:hover:border-slate-600 hover:text-slate-700 dark:hover:text-slate-200'"
+                        @click="newTypeDraft.icon = ico"
+                      >
+                        <component :is="ICON_COMPONENTS[ico]" class="h-4.5 w-4.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide block mb-2">Color</label>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        v-for="c in SCHEMA_COLOR_PRESETS"
+                        :key="c"
+                        type="button"
+                        class="h-8 w-8 rounded-lg transition-all border-2"
+                        :style="{ background: c }"
+                        :class="newTypeDraft.color === c ? 'border-white dark:border-slate-300 scale-110 shadow-md' : 'border-transparent hover:scale-105'"
+                        :title="c"
+                        @click="newTypeDraft.color = c"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4">
+                    <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">Auto-created fields</p>
+                    <div class="space-y-1.5">
+                      <div class="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                        <span class="h-5 w-5 rounded flex items-center justify-center bg-slate-200 dark:bg-slate-700">
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                        </span>
+                        <span><b>Name</b> — text, title field (required)</span>
+                      </div>
+                      <div class="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                        <span class="h-5 w-5 rounded flex items-center justify-center bg-slate-200 dark:bg-slate-700">
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
+                        </span>
+                        <span><b>Status</b> — select: Active, Inactive (editable after creation)</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="px-5 py-4 border-t border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                  <button type="button" class="flex-1 h-10 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" @click="schemaEditorMode = 'fields'">Back to fields</button>
+                  <button
+                    type="button"
+                    class="flex-1 h-10 rounded-xl text-sm font-semibold transition-colors"
+                    :class="newTypeDraft.label.trim()
+                      ? 'bg-violet-500 hover:bg-violet-600 text-white'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'"
+                    :disabled="!newTypeDraft.label.trim()"
+                    @click="addNewRecordType"
+                  >Create type</button>
+                </div>
+              </template>
+
+            </div>
+          </transition>
+        </div>
+      </transition>
+    </Teleport>
+
     <!-- toast notifications -->
     <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
       <transition-group
@@ -3939,7 +4211,7 @@ const { isDark, toggleTheme } = useTheme();
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select';
-type IconKey = 'user' | 'building' | 'chart' | 'target';
+type IconKey = 'user' | 'building' | 'chart' | 'target' | 'check' | 'folder' | 'tag' | 'list' | 'layers' | 'star';
 
 type FieldFormat = 'currency' | 'percent' | undefined;
 
@@ -4014,6 +4286,12 @@ const ICON_PATHS: Record<IconKey, string> = {
   building: 'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2zM9 22V12h6v10',
   chart:    'M3 3v18h18M7 16l4-4 4 4 4-4',
   target:   'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 18a6 6 0 100-12 6 6 0 000 12zM12 14a2 2 0 100-4 2 2 0 000 4z',
+  check:    'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
+  folder:   'M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z',
+  tag:      'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z',
+  list:     'M4 6h16M4 10h16M4 14h16M4 18h16',
+  layers:   'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
+  star:     'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z',
 };
 
 const ICON_COMPONENTS = Object.fromEntries(
@@ -4442,6 +4720,15 @@ const importHeaderRow = ref(true);
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
+
+// ── Schema editor ──────────────────────────────────────────────────────────
+const showSchemaEditor = ref(false);
+const schemaEditorMode = ref<'fields' | 'new-type'>('fields');
+const showAddFieldForm = ref(false);
+const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '' });
+const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
+const SCHEMA_ICON_OPTIONS: IconKey[] = ['user', 'building', 'chart', 'target', 'check', 'folder', 'tag', 'list', 'layers', 'star'];
+const SCHEMA_COLOR_PRESETS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#6366f1', '#ec4899', '#ef4444', '#14b8a6', '#f97316', '#64748b'];
 const annotationDraft = ref('');
 const annotationInputEl = ref<HTMLInputElement | null>(null);
 watch(annotatingField, (val) => { if (val) nextTick(() => annotationInputEl.value?.focus()); });
@@ -6379,6 +6666,91 @@ function showToast(message: string, action?: { label: string; fn: () => void }) 
   setTimeout(() => {
     toasts.value = toasts.value.filter((t) => t.id !== id);
   }, action ? 5000 : 2500);
+}
+
+// ── Schema editor actions ──────────────────────────────────────────────────
+
+function openSchemaEditor(mode: 'fields' | 'new-type' = 'fields') {
+  schemaEditorMode.value = mode;
+  showAddFieldForm.value = false;
+  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '' };
+  newTypeDraft.value = { label: '', key: '', icon: 'folder', color: '#6366f1' };
+  showSchemaEditor.value = true;
+}
+
+function addFieldToCurrentType() {
+  const draft = newFieldDraft.value;
+  const label = draft.label.trim();
+  if (!label) return;
+  const key = draft.key.trim() || label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  const type = schema.find((t) => t.key === selectedTypeKey.value);
+  if (!type) return;
+  if (type.fields.some((f) => f.key === key)) { showToast('A field with that key already exists'); return; }
+  const opts = draft.data_type === 'select'
+    ? draft.select_options_raw.split(',').map((s) => s.trim()).filter(Boolean)
+    : undefined;
+  type.fields.push({
+    id: 'f_custom_' + String(type.fields.length) + '_' + String(Date.now()).slice(-6),
+    key,
+    label,
+    data_type: draft.data_type,
+    is_title: false,
+    is_required: false,
+    position: type.fields.length,
+    ...(opts?.length ? { select_options: opts } : {}),
+  });
+  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '' };
+  showAddFieldForm.value = false;
+  showToast(`Field "${label}" added to ${type.label}`);
+}
+
+function removeFieldFromType(typeKey: string, fieldId: string) {
+  const type = schema.find((t) => t.key === typeKey);
+  if (!type) return;
+  const field = type.fields.find((f) => f.id === fieldId);
+  if (!field || field.is_title || field.is_required) { showToast('Cannot remove required or title fields'); return; }
+  const idx = type.fields.findIndex((f) => f.id === fieldId);
+  if (idx !== -1) type.fields.splice(idx, 1);
+  showToast('Field removed');
+}
+
+function addNewRecordType() {
+  const draft = newTypeDraft.value;
+  const label = draft.label.trim();
+  if (!label) return;
+  const key = draft.key.trim() || label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  if (schema.some((t) => t.key === key)) { showToast('A type with that key already exists'); return; }
+  const plural = label.endsWith('s') ? label : label + 's';
+  schema.push({
+    id: 'rt_' + key + '_' + String(Date.now()).slice(-6),
+    key,
+    label,
+    label_plural: plural,
+    icon: draft.icon,
+    color: draft.color,
+    fields: [
+      { id: 'f_' + key + '_title', key: 'name', label: 'Name', data_type: 'text', is_title: true, is_required: true, position: 0 },
+      { id: 'f_' + key + '_status', key: 'status', label: 'Status', data_type: 'select', is_title: false, is_required: false, position: 1, select_options: ['Active', 'Inactive'] },
+    ],
+  });
+  newTypeDraft.value = { label: '', key: '', icon: 'folder', color: '#6366f1' };
+  schemaEditorMode.value = 'fields';
+  selectType(key);
+  showToast(`Type "${label}" created`);
+}
+
+function deleteRecordType(typeKey: string) {
+  if (mockRecords.some((r) => r.record_type_key === typeKey)) {
+    showToast('Cannot delete a type that has records — remove all records first');
+    return;
+  }
+  const idx = schema.findIndex((t) => t.key === typeKey);
+  if (idx === -1) return;
+  const label = schema[idx].label;
+  schema.splice(idx, 1);
+  if (selectedTypeKey.value === typeKey) selectedTypeKey.value = schema[0]?.key ?? '';
+  showSchemaEditor.value = false;
+  showToast(`Type "${label}" deleted`);
 }
 
 function openImportModal() {
