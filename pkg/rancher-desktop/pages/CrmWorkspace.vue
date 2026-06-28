@@ -4063,6 +4063,7 @@
                       </svg>
                     </span>
                     <span class="text-xs font-medium text-slate-500 dark:text-slate-400 capitalize">{{ noteType }}</span>
+                    <span v-if="noteText.startsWith('> ')" class="text-xs text-sky-400 dark:text-sky-500">· replying</span>
                   </div>
                   <textarea
                     ref="activityTextareaEl"
@@ -4157,18 +4158,30 @@
                           · {{ formatRelativeTime(row.act.created_at) }}
                         </p>
                       </div>
-                      <button
-                        v-if="row.act.type !== 'change'"
-                        type="button"
-                        class="shrink-0 self-start mt-0.5 p-0.5 rounded opacity-0 group-hover/act:opacity-100 text-slate-300 dark:text-slate-700 hover:text-rose-400 dark:hover:text-rose-400 transition-all"
-                        aria-label="Delete activity"
-                        title="Delete this activity"
-                        @click="deleteActivity(row.act.id)"
-                      >
-                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                      <div v-if="row.act.type !== 'change'" class="shrink-0 self-start mt-0.5 flex gap-0.5 opacity-0 group-hover/act:opacity-100 transition-all">
+                        <button
+                          type="button"
+                          class="p-0.5 rounded text-slate-300 dark:text-slate-700 hover:text-sky-400 dark:hover:text-sky-400 transition-colors"
+                          aria-label="Reply to activity"
+                          title="Reply to this activity"
+                          @click="noteType = (row.act.type === 'change' ? 'note' : row.act.type) as 'note'|'email'|'call'|'meeting'; noteText = '> ' + row.act.content.slice(0, 120) + (row.act.content.length > 120 ? '…' : '') + '\n\n'; loggingNote = true; nextTick(() => activityTextareaEl?.focus())"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="p-0.5 rounded text-slate-300 dark:text-slate-700 hover:text-rose-400 dark:hover:text-rose-400 transition-colors"
+                          aria-label="Delete activity"
+                          title="Delete this activity"
+                          @click="deleteActivity(row.act.id)"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
                   </template>
                 </div>
