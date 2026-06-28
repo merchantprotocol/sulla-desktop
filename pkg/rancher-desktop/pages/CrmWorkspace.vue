@@ -585,9 +585,11 @@
                 <div class="flex items-center gap-2 px-1 mb-3">
                   <span
                     class="h-2 w-2 rounded-full shrink-0"
-                    :class="stageDot(col)"
+                    :class="col === KANBAN_UNASSIGNED ? 'bg-slate-300 dark:bg-slate-600' : stageDot(col)"
                   />
-                  <span class="text-xs font-semibold text-slate-700 dark:text-slate-300 truncate">{{ col }}</span>
+                  <span class="text-xs font-semibold truncate" :class="col === KANBAN_UNASSIGNED ? 'text-slate-400 dark:text-slate-500 italic' : 'text-slate-700 dark:text-slate-300'">
+                    {{ col === KANBAN_UNASSIGNED ? 'Unassigned' : col }}
+                  </span>
                   <span class="ml-auto text-xs tabular-nums text-slate-400 dark:text-slate-500 font-medium shrink-0">
                     <template v-if="(searchQuery || activeFilters.length) && (kanbanGroups[col] ?? []).length !== (kanbanGroupsTotal[col] ?? 0)">
                       <span class="text-sky-500 dark:text-sky-400">{{ (kanbanGroups[col] ?? []).length }}</span> of {{ kanbanGroupsTotal[col] ?? 0 }}
@@ -641,7 +643,7 @@
                   <button
                     type="button"
                     class="w-full text-left rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-3 text-xs text-slate-400 dark:text-slate-600 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-500 dark:hover:text-slate-500 transition-colors"
-                    @click="openNewRecord(col)"
+                    @click="openNewRecord(col === KANBAN_UNASSIGNED ? undefined : col)"
                   >
                     + Add record
                   </button>
@@ -1471,17 +1473,21 @@ const kanbanField = computed(() =>
 
 const canKanban = computed(() => kanbanField.value != null);
 
+const KANBAN_UNASSIGNED = '__unassigned__';
+
 const kanbanColumns = computed((): string[] => {
   if (!kanbanField.value) return [];
   const fieldKey = kanbanField.value.key;
   const order = STAGE_ORDER[selectedTypeKey.value] ?? [];
-  // collect values present in records not already in the predefined order
+  // collect extra values present in records not already in the predefined order
   const extra = [...new Set(
     filteredRecords.value
       .map((r) => r.field_values[fieldKey] as string)
       .filter((v): v is string => Boolean(v) && !order.includes(v)),
   )];
-  return [...order, ...extra];
+  // append unassigned column only when any record has no stage value
+  const hasUnassigned = filteredRecords.value.some((r) => !r.field_values[fieldKey]);
+  return [...order, ...extra, ...(hasUnassigned ? [KANBAN_UNASSIGNED] : [])];
 });
 
 const kanbanGroups = computed((): Record<string, CrmRecord[]> => {
@@ -1491,8 +1497,10 @@ const kanbanGroups = computed((): Record<string, CrmRecord[]> => {
   for (const col of kanbanColumns.value) groups[col] = [];
   for (const r of filteredRecords.value) {
     const val = (r.field_values[fieldKey] as string) ?? '';
-    if (Object.prototype.hasOwnProperty.call(groups, val)) {
+    if (val && Object.prototype.hasOwnProperty.call(groups, val)) {
       groups[val].push(r);
+    } else if (!val && Object.prototype.hasOwnProperty.call(groups, KANBAN_UNASSIGNED)) {
+      groups[KANBAN_UNASSIGNED].push(r);
     }
   }
   return groups;
@@ -1506,7 +1514,11 @@ const kanbanGroupsTotal = computed((): Record<string, number> => {
   const typeRecs = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
   for (const r of typeRecs) {
     const val = (r.field_values[fieldKey] as string) ?? '';
-    if (Object.prototype.hasOwnProperty.call(totals, val)) totals[val]++;
+    if (val && Object.prototype.hasOwnProperty.call(totals, val)) {
+      totals[val]++;
+    } else if (!val && Object.prototype.hasOwnProperty.call(totals, KANBAN_UNASSIGNED)) {
+      totals[KANBAN_UNASSIGNED]++;
+    }
   }
   return totals;
 });
