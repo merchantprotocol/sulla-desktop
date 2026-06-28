@@ -718,6 +718,21 @@
               </button>
             </div>
 
+            <!-- created date preset filter -->
+            <div class="flex items-center rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden h-9">
+              <button
+                v-for="(label, preset) in ({ today: 'Today', week: 'Week', month: 'Month' } as const)"
+                :key="preset"
+                type="button"
+                class="h-full px-2.5 text-xs font-medium transition-colors border-r border-slate-200 dark:border-slate-700 last:border-0"
+                :class="createdPreset === preset
+                  ? 'bg-violet-500 text-white'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                :title="`Filter: created ${label.toLowerCase()}`"
+                @click="createdPreset = createdPreset === preset ? null : preset"
+              >{{ label }}</button>
+            </div>
+
             <!-- stale records filter -->
             <div class="relative">
               <button
@@ -3958,6 +3973,7 @@ const colorLabels = ref<Record<string, string>>({});
 const colorLabelFilter = ref<string | null>(null);
 const staleDaysFilter = ref<number | null>(null);
 const showStaleDropdown = ref(false);
+const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
 const groupMenu = ref<{ key: string; label: string; count: number; x: number; y: number } | null>(null);
 const wipLimits = ref<Record<string, number>>({});
 const kanbanColMenu = ref<{ col: string; x: number; y: number } | null>(null);
@@ -4205,6 +4221,19 @@ const filteredRecords = computed(() => {
       const last = lastActivityByRecord.value[r.id] ?? new Date(r.created_at).getTime();
       return last < cutoff;
     });
+  }
+
+  if (createdPreset.value) {
+    const now = new Date();
+    let start: Date;
+    if (createdPreset.value === 'today') {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (createdPreset.value === 'week') {
+      const d = new Date(now); d.setDate(d.getDate() - d.getDay()); d.setHours(0, 0, 0, 0); start = d;
+    } else {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    result = result.filter((r) => new Date(r.created_at) >= start);
   }
 
   if (sortField.value) {
@@ -4900,6 +4929,7 @@ function selectType(key: string) {
   inlineAddTitle.value = '';
   colorLabelFilter.value = null;
   staleDaysFilter.value = null;
+  createdPreset.value = null;
   draftValues.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
@@ -5476,6 +5506,7 @@ function onKeyR(e: KeyboardEvent) {
   groupByField.value = null;
   colorLabelFilter.value = null;
   staleDaysFilter.value = null;
+  createdPreset.value = null;
   if (hadState) showToast('View reset');
 }
 
