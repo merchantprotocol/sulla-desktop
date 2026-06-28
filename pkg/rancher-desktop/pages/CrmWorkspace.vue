@@ -458,7 +458,7 @@
                   <button
                     type="button"
                     class="w-full text-left rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-3 text-xs text-slate-400 dark:text-slate-600 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-500 dark:hover:text-slate-500 transition-colors"
-                    @click="openNewRecord"
+                    @click="openNewRecord(col)"
                   >
                     + Add record
                   </button>
@@ -1247,9 +1247,10 @@ function openRecord(record: CrmRecord) {
   creatingRecord.value = false;
 }
 
-function openNewRecord() {
+function openNewRecord(stageValue?: string) {
   openedRecord.value = null;
-  draftValues.value = {};
+  const fieldKey = kanbanField.value?.key;
+  draftValues.value = fieldKey && stageValue ? { [fieldKey]: stageValue } : {};
   creatingRecord.value = true;
 }
 
