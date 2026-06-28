@@ -311,6 +311,38 @@
             </button>
           </div>
 
+          <!-- active filter pills -->
+          <div
+            v-if="activeFilters.length"
+            class="flex items-center gap-2 px-6 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-950/50 flex-wrap"
+          >
+            <span class="text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">Filtered by:</span>
+            <div
+              v-for="f in activeFilters"
+              :key="f.fieldKey + ':' + f.value"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300"
+            >
+              <span>{{ allColumns.find((c) => c.key === f.fieldKey)?.label }}: <b>{{ f.value }}</b></span>
+              <button
+                type="button"
+                class="ml-0.5 text-sky-400 hover:text-sky-600 dark:hover:text-sky-200 transition-colors leading-none"
+                :aria-label="`Remove ${f.fieldKey} filter`"
+                @click="toggleFilter(f.fieldKey, f.value)"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <button
+              type="button"
+              class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors ml-1"
+              @click="clearFilters"
+            >
+              Clear all
+            </button>
+          </div>
+
           <!-- ── Table view ── -->
           <div v-if="viewMode === 'table'" class="flex-1 overflow-auto">
             <table class="min-w-full border-separate border-spacing-0">
@@ -432,11 +464,27 @@
                       <div
                         v-else
                         class="group/cell relative"
+                        :class="col.data_type === 'select' && record.field_values[col.key] ? 'cursor-pointer' : ''"
                         @dblclick.stop="startCellEdit(record, col)"
+                        @click.stop="col.data_type === 'select' && record.field_values[col.key]
+                          ? toggleFilter(col.key, String(record.field_values[col.key]))
+                          : undefined"
                       >
                         <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                        <!-- funnel icon on select cells to hint at click-to-filter -->
                         <span
-                          v-if="col.data_type !== 'boolean'"
+                          v-if="col.data_type === 'select' && record.field_values[col.key]"
+                          class="absolute right-0 top-1/2 -translate-y-1/2 transition-opacity pointer-events-none"
+                          :class="activeFilters.some(f => f.fieldKey === col.key && f.value === String(record.field_values[col.key]))
+                            ? 'opacity-60 text-sky-500'
+                            : 'opacity-0 group-hover/cell:opacity-30'"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+                          </svg>
+                        </span>
+                        <span
+                          v-else-if="col.data_type !== 'boolean' && col.data_type !== 'select'"
                           class="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover/cell:opacity-40 transition-opacity pointer-events-none"
                         >
                           <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -1208,6 +1256,7 @@ const detailTab = ref<'details' | 'activity' | 'related'>('details');
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const cellDraftValue = ref<string | number | boolean | null>(null);
 const showShortcuts = ref(false);
+const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -1241,12 +1290,18 @@ const visibleColumns = computed(() =>
 const filteredRecords = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
   const recs = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
-  const filtered = q
+  let filtered = q
     ? recs.filter((r) =>
         r.title.toLowerCase().includes(q) ||
         Object.values(r.field_values).some((v) => v != null && String(v).toLowerCase().includes(q))
       )
     : recs;
+
+  if (activeFilters.value.length) {
+    filtered = filtered.filter((r) =>
+      activeFilters.value.every((f) => String(r.field_values[f.fieldKey] ?? '') === f.value),
+    );
+  }
 
   if (!sortField.value) return filtered;
 
@@ -1388,6 +1443,19 @@ function clearSelection() {
   selectedIds.value = new Set();
 }
 
+function toggleFilter(fieldKey: string, value: string) {
+  const idx = activeFilters.value.findIndex((f) => f.fieldKey === fieldKey && f.value === value);
+  if (idx >= 0) {
+    activeFilters.value = activeFilters.value.filter((_, i) => i !== idx);
+  } else {
+    activeFilters.value = [...activeFilters.value, { fieldKey, value }];
+  }
+}
+
+function clearFilters() {
+  activeFilters.value = [];
+}
+
 function startCellEdit(record: CrmRecord, col: CrmField) {
   if (editingRecord.value || col.is_title || col.data_type === 'boolean') return;
   editingCell.value = { recordId: record.id, fieldKey: col.key };
@@ -1424,6 +1492,7 @@ function selectType(key: string) {
   selectedIds.value = new Set();
   hiddenColumnKeys.value = new Set();
   showColumnsMenu.value = false;
+  activeFilters.value = [];
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
