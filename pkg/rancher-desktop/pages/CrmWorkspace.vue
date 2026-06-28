@@ -2097,6 +2097,29 @@
               >
                 Editing
               </span>
+              <!-- completeness indicator -->
+              <span
+                v-if="!editingRecord"
+                class="shrink-0 mt-0.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+                :class="recordCompleteness(openedRecord) === 100
+                  ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
+                  : recordCompleteness(openedRecord) >= 50
+                    ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400'
+                    : 'bg-red-50 dark:bg-red-950/30 text-red-500 dark:text-red-400'"
+                :title="`${recordCompleteness(openedRecord)}% of fields filled`"
+              >{{ recordCompleteness(openedRecord) }}%</span>
+              <!-- copy as text -->
+              <button
+                type="button"
+                aria-label="Copy as text"
+                title="Copy record as plain text"
+                class="shrink-0 mt-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
+                @click="copyRecordAsText(openedRecord)"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </button>
               <!-- copy record link -->
               <button
                 type="button"
@@ -5338,6 +5361,29 @@ async function copyRecordLink(record: CrmRecord) {
   } catch {
     // silent fail in non-secure context
   }
+}
+
+async function copyRecordAsText(record: CrmRecord) {
+  const fields = selectedType.value?.fields ?? [];
+  const lines: string[] = [record.title, ''];
+  for (const f of fields) {
+    const v = record.field_values[f.key];
+    if (v != null && String(v).trim()) lines.push(`${f.label}: ${String(v)}`);
+  }
+  try {
+    await navigator.clipboard.writeText(lines.join('\n'));
+    showToast('Copied as text');
+  } catch { /* silent fail */ }
+}
+
+function recordCompleteness(record: CrmRecord): number {
+  const fields = selectedType.value?.fields ?? [];
+  if (!fields.length) return 100;
+  const filled = fields.filter((f) => {
+    const v = record.field_values[f.key];
+    return v != null && String(v).trim() !== '';
+  }).length;
+  return Math.round((filled / fields.length) * 100);
 }
 
 function cycleSelectField(record: CrmRecord, field: CrmField) {
