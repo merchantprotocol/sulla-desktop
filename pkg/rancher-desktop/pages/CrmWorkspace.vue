@@ -845,7 +845,33 @@
                     {{ field.label }}
                     <span v-if="field.is_required" class="text-red-400 ml-0.5">*</span>
                   </label>
+                  <!-- clickable cycle badge for select fields in view mode -->
+                  <template v-if="!editingRecord && field.data_type === 'select'">
+                    <button
+                      v-if="openedRecord.field_values[field.key]"
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 cursor-pointer"
+                      :class="selectBadgeClass(String(openedRecord.field_values[field.key]))"
+                      :title="`Click to cycle ${field.label} (${field.select_options?.join(' → ')})`"
+                      @click="cycleSelectField(openedRecord, field)"
+                    >
+                      {{ openedRecord.field_values[field.key] }}
+                      <svg class="h-2.5 w-2.5 opacity-60 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+                      </svg>
+                    </button>
+                    <button
+                      v-else
+                      type="button"
+                      class="text-xs text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors italic"
+                      :title="`Click to set ${field.label}`"
+                      @click="cycleSelectField(openedRecord, field)"
+                    >
+                      — set value
+                    </button>
+                  </template>
                   <CrmFieldInput
+                    v-else
                     :data-type="field.data_type"
                     :value="openedRecord.field_values[field.key]"
                     :read-only="!editingRecord"
@@ -1627,6 +1653,14 @@ function saveNewRecord() {
   }
   createFormErrors.value = new Set();
   creatingRecord.value = false;
+}
+
+function cycleSelectField(record: CrmRecord, field: CrmField) {
+  const opts = field.select_options ?? [];
+  if (!opts.length) return;
+  const cur = String(record.field_values[field.key] ?? '');
+  const idx = opts.indexOf(cur);
+  record.field_values[field.key] = opts[(idx + 1) % opts.length];
 }
 
 function duplicateRecord(record: CrmRecord) {
