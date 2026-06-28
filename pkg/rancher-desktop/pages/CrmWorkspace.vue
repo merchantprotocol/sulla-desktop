@@ -28,7 +28,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1386,6 +1386,56 @@
                   @click="galleryColCount = n"
                 >{{ n }}</button>
               </template>
+              <!-- gallery fields picker -->
+              <div v-if="viewMode === 'gallery'" class="relative border-l border-slate-200 dark:border-slate-700" @click.stop>
+                <button
+                  type="button"
+                  class="flex items-center gap-1 h-9 px-3 text-xs transition-colors"
+                  :class="galleryPreviewFieldKeys[selectedTypeKey]?.length
+                    ? 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                  :title="galleryPreviewFieldKeys[selectedTypeKey]?.length ? `Card fields: ${(galleryPreviewFieldKeys[selectedTypeKey] ?? []).length} selected` : 'Choose which fields appear on cards'"
+                  @click="showGalleryFieldsPopover = !showGalleryFieldsPopover"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h8" />
+                  </svg>
+                  Fields
+                </button>
+                <div
+                  v-if="showGalleryFieldsPopover"
+                  class="absolute top-full right-0 mt-1 z-40 w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg py-2"
+                >
+                  <p class="px-3 pt-0.5 pb-2 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Card preview fields</p>
+                  <div class="space-y-0.5 px-1 max-h-60 overflow-y-auto">
+                    <label
+                      v-for="field in (selectedType?.fields ?? []).filter(f => !f.is_title).sort((a, b) => a.position - b.position)"
+                      :key="field.key"
+                      class="flex items-center gap-2.5 w-full px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        class="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-sky-600"
+                        :checked="(galleryPreviewFieldKeys[selectedTypeKey] ?? []).includes(field.key)"
+                        @change="(() => {
+                          const cur = galleryPreviewFieldKeys[selectedTypeKey] ?? [];
+                          const checked = (($event as Event).target as HTMLInputElement).checked;
+                          const next = checked ? [...cur, field.key] : cur.filter(k => k !== field.key);
+                          galleryPreviewFieldKeys = { ...galleryPreviewFieldKeys, [selectedTypeKey]: next };
+                        })()"
+                      />
+                      <span class="text-sm text-slate-700 dark:text-slate-300 truncate">{{ field.label }}</span>
+                    </label>
+                  </div>
+                  <div class="px-3 pt-2 mt-1 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      type="button"
+                      class="text-xs text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
+                      @click="galleryPreviewFieldKeys = { ...galleryPreviewFieldKeys, [selectedTypeKey]: [] }; showGalleryFieldsPopover = false"
+                    >Reset to default (auto)</button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <!-- save view popover -->
@@ -5844,6 +5894,7 @@ const LS_KEY_ROW_DENSITY = 'crm:rowDensity';
 const LS_KEY_SAVED_VIEWS = 'crm:savedViews';
 const LS_KEY_ARCHIVED = 'crm:archivedIds';
 const LS_KEY_FILTER_PRESETS = 'crm:filterPresets';
+const LS_KEY_GALLERY_FIELDS = 'crm:galleryFields';
 
 const archivedIds = ref<Set<string>>(new Set());
 const showArchived = ref(false);
@@ -5851,6 +5902,9 @@ const showArchived = ref(false);
 const filterPresets = ref<FilterPreset[]>([]);
 const showFilterPresetsPanel = ref(false);
 const filterPresetNameInput = ref('');
+
+const galleryPreviewFieldKeys = ref<Record<string, string[]>>({});
+const showGalleryFieldsPopover = ref(false);
 
 onMounted(() => {
   try {
@@ -5866,6 +5920,8 @@ onMounted(() => {
     if (sa) archivedIds.value = new Set(JSON.parse(sa) as string[]);
     const fp = localStorage.getItem(LS_KEY_FILTER_PRESETS);
     if (fp) filterPresets.value = JSON.parse(fp) as FilterPreset[];
+    const gf = localStorage.getItem(LS_KEY_GALLERY_FIELDS);
+    if (gf) galleryPreviewFieldKeys.value = JSON.parse(gf) as Record<string, string[]>;
   } catch { /* storage not available */ }
 });
 
@@ -5878,6 +5934,7 @@ watch(rowDensity, (val) => { try { localStorage.setItem(LS_KEY_ROW_DENSITY, val)
 watch(savedViews, (val) => { try { localStorage.setItem(LS_KEY_SAVED_VIEWS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
 watch(archivedIds, (val) => { try { localStorage.setItem(LS_KEY_ARCHIVED, JSON.stringify([...val])); } catch { /* ignore */ } }, { deep: true });
 watch(filterPresets, (val) => { try { localStorage.setItem(LS_KEY_FILTER_PRESETS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
+watch(galleryPreviewFieldKeys, (val) => { try { localStorage.setItem(LS_KEY_GALLERY_FIELDS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -6479,10 +6536,12 @@ const canCalendar = computed(() => calendarDateField.value != null);
 
 const galleryPreviewFields = computed(() => {
   if (!selectedType.value) return [];
-  return [...selectedType.value.fields]
-    .filter((f) => !f.is_title)
-    .sort((a, b) => a.position - b.position)
-    .slice(0, 3);
+  const chosen = galleryPreviewFieldKeys.value[selectedTypeKey.value];
+  const allNonTitle = [...selectedType.value.fields].filter((f) => !f.is_title).sort((a, b) => a.position - b.position);
+  if (chosen?.length) {
+    return chosen.map((k) => allNonTitle.find((f) => f.key === k)).filter(Boolean) as typeof allNonTitle;
+  }
+  return allNonTitle.slice(0, 3);
 });
 
 type GalleryGroup = { key: string; label: string; records: CrmRecord[] };
