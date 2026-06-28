@@ -61,8 +61,45 @@
 
         <!-- ── Main content ── -->
         <div class="flex flex-col flex-1 min-w-0 bg-slate-50 dark:bg-slate-950">
+          <!-- bulk action bar — visible when rows are checked in table view -->
+          <div
+            v-if="selectedIds.size && viewMode === 'table'"
+            class="flex items-center gap-3 px-6 py-3.5 border-b border-slate-200 dark:border-slate-700 bg-sky-50 dark:bg-sky-950/20"
+          >
+            <span class="flex-1 text-sm font-medium text-sky-700 dark:text-sky-300">
+              {{ selectedIds.size }} record{{ selectedIds.size === 1 ? '' : 's' }} selected
+            </span>
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
+              title="Archive selected (coming soon)"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8l1 12a2 2 0 002 2h8a2 2 0 002-2L19 8" />
+              </svg>
+              Archive
+            </button>
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
+              title="Export selected (coming soon)"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Export
+            </button>
+            <button
+              type="button"
+              class="h-8 px-3 rounded-lg text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              @click="clearSelection"
+            >
+              Clear
+            </button>
+          </div>
+
           <!-- toolbar -->
-          <div class="flex items-center gap-3 px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+          <div v-else class="flex items-center gap-3 px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
             <div class="flex-1">
               <h1 class="text-base font-semibold text-slate-900 dark:text-white">
                 {{ selectedType?.label_plural ?? 'CRM' }}
@@ -185,10 +222,20 @@
             <table class="min-w-full border-separate border-spacing-0">
               <thead class="sticky top-0 z-10">
                 <tr>
+                  <!-- select-all checkbox -->
+                  <th class="w-9 pl-6 pr-2 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
+                    <input
+                      type="checkbox"
+                      :checked="allSelected"
+                      :indeterminate="selectedIds.size > 0 && !allSelected"
+                      class="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer"
+                      @change="toggleAll"
+                    >
+                  </th>
                   <th
                     v-for="col in visibleColumns"
                     :key="col.key"
-                    class="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 first:pl-6 last:pr-6 whitespace-nowrap"
+                    class="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap"
                   >
                     <button
                       type="button"
@@ -250,10 +297,19 @@
                     : 'hover:bg-white dark:hover:bg-slate-900'"
                   @click="openRecord(record)"
                 >
+                  <!-- row checkbox -->
+                  <td class="pl-6 pr-2 py-3" @click.stop>
+                    <input
+                      type="checkbox"
+                      :checked="selectedIds.has(record.id)"
+                      class="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer"
+                      @change="toggleSelect(record.id)"
+                    >
+                  </td>
                   <td
                     v-for="col in visibleColumns"
                     :key="col.key"
-                    class="px-4 py-3 text-sm first:pl-6"
+                    class="px-4 py-3 text-sm"
                     :class="col.is_title
                       ? 'font-medium text-slate-900 dark:text-white'
                       : 'text-slate-600 dark:text-slate-400'"
@@ -285,7 +341,7 @@
 
                 <tr v-if="filteredRecords.length === 0">
                   <td
-                    :colspan="visibleColumns.length + 2"
+                    :colspan="visibleColumns.length + 3"
                     class="px-6 py-16 text-center"
                   >
                     <div class="mx-auto w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
@@ -928,6 +984,7 @@ const draftValues = ref<Record<string, string | number | boolean | null>>({});
 const sortField = ref<string | null>(null);
 const sortDir = ref<'asc' | 'desc'>('asc');
 const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
+const selectedIds = ref<Set<string>>(new Set());
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -1077,7 +1134,32 @@ const recordActivities = computed(() =>
     : [],
 );
 
+const allSelected = computed(
+  () =>
+    filteredRecords.value.length > 0 &&
+    filteredRecords.value.every((r) => selectedIds.value.has(r.id)),
+);
+
 // ── Actions ────────────────────────────────────────────────────────────────
+
+function toggleSelect(id: string) {
+  const next = new Set(selectedIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  selectedIds.value = next;
+}
+
+function toggleAll() {
+  if (allSelected.value) {
+    selectedIds.value = new Set();
+  } else {
+    selectedIds.value = new Set(filteredRecords.value.map((r) => r.id));
+  }
+}
+
+function clearSelection() {
+  selectedIds.value = new Set();
+}
 
 function selectType(key: string) {
   selectedTypeKey.value = key;
@@ -1089,6 +1171,7 @@ function selectType(key: string) {
   sortField.value = null;
   sortDir.value = 'asc';
   navigationStack.value = [];
+  selectedIds.value = new Set();
   // If the new type has no groupable field, fall back to table view
   const newType = schema.find((rt) => rt.key === key);
   if (!newType?.fields.some((f) => f.data_type === 'select')) {
