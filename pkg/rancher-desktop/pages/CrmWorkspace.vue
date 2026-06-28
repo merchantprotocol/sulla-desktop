@@ -1179,13 +1179,52 @@
               <!-- Related tab -->
               <template v-else-if="detailTab === 'related'">
                 <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Related records</p>
+
+                <!-- quick link search -->
+                <div class="relative">
+                  <div class="relative">
+                    <svg class="pointer-events-none absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+                    </svg>
+                    <input
+                      v-model="linkQuery"
+                      type="text"
+                      placeholder="Link a record…"
+                      class="h-8 w-full rounded-lg pl-8 pr-3 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                      @focus="linkDropdownOpen = true"
+                      @blur="linkDropdownOpen = false"
+                    />
+                  </div>
+                  <div
+                    v-if="linkDropdownOpen && linkResults.length"
+                    class="absolute top-full left-0 right-0 mt-1 rounded-lg border shadow-lg overflow-hidden z-20 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700"
+                  >
+                    <button
+                      v-for="r in linkResults"
+                      :key="r.id"
+                      type="button"
+                      class="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                      @mousedown.prevent="addLink(openedRecord, r)"
+                    >
+                      <span
+                        class="h-5 w-5 rounded flex items-center justify-center shrink-0"
+                        :style="{ background: (schema.find(rt => rt.key === r.record_type_key)?.color ?? '#64748b') + '22', color: schema.find(rt => rt.key === r.record_type_key)?.color ?? '#64748b' }"
+                      >
+                        <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === r.record_type_key)?.icon ?? 'user']" class="h-3 w-3" />
+                      </span>
+                      <div class="flex-1 min-w-0">
+                        <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{{ r.title }}</p>
+                        <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ schema.find(rt => rt.key === r.record_type_key)?.label }}</p>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
                 <div v-if="openedRecord.links?.length" class="space-y-1">
-                  <button
+                  <div
                     v-for="link in openedRecord.links"
                     :key="link.target_id"
-                    type="button"
-                    class="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 text-left transition-colors"
-                    @click="openLinkedRecord(link)"
+                    class="group/link flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                   >
                     <span
                       class="h-5 w-5 rounded flex items-center justify-center shrink-0"
@@ -1197,12 +1236,30 @@
                       <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{{ link.target_title }}</p>
                       <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ link.target_type }}</p>
                     </div>
-                    <svg class="h-3.5 w-3.5 text-slate-300 dark:text-slate-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-                    </svg>
-                  </button>
+                    <button
+                      type="button"
+                      class="invisible group-hover/link:visible rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 transition-colors"
+                      aria-label="Remove link"
+                      title="Remove link"
+                      @click="removeLink(openedRecord, link.target_id)"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="shrink-0 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 rounded p-0.5 transition-colors"
+                      aria-label="Open linked record"
+                      @click="openLinkedRecord(link)"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
-                <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No related records.</p>
+                <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No related records yet — use the search above to link some.</p>
               </template>
             </div>
 
@@ -1774,6 +1831,8 @@ const fieldAnnotations = ref<Record<string, string>>({});
 const annotatingField = ref<string | null>(null);
 const preEditSnapshot = ref<Record<string, unknown>>({});
 const recentRecords = ref<CrmRecord[]>([]); // last 5 opened, newest first
+const linkQuery = ref('');
+const linkDropdownOpen = ref(false);
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
 let previewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2013,6 +2072,20 @@ const previewFields = computed(() =>
     .slice(0, 3),
 );
 
+const linkResults = computed(() => {
+  const q = linkQuery.value.trim().toLowerCase();
+  if (!q) return [];
+  const linked = new Set(openedRecord.value?.links?.map((l) => l.target_id) ?? []);
+  return mockRecords
+    .filter((r) =>
+      r.id !== openedRecord.value?.id &&
+      !linked.has(r.id) &&
+      (r.title.toLowerCase().includes(q) ||
+        Object.values(r.field_values).some((v) => v != null && String(v).toLowerCase().includes(q)))
+    )
+    .slice(0, 6);
+});
+
 const paletteResults = computed(() => {
   const q = paletteQuery.value.trim().toLowerCase();
   if (!q) return mockRecords.slice(0, 8);
@@ -2248,6 +2321,25 @@ function logNote(record: CrmRecord) {
   noteText.value = '';
   loggingNote.value = false;
   showToast('Note logged');
+}
+
+function addLink(record: CrmRecord, target: CrmRecord) {
+  if (!record.links) record.links = [];
+  if (record.links.some((l) => l.target_id === target.id)) return;
+  record.links.push({
+    target_id: target.id,
+    target_title: target.title,
+    target_type: target.record_type_key,
+  });
+  linkQuery.value = '';
+  linkDropdownOpen.value = false;
+  showToast(`Linked to ${target.title}`);
+}
+
+function removeLink(record: CrmRecord, targetId: string) {
+  if (!record.links) return;
+  record.links = record.links.filter((l) => l.target_id !== targetId);
+  showToast('Link removed');
 }
 
 function startAnnotate(fieldKey: string, recordId: string) {
