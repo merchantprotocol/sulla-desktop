@@ -1557,6 +1557,7 @@
                     <span class="text-xs font-medium text-slate-500 dark:text-slate-400 capitalize">{{ noteType }}</span>
                   </div>
                   <textarea
+                    ref="activityTextareaEl"
                     v-model="noteText"
                     rows="3"
                     :placeholder="`Add ${noteType === 'note' ? 'a' : 'an'} ${noteType}…`"
@@ -1824,6 +1825,7 @@
                 { keys: ['E'], desc: 'Edit record' },
                 { keys: ['W'], desc: 'Watch / unwatch record' },
                 { keys: ['C'], desc: 'Copy record link' },
+                { keys: ['A'], desc: 'Open activity compose' },
                 { keys: ['1'], desc: 'Details tab' },
                 { keys: ['2'], desc: 'Activity tab' },
                 { keys: ['3'], desc: 'Related tab' },
@@ -2399,6 +2401,8 @@ const contextMenuPos = ref({ x: 0, y: 0 });
 const bulkStageDropdown = ref(false);
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const loggingNote = ref(false);
+const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
+watch(loggingNote, (val) => { if (val) nextTick(() => activityTextareaEl.value?.focus()); });
 const noteText = ref('');
 const noteType = ref<'note' | 'email' | 'call' | 'meeting'>('note');
 const editingTitle = ref(false);
@@ -3267,6 +3271,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (e.key === '2') { detailTab.value = 'activity'; e.preventDefault(); return; }
     if (e.key === '3') { detailTab.value = 'related'; e.preventDefault(); return; }
     if (e.key === 'c' && !e.metaKey && !e.ctrlKey) { copyRecordLink(openedRecord.value); e.preventDefault(); return; }
+    if (e.key === 'a' && !e.metaKey && !e.ctrlKey) {
+      detailTab.value = 'activity';
+      loggingNote.value = true;
+      e.preventDefault();
+      return;
+    }
   }
   if (!inField && !openedRecord.value && !editingRecord.value && !creatingRecord.value) {
     const idx = parseInt(e.key, 10) - 1;
