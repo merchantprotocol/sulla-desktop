@@ -204,6 +204,9 @@
                       </svg>
                     </button>
                   </th>
+                  <th class="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap">
+                    <span class="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Added</span>
+                  </th>
                   <th class="w-10 px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800" />
                 </tr>
               </thead>
@@ -227,6 +230,9 @@
                   >
                     <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                   </td>
+                  <td class="px-4 py-3 text-xs tabular-nums text-slate-400 dark:text-slate-500 whitespace-nowrap">
+                    {{ formatDate(record.created_at) }}
+                  </td>
                   <td class="w-10 px-3 py-3 text-right">
                     <button
                       type="button"
@@ -242,7 +248,7 @@
 
                 <tr v-if="filteredRecords.length === 0">
                   <td
-                    :colspan="visibleColumns.length + 1"
+                    :colspan="visibleColumns.length + 2"
                     class="px-6 py-16 text-center"
                   >
                     <div class="mx-auto w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
