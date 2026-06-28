@@ -3163,6 +3163,7 @@
                   :value="draftValues[field.key] ?? null"
                   :read-only="false"
                   :select-options="field.select_options ?? []"
+                  :option-colors="field.select_option_colors ?? {}"
                   :format="field.format"
                   @update:value="draftValues[field.key] = $event; createFormErrors.delete(field.key)"
                 />
@@ -3609,6 +3610,7 @@
                     :value="openedRecord.field_values[field.key]"
                     :read-only="!editingRecord"
                     :select-options="field.select_options ?? []"
+                    :option-colors="field.select_option_colors ?? {}"
                     :format="field.format"
                     :class="editingRecord && editFormErrors.has(field.key) ? 'ring-2 ring-red-400/50 rounded-lg' : ''"
                     @update:value="openedRecord.field_values[field.key] = $event; if (editFormErrors.has(field.key)) { const e = new Set(editFormErrors); e.delete(field.key); editFormErrors = e; }"
@@ -4865,6 +4867,7 @@
               :value="bulkFieldValue"
               :read-only="false"
               :select-options="allColumns.find(c => c.key === bulkFieldKey)?.select_options ?? []"
+              :option-colors="allColumns.find(c => c.key === bulkFieldKey)?.select_option_colors ?? {}"
               :format="allColumns.find(c => c.key === bulkFieldKey)?.format"
               @update:value="bulkFieldValue = $event"
             />
@@ -9619,6 +9622,7 @@ const CrmFieldInput = defineComponent({
     dataType: { type: String as () => DataType, required: true },
     readOnly: { type: Boolean, default: false },
     selectOptions: { type: Array as () => string[], default: () => [] },
+    optionColors: { type: Object as () => Record<string, string>, default: () => ({}) },
     format: { type: String as () => FieldFormat, default: undefined },
   },
   emits: ['update:value'],
@@ -9644,10 +9648,14 @@ const CrmFieldInput = defineComponent({
         if (props.readOnly) {
           if (!current.length) return h('span', { class: 'text-slate-300 dark:text-slate-600 text-sm' }, '—');
           return h('span', { class: 'flex flex-wrap gap-1' },
-            current.map((tag) => h('span', {
-              key: tag,
-              class: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800',
-            }, tag)),
+            current.map((tag) => {
+              const hex = props.optionColors[tag];
+              return h('span', {
+                key: tag,
+                class: hex ? 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium' : 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800',
+                style: hex ? { background: hex + '26', color: hex } : undefined,
+              }, tag);
+            }),
           );
         }
         return h('div', { class: 'flex flex-wrap gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-2' }, [
