@@ -2237,7 +2237,71 @@
               New {{ selectedType?.label ?? 'Record' }}
             </button>
           </div>
-          <!-- card grid -->
+          <!-- card grid — grouped sections -->
+          <div v-else-if="groupedGalleryGroups" class="space-y-8">
+            <section v-for="group in groupedGalleryGroups" :key="group.key">
+              <!-- group header -->
+              <div class="flex items-center gap-2.5 mb-4">
+                <span
+                  class="h-2 w-2 rounded-full shrink-0"
+                  :class="group.key !== '__ungrouped__' ? stageDot(group.key) : 'bg-slate-300 dark:bg-slate-600'"
+                />
+                <span class="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                  {{ group.label }}
+                </span>
+                <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ group.records.length }}</span>
+                <div class="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+              </div>
+              <!-- cards in group -->
+              <div
+                class="grid gap-4"
+                :style="{ gridTemplateColumns: `repeat(${galleryColCount}, minmax(0, 1fr))` }"
+              >
+                <button
+                  v-for="record in group.records"
+                  :key="record.id"
+                  type="button"
+                  class="group/gc text-left rounded-xl border shadow-sm transition-all overflow-hidden flex flex-col"
+                  :class="openedRecord?.id === record.id
+                    ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800 shadow-md ring-1 ring-sky-200 dark:ring-sky-800'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700'"
+                  @click="openRecord(record)"
+                  @contextmenu.prevent="openContextMenu(record, $event)"
+                >
+                  <div v-if="colorLabels[record.id] || evaluateConditionalRules(record)" class="h-1.5 w-full shrink-0" :style="{ background: colorLabels[record.id] || evaluateConditionalRules(record) }" />
+                  <div class="flex-1 flex flex-col p-4">
+                    <div class="flex items-start justify-between gap-2 mb-3">
+                      <div class="h-9 w-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 select-none" :style="{ background: (selectedType?.color ?? '#3b82f6') + '22', color: selectedType?.color ?? '#3b82f6' }">{{ recordInitials(record.title) }}</div>
+                      <button type="button" class="shrink-0 mt-1 rounded transition-colors" :class="pinnedIds.has(record.id) ? 'text-amber-400' : 'text-slate-200 dark:text-slate-700 hover:text-amber-400 dark:hover:text-amber-400 opacity-0 group-hover/gc:opacity-100'" :title="pinnedIds.has(record.id) ? 'Unpin' : 'Pin'" :aria-label="pinnedIds.has(record.id) ? 'Unpin record' : 'Pin record'" @click.stop="togglePin(record.id)">
+                        <svg v-if="pinnedIds.has(record.id)" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                        <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                      </button>
+                    </div>
+                    <p class="text-sm font-semibold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-3">{{ record.title }}</p>
+                    <div v-if="galleryPreviewFields.length" class="space-y-1.5 mb-3">
+                      <div v-for="field in galleryPreviewFields" :key="field.key" class="flex items-start gap-2">
+                        <span class="text-xs text-slate-400 dark:text-slate-500 w-20 shrink-0 truncate pt-px">{{ field.label }}</span>
+                        <CrmCellValue :value="record.field_values[field.key]" :data-type="field.data_type" :format="field.format" class="text-xs truncate" />
+                      </div>
+                    </div>
+                    <div v-if="(recordTags[record.id] ?? []).length" class="flex flex-wrap gap-1 mb-3">
+                      <span v-for="tag in (recordTags[record.id] ?? [])" :key="tag" class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">{{ tag }}</span>
+                    </div>
+                    <div class="mt-auto pt-2">
+                      <div class="h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                        <div class="h-full rounded-full transition-all" :class="recordCompleteness(record) === 100 ? 'bg-emerald-400' : 'bg-sky-400'" :style="{ width: `${recordCompleteness(record)}%` }" />
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </section>
+            <!-- ghost add card below all groups -->
+            <button type="button" class="w-full rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center h-16 text-slate-300 dark:text-slate-700 hover:border-sky-300 dark:hover:border-sky-700 hover:text-sky-400 dark:hover:text-sky-500 transition-all" title="Add new record" @click="openNewRecord()">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+            </button>
+          </div>
+          <!-- card grid — flat (no grouping) -->
           <div
             v-else
             class="grid gap-4"
@@ -5693,6 +5757,34 @@ const galleryPreviewFields = computed(() => {
     .filter((f) => !f.is_title)
     .sort((a, b) => a.position - b.position)
     .slice(0, 3);
+});
+
+type GalleryGroup = { key: string; label: string; records: CrmRecord[] };
+const groupedGalleryGroups = computed((): GalleryGroup[] | null => {
+  if (!groupByField.value || viewMode.value !== 'gallery') return null;
+  const fkey = groupByField.value;
+  const field = allColumns.value.find((c) => c.key === fkey);
+  const opts = field?.select_options ?? [];
+  const ungrouped: CrmRecord[] = [];
+  const byVal: Record<string, CrmRecord[]> = {};
+  for (const r of filteredRecords.value) {
+    const v = r.field_values[fkey];
+    if (v == null || String(v) === '') { ungrouped.push(r); continue; }
+    const k = String(v);
+    if (!byVal[k]) byVal[k] = [];
+    byVal[k].push(r);
+  }
+  const order = opts.length ? opts : Object.keys(byVal);
+  const groups: GalleryGroup[] = [];
+  for (const opt of order) {
+    const recs = byVal[opt];
+    if (!recs?.length) continue;
+    groups.push({ key: opt, label: opt, records: recs });
+  }
+  if (ungrouped.length) {
+    groups.push({ key: '__ungrouped__', label: 'No value', records: ungrouped });
+  }
+  return groups.length ? groups : null;
 });
 
 interface CalDay {
