@@ -20,6 +20,8 @@
     @keydown.bracket-left.exact="onKeyBracketLeft"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
+    @keydown.left.exact="onKeyArrowLR(-1, $event)"
+    @keydown.right.exact="onKeyArrowLR(1, $event)"
     @keydown.home.exact.prevent="onKeyHome"
     @keydown.end.exact.prevent="onKeyEnd"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -2679,7 +2681,8 @@
               :key="record.id"
               role="button"
               tabindex="0"
-              class="group/gc text-left rounded-xl border shadow-sm transition-all overflow-hidden flex flex-col cursor-pointer"
+              :data-gallery-idx="idx"
+              class="group/gc text-left rounded-xl border shadow-sm transition-all overflow-hidden flex flex-col cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-1"
               :class="[
                 selectedIds.has(record.id)
                   ? 'ring-2 ring-sky-400 dark:ring-sky-500 border-sky-300 dark:border-sky-700'
@@ -2691,7 +2694,9 @@
                   : 'bg-white dark:bg-slate-900',
               ]"
               @click="openRecord(record)"
-              @keydown.enter="openRecord(record)"
+              @keydown.enter.prevent="openRecord(record)"
+              @keydown.space.prevent="toggleSelect(record.id)"
+              @focus="galleryFocusIdx = idx"
               @contextmenu.prevent="openContextMenu(record, $event)"
             >
               <!-- color stripe at top -->
@@ -3675,6 +3680,10 @@
                 { keys: ['Click'], desc: 'Open record detail' },
                 { keys: ['Right-click'], desc: 'Context menu' },
                 { keys: ['2 / 3 / 4'], desc: 'Set column count (toolbar picker)' },
+                { keys: ['←', '→'], desc: 'Move focus between cards (flat view)' },
+                { keys: ['↑', '↓'], desc: 'Move focus up / down a row (flat view)' },
+                { keys: ['Enter'], desc: 'Open focused card' },
+                { keys: ['Space'], desc: 'Select / deselect focused card' },
               ]},
               { heading: 'Table', items: [
                 { keys: ['Dbl-click'], desc: 'Edit cell inline' },
@@ -5478,6 +5487,7 @@ const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
 const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery'>('table');
 const galleryColCount = ref<2 | 3 | 4>(3);
+const galleryFocusIdx = ref(-1);
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
 const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
@@ -5691,7 +5701,10 @@ onMounted(() => {
   } catch { /* storage not available */ }
 });
 
-watch(viewMode, (val) => { try { localStorage.setItem(LS_KEY_VIEW_MODE, val); } catch { /* ignore */ } });
+watch(viewMode, (val) => {
+  try { localStorage.setItem(LS_KEY_VIEW_MODE, val); } catch { /* ignore */ }
+  if (val !== 'gallery') galleryFocusIdx.value = -1;
+});
 watch(hiddenColumnKeys, (val) => { try { localStorage.setItem(LS_KEY_HIDDEN_COLS, JSON.stringify([...val])); } catch { /* ignore */ } });
 watch(rowDensity, (val) => { try { localStorage.setItem(LS_KEY_ROW_DENSITY, val); } catch { /* ignore */ } });
 watch(savedViews, (val) => { try { localStorage.setItem(LS_KEY_SAVED_VIEWS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
@@ -7238,6 +7251,7 @@ function selectType(key: string) {
   showOverdueOnly.value = false;
   showDueSoonOnly.value = false;
   createdPreset.value = null;
+  galleryFocusIdx.value = -1;
   customOrder.value = [];
   columnWidths.value = {};
   pinnedColumnKeys.value = new Set();
@@ -8052,9 +8066,20 @@ function onKeySave() {
 }
 
 function onKeyArrow(dir: 1 | -1) {
-  if (!openedRecord.value || viewMode.value !== 'table') return;
   const tag = document.activeElement?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (viewMode.value === 'gallery' && !groupedGalleryGroups.value) {
+    const records = filteredRecords.value;
+    const step = dir * galleryColCount.value;
+    const cur = galleryFocusIdx.value < 0 ? 0 : galleryFocusIdx.value;
+    const next = Math.max(0, Math.min(records.length - 1, cur + step));
+    galleryFocusIdx.value = next;
+    nextTick(() => {
+      (document.querySelector(`[data-gallery-idx="${next}"]`) as HTMLElement | null)?.focus();
+    });
+    return;
+  }
+  if (!openedRecord.value || viewMode.value !== 'table') return;
   const records = filteredRecords.value;
   const idx = records.findIndex((r) => r.id === openedRecord.value?.id);
   const next = records[idx + dir];
@@ -8065,6 +8090,20 @@ function onKeyArrow(dir: 1 | -1) {
       el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
   }
+}
+
+function onKeyArrowLR(dir: 1 | -1, e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (viewMode.value !== 'gallery' || groupedGalleryGroups.value) return;
+  e.preventDefault();
+  const records = filteredRecords.value;
+  const cur = galleryFocusIdx.value < 0 ? 0 : galleryFocusIdx.value;
+  const next = Math.max(0, Math.min(records.length - 1, cur + dir));
+  galleryFocusIdx.value = next;
+  nextTick(() => {
+    (document.querySelector(`[data-gallery-idx="${next}"]`) as HTMLElement | null)?.focus();
+  });
 }
 
 function onKeyHome() {
