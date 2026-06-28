@@ -3763,8 +3763,31 @@
             <div class="flex-1 px-5 py-4 space-y-4 overflow-y-auto">
               <!-- Details tab -->
               <template v-if="editingRecord || detailTab === 'details'">
+                <!-- field search — only shown when type has enough fields -->
+                <div v-if="!editingRecord && (selectedType?.fields?.length ?? 0) > 6" class="relative">
+                  <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-300 dark:text-slate-600 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 111 11a6 6 0 0116 0z" />
+                  </svg>
+                  <input
+                    v-model="drawerFieldSearch"
+                    type="text"
+                    placeholder="Find a field…"
+                    class="w-full pl-7 pr-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300 placeholder:text-slate-300 dark:placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+                    @keydown.escape.prevent="drawerFieldSearch = ''"
+                  >
+                  <button
+                    v-if="drawerFieldSearch"
+                    type="button"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400"
+                    @click="drawerFieldSearch = ''"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
                 <div
-                  v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position).filter(f => fieldIsVisible(f, openedRecord))"
+                  v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position).filter(f => fieldIsVisible(f, openedRecord)).filter(f => !drawerFieldSearch || f.label.toLowerCase().includes(drawerFieldSearch.toLowerCase()))"
                   :key="field.id"
                   class="space-y-1 group/field"
                 >
@@ -3866,6 +3889,11 @@
                     <p class="text-xs text-slate-400 dark:text-slate-500">Enter to save · Esc to discard · empty to clear</p>
                   </div>
                 </div>
+                <!-- no-match message when field search yields nothing -->
+                <p
+                  v-if="drawerFieldSearch && (selectedType?.fields ?? []).filter(f => fieldIsVisible(f, openedRecord) && f.label.toLowerCase().includes(drawerFieldSearch.toLowerCase())).length === 0"
+                  class="text-xs text-slate-400 dark:text-slate-500 italic text-center py-4"
+                >No fields match "{{ drawerFieldSearch }}"</p>
               </template>
 
               <!-- Activity tab -->
@@ -6644,6 +6672,7 @@ watch(showSaveViewPopover, (val) => {
   if (val) { saveViewName.value = ''; nextTick(() => saveViewInputEl.value?.focus()); }
 });
 const loggingNote = ref(false);
+const drawerFieldSearch = ref('');
 const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
 watch(loggingNote, (val) => { if (val) nextTick(() => activityTextareaEl.value?.focus()); });
 const noteText = ref('');
@@ -8817,6 +8846,7 @@ function openRecord(record: CrmRecord) {
   detailTab.value = 'details';
   showCreateLinkForm.value = false;
   newTaskDraft.value = '';
+  drawerFieldSearch.value = '';
   // track in recent list (dedupe + cap at 5)
   recentRecords.value = [record, ...recentRecords.value.filter((r) => r.id !== record.id)].slice(0, 5);
 }
