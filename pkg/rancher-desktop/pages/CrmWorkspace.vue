@@ -1235,7 +1235,8 @@
                   <th
                     v-for="col in visibleColumns"
                     :key="col.key"
-                    class="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap"
+                    class="relative px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap"
+                    :style="columnWidths[col.key] ? { width: `${columnWidths[col.key]}px`, minWidth: `${columnWidths[col.key]}px` } : undefined"
                     @contextmenu.prevent="openColHeaderMenu(col.key, $event)"
                   >
                     <button
@@ -1273,6 +1274,12 @@
                         />
                       </svg>
                     </button>
+                    <!-- column resize handle -->
+                    <div
+                      class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-sky-400/40 dark:hover:bg-sky-500/40 transition-colors"
+                      title="Drag to resize column"
+                      @mousedown.stop="onColResizeMouseDown($event, col.key, columnWidths[col.key] ?? (($event.currentTarget as HTMLElement).closest('th') as HTMLElement)?.offsetWidth ?? 160)"
+                    />
                   </th>
                   <th class="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap">
                     <div class="flex items-center gap-2">
@@ -4121,6 +4128,10 @@ const dateAfterFilters = ref<Record<string, string | null>>({});
 const dateBeforeFilters = ref<Record<string, string | null>>({});
 const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
+const columnWidths = ref<Record<string, number>>({});
+let colResizeDragKey: string | null = null;
+let colResizeDragStart = 0;
+let colResizeDragStartWidth = 0;
 const showColumnsMenu = ref(false);
 const sidebarCollapsed = ref(false);
 const pendingDeleteId = ref<string | null>(null);
@@ -5212,6 +5223,26 @@ function toggleColumnVisibility(key: string) {
   hiddenColumnKeys.value = next;
 }
 
+function onColResizeMouseDown(e: MouseEvent, colKey: string, currentWidth: number) {
+  e.preventDefault();
+  colResizeDragKey = colKey;
+  colResizeDragStart = e.clientX;
+  colResizeDragStartWidth = currentWidth;
+  function onMove(me: MouseEvent) {
+    if (!colResizeDragKey) return;
+    const delta = me.clientX - colResizeDragStart;
+    const newW = Math.max(60, colResizeDragStartWidth + delta);
+    columnWidths.value = { ...columnWidths.value, [colResizeDragKey]: newW };
+  }
+  function onUp() {
+    colResizeDragKey = null;
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+  }
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+}
+
 function selectType(key: string) {
   selectedTypeKey.value = key;
   searchQuery.value = '';
@@ -5226,6 +5257,7 @@ function selectType(key: string) {
   staleDaysFilter.value = null;
   createdPreset.value = null;
   customOrder.value = [];
+  columnWidths.value = {};
   draftValues.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
