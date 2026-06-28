@@ -5,6 +5,8 @@
     tabindex="-1"
     @keydown.esc="openedRecord = null; creatingRecord = false; editingRecord = false"
     @keydown.n.exact="onKeyN"
+    @keydown.up.exact.prevent="onKeyArrow(-1)"
+    @keydown.down.exact.prevent="onKeyArrow(1)"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1027,6 +1029,16 @@ function onKeyN(e: KeyboardEvent) {
   openNewRecord();
 }
 
+function onKeyArrow(dir: 1 | -1) {
+  if (!openedRecord.value || viewMode.value !== 'table') return;
+  const tag = document.activeElement?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  const records = filteredRecords.value;
+  const idx = records.findIndex((r) => r.id === openedRecord.value?.id);
+  const next = records[idx + dir];
+  if (next) openRecord(next);
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string): string {
@@ -1144,12 +1156,12 @@ const CrmFieldInput = defineComponent({
       if (props.dataType === 'select') {
         const opts = props.selectOptions;
         if (props.readOnly) {
-          return h('select', {
-            disabled: true,
-            class: baseClass + ' opacity-80 cursor-default appearance-none',
-          }, [
-            h('option', { value: val != null ? String(val) : '', selected: true }, val != null ? String(val) : '—'),
-          ]);
+          if (val == null || val === '') {
+            return h('span', { class: 'text-slate-300 dark:text-slate-600 text-sm' }, '—');
+          }
+          return h('span', {
+            class: 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ' + selectBadgeClass(String(val)),
+          }, String(val));
         }
         return h('select', {
           class: baseClass + ' appearance-none cursor-pointer',
