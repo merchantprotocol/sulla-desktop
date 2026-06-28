@@ -131,6 +131,7 @@
                 <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
               </svg>
               <input
+                ref="searchInputEl"
                 v-model="searchQuery"
                 type="text"
                 :placeholder="`Search ${selectedType?.label_plural ?? 'records'}…`"
@@ -982,6 +983,7 @@
             <template v-for="group in [
               { heading: 'Navigation', items: [
                 { keys: ['N'], desc: 'New record' },
+                { keys: ['/'], desc: 'Focus search' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Esc'], desc: 'Close panel' },
                 { keys: ['?'], desc: 'Toggle this overlay' },
@@ -1279,6 +1281,7 @@ function stageDot(stage: string): string {
 
 const selectedTypeKey = ref<string>(schema[0].key);
 const searchQuery = ref('');
+const searchInputEl = ref<HTMLInputElement | null>(null);
 const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
 const viewMode = ref<'table' | 'kanban'>('table');
@@ -1649,10 +1652,16 @@ function onKeyEsc() {
 }
 
 function onGlobalKeydown(e: KeyboardEvent) {
-  if (e.key !== '?') return;
   const tag = (e.target as HTMLElement)?.tagName ?? '';
-  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
-  showShortcuts.value = !showShortcuts.value;
+  const inField = ['INPUT', 'SELECT', 'TEXTAREA'].includes(tag);
+  if (e.key === '?' && !inField) {
+    showShortcuts.value = !showShortcuts.value;
+    return;
+  }
+  if (e.key === '/' && !inField) {
+    e.preventDefault();
+    searchInputEl.value?.focus();
+  }
 }
 
 function onKeyN(e: KeyboardEvent) {
