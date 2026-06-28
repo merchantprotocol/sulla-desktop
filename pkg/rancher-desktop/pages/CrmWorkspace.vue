@@ -2531,6 +2531,28 @@
           </svg>
           {{ watchedIds.has(contextMenuRecord.id) ? 'Unwatch' : 'Watch' }}
         </button>
+        <template v-if="contextMenuSelectFilters.length">
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <p class="px-3 pt-1.5 pb-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Filter by</p>
+          <button
+            v-for="opt in contextMenuSelectFilters"
+            :key="opt.fieldKey + ':' + opt.value"
+            type="button"
+            class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="toggleFilter(opt.fieldKey, opt.value); closeContextMenu()"
+          >
+            <svg
+              v-if="activeFilters.some(f => f.fieldKey === opt.fieldKey && f.value === opt.value)"
+              class="h-3.5 w-3.5 text-sky-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            <svg v-else class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+            </svg>
+            <span class="truncate"><span class="text-slate-400 dark:text-slate-500">{{ opt.label }}:</span> {{ opt.value }}</span>
+          </button>
+        </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button
           type="button"
@@ -3629,6 +3651,15 @@ function openContextMenu(record: CrmRecord, e: MouseEvent) {
 function closeContextMenu() {
   contextMenuRecord.value = null;
 }
+
+const contextMenuSelectFilters = computed(() => {
+  if (!contextMenuRecord.value) return [];
+  const record = contextMenuRecord.value;
+  const fields = selectedType.value?.fields ?? [];
+  return fields
+    .filter((f) => f.data_type === 'select' && record.field_values[f.key] != null)
+    .map((f) => ({ fieldKey: f.key, label: f.label, value: String(record.field_values[f.key]) }));
+});
 
 function openColHeaderMenu(fieldKey: string, e: MouseEvent) {
   const menuW = 180;
