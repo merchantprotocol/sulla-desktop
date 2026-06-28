@@ -8,6 +8,7 @@
     @keydown.d.exact="onKeyD"
     @keydown.e.exact="onKeyE"
     @keydown.p.exact="onKeyP"
+    @keydown.u.exact="onKeyU"
     @keydown.w.exact="onKeyW"
     @keydown.r.exact="onKeyR"
     @keydown.t.exact="onKeyT"
@@ -3987,6 +3988,18 @@
                 </button>
                 <button
                   type="button"
+                  :aria-label="archivedIds.has(openedRecord.id) ? 'Unarchive record' : 'Archive record'"
+                  :title="archivedIds.has(openedRecord.id) ? 'Unarchive record  U' : 'Archive record  U'"
+                  class="rounded-lg py-2 px-3 text-sm font-medium transition-colors"
+                  :class="archivedIds.has(openedRecord.id)
+                    ? 'text-amber-500 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-900/30'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
+                  @click="archivedIds.has(openedRecord.id) ? unarchiveRecord(openedRecord.id) : archiveRecord(openedRecord.id)"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
+                </button>
+                <button
+                  type="button"
                   aria-label="Delete record"
                   title="Delete record"
                   class="rounded-lg py-2 px-3 text-sm font-medium transition-colors text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
@@ -4089,6 +4102,7 @@
                 { keys: ['3'], desc: 'Related tab' },
                 { keys: ['['], desc: 'Previous record in list' },
                 { keys: [']'], desc: 'Next record in list' },
+                { keys: ['U'], desc: 'Archive / unarchive record' },
               ]},
               { heading: 'Gallery', items: [
                 { keys: ['Click'], desc: 'Open record detail' },
@@ -8881,6 +8895,15 @@ function onKeyW(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (openedRecord.value && !editingRecord.value && !creatingRecord.value) {
     toggleWatch(openedRecord.value.id);
+  }
+}
+
+function onKeyU(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (openedRecord.value && !editingRecord.value && !creatingRecord.value) {
+    const id = openedRecord.value.id;
+    archivedIds.value.has(id) ? unarchiveRecord(id) : archiveRecord(id);
   }
 }
 
