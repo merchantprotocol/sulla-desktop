@@ -2323,7 +2323,7 @@
             <template v-for="group in [
               { heading: 'Navigation', items: [
                 { keys: ['⌘', 'K'], desc: 'Command palette' },
-                { keys: ['N'], desc: 'New record' },
+                { keys: ['N'], desc: 'New record (or bulk note if rows selected)' },
                 { keys: ['D'], desc: 'Duplicate open record' },
                 { keys: ['P'], desc: 'Toggle pinned-only view' },
                 { keys: ['/'], desc: 'Focus search' },
@@ -2354,7 +2354,9 @@
                 { keys: ['Dbl-click'], desc: 'Edit cell inline' },
                 { keys: ['Enter'], desc: 'Commit cell edit' },
                 { keys: ['Esc'], desc: 'Cancel cell edit' },
-                { keys: ['Right-click'], desc: 'Row context menu' },
+                { keys: ['Right-click'], desc: 'Row context menu (filter by value)' },
+                { keys: ['Right-click', 'col'], desc: 'Column menu (sort / group / hide)' },
+                { keys: ['⇧', 'click col'], desc: 'Add secondary sort column' },
                 { keys: ['S'], desc: 'Bulk move to stage (when rows selected)' },
               ]},
               { heading: 'Forms', items: [
@@ -4534,6 +4536,10 @@ function onGlobalKeydown(e: KeyboardEvent) {
 function onKeyN(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (selectedIds.value.size > 0 && !openedRecord.value && !creatingRecord.value) {
+    showBulkNoteModal.value = true;
+    return;
+  }
   openNewRecord();
 }
 
@@ -4549,13 +4555,17 @@ function onKeyR(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
-  const hadState = searchQuery.value || activeFilters.value.length || sortField.value || showPinnedOnly.value || showWatchedOnly.value || showIncompleteOnly.value;
+  const hadState = searchQuery.value || activeFilters.value.length || sortField.value || showPinnedOnly.value || showWatchedOnly.value || showIncompleteOnly.value || groupByField.value;
   searchQuery.value = '';
   activeFilters.value = [];
   sortField.value = null;
+  sortDir.value = 'asc';
+  sortField2.value = null;
+  sortDir2.value = 'asc';
   showPinnedOnly.value = false;
   showWatchedOnly.value = false;
   showIncompleteOnly.value = false;
+  groupByField.value = null;
   if (hadState) showToast('View reset');
 }
 
