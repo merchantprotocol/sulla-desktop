@@ -937,33 +937,50 @@
               <div
                 v-for="col in kanbanColumns"
                 :key="col"
-                class="flex flex-col w-64 shrink-0"
+                class="flex shrink-0 transition-all duration-200"
+                :class="collapsedColumns.has(col) ? 'flex-col w-9' : 'flex-col w-64'"
               >
                 <!-- column header — sky accent when the open record lives in this column -->
                 <div
-                  class="flex items-center gap-2 px-2 py-1 mb-3 rounded-lg transition-colors"
-                  :class="openedRecord && kanbanField && String(openedRecord.field_values[kanbanField.key] ?? (col === KANBAN_UNASSIGNED ? col : '')) === col
-                    ? 'bg-sky-50 dark:bg-sky-950/20 ring-1 ring-sky-200 dark:ring-sky-800/60'
-                    : ''"
+                  class="flex items-center gap-2 px-2 py-1 mb-3 rounded-lg transition-colors cursor-pointer select-none"
+                  :class="[
+                    collapsedColumns.has(col) ? 'flex-col gap-1 h-auto px-1' : '',
+                    openedRecord && kanbanField && String(openedRecord.field_values[kanbanField.key] ?? (col === KANBAN_UNASSIGNED ? col : '')) === col
+                      ? 'bg-sky-50 dark:bg-sky-950/20 ring-1 ring-sky-200 dark:ring-sky-800/60'
+                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
+                  ]"
+                  :title="collapsedColumns.has(col) ? `Expand ${col === KANBAN_UNASSIGNED ? 'Unassigned' : col}` : `Collapse ${col === KANBAN_UNASSIGNED ? 'Unassigned' : col}`"
+                  @click="toggleColumnCollapse(col)"
                 >
                   <span
                     class="h-2 w-2 rounded-full shrink-0"
                     :class="col === KANBAN_UNASSIGNED ? 'bg-slate-300 dark:bg-slate-600' : stageDot(col)"
                   />
-                  <span class="text-xs font-semibold truncate" :class="col === KANBAN_UNASSIGNED ? 'text-slate-400 dark:text-slate-500 italic' : 'text-slate-700 dark:text-slate-300'">
+                  <span
+                    v-if="!collapsedColumns.has(col)"
+                    class="text-xs font-semibold truncate"
+                    :class="col === KANBAN_UNASSIGNED ? 'text-slate-400 dark:text-slate-500 italic' : 'text-slate-700 dark:text-slate-300'"
+                  >
                     {{ col === KANBAN_UNASSIGNED ? 'Unassigned' : col }}
                   </span>
-                  <span class="ml-auto text-xs tabular-nums text-slate-400 dark:text-slate-500 font-medium shrink-0">
+                  <span
+                    v-if="!collapsedColumns.has(col)"
+                    class="ml-auto text-xs tabular-nums text-slate-400 dark:text-slate-500 font-medium shrink-0"
+                  >
                     <template v-if="(searchQuery || activeFilters.length) && (kanbanGroups[col] ?? []).length !== (kanbanGroupsTotal[col] ?? 0)">
                       <span class="text-sky-500 dark:text-sky-400">{{ (kanbanGroups[col] ?? []).length }}</span> of {{ kanbanGroupsTotal[col] ?? 0 }}
                     </template>
                     <template v-else>{{ (kanbanGroups[col] ?? []).length }}</template>
                     <template v-if="kanbanColumnTotals[col]"> · {{ kanbanColumnTotals[col] }}</template>
                   </span>
+                  <span
+                    v-else
+                    class="text-xs tabular-nums font-semibold text-slate-500 dark:text-slate-400"
+                  >{{ (kanbanGroups[col] ?? []).length }}</span>
                 </div>
 
                 <!-- cards -->
-                <div class="flex-1 space-y-2 overflow-y-auto pb-2 pr-0.5">
+                <div v-if="!collapsedColumns.has(col)" class="flex-1 space-y-2 overflow-y-auto pb-2 pr-0.5">
                   <button
                     v-for="record in (kanbanGroups[col] ?? [])"
                     :key="record.id"
@@ -2418,6 +2435,7 @@ const detailTab = ref<'details' | 'activity' | 'related'>('details');
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
 const bulkStageDropdown = ref(false);
+const collapsedColumns = ref<Set<string>>(new Set());
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const loggingNote = ref(false);
 const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
@@ -2897,6 +2915,12 @@ function bulkWatchToggle() {
   }
   watchedIds.value = next;
   showToast(allWatched ? `Unwatching ${ids.length} record${ids.length === 1 ? '' : 's'}` : `Watching ${ids.length} record${ids.length === 1 ? '' : 's'}`);
+}
+
+function toggleColumnCollapse(col: string) {
+  const next = new Set(collapsedColumns.value);
+  if (next.has(col)) next.delete(col); else next.add(col);
+  collapsedColumns.value = next;
 }
 
 function bulkMoveToStage(stage: string) {
