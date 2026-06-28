@@ -1734,6 +1734,10 @@ function openLinkedRecord(link: CrmLink) {
 
 function onKeyEsc() {
   if (showShortcuts.value) { showShortcuts.value = false; return; }
+  if (searchInputEl.value && document.activeElement === searchInputEl.value && searchQuery.value) {
+    searchQuery.value = '';
+    return;
+  }
   closePanel();
 }
 
