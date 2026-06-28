@@ -4290,7 +4290,7 @@ const { isDark, toggleTheme } = useTheme();
 type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select';
 type IconKey = 'user' | 'building' | 'chart' | 'target' | 'check' | 'folder' | 'tag' | 'list' | 'layers' | 'star';
 
-type FieldFormat = 'currency' | 'percent' | undefined;
+type FieldFormat = 'currency' | 'percent' | 'progress' | undefined;
 
 interface CrmField {
   id: string;
@@ -4445,7 +4445,7 @@ const schema = reactive<CrmRecordType[]>([
       { id: 'f_dl2', key: 'stage',       label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'] },
       { id: 'f_dl3', key: 'amount',      label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2, format: 'currency' },
       { id: 'f_dl4', key: 'close_date',  label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3 },
-      { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4, format: 'percent' },
+      { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4, format: 'progress' },
     ],
   },
   {
@@ -4455,7 +4455,7 @@ const schema = reactive<CrmRecordType[]>([
       { id: 'f_ld1', key: 'name',      label: 'Name',      data_type: 'text',    is_title: true,  is_required: true,  position: 0 },
       { id: 'f_ld2', key: 'email',     label: 'Email',     data_type: 'email',   is_title: false, is_required: false, position: 1 },
       { id: 'f_ld3', key: 'source',    label: 'Source',    data_type: 'select',  is_title: false, is_required: false, position: 2, select_options: ['Webinar', 'LinkedIn', 'Referral', 'Paid Social', 'Organic', 'Direct'] },
-      { id: 'f_ld4', key: 'score',     label: 'Score',     data_type: 'number',  is_title: false, is_required: false, position: 3 },
+      { id: 'f_ld4', key: 'score',     label: 'Score',     data_type: 'number',  is_title: false, is_required: false, position: 3, format: 'progress' },
       { id: 'f_ld5', key: 'converted', label: 'Converted', data_type: 'boolean', is_title: false, is_required: false, position: 4 },
     ],
   },
@@ -7083,6 +7083,7 @@ function formatCardValue(val: string | number | boolean | string[] | null | unde
       return '$' + n;
     }
     if (format === 'percent') return n + '%';
+    if (format === 'progress') return n + '%';
     return n.toLocaleString();
   }
   if (dataType === 'date') return new Date(String(val)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -7121,6 +7122,16 @@ const CrmCellValue = defineComponent({
       }
       if (props.dataType === 'number') {
         const n = Number(props.value);
+        if (props.format === 'progress') {
+          const pct = Math.max(0, Math.min(100, n));
+          const color = pct >= 70 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444';
+          return h('span', { class: 'flex items-center gap-1.5 w-full max-w-[120px]' }, [
+            h('span', { class: 'flex-1 h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden' }, [
+              h('span', { class: 'h-full rounded-full block', style: `width:${pct}%;background:${color}` }),
+            ]),
+            h('span', { class: 'tabular-nums text-xs w-8 text-right shrink-0', style: `color:${color}` }, pct + '%'),
+          ]);
+        }
         let display: string;
         if (props.format === 'currency') {
           display = '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -7349,6 +7360,19 @@ const CrmFieldInput = defineComponent({
         });
       }
       if (props.readOnly && props.dataType === 'number' && props.format) {
+        if (props.format === 'progress') {
+          const pct = val != null ? Math.max(0, Math.min(100, Number(val))) : 0;
+          const color = pct >= 70 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444';
+          return h('div', { class: 'space-y-1.5 py-1' }, [
+            h('div', { class: 'flex items-center justify-between text-xs' }, [
+              h('span', { class: 'text-slate-400 dark:text-slate-500' }, val == null ? '—' : ''),
+              h('span', { class: 'font-semibold tabular-nums', style: `color:${color}` }, val != null ? pct + '%' : '—'),
+            ]),
+            val != null ? h('div', { class: 'h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden' }, [
+              h('div', { class: 'h-full rounded-full transition-all', style: `width:${pct}%;background:${color}` }),
+            ]) : null,
+          ]);
+        }
         let displayVal = '';
         if (val != null && val !== '') {
           const n = Number(val);
@@ -7364,6 +7388,24 @@ const CrmFieldInput = defineComponent({
           readonly: true,
           class: baseClass + ' opacity-80 cursor-default tabular-nums',
         });
+      }
+      if (!props.readOnly && props.dataType === 'number' && props.format === 'progress') {
+        const pct = val != null ? Math.max(0, Math.min(100, Number(val))) : 0;
+        const color = pct >= 70 ? '#10b981' : pct >= 40 ? '#f59e0b' : '#ef4444';
+        return h('div', { class: 'space-y-2' }, [
+          h('div', { class: 'flex items-center gap-3' }, [
+            h('input', {
+              type: 'range', min: 0, max: 100, step: 1,
+              value: pct,
+              class: 'flex-1 accent-sky-500 cursor-pointer',
+              onInput: (e: Event) => emit('update:value', Number((e.target as HTMLInputElement).value)),
+            }),
+            h('span', { class: 'text-sm font-semibold tabular-nums w-10 text-right shrink-0', style: `color:${color}` }, pct + '%'),
+          ]),
+          h('div', { class: 'h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden' }, [
+            h('div', { class: 'h-full rounded-full transition-all', style: `width:${pct}%;background:${color}` }),
+          ]),
+        ]);
       }
       const inputType = props.dataType === 'number' ? 'number'
         : props.dataType === 'date' ? 'date'
