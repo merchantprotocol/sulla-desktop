@@ -1896,6 +1896,29 @@
                     </button>
                   </div>
                 </div>
+                <!-- activity search — shown when 4+ activities exist -->
+                <div v-if="recordActivities.length >= 4" class="relative">
+                  <svg class="pointer-events-none absolute top-1/2 left-2.5 h-3 w-3 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+                  </svg>
+                  <input
+                    v-model="activitySearchQuery"
+                    type="text"
+                    placeholder="Search activity…"
+                    :class="['h-7 w-full rounded-lg pl-7 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40', activitySearchQuery ? 'pr-6' : 'pr-2']"
+                  />
+                  <button
+                    v-if="activitySearchQuery"
+                    type="button"
+                    class="absolute top-1/2 right-1.5 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded transition-colors"
+                    @click="activitySearchQuery = ''"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+
                 <!-- activity type filter chips -->
                 <div v-if="recordActivities.length > 1" class="flex items-center gap-1 flex-wrap">
                   <button
@@ -1948,6 +1971,7 @@
                     </div>
                   </template>
                 </div>
+                <p v-else-if="activitySearchQuery" class="text-xs text-slate-400 dark:text-slate-500 italic">No activity matches your search.</p>
                 <p v-else-if="activityTypeFilter !== 'all'" class="text-xs text-slate-400 dark:text-slate-500 italic">No {{ activityTypeFilter }} activity logged yet.</p>
                 <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No activity logged yet.</p>
               </template>
@@ -3263,12 +3287,16 @@ const recordActivities = computed(() =>
 );
 
 const activityTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
+const activitySearchQuery = ref('');
 
-const visibleActivities = computed(() =>
-  activityTypeFilter.value === 'all'
+const visibleActivities = computed(() => {
+  let result = activityTypeFilter.value === 'all'
     ? recordActivities.value
-    : recordActivities.value.filter((a) => a.type === activityTypeFilter.value),
-);
+    : recordActivities.value.filter((a) => a.type === activityTypeFilter.value);
+  const q = activitySearchQuery.value.trim().toLowerCase();
+  if (q) result = result.filter((a) => a.content.toLowerCase().includes(q) || a.author.toLowerCase().includes(q));
+  return result;
+});
 
 type ActivityRow =
   | { kind: 'label'; label: string; key: string }
@@ -3635,6 +3663,7 @@ function closePanel() {
   createFormErrors.value = new Set();
   loggingNote.value = false;
   noteText.value = '';
+  activitySearchQuery.value = '';
   editingTitle.value = false;
   annotatingField.value = null;
   annotationDraft.value = '';
