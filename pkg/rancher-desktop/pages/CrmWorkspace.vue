@@ -1553,6 +1553,14 @@
                             <span v-else>{{ part.text }}</span>
                           </template>
                         </span>
+                        <template v-else-if="col.data_type === 'text' && String(record.field_values[col.key] ?? '').length > 80">
+                          <span :class="expandedRowIds.has(record.id) ? 'whitespace-pre-wrap break-words' : 'truncate block max-w-[220px]'">{{ record.field_values[col.key] }}</span>
+                          <button
+                            type="button"
+                            class="ml-1 text-xs text-sky-500 dark:text-sky-400 hover:underline"
+                            @click.stop="toggleRowExpand(record.id)"
+                          >{{ expandedRowIds.has(record.id) ? 'less' : 'more' }}</button>
+                        </template>
                         <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                         <!-- funnel icon on select cells to hint at click-to-filter -->
                         <span
@@ -4246,6 +4254,7 @@ const dateBeforeFilters = ref<Record<string, string | null>>({});
 const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
 const pinnedColumnKeys = ref<Set<string>>(new Set());
+const expandedRowIds = ref<Set<string>>(new Set());
 const columnWidths = ref<Record<string, number>>({});
 let colResizeDragKey: string | null = null;
 let colResizeDragStart = 0;
@@ -5419,6 +5428,13 @@ function commitMerge() {
   if (openedRecord.value?.id === secondary.id) openRecord(primary);
   showMergeModal.value = false;
   showToast(`Merged into "${primary.title}"`);
+}
+
+function toggleRowExpand(id: string) {
+  const next = new Set(expandedRowIds.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedRowIds.value = next;
 }
 
 function togglePinColumn(key: string) {
