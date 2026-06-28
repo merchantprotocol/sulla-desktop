@@ -10,6 +10,8 @@
     @keydown.p.exact="onKeyP"
     @keydown.w.exact="onKeyW"
     @keydown.r.exact="onKeyR"
+    @keydown.t.exact="onKeyT"
+    @keydown.b.exact="onKeyB"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -1791,6 +1793,8 @@
                 { keys: ['/'], desc: 'Focus search' },
                 { keys: ['R'], desc: 'Reset filters, search & sort' },
                 { keys: ['1-4'], desc: 'Switch record type (no panel open)' },
+                { keys: ['T'], desc: 'Table view' },
+                { keys: ['B'], desc: 'Board / Kanban view' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Esc'], desc: 'Close panel' },
                 { keys: ['?'], desc: 'Toggle this overlay' },
@@ -3198,6 +3202,20 @@ function onKeyR(e: KeyboardEvent) {
   activeFilters.value = [];
   sortField.value = null;
   if (hadState) showToast('View reset');
+}
+
+function onKeyT(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  viewMode.value = 'table';
+}
+
+function onKeyB(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  if (canKanban.value) viewMode.value = 'kanban';
 }
 
 function startEditing(record: CrmRecord) {
