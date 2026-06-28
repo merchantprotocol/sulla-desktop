@@ -865,6 +865,31 @@ export class CrmSchemaService {
     }
   }
 
+  /**
+   * Create multiple records of the same type in one call. Each item in `items`
+   * is a field-values map (same shape as createRecord `values`). Returns the
+   * count of successful inserts and an error list for failed items — never
+   * aborts the whole batch on a single failure.
+   */
+  static async bulkCreateRecords(
+    recordTypeId: string,
+    items: Array<Record<string, unknown>>,
+    tenantId = DEFAULT_TENANT_ID,
+    createdBy?: string,
+  ): Promise<{ created: number; errors: Array<{ index: number; error: string }> }> {
+    let created = 0;
+    const errors: Array<{ index: number; error: string }> = [];
+    for (let i = 0; i < items.length; i++) {
+      const result = await CrmSchemaService.createRecord(recordTypeId, items[i], tenantId, createdBy);
+      if (result.ok) {
+        created++;
+      } else {
+        errors.push({ index: i, error: result.error ?? 'unknown error' });
+      }
+    }
+    return { created, errors };
+  }
+
   // ── Read / discovery ──────────────────────────────────────────────────────
 
   /**

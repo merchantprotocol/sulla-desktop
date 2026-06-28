@@ -168,6 +168,18 @@ export const crmToolManifests: ToolManifest[] = [
     loader:         () => import('./search_records'),
   },
   {
+    name:        'bulk_create_records',
+    description: 'Create multiple records of the same type in one call. Accepts { items: [{ field: value, ... }, ...] } — up to 200 items. Fails per-item without aborting the batch; returns created count + error list.',
+    category:    'crm',
+    schemaDef:   {
+      record_type: { type: 'string', description: 'Record type key or id.' },
+      items:       { type: 'array', description: 'Array of field-value maps, one per record (max 200).', items: { type: 'object' } },
+      created_by:  { type: 'string', optional: true, description: 'Optional creator attribution.' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./bulk_create_records'),
+  },
+  {
     name:        'get_record',
     description: 'Get a single record by id with all field values hydrated. Use after get_linked_records returns an id and you need the full details.',
     category:    'crm',
