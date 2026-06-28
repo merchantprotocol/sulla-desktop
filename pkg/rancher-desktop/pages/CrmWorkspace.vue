@@ -18,7 +18,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -359,25 +359,102 @@
               </button>
             </div>
 
-            <!-- filter button — clears filters when active -->
-            <button
-              type="button"
-              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
-              :class="activeFilters.length
-                ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/40'
-                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
-              :title="activeFilters.length ? `Clear ${activeFilters.length} active filter${activeFilters.length > 1 ? 's' : ''}` : 'Filter records'"
-              @click="activeFilters.length ? clearFilters() : undefined"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
-              </svg>
-              Filter
-              <span
-                v-if="activeFilters.length"
-                class="inline-flex items-center justify-center h-4 min-w-[1rem] rounded-full px-1 text-xs font-semibold bg-sky-500 text-white"
-              >{{ activeFilters.length }}</span>
-            </button>
+            <!-- filter button + dropdown -->
+            <div class="relative">
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+                :class="activeFilters.length || showFilterDropdown
+                  ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/40 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/40'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+                title="Filter records"
+                @click.stop="showFilterDropdown = !showFilterDropdown; filterPickerField = null"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+                </svg>
+                Filter
+                <span
+                  v-if="activeFilters.length"
+                  class="inline-flex items-center justify-center h-4 min-w-[1rem] rounded-full px-1 text-xs font-semibold bg-sky-500 text-white"
+                >{{ activeFilters.length }}</span>
+              </button>
+              <!-- filter picker dropdown -->
+              <transition
+                enter-active-class="transition-all duration-150"
+                enter-from-class="opacity-0 scale-95 -translate-y-1"
+                enter-to-class="opacity-100 scale-100 translate-y-0"
+                leave-active-class="transition-all duration-100"
+                leave-from-class="opacity-100 scale-100 translate-y-0"
+                leave-to-class="opacity-0 scale-95 -translate-y-1"
+              >
+                <div
+                  v-if="showFilterDropdown"
+                  class="absolute top-full left-0 mt-1 z-40 w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg overflow-hidden"
+                  @click.stop
+                >
+                  <template v-if="!filterPickerField">
+                    <p class="px-3 pt-2.5 pb-1 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Filter by</p>
+                    <button
+                      v-for="col in allColumns.filter(c => c.data_type === 'select' && (c.select_options?.length ?? 0) > 0)"
+                      :key="col.key"
+                      type="button"
+                      class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                      @click="filterPickerField = col.key"
+                    >
+                      <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+                      </svg>
+                      {{ col.label }}
+                    </button>
+                    <div v-if="activeFilters.length" class="border-t border-slate-100 dark:border-slate-800 mt-1">
+                      <button
+                        type="button"
+                        class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors"
+                        @click="clearFilters(); showFilterDropdown = false"
+                      >
+                        <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                        Clear all filters
+                      </button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="flex items-center gap-1 px-3 pt-2.5 pb-1">
+                      <button
+                        type="button"
+                        class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                        @click="filterPickerField = null"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                        </svg>
+                      </button>
+                      <p class="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                        {{ allColumns.find(c => c.key === filterPickerField)?.label }}
+                      </p>
+                    </div>
+                    <button
+                      v-for="opt in allColumns.find(c => c.key === filterPickerField)?.select_options ?? []"
+                      :key="opt"
+                      type="button"
+                      class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors"
+                      :class="activeFilters.some(f => f.fieldKey === filterPickerField && f.value === opt)
+                        ? 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                      @click="toggleFilter(filterPickerField, opt); showFilterDropdown = false"
+                    >
+                      <span
+                        class="h-2 w-2 rounded-full shrink-0"
+                        :class="stageDot(opt)"
+                      />
+                      {{ opt }}
+                    </button>
+                  </template>
+                </div>
+              </transition>
+            </div>
 
             <!-- active sort chip -->
             <div
@@ -2465,6 +2542,8 @@ const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
 const bulkStageDropdown = ref(false);
 const collapsedColumns = ref<Set<string>>(new Set());
+const showFilterDropdown = ref(false);
+const filterPickerField = ref<string | null>(null);
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const loggingNote = ref(false);
 const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
