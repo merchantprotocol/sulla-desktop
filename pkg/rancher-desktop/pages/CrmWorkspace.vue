@@ -27,7 +27,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd()"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -2449,14 +2449,39 @@
                   <p class="text-xs text-slate-300 dark:text-slate-700 select-none">No matches</p>
                 </div>
 
-                <!-- add card placeholder -->
-                  <button
-                    type="button"
-                    class="w-full text-left rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-3 text-xs text-slate-400 dark:text-slate-600 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-500 dark:hover:text-slate-500 transition-colors"
-                    @click="openNewRecord(col === KANBAN_UNASSIGNED ? undefined : col)"
-                  >
-                    + Add record
-                  </button>
+                <!-- add card placeholder — inline if active, button otherwise -->
+                <div v-if="kanbanInlineAdd?.col === col" class="rounded-xl border border-sky-200 dark:border-sky-700 bg-white dark:bg-slate-900 p-3 space-y-2" @click.stop>
+                  <input
+                    ref="kanbanInlineInputEl"
+                    v-model="kanbanInlineTitle"
+                    type="text"
+                    placeholder="Record title…"
+                    class="w-full text-sm rounded-lg px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-sky-400 dark:focus:ring-sky-500"
+                    @keydown.enter.prevent="commitKanbanInlineAdd"
+                    @keydown.esc.stop="cancelKanbanInlineAdd"
+                  />
+                  <div class="flex items-center gap-2">
+                    <button
+                      type="button"
+                      class="flex-1 text-xs font-medium bg-sky-500 hover:bg-sky-600 text-white rounded-lg px-2 py-1.5 transition-colors"
+                      :disabled="!kanbanInlineTitle.trim()"
+                      @click="commitKanbanInlineAdd"
+                    >Add</button>
+                    <button
+                      type="button"
+                      class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                      @click="cancelKanbanInlineAdd"
+                    >Cancel</button>
+                  </div>
+                </div>
+                <button
+                  v-else
+                  type="button"
+                  class="w-full text-left rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-3 text-xs text-slate-400 dark:text-slate-600 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-500 dark:hover:text-slate-500 transition-colors"
+                  @click="startKanbanInlineAdd(col)"
+                >
+                  + Add record
+                </button>
                 </div>
               </div>
 
@@ -5551,6 +5576,10 @@ const groupByField = ref<string | null>(null);
 const showAddStageInput = ref(false);
 const newStageName = ref('');
 const addStageInputEl = ref<HTMLInputElement | null>(null);
+
+const kanbanInlineAdd = ref<{ col: string } | null>(null);
+const kanbanInlineTitle = ref('');
+const kanbanInlineInputEl = ref<HTMLInputElement | null>(null);
 watch(showAddStageInput, (v) => { if (v) { newStageName.value = ''; nextTick(() => addStageInputEl.value?.focus()); } });
 const collapsedGroups = ref<Set<string>>(new Set());
 watch(groupByField, () => { collapsedGroups.value = new Set(); });
@@ -7252,6 +7281,8 @@ function selectType(key: string) {
   showDueSoonOnly.value = false;
   createdPreset.value = null;
   galleryFocusIdx.value = -1;
+  kanbanInlineAdd.value = null;
+  kanbanInlineTitle.value = '';
   customOrder.value = [];
   columnWidths.value = {};
   pinnedColumnKeys.value = new Set();
@@ -7404,6 +7435,49 @@ function saveNewRecord() {
   draftValues.value = {};
   openRecord(newRecord);
   showToast(`${type?.label ?? 'Record'} created`);
+}
+
+function startKanbanInlineAdd(col: string) {
+  kanbanInlineAdd.value = { col };
+  kanbanInlineTitle.value = '';
+  nextTick(() => kanbanInlineInputEl.value?.focus());
+}
+
+function cancelKanbanInlineAdd() {
+  kanbanInlineAdd.value = null;
+  kanbanInlineTitle.value = '';
+}
+
+function commitKanbanInlineAdd() {
+  const ia = kanbanInlineAdd.value;
+  const title = kanbanInlineTitle.value.trim();
+  if (!ia || !title) { cancelKanbanInlineAdd(); return; }
+  const type = selectedType.value;
+  const titleField = type?.fields.find((f) => f.is_title);
+  const fieldKey = kanbanField.value?.key;
+  const fieldValues: Record<string, string | number | boolean | string[] | null> = {};
+  if (titleField) fieldValues[titleField.key] = title;
+  if (fieldKey && ia.col !== KANBAN_UNASSIGNED) fieldValues[fieldKey] = ia.col;
+  const newRecord: CrmRecord = {
+    id: 'new-' + selectedTypeKey.value + '-' + String(mockRecords.length),
+    record_type_key: selectedTypeKey.value,
+    title,
+    created_at: new Date().toISOString(),
+    field_values: fieldValues,
+    links: [],
+  };
+  mockRecords.push(newRecord);
+  mockActivities.unshift({
+    id: 'act-create-' + newRecord.id,
+    record_id: newRecord.id,
+    type: 'change',
+    content: 'Record created',
+    author: 'You',
+    created_at: newRecord.created_at,
+  });
+  kanbanInlineTitle.value = '';
+  showToast(`${type?.label ?? 'Record'} created`);
+  nextTick(() => kanbanInlineInputEl.value?.focus());
 }
 
 function commitInlineAdd() {
