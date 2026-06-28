@@ -873,7 +873,7 @@
 
           <!-- active filter pills -->
           <div
-            v-if="activeFilters.length || groupByField"
+            v-if="activeFilters.length || groupByField || Object.values(fieldTextFilters).some(v => v.trim())"
             class="flex items-center gap-2 px-6 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-950/50 flex-wrap"
           >
             <!-- group-by chip -->
@@ -896,7 +896,8 @@
                 </svg>
               </button>
             </div>
-            <span v-if="activeFilters.length" class="text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">Filtered by:</span>
+            <span v-if="activeFilters.length || Object.values(fieldTextFilters).some(v => v.trim())" class="text-xs font-medium text-slate-500 dark:text-slate-400 shrink-0">Filtered by:</span>
+            <!-- select-field filter chips -->
             <div
               v-for="f in activeFilters"
               :key="f.fieldKey + ':' + f.value"
@@ -914,6 +915,28 @@
                 </svg>
               </button>
             </div>
+            <!-- text-field filter chips -->
+            <template v-for="(val, fkey) in fieldTextFilters" :key="'tf:' + fkey">
+              <div
+                v-if="val.trim()"
+                class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300"
+              >
+                <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803" />
+                </svg>
+                <span>{{ allColumns.find(c => c.key === fkey)?.label }} contains: <b>{{ val }}</b></span>
+                <button
+                  type="button"
+                  class="ml-0.5 text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-200 transition-colors leading-none"
+                  :aria-label="`Remove ${fkey} text filter`"
+                  @click="fieldTextFilters = { ...fieldTextFilters, [fkey]: '' }"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </template>
             <button
               type="button"
               class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors ml-1"
@@ -2786,6 +2809,24 @@
             {{ groupByField === colHeaderMenu?.fieldKey ? 'Clear grouping' : 'Group by this field' }}
           </button>
         </template>
+        <template v-if="['text', 'email', 'phone', 'url'].includes(allColumns.find(c => c.key === colHeaderMenu?.fieldKey)?.data_type ?? '')">
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <div class="px-3 py-2 space-y-1">
+            <p class="text-xs text-slate-400 dark:text-slate-500 font-medium">Contains text:</p>
+            <div class="relative">
+              <input
+                type="text"
+                :value="fieldTextFilters[colHeaderMenu?.fieldKey ?? ''] ?? ''"
+                placeholder="Filter…"
+                class="h-7 w-full rounded-lg px-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                @input="fieldTextFilters = { ...fieldTextFilters, [colHeaderMenu!.fieldKey]: ($event.target as HTMLInputElement).value }"
+                @keydown.enter.stop="colHeaderMenu = null"
+                @keydown.esc.stop="fieldTextFilters = { ...fieldTextFilters, [colHeaderMenu!.fieldKey]: '' }; colHeaderMenu = null"
+                @click.stop
+              />
+            </div>
+          </div>
+        </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           @click="hiddenColumnKeys = new Set([...hiddenColumnKeys, colHeaderMenu!.fieldKey]); colHeaderMenu = null">
@@ -3213,6 +3254,7 @@ const sortDir = ref<'asc' | 'desc'>('asc');
 const sortField2 = ref<string | null>(null);
 const sortDir2 = ref<'asc' | 'desc'>('asc');
 const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
+const fieldTextFilters = ref<Record<string, string>>({});
 const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
 const showColumnsMenu = ref(false);
@@ -3452,6 +3494,15 @@ const filteredRecords = computed(() => {
   if (activeFilters.value.length) {
     result = result.filter((r) =>
       activeFilters.value.every((f) => String(r.field_values[f.fieldKey] ?? '') === f.value),
+    );
+  }
+
+  const ftEntries = Object.entries(fieldTextFilters.value).filter(([, v]) => v.trim());
+  if (ftEntries.length) {
+    result = result.filter((r) =>
+      ftEntries.every(([k, q]) =>
+        String(r.field_values[k] ?? r.title ?? '').toLowerCase().includes(q.toLowerCase()),
+      ),
     );
   }
 
@@ -3991,6 +4042,7 @@ function toggleFilter(fieldKey: string, value: string) {
 
 function clearFilters() {
   activeFilters.value = [];
+  fieldTextFilters.value = {};
 }
 
 function startCellEdit(record: CrmRecord, col: CrmField) {
@@ -4555,9 +4607,10 @@ function onKeyR(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
-  const hadState = searchQuery.value || activeFilters.value.length || sortField.value || showPinnedOnly.value || showWatchedOnly.value || showIncompleteOnly.value || groupByField.value;
+  const hadState = searchQuery.value || activeFilters.value.length || Object.values(fieldTextFilters.value).some(v => v.trim()) || sortField.value || showPinnedOnly.value || showWatchedOnly.value || showIncompleteOnly.value || groupByField.value;
   searchQuery.value = '';
   activeFilters.value = [];
+  fieldTextFilters.value = {};
   sortField.value = null;
   sortDir.value = 'asc';
   sortField2.value = null;
