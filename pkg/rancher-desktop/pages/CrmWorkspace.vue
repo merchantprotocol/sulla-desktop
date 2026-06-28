@@ -30,7 +30,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -920,6 +920,29 @@
                 aria-label="Back to active records"
                 title="Back to active records"
                 @click.stop="showArchived = false"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <!-- snoozed records pill -->
+            <div
+              v-if="Object.entries(snoozedUntil).filter(([id]) => mockRecords.find(r => r.id === id && r.record_type_key === selectedTypeKey)).length > 0"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-violet-50 dark:bg-violet-950/20 text-violet-500 dark:text-violet-400 border border-violet-200 dark:border-violet-800/50 cursor-default select-none"
+              :title="`${Object.entries(snoozedUntil).filter(([id]) => mockRecords.find(r => r.id === id && r.record_type_key === selectedTypeKey)).length} record(s) snoozed — they're hidden until their snooze date`"
+            >
+              <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{{ Object.entries(snoozedUntil).filter(([id]) => mockRecords.find(r => r.id === id && r.record_type_key === selectedTypeKey)).length }} snoozed</span>
+              <button
+                type="button"
+                class="ml-0.5 rounded-full hover:bg-violet-200 dark:hover:bg-violet-900/40 p-0.5 transition-colors"
+                aria-label="Clear all snoozes for this type"
+                title="Clear all snoozes"
+                @click.stop="(() => { const next = { ...snoozedUntil }; for (const r of mockRecords.filter(r => r.record_type_key === selectedTypeKey)) delete next[r.id]; snoozedUntil = next; })()"
               >
                 <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -3675,6 +3698,37 @@
                   <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
                 </svg>
               </button>
+              <!-- snooze record -->
+              <div class="relative shrink-0 mt-0.5" @click.stop>
+                <button
+                  type="button"
+                  class="rounded-lg p-1 transition-colors"
+                  :class="snoozedUntil[openedRecord.id] ? 'text-violet-500 hover:text-violet-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'"
+                  :title="snoozedUntil[openedRecord.id] ? `Snoozed until ${snoozedUntil[openedRecord.id]} — click to clear` : 'Snooze (hide) this record until a date'"
+                  @click="snoozeMenuId = snoozeMenuId === openedRecord.id ? null : openedRecord.id"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path v-if="snoozedUntil[openedRecord.id]" stroke-linecap="round" stroke-linejoin="round" d="M9.5 9.5L14.5 14.5" class="text-violet-400" />
+                  </svg>
+                </button>
+                <div
+                  v-if="snoozeMenuId === openedRecord.id"
+                  class="absolute right-0 top-full mt-1 w-44 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1 z-20"
+                >
+                  <p class="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Snooze until</p>
+                  <button v-for="(days, label) in ({ '1 day': 1, '3 days': 3, '1 week': 7, '2 weeks': 14, '1 month': 30 })" :key="label" type="button"
+                    class="w-full flex items-center px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    @click="snoozedUntil = { ...snoozedUntil, [openedRecord.id]: dateOffset(days) }; snoozeMenuId = null; showToast(`Snoozed until ${dateOffset(days)}`); closePanel()">
+                    {{ label }}
+                  </button>
+                  <button v-if="snoozedUntil[openedRecord.id]" type="button"
+                    class="w-full flex items-center px-3 py-1.5 text-sm text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-colors"
+                    @click="(() => { const s = { ...snoozedUntil }; delete s[openedRecord.id]; snoozedUntil = s; snoozeMenuId = null; showToast('Snooze cleared'); })()">
+                    Clear snooze
+                  </button>
+                </div>
+              </div>
               <!-- expand / compress panel button -->
               <button
                 type="button"
@@ -6785,6 +6839,8 @@ const showCreateLinkForm = ref(false);
 const createLinkTypeKey = ref('');
 const createLinkTitle = ref('');
 const watchedIds = ref<Set<string>>(new Set());
+const snoozedUntil = ref<Record<string, string>>({});
+const snoozeMenuId = ref<string | null>(null);
 const COLOR_LABEL_PALETTE = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'] as const;
 const colorLabels = ref<Record<string, string>>({});
 const colorLabelFilter = ref<string | null>(null);
@@ -7259,9 +7315,14 @@ const archivedCountForType = computed(() =>
 
 const filteredRecords = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
+  const todayStr = DUE_TODAY_STR;
   const recs = mockRecords.filter((r) => {
     if (r.record_type_key !== selectedTypeKey.value) return false;
-    return showArchived.value ? archivedIds.value.has(r.id) : !archivedIds.value.has(r.id);
+    if (!showArchived.value && archivedIds.value.has(r.id)) return false;
+    if (showArchived.value && !archivedIds.value.has(r.id)) return false;
+    const snooze = snoozedUntil.value[r.id];
+    if (snooze && snooze > todayStr) return false;
+    return true;
   });
   let result: CrmRecord[] = q
     ? recs.filter((r) =>
