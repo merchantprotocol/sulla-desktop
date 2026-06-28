@@ -206,7 +206,21 @@
                     </button>
                   </th>
                   <th class="px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap">
-                    <span class="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Added</span>
+                    <button
+                      type="button"
+                      class="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide transition-colors select-none"
+                      :class="sortField === '__created_at__'
+                        ? 'text-sky-600 dark:text-sky-400'
+                        : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
+                      @click="toggleSort('__created_at__')"
+                    >
+                      Added
+                      <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path v-if="sortField === '__created_at__' && sortDir === 'asc'" stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                        <path v-else-if="sortField === '__created_at__' && sortDir === 'desc'" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                        <path v-else stroke-linecap="round" stroke-linejoin="round" class="opacity-30" d="M8 9l4-4 4 4M8 15l4 4 4-4" />
+                      </svg>
+                    </button>
                   </th>
                   <th class="w-10 px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800" />
                 </tr>
@@ -793,6 +807,13 @@ const filteredRecords = computed(() => {
 
   const key = sortField.value;
   const dir = sortDir.value === 'asc' ? 1 : -1;
+
+  if (key === '__created_at__') {
+    return [...filtered].sort((a, b) =>
+      (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir,
+    );
+  }
+
   const col = selectedType.value?.fields.find((f) => f.key === key);
 
   return [...filtered].sort((a, b) => {
