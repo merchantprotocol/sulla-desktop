@@ -164,7 +164,7 @@
                       ? 'font-medium text-slate-900 dark:text-white'
                       : 'text-slate-600 dark:text-slate-400'"
                   >
-                    <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" />
+                    <CrmCellValue :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                   </td>
                   <td class="w-10 px-3 py-3 text-right">
                     <button
@@ -237,7 +237,7 @@
                         :key="f.key"
                         class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"
                       >
-                        <span class="truncate">{{ formatCardValue(record.field_values[f.key], f.data_type) }}</span>
+                        <span class="truncate">{{ formatCardValue(record.field_values[f.key], f.data_type, f.format) }}</span>
                       </div>
                     </div>
                   </button>
@@ -456,6 +456,8 @@ const { isDark, toggleTheme } = useTheme();
 type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select';
 type IconKey = 'user' | 'building' | 'chart' | 'target';
 
+type FieldFormat = 'currency' | 'percent' | undefined;
+
 interface CrmField {
   id: string;
   key: string;
@@ -465,6 +467,7 @@ interface CrmField {
   is_required: boolean;
   position: number;
   select_options?: string[];
+  format?: FieldFormat;
 }
 
 interface CrmRecordType {
@@ -529,7 +532,7 @@ const schema: CrmRecordType[] = [
       { id: 'f_co2', key: 'domain',      label: 'Domain',       data_type: 'url',    is_title: false, is_required: false, position: 1 },
       { id: 'f_co3', key: 'industry',    label: 'Industry',     data_type: 'select', is_title: false, is_required: false, position: 2, select_options: ['Education', 'Marketing', 'Consulting', 'Technology', 'Finance', 'Healthcare', 'Other'] },
       { id: 'f_co4', key: 'employees',   label: 'Employees',    data_type: 'number', is_title: false, is_required: false, position: 3 },
-      { id: 'f_co5', key: 'annual_rev',  label: 'Annual rev.',  data_type: 'number', is_title: false, is_required: false, position: 4 },
+      { id: 'f_co5', key: 'annual_rev',  label: 'Annual rev.',  data_type: 'number', is_title: false, is_required: false, position: 4, format: 'currency' },
     ],
   },
   {
@@ -538,9 +541,9 @@ const schema: CrmRecordType[] = [
     fields: [
       { id: 'f_dl1', key: 'name',        label: 'Deal name',  data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
       { id: 'f_dl2', key: 'stage',       label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'] },
-      { id: 'f_dl3', key: 'amount',      label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2 },
+      { id: 'f_dl3', key: 'amount',      label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2, format: 'currency' },
       { id: 'f_dl4', key: 'close_date',  label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3 },
-      { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4 },
+      { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4, format: 'percent' },
     ],
   },
   {
@@ -729,12 +732,17 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function formatCardValue(val: string | number | boolean | null | undefined, dataType: DataType): string {
+function formatCardValue(val: string | number | boolean | null | undefined, dataType: DataType, format?: FieldFormat): string {
   if (val == null || val === '') return '—';
   if (dataType === 'number') {
     const n = Number(val);
-    if (n >= 1000) return '$' + (n / 1000).toFixed(0) + 'k';
-    return String(n);
+    if (format === 'currency') {
+      if (n >= 1_000_000) return '$' + (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+      if (n >= 1_000) return '$' + Math.round(n / 1_000) + 'k';
+      return '$' + n;
+    }
+    if (format === 'percent') return n + '%';
+    return n.toLocaleString();
   }
   if (dataType === 'date') return new Date(String(val)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   return String(val);
@@ -746,6 +754,7 @@ const CrmCellValue = defineComponent({
   props: {
     value: { type: [String, Number, Boolean, null] as unknown as () => string | number | boolean | null, default: null },
     dataType: { type: String as () => DataType, required: true },
+    format: { type: String as () => FieldFormat, default: undefined },
   },
   setup(props) {
     return () => {
@@ -760,7 +769,16 @@ const CrmCellValue = defineComponent({
         }, props.value ? 'Yes' : 'No');
       }
       if (props.dataType === 'number') {
-        return h('span', { class: 'tabular-nums' }, Number(props.value).toLocaleString());
+        const n = Number(props.value);
+        let display: string;
+        if (props.format === 'currency') {
+          display = '$' + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+        } else if (props.format === 'percent') {
+          display = n + '%';
+        } else {
+          display = n.toLocaleString();
+        }
+        return h('span', { class: 'tabular-nums' }, display);
       }
       if (props.dataType === 'select') {
         return h('span', {
