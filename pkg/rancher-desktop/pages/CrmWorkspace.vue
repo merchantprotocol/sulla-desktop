@@ -1307,10 +1307,20 @@
                   <th
                     v-for="col in visibleColumns"
                     :key="col.key"
-                    class="relative px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap"
-                    :class="pinnedColumnKeys.has(col.key) ? 'sticky z-10 shadow-[2px_0_4px_rgba(0,0,0,0.06)]' : ''"
+                    draggable="true"
+                    class="relative px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 whitespace-nowrap transition-colors"
+                    :class="[
+                      pinnedColumnKeys.has(col.key) ? 'sticky z-10 shadow-[2px_0_4px_rgba(0,0,0,0.06)]' : '',
+                      colDragOver === col.key && colDragSrc !== col.key ? 'border-l-2 border-l-sky-500' : '',
+                      colDragSrc === col.key ? 'opacity-40' : '',
+                    ]"
                     :style="columnWidths[col.key] ? { width: `${columnWidths[col.key]}px`, minWidth: `${columnWidths[col.key]}px` } : undefined"
                     @contextmenu.prevent="openColHeaderMenu(col.key, $event)"
+                    @dragstart.stop="(e) => { colDragSrc = col.key; e.dataTransfer && (e.dataTransfer.effectAllowed = 'move'); }"
+                    @dragover.prevent="colDragOver = col.key"
+                    @dragleave="colDragOver = null"
+                    @drop.prevent="dropColReorder(col.key)"
+                    @dragend="() => { colDragSrc = null; colDragOver = null; }"
                   >
                     <button
                       type="button"
@@ -1349,6 +1359,7 @@
                     </button>
                     <!-- column resize handle -->
                     <div
+                      draggable="false"
                       class="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-sky-400/40 dark:hover:bg-sky-500/40 transition-colors"
                       title="Drag to resize column"
                       @mousedown.stop="onColResizeMouseDown($event, col.key, columnWidths[col.key] ?? (($event.currentTarget as HTMLElement).closest('th') as HTMLElement)?.offsetWidth ?? 160)"
@@ -4778,6 +4789,8 @@ const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(nu
 const colHeaderMenu = ref<{ fieldKey: string; x: number; y: number } | null>(null);
 const showColStatsModal = ref(false);
 const colStatsFieldKey = ref<string | null>(null);
+const colDragSrc = ref<string | null>(null);
+const colDragOver = ref<string | null>(null);
 const groupByField = ref<string | null>(null);
 const showAddStageInput = ref(false);
 const newStageName = ref('');
@@ -5810,6 +5823,21 @@ const contextMenuSelectFilters = computed(() => {
   }
   return items;
 });
+
+function dropColReorder(targetKey: string) {
+  const src = colDragSrc.value;
+  colDragSrc.value = null;
+  colDragOver.value = null;
+  if (!src || src === targetKey || !selectedType.value) return;
+  const fields = selectedType.value.fields;
+  const ordered = [...fields].sort((a, b) => a.position - b.position);
+  const srcIdx = ordered.findIndex((f) => f.key === src);
+  const tgtIdx = ordered.findIndex((f) => f.key === targetKey);
+  if (srcIdx === -1 || tgtIdx === -1) return;
+  const [moved] = ordered.splice(srcIdx, 1);
+  ordered.splice(tgtIdx, 0, moved);
+  ordered.forEach((f, i) => { f.position = i; });
+}
 
 function openColHeaderMenu(fieldKey: string, e: MouseEvent) {
   const menuW = 180;
