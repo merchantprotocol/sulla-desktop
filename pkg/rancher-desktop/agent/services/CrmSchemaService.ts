@@ -1219,6 +1219,48 @@ export class CrmSchemaService {
     );
   }
 
+  /**
+   * One-shot CRM state overview — all types with field + relationship counts,
+   * plus dashboard counts. Lets the agent orient itself without looping over
+   * list_record_types + describe_record_type for every type.
+   */
+  static async getSchemaSummary(tenantId = DEFAULT_TENANT_ID): Promise<{
+    types: Array<{ id: string; key: string; label: string; field_count: number; relationship_count: number }>;
+    dashboards: Array<{ id: string; key: string; name: string; widget_count: number }>;
+  }> {
+    const [types, relCounts, dashboards] = await Promise.all([
+      postgresClient.query(
+        `SELECT rt.id, rt.key, rt.label, COUNT(f.id)::int AS field_count
+         FROM crm_record_types rt
+         LEFT JOIN crm_fields f ON f.record_type_id = rt.id AND f.archived = false
+         WHERE rt.tenant_id = $1 AND rt.archived = false
+         GROUP BY rt.id, rt.key, rt.label ORDER BY rt.label ASC`,
+        [tenantId],
+      ),
+      postgresClient.query(
+        `SELECT unnest(ARRAY[from_type_id, to_type_id]) AS type_id, COUNT(*)::int AS cnt
+         FROM crm_relationships WHERE tenant_id = $1 AND archived = false
+         GROUP BY type_id`,
+        [tenantId],
+      ),
+      CrmSchemaService.listDashboards(tenantId),
+    ]);
+
+    const relByType = new Map<string, number>();
+    for (const r of relCounts) {
+      relByType.set(r.type_id, (relByType.get(r.type_id) ?? 0) + r.cnt);
+    }
+
+    return {
+      types: types.map((t: any) => ({
+        id: t.id, key: t.key, label: t.label,
+        field_count: t.field_count,
+        relationship_count: relByType.get(t.id) ?? 0,
+      })),
+      dashboards,
+    };
+  }
+
   static async listViews(
     recordTypeId: string,
     tenantId = DEFAULT_TENANT_ID,

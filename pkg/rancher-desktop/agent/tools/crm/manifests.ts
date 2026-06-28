@@ -81,6 +81,14 @@ export const crmToolManifests: ToolManifest[] = [
     loader:         () => import('./archive_record_type'),
   },
   {
+    name:        'get_schema_summary',
+    description: 'One-shot CRM orientation: all record types with field + relationship counts, plus all dashboards. Call this at the start of any CRM session to understand what already exists.',
+    category:    'crm',
+    schemaDef:   {},
+    operationTypes: ['read'],
+    loader:         () => import('./get_schema_summary'),
+  },
+  {
     name:        'describe_record_type',
     description: 'Return a record type\'s full field schema + all relationships. Call this before add_field, create_record, or query_records to see what already exists.',
     category:    'crm',
