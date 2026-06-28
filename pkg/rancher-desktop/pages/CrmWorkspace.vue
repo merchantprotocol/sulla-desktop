@@ -3299,6 +3299,79 @@
             </div>
           </div>
 
+          <!-- record count goal card -->
+          <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Goal</p>
+              <button
+                v-if="!editingGoalTypeKey && !typeGoals[selectedTypeKey]"
+                type="button"
+                class="text-xs text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300 transition-colors"
+                @click="editingGoalTypeKey = selectedTypeKey"
+              >Set target</button>
+              <button
+                v-else-if="!editingGoalTypeKey"
+                type="button"
+                class="text-xs text-slate-400 hover:text-slate-500 dark:hover:text-slate-300 transition-colors"
+                @click="editingGoalTypeKey = selectedTypeKey"
+              >Edit</button>
+            </div>
+            <!-- no goal set -->
+            <template v-if="!typeGoals[selectedTypeKey] && editingGoalTypeKey !== selectedTypeKey">
+              <p class="text-xs text-slate-400 dark:text-slate-500 italic">No target set for {{ selectedType?.label_plural }}.</p>
+            </template>
+            <!-- goal input -->
+            <template v-else-if="editingGoalTypeKey === selectedTypeKey">
+              <div class="flex items-center gap-2">
+                <input
+                  ref="goalInputEl"
+                  v-model="goalDraft"
+                  type="number"
+                  min="1"
+                  placeholder="Target count…"
+                  class="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+                  @keydown.enter.prevent="(() => { const n = parseInt(goalDraft); if (n > 0) { typeGoals = { ...typeGoals, [selectedTypeKey]: n }; } else { const c = { ...typeGoals }; delete c[selectedTypeKey]; typeGoals = c; } editingGoalTypeKey = null; })()"
+                  @keydown.escape.prevent="editingGoalTypeKey = null"
+                >
+                <button
+                  type="button"
+                  class="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-600 text-white transition-colors"
+                  @click="(() => { const n = parseInt(goalDraft); if (n > 0) { typeGoals = { ...typeGoals, [selectedTypeKey]: n }; } else { const c = { ...typeGoals }; delete c[selectedTypeKey]; typeGoals = c; } editingGoalTypeKey = null; })()"
+                >Save</button>
+                <button
+                  type="button"
+                  class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                  @click="editingGoalTypeKey = null"
+                >Cancel</button>
+              </div>
+            </template>
+            <!-- goal progress -->
+            <template v-else>
+              <div class="flex items-end justify-between mb-2">
+                <div>
+                  <span class="text-2xl font-bold tabular-nums text-slate-900 dark:text-white">{{ statsViewData.total }}</span>
+                  <span class="text-sm text-slate-400 dark:text-slate-500"> / {{ typeGoals[selectedTypeKey] }}</span>
+                </div>
+                <div class="text-right">
+                  <p class="text-xs tabular-nums" :class="statsViewData.total >= typeGoals[selectedTypeKey] ? 'text-emerald-500 font-semibold' : 'text-slate-400 dark:text-slate-500'">
+                    {{ statsViewData.total >= typeGoals[selectedTypeKey] ? 'Goal reached!' : `${typeGoals[selectedTypeKey] - statsViewData.total} to go` }}
+                  </p>
+                  <p v-if="statsViewData.weeklyRate > 0 && statsViewData.total < typeGoals[selectedTypeKey]" class="text-[10px] text-slate-300 dark:text-slate-600 tabular-nums">
+                    ~{{ Math.ceil((typeGoals[selectedTypeKey] - statsViewData.total) / statsViewData.weeklyRate) }}w at current pace
+                  </p>
+                </div>
+              </div>
+              <div class="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                <div
+                  class="h-full rounded-full transition-all duration-500"
+                  :class="statsViewData.total >= typeGoals[selectedTypeKey] ? 'bg-emerald-500' : 'bg-sky-500'"
+                  :style="{ width: `${Math.min(100, Math.round((statsViewData.total / typeGoals[selectedTypeKey]) * 100))}%` }"
+                />
+              </div>
+              <p class="text-[10px] text-slate-300 dark:text-slate-600 mt-1 tabular-nums">{{ Math.min(100, Math.round((statsViewData.total / typeGoals[selectedTypeKey]) * 100)) }}% complete{{ statsViewData.weeklyRate > 0 ? ` · ${statsViewData.weeklyRate}/wk recent pace` : '' }}</p>
+            </template>
+          </div>
+
           <!-- pipeline funnel -->
           <div v-if="statsViewData.pipelineFunnel" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-4">Pipeline</p>
@@ -6673,6 +6746,11 @@ watch(showSaveViewPopover, (val) => {
 });
 const loggingNote = ref(false);
 const drawerFieldSearch = ref('');
+const typeGoals = ref<Record<string, number>>({});
+const goalDraft = ref('');
+const editingGoalTypeKey = ref<string | null>(null);
+const goalInputEl = ref<HTMLInputElement | null>(null);
+watch(editingGoalTypeKey, (v) => { if (v) { goalDraft.value = String(typeGoals.value[v] ?? ''); nextTick(() => goalInputEl.value?.focus()); } });
 const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
 watch(loggingNote, (val) => { if (val) nextTick(() => activityTextareaEl.value?.focus()); });
 const noteText = ref('');
@@ -7892,7 +7970,14 @@ const statsViewData = computed(() => {
         })()
       : null;
 
-  return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel };
+  // weekly creation rate — how many records were created in the last 30 days / 4.3 weeks
+  const thirtyDaysAgo = new Date(DUE_TODAY_STR);
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const thirtyAgoStr = thirtyDaysAgo.toISOString().slice(0, 10);
+  const recentCount = recs.filter((r) => (r.created_at ?? '').slice(0, 10) >= thirtyAgoStr).length;
+  const weeklyRate = Math.round((recentCount / 4.3) * 10) / 10;
+
+  return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate };
 });
 
 interface ColStatsResult {
