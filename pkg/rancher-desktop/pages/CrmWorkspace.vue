@@ -6141,8 +6141,25 @@
                           <option value="email">Email</option>
                           <option value="phone">Phone</option>
                           <option value="url">URL</option>
+                          <option value="formula">Formula (computed)</option>
                         </select>
                       </div>
+                    </div>
+                    <div v-if="newFieldDraft.data_type === 'formula'">
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Formula expression</label>
+                      <input
+                        v-model="newFieldDraft.formula_expression"
+                        type="text"
+                        placeholder="e.g. {amount} * {probability} / 100"
+                        class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400 font-mono"
+                      />
+                      <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Use {'{field_key}'} to reference numeric field values. Operators: + - * /</p>
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mt-2 mb-1 block">Output format</label>
+                      <select v-model="newFieldDraft.formula_format" class="text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50">
+                        <option value="">Number</option>
+                        <option value="currency">Currency ($)</option>
+                        <option value="percent">Percent (%)</option>
+                      </select>
                     </div>
                     <div v-if="newFieldDraft.data_type === 'select' || newFieldDraft.data_type === 'multi_select'">
                       <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Options (comma-separated)</label>
@@ -7047,7 +7064,7 @@ const fieldLabelInputEl = ref<HTMLInputElement | null>(null);
 const showTypeIconColorPicker = ref(false);
 const visibilityRuleFieldId = ref<string | null>(null);
 const editOptionColorsFieldId = ref<string | null>(null);
-const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' });
+const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string; formula_expression: string; formula_format: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
 const SCHEMA_ICON_OPTIONS: IconKey[] = ['user', 'building', 'chart', 'target', 'check', 'folder', 'tag', 'list', 'layers', 'star'];
 const SCHEMA_COLOR_PRESETS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#6366f1', '#ec4899', '#ef4444', '#14b8a6', '#f97316', '#64748b'];
@@ -10168,8 +10185,10 @@ function addFieldToCurrentType() {
     position: type.fields.length,
     ...(opts?.length ? { select_options: opts } : {}),
     ...(draft.default_value.trim() ? { default_value: draft.default_value.trim() } : {}),
+    ...(draft.data_type === 'formula' && draft.formula_expression.trim() ? { formula_expression: draft.formula_expression.trim() } : {}),
+    ...(draft.data_type === 'formula' && draft.formula_format ? { format: draft.formula_format as FieldFormat } : {}),
   });
-  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' };
+  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '' };
   showAddFieldForm.value = false;
   showToast(`Field "${label}" added to ${type.label}`);
 }
