@@ -7,6 +7,7 @@
     @keydown.n.exact="onKeyN"
     @keydown.d.exact="onKeyD"
     @keydown.e.exact="onKeyE"
+    @keydown.p.exact="onKeyP"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
     @keydown.meta.enter.exact.prevent="onKeySave"
@@ -669,6 +670,24 @@
                     </button>
                   </td>
                 </tr>
+                <!-- inline quick-add row -->
+                <tr
+                  v-if="!creatingRecord"
+                  class="group/addrow"
+                >
+                  <td :colspan="visibleColumns.length + 3" class="px-6 py-1.5">
+                    <button
+                      type="button"
+                      class="flex items-center gap-1.5 text-xs text-slate-300 dark:text-slate-700 hover:text-sky-500 dark:hover:text-sky-400 transition-colors py-1"
+                      @click="openNewRecord()"
+                    >
+                      <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                      Add {{ selectedType?.label ?? 'record' }}
+                    </button>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -1283,6 +1302,7 @@
                 { keys: ['⌘', 'K'], desc: 'Command palette' },
                 { keys: ['N'], desc: 'New record' },
                 { keys: ['D'], desc: 'Duplicate open record' },
+                { keys: ['P'], desc: 'Toggle pinned-only view' },
                 { keys: ['/'], desc: 'Focus search' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Esc'], desc: 'Close panel' },
@@ -2401,6 +2421,14 @@ function onKeyE(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (openedRecord.value && !editingRecord.value && !creatingRecord.value) {
     startEditing(openedRecord.value);
+  }
+}
+
+function onKeyP(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (pinnedCountForType.value > 0) {
+    showPinnedOnly.value = !showPinnedOnly.value;
   }
 }
 
