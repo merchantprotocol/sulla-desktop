@@ -944,12 +944,29 @@
                 <div
                   v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
                   :key="field.id"
-                  class="space-y-1"
+                  class="space-y-1 group/field"
                 >
-                  <label class="block text-xs font-medium text-slate-400 dark:text-slate-500">
-                    {{ field.label }}
-                    <span v-if="field.is_required" class="text-red-400 ml-0.5">*</span>
-                  </label>
+                  <div class="flex items-center gap-1">
+                    <label class="flex-1 text-xs font-medium text-slate-400 dark:text-slate-500">
+                      {{ field.label }}
+                      <span v-if="field.is_required" class="text-red-400 ml-0.5">*</span>
+                    </label>
+                    <button
+                      v-if="!editingRecord"
+                      type="button"
+                      class="invisible group-hover/field:visible rounded p-0.5 transition-colors"
+                      :class="fieldAnnotations[`${openedRecord.id}|${field.key}`]
+                        ? 'text-sky-400 hover:text-sky-500 !visible'
+                        : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400'"
+                      :title="fieldAnnotations[`${openedRecord.id}|${field.key}`] ? 'Edit note' : 'Add note'"
+                      :aria-label="fieldAnnotations[`${openedRecord.id}|${field.key}`] ? 'Edit note' : 'Add note'"
+                      @click.stop="startAnnotate(field.key, openedRecord.id)"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
+                    </button>
+                  </div>
                   <!-- clickable cycle badge for select fields in view mode -->
                   <template v-if="!editingRecord && field.data_type === 'select'">
                     <button
@@ -983,6 +1000,25 @@
                     :select-options="field.select_options ?? []"
                     :format="field.format"
                   />
+                  <!-- field annotation display -->
+                  <p
+                    v-if="fieldAnnotations[`${openedRecord.id}|${field.key}`] && annotatingField !== field.key"
+                    class="text-xs text-slate-400 dark:text-slate-500 italic leading-snug"
+                  >{{ fieldAnnotations[`${openedRecord.id}|${field.key}`] }}</p>
+                  <!-- field annotation input -->
+                  <div v-if="annotatingField === field.key" class="mt-0.5 space-y-1">
+                    <input
+                      ref="annotationInputEl"
+                      v-model="annotationDraft"
+                      type="text"
+                      placeholder="Note about this field… (empty to clear)"
+                      class="w-full rounded px-2 py-1 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                      @keydown.enter.prevent="commitAnnotation(openedRecord.id, field.key)"
+                      @keydown.esc.stop="cancelAnnotation"
+                      @blur="commitAnnotation(openedRecord.id, field.key)"
+                    />
+                    <p class="text-xs text-slate-400 dark:text-slate-500">Enter to save · Esc to discard · empty to clear</p>
+                  </div>
                 </div>
               </template>
 
@@ -1595,6 +1631,11 @@ const paletteInputEl = ref<HTMLInputElement | null>(null);
 const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
 const pinnedIds = ref<Set<string>>(new Set());
 const showPinnedOnly = ref(false);
+const fieldAnnotations = ref<Record<string, string>>({});
+const annotatingField = ref<string | null>(null);
+const annotationDraft = ref('');
+const annotationInputEl = ref<HTMLInputElement | null>(null);
+watch(annotatingField, (val) => { if (val) nextTick(() => annotationInputEl.value?.focus()); });
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -1941,6 +1982,8 @@ function closePanel() {
   loggingNote.value = false;
   noteText.value = '';
   editingTitle.value = false;
+  annotatingField.value = null;
+  annotationDraft.value = '';
 }
 
 function openRecord(record: CrmRecord) {
@@ -2002,6 +2045,30 @@ function logNote(record: CrmRecord) {
   noteText.value = '';
   loggingNote.value = false;
   showToast('Note logged');
+}
+
+function startAnnotate(fieldKey: string, recordId: string) {
+  annotatingField.value = fieldKey;
+  annotationDraft.value = fieldAnnotations.value[`${recordId}|${fieldKey}`] ?? '';
+}
+
+function commitAnnotation(recordId: string, fieldKey: string) {
+  const text = annotationDraft.value.trim();
+  const key = `${recordId}|${fieldKey}`;
+  if (text) {
+    fieldAnnotations.value = { ...fieldAnnotations.value, [key]: text };
+  } else {
+    const copy = { ...fieldAnnotations.value };
+    delete copy[key];
+    fieldAnnotations.value = copy;
+  }
+  annotatingField.value = null;
+  annotationDraft.value = '';
+}
+
+function cancelAnnotation() {
+  annotatingField.value = null;
+  annotationDraft.value = '';
 }
 
 function cycleSelectField(record: CrmRecord, field: CrmField) {
