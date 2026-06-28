@@ -89,8 +89,19 @@
                 v-model="searchQuery"
                 type="text"
                 :placeholder="`Search ${selectedType?.label_plural ?? 'records'}…`"
-                class="h-9 w-56 rounded-lg pl-9 pr-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                :class="['h-9 w-56 rounded-lg pl-9 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40', searchQuery ? 'pr-8' : 'pr-3']"
               >
+              <button
+                v-if="searchQuery"
+                type="button"
+                class="absolute top-1/2 right-2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded transition-colors p-0.5"
+                title="Clear search"
+                @click="searchQuery = ''"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
 
             <!-- filter button — placeholder -->
