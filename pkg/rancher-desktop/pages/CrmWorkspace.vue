@@ -1824,8 +1824,10 @@
                     :read-only="!editingRecord"
                     :select-options="field.select_options ?? []"
                     :format="field.format"
-                    @update:value="openedRecord.field_values[field.key] = $event"
+                    :class="editingRecord && editFormErrors.has(field.key) ? 'ring-2 ring-red-400/50 rounded-lg' : ''"
+                    @update:value="openedRecord.field_values[field.key] = $event; if (editFormErrors.has(field.key)) { const e = new Set(editFormErrors); e.delete(field.key); editFormErrors = e; }"
                   />
+                  <p v-if="editingRecord && editFormErrors.has(field.key)" class="text-xs text-red-500 dark:text-red-400">This field is required.</p>
                   <!-- field annotation display -->
                   <p
                     v-if="fieldAnnotations[`${openedRecord.id}|${field.key}`] && annotatingField !== field.key"
@@ -2138,7 +2140,7 @@
                 <button
                   type="button"
                   class="rounded-lg py-2 px-3 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                  @click="editingRecord = false; preEditSnapshot = {}"
+                  @click="editingRecord = false; preEditSnapshot = {}; editFormErrors = new Set()"
                 >
                   Discard
                 </button>
@@ -3032,6 +3034,7 @@ const showIncompleteOnly = ref(false);
 const fieldAnnotations = ref<Record<string, string>>({});
 const annotatingField = ref<string | null>(null);
 const preEditSnapshot = ref<Record<string, unknown>>({});
+const editFormErrors = ref<Set<string>>(new Set());
 const recentRecords = ref<CrmRecord[]>([]); // last 5 opened, newest first
 const linkQuery = ref('');
 const linkDropdownOpen = ref(false);
@@ -4238,6 +4241,21 @@ function startEditing(record: CrmRecord) {
 
 function saveEditing(record: CrmRecord) {
   const fields = selectedType.value?.fields ?? [];
+  // Validate required fields
+  const errors = new Set<string>();
+  for (const f of fields) {
+    if (f.is_required) {
+      const v = record.field_values[f.key];
+      if (v == null || (typeof v === 'string' && v.trim() === '')) {
+        errors.add(f.key);
+      }
+    }
+  }
+  if (errors.size > 0) {
+    editFormErrors.value = errors;
+    return;
+  }
+  editFormErrors.value = new Set();
   for (const f of fields) {
     const before = preEditSnapshot.value[f.key];
     const after = record.field_values[f.key];
