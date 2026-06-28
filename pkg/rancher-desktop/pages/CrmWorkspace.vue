@@ -644,8 +644,17 @@
                       </div>
                     </template>
                   </td>
-                  <td class="px-4 text-xs tabular-nums text-slate-400 dark:text-slate-500 whitespace-nowrap" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
-                    {{ formatDate(record.created_at) }}
+                  <td
+                    class="px-4 text-xs tabular-nums whitespace-nowrap"
+                    :class="[
+                      rowDensity === 'compact' ? 'py-1.5' : 'py-3',
+                      (Date.now() - new Date(record.created_at).getTime()) > 30 * 24 * 60 * 60 * 1000
+                        ? 'text-rose-300 dark:text-rose-800'
+                        : 'text-slate-400 dark:text-slate-500',
+                    ]"
+                    :title="formatDate(record.created_at)"
+                  >
+                    {{ formatAge(record.created_at) }}
                   </td>
                   <td class="w-20 px-3" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                     <div class="flex items-center justify-end gap-1">
@@ -2749,6 +2758,20 @@ function recordInitials(title: string): string {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatAge(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d`;
+  if (days < 30) return `${Math.floor(days / 7)}w`;
+  if (days < 365) return `${Math.floor(days / 30)}mo`;
+  return `${Math.floor(days / 365)}y`;
 }
 
 function formatRelativeTime(iso: string): string {
