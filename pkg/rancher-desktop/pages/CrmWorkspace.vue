@@ -1082,6 +1082,7 @@
                     :read-only="!editingRecord"
                     :select-options="field.select_options ?? []"
                     :format="field.format"
+                    @update:value="openedRecord.field_values[field.key] = $event"
                   />
                   <!-- field annotation display -->
                   <p
@@ -1198,7 +1199,7 @@
                 <button
                   type="button"
                   class="flex-1 rounded-lg py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                  @click="editingRecord = true"
+                  @click="startEditing(openedRecord)"
                 >
                   Edit
                 </button>
@@ -1230,14 +1231,14 @@
                 <button
                   type="button"
                   class="flex-1 rounded-lg py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors"
-                  @click="editingRecord = false"
+                  @click="saveEditing(openedRecord)"
                 >
                   Save changes
                 </button>
                 <button
                   type="button"
                   class="rounded-lg py-2 px-3 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                  @click="editingRecord = false"
+                  @click="editingRecord = false; preEditSnapshot = {}"
                 >
                   Discard
                 </button>
@@ -1751,6 +1752,7 @@ const pinnedIds = ref<Set<string>>(new Set());
 const showPinnedOnly = ref(false);
 const fieldAnnotations = ref<Record<string, string>>({});
 const annotatingField = ref<string | null>(null);
+const preEditSnapshot = ref<Record<string, unknown>>({});
 const recentRecords = ref<CrmRecord[]>([]); // last 5 opened, newest first
 const previewRecord = ref<CrmRecord | null>(null);
 const previewPos = ref({ x: 0, y: 0 });
@@ -2367,17 +2369,44 @@ function onKeyD(e: KeyboardEvent) {
   }
 }
 
+function startEditing(record: CrmRecord) {
+  preEditSnapshot.value = { ...record.field_values };
+  editingRecord.value = true;
+}
+
+function saveEditing(record: CrmRecord) {
+  const fields = selectedType.value?.fields ?? [];
+  for (const f of fields) {
+    const before = preEditSnapshot.value[f.key];
+    const after = record.field_values[f.key];
+    const beforeStr = before == null ? '' : String(before);
+    const afterStr = after == null ? '' : String(after);
+    if (beforeStr !== afterStr) {
+      mockActivities.unshift({
+        id: 'act-chg-' + String(mockActivities.length),
+        record_id: record.id,
+        type: 'note',
+        content: `${f.label}: ${beforeStr || '—'} → ${afterStr || '—'}`,
+        author: 'You',
+        created_at: new Date().toISOString(),
+      });
+    }
+  }
+  preEditSnapshot.value = {};
+  editingRecord.value = false;
+}
+
 function onKeyE(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement)?.tagName ?? '';
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (openedRecord.value && !editingRecord.value && !creatingRecord.value) {
-    editingRecord.value = true;
+    startEditing(openedRecord.value);
   }
 }
 
 function onKeySave() {
   if (creatingRecord.value) { saveNewRecord(); return; }
-  if (editingRecord.value) { editingRecord.value = false; }
+  if (editingRecord.value && openedRecord.value) { saveEditing(openedRecord.value); }
 }
 
 function onKeyArrow(dir: 1 | -1) {
@@ -2579,12 +2608,16 @@ const CrmFieldInput = defineComponent({
     selectOptions: { type: Array as () => string[], default: () => [] },
     format: { type: String as () => FieldFormat, default: undefined },
   },
-  setup(props) {
+  emits: ['update:value'],
+  setup(props, { emit }) {
     return () => {
       const baseClass = 'w-full rounded-lg px-3 py-2 text-sm border bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100';
       const val = props.value;
       if (props.dataType === 'boolean') {
-        return h('div', { class: 'flex items-center gap-2 py-1' }, [
+        return h('div', {
+          class: 'flex items-center gap-2 py-1' + (props.readOnly ? '' : ' cursor-pointer select-none'),
+          onClick: props.readOnly ? undefined : () => emit('update:value', !val),
+        }, [
           h('div', {
             class: `h-5 w-5 rounded border-2 flex items-center justify-center ${val ? 'bg-sky-500 border-sky-500' : 'border-slate-300 dark:border-slate-600'}`,
           }, val ? h('svg', { class: 'h-3 w-3 text-white', fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24', 'stroke-width': '3' },
@@ -2604,6 +2637,7 @@ const CrmFieldInput = defineComponent({
         }
         return h('select', {
           class: baseClass + ' appearance-none cursor-pointer',
+          onChange: (e: Event) => emit('update:value', (e.target as HTMLSelectElement).value || null),
         }, [
           h('option', { value: '' }, '— select —'),
           ...opts.map((o) => h('option', { value: o, selected: String(val) === o }, o)),
@@ -2662,6 +2696,10 @@ const CrmFieldInput = defineComponent({
         value: val != null ? String(val) : '',
         readonly: props.readOnly,
         class: baseClass + (props.readOnly ? ' opacity-80 cursor-default' : ''),
+        onInput: props.readOnly ? undefined : (e: Event) => {
+          const raw = (e.target as HTMLInputElement).value;
+          emit('update:value', props.dataType === 'number' ? (raw === '' ? null : Number(raw)) : raw);
+        },
       });
     };
   },
