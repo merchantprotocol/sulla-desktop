@@ -1642,12 +1642,29 @@
                 </div>
               </div>
 
-              <!-- add column placeholder -->
-              <div class="flex flex-col w-48 shrink-0 opacity-60 hover:opacity-100 transition-opacity">
+              <!-- add column -->
+              <div class="flex flex-col w-48 shrink-0">
+                <div v-if="showAddStageInput" class="space-y-1.5 px-1">
+                  <input
+                    ref="addStageInputEl"
+                    v-model="newStageName"
+                    type="text"
+                    placeholder="Stage name"
+                    class="h-8 w-full rounded-lg px-3 text-sm bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                    @keydown.enter.prevent="commitAddStage"
+                    @keydown.esc.stop="showAddStageInput = false"
+                  />
+                  <div class="flex gap-1">
+                    <button type="button" class="flex-1 h-7 rounded-lg text-xs font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors" @click="commitAddStage">Add</button>
+                    <button type="button" class="h-7 px-2 rounded-lg text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showAddStageInput = false">Cancel</button>
+                  </div>
+                </div>
                 <button
+                  v-else
                   type="button"
-                  class="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  class="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors opacity-60 hover:opacity-100"
                   title="Add a new stage column"
+                  @click="showAddStageInput = true"
                 >
                   <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
@@ -3171,7 +3188,7 @@ const DATA_TYPE_ICONS: Record<DataType, string> = {
 
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
 
-const schema: CrmRecordType[] = [
+const schema = reactive<CrmRecordType[]>([
   {
     id: 'rt_contact', key: 'contact', label: 'Contact', label_plural: 'Contacts',
     icon: 'user', color: '#3b82f6',
@@ -3216,7 +3233,7 @@ const schema: CrmRecordType[] = [
       { id: 'f_ld5', key: 'converted', label: 'Converted', data_type: 'boolean', is_title: false, is_required: false, position: 4 },
     ],
   },
-];
+]);
 
 // ── Mock records ───────────────────────────────────────────────────────────
 
@@ -3400,6 +3417,10 @@ const filterPickerField = ref<string | null>(null);
 const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
 const colHeaderMenu = ref<{ fieldKey: string; x: number; y: number } | null>(null);
 const groupByField = ref<string | null>(null);
+const showAddStageInput = ref(false);
+const newStageName = ref('');
+const addStageInputEl = ref<HTMLInputElement | null>(null);
+watch(showAddStageInput, (v) => { if (v) { newStageName.value = ''; nextTick(() => addStageInputEl.value?.focus()); } });
 const collapsedGroups = ref<Set<string>>(new Set());
 watch(groupByField, () => { collapsedGroups.value = new Set(); });
 const showBulkNoteModal = ref(false);
@@ -3758,6 +3779,17 @@ function toggleGroupCollapse(key: string) {
   const next = new Set(collapsedGroups.value);
   if (next.has(key)) next.delete(key); else next.add(key);
   collapsedGroups.value = next;
+}
+
+function commitAddStage() {
+  const name = newStageName.value.trim();
+  if (!name || !kanbanField.value) { showAddStageInput.value = false; return; }
+  if (!kanbanField.value.select_options) kanbanField.value.select_options = [];
+  if (!kanbanField.value.select_options.includes(name)) {
+    kanbanField.value.select_options.push(name);
+    showToast(`Stage "${name}" added`);
+  }
+  showAddStageInput.value = false;
 }
 
 // The first select field drives the kanban grouping dimension
