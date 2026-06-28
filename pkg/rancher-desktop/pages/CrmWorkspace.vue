@@ -524,8 +524,16 @@
                     </div>
                     <p class="text-sm font-medium text-slate-600 dark:text-slate-400">No records found</p>
                     <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                      {{ searchQuery ? 'Try a different search term' : `Create the first ${selectedType?.label ?? 'record'}` }}
+                      {{ activeFilters.length ? 'No records match the active filters' : searchQuery ? 'Try a different search term' : `Create the first ${selectedType?.label ?? 'record'}` }}
                     </p>
+                    <button
+                      v-if="activeFilters.length"
+                      type="button"
+                      class="mt-3 rounded-lg px-3 py-1.5 text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors"
+                      @click="clearFilters"
+                    >
+                      Clear filters
+                    </button>
                   </td>
                 </tr>
               </tbody>
