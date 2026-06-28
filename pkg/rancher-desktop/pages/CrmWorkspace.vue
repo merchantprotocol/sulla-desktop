@@ -2,6 +2,8 @@
   <div
     class="text-sm font-sans page-root h-full"
     :class="{ dark: isDark }"
+    tabindex="-1"
+    @keydown.esc="openedRecord = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -33,7 +35,7 @@
                 class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
                 :style="{ background: rt.color + '22', color: rt.color }"
               >
-                <component :is="iconComponent(rt.icon)" class="h-3.5 w-3.5" />
+                <component :is="ICON_COMPONENTS[rt.icon]" class="h-3.5 w-3.5" />
               </span>
               <span class="flex-1 truncate text-sm">{{ rt.label_plural }}</span>
               <span class="text-xs text-slate-400 dark:text-slate-500 tabular-nums">{{ rt.record_count }}</span>
@@ -81,8 +83,43 @@
                 v-model="searchQuery"
                 type="text"
                 :placeholder="`Search ${selectedType?.label_plural ?? 'records'}…`"
-                class="h-9 w-64 rounded-lg pl-9 pr-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                class="h-9 w-56 rounded-lg pl-9 pr-3 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
               >
+            </div>
+
+            <!-- view toggle — only when the type has a groupable select field -->
+            <div
+              v-if="canKanban"
+              class="flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden"
+            >
+              <button
+                type="button"
+                class="flex items-center gap-1.5 px-3 h-9 text-sm transition-colors"
+                :class="viewMode === 'table'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                @click="viewMode = 'table'"
+              >
+                <!-- rows icon -->
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+                Table
+              </button>
+              <button
+                type="button"
+                class="flex items-center gap-1.5 px-3 h-9 text-sm border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="viewMode === 'kanban'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                @click="viewMode = 'kanban'"
+              >
+                <!-- columns icon -->
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <rect x="3" y="3" width="5" height="18" rx="1" /><rect x="10" y="3" width="5" height="18" rx="1" /><rect x="17" y="3" width="4" height="18" rx="1" />
+                </svg>
+                Board
+              </button>
             </div>
 
             <button
@@ -97,8 +134,8 @@
             </button>
           </div>
 
-          <!-- schema-driven table -->
-          <div class="flex-1 overflow-auto">
+          <!-- ── Table view ── -->
+          <div v-if="viewMode === 'table'" class="flex-1 overflow-auto">
             <table class="min-w-full border-separate border-spacing-0">
               <thead class="sticky top-0 z-10">
                 <tr>
@@ -109,7 +146,6 @@
                   >
                     {{ col.label }}
                   </th>
-                  <!-- actions column header -->
                   <th class="w-10 px-4 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800" />
                 </tr>
               </thead>
@@ -143,7 +179,6 @@
                   </td>
                 </tr>
 
-                <!-- empty state -->
                 <tr v-if="filteredRecords.length === 0">
                   <td
                     :colspan="visibleColumns.length + 1"
@@ -162,6 +197,74 @@
                 </tr>
               </tbody>
             </table>
+          </div>
+
+          <!-- ── Kanban view ── -->
+          <div v-else class="flex-1 overflow-x-auto overflow-y-hidden">
+            <div class="flex gap-3 h-full p-5 min-w-max">
+              <div
+                v-for="col in kanbanColumns"
+                :key="col"
+                class="flex flex-col w-64 shrink-0"
+              >
+                <!-- column header -->
+                <div class="flex items-center gap-2 px-1 mb-3">
+                  <span
+                    class="h-2 w-2 rounded-full shrink-0"
+                    :class="stageDot(col)"
+                  />
+                  <span class="text-xs font-semibold text-slate-700 dark:text-slate-300 truncate">{{ col }}</span>
+                  <span class="ml-auto text-xs tabular-nums text-slate-400 dark:text-slate-500 font-medium">
+                    {{ (kanbanGroups[col] ?? []).length }}
+                  </span>
+                </div>
+
+                <!-- cards -->
+                <div class="flex-1 space-y-2 overflow-y-auto pb-2 pr-0.5">
+                  <button
+                    v-for="record in (kanbanGroups[col] ?? [])"
+                    :key="record.id"
+                    type="button"
+                    class="w-full text-left rounded-xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 p-3.5 shadow-sm hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700 transition-all"
+                    @click="openRecord(record)"
+                  >
+                    <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug mb-2 line-clamp-2">
+                      {{ record.title }}
+                    </p>
+                    <div class="space-y-1">
+                      <div
+                        v-for="f in kanbanCardFields"
+                        :key="f.key"
+                        class="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400"
+                      >
+                        <span class="truncate">{{ formatCardValue(record.field_values[f.key], f.data_type) }}</span>
+                      </div>
+                    </div>
+                  </button>
+
+                  <!-- add card placeholder -->
+                  <button
+                    type="button"
+                    class="w-full text-left rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-3 text-xs text-slate-400 dark:text-slate-600 hover:border-slate-300 dark:hover:border-slate-700 hover:text-slate-500 dark:hover:text-slate-500 transition-colors"
+                  >
+                    + Add record
+                  </button>
+                </div>
+              </div>
+
+              <!-- add column placeholder -->
+              <div class="flex flex-col w-48 shrink-0 opacity-60 hover:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  class="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add stage
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -277,6 +380,27 @@ interface CrmRecord {
   created_at: string;
 }
 
+// ── Icon components (memoized — one component per icon key) ───────────────
+
+const ICON_PATHS: Record<IconKey, string> = {
+  user:     'M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z',
+  building: 'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2zM9 22V12h6v10',
+  chart:    'M3 3v18h18M7 16l4-4 4 4 4-4',
+  target:   'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 18a6 6 0 100-12 6 6 0 000 12zM12 14a2 2 0 100-4 2 2 0 000 4z',
+};
+
+const ICON_COMPONENTS = Object.fromEntries(
+  (Object.keys(ICON_PATHS) as IconKey[]).map((key) => [
+    key,
+    defineComponent({
+      render: () =>
+        h('svg', { fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24', 'stroke-width': '2', class: 'h-3.5 w-3.5' }, [
+          h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', d: ICON_PATHS[key] }),
+        ]),
+    }),
+  ]),
+) as Record<IconKey, ReturnType<typeof defineComponent>>;
+
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
 
 const schema: CrmRecordType[] = [
@@ -306,22 +430,22 @@ const schema: CrmRecordType[] = [
     id: 'rt_deal', key: 'deal', label: 'Deal', label_plural: 'Deals',
     icon: 'chart', color: '#10b981', record_count: 9,
     fields: [
-      { id: 'f_dl1', key: 'name',       label: 'Deal name',  data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
-      { id: 'f_dl2', key: 'stage',      label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1 },
-      { id: 'f_dl3', key: 'amount',     label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2 },
-      { id: 'f_dl4', key: 'close_date', label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3 },
-      { id: 'f_dl5', key: 'probability', label: 'Win %',     data_type: 'number', is_title: false, is_required: false, position: 4 },
+      { id: 'f_dl1', key: 'name',        label: 'Deal name',  data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
+      { id: 'f_dl2', key: 'stage',       label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1 },
+      { id: 'f_dl3', key: 'amount',      label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2 },
+      { id: 'f_dl4', key: 'close_date',  label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3 },
+      { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4 },
     ],
   },
   {
     id: 'rt_lead', key: 'lead', label: 'Lead', label_plural: 'Leads',
     icon: 'target', color: '#f59e0b', record_count: 31,
     fields: [
-      { id: 'f_ld1', key: 'name',       label: 'Name',       data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
-      { id: 'f_ld2', key: 'email',      label: 'Email',      data_type: 'email',  is_title: false, is_required: false, position: 1 },
-      { id: 'f_ld3', key: 'source',     label: 'Source',     data_type: 'select', is_title: false, is_required: false, position: 2 },
-      { id: 'f_ld4', key: 'score',      label: 'Score',      data_type: 'number', is_title: false, is_required: false, position: 3 },
-      { id: 'f_ld5', key: 'converted',  label: 'Converted',  data_type: 'boolean',is_title: false, is_required: false, position: 4 },
+      { id: 'f_ld1', key: 'name',      label: 'Name',      data_type: 'text',    is_title: true,  is_required: true,  position: 0 },
+      { id: 'f_ld2', key: 'email',     label: 'Email',     data_type: 'email',   is_title: false, is_required: false, position: 1 },
+      { id: 'f_ld3', key: 'source',    label: 'Source',    data_type: 'select',  is_title: false, is_required: false, position: 2 },
+      { id: 'f_ld4', key: 'score',     label: 'Score',     data_type: 'number',  is_title: false, is_required: false, position: 3 },
+      { id: 'f_ld5', key: 'converted', label: 'Converted', data_type: 'boolean', is_title: false, is_required: false, position: 4 },
     ],
   },
 ];
@@ -350,6 +474,14 @@ const mockRecords: CrmRecord[] = [
     field_values: { name: 'Apex Coaching — Q3 Expansion', stage: 'Proposal', amount: 48000, close_date: '2026-07-31', probability: 65 } },
   { id: 'r9', record_type_key: 'deal', title: 'ScaleLab Renewal', created_at: '2026-06-15T09:45:00Z',
     field_values: { name: 'ScaleLab Renewal', stage: 'Negotiation', amount: 24000, close_date: '2026-07-01', probability: 80 } },
+  { id: 'r13', record_type_key: 'deal', title: 'GrowthForge Pilot', created_at: '2026-06-10T10:00:00Z',
+    field_values: { name: 'GrowthForge Pilot', stage: 'Qualified', amount: 12000, close_date: '2026-08-15', probability: 40 } },
+  { id: 'r14', record_type_key: 'deal', title: 'FunnelWorks Enterprise', created_at: '2026-06-18T15:00:00Z',
+    field_values: { name: 'FunnelWorks Enterprise', stage: 'Lead', amount: 96000, close_date: '2026-09-30', probability: 20 } },
+  { id: 'r15', record_type_key: 'deal', title: 'TechSprint Coaching', created_at: '2026-06-22T09:00:00Z',
+    field_values: { name: 'TechSprint Coaching', stage: 'Closed Won', amount: 18000, close_date: '2026-06-30', probability: 100 } },
+  { id: 'r16', record_type_key: 'deal', title: 'MarketMind Advisory', created_at: '2026-06-24T11:00:00Z',
+    field_values: { name: 'MarketMind Advisory', stage: 'Proposal', amount: 36000, close_date: '2026-08-01', probability: 55 } },
   // Leads
   { id: 'r10', record_type_key: 'lead', title: 'Alex Rivera', created_at: '2026-06-20T11:20:00Z',
     field_values: { name: 'Alex Rivera', email: 'alex@creativehq.io', source: 'Webinar', score: 82, converted: false } },
@@ -359,11 +491,32 @@ const mockRecords: CrmRecord[] = [
     field_values: { name: 'David Chen', email: 'dchen@techsprint.dev', source: 'Referral', score: 74, converted: false } },
 ];
 
+// ── Kanban stage ordering per record type ─────────────────────────────────
+
+const STAGE_ORDER: Record<string, string[]> = {
+  deal:    ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'],
+  contact: ['Lead', 'Prospect', 'Active', 'Churned'],
+  lead:    ['Webinar', 'LinkedIn', 'Referral', 'Qualified', 'Converted'],
+  company: ['Education', 'Marketing', 'Consulting', 'Technology', 'Other'],
+};
+
+// dot color per semantic stage value
+function stageDot(stage: string): string {
+  const s = stage.toLowerCase();
+  if (s.includes('won') || s.includes('active') || s.includes('converted')) return 'bg-emerald-500';
+  if (s.includes('lost') || s.includes('churn')) return 'bg-red-400';
+  if (s.includes('negotiat') || s.includes('qualif')) return 'bg-violet-500';
+  if (s.includes('proposal') || s.includes('prospect')) return 'bg-sky-500';
+  if (s.includes('lead') || s.includes('new')) return 'bg-amber-400';
+  return 'bg-slate-400';
+}
+
 // ── State ──────────────────────────────────────────────────────────────────
 
 const selectedTypeKey = ref<string>(schema[0].key);
 const searchQuery = ref('');
 const openedRecord = ref<CrmRecord | null>(null);
+const viewMode = ref<'table' | 'kanban'>('table');
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -390,12 +543,60 @@ const filteredRecords = computed(() => {
   );
 });
 
+// The first select field drives the kanban grouping dimension
+const kanbanField = computed(() =>
+  selectedType.value?.fields.find((f) => f.data_type === 'select') ?? null,
+);
+
+const canKanban = computed(() => kanbanField.value != null);
+
+const kanbanColumns = computed((): string[] => {
+  if (!kanbanField.value) return [];
+  const fieldKey = kanbanField.value.key;
+  const order = STAGE_ORDER[selectedTypeKey.value] ?? [];
+  // collect values present in records not already in the predefined order
+  const extra = [...new Set(
+    filteredRecords.value
+      .map((r) => r.field_values[fieldKey] as string)
+      .filter((v): v is string => Boolean(v) && !order.includes(v)),
+  )];
+  return [...order, ...extra];
+});
+
+const kanbanGroups = computed((): Record<string, CrmRecord[]> => {
+  if (!kanbanField.value) return {};
+  const fieldKey = kanbanField.value.key;
+  const groups: Record<string, CrmRecord[]> = {};
+  for (const col of kanbanColumns.value) groups[col] = [];
+  for (const r of filteredRecords.value) {
+    const val = (r.field_values[fieldKey] as string) ?? '';
+    if (Object.prototype.hasOwnProperty.call(groups, val)) {
+      groups[val].push(r);
+    }
+  }
+  return groups;
+});
+
+// Secondary fields shown on each kanban card (first 2 non-title, non-groupBy fields)
+const kanbanCardFields = computed(() => {
+  const groupKey = kanbanField.value?.key;
+  return (selectedType.value?.fields ?? [])
+    .filter((f) => !f.is_title && f.key !== groupKey && f.data_type !== 'boolean')
+    .sort((a, b) => a.position - b.position)
+    .slice(0, 2);
+});
+
 // ── Actions ────────────────────────────────────────────────────────────────
 
 function selectType(key: string) {
   selectedTypeKey.value = key;
   searchQuery.value = '';
   openedRecord.value = null;
+  // If the new type has no groupable field, fall back to table view
+  const newType = schema.find((rt) => rt.key === key);
+  if (!newType?.fields.some((f) => f.data_type === 'select')) {
+    viewMode.value = 'table';
+  }
 }
 
 function openRecord(record: CrmRecord) {
@@ -412,29 +613,19 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function iconComponent(icon: IconKey) {
-  const paths: Record<IconKey, string> = {
-    user:     'M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z',
-    building: 'M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2zM9 22V12h6v10',
-    chart:    'M3 3v18h18M7 16l4-4 4 4 4-4',
-    target:   'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10zM12 18a6 6 0 100-12 6 6 0 000 12zM12 14a2 2 0 100-4 2 2 0 000 4z',
-  };
-  return defineComponent({
-    render() {
-      return h('svg', {
-        fill: 'none',
-        stroke: 'currentColor',
-        viewBox: '0 0 24 24',
-        'stroke-width': '2',
-        class: 'h-3.5 w-3.5',
-      }, [h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', d: paths[icon] })]);
-    },
-  });
+function formatCardValue(val: string | number | boolean | null | undefined, dataType: DataType): string {
+  if (val == null || val === '') return '—';
+  if (dataType === 'number') {
+    const n = Number(val);
+    if (n >= 1000) return '$' + (n / 1000).toFixed(0) + 'k';
+    return String(n);
+  }
+  if (dataType === 'date') return new Date(String(val)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return String(val);
 }
 
 // ── Inline sub-components ──────────────────────────────────────────────────
 
-// Renders a read-only field value with type-appropriate formatting
 const CrmCellValue = defineComponent({
   props: {
     value: { type: [String, Number, Boolean, null] as unknown as () => string | number | boolean | null, default: null },
@@ -465,7 +656,6 @@ const CrmCellValue = defineComponent({
   },
 });
 
-// Renders a read-only field input with type-appropriate appearance
 const CrmFieldInput = defineComponent({
   props: {
     value: { type: [String, Number, Boolean, null] as unknown as () => string | number | boolean | null, default: null },
