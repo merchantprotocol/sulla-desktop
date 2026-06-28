@@ -118,6 +118,11 @@
                     class="text-xs text-slate-400 dark:text-slate-500 tabular-nums group-hover/type:opacity-0 transition-opacity"
                     :title="typeCurrencyQuickStat[rt.key] ? `${recordCountByType[rt.key] ?? 0} records · ${typeCurrencyQuickStat[rt.key]} total` : undefined"
                   >{{ typeCurrencyQuickStat[rt.key] ?? (recordCountByType[rt.key] ?? 0) }}</span>
+                  <span
+                    v-if="overdueCountByType[rt.key]"
+                    class="shrink-0 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold tabular-nums leading-4 text-center bg-red-500 text-white"
+                    :title="`${overdueCountByType[rt.key]} overdue ${rt.label_plural.toLowerCase()}`"
+                  >{{ overdueCountByType[rt.key] }}</span>
                 </button>
                 <!-- quick-create + button, appears on hover -->
                 <button
@@ -6711,6 +6716,20 @@ const completenessRateByType = computed((): Record<string, number> => {
     rates[rt.key] = Math.round((fullyComplete / recs.length) * 100);
   }
   return rates;
+});
+
+const overdueCountByType = computed((): Record<string, number> => {
+  const counts: Record<string, number> = {};
+  for (const rt of schema) {
+    const dateField = rt.fields.find((f) => f.data_type === 'date');
+    if (!dateField) { counts[rt.key] = 0; continue; }
+    counts[rt.key] = mockRecords.filter((r) => {
+      if (r.record_type_key !== rt.key) return false;
+      const v = r.field_values[dateField.key];
+      return typeof v === 'string' && v < DUE_TODAY_STR;
+    }).length;
+  }
+  return counts;
 });
 
 // Quick-filter panel — per-field value counts across all current type records
