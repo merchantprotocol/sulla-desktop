@@ -25,60 +25,90 @@
 
       <div class="flex flex-1 min-h-0 overflow-hidden">
         <!-- ── Sidebar: record types nav ── -->
-        <aside class="flex flex-col w-56 shrink-0 border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-y-auto">
-          <div class="px-4 pt-5 pb-3">
+        <aside
+          class="flex flex-col shrink-0 border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-y-auto transition-all duration-200"
+          :class="sidebarCollapsed ? 'w-14' : 'w-56'"
+        >
+          <div v-if="!sidebarCollapsed" class="px-4 pt-5 pb-3">
             <h2 class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
               Record Types
             </h2>
           </div>
+          <div v-else class="pt-3 pb-1 flex justify-center">
+            <span class="h-5" />
+          </div>
 
-          <nav class="flex-1 px-2 pb-4 space-y-0.5">
-            <div
-              v-for="rt in schema"
-              :key="rt.id"
-              class="group/type flex items-center rounded-lg transition-colors"
-              :class="selectedTypeKey === rt.key
-                ? 'bg-slate-100 dark:bg-slate-800'
-                : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
-            >
+          <nav class="flex-1 space-y-0.5" :class="sidebarCollapsed ? 'px-1.5 pb-4' : 'px-2 pb-4'">
+            <!-- icon-only mode when collapsed -->
+            <template v-if="sidebarCollapsed">
               <button
+                v-for="rt in schema"
+                :key="rt.id"
                 type="button"
-                class="flex-1 flex items-center gap-2.5 px-3 py-2 text-left transition-colors min-w-0"
+                class="w-full flex items-center justify-center h-10 rounded-lg transition-colors"
                 :class="selectedTypeKey === rt.key
-                  ? 'text-slate-900 dark:text-white font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 group-hover/type:text-slate-900 dark:group-hover/type:text-white'"
+                  ? 'bg-slate-100 dark:bg-slate-800'
+                  : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                :title="rt.label_plural"
                 @click="selectType(rt.key)"
               >
                 <span
-                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                  class="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
                   :style="{ background: rt.color + '22', color: rt.color }"
                 >
-                  <component :is="ICON_COMPONENTS[rt.icon]" class="h-3.5 w-3.5" />
+                  <component :is="ICON_COMPONENTS[rt.icon]" class="h-4 w-4" />
                 </span>
-                <span class="flex-1 truncate text-sm">{{ rt.label_plural }}</span>
-                <span
-                  class="shrink-0 h-1.5 w-1.5 rounded-full"
-                  :class="(completenessRateByType[rt.key] ?? 0) >= 80 ? 'bg-emerald-400 dark:bg-emerald-500' : (completenessRateByType[rt.key] ?? 0) >= 50 ? 'bg-amber-400 dark:bg-amber-500' : 'bg-rose-400 dark:bg-rose-500'"
-                  :title="`${completenessRateByType[rt.key] ?? 0}% of ${rt.label_plural.toLowerCase()} fully complete`"
-                />
-                <span class="text-xs text-slate-400 dark:text-slate-500 tabular-nums group-hover/type:opacity-0 transition-opacity">{{ recordCountByType[rt.key] ?? 0 }}</span>
               </button>
-              <!-- quick-create + button, appears on hover -->
-              <button
-                type="button"
-                :title="`New ${rt.label}`"
-                class="shrink-0 mr-2 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/type:opacity-100 transition-all text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
-                @click.stop="selectType(rt.key); openNewRecord()"
+            </template>
+            <!-- full mode -->
+            <template v-else>
+              <div
+                v-for="rt in schema"
+                :key="rt.id"
+                class="group/type flex items-center rounded-lg transition-colors"
+                :class="selectedTypeKey === rt.key
+                  ? 'bg-slate-100 dark:bg-slate-800'
+                  : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
               >
-                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              </button>
-            </div>
+                <button
+                  type="button"
+                  class="flex-1 flex items-center gap-2.5 px-3 py-2 text-left transition-colors min-w-0"
+                  :class="selectedTypeKey === rt.key
+                    ? 'text-slate-900 dark:text-white font-semibold'
+                    : 'text-slate-600 dark:text-slate-400 group-hover/type:text-slate-900 dark:group-hover/type:text-white'"
+                  @click="selectType(rt.key)"
+                >
+                  <span
+                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                    :style="{ background: rt.color + '22', color: rt.color }"
+                  >
+                    <component :is="ICON_COMPONENTS[rt.icon]" class="h-3.5 w-3.5" />
+                  </span>
+                  <span class="flex-1 truncate text-sm">{{ rt.label_plural }}</span>
+                  <span
+                    class="shrink-0 h-1.5 w-1.5 rounded-full"
+                    :class="(completenessRateByType[rt.key] ?? 0) >= 80 ? 'bg-emerald-400 dark:bg-emerald-500' : (completenessRateByType[rt.key] ?? 0) >= 50 ? 'bg-amber-400 dark:bg-amber-500' : 'bg-rose-400 dark:bg-rose-500'"
+                    :title="`${completenessRateByType[rt.key] ?? 0}% of ${rt.label_plural.toLowerCase()} fully complete`"
+                  />
+                  <span class="text-xs text-slate-400 dark:text-slate-500 tabular-nums group-hover/type:opacity-0 transition-opacity">{{ recordCountByType[rt.key] ?? 0 }}</span>
+                </button>
+                <!-- quick-create + button, appears on hover -->
+                <button
+                  type="button"
+                  :title="`New ${rt.label}`"
+                  class="shrink-0 mr-2 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/type:opacity-100 transition-all text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  @click.stop="selectType(rt.key); openNewRecord()"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                </button>
+              </div>
+            </template>
           </nav>
 
-          <!-- recent records -->
-          <div v-if="recentRecords.length" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
+          <!-- recent records (hidden when collapsed) -->
+          <div v-if="recentRecords.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
               Recent
             </p>
@@ -100,8 +130,8 @@
             </button>
           </div>
 
-          <!-- watching section -->
-          <div v-if="watchedRecords.length" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
+          <!-- watching section (hidden when collapsed) -->
+          <div v-if="watchedRecords.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
               Watching
             </p>
@@ -128,8 +158,9 @@
             </button>
           </div>
 
-          <div class="px-2 py-3 border-t border-slate-200 dark:border-slate-700">
+          <div class="px-2 py-3 border-t border-slate-200 dark:border-slate-700 flex flex-col gap-1">
             <button
+              v-if="!sidebarCollapsed"
               type="button"
               class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-700 dark:hover:text-slate-200 transition-colors text-sm"
               title="Add a new record type"
@@ -138,6 +169,17 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
               </svg>
               New type
+            </button>
+            <!-- collapse toggle -->
+            <button
+              type="button"
+              class="flex items-center justify-center rounded-lg p-2 text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+              :title="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+              @click="sidebarCollapsed = !sidebarCollapsed"
+            >
+              <svg class="h-4 w-4 transition-transform" :class="sidebarCollapsed ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+              </svg>
             </button>
           </div>
         </aside>
@@ -2301,6 +2343,7 @@ const navigationStack = ref<Array<{ record: CrmRecord; typeKey: string }>>([]);
 const selectedIds = ref<Set<string>>(new Set());
 const hiddenColumnKeys = ref<Set<string>>(new Set());
 const showColumnsMenu = ref(false);
+const sidebarCollapsed = ref(false);
 const detailTab = ref<'details' | 'activity' | 'related'>('details');
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
