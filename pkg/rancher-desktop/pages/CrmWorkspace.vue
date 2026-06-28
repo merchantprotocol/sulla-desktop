@@ -2128,9 +2128,23 @@
                 {{ recordInitials(record.title) }}
               </div>
               <div class="flex-1 min-w-0">
-                <p class="text-sm font-medium text-slate-900 dark:text-white truncate">{{ record.title }}</p>
+                <p class="text-sm font-medium text-slate-900 dark:text-white truncate">
+                  <template v-if="paletteQuery.trim()">
+                    <template v-for="(part, pi) in highlightText(record.title, paletteQuery.trim())" :key="pi">
+                      <mark v-if="part.match" class="bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-100 rounded-sm not-italic">{{ part.text }}</mark>
+                      <span v-else>{{ part.text }}</span>
+                    </template>
+                  </template>
+                  <template v-else>{{ record.title }}</template>
+                </p>
                 <p class="text-xs text-slate-400 dark:text-slate-500 truncate">{{ schema.find(t => t.key === record.record_type_key)?.label }}</p>
               </div>
+              <span v-if="pinnedIds.has(record.id)" class="text-amber-400 shrink-0" title="Pinned">
+                <svg class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+              </span>
+              <span v-if="watchedIds.has(record.id)" class="text-sky-400 shrink-0" title="Watching">
+                <svg class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" /></svg>
+              </span>
               <svg v-if="idx === paletteIdx" class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
               </svg>
