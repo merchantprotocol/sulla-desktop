@@ -611,8 +611,12 @@
                       : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700'"
                     @click="openRecord(record)"
                   >
-                    <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug mb-2 line-clamp-2">
-                      {{ record.title }}
+                    <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug mb-2 line-clamp-2 flex items-start gap-1.5">
+                      <span class="flex-1">{{ record.title }}</span>
+                      <span
+                        v-if="record.links?.length"
+                        class="shrink-0 mt-0.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                      >{{ record.links.length }}</span>
                     </p>
                     <div class="space-y-1">
                       <div
