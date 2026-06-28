@@ -793,7 +793,23 @@
                     {{ selectedType?.label }}
                   </span>
                 </p>
-                <h3 class="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                <input
+                  v-if="editingTitle"
+                  ref="titleInputEl"
+                  :value="titleDraft"
+                  type="text"
+                  class="w-full text-sm font-semibold text-slate-900 dark:text-white bg-transparent border-b border-sky-400 dark:border-sky-500 outline-none pb-0.5"
+                  @input="titleDraft = ($event.target as HTMLInputElement).value"
+                  @keydown.enter.prevent="commitTitleEdit(openedRecord)"
+                  @keydown.esc.stop="cancelTitleEdit"
+                  @blur="commitTitleEdit(openedRecord)"
+                />
+                <h3
+                  v-else
+                  class="text-sm font-semibold text-slate-900 dark:text-white truncate cursor-text hover:opacity-80 transition-opacity"
+                  :title="editingRecord ? undefined : 'Click to rename'"
+                  @click="!editingRecord && startTitleEdit(openedRecord)"
+                >
                   {{ openedRecord.title }}
                 </h3>
               </div>
@@ -1105,7 +1121,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, defineComponent, h, onMounted } from 'vue';
+import { ref, reactive, computed, watch, nextTick, defineComponent, h, onMounted } from 'vue';
 import AgentHeader from '@pkg/pages/agent/AgentHeader.vue';
 import { useTheme } from '@pkg/composables/useTheme';
 
@@ -1383,6 +1399,10 @@ const detailTab = ref<'details' | 'activity' | 'related'>('details');
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const loggingNote = ref(false);
 const noteText = ref('');
+const editingTitle = ref(false);
+const titleDraft = ref('');
+const titleInputEl = ref<HTMLInputElement | null>(null);
+watch(editingTitle, (val) => { if (val) nextTick(() => titleInputEl.value?.select()); });
 const cellDraftValue = ref<string | number | boolean | null>(null);
 const showShortcuts = ref(false);
 const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
@@ -1673,6 +1693,22 @@ function toggleSort(fieldKey: string) {
   }
 }
 
+function startTitleEdit(record: CrmRecord) {
+  if (editingRecord.value) return;
+  titleDraft.value = record.title;
+  editingTitle.value = true;
+}
+
+function commitTitleEdit(record: CrmRecord) {
+  const trimmed = titleDraft.value.trim();
+  if (trimmed) record.title = trimmed;
+  editingTitle.value = false;
+}
+
+function cancelTitleEdit() {
+  editingTitle.value = false;
+}
+
 function closePanel() {
   openedRecord.value = null;
   editingRecord.value = false;
@@ -1681,6 +1717,7 @@ function closePanel() {
   createFormErrors.value = new Set();
   loggingNote.value = false;
   noteText.value = '';
+  editingTitle.value = false;
 }
 
 function openRecord(record: CrmRecord) {
