@@ -2177,7 +2177,12 @@
                     :title="record.title"
                     @click="openRecord(record)"
                   >{{ record.title }}</button>
-                  <span v-if="cell.records.length > 4" class="block text-xs text-slate-400 dark:text-slate-500 px-1">+{{ cell.records.length - 4 }} more</span>
+                  <button
+                    v-if="cell.records.length > 4"
+                    type="button"
+                    class="block text-xs text-slate-400 dark:text-slate-500 px-1 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                    @click.stop="calOverflowDate = cell.date; calOverflowPos = { x: $event.clientX, y: $event.clientY }"
+                  >+{{ cell.records.length - 4 }} more</button>
                 </div>
               </div>
             </div>
@@ -4393,6 +4398,30 @@
       </transition>
     </Teleport>
 
+    <!-- calendar overflow popover -->
+    <Teleport to="body">
+      <div
+        v-if="calOverflowDate"
+        class="fixed inset-0 z-50"
+        @click="calOverflowDate = null"
+      >
+        <div
+          class="absolute bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-2 min-w-[180px] max-w-[240px]"
+          :style="{ top: `${Math.min(calOverflowPos.y, window.innerHeight - 240)}px`, left: `${Math.min(calOverflowPos.x + 8, window.innerWidth - 248)}px` }"
+          @click.stop
+        >
+          <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 px-1 pb-1.5">{{ calOverflowDate }}</p>
+          <button
+            v-for="rec in calOverflowRecords"
+            :key="rec.id"
+            type="button"
+            class="w-full text-left text-xs px-2 py-1 rounded-lg truncate text-slate-700 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-sky-950/40 hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+            @click="openRecord(rec); calOverflowDate = null"
+          >{{ rec.title }}</button>
+        </div>
+      </div>
+    </Teleport>
+
     <!-- toast notifications -->
     <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
       <transition-group
@@ -5469,6 +5498,17 @@ const canKanban = computed(() => kanbanField.value != null);
 // ── Calendar view ────────────────────────────────────────────────────────────
 const calendarYear = ref(2026);
 const calendarMonth = ref(5); // 0-indexed: 5 = June
+const calOverflowDate = ref<string | null>(null);
+const calOverflowPos = ref({ x: 0, y: 0 });
+const calOverflowRecords = computed((): CrmRecord[] => {
+  const date = calOverflowDate.value;
+  if (!date) return [];
+  for (const week of calendarGrid.value) {
+    const cell = week.find((c) => c.date === date);
+    if (cell) return cell.records;
+  }
+  return [];
+});
 
 const calendarDateField = computed(() =>
   selectedType.value?.fields.find((f) => f.data_type === 'date') ?? null,
