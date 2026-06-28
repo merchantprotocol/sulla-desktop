@@ -1484,6 +1484,21 @@
                 </svg>
                 Stats
               </button>
+              <!-- timeline view button -->
+              <button
+                type="button"
+                class="flex items-center gap-1.5 px-3 h-9 text-sm border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="viewMode === 'timeline'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                title="Timeline view"
+                @click="viewMode = 'timeline'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h10M4 14h13M4 18h7" />
+                </svg>
+                Timeline
+              </button>
               <!-- gallery column-count picker — shown only in gallery mode -->
               <template v-if="viewMode === 'gallery'">
                 <button
@@ -3612,6 +3627,121 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- ── Timeline / Gantt view ── -->
+        <div v-if="viewMode === 'timeline'" class="flex-1 flex flex-col overflow-hidden">
+          <!-- no date field warning -->
+          <div
+            v-if="!timelineViewData?.endDateField"
+            class="flex-1 flex flex-col items-center justify-center gap-3 text-center text-slate-400 dark:text-slate-500 p-8"
+          >
+            <svg class="h-12 w-12 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 9v7.5" />
+            </svg>
+            <p class="text-sm font-medium">No date field found</p>
+            <p class="text-xs max-w-xs">Add a date field to this record type in the Schema editor to use the Timeline view.</p>
+            <button
+              type="button"
+              class="mt-2 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              @click="viewMode = 'table'"
+            >Back to table</button>
+          </div>
+          <template v-else-if="timelineViewData">
+            <!-- scrollable area -->
+            <div class="flex-1 overflow-auto">
+              <!-- sticky axis header -->
+              <div class="sticky top-0 z-10 flex border-b border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-sm">
+                <div class="shrink-0 w-52 border-r border-slate-200 dark:border-slate-700 px-3 py-2 flex items-center gap-2">
+                  <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Record</p>
+                  <span class="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded px-1 py-0.5 tabular-nums">{{ timelineViewData.rows.length }}</span>
+                </div>
+                <div class="relative flex-1 h-9 overflow-hidden select-none">
+                  <span
+                    v-for="tick in timelineViewData.ticks"
+                    :key="tick.pct"
+                    class="absolute top-2.5 text-[9px] text-slate-400 dark:text-slate-500 whitespace-nowrap"
+                    :style="{ left: 'calc(' + tick.pct + '% + 2px)' }"
+                  >{{ tick.label }}</span>
+                  <div
+                    v-if="timelineViewData.todayPct >= 0 && timelineViewData.todayPct <= 100"
+                    class="absolute inset-y-0 w-px bg-sky-400 dark:bg-sky-500 opacity-60 pointer-events-none"
+                    :style="{ left: timelineViewData.todayPct + '%' }"
+                  />
+                </div>
+                <div class="shrink-0 w-36 border-l border-slate-200 dark:border-slate-700 px-3 py-2">
+                  <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+                    {{ timelineViewData.endDateField.label }}
+                  </p>
+                </div>
+              </div>
+              <!-- empty state -->
+              <div
+                v-if="!timelineViewData.rows.length"
+                class="flex flex-col items-center justify-center h-48 gap-2 text-slate-400 dark:text-slate-500"
+              >
+                <p class="text-sm">No records to display.</p>
+              </div>
+              <!-- record rows -->
+              <div
+                v-for="row in timelineViewData.rows"
+                :key="row.record.id"
+                class="group flex items-center border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
+                :class="openedRecord?.id === row.record.id ? 'bg-sky-50 dark:bg-sky-950/20' : ''"
+                @click="openRecord(row.record)"
+              >
+                <!-- name column -->
+                <div class="shrink-0 w-52 border-r border-slate-100 dark:border-slate-800 px-3 py-1.5 flex items-center gap-2 min-w-0">
+                  <span
+                    class="shrink-0 h-2 w-2 rounded-full"
+                    :style="{ background: selectedType?.color ?? '#6366f1' }"
+                  />
+                  <span class="text-xs text-slate-700 dark:text-slate-200 truncate" :title="row.title">{{ row.title }}</span>
+                </div>
+                <!-- Gantt bar area -->
+                <div class="relative flex-1 h-9">
+                  <!-- today line -->
+                  <div
+                    v-if="timelineViewData.todayPct >= 0 && timelineViewData.todayPct <= 100"
+                    class="absolute inset-y-0 w-px bg-sky-200 dark:bg-sky-800/60 pointer-events-none"
+                    :style="{ left: timelineViewData.todayPct + '%' }"
+                  />
+                  <!-- bar -->
+                  <div
+                    class="absolute top-1.5 h-6 rounded-full flex items-center px-2.5 text-[10px] font-medium text-white select-none overflow-hidden transition-opacity group-hover:opacity-90"
+                    :style="{
+                      left: row.startPct + '%',
+                      width: Math.max(row.widthPct, 1) + '%',
+                      background: row.isOverdue ? '#f87171' : (selectedType?.color ?? '#6366f1'),
+                    }"
+                    :title="row.title + ' · ' + row.startIso + (row.endIso ? ' → ' + row.endIso : ' → ongoing')"
+                  >
+                    <span v-if="row.widthPct > 6" class="truncate">{{ row.title }}</span>
+                  </div>
+                </div>
+                <!-- date label column -->
+                <div class="shrink-0 w-36 border-l border-slate-100 dark:border-slate-800 px-3 py-1.5 text-right">
+                  <p class="text-[10px] tabular-nums text-slate-400 dark:text-slate-500">{{ row.startIso }}</p>
+                  <p
+                    v-if="row.endIso"
+                    class="text-[10px] tabular-nums font-medium"
+                    :class="row.isOverdue ? 'text-rose-500' : 'text-slate-500 dark:text-slate-400'"
+                  >{{ row.endIso }}</p>
+                  <p v-else class="text-[10px] text-slate-300 dark:text-slate-600 italic">ongoing</p>
+                </div>
+              </div>
+            </div>
+            <!-- footer axis strip -->
+            <div class="shrink-0 flex border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/80 py-1">
+              <div class="w-52 shrink-0" />
+              <div class="flex-1 flex items-center justify-between px-2 text-[9px] text-slate-400 dark:text-slate-500 tabular-nums">
+                <span>{{ timelineViewData.rangeStart }}</span>
+                <span class="text-sky-500 dark:text-sky-400 font-medium">today</span>
+                <span>{{ timelineViewData.rangeEnd }}</span>
+              </div>
+              <div class="w-36 shrink-0" />
+            </div>
+          </template>
         </div>
 
         <!-- ── Record detail panel ── -->
@@ -6839,7 +6969,7 @@ const searchQuery = ref('');
 const searchInputEl = ref<HTMLInputElement | null>(null);
 const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
-const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats'>('table');
+const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline'>('table');
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
@@ -8203,6 +8333,93 @@ const statsViewData = computed(() => {
   const heatmapMax = Math.max(...Object.values(dateCounts), 1);
 
   return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
+});
+
+const timelineViewData = computed(() => {
+  if (viewMode.value !== 'timeline') return null;
+  const rt = selectedType.value;
+  if (!rt) return null;
+  const recs = filteredRecords.value;
+  const titleField = rt.fields.find((f) => f.is_title);
+  const dateFields = rt.fields.filter((f) => f.data_type === 'date');
+  const END_KEYS = ['due_date', 'end_date', 'close_date', 'expected_close', 'closed_at', 'deadline'];
+  const endDateField = dateFields.find((f) => END_KEYS.includes(f.key)) ?? dateFields[0] ?? null;
+
+  const allDates: string[] = [];
+  for (const r of recs) {
+    if (r.created_at) allDates.push(r.created_at.slice(0, 10));
+    if (endDateField) {
+      const v = r.field_values[endDateField.key];
+      if (v && typeof v === 'string' && v.length >= 10) allDates.push(v.slice(0, 10));
+    }
+  }
+
+  // Build padded range; fall back to ±30 days if no records
+  let paddedStart: Date;
+  let paddedEnd: Date;
+  if (allDates.length) {
+    const sorted = [...allDates].sort();
+    paddedStart = new Date(sorted[0]);
+    paddedStart.setDate(paddedStart.getDate() - 5);
+    paddedEnd = new Date(sorted[sorted.length - 1]);
+    paddedEnd.setDate(paddedEnd.getDate() + 10);
+  } else {
+    paddedStart = new Date(DUE_TODAY_STR);
+    paddedStart.setDate(paddedStart.getDate() - 14);
+    paddedEnd = new Date(DUE_TODAY_STR);
+    paddedEnd.setDate(paddedEnd.getDate() + 30);
+  }
+
+  const rangeMs = paddedEnd.getTime() - paddedStart.getTime();
+  const totalDays = Math.round(rangeMs / 86_400_000) + 1;
+
+  function dateToPct(iso: string): number {
+    const ms = new Date(iso).getTime() - paddedStart.getTime();
+    return Math.min(100, Math.max(0, (ms / rangeMs) * 100));
+  }
+
+  const rows = recs.map((r) => {
+    const startIso = (r.created_at ?? DUE_TODAY_STR).slice(0, 10);
+    const rawEnd = endDateField ? String(r.field_values[endDateField.key] ?? '') : '';
+    const hasEnd = rawEnd.length >= 10;
+    const endIso = hasEnd ? rawEnd.slice(0, 10) : null;
+    const startPct = dateToPct(startIso);
+    const endPct = endIso ? dateToPct(endIso) : dateToPct(DUE_TODAY_STR);
+    const widthPct = Math.max(endPct - startPct, 0.5);
+    const isOverdue = !!endIso && endIso < DUE_TODAY_STR;
+    const titleKey = titleField?.key ?? '';
+    const title = String(r.field_values[titleKey] ?? r.id);
+    return { record: r, title, startIso, endIso, startPct, widthPct, isOverdue };
+  }).sort((a, b) => a.startIso.localeCompare(b.startIso));
+
+  // Month tick marks
+  const ticks: Array<{ label: string; pct: number }> = [];
+  const tickDate = new Date(paddedStart);
+  tickDate.setDate(1);
+  tickDate.setMonth(tickDate.getMonth() + 1);
+  while (tickDate <= paddedEnd) {
+    const iso = tickDate.toISOString().slice(0, 10);
+    const pct = dateToPct(iso);
+    if (pct >= 0 && pct <= 100) {
+      const label = tickDate.toLocaleDateString('en-US', {
+        month: 'short',
+        ...(totalDays > 180 ? { year: '2-digit' } : {}),
+      });
+      ticks.push({ label, pct });
+    }
+    tickDate.setMonth(tickDate.getMonth() + 1);
+  }
+
+  const todayPct = dateToPct(DUE_TODAY_STR);
+  return {
+    rows,
+    rangeStart: paddedStart.toISOString().slice(0, 10),
+    rangeEnd: paddedEnd.toISOString().slice(0, 10),
+    endDateField,
+    totalDays,
+    ticks,
+    todayPct,
+  };
 });
 
 interface ColStatsResult {
