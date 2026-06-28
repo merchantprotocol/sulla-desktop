@@ -406,7 +406,7 @@
         >
           <aside
             v-if="openedRecord"
-            class="w-80 shrink-0 flex flex-col border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-y-auto"
+            class="w-80 shrink-0 flex flex-col border-l border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden"
           >
             <!-- panel header -->
             <div class="flex items-start gap-2 px-5 py-4 border-b border-slate-200 dark:border-slate-700">
