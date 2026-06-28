@@ -1161,6 +1161,39 @@ export class CrmSchemaService {
     }
   }
 
+  /**
+   * Fetch recent audit rows. Filterable by entity_id (a specific record/field/
+   * etc.) and entity_type. Useful for recovering lost undo tokens or reviewing
+   * what the agent has changed.
+   */
+  static async getAuditLog(
+    opts: {
+      entityId?: string;
+      entityType?: AuditEntityType;
+      limit?: number;
+      tenantId?: string;
+    } = {},
+  ): Promise<Array<{
+    id: string; op: string; entity_type: string; entity_id: string | null;
+    undo_token: string; undone: boolean; created_at: string;
+  }>> {
+    const tenantId = opts.tenantId ?? DEFAULT_TENANT_ID;
+    const params: any[] = [tenantId];
+    const where: string[] = ['tenant_id = $1'];
+    const push = (v: any): string => { params.push(v); return `$${ params.length }`; };
+
+    if (opts.entityId) where.push(`entity_id = ${ push(opts.entityId) }`);
+    if (opts.entityType) where.push(`entity_type = ${ push(opts.entityType) }`);
+
+    const limitPh = push(opts.limit ?? 20);
+    return postgresClient.query(
+      `SELECT id, op, entity_type, entity_id, undo_token, undone, created_at
+       FROM crm_audit WHERE ${ where.join(' AND ') }
+       ORDER BY created_at DESC LIMIT ${ limitPh }`,
+      params,
+    );
+  }
+
   static async listViews(
     recordTypeId: string,
     tenantId = DEFAULT_TENANT_ID,

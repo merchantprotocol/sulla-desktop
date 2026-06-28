@@ -193,6 +193,18 @@ export const crmToolManifests: ToolManifest[] = [
     loader:         () => import('./aggregate_records'),
   },
   {
+    name:        'get_audit_log',
+    description: 'Return recent CRM audit entries (op, entity, undo_token, undone flag). Use to recover lost undo tokens or inspect what the agent changed. Filter by entity_id and/or entity_type.',
+    category:    'crm',
+    schemaDef:   {
+      entity_id:   { type: 'string', optional: true, description: 'Filter to a specific record/field/type/etc id.' },
+      entity_type: { type: 'enum', enum: ['record_type', 'field', 'relationship', 'view', 'dashboard', 'widget', 'record', 'link'], optional: true },
+      limit:       { type: 'number', optional: true, description: 'Max rows (default 20, cap 100).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./get_audit_log'),
+  },
+  {
     name:        'undo',
     description: 'Revert a previous CRM mutation by its undo token (from an earlier op\'s [undo:...] tag). Reverses create/update/archive/link ops; idempotent.',
     category:    'crm',
