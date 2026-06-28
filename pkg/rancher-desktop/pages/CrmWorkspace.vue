@@ -3,10 +3,11 @@
     class="text-sm font-sans page-root h-full"
     :class="{ dark: isDark }"
     tabindex="-1"
-    @keydown.esc="closePanel"
+    @keydown.esc="onKeyEsc"
     @keydown.n.exact="onKeyN"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
     @keydown.down.exact.prevent="onKeyArrow(1)"
+    @keydown="onGlobalKeydown"
     @click="showColumnsMenu = false; cancelCellEdit()"
   >
     <div class="flex flex-col h-full">
@@ -865,6 +866,68 @@
         </transition>
       </div>
     </div>
+
+    <!-- keyboard shortcuts overlay — triggered by ? key -->
+    <transition
+      enter-active-class="transition-all duration-150"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-100"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="showShortcuts"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+        @click.self="showShortcuts = false"
+      >
+        <div class="w-80 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+            <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Keyboard shortcuts</h3>
+            <button
+              type="button"
+              class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1 transition-colors"
+              aria-label="Close"
+              @click="showShortcuts = false"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="px-5 py-3 space-y-0.5">
+            <template v-for="group in [
+              { heading: 'Navigation', items: [
+                { keys: ['N'], desc: 'New record' },
+                { keys: ['↑', '↓'], desc: 'Prev / next record' },
+                { keys: ['Esc'], desc: 'Close panel' },
+                { keys: ['?'], desc: 'Toggle this overlay' },
+              ]},
+              { heading: 'Table', items: [
+                { keys: ['Dbl-click'], desc: 'Edit cell inline' },
+                { keys: ['Enter'], desc: 'Commit cell edit' },
+                { keys: ['Esc'], desc: 'Cancel cell edit' },
+              ]},
+            ]" :key="group.heading">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 pt-3 pb-1 first:pt-0">{{ group.heading }}</p>
+              <div v-for="item in group.items" :key="item.desc" class="flex items-center justify-between py-1.5">
+                <span class="text-sm text-slate-600 dark:text-slate-300">{{ item.desc }}</span>
+                <span class="flex items-center gap-1">
+                  <kbd
+                    v-for="k in item.keys"
+                    :key="k"
+                    class="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-mono font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                  >{{ k }}</kbd>
+                </span>
+              </div>
+            </template>
+          </div>
+          <div class="px-5 py-3 border-t border-slate-100 dark:border-slate-800">
+            <p class="text-xs text-slate-400 dark:text-slate-500">Press <kbd class="inline-flex items-center rounded px-1 py-0.5 text-xs font-mono bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">?</kbd> to toggle this overlay</p>
+          </div>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -1144,6 +1207,7 @@ const showColumnsMenu = ref(false);
 const detailTab = ref<'details' | 'activity' | 'related'>('details');
 const editingCell = ref<{ recordId: string; fieldKey: string } | null>(null);
 const cellDraftValue = ref<string | number | boolean | null>(null);
+const showShortcuts = ref(false);
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
@@ -1436,6 +1500,18 @@ function openLinkedRecord(link: CrmLink) {
   editingRecord.value = false;
   creatingRecord.value = false;
   detailTab.value = 'details';
+}
+
+function onKeyEsc() {
+  if (showShortcuts.value) { showShortcuts.value = false; return; }
+  closePanel();
+}
+
+function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.key !== '?') return;
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  showShortcuts.value = !showShortcuts.value;
 }
 
 function onKeyN(e: KeyboardEvent) {
