@@ -4427,6 +4427,21 @@
                 @click="calendarViewMode = 'week'"
               >Week</button>
             </div>
+            <!-- task indicators toggle -->
+            <button
+              type="button"
+              class="flex items-center gap-1 h-7 px-2.5 rounded-lg text-xs font-medium border transition-colors"
+              :class="calShowTasks
+                ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400'
+                : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'"
+              :title="calShowTasks ? 'Hiding task due dates — click to show' : 'Show task due dates on calendar'"
+              @click="calShowTasks = !calShowTasks"
+            >
+              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Tasks
+            </button>
             <span class="ml-auto text-xs text-slate-400 dark:text-slate-500">Grouped by: <b class="text-slate-600 dark:text-slate-300">{{ calendarDateField?.label }}</b></span>
           </div>
           <!-- day-of-week headers (shared by both modes) -->
@@ -4527,6 +4542,17 @@
                     class="block text-xs text-slate-400 dark:text-slate-500 px-1 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
                     @click.stop="calOverflowDate = cell.date; calOverflowPos = { x: $event.clientX, y: $event.clientY }"
                   >+{{ cell.records.length - 4 }} more</button>
+                  <!-- task due indicators -->
+                  <div
+                    v-if="calShowTasks && (calTasksByDate[cell.date]?.length ?? 0) > 0"
+                    class="flex items-center gap-1 mt-0.5 px-1"
+                    :title="`${calTasksByDate[cell.date].length} task${calTasksByDate[cell.date].length === 1 ? '' : 's'} due`"
+                  >
+                    <svg class="h-2.5 w-2.5 shrink-0 text-emerald-500 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span class="text-[9px] text-emerald-500 dark:text-emerald-400 font-medium tabular-nums">{{ calTasksByDate[cell.date].length }} task{{ calTasksByDate[cell.date].length === 1 ? '' : 's' }}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4625,7 +4651,24 @@
                       </button>
                     </div>
                   </div>
-                  <div v-if="!cell.records.length" class="text-xs text-slate-200 dark:text-slate-700 text-center py-6 select-none">—</div>
+                  <!-- task due chips (week view) -->
+                  <template v-if="calShowTasks && (calTasksByDate[cell.date]?.length ?? 0) > 0">
+                    <div v-if="cell.records.length" class="my-0.5 border-t border-slate-100 dark:border-slate-800" />
+                    <div
+                      v-for="task in (calTasksByDate[cell.date] ?? []).slice(0, 3)"
+                      :key="task.id"
+                      class="flex items-center gap-1.5 rounded px-1.5 py-1 text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 cursor-pointer transition-colors"
+                      :title="task.text"
+                      @click.stop="(() => { const rec = mockRecords.find(r => r.id === task.record_id); if (rec) { openRecord(rec); nextTick(() => { detailTab = 'tasks'; }); } })()"
+                    >
+                      <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span class="truncate">{{ task.text }}</span>
+                    </div>
+                    <span v-if="(calTasksByDate[cell.date]?.length ?? 0) > 3" class="block text-[10px] text-emerald-500 dark:text-emerald-400 px-1.5 tabular-nums">+{{ (calTasksByDate[cell.date]?.length ?? 0) - 3 }} more</span>
+                  </template>
+                  <div v-if="!cell.records.length && !(calShowTasks && (calTasksByDate[cell.date]?.length ?? 0) > 0)" class="text-xs text-slate-200 dark:text-slate-700 text-center py-6 select-none">—</div>
                 </div>
               </div>
             </div>
@@ -17362,6 +17405,21 @@ const calendarViewMode = ref<'month' | 'week'>('month');
 const calWeekOffset = ref(0);
 let calDragRecordId: string | null = null;
 const calDragOverDate = ref<string | null>(null);
+const calShowTasks = ref(true);
+
+const calTasksByDate = computed((): Record<string, CrmTask[]> => {
+  const typeRecordIds = new Set(
+    mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).map((r) => r.id),
+  );
+  const result: Record<string, CrmTask[]> = {};
+  for (const t of mockTasks) {
+    if (!t.due_date || t.done || t.parent_id) continue;
+    if (!typeRecordIds.has(t.record_id)) continue;
+    if (!result[t.due_date]) result[t.due_date] = [];
+    result[t.due_date].push(t);
+  }
+  return result;
+});
 
 const calWeekDays = computed((): CalDay[] => {
   const fkey = calendarDateField.value?.key;
