@@ -4747,10 +4747,12 @@
               <div
                 v-for="(step, idx) in statsViewData.pipelineFunnel"
                 :key="step.stage"
-                class="flex items-center gap-3 group"
+                class="flex items-center gap-3 group cursor-pointer"
+                :title="`${step.count} record${step.count === 1 ? '' : 's'} — click to filter to this stage`"
+                @click="kanbanField && step.stage !== '__ungrouped__' && (toggleFilter(kanbanField.key, step.stage), viewMode = 'table')"
               >
                 <!-- stage label -->
-                <div class="w-28 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right leading-tight">{{ step.stage }}</div>
+                <div class="w-28 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right leading-tight group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">{{ step.stage }}</div>
                 <!-- funnel bar -->
                 <div class="flex-1 relative h-7 rounded overflow-hidden bg-slate-100 dark:bg-slate-800">
                   <div
