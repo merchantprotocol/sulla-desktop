@@ -9409,6 +9409,16 @@
           Copy link
         </button>
         <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="(() => { quickNotePos = { top: contextMenuPos.y, left: Math.min(contextMenuPos.x, window.innerWidth - 300) }; quickNoteRecordId = contextMenuRecord!.id; closeContextMenu(); })()"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          </svg>
+          Log note
+        </button>
+        <button
           v-if="openedRecord && openedRecord.id !== contextMenuRecord.id"
           type="button"
           class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
