@@ -6169,14 +6169,24 @@
                   <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide group-hover/nc2:text-sky-500 dark:group-hover/nc2:text-sky-400 transition-colors">Avg</p>
                   <p class="text-lg font-semibold tabular-nums text-slate-900 dark:text-white">{{ card.field.format === 'currency' ? '$' + card.avg : card.avg }}</p>
                 </button>
-                <div>
-                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">Min</p>
+                <button
+                  type="button"
+                  class="text-left rounded-lg p-1 -m-1 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/ncmin"
+                  title="Click to sort by this field (low → high)"
+                  @click="sortField = card.field.key; sortDir = 'asc'; viewMode = 'table'"
+                >
+                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide group-hover/ncmin:text-sky-500 dark:group-hover/ncmin:text-sky-400 transition-colors">Min</p>
                   <p class="text-sm tabular-nums text-slate-600 dark:text-slate-400">{{ card.min.toLocaleString() }}</p>
-                </div>
-                <div>
-                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">Max</p>
+                </button>
+                <button
+                  type="button"
+                  class="text-left rounded-lg p-1 -m-1 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/ncmax"
+                  title="Click to sort by this field (high → low)"
+                  @click="sortField = card.field.key; sortDir = 'desc'; viewMode = 'table'"
+                >
+                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide group-hover/ncmax:text-sky-500 dark:group-hover/ncmax:text-sky-400 transition-colors">Max</p>
                   <p class="text-sm tabular-nums text-slate-600 dark:text-slate-400">{{ card.max.toLocaleString() }}</p>
-                </div>
+                </button>
               </div>
             </div>
           </div>
