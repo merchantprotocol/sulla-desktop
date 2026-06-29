@@ -7547,6 +7547,17 @@
           Select all in group
         </button>
         <button
+          v-if="groupByField && groupMenu.key !== '__ungrouped__'"
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="toggleFilter(groupByField, groupMenu.key); groupMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+          </svg>
+          Filter to this group
+        </button>
+        <button
           type="button"
           class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           @click="toggleGroupCollapse(groupMenu.key); groupMenu = null"
