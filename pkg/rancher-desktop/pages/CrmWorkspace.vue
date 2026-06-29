@@ -5085,6 +5085,14 @@
                   <span class="shrink-0 tabular-nums text-slate-500 dark:text-slate-400 font-medium">
                     ${{ item.amount >= 1_000 ? Math.round(item.amount / 1_000) + 'k' : item.amount }}
                   </span>
+                  <button
+                    type="button"
+                    class="shrink-0 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/fi:opacity-100 transition-opacity text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400"
+                    title="Log a quick note"
+                    @click.stop="openQuickNote(item.id, $event)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  </button>
                 </div>
               </div>
             </template>
