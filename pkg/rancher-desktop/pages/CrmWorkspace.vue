@@ -6261,6 +6261,19 @@
               <svg class="pointer-events-none absolute top-1/2 left-2.5 h-3 w-3 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
               <input v-model="feedSearchQuery" type="text" placeholder="Search activity…" class="h-7 w-52 rounded-lg pl-7 pr-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40" />
             </div>
+            <!-- export feed CSV -->
+            <button
+              v-if="feedRows.some(r => r.kind === 'activity')"
+              type="button"
+              class="shrink-0 flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+              title="Export filtered feed as CSV"
+              @click="exportFeedCsv"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Export
+            </button>
           </div>
           <!-- feed items -->
           <div class="space-y-0">
@@ -8088,12 +8101,26 @@
               <template v-else-if="detailTab === 'activity'">
                 <div class="flex items-center justify-between">
                   <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Activity</p>
-                  <button
-                    v-if="loggingNote"
-                    type="button"
-                    class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-                    @click="loggingNote = false; noteText = ''"
-                  >Cancel</button>
+                  <div class="flex items-center gap-2">
+                    <button
+                      v-if="openedRecord && recordActivities.length"
+                      type="button"
+                      class="flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                      title="Export this record's activity log as CSV"
+                      @click="exportRecordActivitiesCsv"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Export
+                    </button>
+                    <button
+                      v-if="loggingNote"
+                      type="button"
+                      class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                      @click="loggingNote = false; noteText = ''"
+                    >Cancel</button>
+                  </div>
                 </div>
 
                 <!-- next best action suggestion -->
@@ -20882,6 +20909,70 @@ function exportCsv(records?: CrmRecord[]) {
   a.click();
   URL.revokeObjectURL(url);
   showToast(`Exported ${recs.length} record${recs.length === 1 ? '' : 's'}`);
+}
+
+function exportFeedCsv() {
+  const acts = feedRows.value
+    .filter((r): r is { kind: 'activity'; act: CrmActivity } => r.kind === 'activity')
+    .map((r) => r.act);
+  const escape = (v: unknown) => {
+    const s = v == null ? '' : String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ['Date', 'Time', 'Type', 'Record', 'Author', 'Content', 'Scheduled'].join(',');
+  const rows = acts.map((a) => {
+    const d = new Date(a.created_at);
+    const rec = mockRecords.find((r) => r.id === a.record_id);
+    return [
+      escape(d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })),
+      escape(d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })),
+      escape(a.type),
+      escape(rec?.title ?? a.record_id),
+      escape(a.author),
+      escape(a.content),
+      escape(a.scheduled_at ? new Date(a.scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''),
+    ].join(',');
+  });
+  const csv = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${selectedType.value?.label_plural ?? 'records'}-activity.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${acts.length} activit${acts.length === 1 ? 'y' : 'ies'}`);
+}
+
+function exportRecordActivitiesCsv() {
+  const rec = openedRecord.value;
+  if (!rec) return;
+  const acts = visibleActivities.value;
+  const escape = (v: unknown) => {
+    const s = v == null ? '' : String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = ['Date', 'Time', 'Type', 'Author', 'Content', 'Scheduled'].join(',');
+  const rows = acts.map((a) => {
+    const d = new Date(a.created_at);
+    return [
+      escape(d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })),
+      escape(d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })),
+      escape(a.type),
+      escape(a.author),
+      escape(a.content),
+      escape(a.scheduled_at ? new Date(a.scheduled_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''),
+    ].join(',');
+  });
+  const csv = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${rec.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-activity.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${acts.length} activit${acts.length === 1 ? 'y' : 'ies'}`);
 }
 
 function recordInitials(title: string): string {
