@@ -5735,6 +5735,18 @@
                   <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
                 </button>
                 <button
+                  v-if="schema.filter(s => s.key !== openedRecord.record_type_key).length"
+                  type="button"
+                  aria-label="Convert record type"
+                  title="Convert to another record type"
+                  class="rounded-lg py-2 px-3 text-sm font-medium transition-colors text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                  @click="convertModal = { record: openedRecord }; convertTargetTypeKey = schema.find(s => s.key !== openedRecord.record_type_key)?.key ?? ''"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                </button>
+                <button
                   type="button"
                   aria-label="Delete record"
                   title="Delete record"
@@ -7066,6 +7078,88 @@
               @click="submitWinLoss"
             >Mark {{ winLossModal.stage }}</button>
             <button type="button" class="rounded-lg py-2 px-4 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" @click="winLossModal = null">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- convert record type modal -->
+    <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div
+        v-if="convertModal"
+        class="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        @click.self="convertModal = null"
+      >
+        <div class="w-full max-w-md mx-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
+          <div class="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+            <div class="h-8 w-8 rounded-full bg-sky-100 dark:bg-sky-900/40 flex items-center justify-center text-sky-600 dark:text-sky-400 shrink-0">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Convert record type</h3>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 truncate">{{ convertModal.record.title }}</p>
+            </div>
+            <button type="button" class="shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-1" @click="convertModal = null">
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="px-5 py-4 space-y-4">
+            <div class="space-y-1">
+              <label class="text-xs font-medium text-slate-500 dark:text-slate-400">Convert to</label>
+              <select
+                v-model="convertTargetTypeKey"
+                class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              >
+                <option v-for="rt in schema.filter(s => s.key !== convertModal!.record.record_type_key)" :key="rt.key" :value="rt.key">{{ rt.label }}</option>
+              </select>
+            </div>
+            <template v-if="convertTargetTypeKey">
+              <div class="space-y-1">
+                <p class="text-xs font-medium text-slate-500 dark:text-slate-400">Field mapping</p>
+                <p class="text-[10px] text-slate-400 dark:text-slate-500">Values from matching fields will be copied to the new record. Fields with no match are left empty.</p>
+              </div>
+              <div class="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-xs">
+                <div class="grid grid-cols-2 bg-slate-50 dark:bg-slate-800/60 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 border-b border-slate-200 dark:border-slate-700">
+                  <span>{{ schema.find(s => s.key === convertModal!.record.record_type_key)?.label ?? 'Source' }} field</span>
+                  <span>Maps to</span>
+                </div>
+                <div
+                  v-for="srcField in (schema.find(s => s.key === convertModal!.record.record_type_key)?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
+                  :key="srcField.key"
+                  class="grid grid-cols-2 items-center px-3 py-1.5 border-b border-slate-100 dark:border-slate-800 last:border-b-0"
+                >
+                  <div>
+                    <span class="font-medium text-slate-700 dark:text-slate-300">{{ srcField.label }}</span>
+                    <span v-if="convertModal!.record.field_values[srcField.key] != null && String(convertModal!.record.field_values[srcField.key]).trim()" class="ml-1.5 text-slate-400 dark:text-slate-500 truncate">{{ String(convertModal!.record.field_values[srcField.key]).slice(0, 24) }}</span>
+                  </div>
+                  <div>
+                    <select
+                      class="w-full text-xs px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-sky-400"
+                      :value="convertMappings[srcField.key] ?? ''"
+                      @change="convertMappings = { ...convertMappings, [srcField.key]: ($event.target as HTMLSelectElement).value }"
+                    >
+                      <option value="">(skip)</option>
+                      <option
+                        v-for="tgtField in (schema.find(s => s.key === convertTargetTypeKey)?.fields ?? []).filter(f => f.data_type === srcField.data_type)"
+                        :key="tgtField.key"
+                        :value="tgtField.key"
+                      >{{ tgtField.label }}</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="px-5 py-3.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
+            <button
+              type="button"
+              class="flex-1 rounded-lg py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors disabled:opacity-40"
+              :disabled="!convertTargetTypeKey"
+              @click="executeConvert"
+            >Convert &amp; open</button>
+            <button type="button" class="rounded-lg py-2 px-4 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" @click="convertModal = null">Cancel</button>
           </div>
         </div>
       </div>
@@ -9010,6 +9104,67 @@ function executeMerge() {
   mergeModal.value = null;
   openRecord(primary);
   showToast(`Records merged into "${primary.title}"`);
+}
+
+// Convert record type
+const convertModal = ref<{ record: CrmRecord } | null>(null);
+const convertTargetTypeKey = ref('');
+const convertMappings = ref<Record<string, string>>({});
+
+watch(convertTargetTypeKey, (newKey) => {
+  if (!newKey || !convertModal.value) return;
+  const srcFields = schema.find((s) => s.key === convertModal.value!.record.record_type_key)?.fields ?? [];
+  const tgtFields = schema.find((s) => s.key === newKey)?.fields ?? [];
+  const auto: Record<string, string> = {};
+  for (const sf of srcFields) {
+    // match by label (case-insensitive) first, then by key, then first same data_type field
+    const byLabel = tgtFields.find((tf) => tf.label.toLowerCase() === sf.label.toLowerCase() && tf.data_type === sf.data_type);
+    const byKey = tgtFields.find((tf) => tf.key === sf.key && tf.data_type === sf.data_type);
+    const byType = tgtFields.find((tf) => tf.data_type === sf.data_type);
+    const match = byLabel ?? byKey ?? byType;
+    auto[sf.key] = match?.key ?? '';
+  }
+  convertMappings.value = auto;
+});
+
+watch(convertModal, (v) => { if (!v) { convertTargetTypeKey.value = ''; convertMappings.value = {}; } });
+
+function executeConvert() {
+  const modal = convertModal.value;
+  if (!modal || !convertTargetTypeKey.value) return;
+  const src = modal.record;
+  const tgtType = schema.find((s) => s.key === convertTargetTypeKey.value);
+  if (!tgtType) return;
+  const newFieldValues: Record<string, string | number | boolean | string[] | null> = {};
+  const srcFields = schema.find((s) => s.key === src.record_type_key)?.fields ?? [];
+  for (const sf of srcFields) {
+    const tgtKey = convertMappings.value[sf.key];
+    if (tgtKey && src.field_values[sf.key] != null) {
+      newFieldValues[tgtKey] = src.field_values[sf.key];
+    }
+  }
+  const titleField = tgtType.fields.find((f) => f.is_title);
+  if (titleField && !newFieldValues[titleField.key]) newFieldValues[titleField.key] = src.title;
+  const newId = `converted-${src.id}-${Date.now()}`;
+  const newRecord: CrmRecord = {
+    id: newId,
+    record_type_key: tgtType.key,
+    title: src.title,
+    field_values: newFieldValues,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    links: [{ target_id: src.id, target_type: src.record_type_key, target_title: src.title }],
+  };
+  mockRecords.unshift(newRecord);
+  if (!src.links) src.links = [];
+  src.links.push({ target_id: newId, target_type: tgtType.key, target_title: src.title });
+  const now = new Date().toISOString();
+  mockActivities.unshift({ id: `act-cvt-src-${String(mockActivities.length)}`, record_id: src.id, type: 'change', content: `Converted to ${tgtType.label}: "${src.title}"`, author: 'You', created_at: now });
+  mockActivities.unshift({ id: `act-cvt-tgt-${String(mockActivities.length)}`, record_id: newId, type: 'change', content: `Converted from ${schema.find((s) => s.key === src.record_type_key)?.label ?? src.record_type_key}: "${src.title}"`, author: 'You', created_at: now });
+  convertModal.value = null;
+  selectedTypeKey.value = tgtType.key;
+  openRecord(newRecord);
+  showToast(`Converted to ${tgtType.label}`);
 }
 
 interface NewRuleDraft {
