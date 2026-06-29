@@ -7568,6 +7568,34 @@
                       </button>
                     </div>
                   </template>
+                  <!-- multi-select: removable chips in view mode -->
+                  <template v-else-if="!editingRecord && field.data_type === 'multi_select' && !lockedRecordIds.has(openedRecord.id)">
+                    <div class="flex flex-wrap gap-1">
+                      <span
+                        v-if="!(Array.isArray(openedRecord.field_values[field.key]) ? openedRecord.field_values[field.key] : (openedRecord.field_values[field.key] ? String(openedRecord.field_values[field.key]).split(',').map(s => s.trim()).filter(Boolean) : [])).length"
+                        class="text-sm text-slate-300 dark:text-slate-600"
+                      >—</span>
+                      <span
+                        v-for="opt in (Array.isArray(openedRecord.field_values[field.key]) ? openedRecord.field_values[field.key] : (openedRecord.field_values[field.key] ? String(openedRecord.field_values[field.key]).split(',').map(s => s.trim()).filter(Boolean) : []))"
+                        :key="String(opt)"
+                        class="group/mchip inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-medium"
+                        :class="(field.select_option_colors ?? {})[String(opt)] ? '' : 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800'"
+                        :style="(field.select_option_colors ?? {})[String(opt)] ? { background: (field.select_option_colors ?? {})[String(opt)] + '26', color: (field.select_option_colors ?? {})[String(opt)] } : undefined"
+                      >
+                        {{ opt }}
+                        <button
+                          type="button"
+                          class="invisible group-hover/mchip:visible ml-0.5 h-3 w-3 rounded-full flex items-center justify-center opacity-60 hover:opacity-100 transition-all"
+                          :title="`Remove '${opt}'`"
+                          @click.stop="(() => { const current = Array.isArray(openedRecord.field_values[field.key]) ? openedRecord.field_values[field.key] as string[] : (openedRecord.field_values[field.key] ? String(openedRecord.field_values[field.key]).split(',').map(s => s.trim()).filter(Boolean) : []); const next = current.filter(v => v !== String(opt)); openedRecord.field_values[field.key] = next.length ? next : null; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, next.length ? next : null); })()"
+                        >
+                          <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </span>
+                    </div>
+                  </template>
                   <CrmFieldInput
                     v-else
                     :data-type="field.data_type"
