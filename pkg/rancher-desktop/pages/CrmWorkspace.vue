@@ -4118,6 +4118,89 @@
             <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No deals closing this month.</p>
           </div>
 
+          <!-- revenue quota goal card (pipeline types with currency field only) -->
+          <div v-if="forecastData" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Revenue quota</p>
+              <button
+                v-if="editingRevenueGoalKey !== selectedTypeKey"
+                type="button"
+                class="text-xs transition-colors"
+                :class="revenueGoals[selectedTypeKey]
+                  ? 'text-slate-400 hover:text-slate-500 dark:hover:text-slate-300'
+                  : 'text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300'"
+                @click="revenueGoalDraft = revenueGoals[selectedTypeKey] ? String(revenueGoals[selectedTypeKey]) : ''; editingRevenueGoalKey = selectedTypeKey"
+              >{{ revenueGoals[selectedTypeKey] ? 'Edit' : 'Set quota' }}</button>
+            </div>
+            <!-- edit input -->
+            <template v-if="editingRevenueGoalKey === selectedTypeKey">
+              <div class="flex items-center gap-2">
+                <span class="text-sm text-slate-400">$</span>
+                <input
+                  v-model="revenueGoalDraft"
+                  type="number"
+                  min="1"
+                  placeholder="e.g. 500000"
+                  class="flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
+                  @keydown.enter.prevent="(() => { const n = parseFloat(revenueGoalDraft); if (n > 0) { revenueGoals.value = { ...revenueGoals.value, [selectedTypeKey]: n }; } else { const c = { ...revenueGoals.value }; delete c[selectedTypeKey]; revenueGoals.value = c; } editingRevenueGoalKey = null; })()"
+                  @keydown.escape.prevent="editingRevenueGoalKey = null"
+                />
+                <button
+                  type="button"
+                  class="text-xs font-medium px-2.5 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-600 text-white transition-colors"
+                  @click="(() => { const n = parseFloat(revenueGoalDraft); if (n > 0) { revenueGoals.value = { ...revenueGoals.value, [selectedTypeKey]: n }; } else { const c = { ...revenueGoals.value }; delete c[selectedTypeKey]; revenueGoals.value = c; } editingRevenueGoalKey = null; })()"
+                >Save</button>
+                <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="editingRevenueGoalKey = null">Cancel</button>
+              </div>
+            </template>
+            <!-- no quota set -->
+            <template v-else-if="!revenueGoals[selectedTypeKey]">
+              <p class="text-xs text-slate-400 dark:text-slate-500 italic">Set a revenue target to track quota progress.</p>
+            </template>
+            <!-- quota progress -->
+            <template v-else>
+              <div class="space-y-3">
+                <!-- won vs. pipeline vs. goal numbers row -->
+                <div class="flex items-end justify-between">
+                  <div>
+                    <span class="text-2xl font-bold tabular-nums" :class="forecastData.closedWonValue >= revenueGoals[selectedTypeKey] ? 'text-emerald-500' : 'text-slate-900 dark:text-white'">
+                      ${{ forecastData.closedWonValue >= 1_000_000 ? (forecastData.closedWonValue / 1_000_000).toFixed(1) + 'M' : forecastData.closedWonValue >= 1_000 ? Math.round(forecastData.closedWonValue / 1_000) + 'k' : forecastData.closedWonValue }}
+                    </span>
+                    <span class="text-sm text-slate-400 dark:text-slate-500"> / ${{ revenueGoals[selectedTypeKey] >= 1_000_000 ? (revenueGoals[selectedTypeKey] / 1_000_000).toFixed(1) + 'M' : revenueGoals[selectedTypeKey] >= 1_000 ? Math.round(revenueGoals[selectedTypeKey] / 1_000) + 'k' : revenueGoals[selectedTypeKey] }}</span>
+                  </div>
+                  <div class="text-right">
+                    <p class="text-xs tabular-nums font-semibold" :class="forecastData.closedWonValue >= revenueGoals[selectedTypeKey] ? 'text-emerald-500' : 'text-slate-500 dark:text-slate-400'">
+                      {{ forecastData.closedWonValue >= revenueGoals[selectedTypeKey] ? 'Quota reached!' : Math.round((forecastData.closedWonValue / revenueGoals[selectedTypeKey]) * 100) + '% of quota' }}
+                    </p>
+                    <p class="text-[10px] text-slate-300 dark:text-slate-600 mt-0.5 tabular-nums">
+                      Pipeline coverage: {{ revenueGoals[selectedTypeKey] - forecastData.closedWonValue > 0
+                        ? Math.round((forecastData.openPipeline / Math.max(1, revenueGoals[selectedTypeKey] - forecastData.closedWonValue)) * 10) / 10 + 'x'
+                        : '—' }}
+                    </p>
+                  </div>
+                </div>
+                <!-- stacked progress bar: won (emerald) + open pipeline (sky) + remaining (slate) -->
+                <div class="h-3 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800 flex">
+                  <div
+                    class="h-full bg-emerald-500 dark:bg-emerald-500 transition-all duration-500 rounded-l-full"
+                    :style="{ width: `${Math.min(100, Math.round((forecastData.closedWonValue / revenueGoals[selectedTypeKey]) * 100))}%` }"
+                    :title="`Won: $${forecastData.closedWonValue.toLocaleString()}`"
+                  />
+                  <div
+                    class="h-full bg-sky-400 dark:bg-sky-500 transition-all duration-500"
+                    :style="{ width: `${Math.min(100 - Math.min(100, Math.round((forecastData.closedWonValue / revenueGoals[selectedTypeKey]) * 100)), Math.round((forecastData.openPipeline / revenueGoals[selectedTypeKey]) * 100))}%` }"
+                    :title="`Open pipeline: $${forecastData.openPipeline.toLocaleString()}`"
+                  />
+                </div>
+                <div class="flex items-center gap-4 text-[10px] text-slate-400 dark:text-slate-500">
+                  <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />Won ${{ forecastData.closedWonValue >= 1_000 ? Math.round(forecastData.closedWonValue / 1_000) + 'k' : forecastData.closedWonValue }}</span>
+                  <span class="flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-sky-400 shrink-0" />Pipeline ${{ forecastData.openPipeline >= 1_000 ? Math.round(forecastData.openPipeline / 1_000) + 'k' : forecastData.openPipeline }}</span>
+                  <span class="flex items-center gap-1.5 ml-auto"><span class="h-2 w-2 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0" />Remaining ${{ Math.max(0, revenueGoals[selectedTypeKey] - forecastData.closedWonValue - forecastData.openPipeline) >= 1_000 ? Math.round(Math.max(0, revenueGoals[selectedTypeKey] - forecastData.closedWonValue - forecastData.openPipeline) / 1_000) + 'k' : Math.max(0, revenueGoals[selectedTypeKey] - forecastData.closedWonValue - forecastData.openPipeline) }}</span>
+                </div>
+              </div>
+            </template>
+          </div>
+
           <!-- pipeline velocity — avg days per stage -->
           <div v-if="pipelineVelocity && pipelineVelocity.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             <div class="flex items-center justify-between mb-4">
@@ -10213,6 +10296,9 @@ const sectionCompleteness = computed((): Record<string, { filled: number; total:
 const typeGoals = ref<Record<string, number>>({});
 const goalDraft = ref('');
 const editingGoalTypeKey = ref<string | null>(null);
+const revenueGoals = ref<Record<string, number>>({});
+const revenueGoalDraft = ref('');
+const editingRevenueGoalKey = ref<string | null>(null);
 const goalInputEl = ref<HTMLInputElement | null>(null);
 watch(editingGoalTypeKey, (v) => { if (v) { goalDraft.value = String(typeGoals.value[v] ?? ''); nextTick(() => goalInputEl.value?.focus()); } });
 const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
@@ -12555,6 +12641,7 @@ const winLossAnalytics = computed((): {
 const forecastData = computed((): {
   openPipeline: number;
   weightedPipeline: number;
+  closedWonValue: number;
   closingThisMonth: Array<{ id: string; title: string; amount: number; stage: string; close_date: string }>;
   closingThisQuarterCount: number;
   closingThisQuarterValue: number;
@@ -12607,8 +12694,14 @@ const forecastData = computed((): {
     const d = String(r.field_values[dateField.key] ?? '');
     return d >= qStart && d <= qEnd;
   });
+  const WON_STAGES = ['Closed Won', 'Won', 'Converted'];
+  const closedWonValue = stageField
+    ? mockRecords
+        .filter((r) => r.record_type_key === rt.key && WON_STAGES.includes(String(r.field_values[stageField.key] ?? '')))
+        .reduce((s, r) => s + (Number(r.field_values[amountField.key]) || 0), 0)
+    : 0;
   return {
-    openPipeline, weightedPipeline, closingThisMonth,
+    openPipeline, weightedPipeline, closedWonValue, closingThisMonth,
     closingThisQuarterCount: closingQtr.length,
     closingThisQuarterValue: closingQtr.reduce((s, r) => s + (Number(r.field_values[amountField.key]) || 0), 0),
     amountField, dateField,
