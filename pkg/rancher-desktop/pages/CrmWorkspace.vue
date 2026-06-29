@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4704,7 +4704,7 @@
                   >Cancel</button>
                 </div>
                 <!-- quick log action buttons -->
-                <div v-if="!loggingNote" class="flex items-center gap-1.5">
+                <div v-if="!loggingNote" class="flex items-center gap-1.5 flex-wrap">
                   <button
                     v-for="qt in ([['note', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z', 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'], ['call', 'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z', 'text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 dark:hover:text-emerald-400'], ['email', 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z', 'text-sky-500 hover:text-sky-400 dark:text-sky-400 dark:hover:text-sky-300'], ['meeting', 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', 'text-violet-500 hover:text-violet-400 dark:text-violet-400 dark:hover:text-violet-300']] as [string, string, string][])"
                     :key="qt[0]"
@@ -4719,6 +4719,62 @@
                     </svg>
                     {{ qt[0] }}
                   </button>
+                  <!-- cadence picker button -->
+                  <div class="relative ml-auto">
+                    <button
+                      type="button"
+                      class="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium border transition-colors"
+                      :class="showCadencePicker
+                        ? 'border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:text-violet-500 hover:border-violet-300 dark:hover:text-violet-400 dark:hover:border-violet-700'"
+                      title="Start an outreach cadence"
+                      @click.stop="showCadencePicker = !showCadencePicker"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      Cadence
+                    </button>
+                    <!-- cadence picker dropdown -->
+                    <div
+                      v-if="showCadencePicker && openedRecord"
+                      class="absolute right-0 top-full mt-1 z-30 w-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl overflow-hidden"
+                      @click.stop
+                    >
+                      <div class="px-3 py-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                        <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Outreach cadences</p>
+                        <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" @click="showCadencePicker = false">
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <ul class="py-1 max-h-64 overflow-y-auto">
+                        <li
+                          v-for="cad in cadenceTemplates"
+                          :key="cad.id"
+                          class="px-3 py-2.5 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors cursor-pointer group/cad"
+                          @mousedown.prevent="startCadence(openedRecord, cad)"
+                        >
+                          <div class="flex items-start justify-between gap-2">
+                            <div class="flex-1 min-w-0">
+                              <p class="text-xs font-medium text-slate-700 dark:text-slate-200 group-hover/cad:text-violet-700 dark:group-hover/cad:text-violet-300 transition-colors">{{ cad.name }}</p>
+                              <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 leading-tight">{{ cad.description }}</p>
+                            </div>
+                            <span class="shrink-0 text-[10px] tabular-nums font-medium text-slate-300 dark:text-slate-600 group-hover/cad:text-violet-400 transition-colors mt-0.5">{{ cad.steps.length }} steps</span>
+                          </div>
+                          <div class="flex items-center gap-1 mt-1.5 flex-wrap">
+                            <span
+                              v-for="(step, si) in cad.steps"
+                              :key="si"
+                              class="inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-medium"
+                              :class="step.type === 'email' ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-500' : step.type === 'call' ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600' : step.type === 'meeting' ? 'bg-violet-50 dark:bg-violet-950/40 text-violet-500' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'"
+                            >D+{{ step.dayOffset }} {{ step.type }}</span>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
                 </div>
                 <!-- compose area -->
                 <div v-if="loggingNote" class="space-y-2">
@@ -7551,6 +7607,19 @@ interface EmailTemplate {
   body: string; // supports {{name}} and {{field_key}} placeholders
 }
 
+interface CadenceStep {
+  dayOffset: number;
+  type: 'email' | 'call' | 'meeting' | 'note';
+  content: string;
+}
+
+interface CadenceTemplate {
+  id: string;
+  name: string;
+  description: string;
+  steps: CadenceStep[];
+}
+
 interface SavedView {
   id: string;
   name: string;
@@ -8028,6 +8097,44 @@ const noteText = ref('');
 const noteType = ref<'note' | 'email' | 'call' | 'meeting'>('note');
 const showEmailTemplatePicker = ref(false);
 watch(noteType, () => { showEmailTemplatePicker.value = false; });
+const showCadencePicker = ref(false);
+
+const cadenceTemplates: CadenceTemplate[] = [
+  {
+    id: 'cad1', name: 'Discovery', description: 'Intro email → call → proposal → check-in',
+    steps: [
+      { dayOffset: 0, type: 'email',   content: 'Sent intro email — introduced our approach and requested a discovery call.' },
+      { dayOffset: 2, type: 'call',    content: 'Discovery call — scheduled for day 2. Goal: understand needs, qualify fit.' },
+      { dayOffset: 5, type: 'email',   content: 'Sent proposal based on discovery call findings.' },
+      { dayOffset: 10, type: 'call',   content: 'Follow-up call — check in on proposal and answer questions.' },
+    ],
+  },
+  {
+    id: 'cad2', name: 'Re-engagement', description: 'Reconnect with a dormant contact over 14 days',
+    steps: [
+      { dayOffset: 0,  type: 'email', content: 'Re-engagement email — checked in after time away, shared relevant update.' },
+      { dayOffset: 7,  type: 'email', content: 'Second touch — shared a resource or insight relevant to their goals.' },
+      { dayOffset: 14, type: 'call',  content: 'Phone follow-up — final outreach to reconnect in person.' },
+    ],
+  },
+  {
+    id: 'cad3', name: 'Onboarding', description: 'Welcome → kick-off → first 30 days check-in',
+    steps: [
+      { dayOffset: 0,  type: 'email',   content: 'Welcome email sent — confirmed next steps and onboarding timeline.' },
+      { dayOffset: 3,  type: 'call',    content: 'Kick-off call — covered account setup, introductions, and expectations.' },
+      { dayOffset: 7,  type: 'meeting', content: 'Onboarding session — deep-dive on their workflow and platform training.' },
+      { dayOffset: 30, type: 'email',   content: '30-day check-in email — confirmed satisfaction and reviewed outcomes.' },
+    ],
+  },
+  {
+    id: 'cad4', name: 'Closing push', description: '3-touch closing sequence for deals in Negotiation',
+    steps: [
+      { dayOffset: 0, type: 'email', content: 'Closing summary email — recapped key value points and terms agreed.' },
+      { dayOffset: 2, type: 'call',  content: 'Closing call — addressed final objections and confirmed decision timeline.' },
+      { dayOffset: 5, type: 'email', content: 'Final follow-up — sent contract for signature with deadline.' },
+    ],
+  },
+];
 
 const emailTemplates: EmailTemplate[] = [
   { id: 'et1', name: 'Follow-up after call',
@@ -10905,6 +11012,23 @@ function logNote(record: CrmRecord) {
   loggingNote.value = false;
   const label = scheduledDate ? `${noteType.value} scheduled for ${scheduledDate}` : `${noteType.value.charAt(0).toUpperCase() + noteType.value.slice(1)} logged`;
   showToast(label);
+}
+
+function startCadence(record: CrmRecord, cad: CadenceTemplate) {
+  for (const step of cad.steps) {
+    const scheduledDate = dateOffset(step.dayOffset);
+    mockActivities.unshift({
+      id: `cad-${cad.id}-${step.dayOffset}-${record.id}`,
+      record_id: record.id,
+      type: step.type,
+      content: step.content,
+      author: 'You',
+      created_at: new Date().toISOString(),
+      scheduled_at: `${scheduledDate}T09:00:00Z`,
+    });
+  }
+  showCadencePicker.value = false;
+  showToast(`${cad.name} cadence started — ${cad.steps.length} activities scheduled`);
 }
 
 function applyEmailTemplate(tpl: EmailTemplate) {
