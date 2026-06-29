@@ -3136,15 +3136,31 @@
                               {{ col.format === 'currency' ? '$' : '' }}{{ groupedStats[row.key][col.key].sum >= 1000 ? (groupedStats[row.key][col.key].sum / 1000).toFixed(1) + 'k' : groupedStats[row.key][col.key].sum }}
                             </span>
                           </template>
-                          <!-- select all in group -->
-                          <button
-                            type="button"
-                            class="ml-auto opacity-0 group-hover/gh:opacity-100 flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-medium border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-all"
-                            title="Select all records in this group"
-                            @click.stop="(() => { const ids = filteredRecords.filter(r => { const val = String(r.field_values[groupByField ?? ''] ?? ''); return row.key === '__ungrouped__' ? !val || val === '' : val === row.key; }).map(r => r.id); const next = new Set(selectedIds); ids.forEach(id => next.add(id)); selectedIds = next; })()"
-                          >
-                            Select {{ row.count }}
-                          </button>
+                          <!-- filter to group + select all in group -->
+                          <div class="ml-auto flex items-center gap-1 opacity-0 group-hover/gh:opacity-100 transition-all">
+                            <button
+                              v-if="groupByField && row.key !== '__ungrouped__'"
+                              type="button"
+                              class="h-5 w-5 rounded flex items-center justify-center border transition-colors"
+                              :class="activeFilters.some(f => f.fieldKey === groupByField && f.value === row.key)
+                                ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400'
+                                : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800 hover:text-sky-500 dark:hover:text-sky-400'"
+                              :title="activeFilters.some(f => f.fieldKey === groupByField && f.value === row.key) ? `Remove filter for ${row.label}` : `Filter to ${row.label}`"
+                              @click.stop="toggleFilter(groupByField, row.key)"
+                            >
+                              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              class="flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-medium border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                              title="Select all records in this group"
+                              @click.stop="(() => { const ids = filteredRecords.filter(r => { const val = String(r.field_values[groupByField ?? ''] ?? ''); return row.key === '__ungrouped__' ? !val || val === '' : val === row.key; }).map(r => r.id); const next = new Set(selectedIds); ids.forEach(id => next.add(id)); selectedIds = next; })()"
+                            >
+                              Select {{ row.count }}
+                            </button>
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -4426,14 +4442,30 @@
                   {{ group.label }}
                 </span>
                 <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ group.records.length }}</span>
-                <button
-                  type="button"
-                  class="opacity-0 group-hover/gh:opacity-100 flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-medium border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-all"
-                  title="Select all records in this group"
-                  @click.stop="selectGroupRecords(group.key)"
-                >
-                  Select {{ group.records.length }}
-                </button>
+                <div class="opacity-0 group-hover/gh:opacity-100 flex items-center gap-1 transition-all">
+                  <button
+                    v-if="groupByField && group.key !== '__ungrouped__'"
+                    type="button"
+                    class="h-5 w-5 rounded flex items-center justify-center border transition-colors"
+                    :class="activeFilters.some(f => f.fieldKey === groupByField && f.value === group.key)
+                      ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400'
+                      : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800 hover:text-sky-500 dark:hover:text-sky-400'"
+                    :title="activeFilters.some(f => f.fieldKey === groupByField && f.value === group.key) ? `Remove filter for ${group.label}` : `Filter to ${group.label}`"
+                    @click.stop="toggleFilter(groupByField, group.key)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    class="flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-medium border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                    title="Select all records in this group"
+                    @click.stop="selectGroupRecords(group.key)"
+                  >
+                    Select {{ group.records.length }}
+                  </button>
+                </div>
                 <div class="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
               </div>
               <!-- cards in group -->
