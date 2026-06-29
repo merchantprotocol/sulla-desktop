@@ -7811,6 +7811,73 @@
                         <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 shrink-0" @click="addingSubtaskOf = null; newSubtaskDraft = ''">Cancel</button>
                       </div>
                     </template>
+                    <!-- comment thread -->
+                    <div class="ml-7 mt-0.5">
+                      <!-- toggle link -->
+                      <button
+                        type="button"
+                        class="flex items-center gap-1 text-xs transition-colors"
+                        :class="expandedCommentTaskIds.has(task.id)
+                          ? 'text-sky-500 dark:text-sky-400'
+                          : 'text-slate-300 dark:text-slate-700 hover:text-sky-400 dark:hover:text-sky-500 opacity-0 group-hover:opacity-100'"
+                        @click.stop="toggleTaskComments(task.id)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                        <span v-if="taskCommentsByTaskId.get(task.id)?.length">{{ taskCommentsByTaskId.get(task.id)!.length }} comment{{ taskCommentsByTaskId.get(task.id)!.length === 1 ? '' : 's' }}</span>
+                        <span v-else-if="expandedCommentTaskIds.has(task.id)">Comment</span>
+                        <span v-else>Comment</span>
+                      </button>
+                      <!-- expanded comments -->
+                      <div v-if="expandedCommentTaskIds.has(task.id)" class="mt-1.5 space-y-1.5 border-l-2 border-slate-100 dark:border-slate-800 pl-2.5">
+                        <!-- existing comments -->
+                        <div
+                          v-for="comment in taskCommentsByTaskId.get(task.id) ?? []"
+                          :key="comment.id"
+                          class="group/comment flex items-start gap-1.5"
+                        >
+                          <span
+                            class="shrink-0 mt-0.5 h-4 w-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white"
+                            :style="{ background: TEAM_MEMBERS.find(m => m.name === comment.author)?.color ?? '#94a3b8' }"
+                          >{{ comment.author.slice(0, 2) }}</span>
+                          <div class="flex-1 min-w-0">
+                            <p class="text-[11px] text-slate-700 dark:text-slate-300 leading-snug">{{ comment.text }}</p>
+                            <p class="text-[10px] text-slate-300 dark:text-slate-700 mt-0.5">{{ comment.author }} · {{ formatDate(comment.created_at) }}</p>
+                          </div>
+                          <button
+                            type="button"
+                            class="shrink-0 h-3.5 w-3.5 rounded flex items-center justify-center text-slate-200 dark:text-slate-700 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover/comment:opacity-100 transition-all"
+                            title="Delete comment"
+                            @click.stop="deleteTaskComment(comment.id)"
+                          >
+                            <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                        <!-- new comment input -->
+                        <div class="flex items-start gap-1.5 mt-1">
+                          <span class="shrink-0 mt-0.5 h-4 w-4 rounded-full bg-indigo-500 flex items-center justify-center text-[8px] font-bold text-white">Yo</span>
+                          <textarea
+                            :ref="(el) => { newCommentInputEls[task.id] = el as HTMLTextAreaElement | null; }"
+                            :value="newCommentDraft[task.id] ?? ''"
+                            placeholder="Add a comment…"
+                            rows="1"
+                            class="flex-1 text-xs px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400 resize-none transition-colors leading-snug"
+                            @input="newCommentDraft = { ...newCommentDraft, [task.id]: ($event.target as HTMLTextAreaElement).value }"
+                            @keydown.enter.prevent="addTaskComment(task.id)"
+                            @keydown.esc.stop="toggleTaskComments(task.id)"
+                          />
+                          <button
+                            type="button"
+                            class="shrink-0 mt-0.5 h-6 px-2 rounded text-xs font-medium bg-sky-500 text-white hover:bg-sky-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                            :disabled="!(newCommentDraft[task.id] ?? '').trim()"
+                            @click.stop="addTaskComment(task.id)"
+                          >Post</button>
+                        </div>
+                      </div>
+                    </div>
                   </template>
                 </div>
 
@@ -11185,6 +11252,14 @@ interface CrmActivity {
   scheduled_at?: string;
 }
 
+interface CrmTaskComment {
+  id: string;
+  task_id: string;
+  author: string;
+  text: string;
+  created_at: string;
+}
+
 interface CrmTask {
   id: string;
   record_id: string;
@@ -11603,6 +11678,12 @@ const taskTemplates: CrmTaskTemplate[] = [
   },
 ];
 
+const mockTaskComments = reactive<CrmTaskComment[]>([
+  { id: 'tc1', task_id: 'tk1', author: 'JB',    text: 'Latest pricing is in the shared drive — attach the 2026 deck.',        created_at: '2026-06-25T10:30:00Z' },
+  { id: 'tc2', task_id: 'tk1', author: 'Sarah', text: 'On it, will include the ROI one-pager as well.',                        created_at: '2026-06-25T11:15:00Z' },
+  { id: 'tc3', task_id: 'tk4', author: 'Mike',  text: 'Legal confirmed they need 3 business days once they have the redlines.', created_at: '2026-06-26T09:45:00Z' },
+]);
+
 const mockAttachments = reactive<CrmAttachment[]>([
   { id: 'af1', record_id: 'r1',  name: 'Proposal_v3.pdf',        size: 1_240_000, mime_type: 'application/pdf',        uploaded_by: 'JB', uploaded_at: '2026-06-24T09:15:00Z' },
   { id: 'af2', record_id: 'r1',  name: 'Contract_signed.pdf',    size: 870_500,   mime_type: 'application/pdf',        uploaded_by: 'JB', uploaded_at: '2026-06-25T14:02:00Z' },
@@ -11775,6 +11856,9 @@ const bulkTaskDue = ref('');
 const bulkTaskPriority = ref<'high' | 'medium' | 'low' | ''>('');
 const bulkTaskInputEl = ref<HTMLInputElement | null>(null);
 watch(showBulkTaskModal, (val) => { if (val) { bulkTaskText.value = ''; bulkTaskDue.value = ''; bulkTaskPriority.value = ''; nextTick(() => bulkTaskInputEl.value?.focus()); } });
+const expandedCommentTaskIds = ref<Set<string>>(new Set());
+const newCommentDraft = ref<Record<string, string>>({});
+const newCommentInputEls = ref<Record<string, HTMLTextAreaElement | null>>({});
 const showBulkFieldModal = ref(false);
 const bulkFieldKey = ref<string | null>(null);
 const bulkFieldValue = ref<string | number | boolean | string[] | null>(null);
@@ -14712,6 +14796,16 @@ const recordTasksPendingCount = computed(() => {
   return mockTasks.filter((t) => t.record_id === openedRecord.value!.id && !t.done).length;
 });
 
+const taskCommentsByTaskId = computed((): Map<string, CrmTaskComment[]> => {
+  const map = new Map<string, CrmTaskComment[]>();
+  for (const c of mockTaskComments) {
+    const arr = map.get(c.task_id) ?? [];
+    arr.push(c);
+    map.set(c.task_id, arr);
+  }
+  return map;
+});
+
 // ── Global tasks view computeds ─────────────────────────────────────────────
 const allTasksInView = computed(() => {
   const typeRecordIds = new Set(
@@ -16243,6 +16337,35 @@ function deleteTask(id: string) {
     label: 'Undo',
     fn: () => { removed.forEach((t) => mockTasks.push(t)); },
   });
+}
+
+function addTaskComment(taskId: string) {
+  const text = (newCommentDraft.value[taskId] ?? '').trim();
+  if (!text) return;
+  mockTaskComments.push({
+    id: `tc-${taskId}-${mockTaskComments.length}`,
+    task_id: taskId,
+    author: 'You',
+    text,
+    created_at: new Date().toISOString(),
+  });
+  newCommentDraft.value = { ...newCommentDraft.value, [taskId]: '' };
+}
+
+function deleteTaskComment(commentId: string) {
+  const idx = mockTaskComments.findIndex((c) => c.id === commentId);
+  if (idx >= 0) mockTaskComments.splice(idx, 1);
+}
+
+function toggleTaskComments(taskId: string) {
+  const next = new Set(expandedCommentTaskIds.value);
+  if (next.has(taskId)) {
+    next.delete(taskId);
+  } else {
+    next.add(taskId);
+    nextTick(() => newCommentInputEls.value[taskId]?.focus());
+  }
+  expandedCommentTaskIds.value = next;
 }
 
 function applyTaskTemplate(template: CrmTaskTemplate) {
