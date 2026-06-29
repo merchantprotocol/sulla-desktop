@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; focusGroupSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; bulkSnoozeDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; focusGroupSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1018,6 +1018,33 @@
               </svg>
               Archive
             </button>
+            <!-- bulk snooze -->
+            <div class="relative" @click.stop>
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
+                :class="bulkSnoozeDropdown
+                  ? 'border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'"
+                :title="`Snooze ${selectedIds.size} selected record${selectedIds.size === 1 ? '' : 's'} — hide from focus until a date`"
+                @click="bulkSnoozeDropdown = !bulkSnoozeDropdown"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2" />
+                </svg>
+                Snooze
+              </button>
+              <div
+                v-if="bulkSnoozeDropdown"
+                class="absolute top-full mt-1 left-0 z-50 w-32 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl py-1 text-xs"
+              >
+                <p class="px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Snooze for</p>
+                <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSnooze(1)">1 day</button>
+                <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSnooze(3)">3 days</button>
+                <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSnooze(7)">1 week</button>
+              </div>
+            </div>
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
@@ -14951,6 +14978,7 @@ const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
 const cellContextMenu = ref<{ record: CrmRecord; col: CrmField; x: number; y: number } | null>(null);
 const bulkStageDropdown = ref(false);
+const bulkSnoozeDropdown = ref(false);
 const collapsedColumns = ref<Set<string>>(new Set());
 const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
@@ -16310,6 +16338,16 @@ function dateOffset(days: number): string {
   const d = new Date(DUE_TODAY_STR);
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+function bulkSnooze(days: number) {
+  const next = { ...snoozedUntil.value };
+  for (const id of selectedIds.value) next[id] = dateOffset(days);
+  snoozedUntil.value = next;
+  bulkSnoozeDropdown.value = false;
+  const label = days === 1 ? 'tomorrow' : days === 3 ? '3 days' : '1 week';
+  showToast(`Snoozed ${selectedIds.value.size} record${selectedIds.value.size === 1 ? '' : 's'} until ${label}`);
+  clearSelection();
 }
 
 function snoozeAllInGroup(groupId: string, days: number) {
