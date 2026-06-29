@@ -6445,6 +6445,35 @@
                 >{{ row.pct }}%</span>
               </div>
             </div>
+          <!-- score distribution chart -->
+          <div v-if="statsViewData.scoreDistribution.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Score distribution</p>
+              <span class="text-[10px] text-slate-400 dark:text-slate-500">% of records per score range</span>
+            </div>
+            <div class="space-y-1.5">
+              <div v-for="bucket in statsViewData.scoreDistribution" :key="bucket.label" class="flex items-center gap-2">
+                <div
+                  class="w-14 shrink-0 text-[10px] tabular-nums font-medium text-right pr-1 leading-tight"
+                  :class="bucket.lo >= 70 ? 'text-emerald-600 dark:text-emerald-400' : bucket.lo >= 40 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
+                >{{ bucket.label }}</div>
+                <div class="flex-1 h-5 rounded-md bg-slate-100 dark:bg-slate-800 overflow-hidden relative">
+                  <div
+                    class="absolute inset-y-0 left-0 rounded-md transition-all duration-300 flex items-center"
+                    :class="bucket.lo >= 70 ? 'bg-emerald-400 dark:bg-emerald-500' : bucket.lo >= 40 ? 'bg-amber-400 dark:bg-amber-500' : 'bg-rose-400 dark:bg-rose-500'"
+                    :style="{ width: `${Math.max(bucket.pct, bucket.count ? 4 : 0)}%` }"
+                  >
+                    <span v-if="bucket.count" class="px-1.5 text-[10px] font-semibold text-white tabular-nums leading-none">{{ bucket.count }}</span>
+                  </div>
+                  <span v-if="!bucket.count" class="absolute inset-y-0 left-2 flex items-center text-[10px] text-slate-400 dark:text-slate-500 tabular-nums">0</span>
+                </div>
+                <span
+                  class="shrink-0 text-[10px] tabular-nums w-8 text-right font-medium"
+                  :class="bucket.lo >= 70 ? 'text-emerald-500 dark:text-emerald-400' : bucket.lo >= 40 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
+                >{{ bucket.pct }}%</span>
+              </div>
+            </div>
+          </div>
           </div>
         </div>
 
@@ -18514,7 +18543,21 @@ const statsViewData = computed(() => {
     })
     .sort((a, b) => a.pct - b.pct);
 
-  return { total, newRecords, priorNewRecords, completeness, selectCharts, numberCards, activityCounts, priorActivityTotal, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax, fieldFillRates };
+  // score distribution — only compute when scoring rules exist
+  const scoringRules = scoringRulesByType.value[selectedTypeKey.value] ?? [];
+  const scoreDistribution = scoringRules.length
+    ? (['0–20', '20–40', '40–60', '60–80', '80–100'] as const).map((label, i) => {
+        const lo = i * 20;
+        const hi = lo + 20;
+        const count = recs.filter((r) => {
+          const s = scoreRecord(r);
+          return i === 4 ? s >= lo && s <= hi : s >= lo && s < hi;
+        }).length;
+        return { label, lo, hi, count, pct: total > 0 ? Math.round((count / total) * 100) : 0 };
+      })
+    : [];
+
+  return { total, newRecords, priorNewRecords, completeness, selectCharts, numberCards, activityCounts, priorActivityTotal, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax, fieldFillRates, scoreDistribution };
 });
 
 // ── Activity digest ───────────────────────────────────────────────────────
