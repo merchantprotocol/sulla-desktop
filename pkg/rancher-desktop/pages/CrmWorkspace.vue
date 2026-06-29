@@ -2567,6 +2567,19 @@
                       </button>
                     </div>
                   </th>
+                  <!-- add field quick-access -->
+                  <th class="w-8 px-0 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800">
+                    <button
+                      type="button"
+                      class="h-5 w-5 flex items-center justify-center rounded text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors mx-auto"
+                      title="Add field"
+                      @click.stop="openSchemaEditor('fields')"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                      </svg>
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
