@@ -7431,6 +7431,22 @@
                         @click="newTaskPriority = newTaskPriority === p ? '' : p"
                       >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
                     </div>
+                    <!-- recurrence selector in add form -->
+                    <div class="flex items-center gap-1.5">
+                      <svg class="h-3 w-3 text-slate-400 dark:text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      <button
+                        v-for="r in (['daily', 'weekly', 'monthly'] as const)"
+                        :key="r"
+                        type="button"
+                        class="h-5 px-1.5 rounded text-[10px] font-medium transition-colors"
+                        :class="newTaskRecurrence === r
+                          ? 'bg-violet-500 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                        @click="newTaskRecurrence = newTaskRecurrence === r ? '' : r"
+                      >{{ r.slice(0, 1).toUpperCase() + r.slice(1) }}</button>
+                    </div>
                   </div>
                 </div>
 
@@ -7496,6 +7512,22 @@
                                 @click="editingTaskPriority = editingTaskPriority === p ? '' : p"
                               >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
                             </div>
+                            <!-- recurrence toggle in edit form -->
+                            <div class="flex items-center gap-1 ml-1">
+                              <svg class="h-3 w-3 text-slate-400 dark:text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                              <button
+                                v-for="r in (['daily', 'weekly', 'monthly'] as const)"
+                                :key="r"
+                                type="button"
+                                class="h-5 px-1.5 rounded text-[10px] font-medium transition-colors"
+                                :class="editingTaskRecurrence === r
+                                  ? 'bg-violet-500 text-white'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                                @click="editingTaskRecurrence = editingTaskRecurrence === r ? '' : r"
+                              >{{ r.slice(0, 1).toUpperCase() + r.slice(1) }}</button>
+                            </div>
                             <button type="button" class="text-xs text-sky-600 dark:text-sky-400 hover:underline" @click="saveTaskEdit">Save</button>
                             <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:underline" @click="cancelTaskEdit">Cancel</button>
                           </div>
@@ -7507,9 +7539,22 @@
                             :class="task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'"
                             @click="startTaskEdit(task)"
                           >{{ task.text }}</p>
-                          <p v-if="task.due_date" class="text-xs mt-0.5"
-                            :class="task.due_date < DUE_TODAY_STR ? 'text-red-400 dark:text-red-500' : task.due_date <= DUE_SOON_STR ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
-                          >Due {{ task.due_date }}</p>
+                          <div class="flex items-center gap-2 flex-wrap">
+                            <p v-if="task.due_date" class="text-xs mt-0.5"
+                              :class="task.due_date < DUE_TODAY_STR ? 'text-red-400 dark:text-red-500' : task.due_date <= DUE_SOON_STR ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
+                            >Due {{ task.due_date }}</p>
+                            <!-- recurrence badge -->
+                            <span
+                              v-if="task.recurrence"
+                              class="inline-flex items-center gap-0.5 text-[10px] font-medium text-violet-500 dark:text-violet-400 mt-0.5"
+                              :title="`Repeats ${task.recurrence}`"
+                            >
+                              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                              {{ task.recurrence }}
+                            </span>
+                          </div>
                           <!-- subtask summary / expand toggle -->
                           <button
                             v-if="recordSubtasks.get(task.id)?.length"
@@ -10928,6 +10973,7 @@ interface CrmTask {
   due_date?: string;
   priority?: 'high' | 'medium' | 'low';
   parent_id?: string;
+  recurrence?: 'daily' | 'weekly' | 'monthly';
 }
 
 type AutomationActionType = 'set_field' | 'create_task' | 'notify';
@@ -11276,6 +11322,7 @@ const mockTasks = reactive<CrmTask[]>([
   { id: 'tk4', record_id: 'r8',  text: 'Confirm legal sign-off timeline', done: false, created_at: '2026-06-26T09:00:00Z', due_date: dateOffset(5), priority: 'high' },
   { id: 'tk5', record_id: 'r8',  text: 'Send revised contract PDF', done: true,  created_at: '2026-06-20T11:00:00Z' },
   { id: 'tk6', record_id: 'r9',  text: 'Process renewal agreement',  done: false, created_at: '2026-06-24T15:00:00Z', due_date: dateOffset(3), priority: 'medium' },
+  { id: 'tk7', record_id: 'r1',  text: 'Weekly check-in call', done: false, created_at: '2026-06-25T08:00:00Z', due_date: dateOffset(5), recurrence: 'weekly' },
   // subtasks for tk1
   { id: 'stk1', record_id: 'r1', text: 'Attach updated pricing sheet', done: false, created_at: '2026-06-25T10:02:00Z', parent_id: 'tk1' },
   { id: 'stk2', record_id: 'r1', text: 'Include ROI case study',       done: true,  created_at: '2026-06-25T10:03:00Z', parent_id: 'tk1' },
@@ -11895,6 +11942,8 @@ const editingTaskId = ref<string | null>(null);
 const editingTaskText = ref('');
 const editingTaskDue = ref('');
 const editingTaskPriority = ref<'high' | 'medium' | 'low' | ''>('');
+const newTaskRecurrence = ref<'daily' | 'weekly' | 'monthly' | ''>('');
+const editingTaskRecurrence = ref<'daily' | 'weekly' | 'monthly' | ''>('');
 const expandedTaskIds = ref<Set<string>>(new Set());
 const addingSubtaskOf = ref<string | null>(null);
 const newSubtaskDraft = ref('');
@@ -15801,6 +15850,7 @@ function addTask() {
   if (!text || !openedRecord.value) return;
   const due = newTaskDueDraft.value.trim() || undefined;
   const pri = newTaskPriority.value || undefined;
+  const rec = newTaskRecurrence.value || undefined;
   mockTasks.push({
     id: 'tk-' + String(mockTasks.length) + '-' + String(Date.now()).slice(-5),
     record_id: openedRecord.value.id,
@@ -15809,10 +15859,12 @@ function addTask() {
     created_at: new Date().toISOString(),
     ...(due ? { due_date: due } : {}),
     ...(pri ? { priority: pri } : {}),
+    ...(rec ? { recurrence: rec } : {}),
   });
   newTaskDraft.value = '';
   newTaskDueDraft.value = '';
   newTaskPriority.value = '';
+  newTaskRecurrence.value = '';
 }
 
 function addSubtask(parentId: string) {
@@ -15839,6 +15891,7 @@ function startTaskEdit(task: CrmTask) {
   editingTaskText.value = task.text;
   editingTaskDue.value = task.due_date ?? '';
   editingTaskPriority.value = task.priority ?? '';
+  editingTaskRecurrence.value = task.recurrence ?? '';
 }
 
 function saveTaskEdit() {
@@ -15850,6 +15903,7 @@ function saveTaskEdit() {
     if (text) task.text = text;
     task.due_date = editingTaskDue.value.trim() || undefined;
     task.priority = (editingTaskPriority.value as 'high' | 'medium' | 'low') || undefined;
+    task.recurrence = (editingTaskRecurrence.value as 'daily' | 'weekly' | 'monthly') || undefined;
   }
   editingTaskId.value = null;
 }
@@ -15860,7 +15914,23 @@ function cancelTaskEdit() {
 
 function toggleTask(id: string) {
   const task = mockTasks.find((t) => t.id === id);
-  if (task) task.done = !task.done;
+  if (!task) return;
+  if (!task.done && task.recurrence) {
+    // recurring task: mark done momentarily then advance due_date
+    task.done = true;
+    const advanceDays = task.recurrence === 'daily' ? 1 : task.recurrence === 'weekly' ? 7 : 30;
+    const base = task.due_date ?? DUE_TODAY_STR;
+    const d = new Date(base);
+    d.setDate(d.getDate() + advanceDays);
+    const nextDue = d.toISOString().slice(0, 10);
+    showToast(`Recurring task rescheduled to ${nextDue}`, { label: 'Undo', fn: () => { task.done = false; task.due_date = base; } });
+    setTimeout(() => {
+      task.done = false;
+      task.due_date = nextDue;
+    }, 600);
+  } else {
+    task.done = !task.done;
+  }
 }
 
 function deleteTask(id: string) {
