@@ -4403,8 +4403,11 @@
               <div
                 v-for="cell in week"
                 :key="cell.date"
-                class="group relative flex flex-col border-r border-slate-200 dark:border-slate-700 last:border-r-0 p-1.5 min-h-[100px]"
-                :class="cell.inMonth ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-950'"
+                class="group relative flex flex-col border-r border-slate-200 dark:border-slate-700 last:border-r-0 p-1.5 min-h-[100px] transition-colors"
+                :class="[cell.inMonth ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-950', calDragOverDate === cell.date ? 'ring-2 ring-inset ring-sky-400 bg-sky-50/60 dark:bg-sky-950/20' : '']"
+                @dragover="onCalCellDragOver($event, cell.date)"
+                @dragleave="calDragOverDate = calDragOverDate === cell.date ? null : calDragOverDate"
+                @drop="onCalCellDrop($event, cell.date)"
               >
                 <div class="flex items-start justify-between mb-1">
                   <button
@@ -4430,7 +4433,8 @@
                   <div
                     v-for="record in cell.records.slice(0, 4)"
                     :key="record.id"
-                    class="group/cem w-full flex items-center rounded-md overflow-hidden transition-colors"
+                    draggable="true"
+                    class="group/cem w-full flex items-center rounded-md overflow-hidden transition-colors cursor-grab active:cursor-grabbing"
                     :class="openedRecord?.id === record.id
                       ? 'text-white'
                       : colorLabels[record.id]
@@ -4441,6 +4445,8 @@
                       : colorLabels[record.id]
                         ? { background: colorLabels[record.id] }
                         : undefined"
+                    @dragstart="onCalEventDragStart($event, record.id)"
+                    @dragend="calDragRecordId = null; calDragOverDate = null"
                   >
                     <button
                       type="button"
@@ -4491,8 +4497,11 @@
               <div
                 v-for="cell in calWeekDays"
                 :key="cell.date"
-                class="group flex flex-col border-r border-slate-200 dark:border-slate-700 last:border-r-0 bg-white dark:bg-slate-900"
-                :class="cell.date === DUE_TODAY_STR ? 'bg-sky-50/40 dark:bg-sky-950/10' : ''"
+                class="group flex flex-col border-r border-slate-200 dark:border-slate-700 last:border-r-0 bg-white dark:bg-slate-900 transition-colors"
+                :class="[cell.date === DUE_TODAY_STR ? 'bg-sky-50/40 dark:bg-sky-950/10' : '', calDragOverDate === cell.date ? 'ring-2 ring-inset ring-sky-400 !bg-sky-50/60 dark:!bg-sky-950/20' : '']"
+                @dragover="onCalCellDragOver($event, cell.date)"
+                @dragleave="calDragOverDate = calDragOverDate === cell.date ? null : calDragOverDate"
+                @drop="onCalCellDrop($event, cell.date)"
               >
                 <!-- day header -->
                 <div class="flex items-center justify-between px-3 py-2 border-b border-slate-100 dark:border-slate-800 shrink-0">
@@ -4516,7 +4525,8 @@
                   <div
                     v-for="record in cell.records"
                     :key="record.id"
-                    class="group/ce w-full flex items-center text-xs rounded-lg font-medium"
+                    draggable="true"
+                    class="group/ce w-full flex items-center text-xs rounded-lg font-medium cursor-grab active:cursor-grabbing"
                     :class="openedRecord?.id === record.id
                       ? 'text-white'
                       : colorLabels[record.id]
@@ -4527,6 +4537,8 @@
                       : colorLabels[record.id]
                         ? { background: colorLabels[record.id] }
                         : undefined"
+                    @dragstart="onCalEventDragStart($event, record.id)"
+                    @dragend="calDragRecordId = null; calDragOverDate = null"
                   >
                     <button
                       type="button"
@@ -17140,6 +17152,8 @@ function calGoToday() {
 
 const calendarViewMode = ref<'month' | 'week'>('month');
 const calWeekOffset = ref(0);
+let calDragRecordId: string | null = null;
+const calDragOverDate = ref<string | null>(null);
 
 const calWeekDays = computed((): CalDay[] => {
   const fkey = calendarDateField.value?.key;
@@ -17175,6 +17189,33 @@ const calWeekLabel = computed(() => {
 function calPrevWeek() { calWeekOffset.value--; }
 function calNextWeek() { calWeekOffset.value++; }
 function calGoTodayWeek() { calWeekOffset.value = 0; }
+
+function onCalEventDragStart(e: DragEvent, recordId: string) {
+  calDragRecordId = recordId;
+  if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', recordId); }
+}
+
+function onCalCellDragOver(e: DragEvent, date: string) {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  calDragOverDate.value = date;
+}
+
+function onCalCellDrop(e: DragEvent, date: string) {
+  e.preventDefault();
+  const id = calDragRecordId;
+  calDragRecordId = null;
+  calDragOverDate.value = null;
+  if (!id) return;
+  const rec = mockRecords.find((r) => r.id === id);
+  const field = calendarDateField.value;
+  if (!rec || !field) return;
+  const oldDate = rec.field_values[field.key] as string | undefined;
+  if (oldDate === date) return;
+  rec.field_values[field.key] = date;
+  rec.updated_at = new Date().toISOString();
+  showToast(`Moved to ${new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`);
+}
 
 const KANBAN_UNASSIGNED = '__unassigned__';
 
