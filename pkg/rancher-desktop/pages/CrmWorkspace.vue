@@ -3624,16 +3624,31 @@
                     </div>
                     <p class="text-sm font-medium text-slate-600 dark:text-slate-400">No records found</p>
                     <p class="text-xs text-slate-400 dark:text-slate-500 mt-1">
-                      {{ activeFilters.length ? 'No records match the active filters' : searchQuery ? 'Try a different search term' : `Create the first ${selectedType?.label ?? 'record'}` }}
+                      {{ activeFilters.length ? 'No records match the active filters' : searchQuery ? 'No results for this search' : `No ${selectedType?.label_plural ?? 'records'} yet` }}
                     </p>
-                    <button
-                      v-if="activeFilters.length"
-                      type="button"
-                      class="mt-3 rounded-lg px-3 py-1.5 text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors"
-                      @click="clearFilters"
-                    >
-                      Clear filters
-                    </button>
+                    <div class="flex items-center justify-center gap-2 mt-3">
+                      <button
+                        v-if="activeFilters.length"
+                        type="button"
+                        class="rounded-lg px-3 py-1.5 text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors"
+                        @click="clearFilters"
+                      >Clear filters</button>
+                      <button
+                        v-if="searchQuery && !activeFilters.length"
+                        type="button"
+                        class="rounded-lg px-3 py-1.5 text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors"
+                        @click="searchQuery = ''"
+                      >Clear search</button>
+                      <button
+                        v-if="!activeFilters.length && !searchQuery"
+                        type="button"
+                        class="rounded-lg px-3 py-1.5 text-xs font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors flex items-center gap-1.5"
+                        @click="openNewRecord"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                        New {{ selectedType?.label ?? 'record' }}
+                      </button>
+                    </div>
                   </td>
                 </tr>
                 <!-- inline quick-add row -->
@@ -4434,15 +4449,31 @@
                 <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
               </svg>
             </div>
-            <p class="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">No records match your filters</p>
-            <button
-              type="button"
-              class="mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium bg-sky-600 hover:bg-sky-500 text-white transition-colors"
-              @click="openNewRecord()"
-            >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
-              New {{ selectedType?.label ?? 'Record' }}
-            </button>
+            <p class="text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">
+              {{ activeFilters.length || searchQuery ? 'No records match your filters' : `No ${selectedType?.label_plural ?? 'records'} yet` }}
+            </p>
+            <div class="flex items-center gap-2 mt-3">
+              <button
+                v-if="activeFilters.length"
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors"
+                @click="clearFilters"
+              >Clear filters</button>
+              <button
+                v-if="searchQuery && !activeFilters.length"
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors"
+                @click="searchQuery = ''"
+              >Clear search</button>
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+                @click="openNewRecord()"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                New {{ selectedType?.label ?? 'Record' }}
+              </button>
+            </div>
           </div>
           <!-- card grid — grouped sections -->
           <div v-else-if="groupedGalleryGroups" class="space-y-8">
