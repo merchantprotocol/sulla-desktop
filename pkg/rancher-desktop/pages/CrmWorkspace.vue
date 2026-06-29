@@ -4887,21 +4887,37 @@
               <!-- Tasks tab -->
               <template v-else-if="detailTab === 'tasks'">
                 <!-- quick add -->
-                <div class="flex gap-2">
-                  <input
-                    ref="taskInputEl"
-                    v-model="newTaskDraft"
-                    type="text"
-                    placeholder="Add a task and press Enter…"
-                    class="flex-1 text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400"
-                    @keydown.enter.prevent="addTask"
-                  />
-                  <button
-                    type="button"
-                    class="h-9 px-3 rounded-lg text-sm font-medium bg-sky-600 hover:bg-sky-500 text-white transition-colors disabled:opacity-40"
-                    :disabled="!newTaskDraft.trim()"
-                    @click="addTask"
-                  >Add</button>
+                <div class="space-y-1.5">
+                  <div class="flex gap-2">
+                    <input
+                      ref="taskInputEl"
+                      v-model="newTaskDraft"
+                      type="text"
+                      placeholder="Add a task and press Enter…"
+                      class="flex-1 text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400"
+                      @keydown.enter.prevent="addTask"
+                    />
+                    <button
+                      type="button"
+                      class="h-9 px-3 rounded-lg text-sm font-medium bg-sky-600 hover:bg-sky-500 text-white transition-colors disabled:opacity-40"
+                      :disabled="!newTaskDraft.trim()"
+                      @click="addTask"
+                    >Add</button>
+                  </div>
+                  <div class="flex items-center gap-2 pl-0.5">
+                    <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">Due date</span>
+                    <input
+                      v-model="newTaskDueDraft"
+                      type="date"
+                      class="text-xs px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400"
+                    />
+                    <button
+                      v-if="newTaskDueDraft"
+                      type="button"
+                      class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                      @click="newTaskDueDraft = ''"
+                    >Clear</button>
+                  </div>
                 </div>
 
                 <!-- task list -->
@@ -7585,6 +7601,7 @@ const showStaleDropdown = ref(false);
 const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
 const detailPanelExpanded = ref<false | 'wide' | 'full'>(false);
 const newTaskDraft = ref('');
+const newTaskDueDraft = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
 const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
@@ -10146,14 +10163,17 @@ function deleteActivity(actId: string) {
 function addTask() {
   const text = newTaskDraft.value.trim();
   if (!text || !openedRecord.value) return;
+  const due = newTaskDueDraft.value.trim() || undefined;
   mockTasks.push({
     id: 'tk-' + String(mockTasks.length) + '-' + String(Date.now()).slice(-5),
     record_id: openedRecord.value.id,
     text,
     done: false,
     created_at: new Date().toISOString(),
+    ...(due ? { due_date: due } : {}),
   });
   newTaskDraft.value = '';
+  newTaskDueDraft.value = '';
 }
 
 function toggleTask(id: string) {
