@@ -4023,12 +4023,22 @@
           <div v-else-if="groupedGalleryGroups" class="space-y-8">
             <section v-for="group in groupedGalleryGroups" :key="group.key">
               <!-- group header -->
-              <div class="flex items-center gap-2.5 mb-4">
+              <div
+                class="flex items-center gap-2.5 mb-4 cursor-pointer select-none group/gh"
+                @click="toggleGalleryGroupCollapse(group.key)"
+              >
+                <svg
+                  class="h-3 w-3 shrink-0 text-slate-400 transition-transform"
+                  :class="collapsedGalleryGroups.has(group.key) ? '-rotate-90' : ''"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
                 <span
                   class="h-2 w-2 rounded-full shrink-0"
                   :class="group.key !== '__ungrouped__' ? stageDot(group.key) : 'bg-slate-300 dark:bg-slate-600'"
                 />
-                <span class="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                <span class="text-sm font-semibold text-slate-700 dark:text-slate-300 group-hover/gh:text-slate-900 dark:group-hover/gh:text-white transition-colors">
                   {{ group.label }}
                 </span>
                 <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ group.records.length }}</span>
@@ -4036,6 +4046,7 @@
               </div>
               <!-- cards in group -->
               <div
+                v-if="!collapsedGalleryGroups.has(group.key)"
                 class="grid gap-4"
                 :style="{ gridTemplateColumns: `repeat(${galleryColCount}, minmax(0, 1fr))` }"
               >
@@ -12448,6 +12459,8 @@ const kanbanInlineInputEl = ref<HTMLInputElement | null>(null);
 watch(showAddStageInput, (v) => { if (v) { newStageName.value = ''; nextTick(() => addStageInputEl.value?.focus()); } });
 const collapsedGroups = ref<Set<string>>(new Set());
 watch(groupByField, () => { collapsedGroups.value = new Set(); });
+const collapsedGalleryGroups = ref<Set<string>>(new Set());
+watch(groupByField, () => { collapsedGalleryGroups.value = new Set(); });
 const showBulkNoteModal = ref(false);
 const bulkNoteText = ref('');
 const bulkNoteInputEl = ref<HTMLTextAreaElement | null>(null);
@@ -14243,6 +14256,12 @@ function toggleGroupCollapse(key: string) {
   const next = new Set(collapsedGroups.value);
   if (next.has(key)) next.delete(key); else next.add(key);
   collapsedGroups.value = next;
+}
+
+function toggleGalleryGroupCollapse(key: string) {
+  const next = new Set(collapsedGalleryGroups.value);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  collapsedGalleryGroups.value = next;
 }
 
 function selectGroupRecords(groupKey: string) {
