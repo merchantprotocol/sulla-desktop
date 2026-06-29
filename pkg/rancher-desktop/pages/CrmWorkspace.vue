@@ -6517,6 +6517,16 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                   </svg>
                 </button>
+                <!-- duplicate task button -->
+                <button
+                  v-if="editingTaskId !== item.task.id"
+                  type="button"
+                  class="shrink-0 h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400 opacity-0 group-hover/gtask:opacity-100 transition-all"
+                  title="Duplicate task"
+                  @click.stop="(() => { const copy = { ...item.task, id: 'task_dup_' + String(Date.now()).slice(-6), done: false }; mockTasks.push(copy); showToast('Task duplicated'); })()"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                </button>
                 <!-- delete button -->
                 <button
                   type="button"
