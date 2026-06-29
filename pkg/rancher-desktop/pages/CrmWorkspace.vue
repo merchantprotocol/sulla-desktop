@@ -4940,15 +4940,41 @@
                       </svg>
                     </button>
                     <div class="flex-1 min-w-0">
-                      <p
-                        class="text-sm leading-snug"
-                        :class="task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300'"
-                      >{{ task.text }}</p>
-                      <p v-if="task.due_date" class="text-xs mt-0.5"
-                        :class="task.due_date < DUE_TODAY_STR ? 'text-red-400 dark:text-red-500' : task.due_date <= DUE_SOON_STR ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
-                      >Due {{ task.due_date }}</p>
+                      <!-- inline edit form -->
+                      <template v-if="editingTaskId === task.id">
+                        <input
+                          :value="editingTaskText"
+                          type="text"
+                          class="w-full text-sm px-2 py-0.5 rounded border border-sky-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+                          @input="editingTaskText = ($event.target as HTMLInputElement).value"
+                          @keydown.enter.prevent="saveTaskEdit"
+                          @keydown.esc.prevent="cancelTaskEdit"
+                        />
+                        <div class="flex items-center gap-2 mt-1">
+                          <input
+                            :value="editingTaskDue"
+                            type="date"
+                            class="text-xs px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+                            @input="editingTaskDue = ($event.target as HTMLInputElement).value"
+                          />
+                          <button type="button" class="text-xs text-sky-600 dark:text-sky-400 hover:underline" @click="saveTaskEdit">Save</button>
+                          <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:underline" @click="cancelTaskEdit">Cancel</button>
+                        </div>
+                      </template>
+                      <!-- display mode -->
+                      <template v-else>
+                        <p
+                          class="text-sm leading-snug cursor-pointer"
+                          :class="task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'"
+                          @click="startTaskEdit(task)"
+                        >{{ task.text }}</p>
+                        <p v-if="task.due_date" class="text-xs mt-0.5"
+                          :class="task.due_date < DUE_TODAY_STR ? 'text-red-400 dark:text-red-500' : task.due_date <= DUE_SOON_STR ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
+                        >Due {{ task.due_date }}</p>
+                      </template>
                     </div>
                     <button
+                      v-if="editingTaskId !== task.id"
                       type="button"
                       class="shrink-0 mt-0.5 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
                       title="Delete task"
@@ -7602,6 +7628,9 @@ const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
 const detailPanelExpanded = ref<false | 'wide' | 'full'>(false);
 const newTaskDraft = ref('');
 const newTaskDueDraft = ref('');
+const editingTaskId = ref<string | null>(null);
+const editingTaskText = ref('');
+const editingTaskDue = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
 const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
@@ -9093,6 +9122,11 @@ const recordTasks = computed(() =>
         .filter((t) => t.record_id === openedRecord.value!.id)
         .sort((a, b) => {
           if (a.done !== b.done) return a.done ? 1 : -1;
+          const aDue = a.due_date ?? '';
+          const bDue = b.due_date ?? '';
+          if (aDue && bDue) return aDue < bDue ? -1 : aDue > bDue ? 1 : 0;
+          if (aDue) return -1;
+          if (bDue) return 1;
           return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
         })
     : [],
@@ -10174,6 +10208,28 @@ function addTask() {
   });
   newTaskDraft.value = '';
   newTaskDueDraft.value = '';
+}
+
+function startTaskEdit(task: CrmTask) {
+  editingTaskId.value = task.id;
+  editingTaskText.value = task.text;
+  editingTaskDue.value = task.due_date ?? '';
+}
+
+function saveTaskEdit() {
+  const id = editingTaskId.value;
+  if (!id) return;
+  const task = mockTasks.find((t) => t.id === id);
+  if (task) {
+    const text = editingTaskText.value.trim();
+    if (text) task.text = text;
+    task.due_date = editingTaskDue.value.trim() || undefined;
+  }
+  editingTaskId.value = null;
+}
+
+function cancelTaskEdit() {
+  editingTaskId.value = null;
 }
 
 function toggleTask(id: string) {
