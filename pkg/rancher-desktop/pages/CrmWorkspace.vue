@@ -5197,12 +5197,14 @@
                   </div>
                 </div>
                 <!-- tags -->
-                <div v-if="(recordTags[record.id] ?? []).length" class="flex flex-wrap gap-1 mb-3">
+                <div v-if="(recordTags[record.id] ?? []).length" class="flex flex-wrap gap-1 mb-3" @click.stop>
                   <span
                     v-for="tag in (recordTags[record.id] ?? [])"
                     :key="tag"
-                    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors"
+                    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors cursor-pointer hover:opacity-80"
                     :style="tagStyle(tag)"
+                    :title="`Filter by tag: ${tag}`"
+                    @click.stop="(() => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; })()"
                   >{{ tag }}</span>
                 </div>
                 <!-- activity / task / score badges -->
@@ -5210,13 +5212,29 @@
                   v-if="activityCountByRecord[record.id] || pendingTaskCountByRecord[record.id] || (scoringRules.length && scoreRecord(record) > 0) || record.links?.length"
                   class="flex items-center gap-1.5 mb-2"
                 >
-                  <span
+                  <button
                     v-if="activityCountByRecord[record.id]"
-                    class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 cursor-default"
-                    :title="`${activityCountByRecord[record.id]} activities`"
+                    type="button"
+                    class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium transition-colors"
+                    :class="(() => {
+                      const days = lastActivityByRecord[record.id] ? Math.floor((Date.now() - lastActivityByRecord[record.id]) / 86400000) : 999;
+                      return days <= 7
+                        ? 'bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/40'
+                        : days <= 30
+                          ? 'bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          : days <= 60
+                            ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                            : 'bg-rose-50 dark:bg-rose-950/30 text-rose-400 dark:text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/40';
+                    })()"
+                    :title="`${activityCountByRecord[record.id]} activit${activityCountByRecord[record.id] === 1 ? 'y' : 'ies'}${lastActivityByRecord[record.id] ? ' · last ' + formatAge(new Date(lastActivityByRecord[record.id]).toISOString()) + ' ago' : ''}`"
+                    @click.stop="openRecord(record); nextTick(() => { detailTab = 'activity'; })"
                     @mouseenter="showActivityPreview(record.id, $event.currentTarget as HTMLElement)"
                     @mouseleave="hideActivityPreview"
-                  >{{ activityCountByRecord[record.id] }}</span>
+                  >
+                    <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3-3-3z" /></svg>
+                    {{ activityCountByRecord[record.id] }}
+                    <span v-if="lastActivityByRecord[record.id]" class="opacity-60 font-normal">· {{ formatAge(new Date(lastActivityByRecord[record.id]).toISOString()) }}</span>
+                  </button>
                   <span
                     v-if="pendingTaskCountByRecord[record.id]"
                     class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400"
