@@ -2414,6 +2414,13 @@
                       @dblclick.stop="startColRename(col)"
                     >
                       {{ col.label }}
+                      <!-- help text indicator -->
+                      <span
+                        v-if="col.help_text"
+                        class="shrink-0 h-3 w-3 rounded-full border border-slate-300 dark:border-slate-600 text-slate-400 dark:text-slate-500 flex items-center justify-center text-[8px] font-bold leading-none"
+                        :title="col.help_text"
+                        @click.stop
+                      >?</span>
                       <!-- secondary sort badge -->
                       <span
                         v-if="sortField2 === col.key"
