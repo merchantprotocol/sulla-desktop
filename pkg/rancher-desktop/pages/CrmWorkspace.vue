@@ -9614,6 +9614,35 @@
                           >+ role</button>
                         </div>
                       </template>
+                      <!-- health badges on linked record -->
+                      <div v-if="overdueIds.has(link.target_id) || activityCountByRecord[link.target_id] || (scoringRulesForType.length && scoreRecord(mockRecords.find(r => r.id === link.target_id)!) > 0)" class="flex items-center gap-1 mt-1 flex-wrap">
+                        <span
+                          v-if="overdueIds.has(link.target_id)"
+                          class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-semibold bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400"
+                        >
+                          <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                          Overdue
+                        </span>
+                        <span
+                          v-if="activityCountByRecord[link.target_id]"
+                          class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-medium tabular-nums"
+                          :class="(() => {
+                            const days = lastActivityByRecord[link.target_id] ? Math.floor((Date.now() - lastActivityByRecord[link.target_id]) / 86400000) : 999;
+                            return days <= 7
+                              ? 'bg-sky-50 dark:bg-sky-950/30 text-sky-500 dark:text-sky-400'
+                              : days <= 30
+                                ? 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+                                : 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400';
+                          })()"
+                          :title="`${activityCountByRecord[link.target_id]} activit${activityCountByRecord[link.target_id] === 1 ? 'y' : 'ies'}${lastActivityByRecord[link.target_id] ? ' · last ' + formatAge(new Date(lastActivityByRecord[link.target_id]).toISOString()) + ' ago' : ''}`"
+                        >{{ activityCountByRecord[link.target_id] }} act</span>
+                        <span
+                          v-if="scoringRulesForType.length && mockRecords.find(r => r.id === link.target_id) && scoreRecord(mockRecords.find(r => r.id === link.target_id)!) > 0"
+                          class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] tabular-nums font-semibold"
+                          :class="scoreRecord(mockRecords.find(r => r.id === link.target_id)!) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(mockRecords.find(r => r.id === link.target_id)!) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400' : 'bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400'"
+                          :title="`Score: ${scoreRecord(mockRecords.find(r => r.id === link.target_id)!)} / 100`"
+                        >{{ scoreRecord(mockRecords.find(r => r.id === link.target_id)!) }}</span>
+                      </div>
                     </div>
                     <button
                       type="button"
