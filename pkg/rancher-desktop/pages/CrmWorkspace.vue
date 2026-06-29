@@ -6047,6 +6047,45 @@
               </template>
             </div>
           </div>
+
+          <!-- tag distribution -->
+          <div v-if="tagDistribution.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Tag distribution</p>
+            <div class="space-y-1.5">
+              <div
+                v-for="row in tagDistribution"
+                :key="row.tag"
+                class="flex items-center gap-2 group/tagrow cursor-pointer"
+                :title="`Filter by tag: ${row.tag}`"
+                @click="(() => { const next = new Set(tagFilters); next.has(row.tag) ? next.delete(row.tag) : next.add(row.tag); tagFilters = next; viewMode = 'table'; })()"
+              >
+                <div
+                  class="w-28 shrink-0 text-xs truncate text-right leading-tight pr-1 transition-colors group-hover/tagrow:text-teal-600 dark:group-hover/tagrow:text-teal-400"
+                  :class="tagFilters.has(row.tag) ? 'font-semibold text-teal-600 dark:text-teal-400' : 'text-slate-600 dark:text-slate-400'"
+                  :title="row.tag"
+                >{{ row.tag }}</div>
+                <div class="flex-1 h-4 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    class="h-full rounded-full transition-all duration-300"
+                    :class="tagFilters.has(row.tag) ? 'bg-teal-400 dark:bg-teal-600' : 'bg-slate-300 dark:bg-slate-600 group-hover/tagrow:bg-teal-300 dark:group-hover/tagrow:bg-teal-700'"
+                    :style="{ width: `${Math.max(row.pct, row.count ? 6 : 0)}%` }"
+                  />
+                </div>
+                <span
+                  class="shrink-0 text-xs tabular-nums w-8 text-right"
+                  :class="tagFilters.has(row.tag) ? 'font-semibold text-teal-600 dark:text-teal-400' : 'text-slate-500 dark:text-slate-400'"
+                >{{ row.count }}</span>
+              </div>
+            </div>
+            <div v-if="tagFilters.size" class="mt-3 flex items-center justify-between">
+              <span class="text-[10px] text-teal-500 dark:text-teal-400">{{ tagFilters.size }} tag{{ tagFilters.size === 1 ? '' : 's' }} active</span>
+              <button
+                type="button"
+                class="text-[10px] text-rose-400 hover:text-rose-500 transition-colors"
+                @click.stop="tagFilters = new Set()"
+              >Clear</button>
+            </div>
+          </div>
         </div>
 
         <!-- ── Timeline / Gantt view ── -->
@@ -17998,6 +18037,20 @@ const funnelData = computed((): Array<{
     convRate: i > 0 && rows[i - 1].count > 0 ? Math.round((d.count / rows[i - 1].count) * 100) : null,
     hasCurrency: Boolean(amountField),
   }));
+});
+
+const tagDistribution = computed((): Array<{ tag: string; count: number; pct: number }> => {
+  const recs = filteredRecords.value;
+  const counts: Record<string, number> = {};
+  for (const r of recs) {
+    for (const tag of (recordTags.value[r.id] ?? [])) {
+      counts[tag] = (counts[tag] ?? 0) + 1;
+    }
+  }
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 20);
+  if (!entries.length) return [];
+  const maxCount = entries[0][1];
+  return entries.map(([tag, count]) => ({ tag, count, pct: Math.round((count / maxCount) * 100) }));
 });
 
 const timelinePadLevel = ref(0); // -2 to +2 zoom levels; 0 = default
