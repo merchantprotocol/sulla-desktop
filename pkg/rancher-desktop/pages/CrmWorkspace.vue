@@ -1391,6 +1391,23 @@
               Export
             </button>
 
+            <!-- scoring rules button -->
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+              :class="scoringRulesForType.length
+                ? 'border-emerald-400 dark:border-emerald-600 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/50'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+              :title="`${scoringRulesForType.length} scoring rule${scoringRulesForType.length === 1 ? '' : 's'} for ${selectedType?.label_plural}`"
+              @click.stop="showScoringModal = true"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Scoring
+              <span v-if="scoringRulesForType.length" class="text-[10px] tabular-nums rounded-full px-1.5 leading-none py-0.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400">{{ scoringRulesForType.length }}</span>
+            </button>
+
             <!-- automations button -->
             <button
               type="button"
@@ -4385,6 +4402,24 @@
                     : 'bg-red-50 dark:bg-red-950/30 text-red-500 dark:text-red-400'"
                 :title="`${recordCompleteness(openedRecord)}% of fields filled`"
               >{{ recordCompleteness(openedRecord) }}%</span>
+              <!-- lead score badge -->
+              <button
+                v-if="!editingRecord && scoringRulesForType.length"
+                type="button"
+                class="shrink-0 mt-0.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold transition-colors"
+                :class="scoreRecord(openedRecord) >= 70
+                  ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100'
+                  : scoreRecord(openedRecord) >= 40
+                    ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                :title="`Score: ${scoreRecord(openedRecord)} / 100 — based on ${scoringRulesForType.length} rule${scoringRulesForType.length === 1 ? '' : 's'}. Click to edit.`"
+                @click="showScoringModal = true"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                {{ scoreRecord(openedRecord) }}
+              </button>
               <!-- save as template -->
               <button
                 type="button"
@@ -6579,6 +6614,131 @@
               Add rule
             </button>
             <button type="button" class="h-8 px-4 rounded-xl text-sm font-medium text-white bg-purple-500 hover:bg-purple-600 transition-colors" @click="showFormatPanel = false">Done</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- Scoring rules modal -->
+    <transition enter-active-class="transition-all duration-200" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-150" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div v-if="showScoringModal" class="fixed inset-0 z-50 flex items-center justify-center p-4" @click.self="showScoringModal = false">
+        <div class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-xl max-h-[82vh] flex flex-col" @click.stop>
+          <!-- header -->
+          <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+            <div class="flex items-center gap-2">
+              <svg class="h-5 w-5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <div>
+                <h2 class="text-base font-semibold text-slate-900 dark:text-white">Scoring rules</h2>
+                <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ selectedType?.label_plural }} · {{ scoringRulesForType.length }} rule{{ scoringRulesForType.length === 1 ? '' : 's' }} · scores 0–100</p>
+              </div>
+            </div>
+            <button type="button" class="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showScoringModal = false">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <!-- rules list -->
+          <div class="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+            <div v-if="!scoringRulesForType.length" class="px-6 py-8 text-center text-sm text-slate-400 dark:text-slate-500">
+              No scoring rules yet. Add one below to start scoring {{ selectedType?.label_plural }}.
+            </div>
+            <div v-for="rule in scoringRulesForType" :key="rule.id" class="flex items-center gap-3 px-6 py-3">
+              <div class="flex-1 min-w-0">
+                <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
+                  <template v-if="rule.condition === 'field_filled'">
+                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                    <span class="text-slate-400 dark:text-slate-500"> is filled</span>
+                  </template>
+                  <template v-else-if="rule.condition === 'field_eq'">
+                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                    <span class="text-slate-400 dark:text-slate-500"> equals </span>
+                    <span class="font-medium">{{ rule.value }}</span>
+                  </template>
+                  <template v-else-if="rule.condition === 'field_contains'">
+                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                    <span class="text-slate-400 dark:text-slate-500"> contains </span>
+                    <span class="font-medium">{{ rule.value }}</span>
+                  </template>
+                  <template v-else-if="rule.condition === 'field_gt'">
+                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                    <span class="text-slate-400 dark:text-slate-500"> &gt; </span>
+                    <span class="font-medium">{{ rule.value }}</span>
+                  </template>
+                  <template v-else-if="rule.condition === 'field_lt'">
+                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                    <span class="text-slate-400 dark:text-slate-500"> &lt; </span>
+                    <span class="font-medium">{{ rule.value }}</span>
+                  </template>
+                  <template v-else-if="rule.condition === 'stage_is'">
+                    <span class="text-slate-400 dark:text-slate-500">Stage is </span>
+                    <span class="font-medium">{{ rule.value }}</span>
+                  </template>
+                  <template v-else-if="rule.condition === 'activity_within_days'">
+                    <span class="text-slate-400 dark:text-slate-500">Activity within </span>
+                    <span class="font-medium">{{ rule.value }} day{{ rule.value === '1' ? '' : 's' }}</span>
+                  </template>
+                </p>
+              </div>
+              <span class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400">+{{ rule.points }} pts</span>
+              <button type="button" class="shrink-0 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors rounded p-0.5" @click="deleteScoringRule(rule.id)">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              </button>
+            </div>
+          </div>
+          <!-- add rule form -->
+          <div class="border-t border-slate-200 dark:border-slate-700 px-6 py-4 space-y-3 bg-slate-50 dark:bg-slate-950/50 rounded-b-2xl">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Add rule</p>
+            <div class="grid grid-cols-2 gap-2">
+              <div class="col-span-2">
+                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">Condition</label>
+                <select v-model="scoringDraftCondition" class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50">
+                  <option value="field_filled">Field is filled</option>
+                  <option value="field_eq">Field equals value</option>
+                  <option value="field_contains">Field contains text</option>
+                  <option value="field_gt">Field is greater than (number)</option>
+                  <option value="field_lt">Field is less than (number)</option>
+                  <option value="stage_is">Stage is</option>
+                  <option value="activity_within_days">Activity within N days</option>
+                </select>
+              </div>
+              <div v-if="scoringDraftCondition !== 'activity_within_days' && scoringDraftCondition !== 'stage_is'">
+                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">Field</label>
+                <select v-model="scoringDraftFieldKey" class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50">
+                  <option v-for="col in allColumns.filter(c => c.data_type !== 'formula')" :key="col.key" :value="col.key">{{ col.label }}</option>
+                </select>
+              </div>
+              <div v-if="scoringDraftCondition !== 'field_filled'">
+                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                  <template v-if="scoringDraftCondition === 'activity_within_days'">Days</template>
+                  <template v-else-if="scoringDraftCondition === 'stage_is'">Stage name</template>
+                  <template v-else>Value</template>
+                </label>
+                <input
+                  v-model="scoringDraftValue"
+                  :type="scoringDraftCondition === 'activity_within_days' || scoringDraftCondition === 'field_gt' || scoringDraftCondition === 'field_lt' ? 'number' : 'text'"
+                  :placeholder="scoringDraftCondition === 'activity_within_days' ? 'e.g. 14' : scoringDraftCondition === 'stage_is' ? 'e.g. Proposal Sent' : 'value…'"
+                  class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                />
+              </div>
+              <div>
+                <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">Points (1–100)</label>
+                <input
+                  v-model="scoringDraftPoints"
+                  type="number"
+                  min="1"
+                  max="100"
+                  placeholder="10"
+                  class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                />
+              </div>
+            </div>
+            <button
+              type="button"
+              class="w-full h-9 rounded-lg text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="!scoringDraftPoints || parseInt(scoringDraftPoints) <= 0"
+              @click="addScoringRule"
+            >Add rule</button>
           </div>
         </div>
       </div>
@@ -9083,6 +9243,95 @@ const showMergeModal = ref(false);
 interface RecordTemplate { id: string; name: string; typeKey: string; fieldValues: Record<string, unknown> }
 const recordTemplates = ref<RecordTemplate[]>([]);
 const showTemplatePanel = ref(false);
+
+interface ScoringRule {
+  id: string;
+  typeKey: string;
+  condition: 'field_filled' | 'field_eq' | 'field_contains' | 'field_gt' | 'field_lt' | 'stage_is' | 'activity_within_days';
+  fieldKey: string;
+  value: string;
+  points: number;
+}
+const scoringRules = ref<ScoringRule[]>([
+  { id: 'scr-1', typeKey: 'deal', condition: 'field_filled',         fieldKey: 'email',       value: '',   points: 10 },
+  { id: 'scr-2', typeKey: 'deal', condition: 'field_filled',         fieldKey: 'phone',       value: '',   points: 10 },
+  { id: 'scr-3', typeKey: 'deal', condition: 'field_gt',             fieldKey: 'amount',      value: '10000', points: 20 },
+  { id: 'scr-4', typeKey: 'deal', condition: 'activity_within_days', fieldKey: '',            value: '14', points: 25 },
+  { id: 'scr-5', typeKey: 'deal', condition: 'stage_is',             fieldKey: '',            value: 'Proposal Sent', points: 35 },
+  { id: 'scr-6', typeKey: 'contact', condition: 'field_filled',      fieldKey: 'email',       value: '',   points: 20 },
+  { id: 'scr-7', typeKey: 'contact', condition: 'field_filled',      fieldKey: 'company',     value: '',   points: 15 },
+  { id: 'scr-8', typeKey: 'contact', condition: 'activity_within_days', fieldKey: '',         value: '30', points: 30 },
+  { id: 'scr-9', typeKey: 'contact', condition: 'field_eq',          fieldKey: 'status',      value: 'Active', points: 35 },
+]);
+const showScoringModal = ref(false);
+const scoringDraftCondition = ref<ScoringRule['condition']>('field_filled');
+const scoringDraftFieldKey = ref('');
+const scoringDraftValue = ref('');
+const scoringDraftPoints = ref('10');
+
+const scoringRulesForType = computed(() =>
+  scoringRules.value.filter((r) => r.typeKey === selectedTypeKey.value),
+);
+
+function scoreRecord(record: CrmRecord): number {
+  const rules = scoringRules.value.filter((r) => r.typeKey === record.record_type_key);
+  if (!rules.length) return 0;
+  const nowMs = new Date(DUE_TODAY_STR).getTime();
+  let total = 0;
+  for (const rule of rules) {
+    const fv = String(record.field_values[rule.fieldKey] ?? '').trim();
+    let matches = false;
+    if (rule.condition === 'field_filled') {
+      matches = fv.length > 0 && fv !== 'false';
+    } else if (rule.condition === 'field_eq') {
+      matches = fv.toLowerCase() === rule.value.toLowerCase();
+    } else if (rule.condition === 'field_contains') {
+      matches = rule.value.length > 0 && fv.toLowerCase().includes(rule.value.toLowerCase());
+    } else if (rule.condition === 'field_gt') {
+      const n = parseFloat(fv);
+      matches = !isNaN(n) && n > parseFloat(rule.value);
+    } else if (rule.condition === 'field_lt') {
+      const n = parseFloat(fv);
+      matches = !isNaN(n) && n < parseFloat(rule.value);
+    } else if (rule.condition === 'stage_is') {
+      const kf = kanbanField.value;
+      if (kf) matches = String(record.field_values[kf.key] ?? '') === rule.value;
+    } else if (rule.condition === 'activity_within_days') {
+      const days = parseInt(rule.value, 10);
+      const lastTs = lastActivityByRecord.value[record.id];
+      matches = !!lastTs && nowMs - lastTs <= days * 86_400_000;
+    }
+    if (matches) total += rule.points;
+  }
+  return Math.max(0, Math.min(100, total));
+}
+
+function addScoringRule() {
+  const cond = scoringDraftCondition.value;
+  const pts = parseInt(scoringDraftPoints.value, 10);
+  if (isNaN(pts) || pts <= 0) return;
+  const needsField = cond !== 'activity_within_days' && cond !== 'stage_is';
+  if (needsField && !scoringDraftFieldKey.value) return;
+  const needsValue = cond !== 'field_filled';
+  if (needsValue && !scoringDraftValue.value.trim()) return;
+  scoringRules.value = [...scoringRules.value, {
+    id: 'scr-' + Date.now(),
+    typeKey: selectedTypeKey.value,
+    condition: cond,
+    fieldKey: scoringDraftFieldKey.value,
+    value: scoringDraftValue.value.trim(),
+    points: pts,
+  }];
+  scoringDraftCondition.value = 'field_filled';
+  scoringDraftFieldKey.value = allColumns.value[0]?.key ?? '';
+  scoringDraftValue.value = '';
+  scoringDraftPoints.value = '10';
+}
+
+function deleteScoringRule(id: string) {
+  scoringRules.value = scoringRules.value.filter((r) => r.id !== id);
+}
+
 const automationRules = reactive<AutomationRule[]>([
   { id: 'ar1', name: 'Won deal → close date', enabled: true,  trigger_type_key: 'deal',    trigger_field_key: 'stage',  trigger_value: 'Closed Won', action_type: 'set_field',   action_field_key: 'close_date', action_value: '__today__' },
   { id: 'ar2', name: 'Won deal → send welcome task', enabled: true, trigger_type_key: 'deal', trigger_field_key: 'stage', trigger_value: 'Closed Won', action_type: 'create_task', action_task_text: 'Send onboarding welcome email' },
