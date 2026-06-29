@@ -8332,6 +8332,7 @@
                     <div class="flex-1 min-w-0">
                       <p
                         class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate cursor-pointer hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+                        @click.stop="openLinkedRecord(link)"
                         @mouseenter="(e) => { const r = mockRecords.find(rec => rec.id === link.target_id); if (r) onMentionMouseenter(r, e.currentTarget as HTMLElement); }"
                         @mouseleave="onMentionMouseleave"
                       >{{ link.target_title }}</p>
@@ -8426,6 +8427,7 @@
                       <div class="flex-1 min-w-0">
                         <p
                           class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate cursor-pointer hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+                          @click.stop="openRecord(r)"
                           @mouseenter="(e) => onMentionMouseenter(r, e.currentTarget as HTMLElement)"
                           @mouseleave="onMentionMouseleave"
                         >{{ r.title }}</p>
