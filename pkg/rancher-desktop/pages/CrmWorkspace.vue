@@ -4575,15 +4575,24 @@
                       </ul>
                     </div>
                   </div>
+                  <!-- schedule row — only for call/meeting -->
+                  <div v-if="noteType === 'call' || noteType === 'meeting'" class="flex items-center gap-2">
+                    <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                    <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">Schedule for</span>
+                    <input v-model="noteScheduledAt" type="date" class="text-xs px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50" />
+                    <input v-model="noteScheduledTime" type="time" class="text-xs px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50" />
+                    <button v-if="noteScheduledAt" type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="noteScheduledAt = ''; noteScheduledTime = ''">Clear</button>
+                  </div>
                   <div class="flex items-center justify-between">
                     <span class="text-xs text-slate-400 dark:text-slate-500">⌘ Enter to save</span>
                     <button
                       type="button"
-                      class="rounded-lg px-3 py-1.5 text-xs font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors disabled:opacity-40"
+                      class="rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-40"
+                      :class="noteScheduledAt ? 'bg-violet-600 hover:bg-violet-500' : 'bg-sky-600 hover:bg-sky-500'"
                       :disabled="!noteText.trim()"
                       @click="logNote(openedRecord)"
                     >
-                      Save {{ noteType }}
+                      {{ noteScheduledAt ? 'Schedule' : 'Save' }} {{ noteType }}
                     </button>
                   </div>
                 </div>
@@ -4672,12 +4681,16 @@
                             <span v-else>{{ part.text }}</span>
                           </template>
                         </p>
-                        <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1.5">
+                        <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
                           <span
                             class="capitalize font-medium"
                             :class="row.act.type === 'change' ? 'text-amber-500 dark:text-amber-400' : ''"
                           >{{ row.act.type === 'change' ? 'System' : row.act.author }}</span>
                           · {{ formatRelativeTime(row.act.created_at) }}
+                          <span v-if="row.act.scheduled_at" class="inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full" :class="row.act.scheduled_at > new Date().toISOString() ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'">
+                            <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                            {{ row.act.scheduled_at > new Date().toISOString() ? 'Scheduled' : 'Held' }} · {{ row.act.scheduled_at.slice(0, 10) }}
+                          </span>
                           <span v-if="pinnedActivityIds.has(row.act.id)" class="inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-500 dark:text-amber-400 uppercase tracking-wide">
                             <svg class="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
                             Pinned
@@ -7258,6 +7271,7 @@ interface CrmActivity {
   content: string;
   author: string;
   created_at: string;
+  scheduled_at?: string;
 }
 
 interface CrmTask {
@@ -7573,6 +7587,8 @@ const mockActivities = reactive<CrmActivity[]>([
   { id: 'a16', record_id: 'r16', type: 'meeting', content: 'Discovery meeting with Aisha. Strong alignment on advisory scope.', author: 'JB', created_at: '2026-06-25T10:00:00Z' },
   { id: 'a12', record_id: 'r10', type: 'note',    content: 'High score on webinar quiz. Followed up via email — no reply yet.', author: 'JB', created_at: '2026-06-21T12:00:00Z' },
   { id: 'a13', record_id: 'r11', type: 'call',    content: 'Converted — signed up for $1 Pool same day as first outreach.', author: 'JB', created_at: '2026-06-22T14:00:00Z' },
+  { id: 'a17', record_id: 'r1',  type: 'call',    content: 'Q3 kick-off call — review expansion roadmap', author: 'JB', created_at: '2026-06-28T08:00:00Z', scheduled_at: dateOffset(3) + 'T10:00:00Z' },
+  { id: 'a18', record_id: 'r8',  type: 'meeting', content: 'Contract signing session with legal team', author: 'JB', created_at: '2026-06-28T08:00:00Z', scheduled_at: dateOffset(7) + 'T14:00:00Z' },
 ]);
 
 const mockTasks = reactive<CrmTask[]>([
@@ -7759,6 +7775,8 @@ const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
 watch(loggingNote, (val) => { if (val) nextTick(() => activityTextareaEl.value?.focus()); });
 const noteText = ref('');
 const noteType = ref<'note' | 'email' | 'call' | 'meeting'>('note');
+const noteScheduledAt = ref('');
+const noteScheduledTime = ref('');
 const atMentionOpen = ref(false);
 const atMentionQuery = ref('');
 const atMentionIdx = ref(0);
@@ -9398,7 +9416,15 @@ const recordActivities = computed(() =>
   openedRecord.value
     ? mockActivities
         .filter((a) => a.record_id === openedRecord.value!.id)
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .sort((a, b) => {
+          // Scheduled (future) activities first, sorted soonest first
+          const aScheduled = a.scheduled_at && a.scheduled_at > new Date().toISOString();
+          const bScheduled = b.scheduled_at && b.scheduled_at > new Date().toISOString();
+          if (aScheduled && !bScheduled) return -1;
+          if (!aScheduled && bScheduled) return 1;
+          if (aScheduled && bScheduled) return new Date(a.scheduled_at!).getTime() - new Date(b.scheduled_at!).getTime();
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        })
     : [],
 );
 
@@ -10489,6 +10515,9 @@ function openFromPalette(record: CrmRecord) {
 function logNote(record: CrmRecord) {
   const text = noteText.value.trim();
   if (!text) return;
+  const scheduledDate = noteScheduledAt.value.trim();
+  const scheduledTime = noteScheduledTime.value.trim() || '09:00';
+  const scheduledAt = scheduledDate ? `${scheduledDate}T${scheduledTime}:00Z` : undefined;
   mockActivities.unshift({
     id: 'act-' + String(mockActivities.length),
     record_id: record.id,
@@ -10496,10 +10525,14 @@ function logNote(record: CrmRecord) {
     content: text,
     author: 'You',
     created_at: new Date().toISOString(),
+    ...(scheduledAt ? { scheduled_at: scheduledAt } : {}),
   });
   noteText.value = '';
+  noteScheduledAt.value = '';
+  noteScheduledTime.value = '';
   loggingNote.value = false;
-  showToast(`${noteType.value.charAt(0).toUpperCase() + noteType.value.slice(1)} logged`);
+  const label = scheduledDate ? `${noteType.value} scheduled for ${scheduledDate}` : `${noteType.value.charAt(0).toUpperCase() + noteType.value.slice(1)} logged`;
+  showToast(label);
 }
 
 function deleteActivity(actId: string) {
