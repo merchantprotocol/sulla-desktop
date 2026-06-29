@@ -4332,6 +4332,20 @@
                       {{ activityCountByRecord[record.id] }}
                       <span v-if="lastActivityByRecord[record.id]" class="opacity-60 font-normal">· {{ formatAge(new Date(lastActivityByRecord[record.id]).toISOString()) }}</span>
                     </button>
+                    <!-- reminder badge -->
+                    <span
+                      v-if="!kanbanCompact && reminders[record.id]?.date"
+                      class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium mb-1.5 ml-0.5"
+                      :class="reminders[record.id].date <= DUE_TODAY_STR
+                        ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400'
+                        : 'bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500'"
+                      :title="`Reminder: ${reminders[record.id].date}${reminders[record.id].note ? ' — ' + reminders[record.id].note : ''}`"
+                    >
+                      <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                      </svg>
+                      {{ reminders[record.id].date }}
+                    </span>
                     <!-- tags -->
                     <div v-if="!kanbanCompact && (recordTags[record.id] ?? []).length" class="flex flex-wrap gap-1 mt-1 mb-0.5">
                       <span
@@ -5074,8 +5088,8 @@
                         @click.stop="(() => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; })()"
                       >{{ tag }}</span>
                     </div>
-                    <!-- activity / task / score / links badges (grouped gallery) -->
-                    <div v-if="overdueIds.has(record.id) || dueSoonIds.has(record.id) || activityCountByRecord[record.id] || pendingTaskCountByRecord[record.id] || (scoringRules.length && scoreRecord(record) > 0) || record.links?.length" class="flex items-center flex-wrap gap-1.5 mb-2">
+                    <!-- activity / task / score / links / reminder badges (grouped gallery) -->
+                    <div v-if="overdueIds.has(record.id) || dueSoonIds.has(record.id) || activityCountByRecord[record.id] || pendingTaskCountByRecord[record.id] || (scoringRules.length && scoreRecord(record) > 0) || record.links?.length || reminders[record.id]?.date" class="flex items-center flex-wrap gap-1.5 mb-2">
                       <!-- urgency chip -->
                       <span
                         v-if="overdueIds.has(record.id) || dueSoonIds.has(record.id)"
@@ -5119,6 +5133,19 @@
                       <span v-if="pendingTaskCountByRecord[record.id]" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400" :title="`${pendingTaskCountByRecord[record.id]} pending tasks`"><svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>{{ pendingTaskCountByRecord[record.id] }}</span>
                       <span v-if="record.links?.length" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400" :title="`${record.links.length} linked record${record.links.length === 1 ? '' : 's'}`"><svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>{{ record.links.length }}</span>
                       <button v-if="scoringRules.length && scoreRecord(record) > 0" type="button" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold cursor-pointer transition-opacity hover:opacity-75" :class="scoreRecord(record) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(record) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400' : 'bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400'" :title="`Score: ${scoreRecord(record)} / 100 — click for breakdown`" @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = record; showScoreBreakdown = !showScoreBreakdown; }"><svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>{{ scoreRecord(record) }}</button>
+                      <span
+                        v-if="reminders[record.id]?.date"
+                        class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                        :class="reminders[record.id].date <= DUE_TODAY_STR
+                          ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
+                        :title="`Reminder: ${reminders[record.id].date}${reminders[record.id].note ? ' — ' + reminders[record.id].note : ''}`"
+                      >
+                        <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                        </svg>
+                        {{ reminders[record.id].date }}
+                      </span>
                     </div>
                     <div class="mt-auto pt-2">
                       <div class="h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
@@ -5319,9 +5346,9 @@
                     @click.stop="(() => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; })()"
                   >{{ tag }}</span>
                 </div>
-                <!-- activity / task / score badges -->
+                <!-- activity / task / score / reminder badges -->
                 <div
-                  v-if="activityCountByRecord[record.id] || pendingTaskCountByRecord[record.id] || (scoringRules.length && scoreRecord(record) > 0) || record.links?.length"
+                  v-if="activityCountByRecord[record.id] || pendingTaskCountByRecord[record.id] || (scoringRules.length && scoreRecord(record) > 0) || record.links?.length || reminders[record.id]?.date"
                   class="flex items-center gap-1.5 mb-2"
                 >
                   <button
@@ -5376,6 +5403,19 @@
                     </svg>
                     {{ scoreRecord(record) }}
                   </button>
+                  <span
+                    v-if="reminders[record.id]?.date"
+                    class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                    :class="reminders[record.id].date <= DUE_TODAY_STR
+                      ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
+                    :title="`Reminder: ${reminders[record.id].date}${reminders[record.id].note ? ' — ' + reminders[record.id].note : ''}`"
+                  >
+                    <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                    {{ reminders[record.id].date }}
+                  </span>
                 </div>
                 <!-- completeness bar -->
                 <div class="mt-auto pt-2">
