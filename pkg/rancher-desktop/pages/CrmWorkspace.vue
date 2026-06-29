@@ -476,11 +476,10 @@
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
               Activity
             </p>
-            <button
+            <div
               v-for="item in globalRecentActivities"
               :key="item.activity.id"
-              type="button"
-              class="w-full flex items-start gap-2 px-3 py-1.5 rounded-lg text-left transition-colors group"
+              class="group/gact w-full flex items-start gap-2 px-3 py-1.5 rounded-lg text-left transition-colors cursor-pointer"
               :class="openedRecord?.id === item.record?.id
                 ? 'bg-slate-100 dark:bg-slate-800'
                 : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
@@ -504,9 +503,20 @@
                 <!-- truncated content -->
                 <span class="block text-[10px] leading-tight text-slate-400 dark:text-slate-500 truncate mt-0.5">{{ item.activity.content.slice(0, 42) }}{{ item.activity.content.length > 42 ? '…' : '' }}</span>
               </span>
-              <!-- age label -->
-              <span class="shrink-0 text-[10px] text-slate-300 dark:text-slate-600 group-hover:text-slate-400 dark:group-hover:text-slate-500 mt-0.5 tabular-nums">{{ item.ageLabel }}</span>
-            </button>
+              <!-- age label (hides on hover to make room for dismiss) -->
+              <span class="shrink-0 text-[10px] text-slate-300 dark:text-slate-600 mt-0.5 tabular-nums group-hover/gact:hidden">{{ item.ageLabel }}</span>
+              <!-- dismiss button -->
+              <button
+                type="button"
+                class="hidden group-hover/gact:flex shrink-0 h-4 w-4 rounded items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-colors mt-0.5"
+                title="Dismiss from feed"
+                @click.stop="dismissedActivityIds.add(item.activity.id)"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <!-- trash section -->
@@ -13902,6 +13912,7 @@ const watchedIds = ref<Set<string>>(new Set());
 const snoozedUntil = ref<Record<string, string>>({});
 const snoozeMenuId = ref<string | null>(null);
 const focusSnoozeId = ref<string | null>(null);
+const dismissedActivityIds = reactive<Set<string>>(new Set());
 const reminders = ref<Record<string, { date: string; note: string }>>({});
 const reminderMenuId = ref<string | null>(null);
 const reminderDraft = ref({ date: '', note: '' });
@@ -14756,9 +14767,9 @@ const lastActivityByRecord = computed((): Record<string, number> => {
 });
 
 const globalRecentActivities = computed(() => {
-  const sorted = [...mockActivities].sort((a, b) =>
-    new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
-  );
+  const sorted = [...mockActivities]
+    .filter((a) => !dismissedActivityIds.has(a.id))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   return sorted.slice(0, 6).map((a) => {
     const rec = mockRecords.find((r) => r.id === a.record_id) ?? null;
     const rt = rec ? schema.find((s) => s.key === rec.record_type_key) ?? null : null;
