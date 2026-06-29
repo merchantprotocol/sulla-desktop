@@ -7515,6 +7515,31 @@
                       </button>
                     </div>
                   </template>
+                  <!-- url/email/phone: link + hover copy in view mode -->
+                  <template v-else-if="!editingRecord && (field.data_type === 'url' || field.data_type === 'email' || field.data_type === 'phone')">
+                    <div class="group/link flex items-center gap-1">
+                      <span v-if="!openedRecord.field_values[field.key]" class="text-sm text-slate-300 dark:text-slate-600">—</span>
+                      <a
+                        v-else
+                        :href="field.data_type === 'email' ? 'mailto:' + String(openedRecord.field_values[field.key]) : field.data_type === 'phone' ? 'tel:' + String(openedRecord.field_values[field.key]) : (String(openedRecord.field_values[field.key]).startsWith('http') ? String(openedRecord.field_values[field.key]) : 'https://' + String(openedRecord.field_values[field.key]))"
+                        :target="field.data_type === 'url' ? '_blank' : undefined"
+                        :rel="field.data_type === 'url' ? 'noopener noreferrer' : undefined"
+                        class="flex-1 text-sm text-sky-600 dark:text-sky-400 hover:underline truncate"
+                        @click.stop
+                      >{{ openedRecord.field_values[field.key] }}</a>
+                      <button
+                        v-if="openedRecord.field_values[field.key]"
+                        type="button"
+                        class="invisible group-hover/link:visible shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-all"
+                        title="Copy to clipboard"
+                        @click.stop="navigator.clipboard?.writeText(String(openedRecord.field_values[field.key])).then(() => showToast('Copied'))"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
+                    </div>
+                  </template>
                   <!-- number field quick stepper in view mode -->
                   <template v-else-if="!editingRecord && field.data_type === 'number' && !lockedRecordIds.has(openedRecord.id)">
                     <div class="flex items-center gap-1.5">
