@@ -5938,9 +5938,19 @@
               <!-- empty state -->
               <div
                 v-if="!timelineViewData.rows.length"
-                class="flex flex-col items-center justify-center h-48 gap-2 text-slate-400 dark:text-slate-500"
+                class="flex flex-col items-center justify-center h-48 gap-3 text-slate-400 dark:text-slate-500"
               >
-                <p class="text-sm">No records to display.</p>
+                <svg class="h-8 w-8 text-slate-200 dark:text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <p class="text-sm">{{ activeFilters.length || searchQuery ? 'No records match your filters' : `No ${selectedType?.label_plural ?? 'records'} with date fields yet` }}</p>
+                <div class="flex items-center gap-2">
+                  <button v-if="activeFilters.length" type="button" class="rounded-lg px-3 py-1.5 text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/40 transition-colors" @click="clearFilters">Clear filters</button>
+                  <button v-if="!activeFilters.length && !searchQuery" type="button" class="rounded-lg px-3 py-1.5 text-xs font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors flex items-center gap-1.5" @click="openNewRecord">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                    New {{ selectedType?.label ?? 'record' }}
+                  </button>
+                </div>
               </div>
               <!-- record rows -->
               <div
@@ -5968,6 +5978,17 @@
                     class="shrink-0 inline-flex items-center rounded-full px-1 py-0.5 text-[9px] tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400"
                     :title="`${pendingTaskCountByRecord[row.record.id]} pending tasks`"
                   >{{ pendingTaskCountByRecord[row.record.id] }}</span>
+                  <button
+                    v-if="scoringRulesForType.length"
+                    type="button"
+                    class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1 py-0.5 text-[9px] tabular-nums font-semibold transition-opacity hover:opacity-75"
+                    :class="scoreRecord(row.record) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(row.record) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
+                    :title="`Score: ${scoreRecord(row.record)} / 100 — click for breakdown`"
+                    @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = row.record; showScoreBreakdown = !showScoreBreakdown; }"
+                  >
+                    <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                    {{ scoreRecord(row.record) }}
+                  </button>
                   <!-- hover actions -->
                   <div class="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
