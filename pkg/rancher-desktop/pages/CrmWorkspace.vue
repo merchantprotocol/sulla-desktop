@@ -5900,6 +5900,29 @@
             </div>
           </div>
 
+          <!-- tag distribution -->
+          <div v-if="statsViewData.tagDistribution.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Tags</p>
+            <div class="space-y-2">
+              <div
+                v-for="item in statsViewData.tagDistribution"
+                :key="item.tag"
+                class="flex items-center gap-2 cursor-pointer group/tbar"
+                :title="`${item.count} record${item.count === 1 ? '' : 's'} tagged '${item.tag}' — click to filter`"
+                @click="(() => { const next = new Set(tagFilters); next.has(item.tag) ? next.delete(item.tag) : next.add(item.tag); tagFilters = next; viewMode = 'table'; })()"
+              >
+                <div class="w-28 shrink-0 text-xs truncate text-right transition-colors" :style="tagStyle(item.tag)" :class="!tagStyle(item.tag).color ? 'text-slate-600 dark:text-slate-400 group-hover/tbar:text-sky-600 dark:group-hover/tbar:text-sky-400' : ''">{{ item.tag }}</div>
+                <div class="flex-1 h-5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    class="h-full rounded-full transition-all duration-300 group-hover/tbar:opacity-80"
+                    :style="{ width: `${item.barPct}%`, background: tagStyle(item.tag).backgroundColor ?? '#6366f1' }"
+                  />
+                </div>
+                <span class="text-xs tabular-nums text-slate-500 dark:text-slate-400 w-12 text-right shrink-0">{{ item.count }} <span class="opacity-60">({{ item.pct }}%)</span></span>
+              </div>
+            </div>
+          </div>
+
           <!-- activity heatmap -->
           <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             <div class="flex items-center justify-between mb-3">
@@ -18143,7 +18166,19 @@ const statsViewData = computed(() => {
   }
   const heatmapMax = Math.max(...Object.values(dateCounts), 1);
 
-  return { total, newRecords, priorNewRecords, completeness, selectCharts, numberCards, activityCounts, priorActivityTotal, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
+  // tag distribution
+  const tagCounts: Record<string, number> = {};
+  for (const r of recs) {
+    for (const t of (recordTags.value[r.id] ?? [])) {
+      tagCounts[t] = (tagCounts[t] ?? 0) + 1;
+    }
+  }
+  const tagMax = Math.max(...Object.values(tagCounts), 1);
+  const tagDistribution = Object.entries(tagCounts)
+    .sort(([, a], [, b]) => b - a)
+    .map(([tag, count]) => ({ tag, count, pct: Math.round((count / (total || 1)) * 100), barPct: Math.round((count / tagMax) * 100) }));
+
+  return { total, newRecords, priorNewRecords, completeness, selectCharts, numberCards, activityCounts, priorActivityTotal, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax, tagDistribution };
 });
 
 // ── Activity digest ───────────────────────────────────────────────────────
