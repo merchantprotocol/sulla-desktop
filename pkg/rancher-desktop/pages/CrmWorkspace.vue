@@ -6256,6 +6256,16 @@
               :title="feedMentionsFilter ? 'Showing only activities that @mention you — click to clear' : 'Show only activities that @mention you'"
               @click="feedMentionsFilter = !feedMentionsFilter"
             >@ Mentions</button>
+            <!-- all types toggle -->
+            <button
+              type="button"
+              class="h-7 px-2.5 rounded-lg text-xs font-semibold border transition-colors"
+              :class="feedAllTypes
+                ? 'bg-slate-800 dark:bg-slate-200 border-slate-700 dark:border-slate-300 text-white dark:text-slate-900'
+                : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
+              :title="feedAllTypes ? 'Showing activities from all record types — click to limit to current type' : `Showing only ${selectedType?.label_plural ?? 'records'} — click to show all types`"
+              @click="feedAllTypes = !feedAllTypes"
+            >All types</button>
             <!-- search -->
             <div class="relative ml-auto">
               <svg class="pointer-events-none absolute top-1/2 left-2.5 h-3 w-3 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
@@ -6305,6 +6315,12 @@
                       @mouseenter="(() => { const r = mockRecords.find(x => x.id === row.act.record_id); if (r) onMentionMouseenter(r, $event.currentTarget as HTMLElement); })()"
                       @mouseleave="onMentionMouseleave"
                     >{{ mockRecords.find(r => r.id === row.act.record_id)?.title ?? row.act.record_id }}</button>
+                    <!-- type badge — only shown in all-types mode -->
+                    <span
+                      v-if="feedAllTypes"
+                      class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none"
+                      :style="{ background: (schema.find(t => t.key === mockRecords.find(r => r.id === row.act.record_id)?.record_type_key)?.color ?? '#64748b') + '22', color: schema.find(t => t.key === mockRecords.find(r => r.id === row.act.record_id)?.record_type_key)?.color ?? '#64748b' }"
+                    >{{ schema.find(t => t.key === mockRecords.find(r => r.id === row.act.record_id)?.record_type_key)?.label ?? '' }}</span>
                     <span
                       v-if="overdueIds.has(row.act.record_id)"
                       class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400"
@@ -14681,6 +14697,7 @@ const editingRecord = ref(false);
 const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline' | 'feed' | 'focus' | 'tasks'>('table');
 const feedSearchQuery = ref('');
 const feedMentionsFilter = ref(false);
+const feedAllTypes = ref(false);
 const feedTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const feedAuthorFilter = ref<string>('all');
 const galleryColCount = ref<2 | 3 | 4>(3);
@@ -18125,15 +18142,15 @@ const groupedActivities = computed((): ActivityRow[] => {
 });
 
 const feedRows = computed((): ActivityRow[] => {
-  const typeRecordIds = new Set(
-    mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).map((r) => r.id),
-  );
+  const typeRecordIds = feedAllTypes.value
+    ? null
+    : new Set(mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).map((r) => r.id));
   const q = feedSearchQuery.value.trim().toLowerCase();
   const typeF = feedTypeFilter.value;
   const authorF = feedAuthorFilter.value;
   const mentionsOnly = feedMentionsFilter.value;
   const sorted = [...mockActivities]
-    .filter((a) => typeRecordIds.has(a.record_id))
+    .filter((a) => typeRecordIds === null || typeRecordIds.has(a.record_id))
     .filter((a) => typeF === 'all' || a.type === typeF)
     .filter((a) => authorF === 'all' || a.author === authorF)
     .filter((a) => !mentionsOnly || /@you\b/i.test(a.content))
