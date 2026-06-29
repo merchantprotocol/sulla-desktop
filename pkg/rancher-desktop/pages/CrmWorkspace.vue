@@ -3795,6 +3795,17 @@
                       </button>
                       <button
                         type="button"
+                        class="invisible group-hover:visible text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400 rounded p-0.5 transition-colors"
+                        aria-label="Add task"
+                        title="Add task"
+                        @click.stop="openRecord(record); nextTick(() => { detailTab = 'tasks'; })"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
                         class="invisible group-hover:visible text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-0.5 transition-colors"
                         aria-label="Open record"
                         @click.stop="openRecord(record)"
@@ -4783,6 +4794,17 @@
                           <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                         </svg>
                       </button>
+                      <!-- add task -->
+                      <button
+                        type="button"
+                        class="rounded p-0.5 transition-colors text-slate-300 dark:text-slate-500 hover:text-amber-400 dark:hover:text-amber-400"
+                        title="Add task"
+                        @click.stop="openRecord(record); nextTick(() => { detailTab = 'tasks'; })"
+                      >
+                        <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                   <!-- task due chips (week view) -->
@@ -4961,6 +4983,17 @@
                       >
                         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                      <!-- add task -->
+                      <button
+                        type="button"
+                        class="shrink-0 mt-1 rounded transition-colors text-slate-200 dark:text-slate-700 hover:text-amber-400 dark:hover:text-amber-400 opacity-0 group-hover/gc:opacity-100"
+                        title="Add task"
+                        @click.stop="openRecord(record); nextTick(() => { detailTab = 'tasks'; })"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                         </svg>
                       </button>
                       <!-- more actions -->
@@ -5168,6 +5201,17 @@
                   >
                     <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                  </button>
+                  <!-- add task -->
+                  <button
+                    type="button"
+                    class="shrink-0 mt-1 rounded transition-colors text-slate-200 dark:text-slate-700 hover:text-amber-400 dark:hover:text-amber-400 opacity-0 group-hover/gc:opacity-100"
+                    title="Add task"
+                    @click.stop="openRecord(record); nextTick(() => { detailTab = 'tasks'; })"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                     </svg>
                   </button>
                   <!-- more actions -->
@@ -6679,6 +6723,17 @@
                     >
                       <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </button>
+                    <!-- add task -->
+                    <button
+                      type="button"
+                      class="rounded p-0.5 transition-colors text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400"
+                      title="Add task"
+                      @click.stop="openRecord(row.record); nextTick(() => { detailTab = 'tasks'; })"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                       </svg>
                     </button>
                   </div>
