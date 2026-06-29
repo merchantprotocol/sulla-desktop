@@ -271,15 +271,17 @@
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
               Recent
             </p>
-            <button
+            <div
               v-for="rec in recentRecords"
               :key="rec.id"
-              type="button"
-              class="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors text-xs"
+              role="button"
+              tabindex="0"
+              class="group/recr w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors text-xs cursor-pointer"
               :class="openedRecord?.id === rec.id
                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
                 : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'"
               @click="openFromPalette(rec)"
+              @keydown.enter="openFromPalette(rec)"
               @contextmenu.prevent="openContextMenu(rec, $event)"
             >
               <span
@@ -287,7 +289,25 @@
                 :style="{ background: (schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6') + '22', color: schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6' }"
               >{{ recordInitials(rec.title) }}</span>
               <span class="flex-1 truncate">{{ rec.title }}</span>
-            </button>
+              <!-- hover actions: quick note + pin -->
+              <div class="hidden group-hover/recr:flex items-center gap-0.5">
+                <button type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                  title="Log a quick note" @click.stop="openQuickNote(rec.id, $event)">
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
+                <button type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center transition-colors"
+                  :class="pinnedIds.has(rec.id) ? 'text-amber-400' : 'text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400'"
+                  :title="pinnedIds.has(rec.id) ? 'Unpin' : 'Pin'" @click.stop="togglePin(rec.id)">
+                  <svg class="h-3 w-3" :fill="pinnedIds.has(rec.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
           </div>
 
           <!-- watching section (hidden when collapsed) -->
