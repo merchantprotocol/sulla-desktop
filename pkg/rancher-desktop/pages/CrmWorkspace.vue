@@ -5473,6 +5473,21 @@
                 @click="feedTypeFilter = ft"
               >{{ ft }}</button>
             </div>
+            <!-- author filter -->
+            <div class="flex items-center gap-1">
+              <button
+                v-for="m in TEAM_MEMBERS"
+                :key="m.id"
+                type="button"
+                class="h-6 w-6 rounded-full flex items-center justify-center text-[9px] font-bold transition-all"
+                :style="feedAuthorFilter === m.name ? { background: m.color } : undefined"
+                :class="feedAuthorFilter === m.name
+                  ? 'text-white ring-2 ring-offset-1 ring-current'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                :title="`Filter by ${m.name}`"
+                @click="feedAuthorFilter = feedAuthorFilter === m.name ? 'all' : m.name"
+              >{{ m.name.slice(0, 2) }}</button>
+            </div>
             <!-- search -->
             <div class="relative ml-auto">
               <svg class="pointer-events-none absolute top-1/2 left-2.5 h-3 w-3 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
@@ -12168,6 +12183,7 @@ const editingRecord = ref(false);
 const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline' | 'feed' | 'focus' | 'tasks'>('table');
 const feedSearchQuery = ref('');
 const feedTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
+const feedAuthorFilter = ref<string>('all');
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const tasksViewGroupBy = ref<'due' | 'priority' | 'record'>('due');
@@ -15466,10 +15482,12 @@ const feedRows = computed((): ActivityRow[] => {
   );
   const q = feedSearchQuery.value.trim().toLowerCase();
   const typeF = feedTypeFilter.value;
+  const authorF = feedAuthorFilter.value;
   const sorted = [...mockActivities]
     .filter((a) => typeRecordIds.has(a.record_id))
     .filter((a) => typeF === 'all' || a.type === typeF)
-    .filter((a) => !q || a.content.toLowerCase().includes(q))
+    .filter((a) => authorF === 'all' || a.author === authorF)
+    .filter((a) => !q || a.content.toLowerCase().includes(q) || a.author.toLowerCase().includes(q) || (mockRecords.find((r) => r.id === a.record_id)?.title ?? '').toLowerCase().includes(q))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const rows: ActivityRow[] = [];
   let lastLabel = '';
