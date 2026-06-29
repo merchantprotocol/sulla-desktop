@@ -10128,6 +10128,7 @@ interface SavedView {
   groupByField: string | null;
   tagFilters?: string[];
   groupDateMode?: 'week' | 'month' | 'quarter';
+  columnWidths?: Record<string, number>;
 }
 
 interface FilterPreset {
@@ -15301,6 +15302,7 @@ function saveCurrentView() {
     groupByField: groupByField.value,
     tagFilters: [...tagFilters.value],
     groupDateMode: groupDateMode.value,
+    columnWidths: { ...columnWidths.value },
   };
   savedViews.value = [...savedViews.value, view];
   showSaveViewPopover.value = false;
@@ -15322,6 +15324,7 @@ function applySavedView(view: SavedView) {
   groupByField.value = view.groupByField ?? null;
   tagFilters.value = new Set(view.tagFilters ?? []);
   groupDateMode.value = view.groupDateMode ?? 'month';
+  if (view.columnWidths) columnWidths.value = { ...view.columnWidths };
   searchQuery.value = '';
   closePanel();
 }
