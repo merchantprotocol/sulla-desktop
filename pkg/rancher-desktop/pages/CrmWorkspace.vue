@@ -6692,13 +6692,24 @@
 
             <div v-for="group in focusGroups" :key="group.id" class="space-y-2">
               <!-- group header -->
-              <div class="group/fghdr flex items-center gap-2.5">
+              <div
+                class="group/fghdr flex items-center gap-2.5 cursor-pointer select-none"
+                :title="collapsedFocusGroups.has(group.id) ? `Expand — ${group.records.length} records` : 'Collapse group'"
+                @click="(() => { const next = new Set(collapsedFocusGroups); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); collapsedFocusGroups = next; })()"
+              >
+                <svg
+                  class="h-3 w-3 shrink-0 text-slate-400 dark:text-slate-500 transition-transform duration-150"
+                  :class="collapsedFocusGroups.has(group.id) ? '-rotate-90' : ''"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
                 <span
                   class="shrink-0 h-2 w-2 rounded-full"
                   :class="group.id === 'overdue' ? 'bg-rose-500' : group.id === 'stale' ? 'bg-amber-500' : group.id === 'no-activity' ? 'bg-sky-500' : 'bg-slate-400 dark:bg-slate-500'"
                 />
                 <span class="text-sm font-semibold text-slate-700 dark:text-slate-300">{{ group.label }}</span>
-                <span class="text-xs text-slate-400 dark:text-slate-500">{{ group.description }}</span>
+                <span v-if="!collapsedFocusGroups.has(group.id)" class="text-xs text-slate-400 dark:text-slate-500">{{ group.description }}</span>
                 <!-- snooze all group -->
                 <div class="relative ml-auto flex items-center gap-1.5" @click.stop>
                   <button
@@ -6730,7 +6741,7 @@
               </div>
 
               <!-- record cards -->
-              <div class="space-y-1.5">
+              <div v-if="!collapsedFocusGroups.has(group.id)" class="space-y-1.5">
                 <div
                   v-for="item in group.records"
                   :key="item.record.id"
@@ -15422,6 +15433,7 @@ const snoozedUntil = ref<Record<string, string>>({});
 const snoozeMenuId = ref<string | null>(null);
 const focusSnoozeId = ref<string | null>(null);
 const focusGroupSnoozeId = ref<string | null>(null);
+const collapsedFocusGroups = ref<Set<string>>(new Set());
 const showFocusSettings = ref(false);
 const focusStaleThreshold = ref(21);
 const focusInactiveThreshold = ref(30);
