@@ -6363,6 +6363,21 @@
               :title="feedAllTypes ? 'Showing activities from all record types — click to limit to current type' : `Showing only ${selectedType?.label_plural ?? 'records'} — click to show all types`"
               @click="feedAllTypes = !feedAllTypes"
             >All types</button>
+            <!-- sort direction toggle -->
+            <button
+              type="button"
+              class="flex items-center gap-1 h-7 px-2 rounded-lg text-xs font-medium border transition-colors shrink-0"
+              :class="feedSortOldest
+                ? 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200'
+                : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
+              :title="feedSortOldest ? 'Oldest first — click to switch to newest first' : 'Newest first — click to switch to oldest first'"
+              @click="feedSortOldest = !feedSortOldest"
+            >
+              <svg class="h-3 w-3 transition-transform" :class="feedSortOldest ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+              </svg>
+              {{ feedSortOldest ? 'Oldest' : 'Newest' }}
+            </button>
             <!-- search -->
             <div class="relative ml-auto">
               <svg class="pointer-events-none absolute top-1/2 left-2.5 h-3 w-3 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
@@ -14843,6 +14858,7 @@ const feedMentionsFilter = ref(false);
 const feedAllTypes = ref(false);
 const feedTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const feedAuthorFilter = ref<string>('all');
+const feedSortOldest = ref(false);
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const tasksViewGroupBy = ref<'due' | 'priority' | 'record'>('due');
@@ -18397,7 +18413,10 @@ const feedRows = computed((): ActivityRow[] => {
     .filter((a) => authorF === 'all' || a.author === authorF)
     .filter((a) => !mentionsOnly || /@you\b/i.test(a.content))
     .filter((a) => !q || a.content.toLowerCase().includes(q) || a.author.toLowerCase().includes(q) || (mockRecords.find((r) => r.id === a.record_id)?.title ?? '').toLowerCase().includes(q))
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    .sort((a, b) => {
+      const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      return feedSortOldest.value ? diff : -diff;
+    });
   const rows: ActivityRow[] = [];
   let lastLabel = '';
   for (const act of sorted) {
