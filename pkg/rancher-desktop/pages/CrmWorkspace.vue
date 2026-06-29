@@ -8936,6 +8936,15 @@
                       <button
                         v-if="editingTaskId !== task.id"
                         type="button"
+                        class="shrink-0 mt-0.5 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400 opacity-0 group-hover:opacity-100 transition-all"
+                        title="Duplicate task"
+                        @click.stop="(() => { const copy = { ...task, id: 'task_dup_' + String(Date.now()).slice(-6), done: false }; mockTasks.push(copy); showToast('Task duplicated'); })()"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                      </button>
+                      <button
+                        v-if="editingTaskId !== task.id"
+                        type="button"
                         class="shrink-0 mt-0.5 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
                         title="Delete task"
                         @click="deleteTask(task.id)"
@@ -8980,6 +8989,15 @@
                           :class="sub.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'"
                           @click="startTaskEdit(sub)"
                         >{{ sub.text }}</p>
+                        <button
+                          v-if="editingTaskId !== sub.id"
+                          type="button"
+                          class="shrink-0 h-4 w-4 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400 opacity-0 group-hover/sub:opacity-100 transition-all"
+                          title="Duplicate subtask"
+                          @click.stop="(() => { const copy = { ...sub, id: 'task_dup_' + String(Date.now()).slice(-6), done: false }; mockTasks.push(copy); showToast('Subtask duplicated'); })()"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                        </button>
                         <button
                           v-if="editingTaskId !== sub.id"
                           type="button"
