@@ -5280,37 +5280,37 @@
               </button>
             </div>
 
-            <!-- prev / next record navigation -->
+            <!-- prev / next record navigation — always-visible header bar across all tabs -->
             <div
-              v-if="!creatingRecord && openedRecordIdx !== -1 && filteredRecords.length > 1"
+              v-if="!creatingRecord && openedRecordIndex !== -1 && filteredRecords.length > 1"
               class="flex items-center gap-1.5 px-4 py-1.5 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/60 dark:bg-slate-950/40"
             >
               <button
                 type="button"
                 class="h-6 w-6 flex items-center justify-center rounded-md transition-colors"
-                :class="openedRecordIdx > 0
+                :class="openedRecordIndex > 0
                   ? 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-white dark:hover:bg-slate-800'
                   : 'text-slate-200 dark:text-slate-700 cursor-not-allowed'"
-                :disabled="openedRecordIdx <= 0"
-                title="Previous record"
-                @click="navigateDetailRecord(-1)"
+                :disabled="openedRecordIndex <= 0"
+                title="Previous record  [  "
+                @click="openedRecordIndex > 0 && openRecord(filteredRecords[openedRecordIndex - 1])"
               >
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
               <span class="flex-1 text-center text-[11px] tabular-nums text-slate-400 dark:text-slate-500 select-none">
-                {{ openedRecordIdx + 1 }} / {{ filteredRecords.length }}
+                {{ openedRecordIndex + 1 }} / {{ filteredRecords.length }}
               </span>
               <button
                 type="button"
                 class="h-6 w-6 flex items-center justify-center rounded-md transition-colors"
-                :class="openedRecordIdx < filteredRecords.length - 1
+                :class="openedRecordIndex < filteredRecords.length - 1
                   ? 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-white dark:hover:bg-slate-800'
                   : 'text-slate-200 dark:text-slate-700 cursor-not-allowed'"
-                :disabled="openedRecordIdx >= filteredRecords.length - 1"
-                title="Next record"
-                @click="navigateDetailRecord(1)"
+                :disabled="openedRecordIndex >= filteredRecords.length - 1"
+                title="Next record  ]  "
+                @click="openedRecordIndex < filteredRecords.length - 1 && openRecord(filteredRecords[openedRecordIndex + 1])"
               >
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
@@ -14476,17 +14476,6 @@ function openRecord(record: CrmRecord) {
   drawerFieldSearch.value = '';
   // track in recent list (dedupe + cap at 5)
   recentRecords.value = [record, ...recentRecords.value.filter((r) => r.id !== record.id)].slice(0, 5);
-}
-
-const openedRecordIdx = computed(() =>
-  openedRecord.value ? filteredRecords.value.findIndex((r) => r.id === openedRecord.value!.id) : -1,
-);
-
-function navigateDetailRecord(delta: 1 | -1) {
-  const idx = openedRecordIdx.value;
-  if (idx === -1) return;
-  const next = filteredRecords.value[idx + delta];
-  if (next) openRecord(next);
 }
 
 function openNewRecord(stageValue?: string, extraDraft?: Record<string, string | number | boolean | string[] | null>) {
