@@ -8609,6 +8609,14 @@
                     </button>
                     <button
                       type="button"
+                      class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
+                      @click="schemaEditorMode = 'sections'; showAddFieldForm = false; sectionNameDraftId = null; sectionAddFieldId = null"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h8M4 18h8" /></svg>
+                      Sections
+                    </button>
+                    <button
+                      type="button"
                       class="flex items-center gap-1.5 text-xs transition-colors"
                       :class="(recordCountByType[selectedTypeKey] ?? 0) > 0
                         ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
@@ -8621,6 +8629,114 @@
                       Delete type
                     </button>
                   </div>
+                </div>
+              </template>
+
+              <!-- SECTIONS MODE -->
+              <template v-else-if="schemaEditorMode === 'sections'">
+                <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                  <h3 class="flex-1 text-sm font-semibold text-slate-900 dark:text-white">Detail panel sections — {{ selectedType?.label }}</h3>
+                  <button type="button" class="h-7 w-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showSchemaEditor = false">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+                <div class="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+                  <p class="text-xs text-slate-400 dark:text-slate-500">Group fields into collapsible sections in the record detail panel. Fields not assigned to any section appear in an "Other" group.</p>
+                  <!-- section cards -->
+                  <div
+                    v-for="section in fieldSections.filter(s => s.typeKey === selectedTypeKey)"
+                    :key="section.id"
+                    class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden"
+                  >
+                    <!-- section header -->
+                    <div class="flex items-center gap-2 px-3 py-2 bg-slate-50/80 dark:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/60">
+                      <template v-if="sectionNameDraftId === section.id">
+                        <input
+                          v-model="sectionNameDraft"
+                          type="text"
+                          class="flex-1 text-xs font-semibold rounded px-1.5 py-0.5 bg-white dark:bg-slate-800 border border-violet-400 text-slate-900 dark:text-white focus:outline-none"
+                          @keydown.enter.prevent="commitSectionRename"
+                          @keydown.esc.stop="sectionNameDraftId = null"
+                          @blur="commitSectionRename"
+                          @click.stop
+                        />
+                      </template>
+                      <span
+                        v-else
+                        class="flex-1 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-text hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+                        title="Click to rename"
+                        @click="startSectionRename(section.id)"
+                      >{{ section.label }}</span>
+                      <span class="text-[10px] text-slate-400 dark:text-slate-500 tabular-nums">{{ section.fieldKeys.length }} field{{ section.fieldKeys.length === 1 ? '' : 's' }}</span>
+                      <button
+                        type="button"
+                        class="text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors rounded p-0.5"
+                        title="Delete section"
+                        @click="deleteSection(section.id)"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                    <!-- assigned fields -->
+                    <div class="px-3 py-2 space-y-1">
+                      <div
+                        v-for="fk in section.fieldKeys"
+                        :key="fk"
+                        class="flex items-center gap-2 group/sf"
+                      >
+                        <span class="flex-1 text-xs text-slate-600 dark:text-slate-300 truncate">{{ selectedType?.fields.find(f => f.key === fk)?.label ?? fk }}</span>
+                        <button
+                          type="button"
+                          class="invisible group-hover/sf:visible text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors rounded p-0.5"
+                          title="Remove from section"
+                          @click="removeFieldFromSection(section.id, fk)"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      </div>
+                      <p v-if="!section.fieldKeys.length" class="text-[10px] text-slate-300 dark:text-slate-600 italic">No fields assigned — add one below</p>
+                      <!-- add field dropdown -->
+                      <div class="relative mt-1">
+                        <button
+                          type="button"
+                          class="flex items-center gap-1 text-[10px] text-slate-400 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
+                          @click.stop="sectionAddFieldId = sectionAddFieldId === section.id ? null : section.id"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                          Add field
+                        </button>
+                        <div
+                          v-if="sectionAddFieldId === section.id"
+                          class="absolute left-0 top-full mt-1 z-20 w-48 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg overflow-hidden"
+                          @click.stop
+                        >
+                          <template v-for="f in (selectedType?.fields ?? []).filter(f => !fieldSections.some(s => s.typeKey === selectedTypeKey && s.fieldKeys.includes(f.key)))" :key="f.id">
+                            <button
+                              type="button"
+                              class="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-violet-50 dark:hover:bg-violet-950/30 hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+                              @click="addFieldToSection(section.id, f.key)"
+                            >{{ f.label }}</button>
+                          </template>
+                          <p
+                            v-if="!(selectedType?.fields ?? []).filter(f => !fieldSections.some(s => s.typeKey === selectedTypeKey && s.fieldKeys.includes(f.key))).length"
+                            class="px-3 py-2 text-xs text-slate-400 dark:text-slate-500 italic"
+                          >All fields assigned</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- add section -->
+                  <button
+                    type="button"
+                    class="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-700 text-xs text-slate-400 hover:text-violet-500 dark:hover:text-violet-400 hover:border-violet-300 dark:hover:border-violet-700 transition-colors"
+                    @click="addSection"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                    New section
+                  </button>
+                </div>
+                <div class="px-5 py-3 border-t border-slate-200 dark:border-slate-700">
+                  <button type="button" class="w-full h-9 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" @click="schemaEditorMode = 'fields'">Back to fields</button>
                 </div>
               </template>
 
@@ -10224,7 +10340,54 @@ let previewTimer: ReturnType<typeof setTimeout> | null = null;
 
 // ── Schema editor ──────────────────────────────────────────────────────────
 const showSchemaEditor = ref(false);
-const schemaEditorMode = ref<'fields' | 'new-type'>('fields');
+const schemaEditorMode = ref<'fields' | 'new-type' | 'sections'>('fields');
+const sectionNameDraftId = ref<string | null>(null);
+const sectionNameDraft = ref('');
+const sectionAddFieldId = ref<string | null>(null); // section id with the add-field dropdown open
+
+function startSectionRename(sectionId: string) {
+  const s = fieldSections.value.find((x) => x.id === sectionId);
+  if (!s) return;
+  sectionNameDraftId.value = sectionId;
+  sectionNameDraft.value = s.label;
+}
+
+function commitSectionRename() {
+  const id = sectionNameDraftId.value;
+  if (!id) return;
+  const trimmed = sectionNameDraft.value.trim();
+  if (trimmed) {
+    fieldSections.value = fieldSections.value.map((s) => s.id === id ? { ...s, label: trimmed } : s);
+  }
+  sectionNameDraftId.value = null;
+}
+
+function addSection() {
+  const typeKey = selectedTypeKey.value;
+  const newId = `fs-${typeKey}-${Date.now()}`;
+  fieldSections.value = [...fieldSections.value, { id: newId, typeKey, label: 'New section', fieldKeys: [] }];
+  nextTick(() => { sectionNameDraftId.value = newId; sectionNameDraft.value = 'New section'; });
+}
+
+function deleteSection(sectionId: string) {
+  fieldSections.value = fieldSections.value.filter((s) => s.id !== sectionId);
+}
+
+function removeFieldFromSection(sectionId: string, fieldKey: string) {
+  fieldSections.value = fieldSections.value.map((s) =>
+    s.id === sectionId ? { ...s, fieldKeys: s.fieldKeys.filter((k) => k !== fieldKey) } : s,
+  );
+}
+
+function addFieldToSection(sectionId: string, fieldKey: string) {
+  // Remove from any existing section first
+  fieldSections.value = fieldSections.value.map((s) => ({ ...s, fieldKeys: s.fieldKeys.filter((k) => k !== fieldKey) }));
+  // Add to target section
+  fieldSections.value = fieldSections.value.map((s) =>
+    s.id === sectionId ? { ...s, fieldKeys: [...s.fieldKeys, fieldKey] } : s,
+  );
+  sectionAddFieldId.value = null;
+}
 const showAddFieldForm = ref(false);
 const schemaTypeLabelDraft = ref<string | null>(null);
 const schemaTypeLabelInputEl = ref<HTMLInputElement | null>(null);
@@ -14090,7 +14253,7 @@ function showToast(message: string, action?: { label: string; fn: () => void }) 
 
 // ── Schema editor actions ──────────────────────────────────────────────────
 
-function openSchemaEditor(mode: 'fields' | 'new-type' = 'fields') {
+function openSchemaEditor(mode: 'fields' | 'new-type' | 'sections' = 'fields') {
   schemaEditorMode.value = mode;
   showAddFieldForm.value = false;
   newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '' };
