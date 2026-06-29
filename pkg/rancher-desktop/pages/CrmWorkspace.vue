@@ -3156,6 +3156,14 @@
                               {{ col.format === 'currency' ? '$' : '' }}{{ groupedStats[row.key][col.key].sum >= 1000 ? (groupedStats[row.key][col.key].sum / 1000).toFixed(1) + 'k' : groupedStats[row.key][col.key].sum }}
                             </span>
                           </template>
+                          <!-- overdue count per group -->
+                          <template v-if="filteredRecords.filter(r => { const v = String(r.field_values[groupByField ?? ''] ?? ''); return (row.key === '__ungrouped__' ? !v || v === '' : v === row.key) && overdueIds.has(r.id); }).length">
+                            <span class="text-xs tabular-nums text-slate-300 dark:text-slate-600">·</span>
+                            <span
+                              class="text-xs tabular-nums font-semibold text-rose-500 dark:text-rose-400"
+                              :title="`${filteredRecords.filter(r => { const v = String(r.field_values[groupByField ?? ''] ?? ''); return (row.key === '__ungrouped__' ? !v || v === '' : v === row.key) && overdueIds.has(r.id); }).length} overdue in this group`"
+                            >{{ filteredRecords.filter(r => { const v = String(r.field_values[groupByField ?? ''] ?? ''); return (row.key === '__ungrouped__' ? !v || v === '' : v === row.key) && overdueIds.has(r.id); }).length }} overdue</span>
+                          </template>
                           <!-- filter to group + select all in group -->
                           <div class="ml-auto flex items-center gap-1 opacity-0 group-hover/gh:opacity-100 transition-all">
                             <button
@@ -4535,6 +4543,13 @@
                   {{ group.label }}
                 </span>
                 <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ group.records.length }}</span>
+                <template v-if="group.records.filter(r => overdueIds.has(r.id)).length">
+                  <span class="text-xs tabular-nums text-slate-300 dark:text-slate-600">·</span>
+                  <span
+                    class="text-xs tabular-nums font-semibold text-rose-500 dark:text-rose-400"
+                    :title="`${group.records.filter(r => overdueIds.has(r.id)).length} overdue in this group`"
+                  >{{ group.records.filter(r => overdueIds.has(r.id)).length }} overdue</span>
+                </template>
                 <div class="opacity-0 group-hover/gh:opacity-100 flex items-center gap-1 transition-all">
                   <button
                     v-if="groupByField && group.key !== '__ungrouped__'"
