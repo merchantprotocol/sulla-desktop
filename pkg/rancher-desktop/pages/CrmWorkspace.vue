@@ -341,6 +341,61 @@
             </button>
           </div>
 
+          <!-- trash section -->
+          <div v-if="trashedRecords.length && !sidebarCollapsed" class="px-2 pb-1 border-t border-slate-200 dark:border-slate-700">
+            <button
+              type="button"
+              class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors"
+              :class="showTrashPanel
+                ? 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/20'
+                : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-rose-500'"
+              @click="showTrashPanel = !showTrashPanel"
+            >
+              <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Trash
+              <span class="ml-auto text-xs font-semibold tabular-nums">{{ trashedRecords.length }}</span>
+            </button>
+            <!-- trash record list -->
+            <div v-if="showTrashPanel" class="mt-0.5 space-y-0.5 max-h-48 overflow-y-auto">
+              <div
+                v-for="item in trashedRecords"
+                :key="item.record.id"
+                class="group/tr flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+              >
+                <span
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center"
+                  :style="{ background: (schema.find(rt => rt.key === item.record.record_type_key)?.color ?? '#64748b') + '22', color: schema.find(rt => rt.key === item.record.record_type_key)?.color ?? '#64748b' }"
+                >
+                  <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === item.record.record_type_key)?.icon ?? 'user']" class="h-2.5 w-2.5" />
+                </span>
+                <span class="flex-1 text-xs text-slate-600 dark:text-slate-400 truncate" :title="item.record.title">{{ item.record.title }}</span>
+                <button
+                  type="button"
+                  class="invisible group-hover/tr:visible text-xs text-sky-500 dark:text-sky-400 hover:underline shrink-0 transition-all"
+                  title="Restore record"
+                  @click.stop="(() => { const insertIdx = Math.min(item.idx, mockRecords.length); mockRecords.splice(insertIdx, 0, item.record); const ti = trashedRecords.findIndex(t => t.record.id === item.record.id); if (ti >= 0) trashedRecords.splice(ti, 1); showToast(`'${item.record.title}' restored`); })()"
+                >Restore</button>
+                <button
+                  type="button"
+                  class="invisible group-hover/tr:visible ml-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-all"
+                  title="Permanently delete"
+                  @click.stop="(() => { const ti = trashedRecords.findIndex(t => t.record.id === item.record.id); if (ti >= 0) { trashedRecords.splice(ti, 1); showToast('Permanently deleted'); } })()"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <button
+                type="button"
+                class="w-full text-left px-3 py-1 text-[10px] text-slate-400 dark:text-slate-500 hover:text-rose-400 dark:hover:text-rose-500 transition-colors"
+                @click="trashedRecords.splice(0); showToast('Trash emptied')"
+              >Empty trash</button>
+            </div>
+          </div>
+
           <div class="px-2 py-3 border-t border-slate-200 dark:border-slate-700 flex flex-col gap-1">
             <button
               v-if="!sidebarCollapsed"
@@ -11027,6 +11082,9 @@ const columnsMenuSearch = ref('');
 const sidebarCollapsed = ref(false);
 const pendingDeleteId = ref<string | null>(null);
 let pendingDeleteTimer: ReturnType<typeof setTimeout> | null = null;
+// soft-delete trash — records stay here after deletion; user can restore
+const trashedRecords = reactive<Array<{ record: CrmRecord; idx: number; deletedAt: string }>>([]);
+const showTrashPanel = ref(false);
 const deletedSnapshot = ref<{
   record: CrmRecord;
   idx: number;
@@ -15762,6 +15820,8 @@ function deleteRecord(record: CrmRecord) {
   deletedSnapshot.value = { record, idx: Math.max(0, idx), wasPinned, wasWatched };
   deletedSnapshotTimer = setTimeout(() => { deletedSnapshot.value = null; }, 5000);
   if (idx >= 0) mockRecords.splice(idx, 1);
+  // soft-delete: keep in trash for recovery
+  trashedRecords.unshift({ record, idx: Math.max(0, idx), deletedAt: new Date().toISOString() });
   if (openedRecord.value?.id === record.id) closePanel();
   const nextPinned = new Set(pinnedIds.value); nextPinned.delete(record.id); pinnedIds.value = nextPinned;
   const nextWatched = new Set(watchedIds.value); nextWatched.delete(record.id); watchedIds.value = nextWatched;
@@ -15778,6 +15838,9 @@ function restoreDeletedRecord() {
   deletedSnapshot.value = null;
   const insertIdx = Math.min(snap.idx, mockRecords.length);
   mockRecords.splice(insertIdx, 0, snap.record);
+  // also remove from trash
+  const ti = trashedRecords.findIndex((t) => t.record.id === snap.record.id);
+  if (ti >= 0) trashedRecords.splice(ti, 1);
   if (snap.wasPinned) { const next = new Set(pinnedIds.value); next.add(snap.record.id); pinnedIds.value = next; }
   if (snap.wasWatched) { const next = new Set(watchedIds.value); next.add(snap.record.id); watchedIds.value = next; }
   showToast('Delete undone');
