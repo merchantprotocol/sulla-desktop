@@ -6273,6 +6273,42 @@
                 @click.stop="tagFilters = new Set()"
               >Clear</button>
             </div>
+          <!-- field fill-rate -->
+          <div v-if="statsViewData.fieldFillRates.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Field fill rate</p>
+              <span class="text-[10px] text-slate-400 dark:text-slate-500">% of records with field filled</span>
+            </div>
+            <div class="space-y-1.5">
+              <div
+                v-for="row in statsViewData.fieldFillRates"
+                :key="row.field.key"
+                class="flex items-center gap-2"
+              >
+                <div
+                  class="w-28 shrink-0 text-xs truncate text-right leading-tight pr-1"
+                  :class="row.pct === 0 ? 'text-rose-400 dark:text-rose-500 font-medium' : row.pct < 50 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-600 dark:text-slate-400'"
+                  :title="row.field.label"
+                >{{ row.field.label }}</div>
+                <div class="flex-1 h-3.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    class="h-full rounded-full transition-all duration-300"
+                    :class="row.pct === 100
+                      ? 'bg-emerald-400 dark:bg-emerald-500'
+                      : row.pct >= 80
+                        ? 'bg-sky-400 dark:bg-sky-500'
+                        : row.pct >= 50
+                          ? 'bg-amber-400 dark:bg-amber-500'
+                          : 'bg-rose-400 dark:bg-rose-500'"
+                    :style="{ width: `${Math.max(row.pct, row.filled ? 4 : 0)}%` }"
+                  />
+                </div>
+                <span
+                  class="shrink-0 text-xs tabular-nums w-10 text-right font-medium"
+                  :class="row.pct === 100 ? 'text-emerald-500 dark:text-emerald-400' : row.pct < 50 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'"
+                >{{ row.pct }}%</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -18233,7 +18269,22 @@ const statsViewData = computed(() => {
   }
   const heatmapMax = Math.max(...Object.values(dateCounts), 1);
 
-  return { total, newRecords, priorNewRecords, completeness, selectCharts, numberCards, activityCounts, priorActivityTotal, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
+  // field fill-rate: % of records that have each field filled
+  const fieldFillRates = rt.fields
+    .filter((f) => f.data_type !== 'formula')
+    .map((f) => {
+      const filled = recs.filter((r) => {
+        const v = r.field_values[f.key];
+        if (v == null) return false;
+        if (typeof v === 'string') return v.trim() !== '';
+        if (Array.isArray(v)) return v.length > 0;
+        return true;
+      }).length;
+      return { field: f, filled, pct: total > 0 ? Math.round((filled / total) * 100) : 0 };
+    })
+    .sort((a, b) => a.pct - b.pct);
+
+  return { total, newRecords, priorNewRecords, completeness, selectCharts, numberCards, activityCounts, priorActivityTotal, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax, fieldFillRates };
 });
 
 // ── Activity digest ───────────────────────────────────────────────────────
