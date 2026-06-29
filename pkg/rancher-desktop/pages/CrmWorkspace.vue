@@ -9072,6 +9072,11 @@
             <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
             Copy link
           </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="(() => { quickNotePos = { top: kanbanCardMenu!.y, left: Math.min(kanbanCardMenu!.x, window.innerWidth - 300) }; quickNoteRecordId = kanbanCardMenu!.recordId; kanbanCardMenu = null; })()">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+            Log note
+          </button>
           <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
             :class="pinnedIds.has(kanbanCardMenu.recordId) ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
             @click="togglePin(kanbanCardMenu!.recordId); kanbanCardMenu = null">
@@ -9105,6 +9110,28 @@
               @click="(() => { const rec = mockRecords.find(r => r.id === kanbanCardMenu!.recordId); if (rec) { convertModal = { record: rec }; convertTargetTypeKey = schema.find(t => t.key !== rec.record_type_key)?.key ?? ''; } kanbanCardMenu = null; })()">
               <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
               Convert to...
+            </button>
+          </template>
+          <template v-if="selectedIds.size === 2 && selectedIds.has(kanbanCardMenu.recordId)">
+            <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 transition-colors"
+              @click="(() => { const other = filteredRecords.find(r => r.id !== kanbanCardMenu!.recordId && selectedIds.has(r.id)); const self = mockRecords.find(r => r.id === kanbanCardMenu!.recordId); if (other && self) { compareModal = { recordA: self, recordB: other }; } kanbanCardMenu = null; })()">
+              <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h5.586a1 1 0 00.707-.293l5.414-5.414a1 1 0 00.293-.707V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+              Compare selected
+            </button>
+          </template>
+          <template v-if="getCardSelectFilters(kanbanCardMenu.recordId).length">
+            <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+            <p class="px-3 pt-1.5 pb-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Filter by</p>
+            <button
+              v-for="opt in getCardSelectFilters(kanbanCardMenu.recordId)"
+              :key="opt.fieldKey + ':' + opt.value"
+              type="button"
+              class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              @click="toggleFilter(opt.fieldKey, opt.value); kanbanCardMenu = null"
+            >
+              <svg v-if="activeFilters.some(f => f.fieldKey === opt.fieldKey && f.value === opt.value)" class="h-3.5 w-3.5 text-sky-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+              <svg v-else class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" /></svg>
+              <span class="truncate"><span class="text-slate-400 dark:text-slate-500">{{ opt.label }}:</span> {{ opt.value }}</span>
             </button>
           </template>
           <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
@@ -9169,6 +9196,11 @@
             <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
             Copy link
           </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="(() => { quickNotePos = { top: galleryCardMenu!.y, left: Math.min(galleryCardMenu!.x, window.innerWidth - 300) }; quickNoteRecordId = galleryCardMenu!.recordId; galleryCardMenu = null; })()">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+            Log note
+          </button>
           <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
             :class="pinnedIds.has(galleryCardMenu.recordId) ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
             @click="togglePin(galleryCardMenu!.recordId); galleryCardMenu = null">
@@ -9202,6 +9234,28 @@
               @click="(() => { const rec = mockRecords.find(r => r.id === galleryCardMenu!.recordId); if (rec) { convertModal = { record: rec }; convertTargetTypeKey = schema.find(t => t.key !== rec.record_type_key)?.key ?? ''; } galleryCardMenu = null; })()">
               <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
               Convert to...
+            </button>
+          </template>
+          <template v-if="selectedIds.size === 2 && selectedIds.has(galleryCardMenu.recordId)">
+            <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 transition-colors"
+              @click="(() => { const other = filteredRecords.find(r => r.id !== galleryCardMenu!.recordId && selectedIds.has(r.id)); const self = mockRecords.find(r => r.id === galleryCardMenu!.recordId); if (other && self) { compareModal = { recordA: self, recordB: other }; } galleryCardMenu = null; })()">
+              <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h5.586a1 1 0 00.707-.293l5.414-5.414a1 1 0 00.293-.707V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+              Compare selected
+            </button>
+          </template>
+          <template v-if="getCardSelectFilters(galleryCardMenu.recordId).length">
+            <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+            <p class="px-3 pt-1.5 pb-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Filter by</p>
+            <button
+              v-for="opt in getCardSelectFilters(galleryCardMenu.recordId)"
+              :key="opt.fieldKey + ':' + opt.value"
+              type="button"
+              class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              @click="toggleFilter(opt.fieldKey, opt.value); galleryCardMenu = null"
+            >
+              <svg v-if="activeFilters.some(f => f.fieldKey === opt.fieldKey && f.value === opt.value)" class="h-3.5 w-3.5 text-sky-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+              <svg v-else class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" /></svg>
+              <span class="truncate"><span class="text-slate-400 dark:text-slate-500">{{ opt.label }}:</span> {{ opt.value }}</span>
             </button>
           </template>
           <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
@@ -16217,6 +16271,22 @@ const contextMenuSelectFilters = computed(() => {
   }
   return items;
 });
+
+function getCardSelectFilters(recordId: string): Array<{ fieldKey: string; label: string; value: string }> {
+  const record = mockRecords.value.find(r => r.id === recordId);
+  if (!record) return [];
+  const fields = selectedType.value?.fields ?? [];
+  const items: Array<{ fieldKey: string; label: string; value: string }> = [];
+  for (const f of fields) {
+    if (f.data_type === 'select' && record.field_values[f.key] != null) {
+      items.push({ fieldKey: f.key, label: f.label, value: String(record.field_values[f.key]) });
+    } else if (f.data_type === 'multi_select') {
+      const arr = Array.isArray(record.field_values[f.key]) ? record.field_values[f.key] as string[] : [];
+      for (const v of arr) items.push({ fieldKey: f.key, label: f.label, value: v });
+    }
+  }
+  return items;
+}
 
 function startColRename(col: CrmField) {
   editingColKey.value = col.key;
