@@ -4899,6 +4899,28 @@
                     @click="loggingNote = false; noteText = ''"
                   >Cancel</button>
                 </div>
+
+                <!-- next best action suggestion -->
+                <div
+                  v-if="nextBestAction && !loggingNote"
+                  class="flex items-start gap-3 rounded-xl border border-sky-200 dark:border-sky-800/60 bg-sky-50/60 dark:bg-sky-950/20 px-3 py-2.5"
+                >
+                  <div class="shrink-0 h-6 w-6 rounded-full bg-sky-100 dark:bg-sky-900/60 flex items-center justify-center text-sky-500 dark:text-sky-400 mt-0.5">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" :d="nextBestAction.icon" />
+                    </svg>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-xs font-semibold text-sky-700 dark:text-sky-300 leading-snug">{{ nextBestAction.title }}</p>
+                    <p class="text-[10px] text-sky-500/80 dark:text-sky-400/70 mt-0.5 leading-snug">{{ nextBestAction.detail }}</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="shrink-0 self-start mt-0.5 rounded-lg px-2.5 py-1 text-[11px] font-semibold bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+                    @click="noteType = nextBestAction!.type; loggingNote = true; noteText = ''"
+                  >{{ nextBestAction.cta }}</button>
+                </div>
+
                 <!-- quick log action buttons -->
                 <div v-if="!loggingNote" class="flex items-center gap-1.5 flex-wrap">
                   <button
@@ -10070,6 +10092,35 @@ const stageJourney = computed((): Array<{ stage: string; enteredAt: string; days
       isCurrent: i === history.length - 1,
     };
   });
+});
+
+const nextBestAction = computed((): { icon: string; title: string; detail: string; cta: string; type: 'note' | 'email' | 'call' | 'meeting' } | null => {
+  const rec = openedRecord.value;
+  if (!rec) return null;
+  const nowMs = new Date(DUE_TODAY_STR).getTime();
+  const lastTs = lastActivityByRecord.value[rec.id];
+  const daysSinceActivity = lastTs ? Math.floor((nowMs - lastTs) / 86_400_000) : null;
+  const acts = recordActivities.value;
+  const hasCall = acts.some((a) => a.type === 'call');
+  const hasEmail = acts.some((a) => a.type === 'email');
+  const hasMeeting = acts.some((a) => a.type === 'meeting');
+  const stageIdx = kanbanField.value ? (kanbanField.value.select_options ?? []).indexOf(String(rec.field_values[kanbanField.value.key] ?? '')) : -1;
+  const totalStages = kanbanField.value ? (kanbanField.value.select_options ?? []).length : 0;
+  const daysStale = daysInStage(rec);
+
+  // No activity at all
+  if (!acts.length) return { icon: 'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z', title: 'Start the conversation', detail: 'No activity logged yet — kick things off with an intro call.', cta: 'Log call', type: 'call' };
+  // Stale — no contact in 21+ days
+  if (daysSinceActivity != null && daysSinceActivity >= 21) return { icon: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z', title: `Re-engage — ${daysSinceActivity} days since last contact`, detail: 'Send a check-in email to keep the relationship warm.', cta: 'Send email', type: 'email' };
+  // Early stage, has email but no call
+  if (stageIdx >= 0 && stageIdx <= 1 && hasEmail && !hasCall) return { icon: 'M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z', title: 'Schedule a discovery call', detail: "Email contact made — time to get on a call to qualify.", cta: 'Log call', type: 'call' as const };
+  // Mid-pipeline, no meeting booked
+  if (stageIdx >= 2 && stageIdx <= Math.floor(totalStages * 0.6) && !hasMeeting) return { icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', title: 'Book a demo or proposal meeting', detail: "Good activity momentum — lock in a meeting to move the deal forward.", cta: 'Log meeting', type: 'meeting' };
+  // Stale in current stage
+  if (daysStale != null && daysStale > 14 && stageIdx < totalStages - 1) return { icon: 'M13 10V3L4 14h7v7l9-11h-7z', title: `Nudge — ${daysStale} days in this stage`, detail: 'Consider moving forward or confirming next steps with the prospect.', cta: 'Log note', type: 'note' };
+  // Active, no recent note
+  if (daysSinceActivity != null && daysSinceActivity >= 7) return { icon: 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z', title: 'Log a quick update', detail: `Last note was ${daysSinceActivity} days ago — add context while it's fresh.`, cta: 'Log note', type: 'note' };
+  return null;
 });
 
 const focusGroups = computed((): Array<{
