@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment()"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment()"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4095,6 +4095,18 @@
                           <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                         </svg>
                       </button>
+                      <!-- more actions -->
+                      <button
+                        type="button"
+                        class="shrink-0 mt-1 rounded p-0.5 text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400 transition-colors opacity-0 group-hover/gc:opacity-100"
+                        title="More actions"
+                        aria-label="More actions"
+                        @click.stop="galleryCardMenu = galleryCardMenu?.recordId === record.id ? null : { recordId: record.id, x: $event.clientX, y: $event.clientY }"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                          <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
+                        </svg>
+                      </button>
                     </div>
                     <p
                       class="text-sm font-semibold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-3"
@@ -4235,6 +4247,32 @@
                     </svg>
                     <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                    </svg>
+                  </button>
+                  <!-- quick note -->
+                  <button
+                    type="button"
+                    class="shrink-0 mt-1 rounded transition-colors"
+                    :class="quickNoteRecordId === record.id
+                      ? 'text-sky-500'
+                      : 'text-slate-200 dark:text-slate-700 hover:text-sky-400 dark:hover:text-sky-400 opacity-0 group-hover/gc:opacity-100'"
+                    title="Log a quick note"
+                    @click.stop="openQuickNote(record.id, $event)"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                  </button>
+                  <!-- more actions -->
+                  <button
+                    type="button"
+                    class="shrink-0 mt-1 rounded p-0.5 text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400 transition-colors opacity-0 group-hover/gc:opacity-100"
+                    title="More actions"
+                    aria-label="More actions"
+                    @click.stop="galleryCardMenu = galleryCardMenu?.recordId === record.id ? null : { recordId: record.id, x: $event.clientX, y: $event.clientY }"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+                      <circle cx="12" cy="5" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="12" cy="19" r="1.5" />
                     </svg>
                   </button>
                 </div>
@@ -8925,6 +8963,103 @@
       </div>
     </transition>
 
+    <!-- gallery card overflow menu -->
+    <transition
+      enter-active-class="transition-all duration-100"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-75"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="galleryCardMenu"
+        class="fixed z-50 w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden py-1"
+        :style="{ top: `${Math.min(galleryCardMenu.y, window.innerHeight - 200)}px`, left: `${Math.min(galleryCardMenu.x, window.innerWidth - 180)}px` }"
+        @click.stop
+      >
+        <template v-if="mockRecords.find(r => r.id === galleryCardMenu?.recordId) as CrmRecord | undefined">
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" @click="openRecord(mockRecords.find(r => r.id === galleryCardMenu!.recordId)!); galleryCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+            Open
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" @click="duplicateRecord(mockRecords.find(r => r.id === galleryCardMenu!.recordId)!); galleryCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+            Duplicate
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="(() => { const rec = mockRecords.find(r => r.id === galleryCardMenu!.recordId); if (rec) copyRecordLink(rec); galleryCardMenu = null; })()">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+            Copy link
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
+            :class="pinnedIds.has(galleryCardMenu.recordId) ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+            @click="togglePin(galleryCardMenu!.recordId); galleryCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0" :fill="pinnedIds.has(galleryCardMenu.recordId) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+            {{ pinnedIds.has(galleryCardMenu.recordId) ? 'Unpin' : 'Pin' }}
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
+            :class="watchedIds.has(galleryCardMenu.recordId) ? 'text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/20' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+            @click="toggleWatch(galleryCardMenu!.recordId); galleryCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0" :fill="watchedIds.has(galleryCardMenu.recordId) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+            {{ watchedIds.has(galleryCardMenu.recordId) ? 'Unwatch' : 'Watch' }}
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="(() => { const rec = mockRecords.find(r => r.id === galleryCardMenu!.recordId); if (rec) { mergeTargetPicker = { source: rec }; mergeTargetQuery = ''; } galleryCardMenu = null; })()">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 12h.01" /></svg>
+            Merge with...
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="archivedIds.has(galleryCardMenu!.recordId) ? unarchiveRecord(galleryCardMenu!.recordId) : archiveRecord(galleryCardMenu!.recordId); galleryCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
+            {{ archivedIds.has(galleryCardMenu.recordId) ? 'Unarchive' : 'Archive' }}
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
+            :class="lockedRecordIds.has(galleryCardMenu.recordId) ? 'text-orange-500 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/20' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+            @click="toggleRecordLock(galleryCardMenu!.recordId); galleryCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+            {{ lockedRecordIds.has(galleryCardMenu.recordId) ? 'Unlock' : 'Lock' }}
+          </button>
+          <template v-if="schema.length > 1">
+            <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              @click="(() => { const rec = mockRecords.find(r => r.id === galleryCardMenu!.recordId); if (rec) { convertModal = { record: rec }; convertTargetTypeKey = schema.find(t => t.key !== rec.record_type_key)?.key ?? ''; } galleryCardMenu = null; })()">
+              <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+              Convert to...
+            </button>
+          </template>
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <div class="px-3 py-2">
+            <p class="pb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Color label</p>
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <button
+                v-for="c in COLOR_LABEL_PALETTE"
+                :key="c"
+                type="button"
+                class="h-4 w-4 rounded-full transition-transform hover:scale-125 focus:outline-none"
+                :style="{ background: c, boxShadow: colorLabels[galleryCardMenu.recordId] === c ? `0 0 0 2px white, 0 0 0 3.5px ${c}` : 'none' }"
+                @click="setColorLabel(galleryCardMenu!.recordId, colorLabels[galleryCardMenu!.recordId] === c ? '' : c)"
+              />
+              <button
+                v-if="colorLabels[galleryCardMenu.recordId]"
+                type="button"
+                class="h-4 w-4 rounded-full flex items-center justify-center text-slate-400 border border-slate-300 dark:border-slate-600 hover:text-slate-600 transition-colors"
+                title="Clear label"
+                @click="setColorLabel(galleryCardMenu!.recordId, '')"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+          </div>
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+            @click="deleteRecord(mockRecords.find(r => r.id === galleryCardMenu!.recordId)!); galleryCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+            Delete
+          </button>
+        </template>
+      </div>
+    </transition>
+
     <!-- group header context menu -->
     <transition
       enter-active-class="transition-all duration-100"
@@ -12289,6 +12424,7 @@ const collapsedColumns = ref<Set<string>>(new Set());
 const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
 const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
+const galleryCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
 const colHeaderMenu = ref<{ fieldKey: string; x: number; y: number } | null>(null);
 const showColStatsModal = ref(false);
 const colStatsFieldKey = ref<string | null>(null);
