@@ -2259,19 +2259,35 @@
                     </div>
                   </th>
                   <th class="w-20 px-3 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-right">
-                    <button
-                      type="button"
-                      class="text-xs font-semibold uppercase tracking-wide transition-colors select-none"
-                      :class="sortField === '__activity_count__'
-                        ? 'text-sky-600 dark:text-sky-400'
-                        : 'text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400'"
-                      title="Sort by activity count"
-                      @click="toggleSort('__activity_count__')"
-                    >
-                      <svg class="h-3 w-3 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                      </svg>
-                    </button>
+                    <div class="flex items-center justify-end gap-2">
+                      <button
+                        v-if="scoringRulesForType.length"
+                        type="button"
+                        class="text-xs font-semibold uppercase tracking-wide transition-colors select-none"
+                        :class="sortField === '__score__'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400'"
+                        title="Sort by lead score"
+                        @click="toggleSort('__score__')"
+                      >
+                        <svg class="h-3 w-3 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="text-xs font-semibold uppercase tracking-wide transition-colors select-none"
+                        :class="sortField === '__activity_count__'
+                          ? 'text-sky-600 dark:text-sky-400'
+                          : 'text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400'"
+                        title="Sort by activity count"
+                        @click="toggleSort('__activity_count__')"
+                      >
+                        <svg class="h-3 w-3 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                      </button>
+                    </div>
                   </th>
                 </tr>
               </thead>
@@ -10180,6 +10196,7 @@ const activeSortLabel = computed(() => {
   if (sortField.value === '__created_at__') return 'Added';
   if (sortField.value === '__updated_at__') return 'Updated';
   if (sortField.value === '__activity_count__') return 'Activity';
+  if (sortField.value === '__score__') return 'Score';
   return allColumns.value.find((c) => c.key === sortField.value)?.label ?? sortField.value;
 });
 
@@ -10378,11 +10395,12 @@ const filteredRecords = computed(() => {
       if (key === '__created_at__') return new Date(r.created_at).getTime();
       if (key === '__updated_at__') return r.updated_at ? new Date(r.updated_at).getTime() : new Date(r.created_at).getTime();
       if (key === '__activity_count__') return activityCountByRecord.value[r.id] ?? 0;
+      if (key === '__score__') return scoreRecord(r);
       return 0;
     };
     const strVal = (r: CrmRecord, key: string): string | number | boolean | null => r.field_values[key] ?? null;
     const cmpOne = (a: CrmRecord, b: CrmRecord, key: string, dir: number): number => {
-      if (['__created_at__', '__updated_at__', '__activity_count__'].includes(key)) {
+      if (['__created_at__', '__updated_at__', '__activity_count__', '__score__'].includes(key)) {
         return (numVal(a, key) - numVal(b, key)) * dir;
       }
       const col = colFor(key);
