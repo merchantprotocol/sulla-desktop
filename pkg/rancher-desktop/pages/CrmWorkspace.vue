@@ -3246,6 +3246,7 @@
                       @click="Object.keys(colAggOverrides).length ? colAggOverrides = {} : colStatMode = COL_STAT_MODES[(COL_STAT_MODES.indexOf(colStatMode) + 1) % COL_STAT_MODES.length]"
                     >{{ colStatMode }}</button>
                   </td>
+                  <td v-if="showRowNums" class="w-8 py-2" />
                   <td
                     v-for="col in visibleColumns"
                     :key="col.key"
