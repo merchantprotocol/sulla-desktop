@@ -4241,6 +4241,56 @@
             <!-- no quotas set -->
             <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No weekly targets set. Click "Edit targets" to add some.</p>
           </div>
+
+          <!-- win / loss reason analytics -->
+          <div v-if="winLossAnalytics" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Win / Loss</p>
+            <!-- won vs lost summary -->
+            <div class="flex gap-3 mb-4">
+              <div class="flex-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/20 px-3 py-2.5">
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400 mb-0.5">Won</p>
+                <p class="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-300">{{ winLossAnalytics.won }}</p>
+                <p class="text-[10px] text-emerald-500 dark:text-emerald-500 mt-0.5 tabular-nums">
+                  {{ winLossAnalytics.won + winLossAnalytics.lost > 0 ? Math.round((winLossAnalytics.won / (winLossAnalytics.won + winLossAnalytics.lost)) * 100) : 0 }}% win rate
+                </p>
+              </div>
+              <div class="flex-1 rounded-lg bg-rose-50 dark:bg-rose-950/20 px-3 py-2.5">
+                <p class="text-[10px] font-semibold uppercase tracking-wide text-rose-500 dark:text-rose-400 mb-0.5">Lost</p>
+                <p class="text-2xl font-bold tabular-nums text-rose-600 dark:text-rose-300">{{ winLossAnalytics.lost }}</p>
+                <p class="text-[10px] text-rose-400 dark:text-rose-500 mt-0.5 tabular-nums">
+                  {{ winLossAnalytics.won + winLossAnalytics.lost > 0 ? Math.round((winLossAnalytics.lost / (winLossAnalytics.won + winLossAnalytics.lost)) * 100) : 0 }}% loss rate
+                </p>
+              </div>
+            </div>
+            <!-- win reasons -->
+            <template v-if="winLossAnalytics.winReasons.length">
+              <p class="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 dark:text-emerald-400 mb-2">Win reasons</p>
+              <div class="space-y-1.5 mb-4">
+                <div v-for="row in winLossAnalytics.winReasons" :key="row.reason" class="flex items-center gap-2">
+                  <div class="w-32 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right leading-tight" :title="row.reason">{{ row.reason }}</div>
+                  <div class="flex-1 h-4 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div class="h-full rounded-full bg-emerald-400 dark:bg-emerald-600 transition-all duration-300" :style="{ width: `${row.pct}%` }" />
+                  </div>
+                  <span class="shrink-0 text-[10px] tabular-nums text-slate-500 dark:text-slate-400 w-10 text-right">{{ row.count }} <span class="opacity-60">({{ row.pct }}%)</span></span>
+                </div>
+              </div>
+            </template>
+            <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic mb-4">No win reasons captured yet.</p>
+            <!-- loss reasons -->
+            <template v-if="winLossAnalytics.lossReasons.length">
+              <p class="text-[10px] font-semibold uppercase tracking-widest text-rose-500 dark:text-rose-400 mb-2">Loss reasons</p>
+              <div class="space-y-1.5">
+                <div v-for="row in winLossAnalytics.lossReasons" :key="row.reason" class="flex items-center gap-2">
+                  <div class="w-32 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right leading-tight" :title="row.reason">{{ row.reason }}</div>
+                  <div class="flex-1 h-4 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                    <div class="h-full rounded-full bg-rose-400 dark:bg-rose-600 transition-all duration-300" :style="{ width: `${row.pct}%` }" />
+                  </div>
+                  <span class="shrink-0 text-[10px] tabular-nums text-slate-500 dark:text-slate-400 w-10 text-right">{{ row.count }} <span class="opacity-60">({{ row.pct }}%)</span></span>
+                </div>
+              </div>
+            </template>
+            <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No loss reasons captured yet.</p>
+          </div>
         </div>
 
         <!-- ── Timeline / Gantt view ── -->
@@ -11486,6 +11536,44 @@ const statsViewData = computed(() => {
   const heatmapMax = Math.max(...Object.values(dateCounts), 1);
 
   return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
+});
+
+// ── Win / loss reason analytics ───────────────────────────────────────────
+const winLossAnalytics = computed((): {
+  won: number;
+  lost: number;
+  winReasons: Array<{ reason: string; count: number; pct: number }>;
+  lossReasons: Array<{ reason: string; count: number; pct: number }>;
+} | null => {
+  const kf = kanbanField.value;
+  if (!kf) return null;
+  const hasWon = kf.select_options?.includes('Closed Won');
+  const hasLost = kf.select_options?.includes('Closed Lost');
+  if (!hasWon && !hasLost) return null;
+
+  const records = filteredRecords.value;
+  const won = records.filter((r) => String(r.field_values[kf.key]) === 'Closed Won').length;
+  const lost = records.filter((r) => String(r.field_values[kf.key]) === 'Closed Lost').length;
+
+  const ids = new Set(records.map((r) => r.id));
+  const winCounts: Record<string, number> = {};
+  const lossCounts: Record<string, number> = {};
+  for (const a of mockActivities) {
+    if (!ids.has(a.record_id) || a.type !== 'change') continue;
+    const wm = a.content.match(/·\s*Win reason:\s*([^·\n]+)/);
+    const lm = a.content.match(/·\s*Loss reason:\s*([^·\n]+)/);
+    if (wm) { const r = wm[1].trim(); winCounts[r] = (winCounts[r] ?? 0) + 1; }
+    if (lm) { const r = lm[1].trim(); lossCounts[r] = (lossCounts[r] ?? 0) + 1; }
+  }
+
+  const toArr = (counts: Record<string, number>): Array<{ reason: string; count: number; pct: number }> => {
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([reason, count]) => ({ reason, count, pct: total ? Math.round((count / total) * 100) : 0 }));
+  };
+
+  return { won, lost, winReasons: toArr(winCounts), lossReasons: toArr(lossCounts) };
 });
 
 // ── Revenue forecast (deal-type records with a currency field) ────────────
