@@ -19,6 +19,7 @@
     @keydown.f.exact="onKeyF"
     @keydown.g.exact="onKeyG"
     @keydown.i.exact="onKeyI"
+    @keydown.m.exact="onKeyM"
     @keydown.x.exact="onKeyX"
     @keydown.bracket-left.exact="onKeyBracketLeft"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
@@ -30,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -233,6 +234,36 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
               </svg>
+            </button>
+          </div>
+
+          <!-- upcoming reminders (hidden when collapsed) -->
+          <div v-if="upcomingReminders.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
+            <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Reminders</p>
+            <button
+              v-for="item in upcomingReminders"
+              :key="item.id"
+              type="button"
+              class="w-full flex items-start gap-2 px-3 py-1.5 rounded-lg text-left transition-colors"
+              :class="openedRecord?.id === item.id ? 'bg-slate-100 dark:bg-slate-800' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+              @click="item.rec && openFromPalette(item.rec)"
+            >
+              <span
+                class="shrink-0 mt-0.5 h-4 w-4 rounded-full flex items-center justify-center"
+                :class="item.isOverdue ? 'bg-rose-100 dark:bg-rose-900/40 text-rose-500' : item.isToday ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-500' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+              </span>
+              <span class="flex-1 min-w-0">
+                <span class="block text-xs truncate" :class="item.isOverdue || item.isToday ? 'text-slate-800 dark:text-slate-100 font-medium' : 'text-slate-600 dark:text-slate-300'">{{ item.rec?.title }}</span>
+                <span
+                  class="block text-[10px] tabular-nums"
+                  :class="item.isOverdue ? 'text-rose-500' : item.isToday ? 'text-amber-500 font-medium' : 'text-slate-400 dark:text-slate-500'"
+                >{{ item.isOverdue ? 'Overdue · ' : item.isToday ? 'Today · ' : '' }}{{ item.date }}</span>
+                <span v-if="item.note" class="block text-[10px] text-slate-400 dark:text-slate-500 truncate italic">{{ item.note }}</span>
+              </span>
             </button>
           </div>
 
@@ -2387,6 +2418,16 @@
                       >
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
+                      <!-- reminder badge -->
+                      <svg
+                        v-if="reminders[record.id]?.date"
+                        class="h-3.5 w-3.5 shrink-0"
+                        :class="reminders[record.id].date <= DUE_TODAY_STR ? 'text-amber-400' : 'text-slate-300 dark:text-slate-600'"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
+                        :title="`Reminder: ${reminders[record.id].date}${reminders[record.id].note ? ' — ' + reminders[record.id].note : ''}`"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                      </svg>
                       <button
                         type="button"
                         class="rounded p-0.5 transition-colors"
@@ -3979,6 +4020,59 @@
                   </button>
                 </div>
               </div>
+              <!-- follow-up reminder -->
+              <div class="relative shrink-0 mt-0.5" @click.stop>
+                <button
+                  type="button"
+                  class="rounded-lg p-1 transition-colors"
+                  :class="reminders[openedRecord.id]?.date ? 'text-amber-500 hover:text-amber-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'"
+                  :title="reminders[openedRecord.id]?.date ? `Reminder: ${reminders[openedRecord.id].date}${reminders[openedRecord.id].note ? ' — ' + reminders[openedRecord.id].note : ''}` : 'Set a follow-up reminder'"
+                  @click="reminderMenuId = reminderMenuId === openedRecord.id ? null : openedRecord.id"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                </button>
+                <div
+                  v-if="reminderMenuId === openedRecord.id"
+                  class="absolute right-0 top-full mt-1 w-60 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-3 z-20 space-y-2.5"
+                >
+                  <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Follow-up reminder</p>
+                  <div>
+                    <label class="text-[10px] text-slate-400 dark:text-slate-500 font-medium uppercase tracking-wide">Date</label>
+                    <input
+                      ref="reminderInputEl"
+                      v-model="reminderDraft.date"
+                      type="date"
+                      class="mt-0.5 w-full h-7 rounded-lg px-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                    />
+                  </div>
+                  <div>
+                    <label class="text-[10px] text-slate-400 dark:text-slate-500 font-medium uppercase tracking-wide">Note <span class="normal-case">(optional)</span></label>
+                    <input
+                      v-model="reminderDraft.note"
+                      type="text"
+                      placeholder="What to follow up on…"
+                      class="mt-0.5 w-full h-7 rounded-lg px-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                      @keydown.enter.stop="setReminder(openedRecord.id)"
+                    />
+                  </div>
+                  <div class="flex gap-2">
+                    <button
+                      type="button"
+                      class="flex-1 h-7 text-xs rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium transition-colors disabled:opacity-40"
+                      :disabled="!reminderDraft.date"
+                      @click="setReminder(openedRecord.id)"
+                    >Set reminder</button>
+                    <button
+                      v-if="reminders[openedRecord.id]?.date"
+                      type="button"
+                      class="h-7 px-2.5 text-xs rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-rose-500 transition-colors"
+                      @click="clearReminder(openedRecord.id)"
+                    >Clear</button>
+                  </div>
+                </div>
+              </div>
               <!-- expand / compress panel button -->
               <button
                 type="button"
@@ -4900,6 +4994,7 @@
                 { keys: ['L'], desc: 'Calendar view' },
                 { keys: ['V'], desc: 'Gallery view' },
                 { keys: ['I'], desc: 'Stats / Insights view' },
+                { keys: ['M'], desc: 'Timeline / Gantt view' },
                 { keys: ['⌘', 'A'], desc: 'Select all records (table view)' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Home', 'End'], desc: 'First / last record' },
@@ -7249,6 +7344,28 @@ const createLinkTitle = ref('');
 const watchedIds = ref<Set<string>>(new Set());
 const snoozedUntil = ref<Record<string, string>>({});
 const snoozeMenuId = ref<string | null>(null);
+const reminders = ref<Record<string, { date: string; note: string }>>({});
+const reminderMenuId = ref<string | null>(null);
+const reminderDraft = ref({ date: '', note: '' });
+const reminderInputEl = ref<HTMLInputElement | null>(null);
+watch(reminderMenuId, (v) => {
+  if (v) {
+    reminderDraft.value = { date: reminders.value[v]?.date ?? '', note: reminders.value[v]?.note ?? '' };
+    nextTick(() => reminderInputEl.value?.focus());
+  }
+});
+const upcomingReminders = computed(() =>
+  Object.entries(reminders.value)
+    .filter(([, r]) => r.date)
+    .map(([id, r]) => {
+      const rec = mockRecords.find((m) => m.id === id) ?? null;
+      const rt = rec ? schema.find((s) => s.key === rec.record_type_key) ?? null : null;
+      return { id, rec, rt, date: r.date, note: r.note, isOverdue: r.date < DUE_TODAY_STR, isToday: r.date === DUE_TODAY_STR };
+    })
+    .filter((item) => item.rec !== null)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(0, 6),
+);
 const COLOR_LABEL_PALETTE = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'] as const;
 const colorLabels = ref<Record<string, string>>({});
 const colorLabelFilter = ref<string | null>(null);
@@ -9198,6 +9315,22 @@ function archiveSelected() {
   });
 }
 
+function setReminder(recordId: string) {
+  const { date, note } = reminderDraft.value;
+  if (!date) return;
+  reminders.value = { ...reminders.value, [recordId]: { date, note } };
+  reminderMenuId.value = null;
+  showToast(`Reminder set for ${date}`);
+}
+
+function clearReminder(recordId: string) {
+  const next = { ...reminders.value };
+  delete next[recordId];
+  reminders.value = next;
+  reminderMenuId.value = null;
+  showToast('Reminder cleared');
+}
+
 function archiveRecord(id: string) {
   const next = new Set(archivedIds.value);
   next.add(id);
@@ -10315,6 +10448,13 @@ function onKeyI(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
   viewMode.value = 'stats';
+}
+
+function onKeyM(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  viewMode.value = 'timeline';
 }
 
 function onKeyS(e: KeyboardEvent) {
