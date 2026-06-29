@@ -214,6 +214,7 @@
                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
                 : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'"
               @click="openFromPalette(rec)"
+              @contextmenu.prevent="openContextMenu(rec, $event)"
             >
               <span
                 class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold select-none"
@@ -237,6 +238,7 @@
                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
                 : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'"
               @click="openFromPalette(rec)"
+              @contextmenu.prevent="openContextMenu(rec, $event)"
             >
               <span
                 class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold select-none"
@@ -263,6 +265,7 @@
                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
                 : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'"
               @click="openFromPalette(rec)"
+              @contextmenu.prevent="openContextMenu(rec, $event)"
             >
               <span
                 class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold select-none"
@@ -5602,6 +5605,7 @@
                   :key="item.record.id"
                   class="group/focus flex items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 hover:border-sky-300 dark:hover:border-sky-700 transition-all cursor-pointer"
                   @click="openRecord(item.record)"
+                  @contextmenu.prevent="openContextMenu(item.record, $event)"
                 >
                   <!-- type dot -->
                   <span class="shrink-0 h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-bold" :style="{ background: selectedType?.color ?? '#6366f1' }">
