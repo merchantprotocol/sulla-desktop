@@ -12351,14 +12351,19 @@
             </div>
             <!-- distribution chart -->
             <div v-if="colStats.distribution && colStats.distribution.length">
-              <p class="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-2">Distribution</p>
+              <div class="flex items-center justify-between mb-2">
+                <p class="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Distribution</p>
+                <span class="text-[10px] text-slate-300 dark:text-slate-600">click to filter</span>
+              </div>
               <div class="space-y-1.5">
                 <div
                   v-for="item in colStats.distribution"
                   :key="item.label"
-                  class="flex items-center gap-2"
+                  class="group/csd flex items-center gap-2 cursor-pointer rounded-md px-1 -mx-1 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+                  :title="`Filter to ${item.label} (${item.count} records)`"
+                  @click="toggleFilter(colStatsFieldKey, item.label); showColStatsModal = false; showToast(`Filtered to ${item.label}`)"
                 >
-                  <span class="text-xs text-slate-600 dark:text-slate-300 w-28 shrink-0 truncate">{{ item.label }}</span>
+                  <span class="text-xs text-slate-600 dark:text-slate-300 group-hover/csd:text-sky-600 dark:group-hover/csd:text-sky-400 w-28 shrink-0 truncate transition-colors">{{ item.label }}</span>
                   <div class="flex-1 h-5 rounded-md bg-slate-100 dark:bg-slate-800 overflow-hidden relative">
                     <div
                       class="h-full rounded-md bg-sky-400 dark:bg-sky-600 transition-all"
