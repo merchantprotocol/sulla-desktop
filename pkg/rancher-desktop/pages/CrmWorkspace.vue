@@ -5448,6 +5448,14 @@
                   >{{ item.record.title.slice(0, 1).toUpperCase() }}</span>
                   <span class="flex-1 text-xs text-slate-700 dark:text-slate-200 truncate group-hover/ta:text-sky-600 dark:group-hover/ta:text-sky-400 transition-colors">{{ item.record.title }}</span>
                   <span class="shrink-0 tabular-nums text-[10px] font-semibold text-slate-400 dark:text-slate-500">{{ item.count }}</span>
+                  <button
+                    type="button"
+                    class="shrink-0 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/ta:opacity-100 transition-opacity text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400"
+                    title="Log a quick note"
+                    @click.stop="openQuickNote(item.record.id, $event)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  </button>
                 </div>
               </div>
             </div>
@@ -5458,7 +5466,8 @@
                 <div
                   v-for="item in activityDigest.recentActivity"
                   :key="item.act.id"
-                  class="flex items-start gap-2"
+                  class="flex items-start gap-2 group/ra cursor-pointer"
+                  @click="item.record && openRecord(item.record)"
                 >
                   <span
                     class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center mt-0.5"
@@ -5469,9 +5478,18 @@
                     </svg>
                   </span>
                   <div class="flex-1 min-w-0">
-                    <p class="text-[11px] text-slate-700 dark:text-slate-200 truncate">{{ item.record?.title ?? '—' }}</p>
+                    <p class="text-[11px] text-slate-700 dark:text-slate-200 truncate group-hover/ra:text-sky-600 dark:group-hover/ra:text-sky-400 transition-colors">{{ item.record?.title ?? '—' }}</p>
                     <p class="text-[10px] text-slate-400 dark:text-slate-500">{{ relativeTime(item.act.created_at) }}</p>
                   </div>
+                  <button
+                    v-if="item.record"
+                    type="button"
+                    class="shrink-0 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/ra:opacity-100 transition-opacity text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400"
+                    title="Open record"
+                    @click.stop="openRecord(item.record)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                  </button>
                 </div>
               </div>
             </div>
