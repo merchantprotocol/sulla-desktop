@@ -1958,6 +1958,25 @@
                   class="ml-0.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-rose-500 text-white"
                 >{{ focusGroups.reduce((n, g) => n + g.records.length, 0) }}</span>
               </button>
+              <!-- tasks view button -->
+              <button
+                type="button"
+                class="flex items-center gap-1.5 px-3 h-9 text-sm border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="viewMode === 'tasks'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                title="Tasks view — all tasks across records"
+                @click="viewMode = 'tasks'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                </svg>
+                Tasks
+                <span
+                  v-if="allTasksOverdueCount > 0"
+                  class="ml-0.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-rose-500 text-white"
+                >{{ allTasksOverdueCount }}</span>
+              </button>
               <!-- kanban card fields picker — shown only in kanban mode -->
               <div v-if="viewMode === 'kanban'" class="relative border-l border-slate-200 dark:border-slate-700" @click.stop>
                 <button
@@ -5435,6 +5454,179 @@
                     >Open</button>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Global tasks view ── -->
+        <div v-if="viewMode === 'tasks'" class="flex-1 overflow-y-auto">
+          <!-- header bar -->
+          <div class="sticky top-0 z-10 flex items-center gap-3 px-6 py-3 bg-white/95 dark:bg-slate-950/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800">
+            <div>
+              <h2 class="text-sm font-semibold text-slate-900 dark:text-white">Tasks</h2>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                {{ mockTasks.filter(t => !t.done && new Set(mockRecords.filter(r => r.record_type_key === selectedTypeKey).map(r => r.id)).has(t.record_id)).length }} open
+                <template v-if="allTasksOverdueCount"> · <span class="text-rose-500 font-medium">{{ allTasksOverdueCount }} overdue</span></template>
+              </p>
+            </div>
+            <div class="ml-auto flex items-center gap-2 flex-wrap justify-end">
+              <!-- group-by selector -->
+              <div class="flex items-center gap-0.5 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+                <button
+                  v-for="gb in ([{ key: 'due', label: 'Due date' }, { key: 'priority', label: 'Priority' }, { key: 'record', label: 'Record' }] as const)"
+                  :key="gb.key"
+                  type="button"
+                  class="px-2.5 h-7 text-xs transition-colors"
+                  :class="tasksViewGroupBy === gb.key
+                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                  @click="tasksViewGroupBy = gb.key"
+                >{{ gb.label }}</button>
+              </div>
+              <!-- priority filter -->
+              <div class="flex items-center gap-1">
+                <button
+                  v-for="p in (['high', 'medium', 'low'] as const)"
+                  :key="p"
+                  type="button"
+                  class="h-6 px-2 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors"
+                  :class="tasksViewPriorityFilter === p
+                    ? p === 'high'   ? 'bg-rose-500 text-white'
+                    : p === 'medium' ? 'bg-amber-400 text-white'
+                    :                  'bg-slate-400 text-white'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                  :title="`Filter by ${p} priority`"
+                  @click="tasksViewPriorityFilter = tasksViewPriorityFilter === p ? '' : p"
+                >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
+              </div>
+              <!-- hide-done toggle -->
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs font-medium border transition-colors"
+                :class="tasksViewHideDone
+                  ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                :title="tasksViewHideDone ? 'Showing incomplete only' : 'Click to hide completed'"
+                @click="tasksViewHideDone = !tasksViewHideDone"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {{ tasksViewHideDone ? 'Incomplete' : 'All tasks' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- empty state -->
+          <div v-if="!tasksViewGroups.length" class="flex flex-col items-center justify-center py-24 px-8 text-center">
+            <div class="h-14 w-14 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center text-emerald-500 dark:text-emerald-400 mb-4">
+              <svg class="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <p class="text-base font-semibold text-slate-800 dark:text-white mb-1">All caught up</p>
+            <p class="text-sm text-slate-400 dark:text-slate-500 max-w-xs">No open tasks for this record type. Add tasks from the record detail panel.</p>
+          </div>
+
+          <!-- task groups -->
+          <div v-else class="p-6 space-y-6 max-w-3xl mx-auto">
+            <div v-for="group in tasksViewGroups" :key="group.id" class="space-y-1">
+              <!-- group header -->
+              <div class="flex items-center gap-2 mb-2">
+                <span
+                  class="shrink-0 h-2 w-2 rounded-full"
+                  :class="group.color === 'rose' ? 'bg-rose-500'
+                        : group.color === 'amber' ? 'bg-amber-400'
+                        : group.color === 'sky' ? 'bg-sky-500'
+                        : group.color === 'emerald' ? 'bg-emerald-500'
+                        : 'bg-slate-400 dark:bg-slate-500'"
+                />
+                <span class="text-xs font-semibold uppercase tracking-widest"
+                  :class="group.color === 'rose' ? 'text-rose-500 dark:text-rose-400'
+                        : group.color === 'amber' ? 'text-amber-500 dark:text-amber-400'
+                        : group.color === 'sky' ? 'text-sky-600 dark:text-sky-400'
+                        : group.color === 'emerald' ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-slate-500 dark:text-slate-400'"
+                >{{ group.label }}</span>
+                <span class="text-xs text-slate-400 dark:text-slate-500 tabular-nums">{{ group.items.length }}</span>
+              </div>
+              <!-- task rows -->
+              <div
+                v-for="item in group.items"
+                :key="item.task.id"
+                class="group/gtask flex items-start gap-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-3 hover:border-slate-200 dark:hover:border-slate-700 transition-all"
+              >
+                <!-- priority dot -->
+                <button
+                  type="button"
+                  class="mt-0.5 shrink-0 h-2.5 w-2.5 rounded-sm transition-all"
+                  :class="item.task.priority === 'high'   ? 'bg-rose-500'
+                        : item.task.priority === 'medium' ? 'bg-amber-400'
+                        : item.task.priority === 'low'    ? 'bg-slate-400 dark:bg-slate-500'
+                        : 'bg-slate-200 dark:bg-slate-700 opacity-0 group-hover/gtask:opacity-100 hover:bg-slate-300'"
+                  :title="item.task.priority ? `Priority: ${item.task.priority} — click to cycle` : 'Set priority'"
+                  @click="(() => { const t = mockTasks.find(x => x.id === item.task.id); if (!t) return; t.priority = t.priority === 'high' ? 'medium' : t.priority === 'medium' ? 'low' : t.priority === 'low' ? undefined : 'high'; })()"
+                />
+                <!-- checkbox -->
+                <button
+                  type="button"
+                  class="shrink-0 h-4 w-4 rounded border-2 flex items-center justify-center transition-colors"
+                  :class="item.task.done
+                    ? 'bg-emerald-500 border-emerald-500 text-white'
+                    : 'border-slate-300 dark:border-slate-600 hover:border-emerald-400'"
+                  @click="toggleTask(item.task.id)"
+                >
+                  <svg v-if="item.task.done" class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </button>
+                <!-- task content -->
+                <div class="flex-1 min-w-0">
+                  <p
+                    class="text-sm leading-snug"
+                    :class="item.task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-800 dark:text-slate-200'"
+                  >{{ item.task.text }}</p>
+                  <div class="flex items-center gap-2 mt-1 flex-wrap">
+                    <!-- due date -->
+                    <span
+                      v-if="item.task.due_date"
+                      class="text-xs"
+                      :class="!item.task.done && item.task.due_date < DUE_TODAY_STR
+                        ? 'text-rose-500 dark:text-rose-400 font-medium'
+                        : !item.task.done && item.task.due_date <= DUE_SOON_STR
+                          ? 'text-amber-500 dark:text-amber-400'
+                          : 'text-slate-400 dark:text-slate-500'"
+                    >Due {{ item.task.due_date }}</span>
+                    <!-- record name -->
+                    <button
+                      v-if="item.record"
+                      type="button"
+                      class="inline-flex items-center gap-1 text-xs text-sky-600 dark:text-sky-400 hover:underline transition-colors"
+                      :title="`Open ${item.record.title}`"
+                      @click="openRecord(item.record!)"
+                    >
+                      <span
+                        class="h-3.5 w-3.5 rounded flex items-center justify-center shrink-0"
+                        :style="{ background: (schema.find(rt => rt.key === item.record!.record_type_key)?.color ?? '#64748b') + '22', color: schema.find(rt => rt.key === item.record!.record_type_key)?.color ?? '#64748b' }"
+                      >
+                        <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === item.record!.record_type_key)?.icon ?? 'user']" class="h-2.5 w-2.5" />
+                      </span>
+                      {{ item.record.title }}
+                    </button>
+                  </div>
+                </div>
+                <!-- delete button -->
+                <button
+                  type="button"
+                  class="shrink-0 h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover/gtask:opacity-100 transition-all"
+                  title="Delete task"
+                  @click="deleteTask(item.task.id)"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
@@ -11046,11 +11238,14 @@ const searchQuery = ref('');
 const searchInputEl = ref<HTMLInputElement | null>(null);
 const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
-const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline' | 'feed' | 'focus'>('table');
+const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline' | 'feed' | 'focus' | 'tasks'>('table');
 const feedSearchQuery = ref('');
 const feedTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
+const tasksViewGroupBy = ref<'due' | 'priority' | 'record'>('due');
+const tasksViewHideDone = ref(true);
+const tasksViewPriorityFilter = ref<'high' | 'medium' | 'low' | ''>('');
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
 const showRowStripes = ref(false);
 const showDataBars = ref(false);
@@ -14041,6 +14236,60 @@ const recordTasks = computed(() => {
 });
 
 const recordTasksPendingCount = computed(() => recordTasks.value.filter((t) => !t.done).length);
+
+// ── Global tasks view computeds ─────────────────────────────────────────────
+const allTasksInView = computed(() => {
+  const typeRecordIds = new Set(
+    mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).map((r) => r.id),
+  );
+  return mockTasks
+    .filter((t) => typeRecordIds.has(t.record_id))
+    .filter((t) => !(tasksViewHideDone.value && t.done))
+    .filter((t) => !tasksViewPriorityFilter.value || t.priority === tasksViewPriorityFilter.value)
+    .map((t) => ({ task: t, record: mockRecords.find((r) => r.id === t.record_id) as CrmRecord | undefined }));
+});
+
+const allTasksOverdueCount = computed((): number => {
+  const typeRecordIds = new Set(
+    mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).map((r) => r.id),
+  );
+  return mockTasks.filter(
+    (t) => !t.done && !!t.due_date && t.due_date < DUE_TODAY_STR && typeRecordIds.has(t.record_id),
+  ).length;
+});
+
+const tasksViewGroups = computed((): Array<{ id: string; label: string; color: string; items: typeof allTasksInView.value }> => {
+  const items = allTasksInView.value;
+  if (tasksViewGroupBy.value === 'priority') {
+    const g = [
+      { id: 'high',   label: 'High priority',   color: 'rose',    items: items.filter((i) => i.task.priority === 'high') },
+      { id: 'medium', label: 'Medium priority',  color: 'amber',   items: items.filter((i) => i.task.priority === 'medium') },
+      { id: 'low',    label: 'Low priority',     color: 'slate',   items: items.filter((i) => i.task.priority === 'low') },
+      { id: 'none',   label: 'No priority',      color: 'slate',   items: items.filter((i) => !i.task.priority) },
+    ];
+    return g.filter((gr) => gr.items.length);
+  } else if (tasksViewGroupBy.value === 'record') {
+    const map = new Map<string, { id: string; label: string; color: string; items: typeof items }>();
+    for (const item of items) {
+      const rid = item.task.record_id;
+      if (!map.has(rid)) map.set(rid, { id: rid, label: item.record?.title ?? rid, color: 'sky', items: [] });
+      map.get(rid)!.items.push(item);
+    }
+    return Array.from(map.values());
+  } else {
+    const today = DUE_TODAY_STR;
+    const week = DUE_SOON_STR;
+    const g = [
+      { id: 'overdue',  label: 'Overdue',      color: 'rose',    items: items.filter((i) => !i.task.done && !!i.task.due_date && i.task.due_date < today) },
+      { id: 'today',    label: 'Due today',    color: 'amber',   items: items.filter((i) => !i.task.done && i.task.due_date === today) },
+      { id: 'week',     label: 'This week',    color: 'sky',     items: items.filter((i) => !i.task.done && !!i.task.due_date && i.task.due_date > today && i.task.due_date <= week) },
+      { id: 'upcoming', label: 'Upcoming',     color: 'slate',   items: items.filter((i) => !i.task.done && !!i.task.due_date && i.task.due_date > week) },
+      { id: 'no-date',  label: 'No due date',  color: 'slate',   items: items.filter((i) => !i.task.done && !i.task.due_date) },
+      { id: 'done',     label: 'Done',         color: 'emerald', items: items.filter((i) => i.task.done) },
+    ];
+    return g.filter((gr) => gr.items.length);
+  }
+});
 
 const recordAttachments = computed(() =>
   openedRecord.value
