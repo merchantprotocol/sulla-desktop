@@ -5284,6 +5284,33 @@
                       </ul>
                     </div>
                   </div>
+                  <!-- call outcome row -->
+                  <div v-if="noteType === 'call'" class="flex items-center gap-2 flex-wrap">
+                    <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                    </svg>
+                    <select
+                      v-model="callOutcome"
+                      class="text-xs px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                    >
+                      <option value="">Outcome (optional)</option>
+                      <option value="Connected">Connected</option>
+                      <option value="Left voicemail">Left voicemail</option>
+                      <option value="No answer">No answer</option>
+                      <option value="Wrong person">Wrong person</option>
+                      <option value="Transferred">Transferred</option>
+                    </select>
+                    <div v-if="callOutcome" class="flex items-center gap-1">
+                      <input
+                        v-model="callDuration"
+                        type="number"
+                        min="1"
+                        placeholder="min"
+                        class="w-14 text-xs px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                      />
+                      <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">min</span>
+                    </div>
+                  </div>
                   <!-- schedule row — only for call/meeting -->
                   <div v-if="noteType === 'call' || noteType === 'meeting'" class="flex items-center gap-2">
                     <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
@@ -5384,30 +5411,41 @@
                             <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-auto">⌘ Enter to save</span>
                           </div>
                         </div>
-                        <p
-                          v-else
-                          class="text-xs leading-relaxed"
-                          :class="row.act.type === 'change'
-                            ? 'text-slate-400 dark:text-slate-500 font-mono'
-                            : 'text-slate-600 dark:text-slate-300'"
-                        >
-                          <template v-for="(part, pi) in parseActivityContent(row.act.content)" :key="pi">
-                            <button
-                              v-if="part.type === 'mention'"
-                              type="button"
-                              class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/30 transition-colors mx-0.5 align-middle"
-                              :title="part.record ? `Open ${part.text}` : `Record &quot;${part.text}&quot; not found`"
-                              :class="!part.record ? 'opacity-50 cursor-default' : ''"
-                              @click="part.record && openFromPalette(part.record)"
-                            >
-                              <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                              </svg>
-                              {{ part.text }}
-                            </button>
-                            <span v-else>{{ part.text }}</span>
-                          </template>
-                        </p>
+                        <template v-else>
+                          <!-- call outcome badge -->
+                          <span
+                            v-if="row.act.type === 'call' && /^\[[^\]]+\]/.test(row.act.content)"
+                            class="inline-flex items-center gap-1 mb-1 rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400"
+                          >
+                            <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                            </svg>
+                            {{ row.act.content.match(/^\[([^\]]+)\]/)?.[1] }}
+                          </span>
+                          <p
+                            class="text-xs leading-relaxed"
+                            :class="row.act.type === 'change'
+                              ? 'text-slate-400 dark:text-slate-500 font-mono'
+                              : 'text-slate-600 dark:text-slate-300'"
+                          >
+                            <template v-for="(part, pi) in parseActivityContent(stripCallOutcome(row.act.content))" :key="pi">
+                              <button
+                                v-if="part.type === 'mention'"
+                                type="button"
+                                class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-violet-50 dark:bg-violet-950/30 text-violet-600 dark:text-violet-400 border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-900/30 transition-colors mx-0.5 align-middle"
+                                :title="part.record ? `Open ${part.text}` : `Record &quot;${part.text}&quot; not found`"
+                                :class="!part.record ? 'opacity-50 cursor-default' : ''"
+                                @click="part.record && openFromPalette(part.record)"
+                              >
+                                <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                  <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                </svg>
+                                {{ part.text }}
+                              </button>
+                              <span v-else>{{ part.text }}</span>
+                            </template>
+                          </p>
+                        </template>
                         <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
                           <span
                             class="capitalize font-medium"
@@ -8994,6 +9032,9 @@ const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
 watch(loggingNote, (val) => { if (val) nextTick(() => activityTextareaEl.value?.focus()); });
 const noteText = ref('');
 const noteType = ref<'note' | 'email' | 'call' | 'meeting'>('note');
+const callOutcome = ref('');
+const callDuration = ref('');
+watch(noteType, () => { callOutcome.value = ''; callDuration.value = ''; });
 const showEmailTemplatePicker = ref(false);
 watch(noteType, () => { showEmailTemplatePicker.value = false; });
 const showCadencePicker = ref(false);
@@ -12508,17 +12549,28 @@ function openFromPalette(record: CrmRecord) {
   nextTick(() => openRecord(record));
 }
 
+function stripCallOutcome(content: string): string {
+  return content.replace(/^\[[^\]]+\]\s*/, '');
+}
+
 function logNote(record: CrmRecord) {
   const text = noteText.value.trim();
   if (!text) return;
   const scheduledDate = noteScheduledAt.value.trim();
   const scheduledTime = noteScheduledTime.value.trim() || '09:00';
   const scheduledAt = scheduledDate ? `${scheduledDate}T${scheduledTime}:00Z` : undefined;
+  let content = text;
+  if (noteType.value === 'call' && callOutcome.value) {
+    const badge = callDuration.value ? `${callOutcome.value} · ${callDuration.value}min` : callOutcome.value;
+    content = `[${badge}] ${text}`;
+    callOutcome.value = '';
+    callDuration.value = '';
+  }
   mockActivities.unshift({
     id: 'act-' + String(mockActivities.length),
     record_id: record.id,
     type: noteType.value,
-    content: text,
+    content,
     author: 'You',
     created_at: new Date().toISOString(),
     ...(scheduledAt ? { scheduled_at: scheduledAt } : {}),
