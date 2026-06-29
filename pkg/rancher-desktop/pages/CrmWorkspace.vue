@@ -8280,6 +8280,20 @@
                     >Cancel</button>
                   </div>
                 </div>
+                <!-- activity date-range filter -->
+                <div v-if="recordActivities.length > 5" class="flex items-center gap-1 flex-wrap">
+                  <button
+                    v-for="p in ([{ key: 'all', label: 'All' }, { key: '7d', label: '7d' }, { key: '30d', label: '30d' }, { key: '90d', label: '90d' }] as const)"
+                    :key="p.key"
+                    type="button"
+                    class="h-5 px-2 rounded-full text-[10px] font-medium transition-colors"
+                    :class="activityTabDatePreset === p.key
+                      ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400'
+                      : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'"
+                    @click="activityTabDatePreset = p.key"
+                  >{{ p.label }}</button>
+                  <span v-if="activityTabDatePreset !== 'all'" class="text-[10px] text-slate-400 dark:text-slate-500 ml-0.5">{{ visibleActivities.length }} of {{ recordActivities.length }}</span>
+                </div>
 
                 <!-- next best action suggestion -->
                 <div
@@ -18104,8 +18118,10 @@ const recordAttachments = computed(() =>
 );
 
 const activityTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
+const activityTabDatePreset = ref<'all' | '7d' | '30d' | '90d'>('all');
 const activitySearchQuery = ref('');
 const pinnedActivityIds = ref<Set<string>>(new Set());
+watch(() => openedRecord.value?.id, () => { activityTabDatePreset.value = 'all'; });
 const emailThreadsCollapsed = ref<Set<string>>(new Set());
 
 function normalizeEmailSubject(s: string): string {
@@ -18189,6 +18205,12 @@ const visibleActivities = computed(() => {
   let result = activityTypeFilter.value === 'all'
     ? recordActivities.value
     : recordActivities.value.filter((a) => a.type === activityTypeFilter.value);
+  const p = activityTabDatePreset.value;
+  if (p !== 'all') {
+    const days = p === '7d' ? 7 : p === '30d' ? 30 : 90;
+    const cutoffMs = Date.now() - days * 86_400_000;
+    result = result.filter((a) => new Date(a.created_at).getTime() >= cutoffMs);
+  }
   const q = activitySearchQuery.value.trim().toLowerCase();
   if (q) result = result.filter((a) => a.content.toLowerCase().includes(q) || a.author.toLowerCase().includes(q));
   // pinned activities surface to the top
