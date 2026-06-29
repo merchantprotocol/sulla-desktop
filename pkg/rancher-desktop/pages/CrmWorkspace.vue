@@ -5810,6 +5810,23 @@
                   <button
                     v-if="row.act.type !== 'change'"
                     type="button"
+                    class="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-sky-400 dark:hover:text-sky-400 transition-colors"
+                    aria-label="Reply to activity"
+                    title="Reply to this activity"
+                    @click.stop="(() => {
+                      const rect = ($event.currentTarget as HTMLElement).getBoundingClientRect();
+                      quickNotePos = { top: rect.bottom + 6, left: Math.max(rect.right - 280, 8) };
+                      quickNoteReplyQuote = '> ' + row.act.content.slice(0, 120) + (row.act.content.length > 120 ? '…' : '') + '\n\n';
+                      quickNoteRecordId = row.act.record_id;
+                    })()"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                    </svg>
+                  </button>
+                  <button
+                    v-if="row.act.type !== 'change'"
+                    type="button"
                     class="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all"
                     title="Delete this activity entry"
                     @click.stop="deleteActivity(row.act.id)"
@@ -13551,9 +13568,10 @@ const editingTaskAssignee = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
 const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
+const quickNoteReplyQuote = ref('');
 const quickNotePos = ref({ top: 0, left: 0 });
 const quickNoteInputEl = ref<HTMLTextAreaElement | null>(null);
-watch(quickNoteRecordId, (v) => { if (v) { quickNoteText.value = ''; nextTick(() => quickNoteInputEl.value?.focus()); } });
+watch(quickNoteRecordId, (v) => { if (v) { quickNoteText.value = quickNoteReplyQuote.value; quickNoteReplyQuote.value = ''; nextTick(() => quickNoteInputEl.value?.focus()); } });
 
 function openQuickNote(recordId: string, evt: MouseEvent) {
   const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
