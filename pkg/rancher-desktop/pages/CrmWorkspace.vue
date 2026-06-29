@@ -6790,6 +6790,18 @@
                   <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </button>
+              <!-- duplicate record -->
+              <button
+                type="button"
+                aria-label="Duplicate record"
+                title="Duplicate this record"
+                class="shrink-0 mt-0.5 text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 rounded-lg p-1 transition-colors"
+                @click="(() => { const dup = { ...openedRecord, id: 'rec_dup_' + String(Date.now()).slice(-7), title: openedRecord.title + ' (copy)', created_at: new Date().toISOString(), updated_at: new Date().toISOString() }; const idx = mockRecords.findIndex(r => r.id === openedRecord.id); mockRecords.splice(idx + 1, 0, dup); showToast('Record duplicated'); openRecord(dup); })()"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+              </button>
               <!-- copy as text -->
               <button
                 type="button"
