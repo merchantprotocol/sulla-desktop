@@ -4027,6 +4027,20 @@
                         <svg v-if="pinnedIds.has(record.id)" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
                         <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
                       </button>
+                      <!-- quick note -->
+                      <button
+                        type="button"
+                        class="shrink-0 mt-1 rounded transition-colors"
+                        :class="quickNoteRecordId === record.id
+                          ? 'text-sky-500'
+                          : 'text-slate-200 dark:text-slate-700 hover:text-sky-400 dark:hover:text-sky-400 opacity-0 group-hover/gc:opacity-100'"
+                        title="Log a quick note"
+                        @click.stop="openQuickNote(record.id, $event)"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
                     </div>
                     <p
                       class="text-sm font-semibold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-3"
