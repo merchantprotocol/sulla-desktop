@@ -2371,23 +2371,53 @@
                 @click.stop
               >
                 <p class="px-3 pt-0.5 pb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Templates</p>
-                <button
+                <div
                   v-for="tmpl in recordTemplates.filter(t => t.typeKey === selectedTypeKey)"
                   :key="tmpl.id"
-                  type="button"
-                  class="flex items-center justify-between w-full px-3 py-2 text-sm text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-                  @click="applyTemplate(tmpl)"
+                  class="group/tmpl flex items-center w-full hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                 >
-                  <span class="truncate">{{ tmpl.name }}</span>
-                  <button
-                    type="button"
-                    class="ml-2 shrink-0 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 rounded transition-colors"
-                    :aria-label="`Delete template ${tmpl.name}`"
-                    @click.stop="deleteTemplate(tmpl.id)"
-                  >
-                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
-                </button>
+                  <!-- inline rename mode -->
+                  <template v-if="renamingTemplateId === tmpl.id">
+                    <input
+                      :value="renameTemplateDraft"
+                      type="text"
+                      maxlength="60"
+                      class="flex-1 mx-2 h-6 rounded px-2 text-xs bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-slate-900 dark:text-slate-100 focus:outline-none"
+                      @input="renameTemplateDraft = ($event.target as HTMLInputElement).value"
+                      @keydown.enter.prevent="commitRenameTemplate"
+                      @keydown.escape.stop="renamingTemplateId = null"
+                      @vue:mounted="($el as HTMLInputElement).select()"
+                      @click.stop
+                    />
+                    <button type="button" class="shrink-0 h-5 px-1.5 rounded text-[10px] font-medium text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/30 transition-colors" @click.stop="commitRenameTemplate">Save</button>
+                    <button type="button" class="shrink-0 mr-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click.stop="renamingTemplateId = null">✕</button>
+                  </template>
+                  <!-- normal mode -->
+                  <template v-else>
+                    <button
+                      type="button"
+                      class="flex-1 min-w-0 text-left px-3 py-2 text-sm text-slate-700 dark:text-slate-200 truncate"
+                      :title="`Apply template: ${tmpl.name}`"
+                      @click="applyTemplate(tmpl)"
+                    >{{ tmpl.name }}</button>
+                    <button
+                      type="button"
+                      class="shrink-0 opacity-0 group-hover/tmpl:opacity-100 h-5 w-5 flex items-center justify-center rounded text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 transition-all"
+                      title="Rename template"
+                      @click.stop="startRenameTemplate(tmpl)"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="shrink-0 opacity-0 group-hover/tmpl:opacity-100 mr-2 h-5 w-5 flex items-center justify-center rounded text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 transition-all"
+                      :aria-label="`Delete template ${tmpl.name}`"
+                      @click.stop="deleteTemplate(tmpl.id)"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                  </template>
+                </div>
               </div>
             </div>
             <button
@@ -13377,6 +13407,8 @@ const showMergeModal = ref(false);
 interface RecordTemplate { id: string; name: string; typeKey: string; fieldValues: Record<string, unknown> }
 const recordTemplates = ref<RecordTemplate[]>([]);
 const showTemplatePanel = ref(false);
+const renamingTemplateId = ref<string | null>(null);
+const renameTemplateDraft = ref('');
 
 interface ScoringRule {
   id: string;
@@ -16904,6 +16936,20 @@ function applyTemplate(tmpl: RecordTemplate) {
 
 function deleteTemplate(id: string) {
   recordTemplates.value = recordTemplates.value.filter((t) => t.id !== id);
+}
+
+function startRenameTemplate(tmpl: RecordTemplate) {
+  renamingTemplateId.value = tmpl.id;
+  renameTemplateDraft.value = tmpl.name;
+}
+
+function commitRenameTemplate() {
+  const id = renamingTemplateId.value;
+  const name = renameTemplateDraft.value.trim();
+  if (id && name) {
+    recordTemplates.value = recordTemplates.value.map(t => t.id === id ? { ...t, name } : t);
+  }
+  renamingTemplateId.value = null;
 }
 
 function openMergeModal(primaryId: string, secondaryId: string) {
