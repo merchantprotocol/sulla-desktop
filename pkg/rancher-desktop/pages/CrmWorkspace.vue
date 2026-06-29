@@ -2390,7 +2390,7 @@
                             @click.stop="toggleRowExpand(record.id)"
                           >{{ expandedRowIds.has(record.id) ? 'less' : 'more' }}</button>
                         </template>
-                        <CrmCellValue v-else :value="col.data_type === 'formula' ? (evaluateFormula(record, col) as number) : record.field_values[col.key]" :data-type="col.data_type === 'formula' ? 'number' : col.data_type" :format="col.format" />
+                        <CrmCellValue v-else :value="col.data_type === 'formula' ? evaluateFormula(record, col) as (string | number) : record.field_values[col.key]" :data-type="col.data_type === 'formula' ? (typeof evaluateFormula(record, col) === 'string' ? 'text' : 'number') : col.data_type" :format="col.format" />
                         <!-- funnel icon on select cells to hint at click-to-filter -->
                         <span
                           v-if="col.data_type === 'select' && record.field_values[col.key]"
