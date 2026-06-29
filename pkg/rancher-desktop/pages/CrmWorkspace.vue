@@ -4252,7 +4252,16 @@
                     class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate block max-w-full text-left mb-0.5"
                     @click="const rec = mockRecords.find(r => r.id === row.act.record_id); if (rec) { openRecord(rec); viewMode = 'table'; }"
                   >{{ mockRecords.find(r => r.id === row.act.record_id)?.title ?? row.act.record_id }}</button>
-                  <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{{ row.act.content }}</p>
+                  <span
+                    v-if="row.act.type === 'call' && /^\[[^\]]+\]/.test(row.act.content)"
+                    class="inline-flex items-center gap-1 mb-1 rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400"
+                  >
+                    <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                    </svg>
+                    {{ row.act.content.match(/^\[([^\]]+)\]/)?.[1] }}
+                  </span>
+                  <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{{ stripCallOutcome(row.act.content) }}</p>
                   <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1.5">
                     <span class="capitalize font-medium">{{ row.act.type === 'change' ? 'System' : row.act.author }}</span>
                     · {{ formatRelativeTime(row.act.created_at) }}
@@ -5436,6 +5445,8 @@
                                 :title="part.record ? `Open ${part.text}` : `Record &quot;${part.text}&quot; not found`"
                                 :class="!part.record ? 'opacity-50 cursor-default' : ''"
                                 @click="part.record && openFromPalette(part.record)"
+                                @mouseenter="part.record && onMentionMouseenter(part.record, $event.currentTarget as HTMLElement)"
+                                @mouseleave="onMentionMouseleave"
                               >
                                 <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                                   <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -6724,6 +6735,51 @@
         </div>
       </div>
     </transition>
+
+    <!-- @mention peek card -->
+    <Teleport to="body">
+      <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+        <div
+          v-if="peekRecord"
+          class="fixed z-[9999] w-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden pointer-events-auto"
+          :style="peekAnchorEl ? { top: `${Math.min(peekAnchorEl.getBoundingClientRect().bottom + 6, window.innerHeight - 240)}px`, left: `${Math.max(4, Math.min(peekAnchorEl.getBoundingClientRect().left, window.innerWidth - 268))}px` } : {}"
+          @mouseenter="peekCardHovered = true"
+          @mouseleave="peekCardHovered = false; peekRecord = null"
+        >
+          <!-- header -->
+          <div class="px-3 pt-3 pb-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+            <span
+              class="h-7 w-7 rounded-lg flex items-center justify-center shrink-0 text-white text-xs font-bold"
+              :style="{ background: schema.find(s => s.key === peekRecord.record_type_key)?.color ?? '#6366f1' }"
+            >{{ recordInitials(peekRecord.title) }}</span>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-semibold text-slate-900 dark:text-white truncate">{{ peekRecord.title }}</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ schema.find(s => s.key === peekRecord.record_type_key)?.label }}</p>
+            </div>
+          </div>
+          <!-- key fields -->
+          <div class="px-3 py-2 space-y-1">
+            <div
+              v-for="field in (schema.find(s => s.key === peekRecord.record_type_key)?.fields ?? []).filter(f => !f.is_title && peekRecord.field_values[f.key] && f.data_type !== 'formula').slice(0, 4)"
+              :key="field.key"
+              class="flex items-center gap-2"
+            >
+              <span class="text-[10px] text-slate-400 dark:text-slate-500 w-20 shrink-0 truncate">{{ field.label }}</span>
+              <span class="text-xs text-slate-700 dark:text-slate-300 truncate">{{ String(peekRecord.field_values[field.key] ?? '') }}</span>
+            </div>
+          </div>
+          <!-- activity count -->
+          <div class="px-3 py-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ mockActivities.filter(a => a.record_id === peekRecord.id).length }} activit{{ mockActivities.filter(a => a.record_id === peekRecord.id).length === 1 ? 'y' : 'ies' }}</span>
+            <button
+              type="button"
+              class="text-[10px] font-medium text-sky-500 hover:text-sky-600 dark:text-sky-400 transition-colors"
+              @click="openRecord(peekRecord); peekRecord = null"
+            >Open record</button>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
 
     <!-- Scoring rules modal -->
     <transition enter-active-class="transition-all duration-200" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-150" leave-from-class="opacity-100" leave-to-class="opacity-0">
@@ -9120,6 +9176,22 @@ const noteScheduledTime = ref('');
 const atMentionOpen = ref(false);
 const atMentionQuery = ref('');
 const atMentionIdx = ref(0);
+
+const peekRecord = ref<CrmRecord | null>(null);
+const peekAnchorEl = ref<HTMLElement | null>(null);
+const peekTimer = ref<ReturnType<typeof setTimeout> | null>(null);
+
+function onMentionMouseenter(record: CrmRecord, el: HTMLElement) {
+  if (peekTimer.value) clearTimeout(peekTimer.value);
+  peekTimer.value = setTimeout(() => { peekRecord.value = record; peekAnchorEl.value = el; }, 400);
+}
+
+function onMentionMouseleave() {
+  if (peekTimer.value) { clearTimeout(peekTimer.value); peekTimer.value = null; }
+  setTimeout(() => { if (!peekCardHovered.value) peekRecord.value = null; }, 100);
+}
+
+const peekCardHovered = ref(false);
 const atMentionResults = computed(() => {
   if (!atMentionOpen.value) return [];
   const q = atMentionQuery.value.toLowerCase();
