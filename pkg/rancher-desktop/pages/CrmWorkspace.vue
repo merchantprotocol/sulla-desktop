@@ -1078,6 +1078,19 @@
               {{ collapsedGroups.size ? 'Expand all' : 'Collapse all' }}
             </button>
 
+            <!-- date group mode selector — visible when grouping by a date field -->
+            <template v-if="groupByField && viewMode === 'table' && allColumns.find(c => c.key === groupByField)?.data_type === 'date'">
+              <div class="flex items-center rounded-lg border border-violet-200 dark:border-violet-800 overflow-hidden h-9 text-sm">
+                <button v-for="m in (['week', 'month', 'quarter'] as const)" :key="m" type="button"
+                  class="px-2.5 h-full transition-colors capitalize"
+                  :class="groupDateMode === m
+                    ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 font-medium'
+                    : 'text-violet-500 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20'"
+                  @click="groupDateMode = m"
+                >{{ m }}</button>
+              </div>
+            </template>
+
             <!-- color label filter — only visible when any record in this type has a color label -->
             <div
               v-if="usedColorLabels.length"
@@ -10168,6 +10181,7 @@ const sidebarTypeDragOver = ref<string | null>(null);
 const editingColKey = ref<string | null>(null);
 const editingColLabel = ref('');
 const groupByField = ref<string | null>(null);
+const groupDateMode = ref<'week' | 'month' | 'quarter'>('month');
 const showAddStageInput = ref(false);
 const newStageName = ref('');
 const addStageInputEl = ref<HTMLInputElement | null>(null);
@@ -11816,26 +11830,56 @@ const filteredRecords = computed(() => {
 
 // Row grouping for table view — null means no grouping active
 type GroupRow = { kind: 'header'; key: string; label: string; count: number } | { kind: 'record'; record: CrmRecord; idxInFiltered: number };
+function dateGroupKey(dateStr: string, mode: 'week' | 'month' | 'quarter'): { key: string; label: string } {
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return { key: dateStr, label: dateStr };
+  const y = d.getFullYear();
+  const m = d.getMonth();
+  if (mode === 'month') {
+    const key = `${y}-${String(m + 1).padStart(2, '0')}`;
+    const label = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    return { key, label };
+  }
+  if (mode === 'quarter') {
+    const q = Math.floor(m / 3) + 1;
+    return { key: `${y}-Q${q}`, label: `Q${q} ${y}` };
+  }
+  // week: ISO week number
+  const jan1 = new Date(y, 0, 1);
+  const weekNum = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7);
+  return { key: `${y}-W${String(weekNum).padStart(2, '0')}`, label: `Week ${weekNum}, ${y}` };
+}
+
 const groupedTableRows = computed((): GroupRow[] | null => {
   if (!groupByField.value || viewMode.value !== 'table') return null;
   const fkey = groupByField.value;
   const field = allColumns.value.find((c) => c.key === fkey);
-  const opts = field?.select_options ?? [];
+  const isDateField = field?.data_type === 'date';
+  const opts = (!isDateField && field?.select_options) ? field.select_options : [];
   const ungrouped: CrmRecord[] = [];
   const byVal: Record<string, CrmRecord[]> = {};
+  const keyToLabel: Record<string, string> = {};
   for (const r of filteredRecords.value) {
     const v = r.field_values[fkey];
     if (v == null || String(v) === '') { ungrouped.push(r); continue; }
-    const k = String(v);
+    let k: string;
+    if (isDateField) {
+      const { key, label } = dateGroupKey(String(v), groupDateMode.value);
+      k = key;
+      keyToLabel[k] = label;
+    } else {
+      k = String(v);
+    }
     if (!byVal[k]) byVal[k] = [];
     byVal[k].push(r);
   }
-  const order = opts.length ? opts : Object.keys(byVal);
+  const order = opts.length ? opts : Object.keys(byVal).sort();
   const rows: GroupRow[] = [];
   for (const opt of order) {
     const recs = byVal[opt];
     if (!recs?.length) continue;
-    rows.push({ kind: 'header', key: opt, label: opt, count: recs.length });
+    const label = keyToLabel[opt] ?? opt;
+    rows.push({ kind: 'header', key: opt, label, count: recs.length });
     if (!collapsedGroups.value.has(opt)) {
       for (const r of recs) {
         rows.push({ kind: 'record', record: r, idxInFiltered: filteredRecords.value.indexOf(r) });
