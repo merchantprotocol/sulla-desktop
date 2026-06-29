@@ -2647,7 +2647,7 @@
                     <!-- group header -->
                     <tr
                       v-if="row.kind === 'header'"
-                      class="bg-slate-50 dark:bg-slate-950 cursor-pointer select-none"
+                      class="group/gh bg-slate-50 dark:bg-slate-950 cursor-pointer select-none"
                       @click="toggleGroupCollapse(row.key)"
                       @contextmenu.prevent="groupMenu = { key: row.key, label: row.label, count: row.count, x: $event.clientX, y: $event.clientY }"
                     >
@@ -2677,6 +2677,15 @@
                               {{ col.format === 'currency' ? '$' : '' }}{{ groupedStats[row.key][col.key].sum >= 1000 ? (groupedStats[row.key][col.key].sum / 1000).toFixed(1) + 'k' : groupedStats[row.key][col.key].sum }}
                             </span>
                           </template>
+                          <!-- select all in group -->
+                          <button
+                            type="button"
+                            class="ml-auto opacity-0 group-hover/gh:opacity-100 flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-medium border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-all"
+                            title="Select all records in this group"
+                            @click.stop="(() => { const ids = filteredRecords.filter(r => { const val = String(r.field_values[groupByField ?? ''] ?? ''); return row.key === '__ungrouped__' ? !val || val === '' : val === row.key; }).map(r => r.id); const next = new Set(selectedIds); ids.forEach(id => next.add(id)); selectedIds = next; })()"
+                          >
+                            Select {{ row.count }}
+                          </button>
                         </div>
                       </td>
                     </tr>
