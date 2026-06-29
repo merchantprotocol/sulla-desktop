@@ -1700,6 +1700,22 @@
               </svg>
             </button>
 
+            <!-- data bars toggle — table view only, shown when number columns present -->
+            <button
+              v-if="viewMode === 'table' && hasTableTotals"
+              type="button"
+              class="h-9 w-9 flex items-center justify-center rounded-lg border transition-colors"
+              :class="showDataBars
+                ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400'
+                : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+              title="Toggle data bars on number columns"
+              @click="showDataBars = !showDataBars"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </button>
+
             <!-- view toggle — table always available; board when type has select field; calendar when type has date field -->
             <div
               v-if="canKanban || canCalendar"
@@ -2732,7 +2748,7 @@
                   <td
                     v-for="col in visibleColumns"
                     :key="col.key"
-                    class="px-4 text-sm"
+                    class="px-4 text-sm relative overflow-hidden"
                     :class="[
                       rowDensity === 'compact' ? 'py-1.5' : 'py-3',
                       col.is_title
@@ -2741,6 +2757,12 @@
                       pinnedColumnKeys.has(col.key) ? 'sticky z-[1] bg-inherit shadow-[2px_0_4px_rgba(0,0,0,0.04)]' : '',
                     ]"
                   >
+                    <!-- data bar — shown when showDataBars is on and this is a number column with a positive value -->
+                    <span
+                      v-if="showDataBars && col.data_type === 'number' && tableColumnStats[col.key] && tableColumnStats[col.key]!.max > 0 && record.field_values[col.key] != null"
+                      class="absolute inset-y-0 left-0 pointer-events-none"
+                      :style="{ width: Math.max(0, Math.min(100, (Number(record.field_values[col.key]) / tableColumnStats[col.key]!.max) * 100)) + '%', background: 'currentColor', opacity: '0.07' }"
+                    />
                     <div
                       v-if="col.is_title"
                       class="flex items-center gap-1.5"
@@ -10576,6 +10598,7 @@ const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
 const showRowStripes = ref(false);
+const showDataBars = ref(false);
 const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
 const createFormErrors = ref<Set<string>>(new Set());
