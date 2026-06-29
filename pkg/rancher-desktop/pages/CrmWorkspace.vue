@@ -4937,8 +4937,20 @@
                     </svg>
                   </button>
                 </div>
+                <template v-for="row in detailPanelRows" :key="row.kind === 'field' ? row.field.id : row.id">
+                <button
+                  v-if="row.kind === 'section'"
+                  type="button"
+                  class="flex items-center gap-1.5 w-full pt-3 pb-0.5 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                  @click="toggleSection(row.id)"
+                >
+                  <svg class="h-3 w-3 shrink-0 transition-transform duration-150" :class="collapsedSections.has(row.id) ? '-rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                  {{ row.label }}
+                </button>
                 <div
-                  v-for="field in (selectedType?.fields ?? []).slice().sort((a, b) => a.position - b.position).filter(f => fieldIsVisible(f, openedRecord)).filter(f => !drawerFieldSearch || f.label.toLowerCase().includes(drawerFieldSearch.toLowerCase()))"
+                  v-for="field in (row.kind === 'field' ? [row.field] : [])"
                   :key="field.id"
                   class="space-y-1 group/field"
                 >
@@ -5094,6 +5106,7 @@
                     <p class="text-xs text-slate-400 dark:text-slate-500">Enter to save · Esc to discard · empty to clear</p>
                   </div>
                 </div>
+                </template>
                 <!-- no-match message when field search yields nothing -->
                 <p
                   v-if="drawerFieldSearch && (selectedType?.fields ?? []).filter(f => fieldIsVisible(f, openedRecord) && f.label.toLowerCase().includes(drawerFieldSearch.toLowerCase())).length === 0"
@@ -9179,6 +9192,91 @@ watch(showSaveViewPopover, (val) => {
 });
 const loggingNote = ref(false);
 const drawerFieldSearch = ref('');
+
+// Collapsible field sections per record type in the details panel
+interface FieldSection {
+  id: string;
+  typeKey: string;
+  label: string;
+  fieldKeys: string[];
+}
+const fieldSections = ref<FieldSection[]>([
+  { id: 'fs-cn-1', typeKey: 'contact', label: 'Identity',       fieldKeys: ['full_name', 'email', 'phone'] },
+  { id: 'fs-cn-2', typeKey: 'contact', label: 'Classification', fieldKeys: ['company', 'status'] },
+  { id: 'fs-co-1', typeKey: 'company', label: 'Overview',       fieldKeys: ['name', 'domain'] },
+  { id: 'fs-co-2', typeKey: 'company', label: 'Details',        fieldKeys: ['industry', 'employees', 'annual_rev', 'products'] },
+  { id: 'fs-dl-1', typeKey: 'deal',    label: 'Deal info',      fieldKeys: ['name', 'stage', 'amount'] },
+  { id: 'fs-dl-2', typeKey: 'deal',    label: 'Forecast',       fieldKeys: ['close_date', 'probability', 'expected_value', 'deal_tier'] },
+  { id: 'fs-ld-1', typeKey: 'lead',    label: 'Lead info',      fieldKeys: ['name', 'email', 'source'] },
+  { id: 'fs-ld-2', typeKey: 'lead',    label: 'Qualification',  fieldKeys: ['score', 'converted', 'quality'] },
+  { id: 'fs-wi-1', typeKey: 'work_item', label: 'Basic',        fieldKeys: ['title', 'status', 'priority'] },
+  { id: 'fs-wi-2', typeKey: 'work_item', label: 'Assignment',   fieldKeys: ['project', 'assignee', 'due_date', 'description'] },
+]);
+const collapsedSections = ref<Set<string>>(new Set());
+
+function toggleSection(sectionId: string) {
+  const next = new Set(collapsedSections.value);
+  if (next.has(sectionId)) next.delete(sectionId);
+  else next.add(sectionId);
+  collapsedSections.value = next;
+}
+
+// Returns ordered list of {section, fields} for the open record type.
+// Fields not assigned to any section appear in a trailing "Other" group.
+const detailPanelSections = computed((): Array<{ id: string; label: string; fields: CrmField[] }> => {
+  if (!selectedType.value) return [];
+  const typeKey = selectedType.value.key;
+  const allFields = (selectedType.value.fields ?? [])
+    .slice()
+    .sort((a, b) => a.position - b.position)
+    .filter((f) => !openedRecord.value || fieldIsVisible(f, openedRecord.value));
+
+  const sections = fieldSections.value.filter((s) => s.typeKey === typeKey);
+  const assignedKeys = new Set(sections.flatMap((s) => s.fieldKeys));
+
+  const result: Array<{ id: string; label: string; fields: CrmField[] }> = sections.map((sec) => ({
+    id: sec.id,
+    label: sec.label,
+    fields: sec.fieldKeys
+      .map((k) => allFields.find((f) => f.key === k))
+      .filter((f): f is CrmField => !!f),
+  })).filter((s) => s.fields.length > 0);
+
+  const others = allFields.filter((f) => !assignedKeys.has(f.key));
+  if (others.length) result.push({ id: `fs-other-${typeKey}`, label: 'Other', fields: others });
+  return result;
+});
+
+// Flat list of rows for the details panel: section headers interleaved with field rows.
+// When search is active, returns only matching field rows (no section headers).
+type DetailPanelRow =
+  | { kind: 'section'; id: string; label: string }
+  | { kind: 'field'; field: CrmField; sectionId: string }
+
+const detailPanelRows = computed((): DetailPanelRow[] => {
+  if (!selectedType.value || !openedRecord.value) return [];
+
+  if (drawerFieldSearch.value) {
+    const q = drawerFieldSearch.value.toLowerCase();
+    return (selectedType.value.fields ?? [])
+      .slice()
+      .sort((a, b) => a.position - b.position)
+      .filter((f) => fieldIsVisible(f, openedRecord.value!) && f.label.toLowerCase().includes(q))
+      .map((field) => ({ kind: 'field' as const, field, sectionId: '' }));
+  }
+
+  const rows: DetailPanelRow[] = [];
+  for (const section of detailPanelSections.value) {
+    rows.push({ kind: 'section' as const, id: section.id, label: section.label });
+    if (!collapsedSections.value.has(section.id)) {
+      for (const field of section.fields) {
+        rows.push({ kind: 'field' as const, field, sectionId: section.id });
+      }
+    }
+  }
+  return rows;
+});
+
 const typeGoals = ref<Record<string, number>>({});
 const goalDraft = ref('');
 const editingGoalTypeKey = ref<string | null>(null);
