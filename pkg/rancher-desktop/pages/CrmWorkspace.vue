@@ -5312,6 +5312,13 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
                   </svg>
                   {{ row.label }}
+                  <span
+                    v-if="sectionCompleteness[row.id] && sectionCompleteness[row.id].total > 0"
+                    class="ml-auto tabular-nums text-[9px] font-normal transition-colors"
+                    :class="sectionCompleteness[row.id].filled === sectionCompleteness[row.id].total
+                      ? 'text-emerald-500 dark:text-emerald-400'
+                      : 'text-slate-300 dark:text-slate-600'"
+                  >{{ sectionCompleteness[row.id].filled }}/{{ sectionCompleteness[row.id].total }}</span>
                 </button>
                 <div
                   v-for="field in (row.kind === 'field' ? [row.field] : [])"
@@ -9924,6 +9931,21 @@ const detailPanelRows = computed((): DetailPanelRow[] => {
     }
   }
   return rows;
+});
+
+const sectionCompleteness = computed((): Record<string, { filled: number; total: number }> => {
+  if (!openedRecord.value) return {};
+  const rec = openedRecord.value;
+  const result: Record<string, { filled: number; total: number }> = {};
+  for (const sec of detailPanelSections.value) {
+    let filled = 0;
+    for (const field of sec.fields) {
+      const v = rec.field_values[field.key];
+      if (v != null && v !== '' && !(Array.isArray(v) && !v.length)) filled++;
+    }
+    result[sec.id] = { filled, total: sec.fields.length };
+  }
+  return result;
 });
 
 const typeGoals = ref<Record<string, number>>({});
