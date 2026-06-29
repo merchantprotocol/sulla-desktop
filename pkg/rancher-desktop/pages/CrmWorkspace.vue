@@ -165,38 +165,67 @@
               :key="sv.id"
               class="group/sv flex items-center rounded-lg transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60"
             >
-              <button
-                type="button"
-                class="flex-1 flex items-center gap-2 px-3 py-1.5 text-left text-xs min-w-0 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
-                :title="`${sv.name} — ${sv.viewMode} view${sv.filters.length ? `, ${sv.filters.length} filter${sv.filters.length === 1 ? '' : 's'}` : ''}`"
-                @click="applySavedView(sv)"
-              >
-                <!-- view mode icon -->
-                <svg v-if="sv.viewMode === 'kanban'" class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                  <rect x="3" y="3" width="5" height="18" rx="1" /><rect x="10" y="3" width="5" height="12" rx="1" /><rect x="17" y="3" width="5" height="15" rx="1" />
-                </svg>
-                <svg v-else-if="sv.viewMode === 'calendar'" class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                <svg v-else-if="sv.viewMode === 'gallery'" class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                  <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
-                </svg>
-                <svg v-else class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 6h18M3 14h18M3 18h18" />
-                </svg>
-                <span class="truncate">{{ sv.name }}</span>
-                <span v-if="sv.filters.length" class="shrink-0 inline-flex items-center rounded-full px-1 text-[9px] font-semibold bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">{{ sv.filters.length }}</span>
-              </button>
-              <button
-                type="button"
-                class="shrink-0 mr-2 h-4 w-4 rounded flex items-center justify-center opacity-0 group-hover/sv:opacity-100 transition-all text-slate-400 hover:text-red-400 dark:hover:text-red-400"
-                :title="`Delete '${sv.name}'`"
-                @click.stop="deleteSavedView(sv.id)"
-              >
-                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <!-- inline rename mode -->
+              <template v-if="renamingViewId === sv.id">
+                <input
+                  :value="renameViewDraft"
+                  type="text"
+                  maxlength="60"
+                  class="flex-1 mx-2 h-6 rounded px-2 text-xs bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  @input="renameViewDraft = ($event.target as HTMLInputElement).value"
+                  @keydown.enter.prevent="commitRenameView"
+                  @keydown.escape.stop="renamingViewId = null"
+                  @vue:mounted="($el as HTMLInputElement).select()"
+                  @click.stop
+                />
+                <button type="button" class="shrink-0 mr-1 h-5 px-1.5 rounded text-[10px] font-medium text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/30 transition-colors" @click.stop="commitRenameView">Save</button>
+                <button type="button" class="shrink-0 mr-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click.stop="renamingViewId = null">✕</button>
+              </template>
+              <!-- normal view mode -->
+              <template v-else>
+                <button
+                  type="button"
+                  class="flex-1 flex items-center gap-2 px-3 py-1.5 text-left text-xs min-w-0 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+                  :title="`${sv.name} — ${sv.viewMode} view${sv.filters.length ? `, ${sv.filters.length} filter${sv.filters.length === 1 ? '' : 's'}` : ''}`"
+                  @click="applySavedView(sv)"
+                >
+                  <!-- view mode icon -->
+                  <svg v-if="sv.viewMode === 'kanban'" class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <rect x="3" y="3" width="5" height="18" rx="1" /><rect x="10" y="3" width="5" height="12" rx="1" /><rect x="17" y="3" width="5" height="15" rx="1" />
+                  </svg>
+                  <svg v-else-if="sv.viewMode === 'calendar'" class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  <svg v-else-if="sv.viewMode === 'gallery'" class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                  <svg v-else class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 6h18M3 14h18M3 18h18" />
+                  </svg>
+                  <span class="truncate">{{ sv.name }}</span>
+                  <span v-if="sv.filters.length" class="shrink-0 inline-flex items-center rounded-full px-1 text-[9px] font-semibold bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">{{ sv.filters.length }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center opacity-0 group-hover/sv:opacity-100 transition-all text-slate-400 hover:text-sky-400 dark:hover:text-sky-400"
+                  title="Rename view"
+                  @click.stop="startRenameView(sv)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 mr-2 h-4 w-4 rounded flex items-center justify-center opacity-0 group-hover/sv:opacity-100 transition-all text-slate-400 hover:text-red-400 dark:hover:text-red-400"
+                  :title="`Delete '${sv.name}'`"
+                  @click.stop="deleteSavedView(sv.id)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </template>
             </div>
           </div>
 
@@ -12812,6 +12841,8 @@ const savedViews = ref<SavedView[]>([]);
 const showSaveViewPopover = ref(false);
 const saveViewName = ref('');
 const saveViewInputEl = ref<HTMLInputElement | null>(null);
+const renamingViewId = ref<string | null>(null);
+const renameViewDraft = ref('');
 watch(showSaveViewPopover, (val) => {
   if (val) { saveViewName.value = ''; nextTick(() => saveViewInputEl.value?.focus()); }
 });
@@ -17921,6 +17952,20 @@ function applySavedView(view: SavedView) {
 
 function deleteSavedView(id: string) {
   savedViews.value = savedViews.value.filter((v) => v.id !== id);
+}
+
+function startRenameView(sv: SavedView) {
+  renamingViewId.value = sv.id;
+  renameViewDraft.value = sv.name;
+}
+
+function commitRenameView() {
+  const id = renamingViewId.value;
+  const name = renameViewDraft.value.trim();
+  if (id && name) {
+    savedViews.value = savedViews.value.map(v => v.id === id ? { ...v, name } : v);
+  }
+  renamingViewId.value = null;
 }
 
 function duplicateRecord(record: CrmRecord) {
