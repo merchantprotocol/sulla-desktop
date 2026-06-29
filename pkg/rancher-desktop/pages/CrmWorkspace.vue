@@ -2327,6 +2327,8 @@
                           :select-options="[]"
                           @commit="commitCellEdit"
                           @cancel="cancelCellEdit"
+                          @tab="onCellTab(record, col, false)"
+                          @shift-tab="onCellTab(record, col, true)"
                         />
                       </template>
                       <template v-else>
@@ -2356,6 +2358,8 @@
                           :option-colors="col.select_option_colors ?? {}"
                           @commit="commitCellEdit"
                           @cancel="cancelCellEdit"
+                          @tab="onCellTab(record, col, false)"
+                          @shift-tab="onCellTab(record, col, true)"
                         />
                       </div>
                       <div
@@ -5078,6 +5082,7 @@
                 { keys: ['I'], desc: 'Stats / Insights view' },
                 { keys: ['M'], desc: 'Timeline / Gantt view' },
                 { keys: ['⌘', 'A'], desc: 'Select all records (table view)' },
+                { keys: ['Tab'], desc: 'Next cell (while editing inline) — Shift+Tab goes back' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
                 { keys: ['Home', 'End'], desc: 'First / last record' },
                 { keys: ['Esc'], desc: 'Close panel' },
@@ -9569,6 +9574,22 @@ function cancelCellEdit() {
   cellDraftValue.value = null;
 }
 
+function onCellTab(record: CrmRecord, col: CrmField, backwards: boolean) {
+  const cols = visibleColumns.value;
+  const rows = filteredRecords.value;
+  const ci = cols.findIndex((c) => c.key === col.key);
+  const ri = rows.findIndex((r) => r.id === record.id);
+  let nextCi = ci + (backwards ? -1 : 1);
+  let nextRi = ri;
+  if (nextCi < 0) { nextCi = cols.length - 1; nextRi = ri - 1; }
+  else if (nextCi >= cols.length) { nextCi = 0; nextRi = ri + 1; }
+  if (nextRi < 0 || nextRi >= rows.length) return;
+  const nextRecord = rows[nextRi];
+  const nextCol = cols[nextCi];
+  if (!nextRecord || !nextCol) return;
+  nextTick(() => startCellEdit(nextRecord, nextCol));
+}
+
 function toggleColumnVisibility(key: string) {
   const next = new Set(hiddenColumnKeys.value);
   if (next.has(key)) next.delete(key);
@@ -11199,7 +11220,7 @@ const CrmCellEditor = defineComponent({
     selectOptions: { type: Array as () => string[], default: () => [] },
     optionColors: { type: Object as () => Record<string, string>, default: () => ({}) },
   },
-  emits: ['commit', 'cancel'],
+  emits: ['commit', 'cancel', 'tab', 'shift-tab'],
   setup(props, { emit }) {
     const elRef = ref<HTMLInputElement | HTMLSelectElement | null>(null);
     const hoverStar = ref(0);
@@ -11226,6 +11247,11 @@ const CrmCellEditor = defineComponent({
         onKeydown: (e: KeyboardEvent) => {
           if (e.key === 'Enter') { e.preventDefault(); emitCommit(); }
           if (e.key === 'Escape') { e.stopPropagation(); emit('cancel'); }
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            emitCommit();
+            if (e.shiftKey) emit('shift-tab'); else emit('tab');
+          }
         },
         onBlur: emitCommit,
       };
