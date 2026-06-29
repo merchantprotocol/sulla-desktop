@@ -6181,12 +6181,19 @@
                   </svg>
                 </span>
                 <div class="flex-1 min-w-0">
-                  <!-- record link -->
-                  <button
-                    type="button"
-                    class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate block max-w-full text-left mb-0.5"
-                    @click="const rec = mockRecords.find(r => r.id === row.act.record_id); if (rec) { openRecord(rec); viewMode = 'table'; }"
-                  >{{ mockRecords.find(r => r.id === row.act.record_id)?.title ?? row.act.record_id }}</button>
+                  <!-- record link + stage badge -->
+                  <div class="flex items-center gap-1.5 mb-0.5 min-w-0">
+                    <button
+                      type="button"
+                      class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate text-left shrink-0 max-w-[55%]"
+                      @click="const rec = mockRecords.find(r => r.id === row.act.record_id); if (rec) { openRecord(rec); }"
+                    >{{ mockRecords.find(r => r.id === row.act.record_id)?.title ?? row.act.record_id }}</button>
+                    <span
+                      v-if="kanbanField && mockRecords.find(r => r.id === row.act.record_id)?.field_values[kanbanField.key]"
+                      class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none"
+                      :class="selectBadgeClass(String(mockRecords.find(r => r.id === row.act.record_id)!.field_values[kanbanField.key]))"
+                    >{{ String(mockRecords.find(r => r.id === row.act.record_id)!.field_values[kanbanField.key]) }}</span>
+                  </div>
                   <!-- inline edit form -->
                   <div v-if="editingActivityId === row.act.id" class="mb-1">
                     <textarea
