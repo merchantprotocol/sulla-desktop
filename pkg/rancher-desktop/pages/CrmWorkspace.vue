@@ -7105,6 +7105,20 @@
                       class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none"
                       :class="selectBadgeClass(String(mockRecords.find(r => r.id === row.act.record_id)!.field_values[kanbanField.key]))"
                     >{{ String(mockRecords.find(r => r.id === row.act.record_id)!.field_values[kanbanField.key]) }}</span>
+                    <!-- reminder badge -->
+                    <span
+                      v-if="reminders[row.act.record_id]?.date"
+                      class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none"
+                      :class="reminders[row.act.record_id].date <= DUE_TODAY_STR
+                        ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
+                      :title="`Reminder: ${reminders[row.act.record_id].date}${reminders[row.act.record_id].note ? ' — ' + reminders[row.act.record_id].note : ''}`"
+                    >
+                      <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                      </svg>
+                      {{ reminders[row.act.record_id].date }}
+                    </span>
                   </div>
                   <!-- inline edit form -->
                   <div v-if="editingActivityId === row.act.id" class="mb-1">
@@ -7208,6 +7222,28 @@
                   >
                     <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                  <!-- add task to linked record -->
+                  <button
+                    type="button"
+                    class="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400 transition-colors"
+                    title="Add task to record"
+                    @click.stop="(() => { const rec = mockRecords.find(r => r.id === row.act.record_id); if (rec) { openRecord(rec); nextTick(() => { detailTab = 'tasks'; }); } })()"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                    </svg>
+                  </button>
+                  <!-- open record -->
+                  <button
+                    type="button"
+                    class="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-sky-400 dark:hover:text-sky-400 transition-colors"
+                    title="Open linked record"
+                    @click.stop="(() => { const rec = mockRecords.find(r => r.id === row.act.record_id); if (rec) openRecord(rec); })()"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
                     </svg>
                   </button>
                 </div>
