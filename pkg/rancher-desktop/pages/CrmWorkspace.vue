@@ -3540,6 +3540,20 @@
                       </svg>
                       {{ scoreRecord(record) }}
                     </span>
+                    <!-- pending task count badge -->
+                    <span
+                      v-if="!kanbanCompact && pendingTaskCountByRecord[record.id]"
+                      class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium mb-1.5 ml-0.5"
+                      :class="mockTasks.some(t => t.record_id === record.id && !t.done && !t.parent_id && !!t.due_date && t.due_date < DUE_TODAY_STR)
+                        ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400'
+                        : 'bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400'"
+                      :title="`${pendingTaskCountByRecord[record.id]} pending task${pendingTaskCountByRecord[record.id] === 1 ? '' : 's'}`"
+                    >
+                      <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                      </svg>
+                      {{ pendingTaskCountByRecord[record.id] }}
+                    </span>
                     <div v-if="!kanbanCompact" class="space-y-1">
                       <div
                         v-for="f in kanbanCardFields"
