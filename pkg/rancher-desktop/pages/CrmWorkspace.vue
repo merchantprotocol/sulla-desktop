@@ -6130,90 +6130,127 @@
                 <!-- task content -->
                 <div class="flex-1 min-w-0">
                   <!-- inline editing -->
-                  <input
-                    v-if="editingTaskId === item.task.id"
-                    :value="editingTaskText"
-                    type="text"
-                    class="w-full text-sm bg-transparent border-0 border-b border-sky-400 focus:outline-none text-slate-800 dark:text-slate-200 pb-0.5"
-                    @input="editingTaskText = ($event.target as HTMLInputElement).value"
-                    @keydown.enter.prevent="saveTaskEdit"
-                    @keydown.esc.stop="cancelTaskEdit"
-                    @blur="saveTaskEdit"
-                  />
-                  <p
-                    v-else
-                    class="text-sm leading-snug cursor-text"
-                    :class="item.task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-800 dark:text-slate-200'"
-                    @dblclick.stop="startTaskEdit(item.task)"
-                  >{{ item.task.text }}</p>
-                  <div class="flex items-center gap-2 mt-1 flex-wrap">
-                    <!-- due date — click to edit inline -->
-                    <template v-if="globalTaskDueDateEditId === item.task.id">
+                  <template v-if="editingTaskId === item.task.id">
+                    <input
+                      :value="editingTaskText"
+                      type="text"
+                      class="w-full text-sm px-2 py-0.5 rounded border border-sky-400 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+                      @input="editingTaskText = ($event.target as HTMLInputElement).value"
+                      @keydown.enter.prevent="saveTaskEdit"
+                      @keydown.esc.stop="cancelTaskEdit"
+                    />
+                    <div class="flex items-center gap-3 mt-1.5 flex-wrap">
                       <input
+                        :value="editingTaskDue"
                         type="date"
-                        :value="mockTasks.find(t => t.id === item.task.id)?.due_date ?? ''"
-                        class="text-xs h-5 rounded border border-sky-300 dark:border-sky-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-1 focus:outline-none focus:ring-1 focus:ring-sky-400"
-                        @change="(() => { const t = mockTasks.find(x => x.id === item.task.id); if (t) t.due_date = ($event.target as HTMLInputElement).value || undefined; globalTaskDueDateEditId = null; })()"
-                        @blur="globalTaskDueDateEditId = null"
-                        @keydown.esc.stop="globalTaskDueDateEditId = null"
+                        class="text-xs px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+                        @input="editingTaskDue = ($event.target as HTMLInputElement).value"
                       />
-                    </template>
-                    <button
-                      v-else-if="item.task.due_date"
-                      type="button"
-                      class="text-xs transition-colors hover:opacity-70"
-                      :class="!item.task.done && item.task.due_date < DUE_TODAY_STR
-                        ? 'text-rose-500 dark:text-rose-400 font-medium'
-                        : !item.task.done && item.task.due_date <= DUE_SOON_STR
-                          ? 'text-amber-500 dark:text-amber-400'
-                          : 'text-slate-400 dark:text-slate-500'"
-                      title="Click to change due date"
-                      @click.stop="globalTaskDueDateEditId = item.task.id"
-                    >Due {{ item.task.due_date }}</button>
-                    <button
-                      v-else
-                      type="button"
-                      class="text-xs text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400 opacity-0 group-hover/gtask:opacity-100 transition-all"
-                      title="Set due date"
-                      @click.stop="globalTaskDueDateEditId = item.task.id"
-                    >+ Due date</button>
-                    <!-- recurrence badge -->
-                    <span
-                      v-if="item.task.recurrence"
-                      class="inline-flex items-center gap-0.5 text-[10px] font-medium text-violet-500 dark:text-violet-400"
-                      :title="`Repeats ${item.task.recurrence}`"
-                    >
-                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      {{ item.task.recurrence }}
-                    </span>
-                    <!-- record name -->
-                    <button
-                      v-if="item.record"
-                      type="button"
-                      class="inline-flex items-center gap-1 text-xs text-sky-600 dark:text-sky-400 hover:underline transition-colors"
-                      :title="`Open ${item.record.title}`"
-                      @click="openRecord(item.record!)"
-                    >
+                      <div class="flex items-center gap-1">
+                        <button
+                          v-for="p in (['high', 'medium', 'low'] as const)"
+                          :key="p"
+                          type="button"
+                          class="h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors"
+                          :class="editingTaskPriority === p
+                            ? p === 'high'   ? 'bg-rose-500 text-white'
+                            : p === 'medium' ? 'bg-amber-400 text-white'
+                            :                  'bg-slate-400 text-white'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                          @click="editingTaskPriority = editingTaskPriority === p ? '' : p"
+                        >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <svg class="h-3 w-3 text-slate-400 dark:text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        <button
+                          v-for="r in (['daily', 'weekly', 'monthly'] as const)"
+                          :key="r"
+                          type="button"
+                          class="h-5 px-1.5 rounded text-[10px] font-medium transition-colors"
+                          :class="editingTaskRecurrence === r
+                            ? 'bg-violet-500 text-white'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                          @click="editingTaskRecurrence = editingTaskRecurrence === r ? '' : r"
+                        >{{ r.slice(0, 1).toUpperCase() + r.slice(1) }}</button>
+                      </div>
+                      <div class="flex items-center gap-1">
+                        <button
+                          v-for="m in TEAM_MEMBERS"
+                          :key="m.id"
+                          type="button"
+                          class="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold transition-all"
+                          :style="{ background: editingTaskAssignee === m.id ? m.color : undefined }"
+                          :class="editingTaskAssignee === m.id
+                            ? 'text-white ring-2 ring-offset-1 ring-current'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                          :title="m.name"
+                          @click="editingTaskAssignee = editingTaskAssignee === m.id ? '' : m.id"
+                        >{{ m.name.slice(0, 2) }}</button>
+                      </div>
+                      <button type="button" class="text-xs text-sky-600 dark:text-sky-400 hover:underline" @click="saveTaskEdit">Save</button>
+                      <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:underline" @click="cancelTaskEdit">Cancel</button>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <p
+                      class="text-sm leading-snug cursor-text"
+                      :class="item.task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-800 dark:text-slate-200'"
+                      @dblclick.stop="startTaskEdit(item.task)"
+                    >{{ item.task.text }}</p>
+                    <div class="flex items-center gap-2 mt-1 flex-wrap">
+                      <!-- due date — click to edit inline -->
+                      <button
+                        v-if="item.task.due_date"
+                        type="button"
+                        class="text-xs transition-colors hover:opacity-70"
+                        :class="!item.task.done && item.task.due_date < DUE_TODAY_STR
+                          ? 'text-rose-500 dark:text-rose-400 font-medium'
+                          : !item.task.done && item.task.due_date <= DUE_SOON_STR
+                            ? 'text-amber-500 dark:text-amber-400'
+                            : 'text-slate-400 dark:text-slate-500'"
+                        title="Click to change due date"
+                        @click.stop="startTaskEdit(item.task)"
+                      >Due {{ item.task.due_date }}</button>
+                      <!-- recurrence badge -->
                       <span
-                        class="h-3.5 w-3.5 rounded flex items-center justify-center shrink-0"
-                        :style="{ background: (schema.find(rt => rt.key === item.record!.record_type_key)?.color ?? '#64748b') + '22', color: schema.find(rt => rt.key === item.record!.record_type_key)?.color ?? '#64748b' }"
+                        v-if="item.task.recurrence"
+                        class="inline-flex items-center gap-0.5 text-[10px] font-medium text-violet-500 dark:text-violet-400"
+                        :title="`Repeats ${item.task.recurrence}`"
                       >
-                        <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === item.record!.record_type_key)?.icon ?? 'user']" class="h-2.5 w-2.5" />
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        {{ item.task.recurrence }}
                       </span>
-                      {{ item.record.title }}
-                    </button>
-                  </div>
+                      <!-- record name -->
+                      <button
+                        v-if="item.record"
+                        type="button"
+                        class="inline-flex items-center gap-1 text-xs text-sky-600 dark:text-sky-400 hover:underline transition-colors"
+                        :title="`Open ${item.record.title}`"
+                        @click="openRecord(item.record!)"
+                      >
+                        <span
+                          class="h-3.5 w-3.5 rounded flex items-center justify-center shrink-0"
+                          :style="{ background: (schema.find(rt => rt.key === item.record!.record_type_key)?.color ?? '#64748b') + '22', color: schema.find(rt => rt.key === item.record!.record_type_key)?.color ?? '#64748b' }"
+                        >
+                          <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === item.record!.record_type_key)?.icon ?? 'user']" class="h-2.5 w-2.5" />
+                        </span>
+                        {{ item.record.title }}
+                      </button>
+                    </div>
+                  </template>
                 </div>
                 <!-- assignee avatar -->
                 <button
-                  v-if="item.task.assignee"
+                  v-if="item.task.assignee && editingTaskId !== item.task.id"
                   type="button"
                   class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white transition-opacity hover:opacity-80"
                   :style="{ background: TEAM_MEMBERS.find(m => m.id === item.task.assignee)?.color ?? '#94a3b8' }"
-                  :title="`Assigned to ${TEAM_MEMBERS.find(m => m.id === item.task.assignee)?.name ?? item.task.assignee}`"
-                  @click.stop="openRecord(item.record!)"
+                  :title="`Assigned to ${TEAM_MEMBERS.find(m => m.id === item.task.assignee)?.name ?? item.task.assignee} — click to edit`"
+                  @click.stop="startTaskEdit(item.task)"
                 >{{ (TEAM_MEMBERS.find(m => m.id === item.task.assignee)?.name ?? item.task.assignee).slice(0, 2) }}</button>
                 <!-- comment count badge -->
                 <span
@@ -13354,7 +13391,6 @@ const expandedTaskIds = ref<Set<string>>(new Set());
 const addingSubtaskOf = ref<string | null>(null);
 const newSubtaskDraft = ref('');
 const showTaskTemplateDropdown = ref(false);
-const globalTaskDueDateEditId = ref<string | null>(null);
 const newTaskAssignee = ref('');
 const editingTaskAssignee = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
