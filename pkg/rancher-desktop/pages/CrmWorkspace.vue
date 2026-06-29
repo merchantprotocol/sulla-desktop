@@ -516,6 +516,17 @@
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
+              :title="`Add a task to ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}`"
+              @click="showBulkTaskModal = true"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+              </svg>
+              Add task
+            </button>
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
               :title="`Set a field for ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}`"
               @click="showBulkFieldModal = true"
             >
@@ -10009,6 +10020,71 @@
       </div>
     </transition>
 
+    <!-- bulk add task modal -->
+    <transition enter-active-class="transition duration-150 ease-out" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition duration-100 ease-in" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+      <div
+        v-if="showBulkTaskModal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+        @click.self="showBulkTaskModal = false"
+      >
+        <div class="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl p-5 space-y-4">
+          <div class="flex items-center justify-between">
+            <p class="text-sm font-semibold text-slate-900 dark:text-white">
+              Add task to {{ selectedIds.size }} record{{ selectedIds.size === 1 ? '' : 's' }}
+            </p>
+            <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" @click="showBulkTaskModal = false">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <input
+            ref="bulkTaskInputEl"
+            v-model="bulkTaskText"
+            type="text"
+            placeholder="Task description…"
+            class="w-full rounded-lg px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+            @keydown.enter.prevent="submitBulkTask"
+            @keydown.esc.stop="showBulkTaskModal = false"
+          />
+          <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">Due date</span>
+              <input
+                v-model="bulkTaskDue"
+                type="date"
+                class="text-xs px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+              />
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">Priority</span>
+              <button
+                v-for="p in (['high', 'medium', 'low'] as const)"
+                :key="p"
+                type="button"
+                class="h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors"
+                :class="bulkTaskPriority === p
+                  ? p === 'high'   ? 'bg-rose-500 text-white'
+                  : p === 'medium' ? 'bg-amber-400 text-white'
+                  :                  'bg-slate-400 text-white'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                @click="bulkTaskPriority = bulkTaskPriority === p ? '' : p"
+              >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
+            </div>
+          </div>
+          <div class="flex items-center justify-end gap-2">
+            <button type="button" class="h-8 px-3 rounded-lg text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showBulkTaskModal = false">Cancel</button>
+            <button
+              type="button"
+              class="h-8 px-4 rounded-lg text-sm font-medium text-white bg-sky-600 hover:bg-sky-500 transition-colors disabled:opacity-40"
+              :disabled="!bulkTaskText.trim()"
+              @click="submitBulkTask"
+            >Add task</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <!-- column stats modal -->
     <Teleport to="body">
       <div
@@ -11584,6 +11660,12 @@ const showBulkNoteModal = ref(false);
 const bulkNoteText = ref('');
 const bulkNoteInputEl = ref<HTMLTextAreaElement | null>(null);
 watch(showBulkNoteModal, (val) => { if (val) { bulkNoteText.value = ''; nextTick(() => bulkNoteInputEl.value?.focus()); } });
+const showBulkTaskModal = ref(false);
+const bulkTaskText = ref('');
+const bulkTaskDue = ref('');
+const bulkTaskPriority = ref<'high' | 'medium' | 'low' | ''>('');
+const bulkTaskInputEl = ref<HTMLInputElement | null>(null);
+watch(showBulkTaskModal, (val) => { if (val) { bulkTaskText.value = ''; bulkTaskDue.value = ''; bulkTaskPriority.value = ''; nextTick(() => bulkTaskInputEl.value?.focus()); } });
 const showBulkFieldModal = ref(false);
 const bulkFieldKey = ref<string | null>(null);
 const bulkFieldValue = ref<string | number | boolean | string[] | null>(null);
@@ -16490,6 +16572,26 @@ function submitBulkNote() {
   }
   showBulkNoteModal.value = false;
   showToast(`Note logged for ${ids.length} record${ids.length === 1 ? '' : 's'}`);
+}
+
+function submitBulkTask() {
+  const text = bulkTaskText.value.trim();
+  if (!text) return;
+  const ids = [...selectedIds.value];
+  const now = new Date().toISOString();
+  for (const id of ids) {
+    mockTasks.push({
+      id: `btask-${id}-${mockTasks.length}`,
+      record_id: id,
+      text,
+      done: false,
+      created_at: now,
+      due_date: bulkTaskDue.value || undefined,
+      priority: (bulkTaskPriority.value as 'high' | 'medium' | 'low') || undefined,
+    });
+  }
+  showBulkTaskModal.value = false;
+  showToast(`Task added to ${ids.length} record${ids.length === 1 ? '' : 's'}`);
 }
 
 function saveCurrentView() {
