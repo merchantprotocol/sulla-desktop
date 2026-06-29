@@ -33,7 +33,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment()"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -7975,27 +7975,85 @@
                     :key="att.id"
                     class="group flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
                   >
-                    <!-- ext icon -->
-                    <span
-                      class="shrink-0 h-8 w-8 rounded-md flex items-center justify-center text-white text-[10px] font-bold uppercase leading-none"
-                      :style="{ background: attachmentExtIcon(att.name) }"
-                    >{{ att.name.split('.').pop()?.slice(0, 4) }}</span>
-                    <!-- name + meta -->
-                    <div class="flex-1 min-w-0">
-                      <p class="text-sm text-slate-700 dark:text-slate-300 truncate" :title="att.name">{{ att.name }}</p>
-                      <p class="text-xs text-slate-400 dark:text-slate-500">{{ formatFileSize(att.size) }} &middot; {{ formatDate(att.uploaded_at) }}</p>
-                    </div>
-                    <!-- delete -->
+                    <!-- ext icon / preview trigger -->
                     <button
                       type="button"
-                      class="shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
-                      title="Remove file"
-                      @click="deleteAttachment(att.id)"
-                    >
-                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
+                      class="shrink-0 h-8 w-8 rounded-md flex items-center justify-center text-white text-[10px] font-bold uppercase leading-none transition-opacity hover:opacity-80"
+                      :style="{ background: attachmentExtIcon(att.name) }"
+                      :title="['png','jpg','jpeg','gif','webp','svg'].includes(att.name.split('.').pop()?.toLowerCase() ?? '') ? 'Preview image' : att.name"
+                      @click="previewAttachmentId = previewAttachmentId === att.id ? null : att.id"
+                    >{{ att.name.split('.').pop()?.slice(0, 4) }}</button>
+                    <!-- name + meta — or rename input -->
+                    <div class="flex-1 min-w-0">
+                      <template v-if="renamingAttachmentId === att.id">
+                        <input
+                          :value="renameAttachmentDraft"
+                          type="text"
+                          class="w-full text-sm px-2 py-0.5 rounded border border-sky-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+                          @input="renameAttachmentDraft = ($event.target as HTMLInputElement).value"
+                          @keydown.enter.prevent="saveRenameAttachment"
+                          @keydown.esc.prevent="cancelRenameAttachment"
+                        />
+                        <div class="flex items-center gap-2 mt-0.5">
+                          <button type="button" class="text-[10px] text-sky-600 dark:text-sky-400 hover:underline" @click="saveRenameAttachment">Save</button>
+                          <button type="button" class="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:underline" @click="cancelRenameAttachment">Cancel</button>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <p class="text-sm text-slate-700 dark:text-slate-300 truncate cursor-text" :title="att.name" @dblclick.stop="startRenameAttachment(att.id)">{{ att.name }}</p>
+                        <p class="text-xs text-slate-400 dark:text-slate-500">{{ formatFileSize(att.size) }} &middot; {{ formatDate(att.uploaded_at) }}</p>
+                      </template>
+                    </div>
+                    <!-- actions -->
+                    <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                      <!-- rename -->
+                      <button
+                        type="button"
+                        class="shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                        title="Rename file"
+                        @click.stop="startRenameAttachment(att.id)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      <!-- delete -->
+                      <button
+                        type="button"
+                        class="shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-colors"
+                        title="Remove file"
+                        @click="deleteAttachment(att.id)"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <!-- inline image preview -->
+                  <div
+                    v-if="previewAttachmentId && recordAttachments.find(a => a.id === previewAttachmentId)"
+                    class="mt-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 overflow-hidden"
+                  >
+                    <div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 dark:border-slate-700">
+                      <p class="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{{ recordAttachments.find(a => a.id === previewAttachmentId)?.name }}</p>
+                      <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" @click="previewAttachmentId = null">
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                    <!-- file info for non-image types -->
+                    <div class="p-4 flex flex-col items-center gap-2">
+                      <div
+                        class="h-12 w-12 rounded-xl flex items-center justify-center text-white text-sm font-bold uppercase"
+                        :style="{ background: attachmentExtIcon(recordAttachments.find(a => a.id === previewAttachmentId)?.name ?? '') }"
+                      >{{ (recordAttachments.find(a => a.id === previewAttachmentId)?.name ?? '').split('.').pop()?.slice(0, 4) }}</div>
+                      <div class="text-center">
+                        <p class="text-sm font-medium text-slate-700 dark:text-slate-300">{{ recordAttachments.find(a => a.id === previewAttachmentId)?.name }}</p>
+                        <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ formatFileSize(recordAttachments.find(a => a.id === previewAttachmentId)?.size ?? 0) }} · Uploaded {{ formatDate(recordAttachments.find(a => a.id === previewAttachmentId)?.uploaded_at ?? '') }}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -11850,6 +11908,9 @@ let bulkDeletedSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 const detailTab = ref<'details' | 'activity' | 'related' | 'tasks' | 'files' | 'notes'>('details');
 const recordNotes = reactive<Record<string, string>>({});
 const filesDragOver = ref(false);
+const renamingAttachmentId = ref<string | null>(null);
+const renameAttachmentDraft = ref('');
+const previewAttachmentId = ref<string | null>(null);
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
 const cellContextMenu = ref<{ record: CrmRecord; col: CrmField; x: number; y: number } | null>(null);
@@ -17631,6 +17692,26 @@ function deleteAttachment(id: string) {
   if (idx === -1) return;
   const [removed] = mockAttachments.splice(idx, 1);
   showToast('File removed', { label: 'Undo', fn: () => { mockAttachments.splice(idx, 0, removed); } });
+}
+
+function startRenameAttachment(id: string) {
+  const att = mockAttachments.find((a) => a.id === id);
+  if (!att) return;
+  renamingAttachmentId.value = id;
+  renameAttachmentDraft.value = att.name;
+}
+
+function saveRenameAttachment() {
+  const id = renamingAttachmentId.value;
+  if (!id) return;
+  const att = mockAttachments.find((a) => a.id === id);
+  const name = renameAttachmentDraft.value.trim();
+  if (att && name) att.name = name;
+  renamingAttachmentId.value = null;
+}
+
+function cancelRenameAttachment() {
+  renamingAttachmentId.value = null;
 }
 
 function dropFiles(e: DragEvent) {
