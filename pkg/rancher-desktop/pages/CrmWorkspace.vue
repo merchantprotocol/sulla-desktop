@@ -7470,6 +7470,51 @@
                       >{{ openedRecord.field_values[field.key] ? 'Yes' : 'No' }}</span>
                     </button>
                   </template>
+                  <!-- date field nudge controls in view mode -->
+                  <template v-else-if="!editingRecord && field.data_type === 'date' && !lockedRecordIds.has(openedRecord.id)">
+                    <div class="flex items-center gap-1">
+                      <button
+                        type="button"
+                        class="h-6 w-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        title="Move back 1 day"
+                        @click.stop="(() => { const iso = openedRecord.field_values[field.key]; const d = iso ? new Date(String(iso) + 'T12:00:00') : new Date(); d.setDate(d.getDate() - 1); const next = d.toISOString().slice(0, 10); openedRecord.field_values[field.key] = next; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, next); })()"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                        </svg>
+                      </button>
+                      <span class="flex-1 text-sm text-center text-slate-700 dark:text-slate-200 tabular-nums">
+                        {{ openedRecord.field_values[field.key] ? new Date(String(openedRecord.field_values[field.key]) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—' }}
+                      </span>
+                      <button
+                        type="button"
+                        class="h-6 w-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        title="Move forward 1 day"
+                        @click.stop="(() => { const iso = openedRecord.field_values[field.key]; const d = iso ? new Date(String(iso) + 'T12:00:00') : new Date(); d.setDate(d.getDate() + 1); const next = d.toISOString().slice(0, 10); openedRecord.field_values[field.key] = next; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, next); })()"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="h-6 px-1.5 rounded text-[10px] font-medium text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        title="Set to today"
+                        @click.stop="(() => { const next = new Date().toISOString().slice(0, 10); openedRecord.field_values[field.key] = next; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, next); })()"
+                      >Today</button>
+                      <button
+                        v-if="openedRecord.field_values[field.key]"
+                        type="button"
+                        class="h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-colors"
+                        title="Clear date"
+                        @click.stop="openedRecord.field_values[field.key] = null; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, null)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </template>
                   <!-- number field quick stepper in view mode -->
                   <template v-else-if="!editingRecord && field.data_type === 'number' && !lockedRecordIds.has(openedRecord.id)">
                     <div class="flex items-center gap-1.5">
