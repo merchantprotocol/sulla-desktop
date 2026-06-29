@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -3533,7 +3533,7 @@
                       </div>
                     </div>
                     <div v-if="(recordTags[record.id] ?? []).length" class="flex flex-wrap gap-1 mb-3">
-                      <span v-for="tag in (recordTags[record.id] ?? [])" :key="tag" class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">{{ tag }}</span>
+                      <span v-for="tag in (recordTags[record.id] ?? [])" :key="tag" class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors" :style="tagStyle(tag)">{{ tag }}</span>
                     </div>
                     <div class="mt-auto pt-2">
                       <div class="h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
@@ -3664,7 +3664,8 @@
                   <span
                     v-for="tag in (recordTags[record.id] ?? [])"
                     :key="tag"
-                    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
+                    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors"
+                    :style="tagStyle(tag)"
                   >{{ tag }}</span>
                 </div>
                 <!-- completeness bar -->
@@ -5005,12 +5006,20 @@
               <span
                 v-for="tag in (recordTags[openedRecord.id] ?? [])"
                 :key="tag"
-                class="inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 transition-colors"
+                :style="tagStyle(tag)"
               >
+                <button
+                  type="button"
+                  class="shrink-0 h-2.5 w-2.5 rounded-full border border-current/30 transition-opacity hover:opacity-70"
+                  :style="tagColors[tag] ? {} : { backgroundColor: '#94a3b8' }"
+                  :title="`Color #${tag}`"
+                  @click.stop="openTagColorPicker(tag, $event)"
+                />
                 {{ tag }}
                 <button
                   type="button"
-                  class="ml-0.5 rounded-full hover:text-rose-500 dark:hover:text-rose-400 transition-colors leading-none"
+                  class="ml-0.5 rounded-full hover:opacity-60 transition-opacity leading-none"
                   :aria-label="`Remove tag ${tag}`"
                   @click="removeTag(openedRecord.id, tag)"
                 >
@@ -5019,6 +5028,38 @@
                   </svg>
                 </button>
               </span>
+              <!-- tag color picker popover -->
+              <Teleport to="body">
+                <div
+                  v-if="tagColorPickerTag"
+                  class="fixed z-[210] rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5"
+                  :style="{ top: `${tagColorPickerPos.top}px`, left: `${tagColorPickerPos.left}px` }"
+                  @click.stop
+                >
+                  <p class="text-[9px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1.5 px-0.5">#{{ tagColorPickerTag }}</p>
+                  <div class="flex flex-wrap gap-1" style="width: 144px">
+                    <button
+                      v-for="c in TAG_COLOR_PALETTE"
+                      :key="c.id"
+                      type="button"
+                      class="h-5 w-5 rounded-full border-2 transition-transform hover:scale-110"
+                      :style="{ backgroundColor: c.bg, borderColor: tagColors[tagColorPickerTag] === c.id ? c.text : 'transparent' }"
+                      :title="c.id"
+                      @click="setTagColor(tagColorPickerTag!, c.id)"
+                    />
+                    <button
+                      type="button"
+                      class="h-5 w-5 rounded-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 flex items-center justify-center text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
+                      title="Clear color"
+                      @click="setTagColor(tagColorPickerTag!, null)"
+                    >
+                      <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </Teleport>
               <template v-if="showTagInput">
                 <input
                   ref="tagInputEl"
@@ -9892,6 +9933,22 @@ const COLOR_LABEL_PALETTE = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d
 const colorLabels = ref<Record<string, string>>({});
 const colorLabelFilter = ref<string | null>(null);
 const recordTags = ref<Record<string, string[]>>({});
+const TAG_COLOR_PALETTE = [
+  { id: 'rose',   bg: '#fce7f3', text: '#9d174d' },
+  { id: 'red',    bg: '#fee2e2', text: '#991b1b' },
+  { id: 'orange', bg: '#ffedd5', text: '#9a3412' },
+  { id: 'yellow', bg: '#fef9c3', text: '#854d0e' },
+  { id: 'green',  bg: '#d1fae5', text: '#065f46' },
+  { id: 'cyan',   bg: '#cffafe', text: '#155e75' },
+  { id: 'blue',   bg: '#dbeafe', text: '#1e3a8a' },
+  { id: 'violet', bg: '#e9d5ff', text: '#5b21b6' },
+  { id: 'pink',   bg: '#fdf2f8', text: '#831843' },
+  { id: 'slate',  bg: '#f1f5f9', text: '#334155' },
+] as const;
+type TagColorId = typeof TAG_COLOR_PALETTE[number]['id'];
+const tagColors = ref<Record<string, TagColorId>>({});
+const tagColorPickerTag = ref<string | null>(null);
+const tagColorPickerPos = ref({ top: 0, left: 0 });
 const tagFilter = ref<string | null>(null);
 const tagInput = ref('');
 const showTagInput = ref(false);
@@ -13498,6 +13555,30 @@ function removeTag(recordId: string, tag: string) {
   const existing = recordTags.value[recordId] ?? [];
   const next = existing.filter((x) => x !== tag);
   recordTags.value = { ...recordTags.value, [recordId]: next };
+}
+
+function openTagColorPicker(tag: string, evt: MouseEvent) {
+  const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
+  tagColorPickerPos.value = { top: rect.bottom + 4, left: Math.min(rect.left, window.innerWidth - 160) };
+  tagColorPickerTag.value = tagColorPickerTag.value === tag ? null : tag;
+}
+
+function setTagColor(tag: string, colorId: TagColorId | null) {
+  if (!colorId) {
+    const next = { ...tagColors.value };
+    delete next[tag];
+    tagColors.value = next;
+  } else {
+    tagColors.value = { ...tagColors.value, [tag]: colorId };
+  }
+  tagColorPickerTag.value = null;
+}
+
+function tagStyle(tag: string): Record<string, string> {
+  const colorId = tagColors.value[tag];
+  const palette = colorId ? TAG_COLOR_PALETTE.find((c) => c.id === colorId) : null;
+  if (!palette) return {};
+  return { backgroundColor: palette.bg, color: palette.text };
 }
 
 const allTags = computed((): string[] => {
