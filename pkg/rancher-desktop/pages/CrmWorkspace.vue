@@ -15410,16 +15410,26 @@
             @keydown.enter.meta.prevent="submitQuickNote"
             @keydown.escape.prevent="quickNoteRecordId = null"
           />
+          <!-- scheduled-at row (call + meeting only) -->
+          <div v-if="quickNoteType === 'call' || quickNoteType === 'meeting'" class="flex items-center gap-2">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+            <span class="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">Schedule for</span>
+            <input v-model="quickNoteScheduledAt" type="date" class="flex-1 text-xs px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50" />
+            <button v-if="quickNoteScheduledAt" type="button" class="text-[10px] text-slate-400 hover:text-rose-400 transition-colors" title="Clear date" @click="quickNoteScheduledAt = ''">
+              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
           <div class="flex items-center justify-between">
             <span class="text-[10px] text-slate-400 dark:text-slate-500">Cmd+Enter to save · Esc to close</span>
             <div class="flex gap-1.5">
               <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="quickNoteRecordId = null">Cancel</button>
               <button
                 type="button"
-                class="text-xs font-medium px-2.5 py-1 rounded-lg bg-sky-500 hover:bg-sky-600 text-white transition-colors disabled:opacity-40"
+                class="text-xs font-medium px-2.5 py-1 rounded-lg text-white transition-colors disabled:opacity-40"
+                :class="quickNoteScheduledAt ? 'bg-violet-500 hover:bg-violet-600' : 'bg-sky-500 hover:bg-sky-600'"
                 :disabled="!quickNoteText.trim()"
                 @click="submitQuickNote"
-              >Save</button>
+              >{{ quickNoteScheduledAt ? 'Schedule' : 'Save' }}</button>
             </div>
           </div>
         </div>
@@ -16651,9 +16661,10 @@ const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
 const quickNoteType = ref<'note' | 'call' | 'email' | 'meeting'>('note');
 const quickNoteReplyQuote = ref('');
+const quickNoteScheduledAt = ref('');
 const quickNotePos = ref({ top: 0, left: 0 });
 const quickNoteInputEl = ref<HTMLTextAreaElement | null>(null);
-watch(quickNoteRecordId, (v) => { if (v) { quickNoteText.value = quickNoteReplyQuote.value; quickNoteReplyQuote.value = ''; quickNoteType.value = 'note'; nextTick(() => quickNoteInputEl.value?.focus()); } });
+watch(quickNoteRecordId, (v) => { if (v) { quickNoteText.value = quickNoteReplyQuote.value; quickNoteReplyQuote.value = ''; quickNoteType.value = 'note'; quickNoteScheduledAt.value = ''; nextTick(() => quickNoteInputEl.value?.focus()); } });
 
 function openQuickNote(recordId: string, evt: MouseEvent) {
   const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
@@ -16665,6 +16676,7 @@ function submitQuickNote() {
   const rid = quickNoteRecordId.value;
   const text = quickNoteText.value.trim();
   const type = quickNoteType.value;
+  const scheduledAt = quickNoteScheduledAt.value || undefined;
   if (!rid || !text) return;
   mockActivities.push({
     id: 'a_qn_' + String(mockActivities.length) + '_' + String(Date.now()).slice(-5),
@@ -16673,6 +16685,7 @@ function submitQuickNote() {
     content: text,
     author: 'JB',
     created_at: new Date().toISOString(),
+    ...(scheduledAt ? { scheduled_at: scheduledAt } : {}),
   });
   const rec = mockRecords.find((r) => r.id === rid);
   if (rec) rec.updated_at = new Date().toISOString();
