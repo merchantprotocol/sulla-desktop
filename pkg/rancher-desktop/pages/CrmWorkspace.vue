@@ -5532,6 +5532,36 @@
                       </ul>
                     </div>
                   </div>
+                  <!-- email To / Subject / Cc fields -->
+                  <div v-if="noteType === 'email'" class="space-y-1.5 rounded-lg border border-sky-100 dark:border-sky-900/40 bg-sky-50/40 dark:bg-sky-950/10 px-2.5 py-2">
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] font-semibold text-slate-400 dark:text-slate-500 w-12 shrink-0 text-right">To</span>
+                      <input
+                        v-model="emailTo"
+                        type="email"
+                        placeholder="recipient@example.com"
+                        class="flex-1 text-xs px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
+                      />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] font-semibold text-slate-400 dark:text-slate-500 w-12 shrink-0 text-right">Subject</span>
+                      <input
+                        v-model="emailSubject"
+                        type="text"
+                        placeholder="Email subject…"
+                        class="flex-1 text-xs px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
+                      />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-[10px] font-semibold text-slate-400 dark:text-slate-500 w-12 shrink-0 text-right">Cc</span>
+                      <input
+                        v-model="emailCc"
+                        type="email"
+                        placeholder="cc@example.com (optional)"
+                        class="flex-1 text-xs px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-sky-400/60"
+                      />
+                    </div>
+                  </div>
                   <!-- call outcome row -->
                   <div v-if="noteType === 'call'" class="flex items-center gap-2 flex-wrap">
                     <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
@@ -5660,6 +5690,26 @@
                           </div>
                         </div>
                         <template v-else>
+                          <!-- email header (To / Subject / Cc) -->
+                          <template v-for="hdr in [parseEmailHeader(row.act.content)]" :key="'ehdr'">
+                            <div
+                              v-if="row.act.type === 'email' && hdr"
+                              class="mb-1 rounded-lg border border-sky-100 dark:border-sky-900/40 bg-sky-50/50 dark:bg-sky-950/20 px-2 py-1.5 space-y-0.5"
+                            >
+                              <div v-if="hdr.to" class="flex items-start gap-1.5">
+                                <span class="text-[9px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500 w-10 shrink-0 pt-px">To</span>
+                                <span class="text-[10px] text-slate-600 dark:text-slate-300 truncate">{{ hdr.to }}</span>
+                              </div>
+                              <div v-if="hdr.subject" class="flex items-start gap-1.5">
+                                <span class="text-[9px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500 w-10 shrink-0 pt-px">Subj</span>
+                                <span class="text-[10px] font-semibold text-slate-700 dark:text-slate-200 truncate">{{ hdr.subject }}</span>
+                              </div>
+                              <div v-if="hdr.cc" class="flex items-start gap-1.5">
+                                <span class="text-[9px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500 w-10 shrink-0 pt-px">Cc</span>
+                                <span class="text-[10px] text-slate-600 dark:text-slate-300 truncate">{{ hdr.cc }}</span>
+                              </div>
+                            </div>
+                          </template>
                           <!-- call outcome badge -->
                           <span
                             v-if="row.act.type === 'call' && /^\[[^\]]+\]/.test(row.act.content)"
@@ -9452,7 +9502,10 @@ const noteText = ref('');
 const noteType = ref<'note' | 'email' | 'call' | 'meeting'>('note');
 const callOutcome = ref('');
 const callDuration = ref('');
-watch(noteType, () => { callOutcome.value = ''; callDuration.value = ''; });
+const emailTo = ref('');
+const emailSubject = ref('');
+const emailCc = ref('');
+watch(noteType, () => { callOutcome.value = ''; callDuration.value = ''; emailTo.value = ''; emailSubject.value = ''; emailCc.value = ''; });
 const showEmailTemplatePicker = ref(false);
 watch(noteType, () => { showEmailTemplatePicker.value = false; });
 const showCadencePicker = ref(false);
@@ -13093,6 +13146,12 @@ function stripCallOutcome(content: string): string {
   return content.replace(/^\[[^\]]+\]\s*/, '');
 }
 
+function parseEmailHeader(content: string): { to?: string; subject?: string; cc?: string } | null {
+  const m = content.match(/^\[To:\s*([^\]|]+?)(?:\s*\|\s*Subject:\s*([^\]|]+?))?(?:\s*\|\s*Cc:\s*([^\]]+?))?\]/);
+  if (!m) return null;
+  return { to: m[1]?.trim() || undefined, subject: m[2]?.trim() || undefined, cc: m[3]?.trim() || undefined };
+}
+
 function logNote(record: CrmRecord) {
   const text = noteText.value.trim();
   if (!text) return;
@@ -13105,6 +13164,14 @@ function logNote(record: CrmRecord) {
     content = `[${badge}] ${text}`;
     callOutcome.value = '';
     callDuration.value = '';
+  } else if (noteType.value === 'email' && (emailTo.value.trim() || emailSubject.value.trim())) {
+    const parts: string[] = [`To: ${emailTo.value.trim() || '—'}`];
+    if (emailSubject.value.trim()) parts.push(`Subject: ${emailSubject.value.trim()}`);
+    if (emailCc.value.trim()) parts.push(`Cc: ${emailCc.value.trim()}`);
+    content = `[${parts.join(' | ')}] ${text}`;
+    emailTo.value = '';
+    emailSubject.value = '';
+    emailCc.value = '';
   }
   mockActivities.unshift({
     id: 'act-' + String(mockActivities.length),
