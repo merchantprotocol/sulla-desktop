@@ -229,15 +229,17 @@
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
               Watching
             </p>
-            <button
+            <div
               v-for="rec in watchedRecords"
               :key="rec.id"
-              type="button"
-              class="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors text-xs"
+              role="button"
+              tabindex="0"
+              class="group/swrec w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors text-xs cursor-pointer"
               :class="openedRecord?.id === rec.id
                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
                 : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'"
               @click="openFromPalette(rec)"
+              @keydown.enter="openFromPalette(rec)"
               @contextmenu.prevent="openContextMenu(rec, $event)"
             >
               <span
@@ -245,26 +247,38 @@
                 :style="{ background: (schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6') + '22', color: schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6' }"
               >{{ recordInitials(rec.title) }}</span>
               <span class="flex-1 truncate">{{ rec.title }}</span>
-              <!-- eye icon indicates watched state -->
-              <svg class="shrink-0 h-3 w-3 text-sky-400 dark:text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <!-- eye icon: hidden on hover, replaced by unwatch button -->
+              <svg class="shrink-0 h-3 w-3 text-sky-400 dark:text-sky-500 group-hover/swrec:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
               </svg>
-            </button>
+              <button
+                type="button"
+                class="hidden group-hover/swrec:flex shrink-0 items-center justify-center h-4 w-4 rounded text-sky-400 hover:text-slate-400 dark:hover:text-slate-500 transition-colors"
+                title="Unwatch"
+                @click.stop="toggleWatch(rec.id)"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <!-- pinned records (hidden when collapsed) -->
           <div v-if="pinnedRecords.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Pinned</p>
-            <button
+            <div
               v-for="rec in pinnedRecords.slice(0, 8)"
               :key="rec.id"
-              type="button"
-              class="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors text-xs"
+              role="button"
+              tabindex="0"
+              class="group/sprec w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors text-xs cursor-pointer"
               :class="openedRecord?.id === rec.id
                 ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
                 : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'"
               @click="openFromPalette(rec)"
+              @keydown.enter="openFromPalette(rec)"
               @contextmenu.prevent="openContextMenu(rec, $event)"
             >
               <span
@@ -272,10 +286,21 @@
                 :style="{ background: (schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6') + '22', color: schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6' }"
               >{{ recordInitials(rec.title) }}</span>
               <span class="flex-1 truncate">{{ rec.title }}</span>
-              <svg class="shrink-0 h-3 w-3 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
+              <!-- star: hidden on hover, replaced by unpin button -->
+              <svg class="shrink-0 h-3 w-3 text-amber-400 group-hover/sprec:hidden" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
               </svg>
-            </button>
+              <button
+                type="button"
+                class="hidden group-hover/sprec:flex shrink-0 items-center justify-center h-4 w-4 rounded text-amber-400 hover:text-slate-400 dark:hover:text-slate-500 transition-colors"
+                title="Unpin"
+                @click.stop="togglePin(rec.id)"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <!-- upcoming reminders (hidden when collapsed) -->
