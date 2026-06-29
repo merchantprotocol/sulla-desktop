@@ -10318,6 +10318,33 @@
           Log note
         </button>
         <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="copyRecordAsText(contextMenuRecord); closeContextMenu()"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+          </svg>
+          Copy as text
+        </button>
+        <!-- move to stage — shown only when kanban field exists and there are other stages -->
+        <template v-if="kanbanField && kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).length > 1">
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <p class="px-3 pt-1.5 pb-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Move to stage</p>
+          <button
+            v-for="stage in kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED && c !== String(contextMenuRecord.field_values[kanbanField!.key] ?? ''))"
+            :key="stage"
+            type="button"
+            class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="(() => { if (kanbanField) { contextMenuRecord.field_values[kanbanField.key] = stage; showToast(`Stage: ${stage}`); } closeContextMenu(); })()"
+          >
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+            {{ stage }}
+          </button>
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        </template>
+        <button
           v-if="openedRecord && openedRecord.id !== contextMenuRecord.id"
           type="button"
           class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
