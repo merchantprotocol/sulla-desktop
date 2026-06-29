@@ -5045,11 +5045,16 @@
                 class="space-y-1"
               >
                 <label
-                  class="block text-xs font-medium transition-colors"
+                  class="flex items-center gap-1 text-xs font-medium transition-colors"
                   :class="createFormErrors.has(field.key) ? 'text-red-500 dark:text-red-400' : 'text-slate-400 dark:text-slate-500'"
                 >
                   {{ field.label }}
-                  <span v-if="field.is_required" class="text-red-400 ml-0.5">*</span>
+                  <span v-if="field.is_required" class="text-red-400">*</span>
+                  <span
+                    v-if="field.help_text"
+                    class="inline-flex items-center justify-center h-3.5 w-3.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 text-[9px] font-bold cursor-help shrink-0 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                    :title="field.help_text"
+                  >?</span>
                 </label>
                 <CrmFieldInput
                   :data-type="field.data_type"
