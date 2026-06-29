@@ -10084,7 +10084,7 @@
                     <div
                       v-for="r in inverseLinks"
                       :key="r.id"
-                      class="group/backlink flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                      class="group/backlink flex items-start gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                     >
                       <span
                         class="h-5 w-5 rounded flex items-center justify-center shrink-0"
@@ -10100,6 +10100,42 @@
                           @mouseleave="onMentionMouseleave"
                         >{{ r.title }}</p>
                         <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ schema.find(rt => rt.key === r.record_type_key)?.label }}</p>
+                        <!-- health badges on backlinked record -->
+                        <div v-if="overdueIds.has(r.id) || dueSoonIds.has(r.id) || activityCountByRecord[r.id] || (scoringRulesForType.length && scoreRecord(r) > 0)" class="flex items-center gap-1 mt-1 flex-wrap">
+                          <span
+                            v-if="overdueIds.has(r.id)"
+                            class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-semibold bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400"
+                          >
+                            <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                            Overdue
+                          </span>
+                          <span
+                            v-else-if="dueSoonIds.has(r.id)"
+                            class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-semibold bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400"
+                          >
+                            <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            Due soon
+                          </span>
+                          <span
+                            v-if="activityCountByRecord[r.id]"
+                            class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] font-medium tabular-nums"
+                            :class="(() => {
+                              const days = lastActivityByRecord[r.id] ? Math.floor((Date.now() - lastActivityByRecord[r.id]) / 86400000) : 999;
+                              return days <= 7
+                                ? 'bg-sky-50 dark:bg-sky-950/30 text-sky-500 dark:text-sky-400'
+                                : days <= 30
+                                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-400'
+                                  : 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400';
+                            })()"
+                            :title="`${activityCountByRecord[r.id]} activit${activityCountByRecord[r.id] === 1 ? 'y' : 'ies'}${lastActivityByRecord[r.id] ? ' · last ' + formatAge(new Date(lastActivityByRecord[r.id]).toISOString()) + ' ago' : ''}`"
+                          >{{ activityCountByRecord[r.id] }} act</span>
+                          <span
+                            v-if="scoringRulesForType.length && scoreRecord(r) > 0"
+                            class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[9px] tabular-nums font-semibold"
+                            :class="scoreRecord(r) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(r) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400' : 'bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400'"
+                            :title="`Score: ${scoreRecord(r)} / 100`"
+                          >{{ scoreRecord(r) }}</span>
+                        </div>
                       </div>
                       <!-- hover actions: pin + quick note -->
                       <div class="invisible group-hover/backlink:visible flex items-center gap-0.5">
@@ -12244,6 +12280,16 @@
             <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
           Merge into open record
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="mergeTargetPicker = { source: contextMenuRecord }; mergeTargetQuery = ''; closeContextMenu()"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          Merge with...
         </button>
         <!-- convert type — only show when multiple record types exist -->
         <template v-if="schema.length > 1">
