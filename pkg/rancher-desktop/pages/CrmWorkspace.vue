@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -5962,21 +5962,67 @@
                   <div
                     v-for="link in openedRecord.links"
                     :key="link.target_id"
-                    class="group/link flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    class="group/link flex items-start gap-2.5 px-2.5 py-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                   >
                     <span
-                      class="h-5 w-5 rounded flex items-center justify-center shrink-0"
+                      class="h-5 w-5 rounded flex items-center justify-center shrink-0 mt-0.5"
                       :style="{ background: (schema.find(rt => rt.key === link.target_type)?.color ?? '#64748b') + '22', color: schema.find(rt => rt.key === link.target_type)?.color ?? '#64748b' }"
                     >
                       <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === link.target_type)?.icon ?? 'user']" class="h-3 w-3" />
                     </span>
                     <div class="flex-1 min-w-0">
                       <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{{ link.target_title }}</p>
-                      <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ link.target_type }}</p>
+                      <!-- role row: badge when set, inline edit when editing -->
+                      <template v-if="editingLinkRoleId === link.target_id">
+                        <div class="flex items-center gap-1 mt-1" @click.stop>
+                          <input
+                            :value="linkRoleDraft"
+                            type="text"
+                            placeholder="e.g. Decision Maker"
+                            maxlength="40"
+                            class="h-5 flex-1 rounded px-1.5 text-[10px] border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-300 focus:outline-none"
+                            @input="linkRoleDraft = ($event.target as HTMLInputElement).value"
+                            @keydown.enter.prevent="commitLinkRole(openedRecord)"
+                            @keydown.escape.stop="editingLinkRoleId = null"
+                            @vue:mounted="($el as HTMLInputElement).focus()"
+                          />
+                          <div class="flex flex-wrap gap-0.5 max-w-[120px]">
+                            <button
+                              v-for="s in LINK_ROLE_SUGGESTIONS.slice(0, 4)"
+                              :key="s"
+                              type="button"
+                              class="text-[9px] px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-sky-100 dark:hover:bg-sky-900/40 hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+                              @click.stop="linkRoleDraft = s; commitLinkRole(openedRecord)"
+                            >{{ s }}</button>
+                          </div>
+                          <button type="button" class="shrink-0 text-[10px] font-semibold text-sky-600 dark:text-sky-400 hover:text-sky-700 dark:hover:text-sky-300 transition-colors" @click.stop="commitLinkRole(openedRecord)">Save</button>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <div class="flex items-center gap-1 mt-0.5">
+                          <span class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ link.target_type }}</span>
+                          <template v-if="link.role">
+                            <span class="text-slate-300 dark:text-slate-600">·</span>
+                            <button
+                              type="button"
+                              class="inline-flex items-center rounded px-1 py-px text-[10px] font-medium bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/50 transition-colors"
+                              :title="`Relationship role: ${link.role} — click to edit`"
+                              @click.stop="startEditLinkRole(link.target_id, link.role)"
+                            >{{ link.role }}</button>
+                          </template>
+                          <button
+                            v-else
+                            type="button"
+                            class="invisible group-hover/link:visible text-[10px] text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                            title="Set relationship role"
+                            @click.stop="startEditLinkRole(link.target_id)"
+                          >+ role</button>
+                        </div>
+                      </template>
                     </div>
                     <button
                       type="button"
-                      class="invisible group-hover/link:visible rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 transition-colors"
+                      class="invisible group-hover/link:visible shrink-0 rounded p-0.5 mt-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 transition-colors"
                       aria-label="Remove link"
                       title="Remove link"
                       @click="removeLink(openedRecord, link.target_id)"
@@ -5987,7 +6033,7 @@
                     </button>
                     <button
                       type="button"
-                      class="shrink-0 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 rounded p-0.5 transition-colors"
+                      class="shrink-0 mt-0.5 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 rounded p-0.5 transition-colors"
                       aria-label="Open linked record"
                       @click="openLinkedRecord(link)"
                     >
@@ -9021,6 +9067,7 @@ interface CrmLink {
   target_id: string;
   target_type: string;
   target_title: string;
+  role?: string;
 }
 
 interface CrmRecord {
@@ -9904,6 +9951,13 @@ const linkDropdownOpen = ref(false);
 const showCreateLinkForm = ref(false);
 const createLinkTypeKey = ref('');
 const createLinkTitle = ref('');
+const LINK_ROLE_SUGGESTIONS = [
+  'Decision Maker', 'Economic Buyer', 'Champion', 'Influencer',
+  'Sponsor', 'End User', 'Technical Buyer', 'Evaluator',
+  'Vendor', 'Partner', 'Advisor', 'Referral',
+] as const;
+const editingLinkRoleId = ref<string | null>(null);
+const linkRoleDraft = ref('');
 const watchedIds = ref<Set<string>>(new Set());
 const snoozedUntil = ref<Record<string, string>>({});
 const snoozeMenuId = ref<string | null>(null);
@@ -13649,6 +13703,20 @@ function removeLink(record: CrmRecord, targetId: string) {
   if (!record.links) return;
   record.links = record.links.filter((l) => l.target_id !== targetId);
   showToast('Link removed');
+}
+
+function startEditLinkRole(targetId: string, currentRole?: string) {
+  editingLinkRoleId.value = targetId;
+  linkRoleDraft.value = currentRole ?? '';
+}
+
+function commitLinkRole(record: CrmRecord) {
+  const id = editingLinkRoleId.value;
+  if (!id || !record.links) { editingLinkRoleId.value = null; return; }
+  const link = record.links.find((l) => l.target_id === id);
+  if (link) link.role = linkRoleDraft.value.trim() || undefined;
+  editingLinkRoleId.value = null;
+  linkRoleDraft.value = '';
 }
 
 function commitCreateAndLink(record: CrmRecord) {
