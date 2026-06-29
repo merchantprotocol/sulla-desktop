@@ -5600,36 +5600,81 @@
                     class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate block max-w-full text-left mb-0.5"
                     @click="const rec = mockRecords.find(r => r.id === row.act.record_id); if (rec) { openRecord(rec); viewMode = 'table'; }"
                   >{{ mockRecords.find(r => r.id === row.act.record_id)?.title ?? row.act.record_id }}</button>
-                  <span
-                    v-if="row.act.type === 'call' && /^\[[^\]]+\]/.test(row.act.content)"
-                    class="inline-flex items-center gap-1 mb-1 rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400"
-                  >
-                    <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                    </svg>
-                    {{ row.act.content.match(/^\[([^\]]+)\]/)?.[1] }}
-                  </span>
-                  <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{{ stripCallOutcome(row.act.content) }}</p>
-                  <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1.5">
-                    <span class="capitalize font-medium">{{ row.act.type === 'change' ? 'System' : row.act.author }}</span>
-                    · {{ formatRelativeTime(row.act.created_at) }}
-                    <span v-if="row.act.scheduled_at" class="inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full" :class="row.act.scheduled_at > new Date().toISOString() ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'">
-                      {{ row.act.scheduled_at > new Date().toISOString() ? 'Scheduled' : 'Held' }} · {{ row.act.scheduled_at.slice(0, 10) }}
+                  <!-- inline edit form -->
+                  <div v-if="editingActivityId === row.act.id" class="mb-1">
+                    <textarea
+                      ref="editingActivityEl"
+                      v-model="editingActivityText"
+                      rows="3"
+                      class="w-full rounded-lg px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-slate-900 dark:text-slate-100 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                      @keydown.meta.enter.prevent="saveEditActivity"
+                      @keydown.ctrl.enter.prevent="saveEditActivity"
+                      @keydown.escape.prevent="editingActivityId = null"
+                    />
+                    <div class="flex items-center gap-1.5 mt-1">
+                      <button type="button" class="h-6 px-2.5 rounded text-[11px] font-medium bg-sky-600 hover:bg-sky-500 text-white transition-colors" @click="saveEditActivity">Save</button>
+                      <button type="button" class="h-6 px-2 rounded text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors" @click="editingActivityId = null">Cancel</button>
+                      <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-auto">⌘ Enter to save</span>
+                    </div>
+                  </div>
+                  <template v-else>
+                    <span
+                      v-if="row.act.type === 'call' && /^\[[^\]]+\]/.test(row.act.content)"
+                      class="inline-flex items-center gap-1 mb-1 rounded-full px-2 py-0.5 text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400"
+                    >
+                      <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                      </svg>
+                      {{ row.act.content.match(/^\[([^\]]+)\]/)?.[1] }}
                     </span>
-                  </p>
+                    <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{{ stripCallOutcome(row.act.content) }}</p>
+                    <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1.5">
+                      <span class="capitalize font-medium">{{ row.act.type === 'change' ? 'System' : row.act.author }}</span>
+                      · {{ formatRelativeTime(row.act.created_at) }}
+                      <span v-if="row.act.scheduled_at" class="inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full" :class="row.act.scheduled_at > new Date().toISOString() ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'">
+                        {{ row.act.scheduled_at > new Date().toISOString() ? 'Scheduled' : 'Held' }} · {{ row.act.scheduled_at.slice(0, 10) }}
+                      </span>
+                    </p>
+                  </template>
                 </div>
-                <!-- delete button — hidden until hover, not shown for system changes -->
-                <button
-                  v-if="row.act.type !== 'change'"
-                  type="button"
-                  class="shrink-0 mt-1 opacity-0 group-hover:opacity-100 rounded p-1 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all"
-                  title="Delete this activity entry"
-                  @click.stop="deleteActivity(row.act.id)"
-                >
-                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
+                <!-- hover actions (non-change only) -->
+                <div class="shrink-0 flex items-center gap-0.5 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    class="rounded p-1 transition-colors"
+                    :class="pinnedActivityIds.has(row.act.id) ? 'text-amber-400 hover:text-amber-500 opacity-100' : 'text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400'"
+                    :aria-label="pinnedActivityIds.has(row.act.id) ? 'Unpin activity' : 'Pin activity to top'"
+                    :title="pinnedActivityIds.has(row.act.id) ? 'Unpin' : 'Pin to top'"
+                    @click.stop="togglePinActivity(row.act.id)"
+                  >
+                    <svg class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/>
+                    </svg>
+                  </button>
+                  <button
+                    v-if="row.act.type !== 'change'"
+                    type="button"
+                    class="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-violet-400 dark:hover:text-violet-400 transition-colors"
+                    aria-label="Edit activity"
+                    title="Edit this activity"
+                    @click.stop="startEditActivity(row.act)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  <button
+                    v-if="row.act.type !== 'change'"
+                    type="button"
+                    class="rounded p-1 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all"
+                    title="Delete this activity entry"
+                    @click.stop="deleteActivity(row.act.id)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </template>
             <p v-if="feedRows.filter(r => r.kind === 'activity').length === 0" class="text-sm text-slate-400 dark:text-slate-500 text-center py-12">No activity matches</p>
