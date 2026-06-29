@@ -7551,6 +7551,17 @@
           </svg>
           {{ collapsedColumns.has(kanbanColMenu!.col) ? 'Expand column' : 'Collapse column' }}
         </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          :title="`Add all ${(kanbanGroups[kanbanColMenu!.col] ?? []).length} card${(kanbanGroups[kanbanColMenu!.col] ?? []).length === 1 ? '' : 's'} in this column to selection`"
+          @click="(() => { const ids = (kanbanGroups[kanbanColMenu!.col] ?? []).map(r => r.id); const next = new Set(selectedIds); ids.forEach(id => next.add(id)); selectedIds = next; kanbanColMenu = null; })() "
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+          </svg>
+          Select all in column
+        </button>
       </div>
     </transition>
 
