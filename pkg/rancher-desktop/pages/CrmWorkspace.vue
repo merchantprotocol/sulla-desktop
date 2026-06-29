@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment()"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment()"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4038,6 +4038,7 @@
               <div
                 class="flex items-center gap-2.5 mb-4 cursor-pointer select-none group/gh"
                 @click="toggleGalleryGroupCollapse(group.key)"
+                @contextmenu.prevent="galleryGroupMenu = { key: group.key, label: group.label, count: group.records.length, x: $event.clientX, y: $event.clientY }"
               >
                 <svg
                   class="h-3 w-3 shrink-0 text-slate-400 transition-transform"
@@ -9083,6 +9084,59 @@
       </div>
     </transition>
 
+    <!-- gallery group header context menu -->
+    <transition
+      enter-active-class="transition-all duration-100"
+      enter-from-class="opacity-0 scale-95"
+      enter-to-class="opacity-100 scale-100"
+      leave-active-class="transition-all duration-75"
+      leave-from-class="opacity-100 scale-100"
+      leave-to-class="opacity-0 scale-95"
+    >
+      <div
+        v-if="galleryGroupMenu"
+        class="fixed z-50 w-52 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1"
+        :style="{ top: `${Math.min(galleryGroupMenu.y, window.innerHeight - 180)}px`, left: `${Math.min(galleryGroupMenu.x, window.innerWidth - 220)}px` }"
+        @click.stop
+      >
+        <p class="px-3 pt-1.5 pb-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
+          {{ galleryGroupMenu.label === '__ungrouped__' ? 'No value' : galleryGroupMenu.label }}
+          <span class="font-normal text-slate-300 dark:text-slate-600">({{ galleryGroupMenu.count }})</span>
+        </p>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="selectGroupRecords(galleryGroupMenu!.key); galleryGroupMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+          Select all in group
+        </button>
+        <button
+          v-if="groupByField && galleryGroupMenu.key !== '__ungrouped__'"
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="toggleFilter(groupByField, galleryGroupMenu!.key); galleryGroupMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+          </svg>
+          Filter to this group
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="toggleGalleryGroupCollapse(galleryGroupMenu!.key); galleryGroupMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path v-if="collapsedGalleryGroups.has(galleryGroupMenu.key)" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+            <path v-else stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+          {{ collapsedGalleryGroups.has(galleryGroupMenu.key) ? 'Expand group' : 'Collapse group' }}
+        </button>
+      </div>
+    </transition>
+
     <!-- group header context menu -->
     <transition
       enter-active-class="transition-all duration-100"
@@ -12448,6 +12502,7 @@ const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
 const kanbanCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
 const galleryCardMenu = ref<{ recordId: string; x: number; y: number } | null>(null);
+const galleryGroupMenu = ref<{ key: string; label: string; count: number; x: number; y: number } | null>(null);
 const colHeaderMenu = ref<{ fieldKey: string; x: number; y: number } | null>(null);
 const showColStatsModal = ref(false);
 const colStatsFieldKey = ref<string | null>(null);
