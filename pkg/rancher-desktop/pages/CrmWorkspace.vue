@@ -7402,6 +7402,32 @@
                       </button>
                     </div>
                   </template>
+                  <!-- boolean field direct toggle in view mode -->
+                  <template v-else-if="!editingRecord && field.data_type === 'boolean' && !lockedRecordIds.has(openedRecord.id)">
+                    <button
+                      type="button"
+                      class="flex items-center gap-2 py-0.5 group/bool"
+                      :title="openedRecord.field_values[field.key] ? 'Click to set No' : 'Click to set Yes'"
+                      @click.stop="(() => { const next = !openedRecord.field_values[field.key]; openedRecord.field_values[field.key] = next; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, next); })()"
+                    >
+                      <div
+                        class="h-5 w-5 rounded border-2 flex items-center justify-center transition-colors"
+                        :class="openedRecord.field_values[field.key]
+                          ? 'bg-sky-500 border-sky-500'
+                          : 'border-slate-300 dark:border-slate-600 group-hover/bool:border-sky-400 dark:group-hover/bool:border-sky-500'"
+                      >
+                        <svg v-if="openedRecord.field_values[field.key]" class="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                      <span
+                        class="text-sm transition-colors"
+                        :class="openedRecord.field_values[field.key]
+                          ? 'text-slate-700 dark:text-slate-300'
+                          : 'text-slate-400 dark:text-slate-500 group-hover/bool:text-slate-600 dark:group-hover/bool:text-slate-400'"
+                      >{{ openedRecord.field_values[field.key] ? 'Yes' : 'No' }}</span>
+                    </button>
+                  </template>
                   <!-- number field quick stepper in view mode -->
                   <template v-else-if="!editingRecord && field.data_type === 'number' && !lockedRecordIds.has(openedRecord.id)">
                     <div class="flex items-center gap-1.5">
