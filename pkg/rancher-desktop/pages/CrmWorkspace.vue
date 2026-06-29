@@ -1575,6 +1575,21 @@
                 </svg>
                 Timeline
               </button>
+              <!-- feed view button -->
+              <button
+                type="button"
+                class="flex items-center gap-1.5 px-3 h-9 text-sm border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="viewMode === 'feed'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                title="Activity feed"
+                @click="viewMode = 'feed'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                </svg>
+                Feed
+              </button>
               <!-- kanban card fields picker — shown only in kanban mode -->
               <div v-if="viewMode === 'kanban'" class="relative border-l border-slate-200 dark:border-slate-700" @click.stop>
                 <button
@@ -3919,6 +3934,66 @@
               <div class="w-36 shrink-0" />
             </div>
           </template>
+        </div>
+
+        <!-- ── Activity feed view ── -->
+        <div v-if="viewMode === 'feed'" class="flex-1 overflow-y-auto p-6">
+          <!-- header + filters -->
+          <div class="flex items-center gap-3 mb-5 flex-wrap">
+            <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-300 shrink-0">Activity Feed</h2>
+            <!-- type filter -->
+            <div class="flex items-center gap-1 flex-wrap">
+              <button
+                v-for="ft in (['all', 'note', 'email', 'call', 'meeting', 'change'] as const)"
+                :key="ft"
+                type="button"
+                class="px-2 py-1 rounded-lg text-xs font-medium transition-colors capitalize"
+                :class="feedTypeFilter === ft
+                  ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
+                @click="feedTypeFilter = ft"
+              >{{ ft }}</button>
+            </div>
+            <!-- search -->
+            <div class="relative ml-auto">
+              <svg class="pointer-events-none absolute top-1/2 left-2.5 h-3 w-3 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
+              <input v-model="feedSearchQuery" type="text" placeholder="Search activity…" class="h-7 w-52 rounded-lg pl-7 pr-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40" />
+            </div>
+          </div>
+          <!-- feed items -->
+          <div class="space-y-0">
+            <template v-for="(row, i) in feedRows" :key="row.kind === 'label' ? row.key : row.act.id">
+              <div v-if="row.kind === 'label'" :class="i > 0 ? 'pt-5' : ''" class="flex items-center gap-2 pb-1">
+                <span class="text-xs font-semibold text-slate-400 dark:text-slate-500 shrink-0">{{ row.label }}</span>
+                <div class="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
+              </div>
+              <div v-else class="group flex gap-3 py-2.5 border-b border-slate-50 dark:border-slate-800/60 last:border-0">
+                <!-- type icon -->
+                <span class="mt-0.5 h-7 w-7 rounded-full flex items-center justify-center shrink-0" :class="ACTIVITY_ICON_BG[row.act.type]">
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                    <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[row.act.type]" />
+                  </svg>
+                </span>
+                <div class="flex-1 min-w-0">
+                  <!-- record link -->
+                  <button
+                    type="button"
+                    class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate block max-w-full text-left mb-0.5"
+                    @click="const rec = mockRecords.find(r => r.id === row.act.record_id); if (rec) { openRecord(rec); viewMode = 'table'; }"
+                  >{{ mockRecords.find(r => r.id === row.act.record_id)?.title ?? row.act.record_id }}</button>
+                  <p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">{{ row.act.content }}</p>
+                  <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1.5">
+                    <span class="capitalize font-medium">{{ row.act.type === 'change' ? 'System' : row.act.author }}</span>
+                    · {{ formatRelativeTime(row.act.created_at) }}
+                    <span v-if="row.act.scheduled_at" class="inline-flex items-center gap-0.5 text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full" :class="row.act.scheduled_at > new Date().toISOString() ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'">
+                      {{ row.act.scheduled_at > new Date().toISOString() ? 'Scheduled' : 'Held' }} · {{ row.act.scheduled_at.slice(0, 10) }}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </template>
+            <p v-if="feedRows.filter(r => r.kind === 'activity').length === 0" class="text-sm text-slate-400 dark:text-slate-500 text-center py-12">No activity matches</p>
+          </div>
         </div>
 
         <!-- ── Record detail panel ── -->
@@ -7670,7 +7745,9 @@ const searchQuery = ref('');
 const searchInputEl = ref<HTMLInputElement | null>(null);
 const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
-const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline'>('table');
+const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline' | 'feed'>('table');
+const feedSearchQuery = ref('');
+const feedTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
@@ -9502,6 +9579,36 @@ const groupedActivities = computed((): ActivityRow[] => {
       lastLabel = label;
       rows.push({ kind: 'label', label, key: 'lbl-' + label });
     }
+    rows.push({ kind: 'activity', act });
+  }
+  return rows;
+});
+
+const feedRows = computed((): ActivityRow[] => {
+  const typeRecordIds = new Set(
+    mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).map((r) => r.id),
+  );
+  const q = feedSearchQuery.value.trim().toLowerCase();
+  const typeF = feedTypeFilter.value;
+  const sorted = [...mockActivities]
+    .filter((a) => typeRecordIds.has(a.record_id))
+    .filter((a) => typeF === 'all' || a.type === typeF)
+    .filter((a) => !q || a.content.toLowerCase().includes(q))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const rows: ActivityRow[] = [];
+  let lastLabel = '';
+  for (const act of sorted) {
+    const d = new Date(act.created_at);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    const isSameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    let label: string;
+    if (isSameDay(d, today)) label = 'Today';
+    else if (isSameDay(d, yesterday)) label = 'Yesterday';
+    else label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+    if (label !== lastLabel) { lastLabel = label; rows.push({ kind: 'label', label, key: 'lbl-' + label }); }
     rows.push({ kind: 'activity', act });
   }
   return rows;
