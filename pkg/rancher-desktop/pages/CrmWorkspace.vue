@@ -5200,18 +5200,37 @@
                   </div>
                 </div>
               </Teleport>
-              <template v-if="showTagInput">
+              <div v-if="showTagInput" class="relative">
                 <input
                   ref="tagInputEl"
                   v-model="tagInput"
                   type="text"
-                  class="h-6 px-2 rounded-full text-xs border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 outline-none focus:border-sky-400 dark:focus:border-sky-500 w-24"
+                  class="h-6 px-2 rounded-full text-xs border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 outline-none focus:border-sky-400 dark:focus:border-sky-500 w-28"
                   placeholder="Add tag..."
                   @keydown.enter.prevent="addTag(openedRecord.id, tagInput); tagInput = ''; showTagInput = false"
                   @keydown.escape="showTagInput = false; tagInput = ''"
                   @blur="if(tagInput.trim()) { addTag(openedRecord.id, tagInput); tagInput = ''; } showTagInput = false"
                 />
-              </template>
+                <!-- tag autocomplete suggestions -->
+                <div
+                  v-if="tagSuggestions.length"
+                  class="absolute top-full left-0 mt-1 z-50 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-1 min-w-[120px]"
+                >
+                  <button
+                    v-for="s in tagSuggestions"
+                    :key="s"
+                    type="button"
+                    class="w-full text-left flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    @mousedown.prevent="addTag(openedRecord.id, s); tagInput = ''; showTagInput = false"
+                  >
+                    <span
+                      class="h-2 w-2 rounded-full shrink-0"
+                      :style="tagColors[s] ? { backgroundColor: TAG_COLOR_PALETTE.find(c => c.id === tagColors[s])?.bg } : { backgroundColor: '#94a3b8' }"
+                    />
+                    {{ s }}
+                  </button>
+                </div>
+              </div>
               <button
                 v-else
                 type="button"
@@ -13953,6 +13972,13 @@ const allTags = computed((): string[] => {
     for (const t of tags) set.add(t);
   }
   return Array.from(set).sort();
+});
+
+const tagSuggestions = computed((): string[] => {
+  if (!tagInput.value.trim() || !openedRecord.value) return [];
+  const q = tagInput.value.toLowerCase();
+  const existing = new Set(recordTags.value[openedRecord.value.id] ?? []);
+  return allTags.value.filter((t) => t !== q && t.includes(q) && !existing.has(t)).slice(0, 5);
 });
 
 function addBulkTag(tag: string) {
