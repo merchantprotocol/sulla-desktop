@@ -13763,14 +13763,14 @@
             </p>
             <div class="shrink-0 flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
               <button
-                v-for="t in [{ key: 'note', label: 'Note' }, { key: 'call', label: 'Call' }, { key: 'email', label: 'Email' }]"
+                v-for="t in [{ key: 'note', label: 'Note' }, { key: 'call', label: 'Call' }, { key: 'email', label: 'Email' }, { key: 'meeting', label: 'Meeting' }]"
                 :key="t.key"
                 type="button"
                 class="h-5 px-2 rounded-md text-[10px] font-medium transition-colors"
                 :class="quickNoteType === t.key
                   ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm'
                   : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
-                @click="quickNoteType = t.key as 'note' | 'call' | 'email'"
+                @click="quickNoteType = t.key as 'note' | 'call' | 'email' | 'meeting'"
               >{{ t.label }}</button>
             </div>
           </div>
@@ -13778,7 +13778,7 @@
             ref="quickNoteInputEl"
             v-model="quickNoteText"
             rows="3"
-            :placeholder="quickNoteType === 'call' ? 'Call notes…' : quickNoteType === 'email' ? 'Email summary…' : 'Add a note…'"
+            :placeholder="quickNoteType === 'call' ? 'Call notes…' : quickNoteType === 'email' ? 'Email summary…' : quickNoteType === 'meeting' ? 'Meeting notes…' : 'Add a note…'"
             class="w-full resize-none rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
             @keydown.enter.meta.prevent="submitQuickNote"
             @keydown.escape.prevent="quickNoteRecordId = null"
@@ -14995,7 +14995,7 @@ const editingTaskAssignee = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
 const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
-const quickNoteType = ref<'note' | 'call' | 'email'>('note');
+const quickNoteType = ref<'note' | 'call' | 'email' | 'meeting'>('note');
 const quickNoteReplyQuote = ref('');
 const quickNotePos = ref({ top: 0, left: 0 });
 const quickNoteInputEl = ref<HTMLTextAreaElement | null>(null);
