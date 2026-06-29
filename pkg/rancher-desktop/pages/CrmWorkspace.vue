@@ -4964,7 +4964,14 @@
                       </div>
                     </div>
                     <div v-if="(recordTags[record.id] ?? []).length" class="flex flex-wrap gap-1 mb-3">
-                      <span v-for="tag in (recordTags[record.id] ?? [])" :key="tag" class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors" :style="tagStyle(tag)">{{ tag }}</span>
+                      <span
+                        v-for="tag in (recordTags[record.id] ?? [])"
+                        :key="tag"
+                        class="inline-flex items-center rounded-full px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors cursor-pointer hover:opacity-80"
+                        :style="tagStyle(tag)"
+                        :title="`Filter by tag: ${tag}`"
+                        @click.stop="(() => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; })()"
+                      >{{ tag }}</span>
                     </div>
                     <!-- activity / task / score / links badges (grouped gallery) -->
                     <div v-if="overdueIds.has(record.id) || dueSoonIds.has(record.id) || activityCountByRecord[record.id] || pendingTaskCountByRecord[record.id] || (scoringRules.length && scoreRecord(record) > 0) || record.links?.length" class="flex items-center flex-wrap gap-1.5 mb-2">
@@ -4983,7 +4990,31 @@
                         </svg>
                         {{ overdueIds.has(record.id) ? 'Overdue' : 'Due soon' }}
                       </span>
-                      <span v-if="activityCountByRecord[record.id]" class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 cursor-default" :title="`${activityCountByRecord[record.id]} activities`" @mouseenter="showActivityPreview(record.id, $event.currentTarget as HTMLElement)" @mouseleave="hideActivityPreview">{{ activityCountByRecord[record.id] }}</span>
+                      <button
+                        v-if="activityCountByRecord[record.id]"
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium transition-colors"
+                        :class="(() => {
+                          const days = lastActivityByRecord[record.id] ? Math.floor((Date.now() - lastActivityByRecord[record.id]) / 86400000) : 999;
+                          return days <= 7
+                            ? 'bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/40'
+                            : days <= 30
+                              ? 'bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                              : days <= 60
+                                ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                                : 'bg-rose-50 dark:bg-rose-950/30 text-rose-400 dark:text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/40';
+                        })()"
+                        :title="`${activityCountByRecord[record.id]} activit${activityCountByRecord[record.id] === 1 ? 'y' : 'ies'}${lastActivityByRecord[record.id] ? ' · last ' + formatAge(new Date(lastActivityByRecord[record.id]).toISOString()) + ' ago' : ''}`"
+                        @click.stop="openRecord(record); nextTick(() => { detailTab = 'activity'; })"
+                        @mouseenter="showActivityPreview(record.id, $event.currentTarget as HTMLElement)"
+                        @mouseleave="hideActivityPreview"
+                      >
+                        <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3-3-3z" />
+                        </svg>
+                        {{ activityCountByRecord[record.id] }}
+                        <span v-if="lastActivityByRecord[record.id]" class="opacity-60 font-normal">· {{ formatAge(new Date(lastActivityByRecord[record.id]).toISOString()) }}</span>
+                      </button>
                       <span v-if="pendingTaskCountByRecord[record.id]" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400" :title="`${pendingTaskCountByRecord[record.id]} pending tasks`"><svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>{{ pendingTaskCountByRecord[record.id] }}</span>
                       <span v-if="record.links?.length" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400" :title="`${record.links.length} linked record${record.links.length === 1 ? '' : 's'}`"><svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>{{ record.links.length }}</span>
                       <button v-if="scoringRules.length && scoreRecord(record) > 0" type="button" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold cursor-pointer transition-opacity hover:opacity-75" :class="scoreRecord(record) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(record) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400' : 'bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400'" :title="`Score: ${scoreRecord(record)} / 100 — click for breakdown`" @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = record; showScoreBreakdown = !showScoreBreakdown; }"><svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>{{ scoreRecord(record) }}</button>
