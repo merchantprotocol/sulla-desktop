@@ -13598,11 +13598,19 @@ const linkedRecordSummary = computed((): Array<{ typeKey: string; label: string;
 
 const paletteResults = computed(() => {
   const q = paletteQuery.value.trim().toLowerCase();
-  if (!q) return mockRecords.slice(0, 8);
+  if (!q) {
+    const recent = recentRecords.value.filter((r) => !archivedIds.value.has(r.id));
+    const recentIds = new Set(recent.map((r) => r.id));
+    const fill = mockRecords
+      .filter((r) => !recentIds.has(r.id) && !archivedIds.value.has(r.id))
+      .slice(0, Math.max(0, 8 - recent.length));
+    return [...recent, ...fill];
+  }
   return mockRecords
     .filter((r) =>
-      r.title.toLowerCase().includes(q) ||
-      Object.values(r.field_values).some((v) => v != null && String(v).toLowerCase().includes(q)),
+      !archivedIds.value.has(r.id) &&
+      (r.title.toLowerCase().includes(q) ||
+      Object.values(r.field_values).some((v) => v != null && String(v).toLowerCase().includes(q))),
     )
     .slice(0, 8);
 });
