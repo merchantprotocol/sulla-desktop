@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4906,8 +4906,8 @@
                   : scoreRecord(openedRecord) >= 40
                     ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'"
-                :title="`Score: ${scoreRecord(openedRecord)} / 100 — based on ${scoringRulesForType.length} rule${scoringRulesForType.length === 1 ? '' : 's'}. Click to edit.`"
-                @click="showScoringModal = true"
+                :title="`Score: ${scoreRecord(openedRecord)} / 100 — ${scoringRulesForType.length} rule${scoringRulesForType.length === 1 ? '' : 's'}. Click for breakdown.`"
+                @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; showScoreBreakdown = !showScoreBreakdown; }"
               >
                 <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -9294,6 +9294,39 @@
       </div>
     </Teleport>
 
+    <!-- score breakdown popover -->
+    <Teleport to="body">
+      <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+        <div
+          v-if="showScoreBreakdown && openedRecord && scoringRulesForType.length"
+          class="fixed z-[9999] w-56 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+          :style="{ top: `${scoreBreakdownPos.top}px`, left: `${scoreBreakdownPos.left}px` }"
+          @click.stop
+        >
+          <div class="px-3 pt-3 pb-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <span class="text-xs font-semibold text-slate-700 dark:text-slate-200">Score breakdown</span>
+            <span class="tabular-nums font-bold text-sm" :class="scoreRecord(openedRecord) >= 70 ? 'text-emerald-600 dark:text-emerald-400' : scoreRecord(openedRecord) >= 40 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'">{{ scoreRecord(openedRecord) }}<span class="text-[10px] font-normal text-slate-400 dark:text-slate-500"> / 100</span></span>
+          </div>
+          <div class="px-3 py-2 space-y-1 max-h-48 overflow-y-auto">
+            <div
+              v-for="row in scoreBreakdown(openedRecord)"
+              :key="row.label"
+              class="flex items-center gap-2"
+              :class="row.triggered ? '' : 'opacity-40'"
+            >
+              <svg v-if="row.triggered" class="h-3 w-3 shrink-0 text-emerald-500 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+              <svg v-else class="h-3 w-3 shrink-0 text-slate-300 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              <span class="flex-1 text-[10px] text-slate-600 dark:text-slate-400 truncate" :title="row.label">{{ row.label }}</span>
+              <span class="text-[10px] tabular-nums font-semibold shrink-0" :class="row.triggered ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-300 dark:text-slate-600'">{{ row.triggered ? '+' : '' }}{{ row.points }}</span>
+            </div>
+          </div>
+          <div class="px-3 py-2 border-t border-slate-100 dark:border-slate-800">
+            <button type="button" class="w-full text-xs text-center text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors" @click="showScoreBreakdown = false; showScoringModal = true">Edit scoring rules</button>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
+
     <!-- quick-note popover -->
     <teleport to="body">
       <transition
@@ -10453,6 +10486,8 @@ const scoringRules = ref<ScoringRule[]>([
   { id: 'scr-9', typeKey: 'contact', condition: 'field_eq',          fieldKey: 'status',      value: 'Active', points: 35 },
 ]);
 const showScoringModal = ref(false);
+const showScoreBreakdown = ref(false);
+const scoreBreakdownPos = ref({ top: 0, left: 0 });
 const scoringDraftCondition = ref<ScoringRule['condition']>('field_filled');
 const scoringDraftFieldKey = ref('');
 const scoringDraftValue = ref('');
@@ -10493,6 +10528,35 @@ function scoreRecord(record: CrmRecord): number {
     if (matches) total += rule.points;
   }
   return Math.max(0, Math.min(100, total));
+}
+
+function scoreBreakdown(record: CrmRecord): Array<{ label: string; points: number; triggered: boolean }> {
+  const rules = scoringRules.value.filter((r) => r.typeKey === record.record_type_key);
+  const nowMs = new Date(DUE_TODAY_STR).getTime();
+  return rules.map((rule) => {
+    const fv = String(record.field_values[rule.fieldKey] ?? '').trim();
+    let triggered = false;
+    if (rule.condition === 'field_filled') triggered = fv.length > 0 && fv !== 'false';
+    else if (rule.condition === 'field_eq') triggered = fv.toLowerCase() === rule.value.toLowerCase();
+    else if (rule.condition === 'field_contains') triggered = rule.value.length > 0 && fv.toLowerCase().includes(rule.value.toLowerCase());
+    else if (rule.condition === 'field_gt') { const n = parseFloat(fv); triggered = !isNaN(n) && n > parseFloat(rule.value); }
+    else if (rule.condition === 'field_lt') { const n = parseFloat(fv); triggered = !isNaN(n) && n < parseFloat(rule.value); }
+    else if (rule.condition === 'stage_is') { const kf = kanbanField.value; if (kf) triggered = String(record.field_values[kf.key] ?? '') === rule.value; }
+    else if (rule.condition === 'activity_within_days') { const days = parseInt(rule.value, 10); const lastTs = lastActivityByRecord.value[record.id]; triggered = !!lastTs && nowMs - lastTs <= days * 86_400_000; }
+    const fieldLabel = selectedType.value?.fields.find((f) => f.key === rule.fieldKey)?.label ?? rule.fieldKey;
+    const condMap: Record<string, string> = {
+      field_filled: 'has a value',
+      field_eq: `= "${rule.value}"`,
+      field_contains: `contains "${rule.value}"`,
+      field_gt: `> ${rule.value}`,
+      field_lt: `< ${rule.value}`,
+      stage_is: `stage = "${rule.value}"`,
+      activity_within_days: `activity within ${rule.value}d`,
+    };
+    const condLabel = condMap[rule.condition] ?? rule.condition;
+    const label = rule.condition === 'activity_within_days' || rule.condition === 'stage_is' ? condLabel : `${fieldLabel} ${condLabel}`;
+    return { label, points: rule.points, triggered };
+  });
 }
 
 function addScoringRule() {
