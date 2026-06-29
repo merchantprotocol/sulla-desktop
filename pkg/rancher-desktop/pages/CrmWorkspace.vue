@@ -6246,6 +6246,16 @@
                 @click="feedAuthorFilter = feedAuthorFilter === m.name ? 'all' : m.name"
               >{{ m.name.slice(0, 2) }}</button>
             </div>
+            <!-- @mentions filter -->
+            <button
+              type="button"
+              class="h-7 px-2.5 rounded-lg text-xs font-semibold border transition-colors"
+              :class="feedMentionsFilter
+                ? 'bg-violet-100 dark:bg-violet-900/40 border-violet-300 dark:border-violet-600 text-violet-700 dark:text-violet-300'
+                : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
+              :title="feedMentionsFilter ? 'Showing only activities that @mention you — click to clear' : 'Show only activities that @mention you'"
+              @click="feedMentionsFilter = !feedMentionsFilter"
+            >@ Mentions</button>
             <!-- search -->
             <div class="relative ml-auto">
               <svg class="pointer-events-none absolute top-1/2 left-2.5 h-3 w-3 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
@@ -14545,6 +14555,7 @@ const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
 const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline' | 'feed' | 'focus' | 'tasks'>('table');
 const feedSearchQuery = ref('');
+const feedMentionsFilter = ref(false);
 const feedTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const feedAuthorFilter = ref<string>('all');
 const galleryColCount = ref<2 | 3 | 4>(3);
@@ -17977,10 +17988,12 @@ const feedRows = computed((): ActivityRow[] => {
   const q = feedSearchQuery.value.trim().toLowerCase();
   const typeF = feedTypeFilter.value;
   const authorF = feedAuthorFilter.value;
+  const mentionsOnly = feedMentionsFilter.value;
   const sorted = [...mockActivities]
     .filter((a) => typeRecordIds.has(a.record_id))
     .filter((a) => typeF === 'all' || a.type === typeF)
     .filter((a) => authorF === 'all' || a.author === authorF)
+    .filter((a) => !mentionsOnly || /@you\b/i.test(a.content))
     .filter((a) => !q || a.content.toLowerCase().includes(q) || a.author.toLowerCase().includes(q) || (mockRecords.find((r) => r.id === a.record_id)?.title ?? '').toLowerCase().includes(q))
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   const rows: ActivityRow[] = [];
