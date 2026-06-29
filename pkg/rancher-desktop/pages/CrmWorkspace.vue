@@ -3787,7 +3787,12 @@
                         <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
                       </button>
                     </div>
-                    <p class="text-sm font-semibold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-3">
+                    <p
+                      class="text-sm font-semibold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-3"
+                      @mouseenter="showPreview($event, record)"
+                      @mousemove="updatePreviewPos"
+                      @mouseleave="hidePreview"
+                    >
                       <template v-if="searchQuery.trim()">
                         <template v-for="(part, pi) in highlightText(record.title, searchQuery.trim())" :key="pi">
                           <mark v-if="part.match" class="bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-100 rounded-sm not-italic">{{ part.text }}</mark>
@@ -3910,7 +3915,12 @@
                   </button>
                 </div>
                 <!-- title -->
-                <p class="text-sm font-semibold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-1.5">
+                <p
+                  class="text-sm font-semibold text-slate-900 dark:text-white leading-snug line-clamp-2 mb-1.5"
+                  @mouseenter="showPreview($event, record)"
+                  @mousemove="updatePreviewPos"
+                  @mouseleave="hidePreview"
+                >
                   <template v-if="searchQuery.trim()">
                     <template v-for="(part, pi) in highlightText(record.title, searchQuery.trim())" :key="pi">
                       <mark v-if="part.match" class="bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-100 rounded-sm not-italic">{{ part.text }}</mark>
