@@ -5525,6 +5525,21 @@
                   @click="tasksViewPriorityFilter = tasksViewPriorityFilter === p ? '' : p"
                 >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
               </div>
+              <!-- assignee filter -->
+              <div class="flex items-center gap-1">
+                <button
+                  v-for="m in TEAM_MEMBERS"
+                  :key="m.id"
+                  type="button"
+                  class="h-6 w-6 rounded-full flex items-center justify-center text-[9px] font-bold transition-all"
+                  :style="{ background: tasksViewAssigneeFilter === m.id ? m.color : undefined }"
+                  :class="tasksViewAssigneeFilter === m.id
+                    ? 'text-white ring-2 ring-offset-1 ring-current'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                  :title="`Filter by ${m.name}`"
+                  @click="tasksViewAssigneeFilter = tasksViewAssigneeFilter === m.id ? '' : m.id"
+                >{{ m.name.slice(0, 2) }}</button>
+              </div>
               <!-- hide-done toggle -->
               <button
                 type="button"
@@ -7534,6 +7549,24 @@
                         @click="newTaskRecurrence = newTaskRecurrence === r ? '' : r"
                       >{{ r.slice(0, 1).toUpperCase() + r.slice(1) }}</button>
                     </div>
+                    <!-- assignee picker in add form -->
+                    <div class="flex items-center gap-1">
+                      <svg class="h-3 w-3 text-slate-400 dark:text-slate-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                      <button
+                        v-for="m in TEAM_MEMBERS"
+                        :key="m.id"
+                        type="button"
+                        class="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold transition-all"
+                        :style="{ background: newTaskAssignee === m.id ? m.color : undefined }"
+                        :class="newTaskAssignee === m.id
+                          ? 'text-white ring-2 ring-offset-1 ring-current'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                        :title="m.name"
+                        @click="newTaskAssignee = newTaskAssignee === m.id ? '' : m.id"
+                      >{{ m.name.slice(0, 2) }}</button>
+                    </div>
                   </div>
                 </div>
 
@@ -7615,6 +7648,21 @@
                                 @click="editingTaskRecurrence = editingTaskRecurrence === r ? '' : r"
                               >{{ r.slice(0, 1).toUpperCase() + r.slice(1) }}</button>
                             </div>
+                            <!-- assignee picker in edit form -->
+                            <div class="flex items-center gap-1 ml-1">
+                              <button
+                                v-for="m in TEAM_MEMBERS"
+                                :key="m.id"
+                                type="button"
+                                class="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold transition-all"
+                                :style="{ background: editingTaskAssignee === m.id ? m.color : undefined }"
+                                :class="editingTaskAssignee === m.id
+                                  ? 'text-white ring-2 ring-offset-1 ring-current'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                                :title="m.name"
+                                @click="editingTaskAssignee = editingTaskAssignee === m.id ? '' : m.id"
+                              >{{ m.name.slice(0, 2) }}</button>
+                            </div>
                             <button type="button" class="text-xs text-sky-600 dark:text-sky-400 hover:underline" @click="saveTaskEdit">Save</button>
                             <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:underline" @click="cancelTaskEdit">Cancel</button>
                           </div>
@@ -7640,6 +7688,18 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                               </svg>
                               {{ task.recurrence }}
+                            </span>
+                            <!-- assignee badge -->
+                            <span
+                              v-if="task.assignee"
+                              class="inline-flex items-center gap-0.5 text-[10px] font-medium mt-0.5"
+                              :style="{ color: TEAM_MEMBERS.find(m => m.id === task.assignee)?.color ?? '#94a3b8' }"
+                              :title="`Assigned to ${TEAM_MEMBERS.find(m => m.id === task.assignee)?.name ?? task.assignee}`"
+                            >
+                              <svg class="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M10 9a3 3 0 100-6 3 3 0 000 6zM3.465 14.493a1.23 1.23 0 00.41 1.412A9.957 9.957 0 0010 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 00-13.074.003z" />
+                              </svg>
+                              {{ TEAM_MEMBERS.find(m => m.id === task.assignee)?.name ?? task.assignee }}
                             </span>
                           </div>
                           <!-- subtask summary / expand toggle -->
@@ -7668,6 +7728,15 @@
                           </button>
                         </template>
                       </div>
+                      <!-- assignee avatar -->
+                      <button
+                        v-if="task.assignee && editingTaskId !== task.id"
+                        type="button"
+                        class="shrink-0 mt-0.5 h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white transition-opacity hover:opacity-80"
+                        :style="{ background: TEAM_MEMBERS.find(m => m.id === task.assignee)?.color ?? '#94a3b8' }"
+                        :title="`Assigned to ${TEAM_MEMBERS.find(m => m.id === task.assignee)?.name ?? task.assignee}`"
+                        @click.stop="startTaskEdit(task)"
+                      >{{ (TEAM_MEMBERS.find(m => m.id === task.assignee)?.name ?? task.assignee).slice(0, 2) }}</button>
                       <button
                         v-if="editingTaskId !== task.id"
                         type="button"
@@ -11126,6 +11195,7 @@ interface CrmTask {
   priority?: 'high' | 'medium' | 'low';
   parent_id?: string;
   recurrence?: 'daily' | 'weekly' | 'monthly';
+  assignee?: string;
 }
 
 interface CrmTaskTemplateItem {
@@ -11482,13 +11552,13 @@ const mockActivities = reactive<CrmActivity[]>([
 ]);
 
 const mockTasks = reactive<CrmTask[]>([
-  { id: 'tk1', record_id: 'r1',  text: 'Send follow-up proposal PDF', done: false, created_at: '2026-06-25T10:00:00Z', due_date: dateOffset(2), priority: 'high' },
-  { id: 'tk2', record_id: 'r1',  text: 'Schedule Q3 kick-off call', done: false, created_at: '2026-06-25T10:01:00Z', priority: 'medium' },
-  { id: 'tk3', record_id: 'r1',  text: 'Update CRM with call notes', done: true,  created_at: '2026-06-24T09:00:00Z' },
-  { id: 'tk4', record_id: 'r8',  text: 'Confirm legal sign-off timeline', done: false, created_at: '2026-06-26T09:00:00Z', due_date: dateOffset(5), priority: 'high' },
-  { id: 'tk5', record_id: 'r8',  text: 'Send revised contract PDF', done: true,  created_at: '2026-06-20T11:00:00Z' },
-  { id: 'tk6', record_id: 'r9',  text: 'Process renewal agreement',  done: false, created_at: '2026-06-24T15:00:00Z', due_date: dateOffset(3), priority: 'medium' },
-  { id: 'tk7', record_id: 'r1',  text: 'Weekly check-in call', done: false, created_at: '2026-06-25T08:00:00Z', due_date: dateOffset(5), recurrence: 'weekly' },
+  { id: 'tk1', record_id: 'r1',  text: 'Send follow-up proposal PDF', done: false, created_at: '2026-06-25T10:00:00Z', due_date: dateOffset(2), priority: 'high', assignee: 'jb' },
+  { id: 'tk2', record_id: 'r1',  text: 'Schedule Q3 kick-off call', done: false, created_at: '2026-06-25T10:01:00Z', priority: 'medium', assignee: 'sp' },
+  { id: 'tk3', record_id: 'r1',  text: 'Update CRM with call notes', done: true,  created_at: '2026-06-24T09:00:00Z', assignee: 'jb' },
+  { id: 'tk4', record_id: 'r8',  text: 'Confirm legal sign-off timeline', done: false, created_at: '2026-06-26T09:00:00Z', due_date: dateOffset(5), priority: 'high', assignee: 'mk' },
+  { id: 'tk5', record_id: 'r8',  text: 'Send revised contract PDF', done: true,  created_at: '2026-06-20T11:00:00Z', assignee: 'jb' },
+  { id: 'tk6', record_id: 'r9',  text: 'Process renewal agreement',  done: false, created_at: '2026-06-24T15:00:00Z', due_date: dateOffset(3), priority: 'medium', assignee: 'al' },
+  { id: 'tk7', record_id: 'r1',  text: 'Weekly check-in call', done: false, created_at: '2026-06-25T08:00:00Z', due_date: dateOffset(5), recurrence: 'weekly', assignee: 'you' },
   // subtasks for tk1
   { id: 'stk1', record_id: 'r1', text: 'Attach updated pricing sheet', done: false, created_at: '2026-06-25T10:02:00Z', parent_id: 'tk1' },
   { id: 'stk2', record_id: 'r1', text: 'Include ROI case study',       done: true,  created_at: '2026-06-25T10:03:00Z', parent_id: 'tk1' },
@@ -11611,6 +11681,7 @@ const galleryFocusIdx = ref(-1);
 const tasksViewGroupBy = ref<'due' | 'priority' | 'record'>('due');
 const tasksViewHideDone = ref(true);
 const tasksViewPriorityFilter = ref<'high' | 'medium' | 'low' | ''>('');
+const tasksViewAssigneeFilter = ref('');
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
 const showRowStripes = ref(false);
 const showDataBars = ref(false);
@@ -12112,6 +12183,14 @@ const upcomingReminders = computed(() =>
     .slice(0, 6),
 );
 const COLOR_LABEL_PALETTE = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'] as const;
+
+const TEAM_MEMBERS = [
+  { id: 'jb',  name: 'JB',    color: '#3b82f6' },
+  { id: 'sp',  name: 'Sarah', color: '#8b5cf6' },
+  { id: 'mk',  name: 'Mike',  color: '#22c55e' },
+  { id: 'al',  name: 'Alex',  color: '#f97316' },
+  { id: 'you', name: 'You',   color: '#6366f1' },
+] as const;
 const colorLabels = ref<Record<string, string>>({});
 const colorLabelFilter = ref<string | null>(null);
 const recordTags = ref<Record<string, string[]>>({});
@@ -12156,6 +12235,8 @@ const expandedTaskIds = ref<Set<string>>(new Set());
 const addingSubtaskOf = ref<string | null>(null);
 const newSubtaskDraft = ref('');
 const showTaskTemplateDropdown = ref(false);
+const newTaskAssignee = ref('');
+const editingTaskAssignee = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
 const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
@@ -14641,6 +14722,7 @@ const allTasksInView = computed(() => {
     .filter((t) => !t.parent_id)  // top-level only in global view
     .filter((t) => !(tasksViewHideDone.value && t.done))
     .filter((t) => !tasksViewPriorityFilter.value || t.priority === tasksViewPriorityFilter.value)
+    .filter((t) => !tasksViewAssigneeFilter.value || t.assignee === tasksViewAssigneeFilter.value)
     .map((t) => ({ task: t, record: mockRecords.find((r) => r.id === t.record_id) as CrmRecord | undefined }));
 });
 
@@ -16060,6 +16142,7 @@ function addTask() {
   const due = newTaskDueDraft.value.trim() || undefined;
   const pri = newTaskPriority.value || undefined;
   const rec = newTaskRecurrence.value || undefined;
+  const asgn = newTaskAssignee.value || undefined;
   mockTasks.push({
     id: 'tk-' + String(mockTasks.length) + '-' + String(Date.now()).slice(-5),
     record_id: openedRecord.value.id,
@@ -16069,11 +16152,13 @@ function addTask() {
     ...(due ? { due_date: due } : {}),
     ...(pri ? { priority: pri } : {}),
     ...(rec ? { recurrence: rec } : {}),
+    ...(asgn ? { assignee: asgn } : {}),
   });
   newTaskDraft.value = '';
   newTaskDueDraft.value = '';
   newTaskPriority.value = '';
   newTaskRecurrence.value = '';
+  newTaskAssignee.value = '';
 }
 
 function addSubtask(parentId: string) {
@@ -16101,6 +16186,7 @@ function startTaskEdit(task: CrmTask) {
   editingTaskDue.value = task.due_date ?? '';
   editingTaskPriority.value = task.priority ?? '';
   editingTaskRecurrence.value = task.recurrence ?? '';
+  editingTaskAssignee.value = task.assignee ?? '';
 }
 
 function saveTaskEdit() {
@@ -16113,6 +16199,7 @@ function saveTaskEdit() {
     task.due_date = editingTaskDue.value.trim() || undefined;
     task.priority = (editingTaskPriority.value as 'high' | 'medium' | 'low') || undefined;
     task.recurrence = (editingTaskRecurrence.value as 'daily' | 'weekly' | 'monthly') || undefined;
+    task.assignee = editingTaskAssignee.value || undefined;
   }
   editingTaskId.value = null;
 }
