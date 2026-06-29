@@ -11947,24 +11947,44 @@
                     </div>
                   </div>
 
-                  <!-- option color editor -->
+                  <!-- option manager (colors + rename + add/remove) -->
                   <div
-                    v-if="editOptionColorsFieldId && selectedType?.fields.find(f => f.id === editOptionColorsFieldId)?.select_options?.length"
+                    v-if="editOptionColorsFieldId && selectedType?.fields.find(f => f.id === editOptionColorsFieldId)"
                     class="mx-5 mb-3 px-3 py-3 rounded-lg border border-violet-200 dark:border-violet-800/50 bg-violet-50 dark:bg-violet-950/20 space-y-2"
                     @click.stop
                   >
-                    <p class="text-[10px] font-semibold uppercase tracking-wide text-violet-500 dark:text-violet-400">Option colors</p>
+                    <p class="text-[10px] font-semibold uppercase tracking-wide text-violet-500 dark:text-violet-400">Options</p>
                     <div
                       v-for="opt in selectedType.fields.find(f => f.id === editOptionColorsFieldId)?.select_options ?? []"
                       :key="opt"
-                      class="flex items-center gap-2"
+                      class="group/sopt flex items-center gap-2"
                     >
+                      <!-- color swatch -->
                       <span
                         class="h-4 w-4 rounded-full border border-white/40 shrink-0"
                         :style="{ background: selectedType.fields.find(f => f.id === editOptionColorsFieldId)?.select_option_colors?.[opt] ?? '#94a3b8' }"
                       />
-                      <span class="text-xs text-slate-700 dark:text-slate-300 w-24 truncate shrink-0">{{ opt }}</span>
-                      <div class="flex items-center gap-1 flex-wrap">
+                      <!-- option name: inline edit or display -->
+                      <template v-if="editingSelectOptionKey === editOptionColorsFieldId + ':' + opt">
+                        <input
+                          :value="editingSelectOptionDraft"
+                          type="text"
+                          class="flex-1 min-w-0 text-xs px-1.5 py-0.5 rounded border border-violet-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none"
+                          @input="editingSelectOptionDraft = ($event.target as HTMLInputElement).value"
+                          @keydown.enter.prevent="commitRenameSelectOption(editOptionColorsFieldId!, opt)"
+                          @keydown.esc.stop="editingSelectOptionKey = null"
+                          @blur="commitRenameSelectOption(editOptionColorsFieldId!, opt)"
+                          @click.stop
+                        />
+                      </template>
+                      <span
+                        v-else
+                        class="text-xs text-slate-700 dark:text-slate-300 w-20 truncate shrink-0 cursor-text hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+                        title="Double-click to rename"
+                        @dblclick.stop="editingSelectOptionKey = editOptionColorsFieldId + ':' + opt; editingSelectOptionDraft = opt"
+                      >{{ opt }}</span>
+                      <!-- color swatches -->
+                      <div class="flex items-center gap-1 flex-wrap flex-1">
                         <button
                           v-for="hex in OPTION_COLORS"
                           :key="hex"
@@ -11984,8 +12004,53 @@
                           <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                         </button>
                       </div>
+                      <!-- rename + delete buttons — hover reveal -->
+                      <button
+                        type="button"
+                        class="invisible group-hover/sopt:visible shrink-0 rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400 transition-colors"
+                        title="Rename option"
+                        @click.stop="editingSelectOptionKey = editOptionColorsFieldId + ':' + opt; editingSelectOptionDraft = opt"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="invisible group-hover/sopt:visible shrink-0 rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-colors"
+                        title="Remove option"
+                        @click.stop="removeSelectOption(editOptionColorsFieldId!, opt)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
                     </div>
-                    <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="editOptionColorsFieldId = null">Done</button>
+                    <!-- add new option row -->
+                    <div v-if="newSelectOptionFieldId === editOptionColorsFieldId" class="flex items-center gap-1.5 mt-1">
+                      <input
+                        :value="newSelectOptionDraft"
+                        type="text"
+                        placeholder="New option…"
+                        class="flex-1 min-w-0 text-xs px-2 py-1 rounded-lg border border-violet-300 dark:border-violet-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 outline-none focus:ring-1 focus:ring-violet-400/40"
+                        @input="newSelectOptionDraft = ($event.target as HTMLInputElement).value"
+                        @keydown.enter.prevent="addSelectOption(editOptionColorsFieldId!)"
+                        @keydown.esc.stop="newSelectOptionFieldId = null; newSelectOptionDraft = ''"
+                        @click.stop
+                      />
+                      <button type="button" class="shrink-0 h-6 px-2 text-xs rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-medium transition-colors" @click.stop="addSelectOption(editOptionColorsFieldId!)">Add</button>
+                      <button type="button" class="shrink-0 h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click.stop="newSelectOptionFieldId = null; newSelectOptionDraft = ''">
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                    <div class="flex items-center gap-3 pt-0.5">
+                      <button
+                        v-if="newSelectOptionFieldId !== editOptionColorsFieldId"
+                        type="button"
+                        class="flex items-center gap-1 text-xs text-violet-500 dark:text-violet-400 hover:text-violet-600 dark:hover:text-violet-300 transition-colors"
+                        @click.stop="newSelectOptionFieldId = editOptionColorsFieldId; newSelectOptionDraft = ''"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+                        Add option
+                      </button>
+                      <button type="button" class="ml-auto text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="editOptionColorsFieldId = null; newSelectOptionFieldId = null; newSelectOptionDraft = ''; editingSelectOptionKey = null">Done</button>
+                    </div>
                   </div>
 
                   <!-- add field form -->
@@ -14210,6 +14275,10 @@ const fieldLabelInputEl = ref<HTMLInputElement | null>(null);
 const showTypeIconColorPicker = ref(false);
 const visibilityRuleFieldId = ref<string | null>(null);
 const editOptionColorsFieldId = ref<string | null>(null);
+const editingSelectOptionKey = ref<string | null>(null); // `${fieldId}:${optValue}`
+const editingSelectOptionDraft = ref('');
+const newSelectOptionFieldId = ref<string | null>(null);
+const newSelectOptionDraft = ref('');
 const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string; formula_expression: string; formula_format: string; help_text: string; rollup_from_type: string; rollup_field_key: string; rollup_function: 'count' | 'sum' | 'avg' | 'min' | 'max' }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '', rollup_from_type: '', rollup_field_key: '', rollup_function: 'count' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
 const formulaLivePreview = computed((): string => {
@@ -18910,6 +18979,60 @@ function removeFieldFromType(typeKey: string, fieldId: string) {
   const idx = type.fields.findIndex((f) => f.id === fieldId);
   if (idx !== -1) type.fields.splice(idx, 1);
   showToast('Field removed');
+}
+
+function addSelectOption(fieldId: string) {
+  const val = newSelectOptionDraft.value.trim();
+  if (!val) return;
+  for (const type of schema) {
+    const field = type.fields.find((f) => f.id === fieldId);
+    if (!field) continue;
+    if ((field.select_options ?? []).includes(val)) { showToast('Option already exists'); return; }
+    field.select_options = [...(field.select_options ?? []), val];
+    newSelectOptionDraft.value = '';
+    newSelectOptionFieldId.value = null;
+    return;
+  }
+}
+
+function removeSelectOption(fieldId: string, val: string) {
+  for (const type of schema) {
+    const field = type.fields.find((f) => f.id === fieldId);
+    if (!field) continue;
+    field.select_options = (field.select_options ?? []).filter((o) => o !== val);
+    if (field.select_option_colors) {
+      const c = { ...field.select_option_colors };
+      delete c[val];
+      field.select_option_colors = c;
+    }
+    for (const rec of mockRecords) {
+      if (rec.field_values[field.key] === val) rec.field_values[field.key] = null;
+    }
+    showToast(`Option "${val}" removed`);
+    return;
+  }
+}
+
+function commitRenameSelectOption(fieldId: string, oldVal: string) {
+  const newVal = editingSelectOptionDraft.value.trim();
+  editingSelectOptionKey.value = null;
+  if (!newVal || newVal === oldVal) return;
+  for (const type of schema) {
+    const field = type.fields.find((f) => f.id === fieldId);
+    if (!field) continue;
+    if ((field.select_options ?? []).includes(newVal)) { showToast('Option already exists'); return; }
+    field.select_options = (field.select_options ?? []).map((o) => (o === oldVal ? newVal : o));
+    if (field.select_option_colors?.[oldVal]) {
+      field.select_option_colors = { ...field.select_option_colors, [newVal]: field.select_option_colors[oldVal] };
+      const c = { ...field.select_option_colors };
+      delete c[oldVal];
+      field.select_option_colors = c;
+    }
+    for (const rec of mockRecords) {
+      if (rec.field_values[field.key] === oldVal) rec.field_values[field.key] = newVal;
+    }
+    return;
+  }
 }
 
 function addNewRecordType() {
