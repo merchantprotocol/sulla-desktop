@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4669,6 +4669,63 @@
                       </svg>
                     </button>
                   </div>
+                  <!-- date field picker — shown when 2+ date fields exist -->
+                  <div v-if="timelineViewData.dateFields.length > 1" class="relative ml-1" @click.stop>
+                    <button
+                      type="button"
+                      class="flex items-center gap-1 h-5 px-1.5 rounded text-[10px] border transition-colors"
+                      :class="timelineDateOverrides[selectedTypeKey]?.startKey || timelineDateOverrides[selectedTypeKey]?.endKey
+                        ? 'border-sky-300 dark:border-sky-700 text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
+                      title="Choose which date fields to use as bar start and end"
+                      @click="showTimelineFieldPicker = !showTimelineFieldPicker"
+                    >
+                      <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                      Fields
+                    </button>
+                    <div
+                      v-if="showTimelineFieldPicker"
+                      class="absolute top-full mt-1 left-0 z-30 w-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-2"
+                    >
+                      <p class="px-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Start date</p>
+                      <button
+                        type="button"
+                        class="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                        :class="!timelineDateOverrides[selectedTypeKey]?.startKey ? 'font-semibold text-sky-600 dark:text-sky-400' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                        @click="timelineDateOverrides = { ...timelineDateOverrides, [selectedTypeKey]: { ...(timelineDateOverrides[selectedTypeKey] ?? {}), startKey: undefined } }; showTimelineFieldPicker = false"
+                      >
+                        <svg v-if="!timelineDateOverrides[selectedTypeKey]?.startKey" class="h-3 w-3 text-sky-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        <span :class="!timelineDateOverrides[selectedTypeKey]?.startKey ? '' : 'ml-5'">Created at (default)</span>
+                      </button>
+                      <button
+                        v-for="f in timelineViewData.dateFields"
+                        :key="'s:' + f.key"
+                        type="button"
+                        class="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                        :class="timelineDateOverrides[selectedTypeKey]?.startKey === f.key ? 'font-semibold text-sky-600 dark:text-sky-400' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                        @click="timelineDateOverrides = { ...timelineDateOverrides, [selectedTypeKey]: { ...(timelineDateOverrides[selectedTypeKey] ?? {}), startKey: f.key } }; showTimelineFieldPicker = false"
+                      >
+                        <svg v-if="timelineDateOverrides[selectedTypeKey]?.startKey === f.key" class="h-3 w-3 text-sky-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        <span :class="timelineDateOverrides[selectedTypeKey]?.startKey === f.key ? '' : 'ml-5'">{{ f.label }}</span>
+                      </button>
+                      <div class="my-1.5 border-t border-slate-100 dark:border-slate-800" />
+                      <p class="px-3 pb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">End date</p>
+                      <button
+                        v-for="f in timelineViewData.dateFields"
+                        :key="'e:' + f.key"
+                        type="button"
+                        class="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                        :class="(timelineDateOverrides[selectedTypeKey]?.endKey ?? timelineViewData.endDateField?.key) === f.key ? 'font-semibold text-sky-600 dark:text-sky-400' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                        @click="timelineDateOverrides = { ...timelineDateOverrides, [selectedTypeKey]: { ...(timelineDateOverrides[selectedTypeKey] ?? {}), endKey: f.key } }; showTimelineFieldPicker = false"
+                      >
+                        <svg v-if="(timelineDateOverrides[selectedTypeKey]?.endKey ?? timelineViewData.endDateField?.key) === f.key" class="h-3 w-3 text-sky-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        <span :class="(timelineDateOverrides[selectedTypeKey]?.endKey ?? timelineViewData.endDateField?.key) === f.key ? '' : 'ml-5'">{{ f.label }}</span>
+                      </button>
+                      <div class="px-3 pt-2 border-t border-slate-100 dark:border-slate-800 mt-1">
+                        <button type="button" class="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="(() => { const o = { ...timelineDateOverrides }; delete o[selectedTypeKey]; timelineDateOverrides = o; showTimelineFieldPicker = false })()">Reset to defaults</button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <div class="relative flex-1 h-9 overflow-hidden select-none">
                   <span
@@ -4685,7 +4742,7 @@
                 </div>
                 <div class="shrink-0 w-36 border-l border-slate-200 dark:border-slate-700 px-3 py-2">
                   <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
-                    {{ timelineViewData.endDateField.label }}
+                    {{ timelineViewData.endDateField?.label ?? 'End date' }}
                   </p>
                 </div>
               </div>
@@ -12950,6 +13007,8 @@ const funnelData = computed((): Array<{
 });
 
 const timelinePadLevel = ref(0); // -2 to +2 zoom levels; 0 = default
+const showTimelineFieldPicker = ref(false);
+const timelineDateOverrides = ref<Record<string, { startKey?: string; endKey?: string }>>({});
 
 const timelineViewData = computed(() => {
   if (viewMode.value !== 'timeline') return null;
@@ -12959,11 +13018,18 @@ const timelineViewData = computed(() => {
   const titleField = rt.fields.find((f) => f.is_title);
   const dateFields = rt.fields.filter((f) => f.data_type === 'date');
   const END_KEYS = ['due_date', 'end_date', 'close_date', 'expected_close', 'closed_at', 'deadline'];
-  const endDateField = dateFields.find((f) => END_KEYS.includes(f.key)) ?? dateFields[0] ?? null;
+  const overrides = timelineDateOverrides.value[rt.key] ?? {};
+  const startDateField = overrides.startKey
+    ? dateFields.find((f) => f.key === overrides.startKey) ?? null
+    : null;
+  const endDateField = overrides.endKey
+    ? (dateFields.find((f) => f.key === overrides.endKey) ?? dateFields.find((f) => END_KEYS.includes(f.key)) ?? dateFields[0] ?? null)
+    : (dateFields.find((f) => END_KEYS.includes(f.key)) ?? dateFields[0] ?? null);
 
   const allDates: string[] = [];
   for (const r of recs) {
-    if (r.created_at) allDates.push(r.created_at.slice(0, 10));
+    const rawStart = startDateField ? String(r.field_values[startDateField.key] ?? '') : (r.created_at ?? '');
+    if (rawStart) allDates.push(rawStart.slice(0, 10));
     if (endDateField) {
       const v = r.field_values[endDateField.key];
       if (v && typeof v === 'string' && v.length >= 10) allDates.push(v.slice(0, 10));
@@ -13000,7 +13066,8 @@ const timelineViewData = computed(() => {
   }
 
   const rows = recs.map((r) => {
-    const startIso = (r.created_at ?? DUE_TODAY_STR).slice(0, 10);
+    const rawStart = startDateField ? String(r.field_values[startDateField.key] ?? '') : (r.created_at ?? DUE_TODAY_STR);
+    const startIso = (rawStart.length >= 10 ? rawStart : DUE_TODAY_STR).slice(0, 10);
     const rawEnd = endDateField ? String(r.field_values[endDateField.key] ?? '') : '';
     const hasEnd = rawEnd.length >= 10;
     const endIso = hasEnd ? rawEnd.slice(0, 10) : null;
@@ -13036,7 +13103,9 @@ const timelineViewData = computed(() => {
     rows,
     rangeStart: paddedStart.toISOString().slice(0, 10),
     rangeEnd: paddedEnd.toISOString().slice(0, 10),
+    startDateField,
     endDateField,
+    dateFields,
     totalDays,
     ticks,
     todayPct,
