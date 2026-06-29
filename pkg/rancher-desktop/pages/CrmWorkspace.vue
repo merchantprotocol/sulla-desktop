@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; focusGroupSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -6637,14 +6637,41 @@
 
             <div v-for="group in focusGroups" :key="group.id" class="space-y-2">
               <!-- group header -->
-              <div class="flex items-center gap-2.5">
+              <div class="group/fghdr flex items-center gap-2.5">
                 <span
                   class="shrink-0 h-2 w-2 rounded-full"
                   :class="group.id === 'overdue' ? 'bg-rose-500' : group.id === 'stale' ? 'bg-amber-500' : group.id === 'no-activity' ? 'bg-sky-500' : 'bg-slate-400 dark:bg-slate-500'"
                 />
                 <span class="text-sm font-semibold text-slate-700 dark:text-slate-300">{{ group.label }}</span>
                 <span class="text-xs text-slate-400 dark:text-slate-500">{{ group.description }}</span>
-                <span class="ml-auto text-xs font-semibold tabular-nums text-slate-400 dark:text-slate-500">{{ group.records.length }}</span>
+                <!-- snooze all group -->
+                <div class="relative ml-auto flex items-center gap-1.5" @click.stop>
+                  <button
+                    type="button"
+                    class="flex items-center gap-1 h-5 px-1.5 rounded-md text-[10px] font-medium opacity-0 group-hover/fghdr:opacity-100 transition-all"
+                    :class="focusGroupSnoozeId === group.id
+                      ? 'opacity-100 bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400'
+                      : 'text-slate-400 dark:text-slate-500 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
+                    :title="`Snooze all ${group.records.length} records in this group`"
+                    @click="focusGroupSnoozeId = focusGroupSnoozeId === group.id ? null : group.id"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2" />
+                    </svg>
+                    Snooze all
+                  </button>
+                  <div
+                    v-if="focusGroupSnoozeId === group.id"
+                    class="absolute top-full right-0 mt-1 z-40 w-32 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl py-1 text-xs"
+                  >
+                    <p class="px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Snooze all for</p>
+                    <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="snoozeAllInGroup(group.id, 1)">1 day</button>
+                    <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="snoozeAllInGroup(group.id, 3)">3 days</button>
+                    <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="snoozeAllInGroup(group.id, 7)">1 week</button>
+                  </div>
+                </div>
+                <span class="text-xs font-semibold tabular-nums text-slate-400 dark:text-slate-500">{{ group.records.length }}</span>
               </div>
 
               <!-- record cards -->
@@ -15319,6 +15346,7 @@ const watchedIds = ref<Set<string>>(new Set());
 const snoozedUntil = ref<Record<string, string>>({});
 const snoozeMenuId = ref<string | null>(null);
 const focusSnoozeId = ref<string | null>(null);
+const focusGroupSnoozeId = ref<string | null>(null);
 const showFocusSettings = ref(false);
 const focusStaleThreshold = ref(21);
 const focusInactiveThreshold = ref(30);
@@ -16241,6 +16269,17 @@ function dateOffset(days: number): string {
   const d = new Date(DUE_TODAY_STR);
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+function snoozeAllInGroup(groupId: string, days: number) {
+  const group = focusGroups.value.find((g) => g.id === groupId);
+  if (!group) return;
+  const next = { ...snoozedUntil.value };
+  for (const item of group.records) next[item.record.id] = dateOffset(days);
+  snoozedUntil.value = next;
+  focusGroupSnoozeId.value = null;
+  const label = days === 1 ? 'tomorrow' : days === 3 ? '3 days' : '1 week';
+  showToast(`Snoozed ${group.records.length} record${group.records.length === 1 ? '' : 's'} until ${label}`);
 }
 
 const dueDateField = computed(() =>
