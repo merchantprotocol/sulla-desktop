@@ -7320,6 +7320,34 @@
                       </span>
                     </div>
                   </template>
+                  <!-- number field quick stepper in view mode -->
+                  <template v-else-if="!editingRecord && field.data_type === 'number' && !lockedRecordIds.has(openedRecord.id)">
+                    <div class="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        class="h-6 w-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        title="Subtract 1"
+                        @click.stop="(() => { const cur = Number(openedRecord.field_values[field.key] ?? 0); const next = cur - 1; openedRecord.field_values[field.key] = next; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, next); })()"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4" />
+                        </svg>
+                      </button>
+                      <span class="flex-1 text-sm tabular-nums font-medium text-center text-slate-700 dark:text-slate-200">
+                        {{ openedRecord.field_values[field.key] != null ? (field.format === 'currency' ? '$' + Number(openedRecord.field_values[field.key]).toLocaleString() : field.format === 'percent' ? Number(openedRecord.field_values[field.key]) + '%' : openedRecord.field_values[field.key]) : '—' }}
+                      </span>
+                      <button
+                        type="button"
+                        class="h-6 w-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        title="Add 1"
+                        @click.stop="(() => { const cur = Number(openedRecord.field_values[field.key] ?? 0); const next = cur + 1; openedRecord.field_values[field.key] = next; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, next); })()"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                        </svg>
+                      </button>
+                    </div>
+                  </template>
                   <CrmFieldInput
                     v-else
                     :data-type="field.data_type"
