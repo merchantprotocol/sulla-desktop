@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; bulkSnoozeDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; showTimelineGroupPicker = false; showCalColorPicker = false; focusSnoozeId = null; focusGroupSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; bulkSnoozeDropdown = false; bulkReminderDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; showTimelineGroupPicker = false; showCalColorPicker = false; focusSnoozeId = null; focusGroupSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1043,6 +1043,36 @@
                 <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSnooze(1)">1 day</button>
                 <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSnooze(3)">3 days</button>
                 <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSnooze(7)">1 week</button>
+              </div>
+            </div>
+            <!-- bulk set reminder -->
+            <div class="relative" @click.stop>
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
+                :class="bulkReminderDropdown
+                  ? 'border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'"
+                :title="`Set reminder for ${selectedIds.size} selected record${selectedIds.size === 1 ? '' : 's'}`"
+                @click="bulkReminderDropdown = !bulkReminderDropdown"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                Remind
+              </button>
+              <div
+                v-if="bulkReminderDropdown"
+                class="absolute top-full mt-1 left-0 z-50 w-36 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl py-1 text-xs"
+              >
+                <p class="px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Remind in</p>
+                <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-amber-50 dark:hover:bg-amber-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSetReminder(1)">Tomorrow</button>
+                <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-amber-50 dark:hover:bg-amber-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSetReminder(3)">3 days</button>
+                <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-amber-50 dark:hover:bg-amber-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSetReminder(7)">1 week</button>
+                <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-amber-50 dark:hover:bg-amber-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="bulkSetReminder(14)">2 weeks</button>
+                <div class="border-t border-slate-100 dark:border-slate-800 mt-1 pt-1">
+                  <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-400 dark:text-rose-500 transition-colors" @click="bulkSetReminder(null)">Clear reminder</button>
+                </div>
               </div>
             </div>
             <button
@@ -15856,6 +15886,7 @@ const contextMenuPos = ref({ x: 0, y: 0 });
 const cellContextMenu = ref<{ record: CrmRecord; col: CrmField; x: number; y: number } | null>(null);
 const bulkStageDropdown = ref(false);
 const bulkSnoozeDropdown = ref(false);
+const bulkReminderDropdown = ref(false);
 const collapsedColumns = ref<Set<string>>(new Set());
 const showFilterDropdown = ref(false);
 const filterPickerField = ref<string | null>(null);
@@ -17225,6 +17256,24 @@ function bulkSnooze(days: number) {
   bulkSnoozeDropdown.value = false;
   const label = days === 1 ? 'tomorrow' : days === 3 ? '3 days' : '1 week';
   showToast(`Snoozed ${selectedIds.value.size} record${selectedIds.value.size === 1 ? '' : 's'} until ${label}`);
+  clearSelection();
+}
+
+function bulkSetReminder(days: number | null) {
+  const next = { ...reminders.value };
+  if (days === null) {
+    for (const id of selectedIds.value) delete next[id];
+    reminders.value = next;
+    bulkReminderDropdown.value = false;
+    showToast(`Reminder cleared for ${selectedIds.value.size} record${selectedIds.value.size === 1 ? '' : 's'}`);
+  } else {
+    const date = dateOffset(days);
+    for (const id of selectedIds.value) next[id] = { date, note: '' };
+    reminders.value = next;
+    bulkReminderDropdown.value = false;
+    const label = days === 1 ? 'tomorrow' : days === 3 ? 'in 3 days' : days === 7 ? 'in 1 week' : 'in 2 weeks';
+    showToast(`Reminder set ${label} for ${selectedIds.value.size} record${selectedIds.value.size === 1 ? '' : 's'}`);
+  }
   clearSelection();
 }
 
