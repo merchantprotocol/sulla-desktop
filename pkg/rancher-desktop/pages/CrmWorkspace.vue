@@ -4603,6 +4603,42 @@
               <span v-else-if="(daysInStage(openedRecord) ?? 0) > 7" class="text-[10px] text-amber-400 dark:text-amber-500">· Aging</span>
             </div>
 
+            <!-- stage journey timeline -->
+            <div
+              v-if="stageJourney.length >= 2"
+              class="px-5 py-3 border-b border-slate-100 dark:border-slate-800/80"
+            >
+              <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2.5">Stage history</p>
+              <div class="flex items-start overflow-x-auto no-scrollbar pb-0.5">
+                <template v-for="(step, idx) in stageJourney" :key="step.stage + idx">
+                  <div
+                    v-if="idx > 0"
+                    class="shrink-0 self-start mt-2.5 h-px w-5"
+                    :class="step.isCurrent ? 'bg-sky-300 dark:bg-sky-700' : 'bg-slate-200 dark:bg-slate-700'"
+                  />
+                  <div class="shrink-0 flex flex-col items-center gap-0.5 min-w-[68px] max-w-[84px]">
+                    <div
+                      class="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold"
+                      :class="step.isCurrent
+                        ? 'bg-sky-100 dark:bg-sky-900/50 text-sky-600 dark:text-sky-400 ring-2 ring-sky-300/60 dark:ring-sky-700/60'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
+                    >{{ idx + 1 }}</div>
+                    <p
+                      class="text-[10px] font-medium text-center leading-tight px-1 w-full truncate"
+                      :class="step.isCurrent ? 'text-sky-600 dark:text-sky-400' : 'text-slate-500 dark:text-slate-400'"
+                      :title="step.stage"
+                    >{{ step.stage }}</p>
+                    <p class="text-[9px] text-slate-300 dark:text-slate-600 tabular-nums">{{ step.enteredAt }}</p>
+                    <p
+                      class="text-[9px] tabular-nums"
+                      :class="step.isCurrent ? 'text-sky-400 dark:text-sky-500' : 'text-slate-300 dark:text-slate-600'"
+                      :title="step.isCurrent ? `Currently in this stage (${step.daysSpent}d)` : `Spent ${step.daysSpent} days in this stage`"
+                    >{{ step.daysSpent }}d{{ step.isCurrent ? ' so far' : '' }}</p>
+                  </div>
+                </template>
+              </div>
+            </div>
+
             <!-- record completeness bar -->
             <div
               v-if="!editingRecord && recordCompleteness.total > 0"
@@ -9680,6 +9716,46 @@ const pipelineVelocity = computed((): Array<{ stage: string; avgDays: number; co
     return { stage, avgDays: avg, count: recs.length, maxDays: Math.max(...days) };
   }).filter((r): r is NonNullable<typeof r> => r !== null);
   return rows.length > 0 ? rows : null;
+});
+
+const stageJourney = computed((): Array<{ stage: string; enteredAt: string; daysSpent: number; isCurrent: boolean }> => {
+  const rec = openedRecord.value;
+  if (!rec || !kanbanField.value) return [];
+  const field = kanbanField.value;
+  const currentStage = String(rec.field_values[field.key] ?? '');
+  if (!currentStage || (field.select_options ?? []).length < 2) return [];
+  const prefix = `${field.label}: `;
+  const transitions = mockActivities
+    .filter((a) => a.record_id === rec.id && a.type === 'change' && a.content.startsWith(prefix) && a.content.includes(' → '))
+    .map((a) => {
+      const rest = a.content.slice(prefix.length);
+      const arrowIdx = rest.indexOf(' → ');
+      return {
+        from: rest.slice(0, arrowIdx).trim(),
+        to: rest.slice(arrowIdx + 3).trim().split(' · ')[0].trim(),
+        at: a.created_at,
+      };
+    })
+    .sort((a, b) => a.at.localeCompare(b.at));
+  if (!transitions.length) return [];
+  const history: Array<{ stage: string; enteredAt: string }> = [];
+  const firstFrom = transitions[0].from;
+  if (firstFrom && firstFrom !== '—') history.push({ stage: firstFrom, enteredAt: rec.created_at });
+  for (const t of transitions) {
+    if (t.to && t.to !== '—') history.push({ stage: t.to, enteredAt: t.at });
+  }
+  if (history.length < 2) return [];
+  const nowMs = new Date(DUE_TODAY_STR).getTime();
+  return history.map((h, i) => {
+    const nextEntry = history[i + 1];
+    const leftMs = nextEntry ? new Date(nextEntry.enteredAt).getTime() : nowMs;
+    return {
+      stage: h.stage,
+      enteredAt: h.enteredAt.slice(0, 10),
+      daysSpent: Math.max(0, Math.round((leftMs - new Date(h.enteredAt).getTime()) / 86_400_000)),
+      isCurrent: i === history.length - 1,
+    };
+  });
 });
 
 const focusGroups = computed((): Array<{
