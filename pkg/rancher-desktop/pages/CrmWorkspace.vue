@@ -4194,6 +4194,13 @@
                   </div>
                 </div>
               </div>
+              <!-- per-group add record -->
+              <button
+                v-if="!collapsedGalleryGroups.has(group.key)"
+                type="button"
+                class="mt-3 w-full text-left rounded-xl border border-dashed border-slate-200 dark:border-slate-800 px-4 py-2.5 text-xs text-slate-400 dark:text-slate-600 hover:border-slate-300 dark:hover:border-slate-600 hover:text-slate-500 dark:hover:text-slate-500 transition-colors"
+                @click="openNewRecord(group.key === '__ungrouped__' ? undefined : group.key)"
+              >+ Add record</button>
             </section>
             <!-- ghost add card below all groups -->
             <button type="button" class="w-full rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center h-16 text-slate-300 dark:text-slate-700 hover:border-sky-300 dark:hover:border-sky-700 hover:text-sky-400 dark:hover:text-sky-500 transition-all" title="Add new record" @click="openNewRecord()">
