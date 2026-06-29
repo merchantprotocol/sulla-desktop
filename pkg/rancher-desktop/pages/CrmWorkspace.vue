@@ -7102,19 +7102,36 @@
                       @click="addTask"
                     >Add</button>
                   </div>
-                  <div class="flex items-center gap-2 pl-0.5">
-                    <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">Due date</span>
-                    <input
-                      v-model="newTaskDueDraft"
-                      type="date"
-                      class="text-xs px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400"
-                    />
-                    <button
-                      v-if="newTaskDueDraft"
-                      type="button"
-                      class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-                      @click="newTaskDueDraft = ''"
-                    >Clear</button>
+                  <div class="flex items-center gap-3 pl-0.5 flex-wrap">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">Due date</span>
+                      <input
+                        v-model="newTaskDueDraft"
+                        type="date"
+                        class="text-xs px-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400"
+                      />
+                      <button
+                        v-if="newTaskDueDraft"
+                        type="button"
+                        class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        @click="newTaskDueDraft = ''"
+                      >Clear</button>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">Priority</span>
+                      <button
+                        v-for="p in (['high', 'medium', 'low'] as const)"
+                        :key="p"
+                        type="button"
+                        class="h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors"
+                        :class="newTaskPriority === p
+                          ? p === 'high'   ? 'bg-rose-500 text-white'
+                          : p === 'medium' ? 'bg-amber-400 text-white'
+                          :                  'bg-slate-400 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                        @click="newTaskPriority = newTaskPriority === p ? '' : p"
+                      >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
+                    </div>
                   </div>
                 </div>
 
@@ -7125,6 +7142,17 @@
                     :key="task.id"
                     class="group flex items-start gap-2.5 rounded-lg px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
                   >
+                    <!-- priority dot — click to cycle high→medium→low→none -->
+                    <button
+                      type="button"
+                      class="mt-1 flex-shrink-0 h-2.5 w-2.5 rounded-sm transition-all opacity-0 group-hover:opacity-100"
+                      :class="task.priority === 'high'   ? 'opacity-100 bg-rose-500'
+                            : task.priority === 'medium' ? 'opacity-100 bg-amber-400'
+                            : task.priority === 'low'    ? 'opacity-100 bg-slate-400 dark:bg-slate-500'
+                            : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'"
+                      :title="task.priority ? `Priority: ${task.priority} — click to change` : 'Set priority'"
+                      @click.stop="(() => { const t = mockTasks.find(x => x.id === task.id); if (!t) return; t.priority = t.priority === 'high' ? 'medium' : t.priority === 'medium' ? 'low' : t.priority === 'low' ? undefined : 'high'; })()"
+                    />
                     <button
                       type="button"
                       class="mt-0.5 flex-shrink-0 h-4 w-4 rounded border-2 transition-colors flex items-center justify-center"
@@ -7148,13 +7176,27 @@
                           @keydown.enter.prevent="saveTaskEdit"
                           @keydown.esc.prevent="cancelTaskEdit"
                         />
-                        <div class="flex items-center gap-2 mt-1">
+                        <div class="flex items-center gap-3 mt-1 flex-wrap">
                           <input
                             :value="editingTaskDue"
                             type="date"
                             class="text-xs px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50"
                             @input="editingTaskDue = ($event.target as HTMLInputElement).value"
                           />
+                          <div class="flex items-center gap-1">
+                            <button
+                              v-for="p in (['high', 'medium', 'low'] as const)"
+                              :key="p"
+                              type="button"
+                              class="h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors"
+                              :class="editingTaskPriority === p
+                                ? p === 'high'   ? 'bg-rose-500 text-white'
+                                : p === 'medium' ? 'bg-amber-400 text-white'
+                                :                  'bg-slate-400 text-white'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                              @click="editingTaskPriority = editingTaskPriority === p ? '' : p"
+                            >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
+                          </div>
                           <button type="button" class="text-xs text-sky-600 dark:text-sky-400 hover:underline" @click="saveTaskEdit">Save</button>
                           <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:underline" @click="cancelTaskEdit">Cancel</button>
                         </div>
@@ -10477,6 +10519,7 @@ interface CrmTask {
   done: boolean;
   created_at: string;
   due_date?: string;
+  priority?: 'high' | 'medium' | 'low';
 }
 
 type AutomationActionType = 'set_field' | 'create_task' | 'notify';
@@ -10819,12 +10862,12 @@ const mockActivities = reactive<CrmActivity[]>([
 ]);
 
 const mockTasks = reactive<CrmTask[]>([
-  { id: 'tk1', record_id: 'r1',  text: 'Send follow-up proposal PDF', done: false, created_at: '2026-06-25T10:00:00Z', due_date: dateOffset(2) },
-  { id: 'tk2', record_id: 'r1',  text: 'Schedule Q3 kick-off call', done: false, created_at: '2026-06-25T10:01:00Z' },
+  { id: 'tk1', record_id: 'r1',  text: 'Send follow-up proposal PDF', done: false, created_at: '2026-06-25T10:00:00Z', due_date: dateOffset(2), priority: 'high' },
+  { id: 'tk2', record_id: 'r1',  text: 'Schedule Q3 kick-off call', done: false, created_at: '2026-06-25T10:01:00Z', priority: 'medium' },
   { id: 'tk3', record_id: 'r1',  text: 'Update CRM with call notes', done: true,  created_at: '2026-06-24T09:00:00Z' },
-  { id: 'tk4', record_id: 'r8',  text: 'Confirm legal sign-off timeline', done: false, created_at: '2026-06-26T09:00:00Z', due_date: dateOffset(5) },
+  { id: 'tk4', record_id: 'r8',  text: 'Confirm legal sign-off timeline', done: false, created_at: '2026-06-26T09:00:00Z', due_date: dateOffset(5), priority: 'high' },
   { id: 'tk5', record_id: 'r8',  text: 'Send revised contract PDF', done: true,  created_at: '2026-06-20T11:00:00Z' },
-  { id: 'tk6', record_id: 'r9',  text: 'Process renewal agreement',  done: false, created_at: '2026-06-24T15:00:00Z', due_date: dateOffset(3) },
+  { id: 'tk6', record_id: 'r9',  text: 'Process renewal agreement',  done: false, created_at: '2026-06-24T15:00:00Z', due_date: dateOffset(3), priority: 'medium' },
 ]);
 
 const mockAttachments = reactive<CrmAttachment[]>([
@@ -11424,9 +11467,11 @@ const createdPreset = ref<'today' | 'week' | 'month' | null>(null);
 const detailPanelExpanded = ref<false | 'wide' | 'full'>(false);
 const newTaskDraft = ref('');
 const newTaskDueDraft = ref('');
+const newTaskPriority = ref<'high' | 'medium' | 'low' | ''>('');
 const editingTaskId = ref<string | null>(null);
 const editingTaskText = ref('');
 const editingTaskDue = ref('');
+const editingTaskPriority = ref<'high' | 'medium' | 'low' | ''>('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
 const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
@@ -15250,6 +15295,7 @@ function addTask() {
   const text = newTaskDraft.value.trim();
   if (!text || !openedRecord.value) return;
   const due = newTaskDueDraft.value.trim() || undefined;
+  const pri = newTaskPriority.value || undefined;
   mockTasks.push({
     id: 'tk-' + String(mockTasks.length) + '-' + String(Date.now()).slice(-5),
     record_id: openedRecord.value.id,
@@ -15257,15 +15303,18 @@ function addTask() {
     done: false,
     created_at: new Date().toISOString(),
     ...(due ? { due_date: due } : {}),
+    ...(pri ? { priority: pri } : {}),
   });
   newTaskDraft.value = '';
   newTaskDueDraft.value = '';
+  newTaskPriority.value = '';
 }
 
 function startTaskEdit(task: CrmTask) {
   editingTaskId.value = task.id;
   editingTaskText.value = task.text;
   editingTaskDue.value = task.due_date ?? '';
+  editingTaskPriority.value = task.priority ?? '';
 }
 
 function saveTaskEdit() {
@@ -15276,6 +15325,7 @@ function saveTaskEdit() {
     const text = editingTaskText.value.trim();
     if (text) task.text = text;
     task.due_date = editingTaskDue.value.trim() || undefined;
+    task.priority = (editingTaskPriority.value as 'high' | 'medium' | 'low') || undefined;
   }
   editingTaskId.value = null;
 }
