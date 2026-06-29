@@ -1199,19 +1199,21 @@
               </div>
             </div>
 
-            <!-- expand/collapse all groups — only shown when grouping is active in table view -->
+            <!-- expand/collapse all groups — shown when grouping is active in table or gallery view -->
             <button
-              v-if="groupByField && viewMode === 'table'"
+              v-if="groupByField && (viewMode === 'table' || (viewMode === 'gallery' && groupedGalleryGroups))"
               type="button"
               class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors"
-              :title="collapsedGroups.size ? 'Expand all groups' : 'Collapse all groups'"
-              @click="collapsedGroups = collapsedGroups.size ? new Set() : new Set((groupedTableRows ?? []).filter(r => r.kind === 'header').map(r => r.key))"
+              :title="(viewMode === 'gallery' ? collapsedGalleryGroups.size : collapsedGroups.size) ? 'Expand all groups' : 'Collapse all groups'"
+              @click="viewMode === 'gallery'
+                ? (collapsedGalleryGroups = collapsedGalleryGroups.size ? new Set() : new Set((groupedGalleryGroups ?? []).map(g => g.key)))
+                : (collapsedGroups = collapsedGroups.size ? new Set() : new Set((groupedTableRows ?? []).filter(r => r.kind === 'header').map(r => r.key)))"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                <path v-if="collapsedGroups.size" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                <path v-if="(viewMode === 'gallery' ? collapsedGalleryGroups.size : collapsedGroups.size)" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
                 <path v-else stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7M5 9l7-7 7 7" />
               </svg>
-              {{ collapsedGroups.size ? 'Expand all' : 'Collapse all' }}
+              {{ (viewMode === 'gallery' ? collapsedGalleryGroups.size : collapsedGroups.size) ? 'Expand all' : 'Collapse all' }}
             </button>
 
             <!-- date group mode selector — visible when grouping by a date field -->
