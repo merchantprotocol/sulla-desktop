@@ -5763,6 +5763,44 @@
                     </div>
                   </div>
                 </template>
+
+                <!-- cross-record unified activity timeline -->
+                <template v-if="crossRecordActivities.length">
+                  <p class="text-xs font-semibold uppercase tracking-widest text-slate-300 dark:text-slate-600 mt-5 mb-1.5">Activity across linked records</p>
+                  <div class="space-y-px">
+                    <div
+                      v-for="row in crossRecordActivities"
+                      :key="row.act.id"
+                      class="flex items-start gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+                    >
+                      <!-- activity type icon -->
+                      <span
+                        class="mt-0.5 h-5 w-5 rounded-full flex items-center justify-center shrink-0"
+                        :class="ACTIVITY_ICON_BG[row.act.type]"
+                      >
+                        <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2">
+                          <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[row.act.type]" />
+                        </svg>
+                      </span>
+                      <div class="flex-1 min-w-0">
+                        <!-- which linked record this belongs to -->
+                        <button
+                          v-if="row.record"
+                          type="button"
+                          class="text-[10px] font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate max-w-full leading-tight block mb-0.5"
+                          @click="openRecord(row.record!)"
+                        >
+                          {{ row.record.title }}
+                          <span class="font-normal text-slate-400 dark:text-slate-500 capitalize"> · {{ schema.find(rt => rt.key === row.record!.record_type_key)?.label }}</span>
+                        </button>
+                        <!-- activity content preview (strip call outcome badge) -->
+                        <p class="text-xs text-slate-600 dark:text-slate-300 leading-snug line-clamp-2">{{ stripCallOutcome(row.act.content) }}</p>
+                        <!-- time + author -->
+                        <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{{ relativeTime(row.act.created_at) }} &middot; {{ row.act.author }}</p>
+                      </div>
+                    </div>
+                  </div>
+                </template>
               </template>
 
               <!-- Tasks tab -->
@@ -9627,6 +9665,25 @@ function setActivityQuota(activityType: 'call' | 'email' | 'meeting' | 'note', r
 function clearActivityQuota(activityType: 'call' | 'email' | 'meeting' | 'note') {
   activityQuotas.value = activityQuotas.value.filter((q) => q.activityType !== activityType);
 }
+
+// Cross-record activity: unified feed of activities across all records linked to openedRecord
+const crossRecordActivities = computed((): Array<{
+  act: CrmActivity;
+  record: CrmRecord | undefined;
+}> => {
+  if (!openedRecord.value) return [];
+  const linkedIds = new Set(openedRecord.value.links.map((l) => l.target_id));
+  if (!linkedIds.size) return [];
+  return mockActivities
+    .filter((a) => linkedIds.has(a.record_id))
+    .slice()
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 15)
+    .map((a) => ({
+      act: a,
+      record: mockRecords.find((r) => r.id === a.record_id),
+    }));
+});
 
 const automationRules = reactive<AutomationRule[]>([
   { id: 'ar1', name: 'Won deal → close date', enabled: true,  trigger_type_key: 'deal',    trigger_field_key: 'stage',  trigger_value: 'Closed Won', action_type: 'set_field',   action_field_key: 'close_date', action_value: '__today__' },
