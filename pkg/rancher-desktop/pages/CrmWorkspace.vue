@@ -3902,6 +3902,7 @@
                         : undefined"
                     :title="record.title"
                     @click="openRecord(record)"
+                    @contextmenu.prevent="openContextMenu(record, $event)"
                   >{{ record.title }}</button>
                   <button
                     v-if="cell.records.length > 4"
@@ -3961,6 +3962,7 @@
                       class="flex-1 min-w-0 text-left px-2 py-1.5 truncate transition-colors"
                       :title="record.title"
                       @click="openRecord(record)"
+                      @contextmenu.prevent="openContextMenu(record, $event)"
                     >{{ record.title }}</button>
                     <!-- hover actions -->
                     <div class="shrink-0 flex items-center gap-0.5 mr-1 opacity-0 group-hover/ce:opacity-100 transition-opacity">
@@ -5355,6 +5357,7 @@
                 class="group flex items-center border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
                 :class="openedRecord?.id === row.record.id ? 'bg-sky-50 dark:bg-sky-950/20' : ''"
                 @click="openRecord(row.record)"
+                @contextmenu.prevent="openContextMenu(row.record, $event)"
               >
                 <!-- name column -->
                 <div class="shrink-0 w-52 border-r border-slate-100 dark:border-slate-800 px-3 py-1.5 flex items-center gap-1.5 min-w-0">
