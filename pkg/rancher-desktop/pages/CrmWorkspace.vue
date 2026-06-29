@@ -2864,10 +2864,39 @@
                             </span>
                           </div>
                         </td>
-                        <td class="w-10 px-4 opacity-0 group-hover:opacity-100 transition-opacity" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
-                          <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded transition-colors" title="Open record" @click.stop="openRecord(row.record)">
-                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
-                          </button>
+                        <td class="px-2 opacity-0 group-hover:opacity-100 transition-opacity" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
+                          <div class="flex items-center gap-0.5">
+                            <button
+                              type="button"
+                              class="rounded p-0.5 transition-colors"
+                              :class="pinnedIds.has(row.record.id) ? 'text-amber-400 hover:text-amber-500' : 'text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400'"
+                              :title="pinnedIds.has(row.record.id) ? 'Unpin record' : 'Pin record'"
+                              @click.stop="togglePin(row.record.id)"
+                            >
+                              <svg class="h-3.5 w-3.5" :fill="pinnedIds.has(row.record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                            </button>
+                            <button
+                              type="button"
+                              class="rounded p-0.5 transition-colors"
+                              :class="watchedIds.has(row.record.id) ? 'text-sky-400 hover:text-sky-500' : 'text-slate-300 dark:text-slate-600 hover:text-sky-400 dark:hover:text-sky-400'"
+                              :title="watchedIds.has(row.record.id) ? 'Unwatch record' : 'Watch record'"
+                              @click.stop="toggleWatch(row.record.id)"
+                            >
+                              <svg class="h-3.5 w-3.5" :fill="watchedIds.has(row.record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                            </button>
+                            <button
+                              type="button"
+                              class="rounded p-0.5 transition-colors"
+                              :class="quickNoteRecordId === row.record.id ? 'text-sky-500' : 'text-slate-300 dark:text-slate-600 hover:text-sky-400 dark:hover:text-sky-400'"
+                              title="Log a quick note"
+                              @click.stop="openQuickNote(row.record.id, $event)"
+                            >
+                              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                            </button>
+                            <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-0.5 transition-colors" title="Open record" @click.stop="openRecord(row.record)">
+                              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     </template>
