@@ -5367,7 +5367,7 @@
         <!-- ── Stats/Insights view ── -->
         <div v-if="viewMode === 'stats' && statsViewData" class="flex-1 overflow-y-auto p-6 space-y-6">
           <!-- date range preset selector -->
-          <div class="flex items-center gap-1.5">
+          <div class="flex items-center gap-1.5 flex-wrap">
             <span class="text-xs font-medium text-slate-400 dark:text-slate-500 mr-1">Period:</span>
             <button
               v-for="p in ([{ key: '7d', label: '7 days' }, { key: '30d', label: '30 days' }, { key: '90d', label: '90 days' }, { key: 'ytd', label: 'Year to date' }, { key: 'all', label: 'All time' }] as const)"
@@ -5379,6 +5379,22 @@
                 : 'text-slate-500 dark:text-slate-400 border border-transparent hover:border-slate-200 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'"
               @click="statsDatePreset = p.key"
             >{{ p.label }}</button>
+            <!-- filtered toggle -->
+            <button
+              type="button"
+              class="ml-auto flex items-center gap-1 h-6 px-2.5 rounded-full text-xs font-medium border transition-colors"
+              :class="statsUseFiltered
+                ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-700'
+                : 'text-slate-500 dark:text-slate-400 border-transparent hover:border-slate-200 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'"
+              :title="statsUseFiltered
+                ? `Showing stats for ${filteredRecords.length} filtered records — click to show all`
+                : 'Scope stats to current filter/search'"
+              @click="statsUseFiltered = !statsUseFiltered"
+            >
+              <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
+              Filtered
+              <span v-if="statsUseFiltered" class="tabular-nums">({{ filteredRecords.length }})</span>
+            </button>
           </div>
 
           <!-- top summary cards -->
@@ -17860,6 +17876,7 @@ const hasTableTotals = computed(() =>
 );
 
 const statsDatePreset = ref<'7d' | '30d' | '90d' | 'ytd' | 'all'>('30d');
+const statsUseFiltered = ref(false);
 
 const statsDateCutoff = computed((): Date | null => {
   const p = statsDatePreset.value;
@@ -17875,7 +17892,7 @@ const statsDateCutoff = computed((): Date | null => {
 const statsViewData = computed(() => {
   const rt = selectedType.value;
   if (!rt) return null;
-  const recs = mockRecords.filter((r) => r.record_type_key === rt.key);
+  const recs = statsUseFiltered.value ? filteredRecords.value : mockRecords.filter((r) => r.record_type_key === rt.key);
   const total = recs.length;
   const cutoff = statsDateCutoff.value;
   const newRecords = cutoff ? recs.filter((r) => new Date(r.created_at) >= cutoff).length : total;
