@@ -2887,6 +2887,24 @@
                       </svg>
                       {{ overdueIds.has(record.id) ? 'Overdue' : 'Due soon' }}
                     </span>
+                    <!-- days in stage badge -->
+                    <template v-if="!kanbanCompact && kanbanField">
+                      <span
+                        v-if="daysInStage(record) !== null"
+                        class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium mb-1.5 ml-0.5"
+                        :class="(daysInStage(record) ?? 0) > 21
+                          ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-500 dark:text-rose-400'
+                          : (daysInStage(record) ?? 0) > 7
+                            ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400'
+                            : 'bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500'"
+                        :title="`${daysInStage(record)} day${(daysInStage(record) ?? 0) === 1 ? '' : 's'} in ${kanbanField.label}: ${String(record.field_values[kanbanField.key] ?? '')}`"
+                      >
+                        <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+                        </svg>
+                        {{ daysInStage(record) }}d
+                      </span>
+                    </template>
                     <div v-if="!kanbanCompact" class="space-y-1">
                       <div
                         v-for="f in kanbanCardFields"
@@ -3714,6 +3732,42 @@
             </div>
           </div>
 
+          <!-- pipeline velocity — avg days per stage -->
+          <div v-if="pipelineVelocity && pipelineVelocity.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <div class="flex items-center justify-between mb-4">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Stage velocity</p>
+              <p class="text-[10px] text-slate-300 dark:text-slate-600">Avg days per stage</p>
+            </div>
+            <div class="space-y-2.5">
+              <div
+                v-for="row in pipelineVelocity"
+                :key="row.stage"
+                class="flex items-center gap-3"
+              >
+                <div class="w-24 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right leading-tight">{{ row.stage }}</div>
+                <div class="flex-1 relative h-6 rounded overflow-hidden bg-slate-100 dark:bg-slate-800">
+                  <div
+                    class="absolute inset-y-0 left-0 rounded flex items-center transition-all duration-500"
+                    :class="row.avgDays > 21 ? 'bg-rose-400 dark:bg-rose-600' : row.avgDays > 7 ? 'bg-amber-400 dark:bg-amber-500' : 'bg-emerald-400 dark:bg-emerald-500'"
+                    :style="{ width: `${Math.min(100, Math.round((row.avgDays / Math.max(...pipelineVelocity.map(r => r.avgDays), 1)) * 100))}%` }"
+                  >
+                    <span v-if="row.avgDays > 0" class="px-2 text-white text-[10px] font-semibold tabular-nums">{{ row.avgDays }}d</span>
+                  </div>
+                  <span v-if="row.avgDays === 0" class="absolute inset-y-0 left-2 flex items-center text-[10px] text-slate-400 dark:text-slate-500">—</span>
+                </div>
+                <div class="shrink-0 text-right w-14">
+                  <span class="text-[10px] tabular-nums text-slate-400 dark:text-slate-500">{{ row.count }} record{{ row.count === 1 ? '' : 's' }}</span>
+                  <span v-if="row.maxDays > row.avgDays" class="block text-[9px] text-slate-300 dark:text-slate-600 tabular-nums">max {{ row.maxDays }}d</span>
+                </div>
+              </div>
+            </div>
+            <p class="text-[10px] text-slate-300 dark:text-slate-600 mt-3">
+              <span :class="(pipelineVelocity.find(r => r.avgDays > 21) ? 'text-rose-400' : 'text-slate-300 dark:text-slate-600')">
+                {{ pipelineVelocity.some(r => r.avgDays > 21) ? 'Some stages are stale (>21 days avg).' : 'All stages moving within 21-day target.' }}
+              </span>
+            </p>
+          </div>
+
           <!-- number field summaries -->
           <div v-if="statsViewData.numberCards.length" class="grid grid-cols-2 gap-4">
             <div
@@ -4349,6 +4403,23 @@
                   <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
               </template>
+            </div>
+
+            <!-- days in stage indicator -->
+            <div
+              v-if="kanbanField && !editingRecord && openedRecord.field_values[kanbanField.key] != null && daysInStage(openedRecord) !== null"
+              class="flex items-center gap-1.5 px-5 py-1.5 border-b border-slate-100 dark:border-slate-800/80"
+            >
+              <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
+                :class="(daysInStage(openedRecord) ?? 0) > 21 ? 'text-rose-400' : (daysInStage(openedRecord) ?? 0) > 7 ? 'text-amber-400' : 'text-slate-300 dark:text-slate-600'">
+                <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+              </svg>
+              <span
+                class="text-[11px] tabular-nums"
+                :class="(daysInStage(openedRecord) ?? 0) > 21 ? 'text-rose-500 dark:text-rose-400 font-medium' : (daysInStage(openedRecord) ?? 0) > 7 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
+              >{{ daysInStage(openedRecord) }} day{{ (daysInStage(openedRecord) ?? 0) === 1 ? '' : 's' }} in {{ String(openedRecord.field_values[kanbanField.key]) }}</span>
+              <span v-if="(daysInStage(openedRecord) ?? 0) > 21" class="text-[10px] text-rose-400 dark:text-rose-500 font-medium">· Stale</span>
+              <span v-else-if="(daysInStage(openedRecord) ?? 0) > 7" class="text-[10px] text-amber-400 dark:text-amber-500">· Aging</span>
             </div>
 
             <!-- record completeness bar -->
@@ -7698,6 +7769,13 @@ const mockActivities = reactive<CrmActivity[]>([
   { id: 'a13', record_id: 'r11', type: 'call',    content: 'Converted — signed up for $1 Pool same day as first outreach.', author: 'JB', created_at: '2026-06-22T14:00:00Z' },
   { id: 'a17', record_id: 'r1',  type: 'call',    content: 'Q3 kick-off call — review expansion roadmap', author: 'JB', created_at: '2026-06-28T08:00:00Z', scheduled_at: dateOffset(3) + 'T10:00:00Z' },
   { id: 'a18', record_id: 'r8',  type: 'meeting', content: 'Contract signing session with legal team', author: 'JB', created_at: '2026-06-28T08:00:00Z', scheduled_at: dateOffset(7) + 'T14:00:00Z' },
+  // Stage-transition history — used by daysInStage() for pipeline velocity
+  { id: 'a_s1', record_id: 'r8',  type: 'change', content: 'Stage: Qualified → Proposal',     author: 'System', created_at: '2026-06-10T09:00:00Z' },
+  { id: 'a_s2', record_id: 'r9',  type: 'change', content: 'Stage: Proposal → Negotiation',    author: 'System', created_at: '2026-06-14T09:00:00Z' },
+  { id: 'a_s3', record_id: 'r13', type: 'change', content: 'Stage: Lead → Qualified',           author: 'System', created_at: '2026-05-28T09:00:00Z' },
+  { id: 'a_s4', record_id: 'r16', type: 'change', content: 'Stage: Qualified → Proposal',      author: 'System', created_at: '2026-06-21T09:00:00Z' },
+  { id: 'a_s5', record_id: 'r1',  type: 'change', content: 'Status: Prospect → Active',        author: 'System', created_at: '2026-06-15T09:00:00Z' },
+  { id: 'a_s6', record_id: 'r2',  type: 'change', content: 'Status: Lead → Prospect',           author: 'System', created_at: '2026-06-08T09:00:00Z' },
 ]);
 
 const mockTasks = reactive<CrmTask[]>([
@@ -8915,6 +8993,38 @@ const kanbanField = computed(() =>
 );
 
 const canKanban = computed(() => kanbanField.value != null);
+
+// ── Pipeline velocity ─────────────────────────────────────────────────────────
+// Computes how many days a record has been in its current stage by scanning
+// change activities for "FieldLabel: * → currentValue" transitions.
+function daysInStage(record: CrmRecord): number | null {
+  const typeFields = schema.find((s) => s.key === record.record_type_key)?.fields ?? [];
+  const field = typeFields.find((f) => f.data_type === 'select');
+  if (!field) return null;
+  const currentVal = String(record.field_values[field.key] ?? '');
+  if (!currentVal) return null;
+  const suffix = ` → ${currentVal}`;
+  const acts = mockActivities
+    .filter((a) => a.record_id === record.id && a.type === 'change' && a.content.endsWith(suffix))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const enteredAt = acts.length > 0 ? acts[0].created_at : record.created_at;
+  return Math.floor((Date.now() - new Date(enteredAt).getTime()) / 86_400_000);
+}
+
+const pipelineVelocity = computed((): Array<{ stage: string; avgDays: number; count: number; maxDays: number }> | null => {
+  if (!kanbanField.value) return null;
+  const field = kanbanField.value;
+  const stages = field.select_options ?? [];
+  const typeRecords = mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value);
+  const rows = stages.map((stage) => {
+    const recs = typeRecords.filter((r) => String(r.field_values[field.key] ?? '') === stage);
+    if (!recs.length) return null;
+    const days = recs.map((r) => daysInStage(r) ?? Math.floor((Date.now() - new Date(r.created_at).getTime()) / 86_400_000));
+    const avg = Math.round(days.reduce((a, b) => a + b, 0) / days.length);
+    return { stage, avgDays: avg, count: recs.length, maxDays: Math.max(...days) };
+  }).filter((r): r is NonNullable<typeof r> => r !== null);
+  return rows.length > 0 ? rows : null;
+});
 
 // ── Calendar view ────────────────────────────────────────────────────────────
 const calendarYear = ref(2026);
