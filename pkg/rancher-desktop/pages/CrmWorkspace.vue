@@ -817,10 +817,27 @@
                     @keydown.esc.stop="showBulkTagDropdown = false"
                   />
                 </div>
-                <template v-if="allTags.length">
-                  <p class="px-3 pb-1 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Existing tags</p>
+                <!-- remove tags shared by all selected records -->
+                <template v-if="sharedSelectedTags.length">
+                  <p class="px-3 pb-1 text-xs font-semibold text-rose-400 dark:text-rose-500 uppercase tracking-wide">Remove from all</p>
                   <button
-                    v-for="tag in allTags.slice(0, 10)"
+                    v-for="tag in sharedSelectedTags"
+                    :key="'rm:' + tag"
+                    type="button"
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+                    :title="`Remove tag '${tag}' from all ${selectedIds.size} selected records`"
+                    @click="removeBulkTag(tag); showBulkTagDropdown = false"
+                  >
+                    <svg class="h-3 w-3 text-rose-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                    {{ tag }}
+                  </button>
+                  <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+                </template>
+                <!-- add from existing tags -->
+                <template v-if="allTags.filter(t => !sharedSelectedTags.includes(t)).length">
+                  <p class="px-3 pb-1 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Add tag</p>
+                  <button
+                    v-for="tag in allTags.filter(t => !sharedSelectedTags.includes(t)).slice(0, 8)"
                     :key="tag"
                     type="button"
                     class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
@@ -18299,6 +18316,13 @@ const allTags = computed((): string[] => {
   return Array.from(set).sort();
 });
 
+const sharedSelectedTags = computed((): string[] => {
+  const ids = [...selectedIds.value];
+  if (!ids.length) return [];
+  const sets = ids.map((id) => new Set(recordTags.value[id] ?? []));
+  return Array.from(sets[0]).filter((t) => sets.every((s) => s.has(t))).sort();
+});
+
 const tagSuggestions = computed((): string[] => {
   if (!tagInput.value.trim() || !openedRecord.value) return [];
   const q = tagInput.value.toLowerCase();
@@ -18314,6 +18338,13 @@ function addBulkTag(tag: string) {
   }
   bulkTagInput.value = '';
   showToast(`Tag "${t}" added to ${selectedIds.value.size} record${selectedIds.value.size === 1 ? '' : 's'}`);
+}
+
+function removeBulkTag(tag: string) {
+  for (const id of selectedIds.value) {
+    removeTag(id, tag);
+  }
+  showToast(`Tag "${tag}" removed from ${selectedIds.value.size} record${selectedIds.value.size === 1 ? '' : 's'}`);
 }
 
 function moveCardStage(record: CrmRecord, dir: 1 | -1) {
