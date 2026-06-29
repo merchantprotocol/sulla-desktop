@@ -7081,6 +7081,16 @@
                 <!-- empty state -->
                 <p v-else class="text-sm text-slate-400 dark:text-slate-600 text-center pt-4">No tasks yet</p>
 
+                <!-- clear completed action -->
+                <div v-if="recordTasks.some(t => t.done)" class="mt-2 flex justify-end">
+                  <button
+                    type="button"
+                    class="text-xs text-slate-400 dark:text-slate-500 hover:text-rose-400 dark:hover:text-rose-500 transition-colors"
+                    @click="(() => { const done = recordTasks.filter(t => t.done); const restored = done.map(t => ({ ...t })); const ids = new Set(done.map(t => t.id)); for (let i = mockTasks.length - 1; i >= 0; i--) { if (ids.has(mockTasks[i].id)) mockTasks.splice(i, 1); } showToast(`Cleared ${done.length} completed task${done.length === 1 ? '' : 's'}`, { label: 'Undo', fn: () => { restored.forEach(t => mockTasks.push(t)); } }); })()"
+                  >
+                    Clear completed ({{ recordTasks.filter(t => t.done).length }})
+                  </button>
+                </div>
                 <!-- progress bar when tasks exist -->
                 <div v-if="recordTasks.length" class="mt-3">
                   <div class="flex items-center justify-between mb-1">
