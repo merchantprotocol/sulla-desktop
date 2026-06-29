@@ -4519,7 +4519,11 @@
                       <div class="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
                     </div>
                     <!-- activity item -->
-                    <div v-else class="group/act flex gap-2.5 py-1">
+                    <div
+                      v-else
+                      class="group/act flex gap-2.5 py-1 rounded-lg transition-colors"
+                      :class="pinnedActivityIds.has(row.act.id) ? 'pl-1.5 border-l-2 border-amber-300 dark:border-amber-600 bg-amber-50/40 dark:bg-amber-950/10' : ''"
+                    >
                       <span
                         class="mt-0.5 h-6 w-6 rounded-full flex items-center justify-center shrink-0"
                         :class="ACTIVITY_ICON_BG[row.act.type]"
@@ -4552,15 +4556,36 @@
                             <span v-else>{{ part.text }}</span>
                           </template>
                         </p>
-                        <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                        <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 flex items-center gap-1.5">
                           <span
                             class="capitalize font-medium"
                             :class="row.act.type === 'change' ? 'text-amber-500 dark:text-amber-400' : ''"
                           >{{ row.act.type === 'change' ? 'System' : row.act.author }}</span>
                           · {{ formatRelativeTime(row.act.created_at) }}
+                          <span v-if="pinnedActivityIds.has(row.act.id)" class="inline-flex items-center gap-0.5 text-[9px] font-semibold text-amber-500 dark:text-amber-400 uppercase tracking-wide">
+                            <svg class="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+                            Pinned
+                          </span>
                         </p>
                       </div>
-                      <div v-if="row.act.type !== 'change'" class="shrink-0 self-start mt-0.5 flex gap-0.5 opacity-0 group-hover/act:opacity-100 transition-all">
+                      <div
+                        v-if="row.act.type !== 'change'"
+                        class="shrink-0 self-start mt-0.5 flex gap-0.5 transition-all"
+                        :class="pinnedActivityIds.has(row.act.id) ? 'opacity-100' : 'opacity-0 group-hover/act:opacity-100'"
+                      >
+                        <!-- pin / unpin -->
+                        <button
+                          type="button"
+                          class="p-0.5 rounded transition-colors"
+                          :class="pinnedActivityIds.has(row.act.id) ? 'text-amber-400 hover:text-amber-500' : 'text-slate-300 dark:text-slate-700 hover:text-amber-400 dark:hover:text-amber-400'"
+                          :aria-label="pinnedActivityIds.has(row.act.id) ? 'Unpin activity' : 'Pin activity to top'"
+                          :title="pinnedActivityIds.has(row.act.id) ? 'Unpin' : 'Pin to top'"
+                          @click="togglePinActivity(row.act.id)"
+                        >
+                          <svg class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/>
+                          </svg>
+                        </button>
                         <button
                           type="button"
                           class="p-0.5 rounded text-slate-300 dark:text-slate-700 hover:text-sky-400 dark:hover:text-sky-400 transition-colors"
@@ -8862,6 +8887,13 @@ const recordTasksPendingCount = computed(() => recordTasks.value.filter((t) => !
 
 const activityTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const activitySearchQuery = ref('');
+const pinnedActivityIds = ref<Set<string>>(new Set());
+
+function togglePinActivity(id: string) {
+  const s = new Set(pinnedActivityIds.value);
+  s.has(id) ? s.delete(id) : s.add(id);
+  pinnedActivityIds.value = s;
+}
 
 const visibleActivities = computed(() => {
   let result = activityTypeFilter.value === 'all'
@@ -8869,7 +8901,12 @@ const visibleActivities = computed(() => {
     : recordActivities.value.filter((a) => a.type === activityTypeFilter.value);
   const q = activitySearchQuery.value.trim().toLowerCase();
   if (q) result = result.filter((a) => a.content.toLowerCase().includes(q) || a.author.toLowerCase().includes(q));
-  return result;
+  // pinned activities surface to the top
+  return [...result].sort((a, b) => {
+    const aPin = pinnedActivityIds.value.has(a.id) ? 0 : 1;
+    const bPin = pinnedActivityIds.value.has(b.id) ? 0 : 1;
+    return aPin - bPin;
+  });
 });
 
 type ActivityRow =
