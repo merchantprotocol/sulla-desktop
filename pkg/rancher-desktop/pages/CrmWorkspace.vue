@@ -3997,6 +3997,74 @@
               </div>
             </div>
           </div>
+
+          <!-- weekly activity targets -->
+          <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Weekly targets</p>
+              <button
+                type="button"
+                class="text-xs text-sky-500 hover:text-sky-600 dark:text-sky-400 dark:hover:text-sky-300 transition-colors"
+                @click="showActivityQuotaEditor = !showActivityQuotaEditor"
+              >{{ showActivityQuotaEditor ? 'Done' : 'Edit targets' }}</button>
+            </div>
+            <!-- editor mode -->
+            <div v-if="showActivityQuotaEditor" class="space-y-2">
+              <div
+                v-for="at in (['call', 'email', 'meeting', 'note'] as const)"
+                :key="at"
+                class="flex items-center gap-3"
+              >
+                <span class="h-6 w-6 rounded-full flex items-center justify-center shrink-0" :class="ACTIVITY_ICON_BG[at]">
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[at]" /></svg>
+                </span>
+                <span class="text-xs text-slate-600 dark:text-slate-300 capitalize w-16 shrink-0">{{ at }}s / week</span>
+                <input
+                  :value="activityQuotas.find(q => q.activityType === at)?.target ?? ''"
+                  type="number"
+                  min="1"
+                  placeholder="—"
+                  class="w-20 text-sm px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+                  @change="setActivityQuota(at, ($event.target as HTMLInputElement).value)"
+                />
+                <button
+                  v-if="activityQuotas.find(q => q.activityType === at)"
+                  type="button"
+                  class="text-slate-300 dark:text-slate-600 hover:text-rose-500 transition-colors"
+                  @click="clearActivityQuota(at)"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </div>
+            <!-- progress bars mode -->
+            <div v-else-if="activityQuotas.length" class="space-y-3">
+              <div v-for="q in activityQuotas" :key="q.id">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="flex items-center gap-1.5">
+                    <span class="h-5 w-5 rounded-full flex items-center justify-center shrink-0" :class="ACTIVITY_ICON_BG[q.activityType]">
+                      <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[q.activityType]" /></svg>
+                    </span>
+                    <span class="text-xs text-slate-600 dark:text-slate-300 capitalize">{{ q.activityType }}s</span>
+                  </div>
+                  <span class="text-xs tabular-nums" :class="activitiesThisPeriod[q.activityType].weekly >= q.target ? 'text-emerald-500 font-semibold' : 'text-slate-400 dark:text-slate-500'">
+                    {{ activitiesThisPeriod[q.activityType].weekly }} / {{ q.target }}
+                  </span>
+                </div>
+                <div class="h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    class="h-full rounded-full transition-all"
+                    :class="activitiesThisPeriod[q.activityType].weekly >= q.target ? 'bg-emerald-500' : 'bg-sky-500'"
+                    :style="{ width: `${Math.min(100, Math.round((activitiesThisPeriod[q.activityType].weekly / q.target) * 100))}%` }"
+                  />
+                </div>
+                <p v-if="activitiesThisPeriod[q.activityType].weekly >= q.target" class="text-[10px] text-emerald-500 mt-0.5 font-medium">Target reached this week</p>
+                <p v-else class="text-[10px] text-slate-300 dark:text-slate-600 mt-0.5 tabular-nums">{{ q.target - activitiesThisPeriod[q.activityType].weekly }} more to reach weekly target</p>
+              </div>
+            </div>
+            <!-- no quotas set -->
+            <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No weekly targets set. Click "Edit targets" to add some.</p>
+          </div>
         </div>
 
         <!-- ── Timeline / Gantt view ── -->
@@ -9330,6 +9398,59 @@ function addScoringRule() {
 
 function deleteScoringRule(id: string) {
   scoringRules.value = scoringRules.value.filter((r) => r.id !== id);
+}
+
+// ── Weekly activity quotas ─────────────────────────────────────────────────
+interface ActivityQuota {
+  id: string;
+  activityType: 'call' | 'email' | 'meeting' | 'note';
+  target: number;
+}
+const activityQuotas = ref<ActivityQuota[]>([
+  { id: 'aq-1', activityType: 'call',    target: 20 },
+  { id: 'aq-2', activityType: 'email',   target: 30 },
+  { id: 'aq-3', activityType: 'meeting', target: 5  },
+]);
+const showActivityQuotaEditor = ref(false);
+
+const activitiesThisPeriod = computed((): Record<'call' | 'email' | 'meeting' | 'note', { daily: number; weekly: number }> => {
+  const nowMs = new Date(DUE_TODAY_STR).getTime();
+  const dayAgoMs = nowMs - 86_400_000;
+  const weekAgoMs = nowMs - 7 * 86_400_000;
+  const counts: Record<'call' | 'email' | 'meeting' | 'note', { daily: number; weekly: number }> = {
+    call:    { daily: 0, weekly: 0 },
+    email:   { daily: 0, weekly: 0 },
+    meeting: { daily: 0, weekly: 0 },
+    note:    { daily: 0, weekly: 0 },
+  };
+  for (const a of mockActivities) {
+    if (a.type === 'change') continue;
+    const t = a.type as 'call' | 'email' | 'meeting' | 'note';
+    const ts = new Date(a.created_at).getTime();
+    if (ts >= weekAgoMs) {
+      counts[t].weekly++;
+      if (ts >= dayAgoMs) counts[t].daily++;
+    }
+  }
+  return counts;
+});
+
+function setActivityQuota(activityType: 'call' | 'email' | 'meeting' | 'note', rawVal: string) {
+  const n = parseInt(rawVal, 10);
+  const existing = activityQuotas.value.find((q) => q.activityType === activityType);
+  if (!rawVal || isNaN(n) || n <= 0) {
+    if (existing) activityQuotas.value = activityQuotas.value.filter((q) => q.activityType !== activityType);
+    return;
+  }
+  if (existing) {
+    existing.target = n;
+  } else {
+    activityQuotas.value = [...activityQuotas.value, { id: 'aq-' + activityType, activityType, target: n }];
+  }
+}
+
+function clearActivityQuota(activityType: 'call' | 'email' | 'meeting' | 'note') {
+  activityQuotas.value = activityQuotas.value.filter((q) => q.activityType !== activityType);
 }
 
 const automationRules = reactive<AutomationRule[]>([
