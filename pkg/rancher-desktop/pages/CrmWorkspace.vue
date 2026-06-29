@@ -618,6 +618,22 @@
               </svg>
               Duplicate
             </button>
+            <!-- bulk lock / unlock -->
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
+              :class="[...selectedIds].every(id => lockedRecordIds.has(id))
+                ? 'border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/40'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'"
+              :title="[...selectedIds].every(id => lockedRecordIds.has(id)) ? `Unlock ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}` : `Lock ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}`"
+              @click="bulkLockToggle"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path v-if="[...selectedIds].every(id => lockedRecordIds.has(id))" stroke-linecap="round" stroke-linejoin="round" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                <path v-else stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              {{ [...selectedIds].every(id => lockedRecordIds.has(id)) ? 'Unlock' : 'Lock' }}
+            </button>
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
@@ -11189,6 +11205,21 @@ function toggleRecordLock(id: string) {
   if (next.has(id)) next.delete(id); else next.add(id);
   lockedRecordIds.value = next;
   showToast(next.has(id) ? 'Record locked — edits disabled' : 'Record unlocked');
+}
+
+function bulkLockToggle() {
+  const ids = [...selectedIds.value];
+  const allLocked = ids.every((id) => lockedRecordIds.value.has(id));
+  const next = new Set(lockedRecordIds.value);
+  if (allLocked) {
+    ids.forEach((id) => next.delete(id));
+    lockedRecordIds.value = next;
+    showToast(`${ids.length} record${ids.length === 1 ? '' : 's'} unlocked`);
+  } else {
+    ids.forEach((id) => next.add(id));
+    lockedRecordIds.value = next;
+    showToast(`${ids.length} record${ids.length === 1 ? '' : 's'} locked`);
+  }
 }
 const showArchived = ref(false);
 const typeNotes = ref<Record<string, string>>({});
