@@ -7610,7 +7610,7 @@
     >
       <div
         v-if="kanbanCardMenu"
-        class="fixed z-50 w-44 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden py-1"
+        class="fixed z-50 w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden py-1"
         :style="{ top: `${Math.min(kanbanCardMenu.y, window.innerHeight - 200)}px`, left: `${Math.min(kanbanCardMenu.x, window.innerWidth - 180)}px` }"
         @click.stop
       >
@@ -7640,6 +7640,34 @@
             <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 12h.01" /></svg>
             Merge with...
           </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="archivedIds.has(kanbanCardMenu!.recordId) ? unarchiveRecord(kanbanCardMenu!.recordId) : archiveRecord(kanbanCardMenu!.recordId); kanbanCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
+            {{ archivedIds.has(kanbanCardMenu.recordId) ? 'Unarchive' : 'Archive' }}
+          </button>
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <div class="px-3 py-2">
+            <p class="pb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Color label</p>
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <button
+                v-for="c in COLOR_LABEL_PALETTE"
+                :key="c"
+                type="button"
+                class="h-4 w-4 rounded-full transition-transform hover:scale-125 focus:outline-none"
+                :style="{ background: c, boxShadow: colorLabels[kanbanCardMenu.recordId] === c ? `0 0 0 2px white, 0 0 0 3.5px ${c}` : 'none' }"
+                @click="setColorLabel(kanbanCardMenu!.recordId, colorLabels[kanbanCardMenu!.recordId] === c ? '' : c)"
+              />
+              <button
+                v-if="colorLabels[kanbanCardMenu.recordId]"
+                type="button"
+                class="h-4 w-4 rounded-full flex items-center justify-center text-slate-400 border border-slate-300 dark:border-slate-600 hover:text-slate-600 transition-colors"
+                title="Clear label"
+                @click="setColorLabel(kanbanCardMenu!.recordId, '')"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+          </div>
           <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
           <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400 transition-colors"
             @click="deleteRecord(mockRecords.find(r => r.id === kanbanCardMenu!.recordId)!); kanbanCardMenu = null">
