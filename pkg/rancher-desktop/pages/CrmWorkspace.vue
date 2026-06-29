@@ -7307,17 +7307,37 @@
                     </button>
                   </template>
                   <template v-else-if="field.data_type === 'formula'">
-                    <div class="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                    <div class="group/form flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
                       <span class="text-sm tabular-nums font-medium text-slate-700 dark:text-slate-300">
                         {{ (() => { const v = evaluateFormula(openedRecord, field); if (typeof v === 'number') { return field.format === 'currency' ? '$' + v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : field.format === 'percent' ? v + '%' : String(v); } return String(v); })() }}
                       </span>
-                      <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-1" :title="field.formula_expression">= {{ field.formula_expression }}</span>
+                      <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-1 flex-1" :title="field.formula_expression">= {{ field.formula_expression }}</span>
+                      <button
+                        type="button"
+                        class="invisible group-hover/form:visible shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-all"
+                        title="Copy value"
+                        @click.stop="(() => { const v = evaluateFormula(openedRecord, field); const txt = typeof v === 'number' ? (field.format === 'currency' ? '$' + v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : field.format === 'percent' ? v + '%' : String(v)) : String(v); navigator.clipboard?.writeText(txt).then(() => showToast('Value copied')); })()"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
                     </div>
                   </template>
                   <template v-else-if="field.data_type === 'rollup'">
-                    <div class="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                    <div class="group/roll flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
                       <span class="text-sm tabular-nums font-medium text-slate-700 dark:text-slate-300">{{ evaluateRollup(openedRecord, field) !== '' ? evaluateRollup(openedRecord, field) : '—' }}</span>
                       <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-auto">{{ field.rollup_function?.toUpperCase() }} of {{ field.rollup_field_key ?? 'count' }} from {{ field.rollup_from_type ?? '—' }}</span>
+                      <button
+                        type="button"
+                        class="invisible group-hover/roll:visible shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-all"
+                        title="Copy value"
+                        @click.stop="(() => { const v = evaluateRollup(openedRecord, field); navigator.clipboard?.writeText(String(v)).then(() => showToast('Value copied')); })()"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      </button>
                     </div>
                   </template>
                   <template v-else-if="field.data_type === 'checklist'">
