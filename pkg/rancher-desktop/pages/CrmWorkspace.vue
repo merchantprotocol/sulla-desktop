@@ -9981,14 +9981,6 @@
             Filter by this field
           </button>
           <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-            @click="togglePinColumn(colHeaderMenu!.fieldKey); colHeaderMenu = null"
-          >
-            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-            </svg>
-            {{ pinnedColumnKeys.has(colHeaderMenu?.fieldKey ?? '') ? 'Unpin column' : 'Pin column to left' }}
-          </button>
-          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
             @click="groupByField = groupByField === colHeaderMenu!.fieldKey ? null : colHeaderMenu!.fieldKey; colHeaderMenu = null">
             <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16" />
@@ -10090,6 +10082,14 @@
           </div>
         </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="togglePinColumn(colHeaderMenu!.fieldKey); colHeaderMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+          </svg>
+          {{ pinnedColumnKeys.has(colHeaderMenu?.fieldKey ?? '') ? 'Unpin column' : 'Pin column to left' }}
+        </button>
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           @click="colStatsFieldKey = colHeaderMenu!.fieldKey; showColStatsModal = true; colHeaderMenu = null">
           <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
