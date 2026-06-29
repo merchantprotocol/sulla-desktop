@@ -6554,10 +6554,12 @@
               <div
                 v-for="row in statsViewData.fieldFillRates"
                 :key="row.field.key"
-                class="flex items-center gap-2"
+                class="group/ffr flex items-center gap-2 rounded-lg -mx-1.5 px-1.5 py-0.5 cursor-pointer hover:bg-sky-50 dark:hover:bg-sky-950/20 transition-colors"
+                :title="`${row.pct}% filled (${row.filled}/${statsViewData.total}) — click to sort table by this field`"
+                @click="sortField = row.field.key; sortDir = 'asc'; viewMode = 'table'"
               >
                 <div
-                  class="w-28 shrink-0 text-xs truncate text-right leading-tight pr-1"
+                  class="w-28 shrink-0 text-xs truncate text-right leading-tight pr-1 group-hover/ffr:text-sky-600 dark:group-hover/ffr:text-sky-400 transition-colors"
                   :class="row.pct === 0 ? 'text-rose-400 dark:text-rose-500 font-medium' : row.pct < 50 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-600 dark:text-slate-400'"
                   :title="row.field.label"
                 >{{ row.field.label }}</div>
@@ -6616,8 +6618,14 @@
               <span class="text-[10px] text-slate-400 dark:text-slate-500">% of total activities</span>
             </div>
             <div class="space-y-1.5">
-              <div v-for="row in statsViewData.activityByAuthor" :key="row.author" class="flex items-center gap-2">
-                <div class="w-24 shrink-0 text-xs truncate text-right pr-1 text-slate-600 dark:text-slate-400 leading-tight" :title="row.author">{{ row.author }}</div>
+              <div
+                v-for="row in statsViewData.activityByAuthor"
+                :key="row.author"
+                class="group/aba flex items-center gap-2 rounded-lg -mx-1.5 px-1.5 py-0.5 cursor-pointer hover:bg-violet-50 dark:hover:bg-violet-950/20 transition-colors"
+                :title="`${row.count} activities by ${row.author} — click to view in feed`"
+                @click="feedAuthorFilter = row.author; feedTypeFilter = 'all'; viewMode = 'feed'"
+              >
+                <div class="w-24 shrink-0 text-xs truncate text-right pr-1 text-slate-600 dark:text-slate-400 group-hover/aba:text-violet-600 dark:group-hover/aba:text-violet-400 leading-tight transition-colors" :title="row.author">{{ row.author }}</div>
                 <div class="flex-1 h-5 rounded-md bg-slate-100 dark:bg-slate-800 overflow-hidden relative">
                   <div
                     class="absolute inset-y-0 left-0 rounded-md bg-violet-400 dark:bg-violet-500 transition-all duration-300 flex items-center"
