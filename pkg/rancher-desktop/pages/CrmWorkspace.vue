@@ -6625,6 +6625,20 @@
               :title="feedMentionsFilter ? 'Showing only activities that @mention you — click to clear' : 'Show only activities that @mention you'"
               @click="feedMentionsFilter = !feedMentionsFilter"
             >@ Mentions</button>
+            <!-- date range presets -->
+            <div class="flex items-center gap-1">
+              <button
+                v-for="p in ([{ key: '7d', label: '7d' }, { key: '30d', label: '30d' }, { key: '90d', label: '90d' }, { key: 'all', label: 'All' }] as const)"
+                :key="p.key"
+                type="button"
+                class="h-6 px-2 rounded-full text-[10px] font-medium transition-colors"
+                :class="feedDatePreset === p.key
+                  ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'"
+                :title="p.key === 'all' ? 'Show all activity' : `Last ${p.key}`"
+                @click="feedDatePreset = p.key"
+              >{{ p.label }}</button>
+            </div>
             <!-- all types toggle -->
             <button
               type="button"
@@ -15159,6 +15173,7 @@ const feedAllTypes = ref(false);
 const feedTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const feedAuthorFilter = ref<string>('all');
 const feedSortOldest = ref(false);
+const feedDatePreset = ref<'7d' | '30d' | '90d' | 'all'>('all');
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const tasksViewGroupBy = ref<'due' | 'priority' | 'record'>('due');
@@ -18834,11 +18849,19 @@ const feedRows = computed((): ActivityRow[] => {
   const typeF = feedTypeFilter.value;
   const authorF = feedAuthorFilter.value;
   const mentionsOnly = feedMentionsFilter.value;
+  const fdp = feedDatePreset.value;
+  let feedCutoff: string | null = null;
+  if (fdp !== 'all') {
+    const d = new Date(DUE_TODAY_STR);
+    d.setDate(d.getDate() - (fdp === '7d' ? 7 : fdp === '30d' ? 30 : 90));
+    feedCutoff = d.toISOString().slice(0, 10);
+  }
   const sorted = [...mockActivities]
     .filter((a) => typeRecordIds === null || typeRecordIds.has(a.record_id))
     .filter((a) => typeF === 'all' || a.type === typeF)
     .filter((a) => authorF === 'all' || a.author === authorF)
     .filter((a) => !mentionsOnly || /@you\b/i.test(a.content))
+    .filter((a) => !feedCutoff || a.created_at.slice(0, 10) >= feedCutoff)
     .filter((a) => !q || a.content.toLowerCase().includes(q) || a.author.toLowerCase().includes(q) || (mockRecords.find((r) => r.id === a.record_id)?.title ?? '').toLowerCase().includes(q))
     .sort((a, b) => {
       const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
