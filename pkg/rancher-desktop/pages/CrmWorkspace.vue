@@ -7024,7 +7024,18 @@
                   :style="{ top: `${tagColorPickerPos.top}px`, left: `${tagColorPickerPos.left}px` }"
                   @click.stop
                 >
-                  <p class="text-[9px] font-bold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1.5 px-0.5">#{{ tagColorPickerTag }}</p>
+                  <!-- rename input -->
+                  <input
+                    :value="renamingTagDraft"
+                    type="text"
+                    class="w-full h-6 rounded px-2 text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-400/40 mb-2"
+                    placeholder="Rename tag…"
+                    @input="renamingTagDraft = ($event.target as HTMLInputElement).value"
+                    @keydown.enter.prevent="(() => { const oldName = tagColorPickerTag; if (!oldName || !renamingTagDraft.trim() || renamingTagDraft.trim() === oldName) return; renameTag(oldName, renamingTagDraft.trim()); tagColorPickerTag = null; })()"
+                    @keydown.esc.stop="tagColorPickerTag = null"
+                    @vue:mounted="($el as HTMLInputElement).select()"
+                    @click.stop
+                  />
                   <div class="flex flex-wrap gap-1" style="width: 144px">
                     <button
                       v-for="c in TAG_COLOR_PALETTE"
@@ -14164,6 +14175,7 @@ type TagColorId = typeof TAG_COLOR_PALETTE[number]['id'];
 const tagColors = ref<Record<string, TagColorId>>({});
 const tagColorPickerTag = ref<string | null>(null);
 const tagColorPickerPos = ref({ top: 0, left: 0 });
+const renamingTagDraft = ref('');
 const checklistAddText = ref<Record<string, string>>({});
 const editingChecklistItemKey = ref<string | null>(null);
 const editingChecklistItemDraft = ref('');
@@ -18579,7 +18591,25 @@ function removeTag(recordId: string, tag: string) {
 function openTagColorPicker(tag: string, evt: MouseEvent) {
   const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
   tagColorPickerPos.value = { top: rect.bottom + 4, left: Math.min(rect.left, window.innerWidth - 160) };
-  tagColorPickerTag.value = tagColorPickerTag.value === tag ? null : tag;
+  if (tagColorPickerTag.value === tag) { tagColorPickerTag.value = null; return; }
+  tagColorPickerTag.value = tag;
+  renamingTagDraft.value = tag;
+}
+
+function renameTag(oldName: string, newName: string) {
+  const trimmed = newName.trim();
+  if (!trimmed || trimmed === oldName) return;
+  const next: Record<string, string[]> = {};
+  for (const [id, tags] of Object.entries(recordTags.value)) {
+    next[id] = tags.map((t) => (t === oldName ? trimmed : t));
+  }
+  recordTags.value = next;
+  if (tagColors.value[oldName]) {
+    const nc = { ...tagColors.value, [trimmed]: tagColors.value[oldName] };
+    delete nc[oldName];
+    tagColors.value = nc;
+  }
+  showToast(`Tag renamed to "${trimmed}"`);
 }
 
 function setTagColor(tag: string, colorId: TagColorId | null) {
