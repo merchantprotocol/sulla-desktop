@@ -3359,13 +3359,25 @@
                         </td>
                         <td class="px-4" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                           <div class="flex items-center gap-1.5">
-                            <span
+                            <button
                               v-if="activityCountByRecord[row.record.id]"
-                              class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 cursor-default"
-                              :title="`${activityCountByRecord[row.record.id]} activities`"
+                              type="button"
+                              class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium transition-colors"
+                              :class="(() => {
+                                const days = lastActivityByRecord[row.record.id] ? Math.floor((Date.now() - lastActivityByRecord[row.record.id]) / 86400000) : 999;
+                                return days <= 7
+                                  ? 'bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/40'
+                                  : days <= 30
+                                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                                    : days <= 60
+                                      ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                                      : 'bg-rose-50 dark:bg-rose-950/30 text-rose-400 dark:text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/40';
+                              })()"
+                              :title="`${activityCountByRecord[row.record.id]} activit${activityCountByRecord[row.record.id] === 1 ? 'y' : 'ies'}${lastActivityByRecord[row.record.id] ? ' · last ' + formatAge(new Date(lastActivityByRecord[row.record.id]).toISOString()) + ' ago' : ''} — click to view`"
+                              @click.stop="openRecord(row.record); nextTick(() => { detailTab = 'activity'; })"
                               @mouseenter="showActivityPreview(row.record.id, $event.currentTarget as HTMLElement)"
                               @mouseleave="hideActivityPreview"
-                            >{{ activityCountByRecord[row.record.id] }}</span>
+                            >{{ activityCountByRecord[row.record.id] }}</button>
                             <span
                               v-if="pendingTaskCountByRecord[row.record.id]"
                               class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400"
@@ -3659,8 +3671,18 @@
                       <button
                         v-if="activityCountByRecord[record.id]"
                         type="button"
-                        class="shrink-0 h-4 min-w-[1rem] rounded-full px-1 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-sky-100 dark:hover:bg-sky-900/30 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
-                        :title="`${activityCountByRecord[record.id]} activit${activityCountByRecord[record.id] === 1 ? 'y' : 'ies'}`"
+                        class="shrink-0 h-4 min-w-[1rem] rounded-full px-1 text-[10px] tabular-nums font-medium transition-colors"
+                        :class="(() => {
+                          const days = lastActivityByRecord[record.id] ? Math.floor((Date.now() - lastActivityByRecord[record.id]) / 86400000) : 999;
+                          return days <= 7
+                            ? 'bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/40'
+                            : days <= 30
+                              ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'
+                              : days <= 60
+                                ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                                : 'bg-rose-50 dark:bg-rose-950/30 text-rose-400 dark:text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/40';
+                        })()"
+                        :title="`${activityCountByRecord[record.id]} activit${activityCountByRecord[record.id] === 1 ? 'y' : 'ies'}${lastActivityByRecord[record.id] ? ' · last ' + formatAge(new Date(lastActivityByRecord[record.id]).toISOString()) + ' ago' : ''} — click to view`"
                         @mouseenter="showActivityPreview(record.id, $event.currentTarget as HTMLElement)"
                         @mouseleave="hideActivityPreview"
                         @click.stop="openRecord(record); nextTick(() => { detailTab = 'activity'; })"
