@@ -934,6 +934,29 @@
                 </svg>
               </button>
             </div>
+            <!-- secondary sort chip -->
+            <div
+              v-if="sortField && sortField2 && viewMode === 'table'"
+              class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium bg-violet-50/60 dark:bg-violet-950/20 text-violet-500 dark:text-violet-500 border border-violet-100 dark:border-violet-900"
+              title="Secondary sort"
+            >
+              <svg class="h-3 w-3 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path v-if="sortDir2 === 'asc'" stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                <path v-else stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+              <span class="opacity-80">{{ allColumns.find(c => c.key === sortField2)?.label ?? sortField2 }}</span>
+              <button
+                type="button"
+                class="ml-0.5 rounded-full hover:bg-violet-100 dark:hover:bg-violet-900 p-0.5 transition-colors"
+                aria-label="Clear secondary sort"
+                title="Clear secondary sort"
+                @click.stop="sortField2 = null; sortDir2 = 'asc'"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
 
             <!-- pinned filter chip -->
             <div
