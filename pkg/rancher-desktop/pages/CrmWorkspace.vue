@@ -4265,8 +4265,16 @@
                         <span v-else class="truncate text-slate-600 dark:text-slate-300">{{ formatCardValue(record.field_values[f.key], f.data_type, f.format) }}</span>
                       </div>
                     </div>
+                    <!-- record completeness bar -->
+                    <div v-if="!kanbanCompact" class="mt-2 h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden" :title="`Profile completeness: ${recordCompleteness(record)}%`">
+                      <div
+                        class="h-full rounded-full transition-all duration-300"
+                        :class="recordCompleteness(record) === 100 ? 'bg-emerald-400 dark:bg-emerald-500' : 'bg-sky-400 dark:bg-sky-500'"
+                        :style="{ width: `${recordCompleteness(record)}%` }"
+                      />
+                    </div>
                     <!-- card hover actions: stage move + pin + watch -->
-                    <div v-if="!kanbanCompact" class="flex items-center justify-between mt-2 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                    <div v-if="!kanbanCompact" class="flex items-center justify-between mt-1.5 opacity-0 group-hover/card:opacity-100 transition-opacity">
                       <!-- prev stage -->
                       <button
                         v-if="kanbanField && kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).indexOf(String(record.field_values[kanbanField.key] ?? '')) > 0"
