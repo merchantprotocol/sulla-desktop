@@ -6197,7 +6197,11 @@
                       <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === link.target_type)?.icon ?? 'user']" class="h-3 w-3" />
                     </span>
                     <div class="flex-1 min-w-0">
-                      <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{{ link.target_title }}</p>
+                      <p
+                        class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate cursor-pointer hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+                        @mouseenter="(e) => { const r = mockRecords.find(rec => rec.id === link.target_id); if (r) onMentionMouseenter(r, e.currentTarget as HTMLElement); }"
+                        @mouseleave="onMentionMouseleave"
+                      >{{ link.target_title }}</p>
                       <!-- role row: badge when set, inline edit when editing -->
                       <template v-if="editingLinkRoleId === link.target_id">
                         <div class="flex items-center gap-1 mt-1" @click.stop>
@@ -6287,7 +6291,11 @@
                         <component :is="ICON_COMPONENTS[schema.find(rt => rt.key === r.record_type_key)?.icon ?? 'user']" class="h-3 w-3" />
                       </span>
                       <div class="flex-1 min-w-0">
-                        <p class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{{ r.title }}</p>
+                        <p
+                          class="text-xs font-medium text-slate-700 dark:text-slate-200 truncate cursor-pointer hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
+                          @mouseenter="(e) => onMentionMouseenter(r, e.currentTarget as HTMLElement)"
+                          @mouseleave="onMentionMouseleave"
+                        >{{ r.title }}</p>
                         <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ schema.find(rt => rt.key === r.record_type_key)?.label }}</p>
                       </div>
                       <button
