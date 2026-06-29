@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4985,8 +4985,45 @@
                     </span>
                     <span class="text-xs font-medium text-slate-500 dark:text-slate-400 capitalize">{{ noteType }}</span>
                     <span v-if="noteText.startsWith('> ')" class="text-xs text-sky-400 dark:text-sky-500">· replying</span>
+                    <!-- snippet picker button (all types) -->
+                    <div class="relative" :class="noteType !== 'email' ? 'ml-auto' : ''">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 text-[11px] transition-colors"
+                        :class="showSnippetPicker ? 'text-emerald-500 dark:text-emerald-400' : 'text-slate-400 hover:text-emerald-500 dark:hover:text-emerald-400'"
+                        title="Insert a text snippet (or type / in the text box)"
+                        @click.stop="showSnippetPicker = !showSnippetPicker; snippetQuery = ''"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Snippets
+                      </button>
+                      <div
+                        v-if="showSnippetPicker"
+                        class="absolute left-0 bottom-full mb-1 z-30 w-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl overflow-hidden"
+                        @click.stop
+                      >
+                        <div class="px-3 py-1.5 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+                          <svg class="h-3 w-3 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8" /><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35" /></svg>
+                          <input v-model="snippetQuery" type="text" placeholder="Search snippets…" class="flex-1 text-xs bg-transparent text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none" @keydown.stop />
+                        </div>
+                        <ul class="py-1 max-h-52 overflow-y-auto">
+                          <li v-if="!snippetResults.length" class="px-3 py-2 text-xs text-slate-400 dark:text-slate-500 italic">No snippets match</li>
+                          <li
+                            v-for="snip in snippetResults"
+                            :key="snip.id"
+                            class="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 cursor-pointer transition-colors group/snip"
+                            @mousedown.prevent="insertSnippet(snip)"
+                          >
+                            <p class="text-xs font-medium text-slate-700 dark:text-slate-200 group-hover/snip:text-emerald-700 dark:group-hover/snip:text-emerald-300 transition-colors">{{ snip.name }}</p>
+                            <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5 truncate">{{ snip.body.slice(0, 60) }}{{ snip.body.length > 60 ? '…' : '' }}</p>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
                     <!-- email template picker -->
-                    <div v-if="noteType === 'email'" class="relative ml-auto">
+                    <div v-if="noteType === 'email'" class="relative">
                       <button
                         type="button"
                         class="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
@@ -5030,12 +5067,12 @@
                       class="w-full rounded-lg px-3 py-2 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
                       @keydown.meta.enter.prevent="logNote(openedRecord)"
                       @keydown.ctrl.enter.prevent="logNote(openedRecord)"
-                      @keydown.escape.prevent="atMentionOpen ? atMentionOpen = false : null"
+                      @keydown.escape.prevent="atMentionOpen ? (atMentionOpen = false) : showSnippetPicker ? (showSnippetPicker = false) : null"
                       @keydown.arrow-down.prevent="atMentionOpen && (atMentionIdx = Math.min(atMentionIdx + 1, atMentionResults.length - 1))"
                       @keydown.arrow-up.prevent="atMentionOpen && (atMentionIdx = Math.max(atMentionIdx - 1, 0))"
                       @keydown.enter.exact="atMentionOpen ? ($event.preventDefault(), atMentionResults[atMentionIdx] && insertMention(atMentionResults[atMentionIdx].record), atMentionOpen = false) : null"
                       @input="handleNoteInput"
-                      @blur="setTimeout(() => { atMentionOpen = false }, 150)"
+                      @blur="setTimeout(() => { atMentionOpen = false; showSnippetPicker = false; }, 150)"
                     />
                     <!-- @mention picker -->
                     <div
@@ -5059,6 +5096,26 @@
                           >{{ item.record.title.slice(0, 1).toUpperCase() }}</span>
                           <span class="flex-1 truncate">{{ item.record.title }}</span>
                           <span class="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">{{ item.rt?.label }}</span>
+                        </li>
+                      </ul>
+                    </div>
+                    <!-- / snippet inline picker -->
+                    <div
+                      v-if="slashSnippetOpen && slashSnippetResults.length"
+                      class="absolute left-0 bottom-full mb-1 z-30 w-64 rounded-xl border border-emerald-200 dark:border-emerald-800/60 bg-white dark:bg-slate-900 shadow-xl overflow-hidden"
+                    >
+                      <div class="px-3 py-1.5 border-b border-emerald-100 dark:border-emerald-900/40">
+                        <p class="text-[10px] font-semibold uppercase tracking-widest text-emerald-500 dark:text-emerald-400">Quick snippets · /{{ slashSnippetQuery }}</p>
+                      </div>
+                      <ul class="py-1 max-h-48 overflow-y-auto">
+                        <li
+                          v-for="snip in slashSnippetResults"
+                          :key="snip.id"
+                          class="px-3 py-1.5 cursor-pointer text-sm hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"
+                          @mousedown.prevent="applySlashSnippet(snip)"
+                        >
+                          <p class="text-xs font-medium text-slate-700 dark:text-slate-200">{{ snip.name }}</p>
+                          <p class="text-[10px] text-slate-400 dark:text-slate-500 truncate">{{ snip.body.slice(0, 50) }}{{ snip.body.length > 50 ? '…' : '' }}</p>
                         </li>
                       </ul>
                     </div>
@@ -8558,6 +8615,31 @@ const showEmailTemplatePicker = ref(false);
 watch(noteType, () => { showEmailTemplatePicker.value = false; });
 const showCadencePicker = ref(false);
 
+// Note snippets — reusable text blocks insertable via button or /trigger
+interface NoteSnippet { id: string; name: string; body: string; }
+const noteSnippets: NoteSnippet[] = [
+  { id: 'ns1', name: 'Left voicemail', body: 'Left a voicemail. Will follow up if no response within 48 hours.' },
+  { id: 'ns2', name: 'Meeting confirmed', body: 'Meeting confirmed. Sent calendar invite — agenda: introductions, goals, Q&A.' },
+  { id: 'ns3', name: 'Proposal sent', body: 'Proposal sent via email. Awaiting review and feedback within the week.' },
+  { id: 'ns4', name: 'Following up', body: 'Following up on our previous conversation. Please let me know if you have any questions or need additional information to move forward.' },
+  { id: 'ns5', name: 'Decision pending', body: 'Decision is in progress. Budget confirmed — awaiting sign-off from stakeholders.' },
+  { id: 'ns6', name: 'Discovery questions', body: 'Key discovery questions covered:\n- What is driving the need for this now?\n- Who else is involved in the decision?\n- What does success look like in 90 days?\n- What is the timeline and budget range?' },
+  { id: 'ns7', name: 'No response', body: 'Third outreach attempt with no response. Will pause contact for 30 days before re-engaging.' },
+  { id: 'ns8', name: 'Next steps agreed', body: 'Next steps agreed: send contract draft by [date], review call scheduled for [date].' },
+];
+const showSnippetPicker = ref(false);
+const snippetQuery = ref('');
+const snippetResults = computed((): NoteSnippet[] => {
+  const q = snippetQuery.value.toLowerCase();
+  return noteSnippets.filter((s) => !q || s.name.toLowerCase().includes(q)).slice(0, 8);
+});
+const slashSnippetOpen = ref(false);
+const slashSnippetQuery = ref('');
+const slashSnippetResults = computed((): NoteSnippet[] => {
+  const q = slashSnippetQuery.value.toLowerCase();
+  return noteSnippets.filter((s) => !q || s.name.toLowerCase().includes(q)).slice(0, 6);
+});
+
 const cadenceTemplates: CadenceTemplate[] = [
   {
     id: 'cad1', name: 'Discovery', description: 'Intro email → call → proposal → check-in',
@@ -8627,20 +8709,67 @@ function handleNoteInput(evt: Event) {
   const el = evt.target as HTMLTextAreaElement;
   const val = el.value;
   const cursor = el.selectionStart ?? val.length;
-  // scan back from cursor for '@' within 40 chars
   const segment = val.slice(Math.max(0, cursor - 40), cursor);
+
+  // @ mention trigger
   const atIdx = segment.lastIndexOf('@');
   if (atIdx !== -1) {
     const after = segment.slice(atIdx + 1);
-    // Only trigger if after the @ is word characters (no spaces)
     if (/^[\w ]{0,30}$/.test(after)) {
       atMentionQuery.value = after.trim();
       atMentionIdx.value = 0;
       atMentionOpen.value = true;
+      slashSnippetOpen.value = false;
       return;
     }
   }
   atMentionOpen.value = false;
+
+  // / snippet trigger — only at start of line or after whitespace
+  const slashIdx = segment.lastIndexOf('/');
+  if (slashIdx !== -1) {
+    const before = segment.slice(0, slashIdx);
+    const afterSlash = segment.slice(slashIdx + 1);
+    if ((!before.trim() || /\s$/.test(before)) && /^[\w ]{0,20}$/.test(afterSlash) && !afterSlash.includes('\n')) {
+      slashSnippetQuery.value = afterSlash.trim();
+      slashSnippetOpen.value = true;
+      return;
+    }
+  }
+  slashSnippetOpen.value = false;
+}
+
+function insertSnippet(snip: NoteSnippet) {
+  const el = activityTextareaEl.value;
+  if (!el) return;
+  const val = noteText.value;
+  const cursor = el.selectionStart ?? val.length;
+  const before = val.slice(0, cursor);
+  const after = val.slice(cursor);
+  noteText.value = before + (before && !before.endsWith('\n') ? '\n' : '') + snip.body + after;
+  showSnippetPicker.value = false;
+  nextTick(() => {
+    const pos = noteText.value.length - after.length;
+    el.setSelectionRange(pos, pos);
+    el.focus();
+  });
+}
+
+function applySlashSnippet(snip: NoteSnippet) {
+  const el = activityTextareaEl.value;
+  if (!el) return;
+  const val = noteText.value;
+  const cursor = el.selectionStart ?? val.length;
+  const before = val.slice(0, cursor);
+  const slashIdx = before.lastIndexOf('/');
+  const after = val.slice(cursor);
+  noteText.value = (slashIdx !== -1 ? before.slice(0, slashIdx) : before) + snip.body + after;
+  slashSnippetOpen.value = false;
+  nextTick(() => {
+    const pos = (slashIdx !== -1 ? slashIdx : cursor) + snip.body.length;
+    el.setSelectionRange(pos, pos);
+    el.focus();
+  });
 }
 
 function insertMention(record: { id: string; title: string }) {
