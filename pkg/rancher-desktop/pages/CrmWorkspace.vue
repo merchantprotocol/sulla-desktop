@@ -10115,47 +10115,113 @@
             <div v-if="!scoringRulesForType.length" class="px-6 py-8 text-center text-sm text-slate-400 dark:text-slate-500">
               No scoring rules yet. Add one below to start scoring {{ selectedType?.label_plural }}.
             </div>
-            <div v-for="rule in scoringRulesForType" :key="rule.id" class="flex items-center gap-3 px-6 py-3">
-              <div class="flex-1 min-w-0">
-                <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
-                  <template v-if="rule.condition === 'field_filled'">
-                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
-                    <span class="text-slate-400 dark:text-slate-500"> is filled</span>
-                  </template>
-                  <template v-else-if="rule.condition === 'field_eq'">
-                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
-                    <span class="text-slate-400 dark:text-slate-500"> equals </span>
-                    <span class="font-medium">{{ rule.value }}</span>
-                  </template>
-                  <template v-else-if="rule.condition === 'field_contains'">
-                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
-                    <span class="text-slate-400 dark:text-slate-500"> contains </span>
-                    <span class="font-medium">{{ rule.value }}</span>
-                  </template>
-                  <template v-else-if="rule.condition === 'field_gt'">
-                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
-                    <span class="text-slate-400 dark:text-slate-500"> &gt; </span>
-                    <span class="font-medium">{{ rule.value }}</span>
-                  </template>
-                  <template v-else-if="rule.condition === 'field_lt'">
-                    <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
-                    <span class="text-slate-400 dark:text-slate-500"> &lt; </span>
-                    <span class="font-medium">{{ rule.value }}</span>
-                  </template>
-                  <template v-else-if="rule.condition === 'stage_is'">
-                    <span class="text-slate-400 dark:text-slate-500">Stage is </span>
-                    <span class="font-medium">{{ rule.value }}</span>
-                  </template>
-                  <template v-else-if="rule.condition === 'activity_within_days'">
-                    <span class="text-slate-400 dark:text-slate-500">Activity within </span>
-                    <span class="font-medium">{{ rule.value }} day{{ rule.value === '1' ? '' : 's' }}</span>
-                  </template>
-                </p>
-              </div>
-              <span class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400">+{{ rule.points }} pts</span>
-              <button type="button" class="shrink-0 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-colors rounded p-0.5" @click="deleteScoringRule(rule.id)">
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-              </button>
+            <div v-for="rule in scoringRulesForType" :key="rule.id" class="group/srule px-6 py-3">
+              <!-- inline edit form -->
+              <template v-if="editingScoringRuleId === rule.id">
+                <div class="space-y-2">
+                  <div class="grid grid-cols-2 gap-2">
+                    <div class="col-span-2">
+                      <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">Condition</label>
+                      <select v-model="editingScoringCondition" class="w-full text-sm px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50">
+                        <option value="field_filled">Field is filled</option>
+                        <option value="field_eq">Field equals value</option>
+                        <option value="field_contains">Field contains text</option>
+                        <option value="field_gt">Field is greater than (number)</option>
+                        <option value="field_lt">Field is less than (number)</option>
+                        <option value="stage_is">Stage is</option>
+                        <option value="activity_within_days">Activity within N days</option>
+                      </select>
+                    </div>
+                    <div v-if="editingScoringCondition !== 'activity_within_days' && editingScoringCondition !== 'stage_is'">
+                      <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">Field</label>
+                      <select v-model="editingScoringFieldKey" class="w-full text-sm px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50">
+                        <option v-for="col in allColumns.filter(c => c.data_type !== 'formula')" :key="col.key" :value="col.key">{{ col.label }}</option>
+                      </select>
+                    </div>
+                    <div v-if="editingScoringCondition !== 'field_filled'">
+                      <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                        <template v-if="editingScoringCondition === 'activity_within_days'">Days</template>
+                        <template v-else-if="editingScoringCondition === 'stage_is'">Stage name</template>
+                        <template v-else>Value</template>
+                      </label>
+                      <input
+                        v-model="editingScoringValue"
+                        :type="editingScoringCondition === 'activity_within_days' || editingScoringCondition === 'field_gt' || editingScoringCondition === 'field_lt' ? 'number' : 'text'"
+                        class="w-full text-sm px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                      />
+                    </div>
+                    <div>
+                      <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">Points (1–100)</label>
+                      <input
+                        v-model="editingScoringPoints"
+                        type="number"
+                        min="1"
+                        max="100"
+                        class="w-full text-sm px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                        @keydown.enter.prevent="commitEditScoringRule"
+                        @keydown.esc.stop="editingScoringRuleId = null"
+                      />
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-end gap-2 pt-0.5">
+                    <button type="button" class="px-3 py-1 text-xs rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" @click="editingScoringRuleId = null">Cancel</button>
+                    <button type="button" class="px-3 py-1 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors" @click="commitEditScoringRule">Save</button>
+                  </div>
+                </div>
+              </template>
+              <!-- display mode -->
+              <template v-else>
+                <div class="flex items-center gap-3">
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm text-slate-800 dark:text-slate-200 truncate">
+                      <template v-if="rule.condition === 'field_filled'">
+                        <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                        <span class="text-slate-400 dark:text-slate-500"> is filled</span>
+                      </template>
+                      <template v-else-if="rule.condition === 'field_eq'">
+                        <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                        <span class="text-slate-400 dark:text-slate-500"> equals </span>
+                        <span class="font-medium">{{ rule.value }}</span>
+                      </template>
+                      <template v-else-if="rule.condition === 'field_contains'">
+                        <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                        <span class="text-slate-400 dark:text-slate-500"> contains </span>
+                        <span class="font-medium">{{ rule.value }}</span>
+                      </template>
+                      <template v-else-if="rule.condition === 'field_gt'">
+                        <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                        <span class="text-slate-400 dark:text-slate-500"> &gt; </span>
+                        <span class="font-medium">{{ rule.value }}</span>
+                      </template>
+                      <template v-else-if="rule.condition === 'field_lt'">
+                        <span class="font-medium">{{ allColumns.find(c => c.key === rule.fieldKey)?.label ?? rule.fieldKey }}</span>
+                        <span class="text-slate-400 dark:text-slate-500"> &lt; </span>
+                        <span class="font-medium">{{ rule.value }}</span>
+                      </template>
+                      <template v-else-if="rule.condition === 'stage_is'">
+                        <span class="text-slate-400 dark:text-slate-500">Stage is </span>
+                        <span class="font-medium">{{ rule.value }}</span>
+                      </template>
+                      <template v-else-if="rule.condition === 'activity_within_days'">
+                        <span class="text-slate-400 dark:text-slate-500">Activity within </span>
+                        <span class="font-medium">{{ rule.value }} day{{ rule.value === '1' ? '' : 's' }}</span>
+                      </template>
+                    </p>
+                  </div>
+                  <span class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400">+{{ rule.points }} pts</span>
+                  <button
+                    type="button"
+                    class="shrink-0 h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 opacity-0 group-hover/srule:opacity-100 transition-all"
+                    title="Edit rule"
+                    @click="startEditScoringRule(rule)"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  </button>
+                  <button type="button" class="shrink-0 h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 opacity-0 group-hover/srule:opacity-100 transition-all" title="Delete rule" @click="deleteScoringRule(rule.id)">
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
+                </div>
+              </template>
             </div>
           </div>
           <!-- add rule form -->
@@ -10239,40 +10305,129 @@
             <div
               v-for="rule in automationRules"
               :key="rule.id"
-              class="group flex items-start gap-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 transition-colors"
-              :class="!rule.enabled ? 'opacity-50' : ''"
+              class="group/arule rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 transition-colors"
+              :class="!rule.enabled ? 'opacity-60' : ''"
             >
-              <!-- toggle -->
-              <button
-                type="button"
-                class="mt-0.5 shrink-0 h-5 w-9 rounded-full transition-colors relative"
-                :class="rule.enabled ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-600'"
-                @click="rule.enabled = !rule.enabled"
-              >
-                <span class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all" :class="rule.enabled ? 'left-4' : 'left-0.5'" />
-              </button>
-              <!-- details -->
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-medium text-slate-700 dark:text-slate-300">{{ rule.name }}</p>
-                <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                  When <span class="font-medium text-slate-600 dark:text-slate-400">{{ rule.trigger_type_key }}</span>
-                  · {{ rule.trigger_field_key }} = "<span class="font-medium">{{ rule.trigger_value }}</span>"
-                </p>
-                <p class="text-xs mt-0.5">
-                  <span v-if="rule.action_type === 'set_field'" class="text-sky-600 dark:text-sky-400">Set {{ rule.action_field_key }} → {{ rule.action_value === '__today__' ? 'today' : rule.action_value }}</span>
-                  <span v-else-if="rule.action_type === 'create_task'" class="text-emerald-600 dark:text-emerald-400">Create task: "{{ rule.action_task_text }}"</span>
-                  <span v-else-if="rule.action_type === 'notify'" class="text-amber-600 dark:text-amber-400">Notify: "{{ rule.action_message }}"</span>
-                </p>
-              </div>
-              <!-- delete -->
-              <button
-                type="button"
-                class="shrink-0 h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
-                title="Delete rule"
-                @click="automationRules.splice(automationRules.indexOf(rule), 1)"
-              >
-                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
+              <!-- inline edit form -->
+              <template v-if="editingAutomationRuleId === rule.id && editingAutomationDraft">
+                <div class="space-y-2">
+                  <div>
+                    <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Name</label>
+                    <input v-model="editingAutomationDraft.name" type="text" class="w-full text-sm px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50" />
+                  </div>
+                  <div class="grid grid-cols-3 gap-2">
+                    <div>
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Record type</label>
+                      <select v-model="editingAutomationDraft.trigger_type_key" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none">
+                        <option v-for="rt in schema" :key="rt.key" :value="rt.key">{{ rt.label }}</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field</label>
+                      <input v-model="editingAutomationDraft.trigger_field_key" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                    </div>
+                    <div>
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">= value</label>
+                      <input v-model="editingAutomationDraft.trigger_value" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Action</label>
+                    <select v-model="editingAutomationDraft.action_type" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none">
+                      <option value="set_field">Set a field</option>
+                      <option value="create_task">Create a task</option>
+                      <option value="notify">Show notification</option>
+                    </select>
+                  </div>
+                  <div v-if="editingAutomationDraft.action_type === 'set_field'" class="grid grid-cols-2 gap-2">
+                    <div>
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field key</label>
+                      <input v-model="editingAutomationDraft.action_field_key" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                    </div>
+                    <div>
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Value (__today__ = now)</label>
+                      <input v-model="editingAutomationDraft.action_value" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                    </div>
+                  </div>
+                  <div v-else-if="editingAutomationDraft.action_type === 'create_task'">
+                    <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Task text</label>
+                    <input v-model="editingAutomationDraft.action_task_text" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                  </div>
+                  <div v-else-if="editingAutomationDraft.action_type === 'notify'">
+                    <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Message</label>
+                    <input v-model="editingAutomationDraft.action_message" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                  </div>
+                  <div class="flex items-center justify-end gap-2 pt-0.5">
+                    <button type="button" class="px-3 py-1 text-xs rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" @click="editingAutomationRuleId = null; editingAutomationDraft = null">Cancel</button>
+                    <button
+                      type="button"
+                      class="px-3 py-1 text-xs rounded-lg bg-violet-600 hover:bg-violet-500 text-white transition-colors"
+                      @click="(() => {
+                        const idx = automationRules.findIndex(r => r.id === editingAutomationRuleId);
+                        if (idx >= 0 && editingAutomationDraft) {
+                          const d = editingAutomationDraft;
+                          automationRules[idx].name = d.name.trim() || automationRules[idx].name;
+                          automationRules[idx].trigger_type_key = d.trigger_type_key;
+                          automationRules[idx].trigger_field_key = d.trigger_field_key.trim();
+                          automationRules[idx].trigger_value = d.trigger_value.trim();
+                          automationRules[idx].action_type = d.action_type;
+                          automationRules[idx].action_field_key = d.action_field_key.trim() || undefined;
+                          automationRules[idx].action_value = d.action_value.trim() || undefined;
+                          automationRules[idx].action_task_text = d.action_task_text.trim() || undefined;
+                          automationRules[idx].action_message = d.action_message.trim() || undefined;
+                        }
+                        editingAutomationRuleId = null;
+                        editingAutomationDraft = null;
+                      })()"
+                    >Save</button>
+                  </div>
+                </div>
+              </template>
+              <!-- display mode -->
+              <template v-else>
+                <div class="flex items-start gap-3">
+                  <!-- toggle -->
+                  <button
+                    type="button"
+                    class="mt-0.5 shrink-0 h-5 w-9 rounded-full transition-colors relative"
+                    :class="rule.enabled ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-600'"
+                    @click="rule.enabled = !rule.enabled"
+                  >
+                    <span class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all" :class="rule.enabled ? 'left-4' : 'left-0.5'" />
+                  </button>
+                  <!-- details -->
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-slate-700 dark:text-slate-300">{{ rule.name }}</p>
+                    <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                      When <span class="font-medium text-slate-600 dark:text-slate-400">{{ rule.trigger_type_key }}</span>
+                      · {{ rule.trigger_field_key }} = "<span class="font-medium">{{ rule.trigger_value }}</span>"
+                    </p>
+                    <p class="text-xs mt-0.5">
+                      <span v-if="rule.action_type === 'set_field'" class="text-sky-600 dark:text-sky-400">Set {{ rule.action_field_key }} → {{ rule.action_value === '__today__' ? 'today' : rule.action_value }}</span>
+                      <span v-else-if="rule.action_type === 'create_task'" class="text-emerald-600 dark:text-emerald-400">Create task: "{{ rule.action_task_text }}"</span>
+                      <span v-else-if="rule.action_type === 'notify'" class="text-amber-600 dark:text-amber-400">Notify: "{{ rule.action_message }}"</span>
+                    </p>
+                  </div>
+                  <!-- edit -->
+                  <button
+                    type="button"
+                    class="shrink-0 h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 opacity-0 group-hover/arule:opacity-100 transition-all"
+                    title="Edit rule"
+                    @click="editingAutomationRuleId = rule.id; editingAutomationDraft = { name: rule.name, enabled: rule.enabled, trigger_type_key: rule.trigger_type_key, trigger_field_key: rule.trigger_field_key, trigger_value: rule.trigger_value, action_type: rule.action_type, action_field_key: rule.action_field_key ?? '', action_value: rule.action_value ?? '', action_task_text: rule.action_task_text ?? '', action_message: rule.action_message ?? '' }"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                  </button>
+                  <!-- delete -->
+                  <button
+                    type="button"
+                    class="shrink-0 h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover/arule:opacity-100 transition-all"
+                    title="Delete rule"
+                    @click="automationRules.splice(automationRules.indexOf(rule), 1); if (editingAutomationRuleId === rule.id) { editingAutomationRuleId = null; editingAutomationDraft = null; }"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              </template>
             </div>
 
             <!-- empty state -->
@@ -13472,6 +13627,11 @@ const scoringDraftCondition = ref<ScoringRule['condition']>('field_filled');
 const scoringDraftFieldKey = ref('');
 const scoringDraftValue = ref('');
 const scoringDraftPoints = ref('10');
+const editingScoringRuleId = ref<string | null>(null);
+const editingScoringCondition = ref<ScoringRule['condition']>('field_filled');
+const editingScoringFieldKey = ref('');
+const editingScoringValue = ref('');
+const editingScoringPoints = ref('10');
 
 const scoringRulesForType = computed(() =>
   scoringRules.value.filter((r) => r.typeKey === selectedTypeKey.value),
@@ -13563,6 +13723,28 @@ function addScoringRule() {
 
 function deleteScoringRule(id: string) {
   scoringRules.value = scoringRules.value.filter((r) => r.id !== id);
+  if (editingScoringRuleId.value === id) editingScoringRuleId.value = null;
+}
+
+function startEditScoringRule(rule: ScoringRule) {
+  editingScoringRuleId.value = rule.id;
+  editingScoringCondition.value = rule.condition;
+  editingScoringFieldKey.value = rule.fieldKey;
+  editingScoringValue.value = rule.value;
+  editingScoringPoints.value = String(rule.points);
+}
+
+function commitEditScoringRule() {
+  const id = editingScoringRuleId.value;
+  if (!id) return;
+  const pts = parseInt(editingScoringPoints.value, 10);
+  if (isNaN(pts) || pts <= 0) return;
+  scoringRules.value = scoringRules.value.map((r) =>
+    r.id === id
+      ? { ...r, condition: editingScoringCondition.value, fieldKey: editingScoringFieldKey.value, value: editingScoringValue.value.trim(), points: pts }
+      : r,
+  );
+  editingScoringRuleId.value = null;
 }
 
 // ── Weekly activity quotas ─────────────────────────────────────────────────
@@ -13844,6 +14026,8 @@ interface NewRuleDraft {
   action_message: string;
 }
 const newRuleDraft = ref<NewRuleDraft | null>(null);
+const editingAutomationRuleId = ref<string | null>(null);
+const editingAutomationDraft = ref<NewRuleDraft | null>(null);
 const showQuickFilterPanel = ref(false);
 const showBulkTagDropdown = ref(false);
 const bulkTagInput = ref('');
