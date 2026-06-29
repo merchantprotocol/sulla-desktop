@@ -4303,6 +4303,54 @@
             <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No weekly targets set. Click "Edit targets" to add some.</p>
           </div>
 
+          <!-- activity digest -->
+          <div v-if="activityDigest.topRecords.length || activityDigest.recentActivity.length" class="grid grid-cols-2 gap-4">
+            <!-- top active records -->
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Most active</p>
+              <div class="space-y-2">
+                <div
+                  v-for="(item, idx) in activityDigest.topRecords"
+                  :key="item.record.id"
+                  class="flex items-center gap-2 group/ta cursor-pointer"
+                  @click="openRecord(item.record)"
+                >
+                  <span class="shrink-0 text-[10px] tabular-nums font-bold text-slate-300 dark:text-slate-600 w-4 text-right">{{ idx + 1 }}</span>
+                  <span
+                    class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+                    :style="{ background: selectedType?.color ?? '#6366f1' }"
+                  >{{ item.record.title.slice(0, 1).toUpperCase() }}</span>
+                  <span class="flex-1 text-xs text-slate-700 dark:text-slate-200 truncate group-hover/ta:text-sky-600 dark:group-hover/ta:text-sky-400 transition-colors">{{ item.record.title }}</span>
+                  <span class="shrink-0 tabular-nums text-[10px] font-semibold text-slate-400 dark:text-slate-500">{{ item.count }}</span>
+                </div>
+              </div>
+            </div>
+            <!-- recent activity -->
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Recent activity</p>
+              <div class="space-y-2">
+                <div
+                  v-for="item in activityDigest.recentActivity"
+                  :key="item.act.id"
+                  class="flex items-start gap-2"
+                >
+                  <span
+                    class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center mt-0.5"
+                    :class="ACTIVITY_ICON_BG[item.act.type]"
+                  >
+                    <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[item.act.type]" />
+                    </svg>
+                  </span>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-[11px] text-slate-700 dark:text-slate-200 truncate">{{ item.record?.title ?? '—' }}</p>
+                    <p class="text-[10px] text-slate-400 dark:text-slate-500">{{ relativeTime(item.act.created_at) }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- win / loss reason analytics -->
           <div v-if="winLossAnalytics" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Win / Loss</p>
@@ -12051,6 +12099,33 @@ const statsViewData = computed(() => {
   const heatmapMax = Math.max(...Object.values(dateCounts), 1);
 
   return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
+});
+
+// ── Activity digest ───────────────────────────────────────────────────────
+const activityDigest = computed((): {
+  topRecords: Array<{ record: CrmRecord; count: number }>;
+  recentActivity: Array<{ act: CrmActivity; record: CrmRecord | undefined }>;
+} => {
+  const recs = filteredRecords.value;
+  const recIds = new Set(recs.map((r) => r.id));
+  const countMap: Record<string, number> = {};
+  const relevant: CrmActivity[] = [];
+  for (const a of mockActivities) {
+    if (!recIds.has(a.record_id)) continue;
+    countMap[a.record_id] = (countMap[a.record_id] ?? 0) + 1;
+    relevant.push(a);
+  }
+  const topRecords = recs
+    .filter((r) => countMap[r.id])
+    .sort((a, b) => (countMap[b.id] ?? 0) - (countMap[a.id] ?? 0))
+    .slice(0, 5)
+    .map((r) => ({ record: r, count: countMap[r.id] ?? 0 }));
+  const recentActivity = relevant
+    .slice()
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 5)
+    .map((a) => ({ act: a, record: mockRecords.find((r) => r.id === a.record_id) }));
+  return { topRecords, recentActivity };
 });
 
 // ── Win / loss reason analytics ───────────────────────────────────────────
