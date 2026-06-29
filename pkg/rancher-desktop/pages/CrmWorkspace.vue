@@ -1357,6 +1357,23 @@
               Export
             </button>
 
+            <!-- automations button -->
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+              :class="automationRules.some(r => r.enabled)
+                ? 'border-violet-400 dark:border-violet-500 text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/30 hover:bg-violet-100 dark:hover:bg-violet-950/50'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+              :title="`${automationRules.filter(r => r.enabled).length} automation${automationRules.filter(r => r.enabled).length === 1 ? '' : 's'} active`"
+              @click.stop="showAutomationsPanel = true"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Automations
+              <span v-if="automationRules.some(r => r.enabled)" class="text-[10px] tabular-nums rounded-full px-1.5 leading-none py-0.5 bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400">{{ automationRules.filter(r => r.enabled).length }}</span>
+            </button>
+
             <!-- columns toggle — table view only -->
             <div v-if="viewMode === 'table'" class="relative">
               <button
@@ -5901,6 +5918,161 @@
       </div>
     </transition>
 
+    <!-- Automations panel -->
+    <transition enter-active-class="transition-all duration-200" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-150" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div v-if="showAutomationsPanel" class="fixed inset-0 z-50 flex items-center justify-center p-4" @click.self="showAutomationsPanel = false; newRuleDraft = null">
+        <div class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-lg max-h-[80vh] flex flex-col" @click.stop>
+          <!-- header -->
+          <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+            <div class="flex items-center gap-2">
+              <svg class="h-5 w-5 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <h3 class="text-base font-semibold text-slate-900 dark:text-white">Automations</h3>
+              <span class="text-xs text-slate-400 dark:text-slate-500">— run actions when fields change</span>
+            </div>
+            <button type="button" class="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showAutomationsPanel = false; newRuleDraft = null">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+
+          <!-- rule list -->
+          <div class="flex-1 overflow-y-auto px-6 py-4 space-y-2">
+            <div
+              v-for="rule in automationRules"
+              :key="rule.id"
+              class="group flex items-start gap-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 px-4 py-3 transition-colors"
+              :class="!rule.enabled ? 'opacity-50' : ''"
+            >
+              <!-- toggle -->
+              <button
+                type="button"
+                class="mt-0.5 shrink-0 h-5 w-9 rounded-full transition-colors relative"
+                :class="rule.enabled ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-600'"
+                @click="rule.enabled = !rule.enabled"
+              >
+                <span class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all" :class="rule.enabled ? 'left-4' : 'left-0.5'" />
+              </button>
+              <!-- details -->
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-slate-700 dark:text-slate-300">{{ rule.name }}</p>
+                <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                  When <span class="font-medium text-slate-600 dark:text-slate-400">{{ rule.trigger_type_key }}</span>
+                  · {{ rule.trigger_field_key }} = "<span class="font-medium">{{ rule.trigger_value }}</span>"
+                </p>
+                <p class="text-xs mt-0.5">
+                  <span v-if="rule.action_type === 'set_field'" class="text-sky-600 dark:text-sky-400">Set {{ rule.action_field_key }} → {{ rule.action_value === '__today__' ? 'today' : rule.action_value }}</span>
+                  <span v-else-if="rule.action_type === 'create_task'" class="text-emerald-600 dark:text-emerald-400">Create task: "{{ rule.action_task_text }}"</span>
+                  <span v-else-if="rule.action_type === 'notify'" class="text-amber-600 dark:text-amber-400">Notify: "{{ rule.action_message }}"</span>
+                </p>
+              </div>
+              <!-- delete -->
+              <button
+                type="button"
+                class="shrink-0 h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                title="Delete rule"
+                @click="automationRules.splice(automationRules.indexOf(rule), 1)"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <!-- empty state -->
+            <p v-if="!automationRules.length && !newRuleDraft" class="text-sm text-slate-400 dark:text-slate-500 text-center py-6">No automation rules yet</p>
+
+            <!-- new rule form -->
+            <div v-if="newRuleDraft" class="rounded-xl border-2 border-violet-300 dark:border-violet-700 bg-violet-50/40 dark:bg-violet-950/10 px-4 py-4 space-y-3">
+              <p class="text-xs font-semibold uppercase tracking-widest text-violet-500 dark:text-violet-400">New rule</p>
+              <div>
+                <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Name</label>
+                <input v-model="newRuleDraft.name" type="text" placeholder="e.g. Won deal → task" class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50" />
+              </div>
+              <div class="grid grid-cols-3 gap-2">
+                <div>
+                  <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Record type</label>
+                  <select v-model="newRuleDraft.trigger_type_key" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none">
+                    <option v-for="rt in schema" :key="rt.key" :value="rt.key">{{ rt.label }}</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field</label>
+                  <input v-model="newRuleDraft.trigger_field_key" type="text" placeholder="field_key" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                </div>
+                <div>
+                  <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">= value</label>
+                  <input v-model="newRuleDraft.trigger_value" type="text" placeholder="Closed Won" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                </div>
+              </div>
+              <div>
+                <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Action</label>
+                <select v-model="newRuleDraft.action_type" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none">
+                  <option value="set_field">Set a field</option>
+                  <option value="create_task">Create a task</option>
+                  <option value="notify">Show notification</option>
+                </select>
+              </div>
+              <div v-if="newRuleDraft.action_type === 'set_field'" class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field key</label>
+                  <input v-model="newRuleDraft.action_field_key" type="text" placeholder="close_date" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                </div>
+                <div>
+                  <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Value (__today__ = now)</label>
+                  <input v-model="newRuleDraft.action_value" type="text" placeholder="__today__" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                </div>
+              </div>
+              <div v-else-if="newRuleDraft.action_type === 'create_task'">
+                <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Task text</label>
+                <input v-model="newRuleDraft.action_task_text" type="text" placeholder="Send welcome email" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+              </div>
+              <div v-else-if="newRuleDraft.action_type === 'notify'">
+                <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Message</label>
+                <input v-model="newRuleDraft.action_message" type="text" placeholder="Deal closed — follow up!" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+              </div>
+              <div class="flex gap-2 justify-end pt-1">
+                <button type="button" class="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors" @click="newRuleDraft = null">Cancel</button>
+                <button
+                  type="button"
+                  class="px-3 py-1.5 text-xs rounded-lg bg-violet-600 hover:bg-violet-500 text-white transition-colors disabled:opacity-40"
+                  :disabled="!newRuleDraft.name.trim() || !newRuleDraft.trigger_field_key.trim() || !newRuleDraft.trigger_value.trim()"
+                  @click="(() => {
+                    if (!newRuleDraft) return;
+                    automationRules.push({
+                      id: 'ar-' + String(Date.now()).slice(-6),
+                      name: newRuleDraft.name.trim(),
+                      enabled: true,
+                      trigger_type_key: newRuleDraft.trigger_type_key,
+                      trigger_field_key: newRuleDraft.trigger_field_key.trim(),
+                      trigger_value: newRuleDraft.trigger_value.trim(),
+                      action_type: newRuleDraft.action_type,
+                      action_field_key: newRuleDraft.action_field_key.trim() || undefined,
+                      action_value: newRuleDraft.action_value.trim() || undefined,
+                      action_task_text: newRuleDraft.action_task_text.trim() || undefined,
+                      action_message: newRuleDraft.action_message.trim() || undefined,
+                    });
+                    newRuleDraft = null;
+                  })()"
+                >Save rule</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- footer -->
+          <div class="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+            <p class="text-xs text-slate-400 dark:text-slate-500">{{ automationRules.filter(r => r.enabled).length }} of {{ automationRules.length }} enabled</p>
+            <button
+              type="button"
+              class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-violet-600 hover:bg-violet-500 text-white transition-colors"
+              @click="newRuleDraft = { name: '', enabled: true, trigger_type_key: schema[0]?.key ?? '', trigger_field_key: '', trigger_value: '', action_type: 'set_field', action_field_key: '', action_value: '', action_task_text: '', action_message: '' }"
+            >
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+              Add rule
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <!-- CSV import modal -->
     <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100" leave-to-class="opacity-0">
       <div v-if="showImportModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="showImportModal = false">
@@ -7097,6 +7269,22 @@ interface CrmTask {
   due_date?: string;
 }
 
+type AutomationActionType = 'set_field' | 'create_task' | 'notify';
+
+interface AutomationRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger_type_key: string;
+  trigger_field_key: string;
+  trigger_value: string;
+  action_type: AutomationActionType;
+  action_field_key?: string;
+  action_value?: string;
+  action_task_text?: string;
+  action_message?: string;
+}
+
 interface CrmAttachment {
   id: string;
   record_id: string;
@@ -7759,6 +7947,26 @@ const showMergeModal = ref(false);
 interface RecordTemplate { id: string; name: string; typeKey: string; fieldValues: Record<string, unknown> }
 const recordTemplates = ref<RecordTemplate[]>([]);
 const showTemplatePanel = ref(false);
+const automationRules = reactive<AutomationRule[]>([
+  { id: 'ar1', name: 'Won deal → close date', enabled: true,  trigger_type_key: 'deal',    trigger_field_key: 'stage',  trigger_value: 'Closed Won', action_type: 'set_field',   action_field_key: 'close_date', action_value: '__today__' },
+  { id: 'ar2', name: 'Won deal → send welcome task', enabled: true, trigger_type_key: 'deal', trigger_field_key: 'stage', trigger_value: 'Closed Won', action_type: 'create_task', action_task_text: 'Send onboarding welcome email' },
+  { id: 'ar3', name: 'Contact activated',    enabled: true,  trigger_type_key: 'contact', trigger_field_key: 'status', trigger_value: 'Active',     action_type: 'notify',      action_message: 'Contact moved to Active — assign a next step!' },
+  { id: 'ar4', name: 'Lead lost → alert',    enabled: false, trigger_type_key: 'deal',    trigger_field_key: 'stage',  trigger_value: 'Closed Lost', action_type: 'notify',     action_message: 'Deal marked Closed Lost. Consider a follow-up in 30 days.' },
+]);
+const showAutomationsPanel = ref(false);
+interface NewRuleDraft {
+  name: string;
+  enabled: boolean;
+  trigger_type_key: string;
+  trigger_field_key: string;
+  trigger_value: string;
+  action_type: AutomationActionType;
+  action_field_key: string;
+  action_value: string;
+  action_task_text: string;
+  action_message: string;
+}
+const newRuleDraft = ref<NewRuleDraft | null>(null);
 const showQuickFilterPanel = ref(false);
 const showBulkTagDropdown = ref(false);
 const bulkTagInput = ref('');
@@ -9819,6 +10027,7 @@ function commitCellEdit(newValue: string | number | boolean | string[] | null) {
   if (newValue === oldValue) return;
   record.field_values[cell.fieldKey] = newValue;
   record.updated_at = new Date().toISOString();
+  runAutomations(record, cell.fieldKey, newValue);
   // keep title in sync when the title field is edited inline
   const type = schema.find((t) => t.key === record.record_type_key);
   const titleField = type?.fields.find((f) => f.is_title);
@@ -9847,6 +10056,31 @@ function commitCellEdit(newValue: string | number | boolean | string[] | null) {
         showToast(`${col.label} reverted`);
       },
     });
+  }
+}
+
+function runAutomations(record: CrmRecord, changedFieldKey: string, newValue: unknown) {
+  const today = new Date().toISOString().slice(0, 10);
+  for (const rule of automationRules) {
+    if (!rule.enabled) continue;
+    if (rule.trigger_type_key !== record.record_type_key) continue;
+    if (rule.trigger_field_key !== changedFieldKey) continue;
+    if (String(record.field_values[rule.trigger_field_key] ?? '') !== rule.trigger_value && String(newValue ?? '') !== rule.trigger_value) continue;
+    if (String(newValue ?? '') !== rule.trigger_value) continue;
+    if (rule.action_type === 'set_field' && rule.action_field_key) {
+      const val = rule.action_value === '__today__' ? today : (rule.action_value ?? null);
+      record.field_values[rule.action_field_key] = val;
+    } else if (rule.action_type === 'create_task' && rule.action_task_text) {
+      mockTasks.push({
+        id: 'ar-tk-' + String(mockTasks.length) + '-' + String(Date.now()).slice(-5),
+        record_id: record.id,
+        text: rule.action_task_text,
+        done: false,
+        created_at: new Date().toISOString(),
+      });
+    } else if (rule.action_type === 'notify' && rule.action_message) {
+      showToast(`Automation: ${rule.action_message}`);
+    }
   }
 }
 
@@ -10998,6 +11232,7 @@ function saveEditing(record: CrmRecord) {
         author: 'You',
         created_at: new Date().toISOString(),
       });
+      runAutomations(record, f.key, record.field_values[f.key]);
     }
   }
   preEditSnapshot.value = {};
