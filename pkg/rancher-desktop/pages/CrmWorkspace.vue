@@ -762,29 +762,6 @@
               </svg>
               Archive
             </button>
-            <!-- bulk watch / unwatch -->
-            <button
-              type="button"
-              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
-              :class="[...selectedIds].every(id => watchedIds.has(id))
-                ? 'border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/30'
-                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'"
-              :title="[...selectedIds].every(id => watchedIds.has(id))
-                ? `Unwatch ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}`
-                : `Watch ${selectedIds.size} record${selectedIds.size === 1 ? '' : 's'}`"
-              @click="[...selectedIds].every(id => watchedIds.has(id)) ? bulkWatch(false) : bulkWatch(true)"
-            >
-              <svg
-                class="h-4 w-4"
-                :fill="[...selectedIds].every(id => watchedIds.has(id)) ? 'currentColor' : 'none'"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                stroke-width="2"
-              >
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-              </svg>
-              Watch
-            </button>
             <button
               type="button"
               class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
