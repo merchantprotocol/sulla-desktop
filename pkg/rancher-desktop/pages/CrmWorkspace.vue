@@ -8811,6 +8811,29 @@
                     </div>
                     <!-- actions -->
                     <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+                      <!-- copy name -->
+                      <button
+                        type="button"
+                        class="shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        title="Copy file name"
+                        @click.stop="navigator.clipboard?.writeText(att.name).then(() => showToast('File name copied'))"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" stroke-linecap="round" stroke-linejoin="round" />
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                        </svg>
+                      </button>
+                      <!-- download (stub) -->
+                      <button
+                        type="button"
+                        class="shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors"
+                        title="Download file"
+                        @click.stop="showToast(`Downloading ${att.name}…`)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                      </button>
                       <!-- rename -->
                       <button
                         type="button"
