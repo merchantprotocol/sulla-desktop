@@ -5997,7 +5997,7 @@
                 </div>
 
                 <div v-if="visibleActivities.length" class="space-y-1">
-                  <template v-for="row in groupedActivities" :key="row.kind === 'label' ? row.key : row.act.id">
+                  <template v-for="row in groupedActivities" :key="row.kind === 'label' ? row.key : row.kind === 'thread-header' ? ('thread-' + row.threadKey) : row.act.id">
                     <!-- date label -->
                     <div
                       v-if="row.kind === 'label'"
@@ -6006,6 +6006,27 @@
                       <span class="text-xs font-semibold text-slate-400 dark:text-slate-500 shrink-0">{{ row.label }}</span>
                       <div class="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
                     </div>
+                    <!-- email thread header -->
+                    <button
+                      v-else-if="row.kind === 'thread-header'"
+                      type="button"
+                      class="w-full flex items-center gap-2 py-1.5 px-2 rounded-lg bg-sky-50/60 dark:bg-sky-950/10 border border-sky-100 dark:border-sky-900/30 hover:bg-sky-50 dark:hover:bg-sky-950/20 transition-colors group/thread"
+                      :title="emailThreadsCollapsed.has(row.threadKey) ? 'Expand email thread' : 'Collapse email thread'"
+                      @click="toggleEmailThread(row.threadKey)"
+                    >
+                      <svg class="h-3.5 w-3.5 shrink-0 text-sky-500 dark:text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                      </svg>
+                      <span class="flex-1 text-left text-xs font-medium text-sky-700 dark:text-sky-300 truncate capitalize">{{ row.subject }}</span>
+                      <span class="shrink-0 text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400">{{ row.count }}</span>
+                      <svg
+                        class="h-3.5 w-3.5 shrink-0 text-sky-400 dark:text-sky-500 transition-transform"
+                        :class="emailThreadsCollapsed.has(row.threadKey) ? '' : 'rotate-90'"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
+                      >
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
                     <!-- activity item -->
                     <div
                       v-else
@@ -12698,6 +12719,17 @@ const recordAttachments = computed(() =>
 const activityTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const activitySearchQuery = ref('');
 const pinnedActivityIds = ref<Set<string>>(new Set());
+const emailThreadsCollapsed = ref<Set<string>>(new Set());
+
+function normalizeEmailSubject(s: string): string {
+  return s.replace(/^(re|fwd?|forward):\s*/i, '').trim().toLowerCase();
+}
+
+function toggleEmailThread(threadKey: string) {
+  const next = new Set(emailThreadsCollapsed.value);
+  if (next.has(threadKey)) next.delete(threadKey); else next.add(threadKey);
+  emailThreadsCollapsed.value = next;
+}
 const editingActivityId = ref<string | null>(null);
 const editingActivityText = ref('');
 const editingActivityEl = ref<HTMLTextAreaElement | null>(null);
@@ -12770,29 +12802,63 @@ const visibleActivities = computed(() => {
 
 type ActivityRow =
   | { kind: 'label'; label: string; key: string }
-  | { kind: 'activity'; act: CrmActivity };
+  | { kind: 'activity'; act: CrmActivity }
+  | { kind: 'thread-header'; threadKey: string; subject: string; count: number };
 
 const groupedActivities = computed((): ActivityRow[] => {
+  const acts = visibleActivities.value;
+
+  // Build email thread map (threadKey → activities)
+  const threadMap = new Map<string, CrmActivity[]>();
+  for (const act of acts) {
+    if (act.type !== 'email') continue;
+    const hdr = parseEmailHeader(act.content);
+    const subj = hdr?.subject?.trim();
+    if (!subj) continue;
+    const key = normalizeEmailSubject(subj);
+    if (!threadMap.has(key)) threadMap.set(key, []);
+    threadMap.get(key)!.push(act);
+  }
+  const threadedIds = new Set<string>();
+  const actThreadKey = new Map<string, string>();
+  for (const [key, emails] of threadMap) {
+    if (emails.length >= 2) {
+      for (const e of emails) { threadedIds.add(e.id); actThreadKey.set(e.id, key); }
+    }
+  }
+
   const rows: ActivityRow[] = [];
   let lastLabel = '';
-  for (const act of visibleActivities.value) {
+  const emittedThreadKeys = new Set<string>();
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const isSameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  for (const act of acts) {
     const isScheduledFuture = act.scheduled_at && act.scheduled_at > new Date().toISOString();
     const d = new Date(isScheduledFuture ? act.scheduled_at! : act.created_at);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-    const isSameDay = (a: Date, b: Date) =>
-      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
     let label: string;
     if (isScheduledFuture) label = `Scheduled · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
     else if (isSameDay(d, today)) label = 'Today';
     else if (isSameDay(d, yesterday)) label = 'Yesterday';
     else label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
-    if (label !== lastLabel) {
-      lastLabel = label;
-      rows.push({ kind: 'label', label, key: 'lbl-' + label });
+
+    if (threadedIds.has(act.id)) {
+      const tKey = actThreadKey.get(act.id)!;
+      if (!emittedThreadKeys.has(tKey)) {
+        emittedThreadKeys.add(tKey);
+        if (label !== lastLabel) { lastLabel = label; rows.push({ kind: 'label', label, key: 'lbl-' + label }); }
+        rows.push({ kind: 'thread-header', threadKey: tKey, subject: tKey, count: threadMap.get(tKey)!.length });
+      }
+      if (!emailThreadsCollapsed.value.has(tKey)) {
+        rows.push({ kind: 'activity', act });
+      }
+    } else {
+      if (label !== lastLabel) { lastLabel = label; rows.push({ kind: 'label', label, key: 'lbl-' + label }); }
+      rows.push({ kind: 'activity', act });
     }
-    rows.push({ kind: 'activity', act });
   }
   return rows;
 });
