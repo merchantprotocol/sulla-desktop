@@ -250,6 +250,30 @@
             </button>
           </div>
 
+          <!-- pinned records (hidden when collapsed) -->
+          <div v-if="pinnedRecords.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
+            <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Pinned</p>
+            <button
+              v-for="rec in pinnedRecords.slice(0, 8)"
+              :key="rec.id"
+              type="button"
+              class="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left transition-colors text-xs"
+              :class="openedRecord?.id === rec.id
+                ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white'
+                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'"
+              @click="openFromPalette(rec)"
+            >
+              <span
+                class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold select-none"
+                :style="{ background: (schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6') + '22', color: schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6' }"
+              >{{ recordInitials(rec.title) }}</span>
+              <span class="flex-1 truncate">{{ rec.title }}</span>
+              <svg class="shrink-0 h-3 w-3 text-amber-400" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+              </svg>
+            </button>
+          </div>
+
           <!-- upcoming reminders (hidden when collapsed) -->
           <div v-if="upcomingReminders.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Reminders</p>
@@ -13372,6 +13396,10 @@ const usedColorLabels = computed(() => {
 
 const watchedRecords = computed(() =>
   mockRecords.filter((r) => watchedIds.value.has(r.id)),
+);
+
+const pinnedRecords = computed(() =>
+  mockRecords.filter((r) => pinnedIds.value.has(r.id)),
 );
 
 const totalRecordsForType = computed(() =>
