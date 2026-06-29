@@ -11249,10 +11249,27 @@
                     <div v-if="editingScoringCondition !== 'field_filled'">
                       <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">
                         <template v-if="editingScoringCondition === 'activity_within_days'">Days</template>
-                        <template v-else-if="editingScoringCondition === 'stage_is'">Stage name</template>
+                        <template v-else-if="editingScoringCondition === 'stage_is'">Stage</template>
                         <template v-else>Value</template>
                       </label>
+                      <select
+                        v-if="editingScoringCondition === 'stage_is' && kanbanField?.select_options?.length"
+                        v-model="editingScoringValue"
+                        class="w-full text-sm px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                      >
+                        <option value="">— pick stage —</option>
+                        <option v-for="opt in kanbanField.select_options" :key="opt" :value="opt">{{ opt }}</option>
+                      </select>
+                      <select
+                        v-else-if="editingScoringCondition === 'field_eq' && allColumns.find(c => c.key === editingScoringFieldKey)?.data_type === 'select'"
+                        v-model="editingScoringValue"
+                        class="w-full text-sm px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                      >
+                        <option value="">— pick option —</option>
+                        <option v-for="opt in allColumns.find(c => c.key === editingScoringFieldKey)?.select_options ?? []" :key="opt" :value="opt">{{ opt }}</option>
+                      </select>
                       <input
+                        v-else
                         v-model="editingScoringValue"
                         :type="editingScoringCondition === 'activity_within_days' || editingScoringCondition === 'field_gt' || editingScoringCondition === 'field_lt' ? 'number' : 'text'"
                         class="w-full text-sm px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
@@ -11365,13 +11382,32 @@
               <div v-if="scoringDraftCondition !== 'field_filled'">
                 <label class="block text-xs text-slate-500 dark:text-slate-400 mb-1">
                   <template v-if="scoringDraftCondition === 'activity_within_days'">Days</template>
-                  <template v-else-if="scoringDraftCondition === 'stage_is'">Stage name</template>
+                  <template v-else-if="scoringDraftCondition === 'stage_is'">Stage</template>
                   <template v-else>Value</template>
                 </label>
+                <!-- stage_is: show kanban stages -->
+                <select
+                  v-if="scoringDraftCondition === 'stage_is' && kanbanField?.select_options?.length"
+                  v-model="scoringDraftValue"
+                  class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                >
+                  <option value="">— pick stage —</option>
+                  <option v-for="opt in kanbanField.select_options" :key="opt" :value="opt">{{ opt }}</option>
+                </select>
+                <!-- field_eq on a select field: show the field's options -->
+                <select
+                  v-else-if="scoringDraftCondition === 'field_eq' && allColumns.find(c => c.key === scoringDraftFieldKey)?.data_type === 'select'"
+                  v-model="scoringDraftValue"
+                  class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
+                >
+                  <option value="">— pick option —</option>
+                  <option v-for="opt in allColumns.find(c => c.key === scoringDraftFieldKey)?.select_options ?? []" :key="opt" :value="opt">{{ opt }}</option>
+                </select>
                 <input
+                  v-else
                   v-model="scoringDraftValue"
                   :type="scoringDraftCondition === 'activity_within_days' || scoringDraftCondition === 'field_gt' || scoringDraftCondition === 'field_lt' ? 'number' : 'text'"
-                  :placeholder="scoringDraftCondition === 'activity_within_days' ? 'e.g. 14' : scoringDraftCondition === 'stage_is' ? 'e.g. Proposal Sent' : 'value…'"
+                  :placeholder="scoringDraftCondition === 'activity_within_days' ? 'e.g. 14' : 'value…'"
                   class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-400/50"
                 />
               </div>
