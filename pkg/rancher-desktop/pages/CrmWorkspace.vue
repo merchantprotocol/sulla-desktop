@@ -6854,12 +6854,15 @@
                 <!-- group header shown when group-by is active -->
                 <div
                   v-if="timelineGroupKey"
-                  class="sticky top-9 z-[5] flex items-center gap-2 px-3 py-1 border-b border-slate-200 dark:border-slate-700 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-sm"
+                  class="sticky top-9 z-[5] flex items-center gap-2 px-3 py-1 border-b border-slate-200 dark:border-slate-700 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-sm cursor-pointer select-none"
+                  :title="collapsedTimelineGroups.has(group.groupKey) ? `Expand — ${group.rows.length} record${group.rows.length === 1 ? '' : 's'}` : 'Collapse group'"
+                  @click="(() => { const next = new Set(collapsedTimelineGroups); if (next.has(group.groupKey)) next.delete(group.groupKey); else next.add(group.groupKey); collapsedTimelineGroups = next; })()"
                 >
-                  <span class="shrink-0 h-2 w-2 rounded-full bg-emerald-400 dark:bg-emerald-500" />
+                  <svg class="shrink-0 h-3 w-3 text-slate-400 dark:text-slate-500 transition-transform duration-150" :class="collapsedTimelineGroups.has(group.groupKey) ? '-rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
                   <span class="text-xs font-semibold text-slate-600 dark:text-slate-300">{{ group.groupLabel }}</span>
                   <span class="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded px-1 py-0.5 tabular-nums">{{ group.rows.length }}</span>
                 </div>
+                <template v-if="!timelineGroupKey || !collapsedTimelineGroups.has(group.groupKey)">
                 <div
                   v-for="row in group.rows"
                   :key="row.record.id"
@@ -7036,6 +7039,7 @@
                   >{{ row.isOverdue ? 'overdue · ' : '' }}{{ row.durationDays }}d</p>
                 </div>
                 </div>
+                </template>
               </template>
             </div>
             <!-- footer axis strip -->
@@ -15163,13 +15167,52 @@
           @click.stop
         >
           <p class="text-xs font-semibold text-slate-500 dark:text-slate-400 px-1 pb-1.5">{{ calOverflowDate }}</p>
-          <button
+          <div
             v-for="rec in calOverflowRecords"
             :key="rec.id"
-            type="button"
-            class="w-full text-left text-xs px-2 py-1 rounded-lg truncate text-slate-700 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-sky-950/40 hover:text-sky-600 dark:hover:text-sky-400 transition-colors"
-            @click="openRecord(rec); calOverflowDate = null"
-          >{{ rec.title }}</button>
+            class="flex items-center gap-1 px-1 py-0.5 rounded-lg hover:bg-sky-50 dark:hover:bg-sky-950/40 transition-colors group/calof"
+          >
+            <button
+              type="button"
+              class="flex-1 text-left text-xs px-1 py-0.5 truncate text-slate-700 dark:text-slate-200 group-hover/calof:text-sky-600 dark:group-hover/calof:text-sky-400 transition-colors"
+              @click="openRecord(rec); calOverflowDate = null"
+            >{{ rec.title }}</button>
+            <button
+              type="button"
+              class="shrink-0 rounded p-0.5 opacity-0 group-hover/calof:opacity-100 transition-all"
+              :class="pinnedIds.has(rec.id) ? 'text-amber-400 !opacity-100' : 'text-slate-300 dark:text-slate-600 hover:text-amber-400'"
+              :title="pinnedIds.has(rec.id) ? 'Unpin' : 'Pin'"
+              @click.stop="togglePin(rec.id)"
+            >
+              <svg class="h-3 w-3" :fill="pinnedIds.has(rec.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+            </button>
+            <button
+              type="button"
+              class="shrink-0 rounded p-0.5 opacity-0 group-hover/calof:opacity-100 transition-all"
+              :class="watchedIds.has(rec.id) ? 'text-sky-500 !opacity-100' : 'text-slate-300 dark:text-slate-600 hover:text-sky-400'"
+              :title="watchedIds.has(rec.id) ? 'Unwatch' : 'Watch'"
+              @click.stop="toggleWatch(rec.id)"
+            >
+              <svg class="h-3 w-3" :fill="watchedIds.has(rec.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+            </button>
+            <button
+              type="button"
+              class="shrink-0 rounded p-0.5 opacity-0 group-hover/calof:opacity-100 transition-all"
+              :class="quickNoteRecordId === rec.id ? 'text-sky-500 !opacity-100' : 'text-slate-300 dark:text-slate-600 hover:text-sky-400'"
+              title="Log a quick note"
+              @click.stop="openQuickNote(rec.id, $event); calOverflowDate = null"
+            >
+              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+            </button>
+            <button
+              type="button"
+              class="shrink-0 rounded p-0.5 opacity-0 group-hover/calof:opacity-100 transition-all text-slate-300 dark:text-slate-600 hover:text-amber-400"
+              title="Add task"
+              @click.stop="openRecord(rec); nextTick(() => { detailTab = 'tasks'; }); calOverflowDate = null"
+            >
+              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+            </button>
+          </div>
         </div>
       </div>
     </Teleport>
@@ -16061,6 +16104,8 @@ const collapsedGroups = ref<Set<string>>(new Set());
 watch(groupByField, () => { collapsedGroups.value = new Set(); });
 const collapsedGalleryGroups = ref<Set<string>>(new Set());
 watch(groupByField, () => { collapsedGalleryGroups.value = new Set(); });
+const collapsedTimelineGroups = ref<Set<string>>(new Set());
+watch(timelineGroupKey, () => { collapsedTimelineGroups.value = new Set(); });
 const showBulkNoteModal = ref(false);
 const bulkNoteText = ref('');
 const bulkNoteInputEl = ref<HTMLTextAreaElement | null>(null);
