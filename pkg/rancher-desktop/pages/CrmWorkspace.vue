@@ -4057,6 +4057,14 @@
                   {{ group.label }}
                 </span>
                 <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ group.records.length }}</span>
+                <button
+                  type="button"
+                  class="opacity-0 group-hover/gh:opacity-100 flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-medium border border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-white dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-all"
+                  title="Select all records in this group"
+                  @click.stop="selectGroupRecords(group.key)"
+                >
+                  Select {{ group.records.length }}
+                </button>
                 <div class="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
               </div>
               <!-- cards in group -->
