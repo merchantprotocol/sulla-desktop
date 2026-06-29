@@ -7245,13 +7245,23 @@
                             </button>
                           </div>
                           <ul class="py-1 max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-                            <li v-for="entry in fieldChangeHistory(openedRecord.id, field)" :key="entry.at" class="px-3 py-1.5">
-                              <p class="text-[10px] text-slate-400 dark:text-slate-500 mb-0.5">{{ formatRelativeTime(entry.at) }} · {{ entry.author }}</p>
-                              <p class="text-xs text-slate-600 dark:text-slate-300">
-                                <span class="line-through text-slate-300 dark:text-slate-600">{{ entry.from || 'empty' }}</span>
-                                <svg class="h-2.5 w-2.5 inline mx-1 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
-                                <span class="font-medium">{{ entry.to || 'empty' }}</span>
-                              </p>
+                            <li v-for="entry in fieldChangeHistory(openedRecord.id, field)" :key="entry.at" class="group/hist px-3 py-1.5 flex items-start gap-2">
+                              <div class="flex-1 min-w-0">
+                                <p class="text-[10px] text-slate-400 dark:text-slate-500 mb-0.5">{{ formatRelativeTime(entry.at) }} · {{ entry.author }}</p>
+                                <p class="text-xs text-slate-600 dark:text-slate-300">
+                                  <span class="line-through text-slate-300 dark:text-slate-600">{{ entry.from || 'empty' }}</span>
+                                  <svg class="h-2.5 w-2.5 inline mx-1 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                                  <span class="font-medium">{{ entry.to || 'empty' }}</span>
+                                </p>
+                              </div>
+                              <!-- restore to pre-change value -->
+                              <button
+                                v-if="entry.from && !lockedRecordIds.has(openedRecord.id)"
+                                type="button"
+                                class="invisible group-hover/hist:visible shrink-0 mt-0.5 h-5 px-1.5 rounded text-[10px] font-medium border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-amber-300 dark:hover:border-amber-600 hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                                :title="`Restore to: ${entry.from}`"
+                                @click.stop="openedRecord.field_values[field.key] = entry.from; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, entry.from); fieldHistoryPopover = null; showToast(`'${field.label}' restored to '${entry.from}'`)"
+                              >Restore</button>
                             </li>
                           </ul>
                         </div>
