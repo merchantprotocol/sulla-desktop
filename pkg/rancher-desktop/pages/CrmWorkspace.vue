@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1088,7 +1088,7 @@
             </div>
 
             <!-- search -->
-            <div class="relative">
+            <div class="relative" @click.stop>
               <svg
                 class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400"
                 fill="none"
@@ -1104,18 +1104,56 @@
                 type="text"
                 :placeholder="`Search ${selectedType?.label_plural ?? 'records'}…`"
                 :class="['h-9 w-56 rounded-lg pl-9 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40', searchQuery ? 'pr-8' : 'pr-3']"
+                @focus="showSearchHistory = !searchQuery && recentSearches.length > 0"
+                @keydown.enter="saveSearchToHistory(searchQuery)"
+                @keydown.escape.stop="showSearchHistory = false; searchQuery = ''"
               >
               <button
                 v-if="searchQuery"
                 type="button"
                 class="absolute top-1/2 right-2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded transition-colors p-0.5"
                 title="Clear search"
-                @click="searchQuery = ''"
+                @click="searchQuery = ''; showSearchHistory = false"
               >
                 <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+              <!-- recent searches dropdown -->
+              <div
+                v-if="showSearchHistory && recentSearches.length"
+                class="absolute top-full left-0 mt-1 w-72 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg z-40 py-1"
+              >
+                <div class="flex items-center justify-between px-3 pt-1.5 pb-1 border-b border-slate-100 dark:border-slate-800">
+                  <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Recent searches</span>
+                  <button
+                    type="button"
+                    class="text-[10px] text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 transition-colors"
+                    @click="recentSearches = []; showSearchHistory = false"
+                  >Clear</button>
+                </div>
+                <button
+                  v-for="q in recentSearches"
+                  :key="q"
+                  type="button"
+                  class="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/sh"
+                  @click="searchQuery = q; showSearchHistory = false"
+                >
+                  <svg class="h-3.5 w-3.5 shrink-0 text-slate-300 dark:text-slate-600 group-hover/sh:text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span class="truncate">{{ q }}</span>
+                  <button
+                    class="ml-auto shrink-0 opacity-0 group-hover/sh:opacity-100 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-opacity"
+                    title="Remove"
+                    @click.stop="recentSearches = recentSearches.filter(s => s !== q)"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </button>
+              </div>
               <!-- operator chips — shown when field:value tokens are detected -->
               <transition
                 enter-active-class="transition-all duration-150"
@@ -14714,6 +14752,11 @@ function stageDot(stage: string): string {
 const selectedTypeKey = ref<string>(schema[0].key);
 const searchQuery = ref('');
 const searchInputEl = ref<HTMLInputElement | null>(null);
+const showSearchHistory = ref(false);
+const recentSearches = ref<string[]>((() => {
+  try { return JSON.parse(localStorage.getItem('crm_recent_searches') ?? '[]') as string[]; } catch { return []; }
+})());
+watch(recentSearches, (v) => { try { localStorage.setItem('crm_recent_searches', JSON.stringify(v)); } catch { /* noop */ } }, { deep: true });
 const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
 const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline' | 'feed' | 'focus' | 'tasks'>('table');
@@ -18883,6 +18926,14 @@ function clearFilters() {
   showPinnedOnly.value = false;
   showWatchedOnly.value = false;
   showIncompleteOnly.value = false;
+}
+
+function saveSearchToHistory(q: string) {
+  const s = q.trim();
+  if (!s) return;
+  const prev = recentSearches.value.filter((x) => x !== s);
+  recentSearches.value = [s, ...prev].slice(0, 8);
+  showSearchHistory.value = false;
 }
 
 function saveFilterPreset() {
