@@ -2739,18 +2739,29 @@
                 </div>
 
                 <!-- cards -->
-                <div v-if="!collapsedColumns.has(col)" class="flex-1 space-y-2 overflow-y-auto pb-2 pr-0.5">
+                <div
+                  v-if="!collapsedColumns.has(col)"
+                  class="flex-1 space-y-2 overflow-y-auto pb-2 pr-0.5 rounded-lg transition-colors"
+                  :class="kanbanDragCardId && kanbanDragOverCol === col ? 'ring-2 ring-sky-400 bg-sky-50/30 dark:bg-sky-950/10' : ''"
+                  @dragover.prevent="kanbanDragCardId && (kanbanDragOverCol = col)"
+                  @dragleave="kanbanDragOverCol = null"
+                  @drop.prevent="dropCardToColumn(col)"
+                >
                   <button
                     v-for="record in (kanbanGroups[col] ?? [])"
                     :key="record.id"
                     type="button"
+                    draggable="true"
                     class="group/card w-full text-left rounded-xl border shadow-sm transition-all"
                     :class="[openedRecord?.id === record.id
                       ? 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800 shadow-md'
                       : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:shadow-md hover:border-slate-300 dark:hover:border-slate-700',
-                      kanbanCompact ? 'p-2' : 'p-3.5']"
+                      kanbanCompact ? 'p-2' : 'p-3.5',
+                      kanbanDragCardId === record.id ? 'opacity-40' : '']"
                     :style="colorLabels[record.id] ? { borderTopColor: colorLabels[record.id], borderTopWidth: '3px' } : undefined"
                     @click="openRecord(record)"
+                    @dragstart.stop="(e) => { kanbanDragCardId = record.id; e.dataTransfer && (e.dataTransfer.effectAllowed = 'move'); }"
+                    @dragend="kanbanDragCardId = null; kanbanDragOverCol = null"
                   >
                     <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug line-clamp-2 flex items-start gap-1.5" :class="kanbanCompact ? 'mb-0' : 'mb-2'">
                       <span class="flex-1">
@@ -7507,6 +7518,8 @@ function submitQuickNote() {
   showToast('Note added');
 }
 const kanbanCompact = ref(false);
+const kanbanDragCardId = ref<string | null>(null);
+const kanbanDragOverCol = ref<string | null>(null);
 const customOrder = ref<string[]>([]);
 const dragSrcId = ref<string | null>(null);
 const dragOverId = ref<string | null>(null);
@@ -10106,6 +10119,22 @@ function moveCardStage(record: CrmRecord, dir: 1 | -1) {
   if (nextIdx < 0 || nextIdx >= cols.length) return;
   record.field_values[fieldKey] = cols[nextIdx];
   showToast(`Stage: ${cols[nextIdx]}`);
+}
+
+function dropCardToColumn(targetCol: string) {
+  const id = kanbanDragCardId.value;
+  kanbanDragCardId.value = null;
+  kanbanDragOverCol.value = null;
+  if (!id) return;
+  const fieldKey = kanbanField.value?.key;
+  if (!fieldKey) return;
+  const record = mockRecords.find((r) => r.id === id);
+  if (!record) return;
+  const newVal = targetCol === KANBAN_UNASSIGNED ? null : targetCol;
+  if (record.field_values[fieldKey] === newVal) return;
+  record.field_values[fieldKey] = newVal;
+  record.updated_at = new Date().toISOString();
+  showToast(targetCol === KANBAN_UNASSIGNED ? 'Moved to Unassigned' : `Moved to ${targetCol}`);
 }
 
 function addLink(record: CrmRecord, target: CrmRecord) {
