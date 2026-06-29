@@ -1257,7 +1257,7 @@
                 :class="tagFilters.size
                   ? 'border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/30 text-teal-600 dark:text-teal-400 hover:bg-teal-100 dark:hover:bg-teal-900/30'
                   : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
-                :title="tagFilters.size ? `Filtered by ${tagFilters.size} tag${tagFilters.size === 1 ? '' : 's'} (AND)` : 'Filter by tag'"
+                :title="tagFilters.size ? `Filtered by ${tagFilters.size} tag${tagFilters.size === 1 ? '' : 's'} (${tagFilterMode.toUpperCase()})` : 'Filter by tag'"
                 @click.stop="$event.currentTarget.nextElementSibling?.classList.toggle('hidden')"
               >
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
@@ -1269,7 +1269,13 @@
                 </svg>
               </button>
               <div class="hidden absolute top-full left-0 mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 min-w-[160px]">
-                <p class="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Tags (AND filter)</p>
+                <div class="px-3 pt-1.5 pb-0.5 flex items-center justify-between">
+                  <p class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Tags filter</p>
+                  <div class="flex items-center rounded border border-slate-200 dark:border-slate-700 overflow-hidden text-[10px] font-semibold">
+                    <button type="button" class="px-1.5 py-0.5 transition-colors" :class="tagFilterMode === 'and' ? 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300' : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'" @click.stop="tagFilterMode = 'and'">AND</button>
+                    <button type="button" class="px-1.5 py-0.5 border-l border-slate-200 dark:border-slate-700 transition-colors" :class="tagFilterMode === 'or' ? 'bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300' : 'text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'" @click.stop="tagFilterMode = 'or'">OR</button>
+                  </div>
+                </div>
                 <button
                   v-for="t in allTags"
                   :key="t"
@@ -11130,6 +11136,7 @@ const tagColorPickerPos = ref({ top: 0, left: 0 });
 const checklistAddText = ref<Record<string, string>>({});
 const dismissedDuplicateWarning = ref<Set<string>>(new Set());
 const tagFilters = ref<Set<string>>(new Set());
+const tagFilterMode = ref<'and' | 'or'>('and');
 const tagInput = ref('');
 const showTagInput = ref(false);
 const showDetailColorPicker = ref(false);
@@ -12250,7 +12257,8 @@ const filteredRecords = computed(() => {
 
   if (tagFilters.value.size) {
     const ft = tagFilters.value;
-    result = result.filter((r) => { const rt = recordTags.value[r.id] ?? []; return [...ft].every((t) => rt.includes(t)); });
+    const mode = tagFilterMode.value;
+    result = result.filter((r) => { const rt = recordTags.value[r.id] ?? []; return mode === 'or' ? [...ft].some((t) => rt.includes(t)) : [...ft].every((t) => rt.includes(t)); });
   }
 
   if (staleDaysFilter.value) {
