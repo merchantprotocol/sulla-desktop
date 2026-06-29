@@ -4434,6 +4434,54 @@
             </template>
             <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No loss reasons captured yet.</p>
           </div>
+
+          <!-- pipeline funnel -->
+          <div v-if="funnelData && funnelData.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-4">Pipeline funnel</p>
+            <div class="space-y-1">
+              <template v-for="(row, i) in funnelData" :key="row.stage">
+                <!-- conversion rate bridge between stages -->
+                <div v-if="i > 0 && row.convRate !== null" class="flex items-center gap-2 py-0.5">
+                  <div class="w-24 shrink-0" />
+                  <div class="flex-1 flex items-center gap-2">
+                    <div class="flex-1 border-t border-dashed border-slate-150 dark:border-slate-800" />
+                    <span
+                      class="text-[10px] font-medium tabular-nums px-1.5 py-0.5 rounded-full shrink-0"
+                      :class="row.convRate >= 60 ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30'
+                        : row.convRate >= 30 ? 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30'
+                        : 'text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800'"
+                    >{{ row.convRate }}% convert</span>
+                    <div class="flex-1 border-t border-dashed border-slate-150 dark:border-slate-800" />
+                  </div>
+                  <div class="w-8 shrink-0" />
+                </div>
+                <!-- stage bar row -->
+                <div class="flex items-center gap-2">
+                  <span class="w-24 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right leading-tight pr-1" :title="row.stage">{{ row.stage }}</span>
+                  <div class="flex-1 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden relative">
+                    <div
+                      class="h-full rounded-lg transition-all duration-500"
+                      :class="i === 0 ? 'bg-sky-400 dark:bg-sky-600'
+                        : row.pct >= 60 ? 'bg-sky-300 dark:bg-sky-700'
+                        : row.pct >= 30 ? 'bg-violet-300 dark:bg-violet-700'
+                        : 'bg-slate-300 dark:bg-slate-600'"
+                      :style="{ width: `${Math.max(row.pct, row.count ? 6 : 0)}%` }"
+                    />
+                    <span
+                      v-if="row.count"
+                      class="absolute inset-y-0 left-2 flex items-center text-[10px] font-semibold text-white/90 mix-blend-plus-lighter pointer-events-none"
+                    >{{ row.count }}</span>
+                  </div>
+                  <span class="w-8 shrink-0 text-right text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-300">{{ row.count }}</span>
+                  <span
+                    v-if="row.hasCurrency && row.total"
+                    class="w-16 shrink-0 text-right text-[10px] tabular-nums text-slate-400 dark:text-slate-500"
+                  >${{ row.total >= 1_000_000 ? (row.total / 1_000_000).toFixed(1) + 'M' : row.total >= 1_000 ? Math.round(row.total / 1_000) + 'k' : row.total }}</span>
+                  <span v-else-if="row.hasCurrency" class="w-16 shrink-0" />
+                </div>
+              </template>
+            </div>
+          </div>
         </div>
 
         <!-- ── Timeline / Gantt view ── -->
@@ -12361,6 +12409,34 @@ const forecastData = computed((): {
     closingThisQuarterValue: closingQtr.reduce((s, r) => s + (Number(r.field_values[amountField.key]) || 0), 0),
     amountField, dateField,
   };
+});
+
+const funnelData = computed((): Array<{
+  stage: string;
+  count: number;
+  total: number;
+  pct: number;
+  convRate: number | null;
+  hasCurrency: boolean;
+}> | null => {
+  if (!kanbanField.value) return null;
+  const rt = selectedType.value;
+  if (!rt) return null;
+  const amountField = rt.fields.find((f) => f.data_type === 'number' && f.format === 'currency') ?? null;
+  const stages = kanbanColumns.value.filter((c) => c !== KANBAN_UNASSIGNED);
+  if (!stages.length) return null;
+  const rows = stages.map((stage) => {
+    const recs = kanbanGroups.value[stage] ?? [];
+    const total = amountField ? recs.reduce((s, r) => s + (Number(r.field_values[amountField.key]) || 0), 0) : 0;
+    return { stage, count: recs.length, total };
+  });
+  const maxCount = Math.max(...rows.map((d) => d.count), 1);
+  return rows.map((d, i) => ({
+    ...d,
+    pct: Math.round((d.count / maxCount) * 100),
+    convRate: i > 0 && rows[i - 1].count > 0 ? Math.round((d.count / rows[i - 1].count) * 100) : null,
+    hasCurrency: Boolean(amountField),
+  }));
 });
 
 const timelinePadLevel = ref(0); // -2 to +2 zoom levels; 0 = default
