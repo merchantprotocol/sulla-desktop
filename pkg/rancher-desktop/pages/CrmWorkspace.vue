@@ -11440,11 +11440,22 @@
                     </div>
                     <div>
                       <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field</label>
-                      <input v-model="editingAutomationDraft.trigger_field_key" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                      <select v-model="editingAutomationDraft.trigger_field_key" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none">
+                        <option value="">— pick field —</option>
+                        <option v-for="f in schema.find(rt => rt.key === editingAutomationDraft.trigger_type_key)?.fields ?? []" :key="f.key" :value="f.key">{{ f.label }}</option>
+                      </select>
                     </div>
                     <div>
                       <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">= value</label>
-                      <input v-model="editingAutomationDraft.trigger_value" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                      <select
+                        v-if="(schema.find(rt => rt.key === editingAutomationDraft.trigger_type_key)?.fields ?? []).find(f => f.key === editingAutomationDraft.trigger_field_key)?.data_type === 'select'"
+                        v-model="editingAutomationDraft.trigger_value"
+                        class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
+                      >
+                        <option value="">— any —</option>
+                        <option v-for="opt in (schema.find(rt => rt.key === editingAutomationDraft.trigger_type_key)?.fields ?? []).find(f => f.key === editingAutomationDraft.trigger_field_key)?.select_options ?? []" :key="opt" :value="opt">{{ opt }}</option>
+                      </select>
+                      <input v-else v-model="editingAutomationDraft.trigger_value" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
                     </div>
                   </div>
                   <div>
@@ -11457,12 +11468,23 @@
                   </div>
                   <div v-if="editingAutomationDraft.action_type === 'set_field'" class="grid grid-cols-2 gap-2">
                     <div>
-                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field key</label>
-                      <input v-model="editingAutomationDraft.action_field_key" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field to set</label>
+                      <select v-model="editingAutomationDraft.action_field_key" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none">
+                        <option value="">— pick field —</option>
+                        <option v-for="f in schema.find(rt => rt.key === editingAutomationDraft.trigger_type_key)?.fields?.filter(f => f.data_type !== 'formula' && f.data_type !== 'rollup') ?? []" :key="f.key" :value="f.key">{{ f.label }}</option>
+                      </select>
                     </div>
                     <div>
                       <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Value (__today__ = now)</label>
-                      <input v-model="editingAutomationDraft.action_value" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                      <select
+                        v-if="(schema.find(rt => rt.key === editingAutomationDraft.trigger_type_key)?.fields ?? []).find(f => f.key === editingAutomationDraft.action_field_key)?.data_type === 'select'"
+                        v-model="editingAutomationDraft.action_value"
+                        class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
+                      >
+                        <option value="">— clear —</option>
+                        <option v-for="opt in (schema.find(rt => rt.key === editingAutomationDraft.trigger_type_key)?.fields ?? []).find(f => f.key === editingAutomationDraft.action_field_key)?.select_options ?? []" :key="opt" :value="opt">{{ opt }}</option>
+                      </select>
+                      <input v-else v-model="editingAutomationDraft.action_value" type="text" class="w-full text-sm px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
                     </div>
                   </div>
                   <div v-else-if="editingAutomationDraft.action_type === 'create_task'">
@@ -11515,11 +11537,12 @@
                   <div class="flex-1 min-w-0">
                     <p class="text-sm font-medium text-slate-700 dark:text-slate-300">{{ rule.name }}</p>
                     <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                      When <span class="font-medium text-slate-600 dark:text-slate-400">{{ rule.trigger_type_key }}</span>
-                      · {{ rule.trigger_field_key }} = "<span class="font-medium">{{ rule.trigger_value }}</span>"
+                      When <span class="font-medium text-slate-600 dark:text-slate-400">{{ schema.find(rt => rt.key === rule.trigger_type_key)?.label ?? rule.trigger_type_key }}</span>
+                      · <span class="font-medium text-slate-500 dark:text-slate-400">{{ (schema.find(rt => rt.key === rule.trigger_type_key)?.fields ?? []).find(f => f.key === rule.trigger_field_key)?.label ?? rule.trigger_field_key }}</span>
+                      = "<span class="font-medium text-slate-600 dark:text-slate-300">{{ rule.trigger_value || 'any' }}</span>"
                     </p>
                     <p class="text-xs mt-0.5">
-                      <span v-if="rule.action_type === 'set_field'" class="text-sky-600 dark:text-sky-400">Set {{ rule.action_field_key }} → {{ rule.action_value === '__today__' ? 'today' : rule.action_value }}</span>
+                      <span v-if="rule.action_type === 'set_field'" class="text-sky-600 dark:text-sky-400">Set <span class="font-medium">{{ (schema.find(rt => rt.key === rule.trigger_type_key)?.fields ?? []).find(f => f.key === rule.action_field_key)?.label ?? rule.action_field_key }}</span> → {{ rule.action_value === '__today__' ? 'today' : (rule.action_value || '—') }}</span>
                       <span v-else-if="rule.action_type === 'create_task'" class="text-emerald-600 dark:text-emerald-400">Create task: "{{ rule.action_task_text }}"</span>
                       <span v-else-if="rule.action_type === 'notify'" class="text-amber-600 dark:text-amber-400">Notify: "{{ rule.action_message }}"</span>
                     </p>
@@ -11574,11 +11597,22 @@
                 </div>
                 <div>
                   <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field</label>
-                  <input v-model="newRuleDraft.trigger_field_key" type="text" placeholder="field_key" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                  <select v-model="newRuleDraft.trigger_field_key" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none">
+                    <option value="">— pick field —</option>
+                    <option v-for="f in schema.find(rt => rt.key === newRuleDraft.trigger_type_key)?.fields ?? []" :key="f.key" :value="f.key">{{ f.label }}</option>
+                  </select>
                 </div>
                 <div>
                   <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">= value</label>
-                  <input v-model="newRuleDraft.trigger_value" type="text" placeholder="Closed Won" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                  <select
+                    v-if="(schema.find(rt => rt.key === newRuleDraft.trigger_type_key)?.fields ?? []).find(f => f.key === newRuleDraft.trigger_field_key)?.data_type === 'select'"
+                    v-model="newRuleDraft.trigger_value"
+                    class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
+                  >
+                    <option value="">— any —</option>
+                    <option v-for="opt in (schema.find(rt => rt.key === newRuleDraft.trigger_type_key)?.fields ?? []).find(f => f.key === newRuleDraft.trigger_field_key)?.select_options ?? []" :key="opt" :value="opt">{{ opt }}</option>
+                  </select>
+                  <input v-else v-model="newRuleDraft.trigger_value" type="text" placeholder="Closed Won" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
                 </div>
               </div>
               <div>
@@ -11591,12 +11625,23 @@
               </div>
               <div v-if="newRuleDraft.action_type === 'set_field'" class="grid grid-cols-2 gap-2">
                 <div>
-                  <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field key</label>
-                  <input v-model="newRuleDraft.action_field_key" type="text" placeholder="close_date" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                  <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field to set</label>
+                  <select v-model="newRuleDraft.action_field_key" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none">
+                    <option value="">— pick field —</option>
+                    <option v-for="f in schema.find(rt => rt.key === newRuleDraft.trigger_type_key)?.fields?.filter(f => f.data_type !== 'formula' && f.data_type !== 'rollup') ?? []" :key="f.key" :value="f.key">{{ f.label }}</option>
+                  </select>
                 </div>
                 <div>
                   <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Value (__today__ = now)</label>
-                  <input v-model="newRuleDraft.action_value" type="text" placeholder="__today__" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
+                  <select
+                    v-if="(schema.find(rt => rt.key === newRuleDraft.trigger_type_key)?.fields ?? []).find(f => f.key === newRuleDraft.action_field_key)?.data_type === 'select'"
+                    v-model="newRuleDraft.action_value"
+                    class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none"
+                  >
+                    <option value="">— clear —</option>
+                    <option v-for="opt in (schema.find(rt => rt.key === newRuleDraft.trigger_type_key)?.fields ?? []).find(f => f.key === newRuleDraft.action_field_key)?.select_options ?? []" :key="opt" :value="opt">{{ opt }}</option>
+                  </select>
+                  <input v-else v-model="newRuleDraft.action_value" type="text" placeholder="__today__" class="w-full text-sm px-2 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none" />
                 </div>
               </div>
               <div v-else-if="newRuleDraft.action_type === 'create_task'">
