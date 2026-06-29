@@ -5496,6 +5496,28 @@
               </p>
             </div>
             <div class="ml-auto flex items-center gap-2 flex-wrap justify-end">
+              <!-- text search -->
+              <div class="relative">
+                <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <circle cx="11" cy="11" r="8" /><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35" />
+                </svg>
+                <input
+                  v-model="tasksViewSearch"
+                  type="text"
+                  placeholder="Search tasks…"
+                  class="h-7 pl-7 pr-7 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400/40 focus:border-sky-400 dark:focus:border-sky-500 transition-colors w-40"
+                />
+                <button
+                  v-if="tasksViewSearch"
+                  type="button"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                  @click="tasksViewSearch = ''"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
               <!-- group-by selector -->
               <div class="flex items-center gap-0.5 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
                 <button
@@ -11948,6 +11970,7 @@ const tasksViewGroupBy = ref<'due' | 'priority' | 'record'>('due');
 const tasksViewHideDone = ref(true);
 const tasksViewPriorityFilter = ref<'high' | 'medium' | 'low' | ''>('');
 const tasksViewAssigneeFilter = ref('');
+const tasksViewSearch = ref('');
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
 const showRowStripes = ref(false);
 const showDataBars = ref(false);
@@ -15026,6 +15049,7 @@ const allTasksInView = computed(() => {
     .filter((t) => !(tasksViewHideDone.value && t.done))
     .filter((t) => !tasksViewPriorityFilter.value || t.priority === tasksViewPriorityFilter.value)
     .filter((t) => !tasksViewAssigneeFilter.value || t.assignee === tasksViewAssigneeFilter.value)
+    .filter((t) => { const q = tasksViewSearch.value.trim().toLowerCase(); return !q || t.text.toLowerCase().includes(q) || mockRecords.find((r) => r.id === t.record_id)?.title.toLowerCase().includes(q); })
     .map((t) => ({ task: t, record: mockRecords.find((r) => r.id === t.record_id) as CrmRecord | undefined }));
 });
 
