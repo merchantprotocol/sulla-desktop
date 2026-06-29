@@ -7116,6 +7116,24 @@
 
               <!-- Tasks tab -->
               <template v-else-if="detailTab === 'tasks'">
+                <!-- tasks header row -->
+                <div class="flex items-center justify-between -mt-1 mb-1">
+                  <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Tasks</p>
+                  <button
+                    type="button"
+                    class="flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-medium transition-colors"
+                    :class="hideCompletedTasks
+                      ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400'
+                      : 'text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'"
+                    :title="hideCompletedTasks ? 'Showing incomplete only — click to show all' : 'Click to hide completed tasks'"
+                    @click="hideCompletedTasks = !hideCompletedTasks"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {{ hideCompletedTasks ? 'Incomplete only' : 'All tasks' }}
+                  </button>
+                </div>
                 <!-- quick add -->
                 <div class="space-y-1.5">
                   <div class="flex gap-2">
@@ -11501,6 +11519,7 @@ const detailPanelExpanded = ref<false | 'wide' | 'full'>(false);
 const newTaskDraft = ref('');
 const newTaskDueDraft = ref('');
 const newTaskPriority = ref<'high' | 'medium' | 'low' | ''>('');
+const hideCompletedTasks = ref(false);
 const editingTaskId = ref<string | null>(null);
 const editingTaskText = ref('');
 const editingTaskDue = ref('');
@@ -13938,21 +13957,29 @@ const recordActivities = computed(() =>
     : [],
 );
 
-const recordTasks = computed(() =>
-  openedRecord.value
-    ? mockTasks
-        .filter((t) => t.record_id === openedRecord.value!.id)
-        .sort((a, b) => {
-          if (a.done !== b.done) return a.done ? 1 : -1;
-          const aDue = a.due_date ?? '';
-          const bDue = b.due_date ?? '';
-          if (aDue && bDue) return aDue < bDue ? -1 : aDue > bDue ? 1 : 0;
-          if (aDue) return -1;
-          if (bDue) return 1;
-          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-        })
-    : [],
-);
+const TASK_PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
+const recordTasks = computed(() => {
+  if (!openedRecord.value) return [];
+  const PRANK = TASK_PRIORITY_RANK;
+  return mockTasks
+    .filter((t) => t.record_id === openedRecord.value!.id && !(hideCompletedTasks.value && t.done))
+    .sort((a, b) => {
+      if (a.done !== b.done) return a.done ? 1 : -1;
+      // within incomplete tasks: sort by priority first
+      if (!a.done) {
+        const ap = a.priority ? (PRANK[a.priority] ?? 3) : 3;
+        const bp = b.priority ? (PRANK[b.priority] ?? 3) : 3;
+        if (ap !== bp) return ap - bp;
+      }
+      const aDue = a.due_date ?? '';
+      const bDue = b.due_date ?? '';
+      if (aDue && bDue) return aDue < bDue ? -1 : aDue > bDue ? 1 : 0;
+      if (aDue) return -1;
+      if (bDue) return 1;
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
+});
 
 const recordTasksPendingCount = computed(() => recordTasks.value.filter((t) => !t.done).length);
 
