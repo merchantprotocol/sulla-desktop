@@ -11651,6 +11651,7 @@ const LS_KEY_SAVED_VIEWS = 'crm:savedViews';
 const LS_KEY_ARCHIVED = 'crm:archivedIds';
 const LS_KEY_FILTER_PRESETS = 'crm:filterPresets';
 const LS_KEY_GALLERY_FIELDS = 'crm:galleryFields';
+const LS_KEY_COL_WIDTHS = 'crm:colWidths';
 
 const archivedIds = ref<Set<string>>(new Set());
 const lockedRecordIds = ref<Set<string>>(new Set());
@@ -11710,6 +11711,8 @@ onMounted(() => {
     if (fp) filterPresets.value = JSON.parse(fp) as FilterPreset[];
     const gf = localStorage.getItem(LS_KEY_GALLERY_FIELDS);
     if (gf) galleryPreviewFieldKeys.value = JSON.parse(gf) as Record<string, string[]>;
+    const cw = localStorage.getItem(LS_KEY_COL_WIDTHS);
+    if (cw) columnWidths.value = JSON.parse(cw) as Record<string, number>;
   } catch { /* storage not available */ }
 });
 
@@ -11724,6 +11727,7 @@ watch(savedViews, (val) => { try { localStorage.setItem(LS_KEY_SAVED_VIEWS, JSON
 watch(archivedIds, (val) => { try { localStorage.setItem(LS_KEY_ARCHIVED, JSON.stringify([...val])); } catch { /* ignore */ } }, { deep: true });
 watch(filterPresets, (val) => { try { localStorage.setItem(LS_KEY_FILTER_PRESETS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
 watch(galleryPreviewFieldKeys, (val) => { try { localStorage.setItem(LS_KEY_GALLERY_FIELDS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
+watch(columnWidths, (val) => { try { localStorage.setItem(LS_KEY_COL_WIDTHS, JSON.stringify(val)); } catch { /* ignore */ } }, { deep: true });
 
 // ── Computed ───────────────────────────────────────────────────────────────
 
