@@ -6904,6 +6904,17 @@
                 </svg>
                 {{ tasksViewHideDone ? 'Incomplete' : 'All tasks' }}
               </button>
+              <!-- sort key -->
+              <select
+                v-model="tasksViewSortKey"
+                class="h-7 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 px-2 focus:outline-none focus:ring-1 focus:ring-sky-400/40 cursor-pointer"
+                title="Sort tasks within each group"
+              >
+                <option value="due">Sort: Due date</option>
+                <option value="priority">Sort: Priority</option>
+                <option value="name">Sort: Name</option>
+                <option value="created">Sort: Created</option>
+              </select>
             </div>
           </div>
 
@@ -14875,6 +14886,7 @@ const feedSortOldest = ref(false);
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const tasksViewGroupBy = ref<'due' | 'priority' | 'record'>('due');
+const tasksViewSortKey = ref<'due' | 'priority' | 'name' | 'created'>('due');
 const tasksViewHideDone = ref(true);
 const tasksViewPriorityFilter = ref<'high' | 'medium' | 'low' | ''>('');
 const tasksViewAssigneeFilter = ref('');
@@ -18206,7 +18218,19 @@ const allTasksInView = computed(() => {
     .filter((t) => !tasksViewPriorityFilter.value || t.priority === tasksViewPriorityFilter.value)
     .filter((t) => !tasksViewAssigneeFilter.value || t.assignee === tasksViewAssigneeFilter.value)
     .filter((t) => { const q = tasksViewSearch.value.trim().toLowerCase(); return !q || t.text.toLowerCase().includes(q) || mockRecords.find((r) => r.id === t.record_id)?.title.toLowerCase().includes(q); })
-    .map((t) => ({ task: t, record: mockRecords.find((r) => r.id === t.record_id) as CrmRecord | undefined }));
+    .map((t) => ({ task: t, record: mockRecords.find((r) => r.id === t.record_id) as CrmRecord | undefined }))
+    .sort((a, b) => {
+      const sk = tasksViewSortKey.value;
+      if (sk === 'priority') {
+        const order: Record<string, number> = { high: 0, medium: 1, low: 2 };
+        return (order[a.task.priority ?? ''] ?? 3) - (order[b.task.priority ?? ''] ?? 3);
+      }
+      if (sk === 'name') return a.task.text.localeCompare(b.task.text);
+      if (sk === 'created') return b.task.id.localeCompare(a.task.id);
+      const ad = a.task.due_date ?? '9999-12-31';
+      const bd = b.task.due_date ?? '9999-12-31';
+      return ad.localeCompare(bd);
+    });
 });
 
 const allTasksOverdueCount = computed((): number => {
