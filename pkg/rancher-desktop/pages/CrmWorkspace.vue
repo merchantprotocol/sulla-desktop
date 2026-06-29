@@ -17387,6 +17387,12 @@ const PALETTE_COMMANDS: PaletteCmd[] = [
   { id: 'schema',    label: 'Manage fields',   description: 'Open schema / field editor', action: () => { openSchemaEditor(); } },
   { id: 'shortcuts', label: 'Keyboard shortcuts', description: 'Show all keyboard shortcuts', action: () => { showShortcuts.value = true; } },
   { id: 'newrec',    label: 'New record',      description: 'Create a new record',        action: () => { openNewRecord(); } },
+  { id: 'newtype',   label: 'New record type', description: 'Create a new record type',    action: () => { openSchemaEditor('new-type'); } },
+  { id: 'filter',    label: 'Filter records',  description: 'Open filter panel',           action: () => { showFilterDropdown.value = true; } },
+  { id: 'clrfilter', label: 'Clear filters',   description: 'Remove all active filters',   action: () => { clearFilters(); } },
+  { id: 'archive',   label: 'Toggle archived', description: 'Show / hide archived records', action: () => { showArchived.value = !showArchived.value; showToast(showArchived.value ? 'Showing archived records' : 'Archived records hidden'); } },
+  { id: 'selall',    label: 'Select all',      description: 'Select all filtered records',  action: () => { selectedIds.value = new Set(filteredRecords.value.map((r) => r.id)); showToast(`${filteredRecords.value.length} records selected`); } },
+  { id: 'dark',      label: 'Toggle dark mode', description: 'Switch between light and dark theme', action: () => { toggleTheme(); } },
 ];
 
 const paletteCommandMode = computed(() => paletteQuery.value.startsWith('>'));
