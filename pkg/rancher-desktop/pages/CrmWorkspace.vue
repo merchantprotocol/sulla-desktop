@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -6693,6 +6693,18 @@
                   </svg>
                 </button>
                 <button
+                  v-if="schema.length > 1"
+                  type="button"
+                  aria-label="Convert record type"
+                  title="Convert to a different record type"
+                  class="rounded-lg py-2 px-3 text-sm font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  @click.stop="convertModal = { record: openedRecord, targetTypeKey: schema.find(t => t.key !== openedRecord.record_type_key)?.key ?? '' }"
+                >
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                </button>
+                <button
                   type="button"
                   :aria-label="archivedIds.has(openedRecord.id) ? 'Unarchive record' : 'Archive record'"
                   :title="archivedIds.has(openedRecord.id) ? 'Unarchive record  U' : 'Archive record  U'"
@@ -7259,6 +7271,19 @@
           </svg>
           Merge into open record
         </button>
+        <!-- convert type — only show when multiple record types exist -->
+        <template v-if="schema.length > 1">
+          <button
+            type="button"
+            class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="convertModal = { record: contextMenuRecord, targetTypeKey: schema.find(t => t.key !== contextMenuRecord.record_type_key)?.key ?? '' }; closeContextMenu()"
+          >
+            <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+            </svg>
+            Convert to...
+          </button>
+        </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button
           type="button"
@@ -8339,6 +8364,61 @@
             <span class="flex-1 truncate">{{ rec.title }}</span>
           </li>
         </ul>
+      </div>
+    </transition>
+
+    <!-- convert record type modal -->
+    <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+      <div
+        v-if="convertModal"
+        class="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        @click.self="convertModal = null"
+      >
+        <div class="w-full max-w-sm mx-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden" @click.stop>
+          <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Convert record type</h3>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 truncate max-w-[220px]">{{ convertModal.record.title }}</p>
+            </div>
+            <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg p-1.5 transition-colors" @click="convertModal = null">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <div class="px-5 py-4 space-y-3">
+            <p class="text-xs text-slate-500 dark:text-slate-400">Choose the target type. Field values matching existing keys will be preserved; others will be cleared.</p>
+            <div class="space-y-1.5">
+              <button
+                v-for="t in schema.filter(t => t.key !== convertModal!.record.record_type_key)"
+                :key="t.key"
+                type="button"
+                class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors text-left"
+                :class="convertModal.targetTypeKey === t.key
+                  ? 'border-violet-400 dark:border-violet-500 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300'
+                  : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 text-slate-700 dark:text-slate-300'"
+                @click="convertModal.targetTypeKey = t.key"
+              >
+                <span class="h-7 w-7 rounded-lg flex items-center justify-center shrink-0 text-white text-xs font-bold" :style="{ background: t.color }">{{ t.label[0] }}</span>
+                <div>
+                  <div class="text-sm font-medium leading-tight">{{ t.label }}</div>
+                  <div class="text-[10px] text-slate-400 dark:text-slate-500">{{ t.fields.length }} fields</div>
+                </div>
+                <svg v-if="convertModal.targetTypeKey === t.key" class="h-4 w-4 text-violet-500 ml-auto shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+              </button>
+            </div>
+          </div>
+          <div class="flex gap-2 px-5 py-4 border-t border-slate-100 dark:border-slate-800">
+            <button type="button" class="flex-1 h-9 rounded-xl text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="convertModal = null">Cancel</button>
+            <button
+              type="button"
+              class="flex-1 h-9 rounded-xl text-sm font-semibold transition-colors"
+              :class="convertModal.targetTypeKey
+                ? 'bg-violet-500 hover:bg-violet-600 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'"
+              :disabled="!convertModal.targetTypeKey"
+              @click="convertRecordType(convertModal!.record, convertModal!.targetTypeKey)"
+            >Convert</button>
+          </div>
+        </div>
       </div>
     </transition>
 
@@ -10772,6 +10852,7 @@ interface MergeDraft {
 }
 const mergeModal = ref<{ primary: CrmRecord; secondary: CrmRecord | MergeDraft; choices: Record<string, 'primary' | 'secondary'> } | null>(null);
 const mergeTargetPicker = ref<{ source: CrmRecord } | null>(null);
+const convertModal = ref<{ record: CrmRecord; targetTypeKey: string } | null>(null);
 const mergeTargetQuery = ref('');
 const mergeTargetInputEl = ref<HTMLInputElement | null>(null);
 watch(mergeTargetPicker, (v) => { if (v) nextTick(() => mergeTargetInputEl.value?.focus()); });
@@ -14699,6 +14780,28 @@ function duplicateRecord(record: CrmRecord) {
   mockRecords.push(newRecord);
   openRecord(newRecord);
   showToast('Record duplicated');
+}
+
+function convertRecordType(record: CrmRecord, targetTypeKey: string) {
+  if (targetTypeKey === record.record_type_key) return;
+  const targetType = schema.find((t) => t.key === targetTypeKey);
+  if (!targetType) return;
+  const titleField = targetType.fields.find((f) => f.is_title);
+  const newValues: Record<string, string | number | boolean | null> = {};
+  for (const f of targetType.fields) {
+    if (record.field_values[f.key] !== undefined) newValues[f.key] = record.field_values[f.key];
+    else if (f.default_value !== undefined) newValues[f.key] = f.default_value;
+  }
+  if (titleField && newValues[titleField.key] === undefined) newValues[titleField.key] = record.title;
+  record.record_type_key = targetTypeKey;
+  record.field_values = newValues;
+  if (titleField) record.title = String(newValues[titleField.key] ?? record.title);
+  convertModal.value = null;
+  if (selectedTypeKey.value !== targetTypeKey) {
+    selectedTypeKey.value = targetTypeKey;
+    nextTick(() => openRecord(record));
+  }
+  showToast(`Converted to ${targetType.label}`);
 }
 
 function goBack() {
