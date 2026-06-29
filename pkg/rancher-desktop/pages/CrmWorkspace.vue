@@ -4461,9 +4461,9 @@
                     :option-colors="field.select_option_colors ?? {}"
                     :format="field.format"
                     :class="editingRecord && editFormErrors.has(field.key) ? 'ring-2 ring-red-400/50 rounded-lg' : ''"
-                    @update:value="openedRecord.field_values[field.key] = $event; if (editFormErrors.has(field.key)) { const e = new Set(editFormErrors); e.delete(field.key); editFormErrors = e; }"
+                    @update:value="openedRecord.field_values[field.key] = $event; if (editFormErrors.has(field.key)) { const e = new Map(editFormErrors); e.delete(field.key); editFormErrors = e; }"
                   />
-                  <p v-if="editingRecord && editFormErrors.has(field.key)" class="text-xs text-red-500 dark:text-red-400">This field is required.</p>
+                  <p v-if="editingRecord && editFormErrors.has(field.key)" class="text-xs text-red-500 dark:text-red-400">{{ editFormErrors.get(field.key) }}</p>
                   <!-- field annotation display -->
                   <p
                     v-if="fieldAnnotations[`${openedRecord.id}|${field.key}`] && annotatingField !== field.key"
@@ -5176,7 +5176,7 @@
                 <button
                   type="button"
                   class="rounded-lg py-2 px-3 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                  @click="editingRecord = false; preEditSnapshot = {}; editFormErrors = new Set()"
+                  @click="editingRecord = false; preEditSnapshot = {}; editFormErrors = new Map()"
                 >
                   Discard
                 </button>
@@ -7848,7 +7848,7 @@ const showIncompleteOnly = ref(false);
 const fieldAnnotations = ref<Record<string, string>>({});
 const annotatingField = ref<string | null>(null);
 const preEditSnapshot = ref<Record<string, unknown>>({});
-const editFormErrors = ref<Set<string>>(new Set());
+const editFormErrors = ref<Map<string, string>>(new Map());
 const recentRecords = ref<CrmRecord[]>([]); // last 5 opened, newest first
 const linkQuery = ref('');
 const linkDropdownOpen = ref(false);
@@ -11201,23 +11201,37 @@ function startEditing(record: CrmRecord) {
   editingRecord.value = true;
 }
 
+function validateFieldValue(field: CrmField, value: unknown): string | null {
+  if (value == null || String(value).trim() === '') return null;
+  const s = String(value).trim();
+  if (field.data_type === 'email') {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return 'Invalid email format';
+  } else if (field.data_type === 'url') {
+    try { new URL(s.startsWith('http') ? s : 'https://' + s); } catch { return 'Invalid URL'; }
+  } else if (field.data_type === 'phone') {
+    if (!/^[\d\s\-+().]{6,}$/.test(s)) return 'Invalid phone number';
+  }
+  return null;
+}
+
 function saveEditing(record: CrmRecord) {
   const fields = selectedType.value?.fields ?? [];
-  // Validate required fields
-  const errors = new Set<string>();
+  // Validate required + format
+  const errors = new Map<string, string>();
   for (const f of fields) {
-    if (f.is_required) {
-      const v = record.field_values[f.key];
-      if (v == null || (typeof v === 'string' && v.trim() === '')) {
-        errors.add(f.key);
-      }
+    const v = record.field_values[f.key];
+    if (f.is_required && (v == null || (typeof v === 'string' && v.trim() === ''))) {
+      errors.set(f.key, 'This field is required.');
+      continue;
     }
+    const fmtErr = validateFieldValue(f, v);
+    if (fmtErr) errors.set(f.key, fmtErr);
   }
   if (errors.size > 0) {
     editFormErrors.value = errors;
     return;
   }
-  editFormErrors.value = new Set();
+  editFormErrors.value = new Map();
   for (const f of fields) {
     const before = preEditSnapshot.value[f.key];
     const after = record.field_values[f.key];
