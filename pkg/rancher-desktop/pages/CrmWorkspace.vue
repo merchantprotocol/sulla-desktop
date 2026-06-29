@@ -9287,6 +9287,29 @@
           </svg>
           {{ collapsedGalleryGroups.has(galleryGroupMenu.key) ? 'Expand group' : 'Collapse group' }}
         </button>
+        <template v-if="kanbanField && galleryGroupMenu.key !== '__ungrouped__'">
+          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+          <p class="px-3 pt-1.5 pb-0.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Move all to</p>
+          <button
+            v-for="stage in (kanbanField?.select_options ?? []).filter(s => s !== galleryGroupMenu!.key)"
+            :key="stage"
+            type="button"
+            class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="moveGroupToStage(galleryGroupMenu!.key, stage); galleryGroupMenu = null"
+          >
+            <span class="h-2 w-2 rounded-full shrink-0" :style="{ background: stageColorHex(stage) }" />
+            {{ stage }}
+          </button>
+        </template>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors text-red-400 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400"
+          @click="deleteGroupRecords(galleryGroupMenu!.key); galleryGroupMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+          Delete all in group
+        </button>
       </div>
     </transition>
 
