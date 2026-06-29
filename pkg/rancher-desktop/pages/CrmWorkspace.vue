@@ -7377,6 +7377,31 @@
                       </span>
                     </div>
                   </template>
+                  <!-- rating field interactive stars in view mode -->
+                  <template v-else-if="!editingRecord && field.data_type === 'rating' && !lockedRecordIds.has(openedRecord.id)">
+                    <div class="group/rat flex items-center gap-0.5 py-0.5">
+                      <button
+                        v-for="star in [1,2,3,4,5]"
+                        :key="star"
+                        type="button"
+                        class="text-xl leading-none transition-colors focus:outline-none hover:text-amber-300 cursor-pointer"
+                        :class="star <= Number(openedRecord.field_values[field.key] ?? 0) ? 'text-amber-400' : 'text-slate-200 dark:text-slate-700'"
+                        :title="`Set rating to ${star}`"
+                        @click.stop="(() => { const cur = Number(openedRecord.field_values[field.key] ?? 0); const next = star === cur ? null : star; openedRecord.field_values[field.key] = next; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, next); })()"
+                      >★</button>
+                      <button
+                        v-if="openedRecord.field_values[field.key]"
+                        type="button"
+                        class="ml-1 opacity-0 group-hover/rat:opacity-100 h-4 w-4 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-all"
+                        title="Clear rating"
+                        @click.stop="openedRecord.field_values[field.key] = null; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, null)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </template>
                   <!-- number field quick stepper in view mode -->
                   <template v-else-if="!editingRecord && field.data_type === 'number' && !lockedRecordIds.has(openedRecord.id)">
                     <div class="flex items-center gap-1.5">
