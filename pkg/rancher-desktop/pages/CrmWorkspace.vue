@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -617,6 +617,19 @@
                 <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
               Duplicate
+            </button>
+            <!-- bulk compare (exactly 2 selected) -->
+            <button
+              v-if="selectedIds.size === 2"
+              type="button"
+              class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/30 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors"
+              title="Compare these 2 records side by side"
+              @click="(() => { const [a, b] = [...selectedIds].map(id => filteredRecords.find(r => r.id === id)!); if (a && b) compareModal = { recordA: a, recordB: b }; })()"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h5.586a1 1 0 00.707-.293l5.414-5.414a1 1 0 00.293-.707V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              Compare
             </button>
             <!-- bulk lock / unlock -->
             <button
@@ -7421,6 +7434,19 @@
             Convert to...
           </button>
         </template>
+        <!-- compare with another record -->
+        <template v-if="selectedIds.size === 2 && selectedIds.has(contextMenuRecord.id)">
+          <button
+            type="button"
+            class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 transition-colors"
+            @click="(() => { const other = filteredRecords.find(r => r.id !== contextMenuRecord.id && selectedIds.has(r.id)); if (other) { compareModal = { recordA: contextMenuRecord, recordB: other }; } closeContextMenu(); })()"
+          >
+            <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h5.586a1 1 0 00.707-.293l5.414-5.414a1 1 0 00.293-.707V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            Compare selected
+          </button>
+        </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button
           type="button"
@@ -8619,6 +8645,129 @@
               Merge records
             </button>
             <button type="button" class="rounded-lg py-2 px-4 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" @click="mergeModal = null">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- compare modal — side-by-side record comparison -->
+    <transition
+      enter-active-class="transition-all duration-150"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition-all duration-100"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="compareModal"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4"
+        @click.self="compareModal = null"
+      >
+        <div class="relative w-full max-w-4xl max-h-[88vh] flex flex-col rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
+          <!-- header -->
+          <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 shrink-0 bg-white dark:bg-slate-900">
+            <svg class="h-4 w-4 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h5.586a1 1 0 00.707-.293l5.414-5.414a1 1 0 00.293-.707V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <h3 class="text-sm font-semibold text-slate-900 dark:text-white flex-1">Compare records</h3>
+            <!-- swap -->
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-colors"
+              title="Swap A / B"
+              @click="compareModal = { recordA: compareModal!.recordB, recordB: compareModal!.recordA }"
+            >
+              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
+              </svg>
+              Swap
+            </button>
+            <button type="button" class="rounded-lg p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="compareModal = null">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+
+          <!-- column headers: field label | A | B -->
+          <div class="grid grid-cols-[minmax(140px,1fr)_2fr_2fr] gap-0 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 shrink-0">
+            <div class="px-4 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Field</div>
+            <div class="px-4 py-2.5 border-l border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate max-w-full text-left"
+                @click="openRecord(compareModal!.recordA); compareModal = null"
+              >{{ compareModal.recordA.title }}</button>
+              <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">A</p>
+            </div>
+            <div class="px-4 py-2.5 border-l border-slate-200 dark:border-slate-700">
+              <button
+                type="button"
+                class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate max-w-full text-left"
+                @click="openRecord(compareModal!.recordB); compareModal = null"
+              >{{ compareModal.recordB.title }}</button>
+              <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">B</p>
+            </div>
+          </div>
+
+          <!-- field rows -->
+          <div class="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+            <template v-for="field in (schema.find(s => s.key === compareModal!.recordA.record_type_key)?.fields ?? []).slice().sort((a, b) => a.position - b.position)" :key="field.key">
+              <div
+                class="grid grid-cols-[minmax(140px,1fr)_2fr_2fr] gap-0 text-sm transition-colors"
+                :class="String(compareModal!.recordA.field_values[field.key] ?? '') !== String(compareModal!.recordB.field_values[field.key] ?? '')
+                  ? 'bg-amber-50/60 dark:bg-amber-950/10'
+                  : ''"
+              >
+                <div class="px-4 py-2.5 flex items-center gap-1.5">
+                  <span class="text-xs font-medium text-slate-500 dark:text-slate-400 truncate">{{ field.label }}</span>
+                  <span
+                    v-if="String(compareModal!.recordA.field_values[field.key] ?? '') !== String(compareModal!.recordB.field_values[field.key] ?? '')"
+                    class="shrink-0 h-1.5 w-1.5 rounded-full bg-amber-400 dark:bg-amber-500"
+                    title="Values differ"
+                  />
+                </div>
+                <div class="px-4 py-2.5 border-l border-slate-100 dark:border-slate-800">
+                  <CrmCellValue
+                    :value="field.data_type === 'formula' ? evaluateFormula(compareModal!.recordA, field) as (string | number) : field.data_type === 'rollup' ? evaluateRollup(compareModal!.recordA, field) as (string | number) : compareModal!.recordA.field_values[field.key]"
+                    :data-type="field.data_type === 'formula' ? (typeof evaluateFormula(compareModal!.recordA, field) === 'string' ? 'text' : 'number') : field.data_type"
+                    :format="field.format"
+                  />
+                  <span v-if="compareModal!.recordA.field_values[field.key] == null || compareModal!.recordA.field_values[field.key] === ''" class="text-xs text-slate-300 dark:text-slate-600 italic">—</span>
+                </div>
+                <div class="px-4 py-2.5 border-l border-slate-100 dark:border-slate-800">
+                  <CrmCellValue
+                    :value="field.data_type === 'formula' ? evaluateFormula(compareModal!.recordB, field) as (string | number) : field.data_type === 'rollup' ? evaluateRollup(compareModal!.recordB, field) as (string | number) : compareModal!.recordB.field_values[field.key]"
+                    :data-type="field.data_type === 'formula' ? (typeof evaluateFormula(compareModal!.recordB, field) === 'string' ? 'text' : 'number') : field.data_type"
+                    :format="field.format"
+                  />
+                  <span v-if="compareModal!.recordB.field_values[field.key] == null || compareModal!.recordB.field_values[field.key] === ''" class="text-xs text-slate-300 dark:text-slate-600 italic">—</span>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- footer -->
+          <div class="px-5 py-3.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2 shrink-0 bg-white dark:bg-slate-900">
+            <button
+              type="button"
+              class="flex-1 rounded-lg py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              @click="openRecord(compareModal!.recordA); compareModal = null"
+            >Open A</button>
+            <button
+              type="button"
+              class="flex-1 rounded-lg py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+              @click="openRecord(compareModal!.recordB); compareModal = null"
+            >Open B</button>
+            <button
+              v-if="compareModal.recordA.record_type_key === compareModal.recordB.record_type_key"
+              type="button"
+              class="flex-1 rounded-lg py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors"
+              @click="mergeModal = { primary: compareModal!.recordA, secondary: compareModal!.recordB, choices: {} }; compareModal = null"
+            >
+              <svg class="h-3.5 w-3.5 inline mr-1.5 -mt-px" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+              Merge these
+            </button>
+            <button type="button" class="rounded-lg py-2 px-4 text-sm font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="compareModal = null">Close</button>
           </div>
         </div>
       </div>
@@ -10947,6 +11096,7 @@ interface MergeDraft {
   isDraft: true;
 }
 const mergeModal = ref<{ primary: CrmRecord; secondary: CrmRecord | MergeDraft; choices: Record<string, 'primary' | 'secondary'> } | null>(null);
+const compareModal = ref<{ recordA: CrmRecord; recordB: CrmRecord } | null>(null);
 const mergeTargetPicker = ref<{ source: CrmRecord } | null>(null);
 const convertModal = ref<{ record: CrmRecord } | null>(null);
 const mergeTargetQuery = ref('');
