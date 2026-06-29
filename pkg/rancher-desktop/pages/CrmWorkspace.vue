@@ -7366,8 +7366,46 @@
               <!-- Tasks tab -->
               <template v-else-if="detailTab === 'tasks'">
                 <!-- tasks header row -->
-                <div class="flex items-center justify-between -mt-1 mb-1">
-                  <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Tasks</p>
+                <div class="flex items-center gap-2 -mt-1 mb-1">
+                  <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 flex-1">Tasks</p>
+                  <!-- task template picker -->
+                  <div class="relative" @click.stop>
+                    <button
+                      type="button"
+                      class="flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-medium transition-colors"
+                      :class="showTaskTemplateDropdown
+                        ? 'bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400'
+                        : 'text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'"
+                      title="Apply a task template"
+                      @click="showTaskTemplateDropdown = !showTaskTemplateDropdown"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                      </svg>
+                      Templates
+                    </button>
+                    <div
+                      v-if="showTaskTemplateDropdown"
+                      class="absolute right-0 top-full mt-1 z-30 w-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1.5"
+                    >
+                      <p class="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Apply template</p>
+                      <button
+                        v-for="tmpl in taskTemplates"
+                        :key="tmpl.id"
+                        type="button"
+                        class="w-full flex items-start gap-2.5 px-3 py-2 text-left hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                        @click="applyTaskTemplate(tmpl)"
+                      >
+                        <svg class="h-4 w-4 text-violet-500 dark:text-violet-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        </svg>
+                        <div class="min-w-0">
+                          <p class="text-sm font-medium text-slate-700 dark:text-slate-200 leading-snug">{{ tmpl.name }}</p>
+                          <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{{ tmpl.description }} · {{ tmpl.tasks.length }} tasks</p>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
                   <button
                     type="button"
                     class="flex items-center gap-1 h-5 px-1.5 rounded text-[10px] font-medium transition-colors"
@@ -10976,6 +11014,20 @@ interface CrmTask {
   recurrence?: 'daily' | 'weekly' | 'monthly';
 }
 
+interface CrmTaskTemplateItem {
+  text: string;
+  priority?: 'high' | 'medium' | 'low';
+  daysFromNow?: number;
+  recurrence?: 'daily' | 'weekly' | 'monthly';
+}
+
+interface CrmTaskTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  tasks: CrmTaskTemplateItem[];
+}
+
 type AutomationActionType = 'set_field' | 'create_task' | 'notify';
 
 interface AutomationRule {
@@ -11330,6 +11382,42 @@ const mockTasks = reactive<CrmTask[]>([
   { id: 'stk3', record_id: 'r8', text: 'Email legal team for update',  done: false, created_at: '2026-06-26T09:01:00Z', parent_id: 'tk4' },
   { id: 'stk4', record_id: 'r8', text: 'Review redlines in clause 5',  done: false, created_at: '2026-06-26T09:02:00Z', parent_id: 'tk4' },
 ]);
+
+const taskTemplates: CrmTaskTemplate[] = [
+  {
+    id: 'tmpl1',
+    name: 'Deal close checklist',
+    description: '5 standard tasks to close a deal',
+    tasks: [
+      { text: 'Send proposal',               priority: 'high',   daysFromNow: 1 },
+      { text: 'Follow up on proposal',       priority: 'medium', daysFromNow: 5 },
+      { text: 'Schedule contract review call', priority: 'high',  daysFromNow: 7 },
+      { text: 'Send contract for signature', priority: 'high',   daysFromNow: 10 },
+      { text: 'Confirm payment terms',       priority: 'medium', daysFromNow: 12 },
+    ],
+  },
+  {
+    id: 'tmpl2',
+    name: 'Onboarding checklist',
+    description: '4 tasks to onboard a new customer',
+    tasks: [
+      { text: 'Send welcome email',     priority: 'high',   daysFromNow: 0 },
+      { text: 'Schedule kick-off call', priority: 'high',   daysFromNow: 2 },
+      { text: 'Share onboarding docs',  priority: 'medium', daysFromNow: 3 },
+      { text: '30-day check-in',        priority: 'medium', daysFromNow: 30, recurrence: 'monthly' },
+    ],
+  },
+  {
+    id: 'tmpl3',
+    name: 'Weekly follow-up',
+    description: '3 recurring check-in tasks',
+    tasks: [
+      { text: 'Weekly status email', priority: 'medium', daysFromNow: 7, recurrence: 'weekly' },
+      { text: 'Review open items',   priority: 'low',    daysFromNow: 7, recurrence: 'weekly' },
+      { text: 'Update notes',        priority: 'low',    daysFromNow: 7, recurrence: 'weekly' },
+    ],
+  },
+];
 
 const mockAttachments = reactive<CrmAttachment[]>([
   { id: 'af1', record_id: 'r1',  name: 'Proposal_v3.pdf',        size: 1_240_000, mime_type: 'application/pdf',        uploaded_by: 'JB', uploaded_at: '2026-06-24T09:15:00Z' },
@@ -11947,6 +12035,7 @@ const editingTaskRecurrence = ref<'daily' | 'weekly' | 'monthly' | ''>('');
 const expandedTaskIds = ref<Set<string>>(new Set());
 const addingSubtaskOf = ref<string | null>(null);
 const newSubtaskDraft = ref('');
+const showTaskTemplateDropdown = ref(false);
 const taskInputEl = ref<HTMLInputElement | null>(null);
 const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
@@ -15947,6 +16036,32 @@ function deleteTask(id: string) {
     label: 'Undo',
     fn: () => { removed.forEach((t) => mockTasks.push(t)); },
   });
+}
+
+function applyTaskTemplate(template: CrmTaskTemplate) {
+  if (!openedRecord.value) return;
+  const rid = openedRecord.value.id;
+  template.tasks.forEach((t) => {
+    let due: string | undefined;
+    if (t.daysFromNow !== undefined) {
+      const d = new Date(DUE_TODAY_STR);
+      d.setDate(d.getDate() + t.daysFromNow);
+      due = d.toISOString().slice(0, 10);
+    }
+    const uid = `tpl${rid}${mockTasks.length}${Math.random().toString(36).slice(2, 5)}`;
+    mockTasks.push({
+      id: uid,
+      record_id: rid,
+      text: t.text,
+      done: false,
+      created_at: new Date().toISOString(),
+      due_date: due,
+      priority: t.priority,
+      recurrence: t.recurrence,
+    });
+  });
+  showToast(`"${template.name}" applied — ${template.tasks.length} task${template.tasks.length === 1 ? '' : 's'} created`);
+  showTaskTemplateDropdown.value = false;
 }
 
 function highlightText(text: string, query: string): Array<{ text: string; match: boolean }> {
