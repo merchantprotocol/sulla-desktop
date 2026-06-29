@@ -7225,7 +7225,7 @@
           <div v-else class="p-6 space-y-6 max-w-3xl mx-auto">
             <div v-for="group in tasksViewGroups" :key="group.id" class="space-y-1">
               <!-- group header -->
-              <div class="flex items-center gap-2 mb-2">
+              <div class="group/tasksgrp flex items-center gap-2 mb-2">
                 <span
                   class="shrink-0 h-2 w-2 rounded-full"
                   :class="group.color === 'rose' ? 'bg-rose-500'
@@ -7242,6 +7242,19 @@
                         : 'text-slate-500 dark:text-slate-400'"
                 >{{ group.label }}</span>
                 <span class="text-xs text-slate-400 dark:text-slate-500 tabular-nums">{{ group.items.length }}</span>
+                <!-- mark all done -->
+                <button
+                  v-if="group.items.some(i => !i.task.done && !i.task.recurrence)"
+                  type="button"
+                  class="ml-auto opacity-0 group-hover/tasksgrp:opacity-100 inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all"
+                  :title="`Mark all ${group.items.filter(i => !i.task.done && !i.task.recurrence).length} pending tasks done`"
+                  @click="(() => { const pending = group.items.filter(i => !i.task.done && !i.task.recurrence); pending.forEach(i => { const t = mockTasks.find(x => x.id === i.task.id); if (t) t.done = true; }); showToast(`${pending.length} task${pending.length === 1 ? '' : 's'} completed`, { label: 'Undo', fn: () => pending.forEach(i => { const t = mockTasks.find(x => x.id === i.task.id); if (t) t.done = false; }) }); })()"
+                >
+                  <svg class="h-2.5 w-2.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Mark all done
+                </button>
               </div>
               <!-- task rows -->
               <div
