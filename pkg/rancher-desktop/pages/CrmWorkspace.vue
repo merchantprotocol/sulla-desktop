@@ -3753,6 +3753,58 @@
             </div>
           </div>
 
+          <!-- revenue forecast panel (deal types with currency field) -->
+          <div v-if="forecastData" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-4">Forecast</p>
+            <!-- top metrics row -->
+            <div class="grid grid-cols-3 gap-3 mb-4">
+              <div class="rounded-lg bg-slate-50 dark:bg-slate-800/60 px-3 py-2.5">
+                <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">Open pipeline</p>
+                <p class="text-base font-bold tabular-nums text-slate-900 dark:text-white">
+                  ${{ forecastData.openPipeline >= 1_000_000 ? (forecastData.openPipeline / 1_000_000).toFixed(1) + 'M' : forecastData.openPipeline >= 1_000 ? Math.round(forecastData.openPipeline / 1_000) + 'k' : forecastData.openPipeline }}
+                </p>
+              </div>
+              <div class="rounded-lg bg-emerald-50 dark:bg-emerald-950/20 px-3 py-2.5">
+                <p class="text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide mb-1">Weighted</p>
+                <p class="text-base font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                  ${{ forecastData.weightedPipeline >= 1_000_000 ? (forecastData.weightedPipeline / 1_000_000).toFixed(1) + 'M' : forecastData.weightedPipeline >= 1_000 ? Math.round(forecastData.weightedPipeline / 1_000) + 'k' : forecastData.weightedPipeline }}
+                </p>
+              </div>
+              <div class="rounded-lg bg-sky-50 dark:bg-sky-950/20 px-3 py-2.5">
+                <p class="text-[10px] text-sky-600 dark:text-sky-400 uppercase tracking-wide mb-1">This quarter</p>
+                <p class="text-base font-bold tabular-nums text-sky-700 dark:text-sky-400">
+                  {{ forecastData.closingThisQuarterCount }} deals
+                </p>
+                <p class="text-[10px] tabular-nums text-sky-500 dark:text-sky-500 mt-0.5">
+                  ${{ forecastData.closingThisQuarterValue >= 1_000 ? Math.round(forecastData.closingThisQuarterValue / 1_000) + 'k' : forecastData.closingThisQuarterValue }}
+                </p>
+              </div>
+            </div>
+            <!-- closing this month -->
+            <template v-if="forecastData.closingThisMonth.length">
+              <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">Closing this month</p>
+              <div class="space-y-1.5">
+                <div
+                  v-for="item in forecastData.closingThisMonth"
+                  :key="item.id"
+                  class="flex items-center gap-2 text-xs group/fi cursor-pointer"
+                  @click="openRecord(mockRecords.find(r => r.id === item.id)!)"
+                >
+                  <span class="flex-1 truncate text-slate-700 dark:text-slate-200 group-hover/fi:text-sky-600 dark:group-hover/fi:text-sky-400 transition-colors">{{ item.title }}</span>
+                  <span
+                    v-if="item.stage"
+                    class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+                    :class="selectBadgeClass(item.stage)"
+                  >{{ item.stage }}</span>
+                  <span class="shrink-0 tabular-nums text-slate-500 dark:text-slate-400 font-medium">
+                    ${{ item.amount >= 1_000 ? Math.round(item.amount / 1_000) + 'k' : item.amount }}
+                  </span>
+                </div>
+              </div>
+            </template>
+            <p v-else class="text-xs text-slate-400 dark:text-slate-500 italic">No deals closing this month.</p>
+          </div>
+
           <!-- pipeline velocity — avg days per stage -->
           <div v-if="pipelineVelocity && pipelineVelocity.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             <div class="flex items-center justify-between mb-4">
@@ -9617,6 +9669,65 @@ const statsViewData = computed(() => {
   const heatmapMax = Math.max(...Object.values(dateCounts), 1);
 
   return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
+});
+
+// ── Revenue forecast (deal-type records with a currency field) ────────────
+const forecastData = computed((): {
+  openPipeline: number;
+  weightedPipeline: number;
+  closingThisMonth: Array<{ id: string; title: string; amount: number; stage: string; close_date: string }>;
+  closingThisQuarterCount: number;
+  closingThisQuarterValue: number;
+  amountField: CrmField;
+  dateField: CrmField | null;
+} | null => {
+  const rt = selectedType.value;
+  if (!rt) return null;
+  const amountField = rt.fields.find((f) => f.data_type === 'number' && f.format === 'currency') ?? null;
+  if (!amountField) return null;
+  const stageField = rt.fields.find((f) => f.data_type === 'select') ?? null;
+  const probabilityField = rt.fields.find((f) => f.key === 'probability') ?? null;
+  const dateField = rt.fields.find((f) => ['close_date', 'due_date', 'end_date', 'deadline'].includes(f.key)) ?? null;
+  const CLOSED = ['Closed Won', 'Closed Lost', 'Churned', 'Inactive', 'Done'];
+  const openRecs = mockRecords.filter((r) => {
+    if (r.record_type_key !== rt.key) return false;
+    if (stageField) {
+      const sv = String(r.field_values[stageField.key] ?? '');
+      if (CLOSED.includes(sv)) return false;
+    }
+    return true;
+  });
+  const openPipeline = openRecs.reduce((s, r) => s + (Number(r.field_values[amountField.key]) || 0), 0);
+  const weightedPipeline = Math.round(openRecs.reduce((s, r) => {
+    const amt = Number(r.field_values[amountField.key]) || 0;
+    const prob = probabilityField ? (Number(r.field_values[probabilityField.key]) || 0) / 100 : 0.5;
+    return s + amt * prob;
+  }, 0));
+  const thisMonth = DUE_TODAY_STR.slice(0, 7);
+  const closingThisMonth = openRecs
+    .filter((r) => dateField && String(r.field_values[dateField.key] ?? '').startsWith(thisMonth))
+    .map((r) => ({
+      id: r.id, title: r.title,
+      amount: Number(r.field_values[amountField.key]) || 0,
+      stage: stageField ? String(r.field_values[stageField.key] ?? '') : '',
+      close_date: dateField ? String(r.field_values[dateField.key] ?? '') : '',
+    }))
+    .sort((a, b) => a.close_date.localeCompare(b.close_date));
+  const today = new Date(DUE_TODAY_STR);
+  const qM = Math.floor(today.getMonth() / 3) * 3;
+  const qStart = new Date(today.getFullYear(), qM, 1).toISOString().slice(0, 10);
+  const qEnd = new Date(today.getFullYear(), qM + 3, 0).toISOString().slice(0, 10);
+  const closingQtr = openRecs.filter((r) => {
+    if (!dateField) return false;
+    const d = String(r.field_values[dateField.key] ?? '');
+    return d >= qStart && d <= qEnd;
+  });
+  return {
+    openPipeline, weightedPipeline, closingThisMonth,
+    closingThisQuarterCount: closingQtr.length,
+    closingThisQuarterValue: closingQtr.reduce((s, r) => s + (Number(r.field_values[amountField.key]) || 0), 0),
+    amountField, dateField,
+  };
 });
 
 const timelinePadLevel = ref(0); // -2 to +2 zoom levels; 0 = default
