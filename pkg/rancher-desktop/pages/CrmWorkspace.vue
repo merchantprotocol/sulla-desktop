@@ -7092,6 +7092,56 @@
                           ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'"
                   >{{ item.reason }}</span>
+                  <!-- activity / task / score / links badges -->
+                  <button
+                    v-if="activityCountByRecord[item.record.id]"
+                    type="button"
+                    class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] tabular-nums font-medium transition-colors"
+                    :class="(() => {
+                      const days = lastActivityByRecord[item.record.id] ? Math.floor((Date.now() - lastActivityByRecord[item.record.id]) / 86400000) : 999;
+                      return days <= 7
+                        ? 'bg-sky-50 dark:bg-sky-950/30 text-sky-500 dark:text-sky-400 hover:bg-sky-100 dark:hover:bg-sky-900/40'
+                        : days <= 30
+                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                          : days <= 60
+                            ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                            : 'bg-rose-50 dark:bg-rose-950/30 text-rose-400 dark:text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-900/40';
+                    })()"
+                    :title="`${activityCountByRecord[item.record.id]} activit${activityCountByRecord[item.record.id] === 1 ? 'y' : 'ies'}${lastActivityByRecord[item.record.id] ? ' · last ' + formatAge(new Date(lastActivityByRecord[item.record.id]).toISOString()) + ' ago' : ''} — click to view`"
+                    @click.stop="openRecord(item.record); nextTick(() => { detailTab = 'activity'; })"
+                    @mouseenter="showActivityPreview(item.record.id, $event.currentTarget as HTMLElement)"
+                    @mouseleave="hideActivityPreview"
+                  >
+                    <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3-3-3z" /></svg>
+                    {{ activityCountByRecord[item.record.id] }}
+                  </button>
+                  <span
+                    v-if="pendingTaskCountByRecord[item.record.id]"
+                    class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400"
+                    :title="`${pendingTaskCountByRecord[item.record.id]} pending task${pendingTaskCountByRecord[item.record.id] === 1 ? '' : 's'}`"
+                  >
+                    <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+                    {{ pendingTaskCountByRecord[item.record.id] }}
+                  </span>
+                  <button
+                    v-if="scoringRulesForType.length && scoreRecord(item.record) > 0"
+                    type="button"
+                    class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] tabular-nums font-semibold transition-opacity hover:opacity-75"
+                    :class="scoreRecord(item.record) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(item.record) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400' : 'bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400'"
+                    :title="`Score: ${scoreRecord(item.record)} / 100 — click for breakdown`"
+                    @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = item.record; showScoreBreakdown = !showScoreBreakdown; }"
+                  >
+                    <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                    {{ scoreRecord(item.record) }}
+                  </button>
+                  <span
+                    v-if="item.record.links?.length"
+                    class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
+                    :title="`${item.record.links.length} linked record${item.record.links.length === 1 ? '' : 's'}`"
+                  >
+                    <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                    {{ item.record.links.length }}
+                  </span>
                   <!-- quick actions -->
                   <div class="shrink-0 flex items-center gap-1 opacity-0 group-hover/focus:opacity-100 transition-opacity">
                     <!-- pin -->
