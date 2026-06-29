@@ -2096,6 +2096,23 @@
                   </button>
                 </div>
               </div>
+              <!-- gallery select-all toggle — shown only in gallery mode -->
+              <button
+                v-if="viewMode === 'gallery'"
+                type="button"
+                class="flex items-center justify-center w-9 h-9 border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="selectedIds.size > 0
+                  ? 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30'
+                  : 'text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                :title="allSelected ? 'Deselect all' : selectedIds.size ? `${selectedIds.size} selected — click to select all` : 'Select all cards'"
+                @click="toggleAll"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path v-if="allSelected" stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path v-else-if="selectedIds.size" stroke-linecap="round" stroke-linejoin="round" d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path v-else stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </button>
               <!-- gallery column-count picker — shown only in gallery mode -->
               <template v-if="viewMode === 'gallery'">
                 <button
