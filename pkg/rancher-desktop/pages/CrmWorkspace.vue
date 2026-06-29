@@ -1747,6 +1747,18 @@
               </svg>
             </button>
 
+            <!-- row numbers toggle — table view only -->
+            <button
+              v-if="viewMode === 'table'"
+              type="button"
+              class="h-9 w-9 flex items-center justify-center rounded-lg border transition-colors font-mono text-sm font-semibold"
+              :class="showRowNums
+                ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400'
+                : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+              title="Toggle row numbers"
+              @click="showRowNums = !showRowNums"
+            >#</button>
+
             <!-- view toggle — table always available; board when type has select field; calendar when type has date field -->
             <div
               v-if="canKanban || canCalendar"
@@ -2448,6 +2460,13 @@
                       @change="toggleAll"
                     >
                   </th>
+                  <!-- row number column header -->
+                  <th
+                    v-if="showRowNums"
+                    class="w-8 pr-2 py-3 bg-slate-50 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 text-right select-none"
+                  >
+                    <span class="text-[10px] font-semibold text-slate-300 dark:text-slate-600 font-mono">#</span>
+                  </th>
                   <th
                     v-for="col in visibleColumns"
                     :key="col.key"
@@ -2653,7 +2672,7 @@
                       @click="toggleGroupCollapse(row.key)"
                       @contextmenu.prevent="groupMenu = { key: row.key, label: row.label, count: row.count, x: $event.clientX, y: $event.clientY }"
                     >
-                      <td :colspan="visibleColumns.length + 3" class="px-5 py-1.5">
+                      <td :colspan="visibleColumns.length + (showRowNums ? 4 : 3)" class="px-5 py-1.5">
                         <div class="flex items-center gap-2">
                           <svg
                             class="h-3.5 w-3.5 text-slate-400 transition-transform"
@@ -2711,6 +2730,12 @@
                             @click="onCheckboxClick(row.record, row.idxInFiltered, $event)"
                           >
                         </td>
+                        <!-- row number cell (grouped) -->
+                        <td
+                          v-if="showRowNums"
+                          class="w-8 pr-2 text-right tabular-nums select-none"
+                          :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'"
+                        ><span class="text-[11px] text-slate-300 dark:text-slate-600 font-mono">{{ row.idxInFiltered + 1 }}</span></td>
                         <td v-for="col in visibleColumns" :key="col.key" class="px-4" :class="[rowDensity === 'compact' ? 'py-1.5' : 'py-3']">
                           <CrmCellValue :value="row.record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
                         </td>
@@ -2798,6 +2823,12 @@
                       </svg>
                     </div>
                   </td>
+                  <!-- row number cell (non-grouped) -->
+                  <td
+                    v-if="showRowNums"
+                    class="w-8 pr-2 text-right tabular-nums select-none"
+                    :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'"
+                  ><span class="text-[11px] text-slate-300 dark:text-slate-600 font-mono">{{ idx + 1 }}</span></td>
                   <td
                     v-for="col in visibleColumns"
                     :key="col.key"
@@ -3067,7 +3098,7 @@
                 <tr
                   v-if="!showPinnedOnly && pinnedIds.has(record.id) && idx < filteredRecords.length - 1 && !pinnedIds.has(filteredRecords[idx + 1]?.id ?? '')"
                 >
-                  <td :colspan="visibleColumns.length + 3" class="p-0">
+                  <td :colspan="visibleColumns.length + (showRowNums ? 4 : 3)" class="p-0">
                     <div class="h-px bg-amber-200 dark:bg-amber-800/40 mx-4" />
                   </td>
                 </tr>
@@ -3076,7 +3107,7 @@
 
                 <tr v-if="filteredRecords.length === 0">
                   <td
-                    :colspan="visibleColumns.length + 3"
+                    :colspan="visibleColumns.length + (showRowNums ? 4 : 3)"
                     class="px-6 py-16 text-center"
                   >
                     <div class="mx-auto w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
@@ -3100,7 +3131,7 @@
                 </tr>
                 <!-- inline quick-add row -->
                 <tr v-if="!creatingRecord && !showInlineAdd" class="group/addrow">
-                  <td :colspan="visibleColumns.length + 3" class="px-6 py-1.5">
+                  <td :colspan="visibleColumns.length + (showRowNums ? 4 : 3)" class="px-6 py-1.5">
                     <button
                       type="button"
                       class="flex items-center gap-1.5 text-xs text-slate-300 dark:text-slate-700 hover:text-sky-500 dark:hover:text-sky-400 transition-colors py-1"
@@ -3116,6 +3147,7 @@
                 <!-- inline add input row -->
                 <tr v-else-if="showInlineAdd" class="bg-sky-50/50 dark:bg-sky-950/10">
                   <td class="pl-6 pr-2 py-2" />
+                  <td v-if="showRowNums" class="w-8 py-2" />
                   <td :colspan="visibleColumns.length + 1" class="px-3 py-2">
                     <input
                       ref="inlineAddInputEl"
@@ -10948,6 +10980,7 @@ const galleryFocusIdx = ref(-1);
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
 const showRowStripes = ref(false);
 const showDataBars = ref(false);
+const showRowNums = ref(false);
 const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
 const createFormErrors = ref<Set<string>>(new Set());
