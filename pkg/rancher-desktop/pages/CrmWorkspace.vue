@@ -6105,6 +6105,27 @@
                   <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
               </button>
+              <!-- pin record -->
+              <button
+                type="button"
+                :aria-label="pinnedIds.has(openedRecord.id) ? 'Unpin record' : 'Pin record'"
+                :title="pinnedIds.has(openedRecord.id) ? 'Pinned — click to unpin' : 'Pin this record'"
+                class="shrink-0 mt-0.5 rounded-lg p-1 transition-colors"
+                :class="pinnedIds.has(openedRecord.id)
+                  ? 'text-amber-400 hover:text-amber-300'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'"
+                @click="togglePin(openedRecord.id)"
+              >
+                <svg
+                  class="h-4 w-4"
+                  :fill="pinnedIds.has(openedRecord.id) ? 'currentColor' : 'none'"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  stroke-width="1.8"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                </svg>
+              </button>
               <!-- copy record link -->
               <button
                 type="button"
