@@ -8393,23 +8393,53 @@
         <div class="w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
           <!-- search input -->
           <div class="flex items-center gap-3 px-4 py-3 border-b border-slate-100 dark:border-slate-800">
-            <svg class="h-4 w-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <svg v-if="!paletteCommandMode" class="h-4 w-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
               <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+            </svg>
+            <svg v-else class="h-4 w-4 text-violet-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
             <input
               ref="paletteInputEl"
               v-model="paletteQuery"
               type="text"
-              placeholder="Search all records…"
+              :placeholder="paletteCommandMode ? 'Type a command…' : 'Search records… or type > for commands'"
               class="flex-1 text-sm bg-transparent text-slate-900 dark:text-white placeholder-slate-400 outline-none"
-              @keydown.arrow-down.prevent="paletteIdx = Math.min(paletteIdx + 1, paletteResults.length - 1)"
+              @keydown.arrow-down.prevent="paletteIdx = Math.min(paletteIdx + 1, (paletteCommandMode ? paletteFilteredCommands.length : paletteResults.length) - 1)"
               @keydown.arrow-up.prevent="paletteIdx = Math.max(paletteIdx - 1, 0)"
-              @keydown.enter.prevent="paletteResults[paletteIdx] && openFromPalette(paletteResults[paletteIdx])"
+              @keydown.enter.prevent="paletteCommandMode ? (paletteFilteredCommands[paletteIdx] && (showPalette = false, paletteFilteredCommands[paletteIdx].action())) : (paletteResults[paletteIdx] && openFromPalette(paletteResults[paletteIdx]))"
               @keydown.esc.stop="showPalette = false"
             />
             <kbd class="text-xs text-slate-400 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 font-mono">esc</kbd>
           </div>
-          <!-- quick-create chips — shown when no query -->
+
+          <!-- command mode results -->
+          <div v-if="paletteCommandMode" class="max-h-72 overflow-y-auto">
+            <p class="px-4 pt-3 pb-1 text-xs font-medium text-violet-400 dark:text-violet-500 uppercase tracking-wide">Commands</p>
+            <button
+              v-for="(cmd, idx) in paletteFilteredCommands"
+              :key="cmd.id"
+              type="button"
+              class="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
+              :class="idx === paletteIdx ? 'bg-violet-50 dark:bg-violet-950/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'"
+              @mouseenter="paletteIdx = idx"
+              @click="showPalette = false; cmd.action()"
+            >
+              <div class="shrink-0 h-7 w-7 rounded-md flex items-center justify-center text-violet-500 bg-violet-50 dark:bg-violet-950/30">
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-slate-900 dark:text-white">{{ cmd.label }}</p>
+                <p class="text-xs text-slate-400 dark:text-slate-500">{{ cmd.description }}</p>
+              </div>
+            </button>
+            <p v-if="!paletteFilteredCommands.length" class="px-4 py-8 text-center text-sm text-slate-400 dark:text-slate-500">No matching commands</p>
+          </div>
+
+          <!-- quick-create chips — shown when no query (record mode) -->
+          <template v-else>
           <div v-if="!paletteQuery.trim()" class="px-4 pt-3 pb-3 border-b border-slate-100 dark:border-slate-800">
             <p class="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-2">Create</p>
             <div class="flex flex-wrap gap-1.5">
@@ -8472,10 +8502,12 @@
             </button>
             <p v-if="!paletteResults.length" class="px-4 py-8 text-center text-sm text-slate-400 dark:text-slate-500">No records found</p>
           </div>
+          </template>
           <div class="px-4 py-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-3 text-xs text-slate-400 dark:text-slate-500">
             <span><kbd class="font-mono">↑↓</kbd> navigate</span>
-            <span><kbd class="font-mono">↵</kbd> open</span>
+            <span><kbd class="font-mono">↵</kbd> {{ paletteCommandMode ? 'run' : 'open' }}</span>
             <span><kbd class="font-mono">esc</kbd> close</span>
+            <span v-if="!paletteCommandMode" class="text-slate-300 dark:text-slate-700">Type <kbd class="font-mono">&gt;</kbd> for commands</span>
             <span class="ml-auto"><kbd class="font-mono">⌘K</kbd> toggle</span>
           </div>
         </div>
@@ -15344,6 +15376,32 @@ const allSelected = computed(
     filteredRecords.value.length > 0 &&
     filteredRecords.value.every((r) => selectedIds.value.has(r.id)),
 );
+
+type PaletteCmd = { id: string; label: string; description: string; action: () => void };
+const PALETTE_COMMANDS: PaletteCmd[] = [
+  { id: 'table',     label: 'View: Table',     description: 'Switch to table view',       action: () => { viewMode.value = 'table'; } },
+  { id: 'kanban',    label: 'View: Kanban',    description: 'Switch to kanban view',      action: () => { viewMode.value = 'kanban'; } },
+  { id: 'calendar',  label: 'View: Calendar',  description: 'Switch to calendar view',    action: () => { viewMode.value = 'calendar'; } },
+  { id: 'gallery',   label: 'View: Gallery',   description: 'Switch to gallery view',     action: () => { viewMode.value = 'gallery'; } },
+  { id: 'timeline',  label: 'View: Timeline',  description: 'Switch to timeline view',    action: () => { viewMode.value = 'timeline'; } },
+  { id: 'stats',     label: 'View: Stats',     description: 'Switch to stats view',       action: () => { viewMode.value = 'stats'; } },
+  { id: 'feed',      label: 'View: Feed',      description: 'Switch to activity feed',    action: () => { viewMode.value = 'feed'; } },
+  { id: 'tasks',     label: 'View: Tasks',     description: 'Switch to global tasks view', action: () => { viewMode.value = 'tasks'; } },
+  { id: 'focus',     label: 'View: Focus',     description: 'Switch to focus view',       action: () => { viewMode.value = 'focus'; } },
+  { id: 'import',    label: 'Import CSV',      description: 'Open CSV import wizard',     action: () => { openImportModal(); } },
+  { id: 'export',    label: 'Export CSV',      description: 'Export current view to CSV', action: () => { exportCsv(); } },
+  { id: 'schema',    label: 'Manage fields',   description: 'Open schema / field editor', action: () => { openSchemaEditor(); } },
+  { id: 'shortcuts', label: 'Keyboard shortcuts', description: 'Show all keyboard shortcuts', action: () => { showShortcuts.value = true; } },
+  { id: 'newrec',    label: 'New record',      description: 'Create a new record',        action: () => { openNewRecord(); } },
+];
+
+const paletteCommandMode = computed(() => paletteQuery.value.startsWith('>'));
+
+const paletteFilteredCommands = computed((): PaletteCmd[] => {
+  const q = paletteQuery.value.slice(1).trim().toLowerCase();
+  if (!q) return PALETTE_COMMANDS;
+  return PALETTE_COMMANDS.filter((c) => c.label.toLowerCase().includes(q) || c.description.toLowerCase().includes(q));
+});
 
 // ── Duplicate detection ───────────────────────────────────────────────────
 function titleSimilarity(a: string, b: string): number {
