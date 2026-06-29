@@ -4837,12 +4837,22 @@
                 @click="openRecord(row.record)"
               >
                 <!-- name column -->
-                <div class="shrink-0 w-52 border-r border-slate-100 dark:border-slate-800 px-3 py-1.5 flex items-center gap-2 min-w-0">
+                <div class="shrink-0 w-52 border-r border-slate-100 dark:border-slate-800 px-3 py-1.5 flex items-center gap-1.5 min-w-0">
                   <span
                     class="shrink-0 h-2 w-2 rounded-full"
                     :style="{ background: selectedType?.color ?? '#6366f1' }"
                   />
-                  <span class="text-xs text-slate-700 dark:text-slate-200 truncate" :title="row.title">{{ row.title }}</span>
+                  <span class="text-xs text-slate-700 dark:text-slate-200 truncate flex-1" :title="row.title">{{ row.title }}</span>
+                  <span
+                    v-if="activityCountByRecord[row.record.id]"
+                    class="shrink-0 inline-flex items-center rounded-full px-1 py-0.5 text-[9px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-500 dark:text-sky-400"
+                    :title="`${activityCountByRecord[row.record.id]} activities`"
+                  >{{ activityCountByRecord[row.record.id] }}</span>
+                  <span
+                    v-if="pendingTaskCountByRecord[row.record.id]"
+                    class="shrink-0 inline-flex items-center rounded-full px-1 py-0.5 text-[9px] tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400"
+                    :title="`${pendingTaskCountByRecord[row.record.id]} pending tasks`"
+                  >{{ pendingTaskCountByRecord[row.record.id] }}</span>
                 </div>
                 <!-- Gantt bar area -->
                 <div class="relative flex-1 h-9">
