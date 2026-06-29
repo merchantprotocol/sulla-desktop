@@ -9486,14 +9486,16 @@ const groupedActivities = computed((): ActivityRow[] => {
   const rows: ActivityRow[] = [];
   let lastLabel = '';
   for (const act of visibleActivities.value) {
-    const d = new Date(act.created_at);
+    const isScheduledFuture = act.scheduled_at && act.scheduled_at > new Date().toISOString();
+    const d = new Date(isScheduledFuture ? act.scheduled_at! : act.created_at);
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
     const isSameDay = (a: Date, b: Date) =>
       a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
     let label: string;
-    if (isSameDay(d, today)) label = 'Today';
+    if (isScheduledFuture) label = `Scheduled · ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+    else if (isSameDay(d, today)) label = 'Today';
     else if (isSameDay(d, yesterday)) label = 'Yesterday';
     else label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
     if (label !== lastLabel) {
