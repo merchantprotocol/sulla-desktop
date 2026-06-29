@@ -388,17 +388,29 @@
                 >{{ item.isOverdue ? 'Overdue · ' : item.isToday ? 'Today · ' : '' }}{{ item.date }}</span>
                 <span v-if="item.note" class="block text-[10px] text-slate-400 dark:text-slate-500 truncate italic">{{ item.note }}</span>
               </span>
-              <!-- hover-reveal dismiss -->
-              <button
-                type="button"
-                class="invisible group-hover/rem:visible shrink-0 mt-0.5 rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-colors"
-                title="Clear reminder"
-                @click.stop="clearReminder(item.id)"
-              >
-                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <!-- hover-reveal actions: snooze +1d + dismiss -->
+              <div class="invisible group-hover/rem:visible shrink-0 flex items-center gap-0.5">
+                <button
+                  type="button"
+                  class="rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                  title="Snooze 1 day"
+                  @click.stop="snoozeReminder(item.id, 1)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-colors"
+                  title="Clear reminder"
+                  @click.stop="clearReminder(item.id)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -17238,6 +17250,16 @@ function clearReminder(recordId: string) {
   reminders.value = next;
   reminderMenuId.value = null;
   showToast('Reminder cleared');
+}
+
+function snoozeReminder(recordId: string, days: number) {
+  const existing = reminders.value[recordId];
+  if (!existing) return;
+  const d = new Date(existing.date + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  const newDate = d.toISOString().slice(0, 10);
+  reminders.value = { ...reminders.value, [recordId]: { ...existing, date: newDate } };
+  showToast(`Reminder snoozed to ${newDate}`);
 }
 
 function archiveRecord(id: string) {
