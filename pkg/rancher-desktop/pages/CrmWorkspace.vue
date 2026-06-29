@@ -3025,6 +3025,40 @@
                       <svg v-if="(kanbanGroups[col] ?? []).length > wipLimits[col]" class="h-3 w-3 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" /></svg>
                     </template>
                     <template v-if="kanbanColumnTotals[col]"> · {{ kanbanColumnTotals[col] }}</template>
+                    <!-- stage probability badge (pipeline types with currency field) -->
+                    <template v-if="forecastData && col !== KANBAN_UNASSIGNED">
+                      <span class="text-slate-200 dark:text-slate-700">·</span>
+                      <button
+                        v-if="editingStageProbCol !== col"
+                        type="button"
+                        class="tabular-nums font-semibold text-[10px] px-1 rounded transition-colors"
+                        :class="stageProbabilitiesForType[col] !== undefined
+                          ? stageProbabilitiesForType[col] >= 70 ? 'text-emerald-600 dark:text-emerald-400'
+                            : stageProbabilitiesForType[col] >= 40 ? 'text-amber-500 dark:text-amber-400'
+                            : 'text-rose-500 dark:text-rose-400'
+                          : 'text-slate-300 dark:text-slate-600 hover:text-slate-400 dark:hover:text-slate-500'"
+                        :title="stageProbabilitiesForType[col] !== undefined
+                          ? `Stage probability: ${stageProbabilitiesForType[col]}% — click to edit`
+                          : 'Set stage probability for weighted forecast'"
+                        @click.stop="editingStageProbCol = col; stageProbDraft = stageProbabilitiesForType[col] !== undefined ? String(stageProbabilitiesForType[col]) : ''; nextTick(() => (stageProbInputEl as any)?.focus?.())"
+                      >{{ stageProbabilitiesForType[col] !== undefined ? stageProbabilitiesForType[col] + '%' : '?%' }}</button>
+                      <span v-else class="flex items-center gap-0.5" @click.stop>
+                        <input
+                          ref="stageProbInputEl"
+                          v-model="stageProbDraft"
+                          type="number"
+                          min="0"
+                          max="100"
+                          placeholder="50"
+                          class="w-9 h-4 text-[10px] rounded px-1 text-center bg-white dark:bg-slate-700 border border-violet-400 dark:border-violet-600 text-slate-900 dark:text-white focus:outline-none tabular-nums"
+                          @keydown.enter.prevent="commitStageProbability"
+                          @keydown.esc.stop="editingStageProbCol = null"
+                          @blur="commitStageProbability"
+                          @click.stop
+                        />
+                        <span class="text-[10px]">%</span>
+                      </span>
+                    </template>
                   </span>
                   <span
                     v-else
@@ -11947,6 +11981,28 @@ const kanbanSwimlaneKeysByType = ref<Record<string, string | null>>({});
 const kanbanSwimlaneKey = computed((): string | null => kanbanSwimlaneKeysByType.value[selectedTypeKey.value] ?? null);
 const showKanbanSwimlanePopover = ref(false);
 
+const stageProbabilitiesByType = ref<Record<string, Record<string, number>>>({});
+const stageProbabilitiesForType = computed((): Record<string, number> =>
+  stageProbabilitiesByType.value[selectedTypeKey.value] ?? {}
+);
+const editingStageProbCol = ref<string | null>(null);
+const stageProbDraft = ref('');
+const stageProbInputEl = ref<HTMLInputElement | null>(null);
+
+function commitStageProbability() {
+  const col = editingStageProbCol.value;
+  if (col === null) return;
+  editingStageProbCol.value = null;
+  const raw = stageProbDraft.value.trim();
+  const next = { ...(stageProbabilitiesByType.value[selectedTypeKey.value] ?? {}) };
+  if (raw === '' || isNaN(Number(raw))) {
+    delete next[col];
+  } else {
+    next[col] = Math.min(100, Math.max(0, Math.round(Number(raw))));
+  }
+  stageProbabilitiesByType.value = { ...stageProbabilitiesByType.value, [selectedTypeKey.value]: next };
+}
+
 type KanbanColumnItem = { kind: 'lane'; lane: string; count: number } | { kind: 'record'; record: CrmRecord };
 
 const kanbanColumnItems = computed((): Record<string, KanbanColumnItem[]> => {
@@ -12270,9 +12326,14 @@ const forecastData = computed((): {
     return true;
   });
   const openPipeline = openRecs.reduce((s, r) => s + (Number(r.field_values[amountField.key]) || 0), 0);
+  const stageProbs = stageProbabilitiesByType.value[rt.key] ?? {};
   const weightedPipeline = Math.round(openRecs.reduce((s, r) => {
     const amt = Number(r.field_values[amountField.key]) || 0;
-    const prob = probabilityField ? (Number(r.field_values[probabilityField.key]) || 0) / 100 : 0.5;
+    const stage = stageField ? String(r.field_values[stageField.key] ?? '') : '';
+    const stagePct = stageProbs[stage];
+    const prob = stagePct !== undefined
+      ? stagePct / 100
+      : probabilityField ? (Number(r.field_values[probabilityField.key]) || 0) / 100 : 0.5;
     return s + amt * prob;
   }, 0));
   const thisMonth = DUE_TODAY_STR.slice(0, 7);
