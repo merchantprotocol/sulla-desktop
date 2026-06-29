@@ -1624,6 +1624,26 @@
                 </svg>
                 Feed
               </button>
+              <!-- focus view button -->
+              <button
+                type="button"
+                class="flex items-center gap-1.5 px-3 h-9 text-sm border-l border-slate-200 dark:border-slate-700 transition-colors"
+                :class="viewMode === 'focus'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-medium'
+                  : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+                :title="`Focus — ${focusGroups.length ? focusGroups.reduce((n, g) => n + g.records.length, 0) + ' records need attention' : 'All caught up'}`"
+                @click="viewMode = 'focus'"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <circle cx="12" cy="12" r="3" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                </svg>
+                Focus
+                <span
+                  v-if="focusGroups.length"
+                  class="ml-0.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold flex items-center justify-center bg-rose-500 text-white"
+                >{{ focusGroups.reduce((n, g) => n + g.records.length, 0) }}</span>
+              </button>
               <!-- kanban card fields picker — shown only in kanban mode -->
               <div v-if="viewMode === 'kanban'" class="relative border-l border-slate-200 dark:border-slate-700" @click.stop>
                 <button
@@ -4159,6 +4179,89 @@
               </div>
             </template>
             <p v-if="feedRows.filter(r => r.kind === 'activity').length === 0" class="text-sm text-slate-400 dark:text-slate-500 text-center py-12">No activity matches</p>
+          </div>
+        </div>
+
+        <!-- ── Focus / needs-attention view ── -->
+        <div v-if="viewMode === 'focus'" class="flex-1 overflow-y-auto">
+          <!-- all caught up state -->
+          <div v-if="!focusGroups.length" class="flex flex-col items-center justify-center h-full py-24 text-center px-8">
+            <div class="h-14 w-14 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center text-emerald-500 dark:text-emerald-400 mb-4">
+              <svg class="h-7 w-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <p class="text-base font-semibold text-slate-800 dark:text-white mb-1">All caught up</p>
+            <p class="text-sm text-slate-400 dark:text-slate-500 max-w-xs">No {{ selectedType?.label ?? 'records' }} need attention right now. Check back after logging more activity.</p>
+          </div>
+
+          <!-- attention groups -->
+          <div v-else class="p-6 space-y-6">
+            <div class="flex items-center justify-between">
+              <div>
+                <h2 class="text-base font-semibold text-slate-900 dark:text-white">Focus</h2>
+                <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ focusGroups.reduce((n, g) => n + g.records.length, 0) }} {{ selectedType?.label ?? 'record' }}{{ focusGroups.reduce((n, g) => n + g.records.length, 0) === 1 ? '' : 's' }} need attention</p>
+              </div>
+            </div>
+
+            <div v-for="group in focusGroups" :key="group.id" class="space-y-2">
+              <!-- group header -->
+              <div class="flex items-center gap-2.5">
+                <span
+                  class="shrink-0 h-2 w-2 rounded-full"
+                  :class="group.id === 'overdue' ? 'bg-rose-500' : group.id === 'stale' ? 'bg-amber-500' : group.id === 'no-activity' ? 'bg-sky-500' : 'bg-slate-400 dark:bg-slate-500'"
+                />
+                <span class="text-sm font-semibold text-slate-700 dark:text-slate-300">{{ group.label }}</span>
+                <span class="text-xs text-slate-400 dark:text-slate-500">{{ group.description }}</span>
+                <span class="ml-auto text-xs font-semibold tabular-nums text-slate-400 dark:text-slate-500">{{ group.records.length }}</span>
+              </div>
+
+              <!-- record cards -->
+              <div class="space-y-1.5">
+                <div
+                  v-for="item in group.records"
+                  :key="item.record.id"
+                  class="group/focus flex items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-3 hover:border-sky-300 dark:hover:border-sky-700 transition-all cursor-pointer"
+                  @click="openRecord(item.record)"
+                >
+                  <!-- type dot -->
+                  <span class="shrink-0 h-7 w-7 rounded-full flex items-center justify-center text-white text-xs font-bold" :style="{ background: selectedType?.color ?? '#6366f1' }">
+                    {{ item.record.title.slice(0, 1).toUpperCase() }}
+                  </span>
+                  <!-- title + detail -->
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-slate-800 dark:text-white truncate">{{ item.record.title }}</p>
+                    <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ item.detail }}</p>
+                  </div>
+                  <!-- reason badge -->
+                  <span
+                    class="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                    :class="group.id === 'overdue'
+                      ? 'bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400'
+                      : group.id === 'stale'
+                        ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400'
+                        : group.id === 'no-activity'
+                          ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'"
+                  >{{ item.reason }}</span>
+                  <!-- quick actions -->
+                  <div class="shrink-0 flex items-center gap-1 opacity-0 group-hover/focus:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      class="h-7 px-2.5 rounded-lg text-xs font-medium bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+                      title="Log a call"
+                      @click.stop="openRecord(item.record); nextTick(() => { noteType = 'call'; })"
+                    >Call</button>
+                    <button
+                      type="button"
+                      class="h-7 px-2.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+                      title="Open record"
+                      @click.stop="openRecord(item.record)"
+                    >Open</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -8278,7 +8381,7 @@ const searchQuery = ref('');
 const searchInputEl = ref<HTMLInputElement | null>(null);
 const openedRecord = ref<CrmRecord | null>(null);
 const editingRecord = ref(false);
-const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline' | 'feed'>('table');
+const viewMode = ref<'table' | 'kanban' | 'calendar' | 'gallery' | 'stats' | 'timeline' | 'feed' | 'focus'>('table');
 const feedSearchQuery = ref('');
 const feedTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const galleryColCount = ref<2 | 3 | 4>(3);
@@ -9577,6 +9680,62 @@ const pipelineVelocity = computed((): Array<{ stage: string; avgDays: number; co
     return { stage, avgDays: avg, count: recs.length, maxDays: Math.max(...days) };
   }).filter((r): r is NonNullable<typeof r> => r !== null);
   return rows.length > 0 ? rows : null;
+});
+
+const focusGroups = computed((): Array<{
+  id: string;
+  label: string;
+  description: string;
+  records: Array<{ record: CrmRecord; reason: string; detail: string }>;
+}> => {
+  const typeRecs = filteredRecords.value;
+  const nowMs = new Date(DUE_TODAY_STR).getTime();
+  const seen = new Set<string>();
+
+  const overdue = typeRecs
+    .filter((r) => overdueIds.value.has(r.id))
+    .map((r) => { seen.add(r.id); return { record: r, reason: 'Overdue', detail: 'Has an activity past its scheduled date' }; });
+
+  const stale = typeRecs
+    .filter((r) => !seen.has(r.id) && (daysInStage(r) ?? 0) > 21)
+    .map((r) => {
+      seen.add(r.id);
+      const d = daysInStage(r) ?? 0;
+      const stageName = kanbanField.value ? String(r.field_values[kanbanField.value.key] ?? '') : '';
+      return { record: r, reason: `${d}d in stage`, detail: stageName ? `In "${stageName}" for ${d} days — consider moving forward or closing` : `No stage movement in ${d} days` };
+    });
+
+  const noActivity = typeRecs
+    .filter((r) => !seen.has(r.id))
+    .filter((r) => {
+      const lastTs = lastActivityByRecord.value[r.id];
+      return !lastTs || nowMs - lastTs > 30 * 86_400_000;
+    })
+    .map((r) => {
+      seen.add(r.id);
+      const lastTs = lastActivityByRecord.value[r.id];
+      const daysAgo = lastTs ? Math.floor((nowMs - lastTs) / 86_400_000) : null;
+      return {
+        record: r,
+        reason: daysAgo != null ? `${daysAgo}d quiet` : 'No activity',
+        detail: daysAgo != null ? `Last touched ${daysAgo} days ago — time to reach out` : 'No activities logged on this record yet',
+      };
+    });
+
+  const incomplete = typeRecs
+    .filter((r) => !seen.has(r.id) && recordCompleteness(r) < 50)
+    .map((r) => {
+      seen.add(r.id);
+      const pct = recordCompleteness(r);
+      return { record: r, reason: `${pct}% complete`, detail: `Profile less than half filled — add key details to improve data quality` };
+    });
+
+  return [
+    { id: 'overdue', label: 'Overdue activities', description: 'Activities that are past their scheduled date', records: overdue },
+    { id: 'stale', label: 'Stale in stage', description: 'In the same pipeline stage for more than 3 weeks', records: stale },
+    { id: 'no-activity', label: 'No recent activity', description: 'Not touched in 30+ days', records: noActivity },
+    { id: 'incomplete', label: 'Incomplete profile', description: 'Less than 50% of fields filled in', records: incomplete },
+  ].filter((g) => g.records.length > 0);
 });
 
 // ── Calendar view ────────────────────────────────────────────────────────────
