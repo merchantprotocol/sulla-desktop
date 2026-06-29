@@ -3963,11 +3963,10 @@
                 </div>
                 <!-- events -->
                 <div class="flex-1 overflow-y-auto px-2 py-2 space-y-1">
-                  <button
+                  <div
                     v-for="record in cell.records"
                     :key="record.id"
-                    type="button"
-                    class="w-full text-left text-xs px-2 py-1.5 rounded-lg truncate transition-colors font-medium"
+                    class="group/ce w-full flex items-center text-xs rounded-lg font-medium"
                     :class="openedRecord?.id === record.id
                       ? 'text-white'
                       : colorLabels[record.id]
@@ -3978,9 +3977,39 @@
                       : colorLabels[record.id]
                         ? { background: colorLabels[record.id] }
                         : undefined"
-                    :title="record.title"
-                    @click="openRecord(record)"
-                  >{{ record.title }}</button>
+                  >
+                    <button
+                      type="button"
+                      class="flex-1 min-w-0 text-left px-2 py-1.5 truncate transition-colors"
+                      :title="record.title"
+                      @click="openRecord(record)"
+                    >{{ record.title }}</button>
+                    <!-- hover actions -->
+                    <div class="shrink-0 flex items-center gap-0.5 mr-1 opacity-0 group-hover/ce:opacity-100 transition-opacity">
+                      <button
+                        type="button"
+                        class="rounded p-0.5 transition-colors"
+                        :class="pinnedIds.has(record.id) ? 'text-amber-300 opacity-100' : 'text-slate-300 dark:text-slate-500 hover:text-amber-300'"
+                        :title="pinnedIds.has(record.id) ? 'Unpin' : 'Pin'"
+                        @click.stop="togglePin(record.id)"
+                      >
+                        <svg class="h-2.5 w-2.5" :fill="pinnedIds.has(record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded p-0.5 transition-colors"
+                        :class="quickNoteRecordId === record.id ? 'text-sky-300 opacity-100' : 'text-slate-300 dark:text-slate-500 hover:text-sky-300'"
+                        title="Log a quick note"
+                        @click.stop="openQuickNote(record.id, $event)"
+                      >
+                        <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
                   <div v-if="!cell.records.length" class="text-xs text-slate-200 dark:text-slate-700 text-center py-6 select-none">—</div>
                 </div>
               </div>
