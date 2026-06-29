@@ -3253,6 +3253,14 @@
                               </svg>
                               {{ scoreRecord(row.record) }}
                             </button>
+                            <span
+                              v-if="row.record.links?.length"
+                              class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                              :title="`${row.record.links.length} linked record${row.record.links.length === 1 ? '' : 's'}`"
+                            >
+                              <svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                              {{ row.record.links.length }}
+                            </span>
                           </div>
                         </td>
                         <td class="px-2 opacity-0 group-hover:opacity-100 transition-opacity" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
@@ -3386,8 +3394,12 @@
                         <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" :on-tag-click="col.data_type === 'multi_select' ? (tag: string) => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; } : undefined" />
                         <span
                           v-if="record.links?.length"
-                          class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
-                        >{{ record.links.length }}</span>
+                          class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1 py-0.5 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                          :title="`${record.links.length} linked record${record.links.length === 1 ? '' : 's'}`"
+                        >
+                          <svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                          {{ record.links.length }}
+                        </span>
                       </template>
                     </div>
                     <!-- inline cell editor (non-title columns) -->
@@ -3515,6 +3527,14 @@
                         </svg>
                         {{ scoreRecord(record) }}
                       </button>
+                      <span
+                        v-if="record.links?.length"
+                        class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                        :title="`${record.links.length} linked record${record.links.length === 1 ? '' : 's'}`"
+                      >
+                        <svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                        {{ record.links.length }}
+                      </span>
                       <!-- due-date urgency badges -->
                       <svg
                         v-if="overdueIds.has(record.id)"
@@ -3954,8 +3974,12 @@
                       </button>
                       <span
                         v-if="record.links?.length"
-                        class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
-                      >{{ record.links.length }}</span>
+                        class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                        :title="`${record.links.length} linked record${record.links.length === 1 ? '' : 's'}`"
+                      >
+                        <svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                        {{ record.links.length }}
+                      </span>
                       <button
                         type="button"
                         class="shrink-0 mt-0.5 rounded p-0.5 text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400 transition-colors opacity-0 group-hover/card:opacity-100"
@@ -5998,6 +6022,14 @@
                     <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                     {{ scoreRecord(row.record) }}
                   </button>
+                  <span
+                    v-if="row.record.links?.length"
+                    class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1 py-0.5 text-[9px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
+                    :title="`${row.record.links.length} linked record${row.record.links.length === 1 ? '' : 's'}`"
+                  >
+                    <svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                    {{ row.record.links.length }}
+                  </span>
                   <!-- hover actions -->
                   <div class="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
