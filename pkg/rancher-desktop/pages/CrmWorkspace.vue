@@ -8444,6 +8444,7 @@
                 { keys: ['3'], desc: 'Related tab' },
                 { keys: ['4'], desc: 'Tasks tab' },
                 { keys: ['5'], desc: 'Files tab' },
+                { keys: ['6'], desc: 'Notes tab' },
                 { keys: ['['], desc: 'Previous record in list' },
                 { keys: [']'], desc: 'Next record in list' },
                 { keys: ['U'], desc: 'Archive / unarchive record' },
