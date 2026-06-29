@@ -6230,6 +6230,7 @@
                   { key: 'related', label: 'Related', count: (openedRecord.links?.length ?? 0) + inverseLinks.length },
                   { key: 'tasks', label: 'Tasks', count: recordTasksPendingCount },
                   { key: 'files', label: 'Files', count: recordAttachments.length },
+                  { key: 'notes', label: 'Notes', count: recordNotes[openedRecord.id] ? (recordNotes[openedRecord.id].trim().split(/\s+/).filter(Boolean).length) : 0 },
                 ] as const)"
                 :key="tab.key"
                 type="button"
@@ -7697,6 +7698,24 @@
 
                 <!-- empty state -->
                 <p v-else class="text-sm text-slate-400 dark:text-slate-600 text-center pt-4">No files attached yet</p>
+              </template>
+
+              <!-- Notes tab — freeform per-record scratchpad -->
+              <template v-else-if="detailTab === 'notes'">
+                <div class="flex items-center justify-between -mt-1 mb-2">
+                  <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Notes</p>
+                  <span
+                    v-if="recordNotes[openedRecord.id]?.trim()"
+                    class="text-[10px] text-slate-400 dark:text-slate-500 tabular-nums"
+                  >{{ recordNotes[openedRecord.id].trim().split(/\s+/).filter(Boolean).length }} words</span>
+                </div>
+                <textarea
+                  :value="recordNotes[openedRecord.id] ?? ''"
+                  placeholder="Write anything — research, context, open questions…"
+                  class="w-full min-h-[200px] flex-1 resize-none text-sm text-slate-800 dark:text-slate-200 placeholder-slate-300 dark:placeholder-slate-600 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400 transition-colors leading-relaxed"
+                  @input="recordNotes[openedRecord.id] = ($event.target as HTMLTextAreaElement).value"
+                />
+                <p class="mt-2 text-[10px] text-slate-300 dark:text-slate-700">Private scratchpad — saved in this session. Separate from the activity log.</p>
               </template>
             </div>
 
@@ -11392,7 +11411,8 @@ const bulkDeletedSnapshot = ref<Array<{
   wasWatched: boolean;
 }> | null>(null);
 let bulkDeletedSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
-const detailTab = ref<'details' | 'activity' | 'related' | 'tasks' | 'files'>('details');
+const detailTab = ref<'details' | 'activity' | 'related' | 'tasks' | 'files' | 'notes'>('details');
+const recordNotes = reactive<Record<string, string>>({});
 const filesDragOver = ref(false);
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
@@ -16424,6 +16444,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (e.key === '3') { detailTab.value = 'related'; e.preventDefault(); return; }
     if (e.key === '4') { detailTab.value = 'tasks'; e.preventDefault(); return; }
     if (e.key === '5') { detailTab.value = 'files'; e.preventDefault(); return; }
+    if (e.key === '6') { detailTab.value = 'notes'; e.preventDefault(); return; }
     if (e.key === '[' && openedRecordIndex.value > 0) { openRecord(filteredRecords.value[openedRecordIndex.value - 1]); e.preventDefault(); return; }
     if (e.key === ']' && openedRecordIndex.value < filteredRecords.value.length - 1) { openRecord(filteredRecords.value[openedRecordIndex.value + 1]); e.preventDefault(); return; }
     if (e.key === 'c' && !e.metaKey && !e.ctrlKey) { copyRecordLink(openedRecord.value); e.preventDefault(); return; }
