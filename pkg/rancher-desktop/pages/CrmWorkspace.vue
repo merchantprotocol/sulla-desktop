@@ -2422,6 +2422,12 @@
                         />
                       </svg>
                     </button>
+                    <!-- active-filter indicator dot -->
+                    <span
+                      v-if="activeFilters.find(f => f.fieldKey === col.key) || fieldTextFilters[col.key] || dateAfterFilters[col.key] || dateBeforeFilters[col.key]"
+                      class="absolute top-2 right-3.5 h-1.5 w-1.5 rounded-full bg-sky-500 dark:bg-sky-400 ring-1 ring-white dark:ring-slate-950"
+                      title="Column has active filter"
+                    />
                     <!-- column resize handle -->
                     <div
                       draggable="false"
