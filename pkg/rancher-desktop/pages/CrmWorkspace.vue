@@ -9579,6 +9579,19 @@ function commitCellEdit(newValue: string | number | boolean | string[] | null) {
       author: 'JB',
       created_at: new Date().toISOString(),
     });
+    // snapshot for undo
+    const prevVal = oldValue;
+    const prevTitle = titleField?.key === cell.fieldKey ? record.title : undefined;
+    const actIdx = mockActivities.length - 1;
+    showToast(`${col.label} updated`, {
+      label: 'Undo',
+      fn: () => {
+        record.field_values[cell.fieldKey] = prevVal;
+        if (prevTitle != null) record.title = prevTitle;
+        if (actIdx >= 0 && actIdx < mockActivities.length) mockActivities.splice(actIdx, 1);
+        showToast(`${col.label} reverted`);
+      },
+    });
   }
 }
 
@@ -10132,9 +10145,14 @@ function dropCardToColumn(targetCol: string) {
   if (!record) return;
   const newVal = targetCol === KANBAN_UNASSIGNED ? null : targetCol;
   if (record.field_values[fieldKey] === newVal) return;
+  const prevVal = record.field_values[fieldKey];
   record.field_values[fieldKey] = newVal;
   record.updated_at = new Date().toISOString();
-  showToast(targetCol === KANBAN_UNASSIGNED ? 'Moved to Unassigned' : `Moved to ${targetCol}`);
+  const label = targetCol === KANBAN_UNASSIGNED ? 'Moved to Unassigned' : `Moved to ${targetCol}`;
+  showToast(label, {
+    label: 'Undo',
+    fn: () => { record.field_values[fieldKey] = prevVal; showToast('Move undone'); },
+  });
 }
 
 function addLink(record: CrmRecord, target: CrmRecord) {
