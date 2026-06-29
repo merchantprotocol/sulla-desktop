@@ -2571,6 +2571,19 @@
                       <button
                         type="button"
                         class="text-xs font-semibold uppercase tracking-wide transition-colors select-none"
+                        :class="sortField === '__completeness__'
+                          ? 'text-violet-600 dark:text-violet-400'
+                          : 'text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400'"
+                        title="Sort by record completeness %"
+                        @click="toggleSort('__completeness__')"
+                      >
+                        <svg class="h-3 w-3 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="text-xs font-semibold uppercase tracking-wide transition-colors select-none"
                         :class="sortField === '__activity_count__'
                           ? 'text-sky-600 dark:text-sky-400'
                           : 'text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400'"
@@ -12272,11 +12285,12 @@ const filteredRecords = computed(() => {
       if (key === '__updated_at__') return r.updated_at ? new Date(r.updated_at).getTime() : new Date(r.created_at).getTime();
       if (key === '__activity_count__') return activityCountByRecord.value[r.id] ?? 0;
       if (key === '__score__') return scoreRecord(r);
+      if (key === '__completeness__') return recordCompleteness(r);
       return 0;
     };
     const strVal = (r: CrmRecord, key: string): string | number | boolean | null => r.field_values[key] ?? null;
     const cmpOne = (a: CrmRecord, b: CrmRecord, key: string, dir: number): number => {
-      if (['__created_at__', '__updated_at__', '__activity_count__', '__score__'].includes(key)) {
+      if (['__created_at__', '__updated_at__', '__activity_count__', '__score__', '__completeness__'].includes(key)) {
         return (numVal(a, key) - numVal(b, key)) * dir;
       }
       const col = colFor(key);
