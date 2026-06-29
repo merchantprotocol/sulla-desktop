@@ -1637,6 +1637,17 @@
                             <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
                         </button>
+                        <!-- duplicate preset -->
+                        <button
+                          type="button"
+                          class="shrink-0 opacity-0 group-hover/fp:opacity-100 text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400 transition-all"
+                          :title="`Duplicate preset: ${preset.name}`"
+                          @click.stop="duplicateFilterPreset(preset)"
+                        >
+                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                        </button>
                         <button
                           type="button"
                           class="shrink-0 opacity-0 group-hover/fp:opacity-100 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-all"
@@ -17414,6 +17425,16 @@ function applyFilterPreset(preset: FilterPreset) {
 
 function deleteFilterPreset(id: string) {
   filterPresets.value = filterPresets.value.filter((p) => p.id !== id);
+}
+
+function duplicateFilterPreset(preset: FilterPreset) {
+  const copy: FilterPreset = {
+    ...JSON.parse(JSON.stringify(preset)),
+    id: 'fp_' + String(Date.now()).slice(-6),
+    name: preset.name + ' (copy)',
+  };
+  filterPresets.value = [...filterPresets.value, copy];
+  showToast(`Preset duplicated as "${copy.name}"`);
 }
 
 function startRenamePreset(preset: FilterPreset) {
