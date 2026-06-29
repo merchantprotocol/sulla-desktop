@@ -3548,6 +3548,21 @@
                         </span>
                       </template>
                     </div>
+                    <!-- tags below title (non-compact only) -->
+                    <div
+                      v-if="col.is_title && rowDensity !== 'compact' && (recordTags[record.id] ?? []).length"
+                      class="flex flex-wrap gap-0.5 mt-0.5"
+                      @click.stop
+                    >
+                      <span
+                        v-for="tag in (recordTags[record.id] ?? [])"
+                        :key="tag"
+                        class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 cursor-pointer hover:opacity-80 transition-colors"
+                        :style="tagStyle(tag)"
+                        :title="`Filter by tag: ${tag}`"
+                        @click.stop="(() => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; })()"
+                      >{{ tag }}</span>
+                    </div>
                     <!-- inline cell editor (non-title columns) -->
                     <template v-else>
                       <div v-if="editingCell?.recordId === record.id && editingCell?.fieldKey === col.key" @click.stop>
