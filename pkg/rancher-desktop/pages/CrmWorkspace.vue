@@ -5124,7 +5124,7 @@
                 <span class="text-xs font-semibold text-slate-400 dark:text-slate-500 shrink-0">{{ row.label }}</span>
                 <div class="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
               </div>
-              <div v-else class="group flex gap-3 py-2.5 border-b border-slate-50 dark:border-slate-800/60 last:border-0">
+              <div v-else class="group flex gap-3 py-2.5 border-b border-slate-50 dark:border-slate-800/60 last:border-0 items-start">
                 <!-- type icon -->
                 <span class="mt-0.5 h-7 w-7 rounded-full flex items-center justify-center shrink-0" :class="ACTIVITY_ICON_BG[row.act.type]">
                   <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
@@ -5156,6 +5156,18 @@
                     </span>
                   </p>
                 </div>
+                <!-- delete button — hidden until hover, not shown for system changes -->
+                <button
+                  v-if="row.act.type !== 'change'"
+                  type="button"
+                  class="shrink-0 mt-1 opacity-0 group-hover:opacity-100 rounded p-1 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-all"
+                  title="Delete this activity entry"
+                  @click.stop="deleteActivity(row.act.id)"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
               </div>
             </template>
             <p v-if="feedRows.filter(r => r.kind === 'activity').length === 0" class="text-sm text-slate-400 dark:text-slate-500 text-center py-12">No activity matches</p>
