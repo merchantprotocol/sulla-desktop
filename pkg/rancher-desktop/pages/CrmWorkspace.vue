@@ -5680,6 +5680,26 @@
                     </button>
                   </div>
                 </div>
+                <!-- assignee avatar -->
+                <button
+                  v-if="item.task.assignee"
+                  type="button"
+                  class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white transition-opacity hover:opacity-80"
+                  :style="{ background: TEAM_MEMBERS.find(m => m.id === item.task.assignee)?.color ?? '#94a3b8' }"
+                  :title="`Assigned to ${TEAM_MEMBERS.find(m => m.id === item.task.assignee)?.name ?? item.task.assignee}`"
+                  @click.stop="openRecord(item.record!)"
+                >{{ (TEAM_MEMBERS.find(m => m.id === item.task.assignee)?.name ?? item.task.assignee).slice(0, 2) }}</button>
+                <!-- comment count badge -->
+                <span
+                  v-if="taskCommentsByTaskId.get(item.task.id)?.length"
+                  class="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium text-slate-400 dark:text-slate-500"
+                  :title="`${taskCommentsByTaskId.get(item.task.id)!.length} comment${taskCommentsByTaskId.get(item.task.id)!.length === 1 ? '' : 's'}`"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  {{ taskCommentsByTaskId.get(item.task.id)!.length }}
+                </span>
                 <!-- delete button -->
                 <button
                   type="button"
