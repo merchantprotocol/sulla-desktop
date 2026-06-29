@@ -505,9 +505,9 @@
 
         <!-- ── Main content ── -->
         <div class="flex flex-col flex-1 min-w-0 bg-slate-50 dark:bg-slate-950">
-          <!-- bulk action bar — visible when rows are checked in table view -->
+          <!-- bulk action bar — visible when rows are checked in table or gallery view -->
           <div
-            v-if="selectedIds.size && viewMode === 'table'"
+            v-if="selectedIds.size && (viewMode === 'table' || viewMode === 'gallery')"
             class="flex items-center gap-3 px-6 py-3.5 border-b border-slate-200 dark:border-slate-700 bg-sky-50 dark:bg-sky-950/20"
           >
             <span class="flex-1 text-sm font-medium text-sky-700 dark:text-sky-300">
