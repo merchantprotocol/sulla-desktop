@@ -4155,7 +4155,13 @@
                     @dragstart.stop="(e) => { kanbanDragCardId = record.id; e.dataTransfer && (e.dataTransfer.effectAllowed = 'move'); }"
                     @dragend="kanbanDragCardId = null; kanbanDragOverCol = null"
                   >
-                    <p class="text-sm font-medium text-slate-900 dark:text-white leading-snug line-clamp-2 flex items-start gap-1.5" :class="kanbanCompact ? 'mb-0' : 'mb-2'">
+                    <p
+                      class="text-sm font-medium text-slate-900 dark:text-white leading-snug line-clamp-2 flex items-start gap-1.5"
+                      :class="kanbanCompact ? 'mb-0' : 'mb-2'"
+                      @mouseenter="showPreview($event, record)"
+                      @mousemove="updatePreviewPos"
+                      @mouseleave="hidePreview"
+                    >
                       <span class="flex-1">
                         <template v-if="searchQuery.trim()">
                           <template v-for="(part, pi) in highlightText(record.title, searchQuery.trim())" :key="pi">
@@ -7310,7 +7316,12 @@
                   </span>
                   <!-- title + detail -->
                   <div class="flex-1 min-w-0">
-                    <p class="text-sm font-medium text-slate-800 dark:text-white truncate">{{ item.record.title }}</p>
+                    <p
+                      class="text-sm font-medium text-slate-800 dark:text-white truncate"
+                      @mouseenter="showPreview($event, item.record)"
+                      @mousemove="updatePreviewPos"
+                      @mouseleave="hidePreview"
+                    >{{ item.record.title }}</p>
                     <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ item.detail }}</p>
                   </div>
                   <!-- completeness badge -->
