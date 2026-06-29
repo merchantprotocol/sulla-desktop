@@ -1706,7 +1706,13 @@
                       </div>
                       <!-- unread dot + dismiss -->
                       <div class="flex flex-col items-center gap-1.5 shrink-0 pt-0.5">
-                        <span v-if="!notif.read" class="h-2 w-2 rounded-full bg-rose-500 mt-0.5" />
+                        <button
+                          v-if="!notif.read"
+                          type="button"
+                          class="h-2 w-2 rounded-full bg-rose-500 hover:bg-rose-400 mt-0.5 transition-colors shrink-0"
+                          title="Mark as read"
+                          @click.stop="markNotifRead(notif.id)"
+                        />
                         <span v-else class="h-2 w-2" />
                         <button
                           type="button"
