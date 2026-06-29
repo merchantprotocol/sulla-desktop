@@ -2160,6 +2160,22 @@
                   </div>
                 </div>
               </div>
+              <!-- gallery group-by indicator -->
+              <button
+                v-if="viewMode === 'gallery' && groupByField"
+                type="button"
+                class="flex items-center gap-1 h-9 px-2.5 border-l border-slate-200 dark:border-slate-700 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 transition-colors"
+                :title="`Grouped by ${allColumns.find(c => c.key === groupByField)?.label ?? groupByField} — click to clear`"
+                @click="groupByField = null"
+              >
+                <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h8" />
+                </svg>
+                {{ allColumns.find(c => c.key === groupByField)?.label ?? groupByField }}
+                <svg class="h-3 w-3 text-violet-400 dark:text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
 
             <!-- save view popover -->
