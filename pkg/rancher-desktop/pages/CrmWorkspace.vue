@@ -10283,6 +10283,31 @@
             </button>
           </template>
         </template>
+        <!-- reorder stage left / right -->
+        <template v-if="kanbanField && kanbanColMenu!.col !== KANBAN_UNASSIGNED">
+          <button
+            type="button"
+            class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
+            :class="(kanbanField.select_options ?? []).indexOf(kanbanColMenu!.col) <= 0 ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+            :disabled="(kanbanField.select_options ?? []).indexOf(kanbanColMenu!.col) <= 0"
+            title="Move stage left (earlier in pipeline)"
+            @click="(() => { if (!kanbanField) return; const opts = [...(kanbanField.select_options ?? [])]; const i = opts.indexOf(kanbanColMenu!.col); if (i <= 0) return; [opts[i-1], opts[i]] = [opts[i], opts[i-1]]; kanbanField.select_options = opts; showToast(`Stage moved left`); kanbanColMenu = null; })()"
+          >
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" /></svg>
+            Move stage left
+          </button>
+          <button
+            type="button"
+            class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
+            :class="(kanbanField.select_options ?? []).indexOf(kanbanColMenu!.col) >= (kanbanField.select_options ?? []).length - 1 ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+            :disabled="(kanbanField.select_options ?? []).indexOf(kanbanColMenu!.col) >= (kanbanField.select_options ?? []).length - 1"
+            title="Move stage right (later in pipeline)"
+            @click="(() => { if (!kanbanField) return; const opts = [...(kanbanField.select_options ?? [])]; const i = opts.indexOf(kanbanColMenu!.col); if (i >= opts.length - 1) return; [opts[i], opts[i+1]] = [opts[i+1], opts[i]]; kanbanField.select_options = opts; showToast(`Stage moved right`); kanbanColMenu = null; })()"
+          >
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+            Move stage right
+          </button>
+        </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button
           type="button"
