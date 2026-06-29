@@ -2685,7 +2685,7 @@
                             @click.stop="toggleRowExpand(record.id)"
                           >{{ expandedRowIds.has(record.id) ? 'less' : 'more' }}</button>
                         </template>
-                        <CrmCellValue v-else :value="col.data_type === 'formula' ? evaluateFormula(record, col) as (string | number) : record.field_values[col.key]" :data-type="col.data_type === 'formula' ? (typeof evaluateFormula(record, col) === 'string' ? 'text' : 'number') : col.data_type" :format="col.format" />
+                        <CrmCellValue v-else :value="col.data_type === 'formula' ? evaluateFormula(record, col) as (string | number) : col.data_type === 'rollup' ? evaluateRollup(record, col) as (string | number) : record.field_values[col.key]" :data-type="col.data_type === 'formula' ? (typeof evaluateFormula(record, col) === 'string' ? 'text' : 'number') : col.data_type === 'rollup' ? 'number' : col.data_type" :format="col.format" />
                         <!-- funnel icon on select cells to hint at click-to-filter -->
                         <span
                           v-if="col.data_type === 'select' && record.field_values[col.key]"
@@ -5525,6 +5525,12 @@
                         {{ (() => { const v = evaluateFormula(openedRecord, field); if (typeof v === 'number') { return field.format === 'currency' ? '$' + v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) : field.format === 'percent' ? v + '%' : String(v); } return String(v); })() }}
                       </span>
                       <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-1" :title="field.formula_expression">= {{ field.formula_expression }}</span>
+                    </div>
+                  </template>
+                  <template v-else-if="field.data_type === 'rollup'">
+                    <div class="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                      <span class="text-sm tabular-nums font-medium text-slate-700 dark:text-slate-300">{{ evaluateRollup(openedRecord, field) !== '' ? evaluateRollup(openedRecord, field) : '—' }}</span>
+                      <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-auto">{{ field.rollup_function?.toUpperCase() }} of {{ field.rollup_field_key ?? 'count' }} from {{ field.rollup_from_type ?? '—' }}</span>
                     </div>
                   </template>
                   <template v-else-if="field.data_type === 'checklist'">
@@ -8959,6 +8965,7 @@
                           <option value="phone">Phone</option>
                           <option value="url">URL</option>
                           <option value="formula">Formula (computed)</option>
+                          <option value="rollup">Rollup (aggregated)</option>
                           <option value="checklist">Checklist</option>
                         </select>
                       </div>
@@ -8988,6 +8995,33 @@
                         <option value="percent">Percent (%)</option>
                       </select>
                     </div>
+                    <div v-if="newFieldDraft.data_type === 'rollup'" class="space-y-2">
+                      <div>
+                        <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Linked record type</label>
+                        <select v-model="newFieldDraft.rollup_from_type" class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50">
+                          <option value="">— choose linked type —</option>
+                          <option v-for="t in schema" :key="t.key" :value="t.key">{{ t.label }}</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Aggregate function</label>
+                        <select v-model="newFieldDraft.rollup_function" class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50">
+                          <option value="count">Count (number of linked records)</option>
+                          <option value="sum">Sum</option>
+                          <option value="avg">Average</option>
+                          <option value="min">Min</option>
+                          <option value="max">Max</option>
+                        </select>
+                      </div>
+                      <div v-if="newFieldDraft.rollup_function !== 'count' && newFieldDraft.rollup_from_type">
+                        <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Field to aggregate</label>
+                        <select v-model="newFieldDraft.rollup_field_key" class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50">
+                          <option value="">— choose field —</option>
+                          <option v-for="f in (schema.find(t => t.key === newFieldDraft.rollup_from_type)?.fields ?? []).filter(f => f.data_type === 'number')" :key="f.key" :value="f.key">{{ f.label }}</option>
+                        </select>
+                      </div>
+                      <p class="text-[10px] text-slate-400 dark:text-slate-500">Rollup reads live values from linked records. Count works without selecting a field.</p>
+                    </div>
                     <div v-if="newFieldDraft.data_type === 'select' || newFieldDraft.data_type === 'multi_select'">
                       <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Options (comma-separated)</label>
                       <input
@@ -8997,7 +9031,7 @@
                         class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400"
                       />
                     </div>
-                    <div v-if="newFieldDraft.data_type !== 'boolean' && newFieldDraft.data_type !== 'checklist'">
+                    <div v-if="newFieldDraft.data_type !== 'boolean' && newFieldDraft.data_type !== 'checklist' && newFieldDraft.data_type !== 'formula' && newFieldDraft.data_type !== 'rollup'">
                       <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Default value <span class="font-normal opacity-60">(optional)</span></label>
                       <input
                         v-model="newFieldDraft.default_value"
@@ -9411,7 +9445,7 @@ const { isDark, toggleTheme } = useTheme();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select' | 'rating' | 'formula' | 'checklist';
+type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select' | 'rating' | 'formula' | 'checklist' | 'rollup';
 interface ChecklistItem { t: string; d: boolean; }
 type IconKey = 'user' | 'building' | 'chart' | 'target' | 'check' | 'folder' | 'tag' | 'list' | 'layers' | 'star';
 
@@ -9432,6 +9466,9 @@ interface CrmField {
   formula_expression?: string;
   visible_when?: { fieldKey: string; operator: 'eq' | 'neq' | 'empty' | 'not_empty'; value: string };
   help_text?: string;
+  rollup_from_type?: string;
+  rollup_field_key?: string;
+  rollup_function?: 'count' | 'sum' | 'avg' | 'min' | 'max';
 }
 
 interface CrmRecordType {
@@ -9615,6 +9652,7 @@ const DATA_TYPE_ICONS: Record<DataType, string> = {
   rating:       'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z',
   formula:      'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z',
   checklist:    'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
+  rollup:       'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
 };
 
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
@@ -10938,7 +10976,7 @@ const fieldLabelInputEl = ref<HTMLInputElement | null>(null);
 const showTypeIconColorPicker = ref(false);
 const visibilityRuleFieldId = ref<string | null>(null);
 const editOptionColorsFieldId = ref<string | null>(null);
-const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string; formula_expression: string; formula_format: string; help_text: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '' });
+const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string; formula_expression: string; formula_format: string; help_text: string; rollup_from_type: string; rollup_field_key: string; rollup_function: 'count' | 'sum' | 'avg' | 'min' | 'max' }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '', rollup_from_type: '', rollup_field_key: '', rollup_function: 'count' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
 const formulaLivePreview = computed((): string => {
   if (newFieldDraft.value.data_type !== 'formula' || !newFieldDraft.value.formula_expression.trim()) return '';
@@ -15068,7 +15106,7 @@ function showToast(message: string, action?: { label: string; fn: () => void }) 
 function openSchemaEditor(mode: 'fields' | 'new-type' | 'sections' = 'fields') {
   schemaEditorMode.value = mode;
   showAddFieldForm.value = false;
-  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '' };
+  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '', rollup_from_type: '', rollup_field_key: '', rollup_function: 'count' };
   newTypeDraft.value = { label: '', key: '', icon: 'folder', color: '#6366f1' };
   showSchemaEditor.value = true;
 }
@@ -15134,9 +15172,12 @@ function addFieldToCurrentType() {
     ...(draft.default_value.trim() ? { default_value: draft.default_value.trim() } : {}),
     ...(draft.data_type === 'formula' && draft.formula_expression.trim() ? { formula_expression: draft.formula_expression.trim() } : {}),
     ...(draft.data_type === 'formula' && draft.formula_format ? { format: draft.formula_format as FieldFormat } : {}),
+    ...(draft.data_type === 'rollup' && draft.rollup_from_type ? { rollup_from_type: draft.rollup_from_type } : {}),
+    ...(draft.data_type === 'rollup' && draft.rollup_field_key && draft.rollup_function !== 'count' ? { rollup_field_key: draft.rollup_field_key } : {}),
+    ...(draft.data_type === 'rollup' ? { rollup_function: draft.rollup_function } : {}),
     ...(draft.help_text.trim() ? { help_text: draft.help_text.trim() } : {}),
   });
-  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '' };
+  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '', rollup_from_type: '', rollup_field_key: '', rollup_function: 'count' };
   showAddFieldForm.value = false;
   showToast(`Field "${label}" added to ${type.label}`);
 }
@@ -15522,6 +15563,25 @@ function evaluateFormula(record: { field_values: Record<string, unknown> }, fiel
   } catch {
     return '?';
   }
+}
+
+function evaluateRollup(record: CrmRecord, field: CrmField): number | string {
+  if (!field.rollup_from_type || !field.rollup_function) return '';
+  const links = record.links?.filter((l) => l.target_type === field.rollup_from_type) ?? [];
+  const linkedRecs = links.map((l) => mockRecords.find((r) => r.id === l.target_id)).filter((r): r is CrmRecord => Boolean(r));
+  if (field.rollup_function === 'count') return linkedRecs.length;
+  if (!field.rollup_field_key) return '';
+  const vals = linkedRecs
+    .map((r) => r.field_values[field.rollup_field_key!])
+    .filter((v): v is string | number => v !== undefined && v !== null && v !== '')
+    .map((v) => Number(v))
+    .filter((n) => !isNaN(n));
+  if (!vals.length) return '';
+  if (field.rollup_function === 'sum') return vals.reduce((a, b) => a + b, 0);
+  if (field.rollup_function === 'avg') return Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100;
+  if (field.rollup_function === 'min') return Math.min(...vals);
+  if (field.rollup_function === 'max') return Math.max(...vals);
+  return '';
 }
 
 // ── Inline sub-components ──────────────────────────────────────────────────
