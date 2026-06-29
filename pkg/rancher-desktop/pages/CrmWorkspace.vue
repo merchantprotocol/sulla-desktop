@@ -4996,6 +4996,11 @@
                     :class="row.isOverdue ? 'text-rose-500' : 'text-slate-500 dark:text-slate-400'"
                   >{{ row.endIso }}</p>
                   <p v-else class="text-[10px] text-slate-300 dark:text-slate-600 italic">ongoing</p>
+                  <p
+                    v-if="row.durationDays != null"
+                    class="text-[9px] tabular-nums mt-0.5"
+                    :class="row.isOverdue ? 'text-rose-400' : 'text-slate-300 dark:text-slate-600'"
+                  >{{ row.isOverdue ? 'overdue · ' : '' }}{{ row.durationDays }}d</p>
                 </div>
               </div>
             </div>
@@ -13435,7 +13440,10 @@ const timelineViewData = computed(() => {
     const isOverdue = !!endIso && endIso < DUE_TODAY_STR;
     const titleKey = titleField?.key ?? '';
     const title = String(r.field_values[titleKey] ?? r.id);
-    return { record: r, title, startIso, endIso, startPct, widthPct, isOverdue };
+    const durationDays = endIso
+      ? Math.max(0, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 86_400_000))
+      : null;
+    return { record: r, title, startIso, endIso, startPct, widthPct, isOverdue, durationDays };
   }).sort((a, b) => a.startIso.localeCompare(b.startIso));
 
   // Month tick marks
