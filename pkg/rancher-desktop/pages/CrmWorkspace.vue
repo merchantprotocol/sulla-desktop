@@ -4872,12 +4872,20 @@
           </div>
           <template v-else-if="timelineViewData">
             <!-- scrollable area -->
-            <div class="flex-1 overflow-auto">
+            <div ref="timelineScrollEl" class="flex-1 overflow-auto">
               <!-- sticky axis header -->
               <div class="sticky top-0 z-10 flex border-b border-slate-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-sm">
                 <div class="shrink-0 w-52 border-r border-slate-200 dark:border-slate-700 px-3 py-2 flex items-center gap-2">
                   <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Record</p>
                   <span class="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded px-1 py-0.5 tabular-nums">{{ timelineViewData.rows.length }}</span>
+                  <!-- today button — scrolls timeline to today line -->
+                  <button
+                    v-if="timelineViewData.todayPct >= 0 && timelineViewData.todayPct <= 100"
+                    type="button"
+                    class="h-5 px-1.5 rounded text-[10px] font-medium border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                    title="Scroll to today"
+                    @click.stop="(() => { const el = timelineScrollEl; if (!el) return; const w = el.scrollWidth - 208; el.scrollLeft = Math.max(0, w * timelineViewData!.todayPct / 100 - el.clientWidth / 2 + 104); })()"
+                  >Today</button>
                   <!-- zoom controls -->
                   <div class="ml-auto flex items-center gap-0.5">
                     <button
@@ -13555,6 +13563,7 @@ const funnelData = computed((): Array<{
 });
 
 const timelinePadLevel = ref(0); // -2 to +2 zoom levels; 0 = default
+const timelineScrollEl = ref<HTMLElement | null>(null);
 const showTimelineFieldPicker = ref(false);
 const showTimelineColorPicker = ref(false);
 const timelineColorFieldKey = ref<string | null>(null);
