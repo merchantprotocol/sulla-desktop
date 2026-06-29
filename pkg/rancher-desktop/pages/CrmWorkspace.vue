@@ -12165,6 +12165,15 @@
             Move stage right
           </button>
         </template>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          :title="`Export ${(kanbanGroups[kanbanColMenu!.col] ?? []).length} record${(kanbanGroups[kanbanColMenu!.col] ?? []).length === 1 ? '' : 's'} in this column as CSV`"
+          @click="exportCsv(kanbanGroups[kanbanColMenu!.col] ?? []); kanbanColMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+          Export column as CSV
+        </button>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button
           type="button"
