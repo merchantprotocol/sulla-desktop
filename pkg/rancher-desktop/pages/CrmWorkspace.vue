@@ -1521,22 +1521,51 @@
                       :key="preset.id"
                       class="group/fp flex items-center gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                     >
-                      <button
-                        type="button"
-                        class="flex-1 min-w-0 text-left text-sm text-slate-700 dark:text-slate-300 truncate"
-                        :title="`Apply preset: ${preset.name}`"
-                        @click="applyFilterPreset(preset)"
-                      >{{ preset.name }}</button>
-                      <button
-                        type="button"
-                        class="shrink-0 opacity-0 group-hover/fp:opacity-100 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-all"
-                        :title="`Delete preset: ${preset.name}`"
-                        @click="deleteFilterPreset(preset.id)"
-                      >
-                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                          <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
+                      <!-- inline rename mode -->
+                      <template v-if="renamingPresetId === preset.id">
+                        <input
+                          :value="renamePresetDraft"
+                          type="text"
+                          maxlength="60"
+                          class="flex-1 h-6 rounded px-2 text-xs bg-white dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-slate-900 dark:text-slate-100 focus:outline-none"
+                          @input="renamePresetDraft = ($event.target as HTMLInputElement).value"
+                          @keydown.enter.prevent="commitRenamePreset"
+                          @keydown.escape.stop="renamingPresetId = null"
+                          @vue:mounted="($el as HTMLInputElement).select()"
+                          @click.stop
+                        />
+                        <button type="button" class="shrink-0 h-5 px-1.5 rounded text-[10px] font-medium text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/30 transition-colors" @click.stop="commitRenamePreset">Save</button>
+                        <button type="button" class="shrink-0 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click.stop="renamingPresetId = null">✕</button>
+                      </template>
+                      <!-- normal mode -->
+                      <template v-else>
+                        <button
+                          type="button"
+                          class="flex-1 min-w-0 text-left text-sm text-slate-700 dark:text-slate-300 truncate"
+                          :title="`Apply preset: ${preset.name}`"
+                          @click="applyFilterPreset(preset)"
+                        >{{ preset.name }}</button>
+                        <button
+                          type="button"
+                          class="shrink-0 opacity-0 group-hover/fp:opacity-100 text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-all"
+                          title="Rename preset"
+                          @click.stop="startRenamePreset(preset)"
+                        >
+                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="shrink-0 opacity-0 group-hover/fp:opacity-100 text-slate-300 dark:text-slate-600 hover:text-rose-500 dark:hover:text-rose-400 transition-all"
+                          :title="`Delete preset: ${preset.name}`"
+                          @click="deleteFilterPreset(preset.id)"
+                        >
+                          <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </template>
                     </div>
                   </div>
                   <!-- no presets yet but filters active -->
@@ -13904,6 +13933,8 @@ watch(editingTypeNote, (v) => {
 const filterPresets = ref<FilterPreset[]>([]);
 const showFilterPresetsPanel = ref(false);
 const filterPresetNameInput = ref('');
+const renamingPresetId = ref<string | null>(null);
+const renamePresetDraft = ref('');
 
 const galleryPreviewFieldKeys = ref<Record<string, string[]>>({});
 const showGalleryFieldsPopover = ref(false);
@@ -16688,6 +16719,20 @@ function applyFilterPreset(preset: FilterPreset) {
 
 function deleteFilterPreset(id: string) {
   filterPresets.value = filterPresets.value.filter((p) => p.id !== id);
+}
+
+function startRenamePreset(preset: FilterPreset) {
+  renamingPresetId.value = preset.id;
+  renamePresetDraft.value = preset.name;
+}
+
+function commitRenamePreset() {
+  const id = renamingPresetId.value;
+  const name = renamePresetDraft.value.trim();
+  if (id && name) {
+    filterPresets.value = filterPresets.value.map(p => p.id === id ? { ...p, name } : p);
+  }
+  renamingPresetId.value = null;
 }
 
 function startCellEdit(record: CrmRecord, col: CrmField) {
