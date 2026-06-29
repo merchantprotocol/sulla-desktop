@@ -6114,6 +6114,18 @@
                   </svg>
                   {{ taskCommentsByTaskId.get(item.task.id)!.length }}
                 </span>
+                <!-- edit button -->
+                <button
+                  v-if="editingTaskId !== item.task.id"
+                  type="button"
+                  class="shrink-0 h-6 w-6 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-400 dark:hover:text-sky-400 opacity-0 group-hover/gtask:opacity-100 transition-all"
+                  title="Edit task"
+                  @click.stop="startTaskEdit(item.task)"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
                 <!-- delete button -->
                 <button
                   type="button"
