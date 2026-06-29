@@ -12599,18 +12599,33 @@
       >
         <div
           v-if="quickNoteRecordId"
-          class="fixed z-[200] w-72 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-3 flex flex-col gap-2"
+          class="fixed z-[200] w-80 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-3 flex flex-col gap-2"
           :style="{ top: quickNotePos.top + 'px', left: quickNotePos.left + 'px' }"
           @click.stop
         >
-          <p class="text-xs font-semibold text-slate-500 dark:text-slate-400">
-            Log a note · <span class="font-normal">{{ mockRecords.find(r => r.id === quickNoteRecordId)?.title ?? '' }}</span>
-          </p>
+          <!-- header: record name + type picker -->
+          <div class="flex items-center gap-2">
+            <p class="flex-1 min-w-0 text-xs text-slate-500 dark:text-slate-400 truncate">
+              <span class="font-semibold capitalize">{{ quickNoteType }}</span> · <span>{{ mockRecords.find(r => r.id === quickNoteRecordId)?.title ?? '' }}</span>
+            </p>
+            <div class="shrink-0 flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
+              <button
+                v-for="t in [{ key: 'note', label: 'Note' }, { key: 'call', label: 'Call' }, { key: 'email', label: 'Email' }]"
+                :key="t.key"
+                type="button"
+                class="h-5 px-2 rounded-md text-[10px] font-medium transition-colors"
+                :class="quickNoteType === t.key
+                  ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm'
+                  : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
+                @click="quickNoteType = t.key as 'note' | 'call' | 'email'"
+              >{{ t.label }}</button>
+            </div>
+          </div>
           <textarea
             ref="quickNoteInputEl"
             v-model="quickNoteText"
             rows="3"
-            placeholder="Add a note…"
+            :placeholder="quickNoteType === 'call' ? 'Call notes…' : quickNoteType === 'email' ? 'Email summary…' : 'Add a note…'"
             class="w-full resize-none rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-transparent"
             @keydown.enter.meta.prevent="submitQuickNote"
             @keydown.escape.prevent="quickNoteRecordId = null"
@@ -13823,10 +13838,11 @@ const editingTaskAssignee = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
 const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
+const quickNoteType = ref<'note' | 'call' | 'email'>('note');
 const quickNoteReplyQuote = ref('');
 const quickNotePos = ref({ top: 0, left: 0 });
 const quickNoteInputEl = ref<HTMLTextAreaElement | null>(null);
-watch(quickNoteRecordId, (v) => { if (v) { quickNoteText.value = quickNoteReplyQuote.value; quickNoteReplyQuote.value = ''; nextTick(() => quickNoteInputEl.value?.focus()); } });
+watch(quickNoteRecordId, (v) => { if (v) { quickNoteText.value = quickNoteReplyQuote.value; quickNoteReplyQuote.value = ''; quickNoteType.value = 'note'; nextTick(() => quickNoteInputEl.value?.focus()); } });
 
 function openQuickNote(recordId: string, evt: MouseEvent) {
   const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
@@ -13837,11 +13853,12 @@ function openQuickNote(recordId: string, evt: MouseEvent) {
 function submitQuickNote() {
   const rid = quickNoteRecordId.value;
   const text = quickNoteText.value.trim();
+  const type = quickNoteType.value;
   if (!rid || !text) return;
   mockActivities.push({
     id: 'a_qn_' + String(mockActivities.length) + '_' + String(Date.now()).slice(-5),
     record_id: rid,
-    type: 'note',
+    type,
     content: text,
     author: 'JB',
     created_at: new Date().toISOString(),
@@ -13849,7 +13866,7 @@ function submitQuickNote() {
   const rec = mockRecords.find((r) => r.id === rid);
   if (rec) rec.updated_at = new Date().toISOString();
   quickNoteRecordId.value = null;
-  showToast('Note added');
+  showToast(`${type.charAt(0).toUpperCase() + type.slice(1)} logged`);
 }
 const kanbanCompact = ref(false);
 const kanbanDragCardId = ref<string | null>(null);
