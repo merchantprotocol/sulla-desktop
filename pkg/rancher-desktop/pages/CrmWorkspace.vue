@@ -13012,13 +13012,25 @@
                     <p class="text-sm text-slate-600 dark:text-slate-300 leading-snug line-clamp-2">{{ act.content }}</p>
                     <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ act.author }}</p>
                   </div>
-                  <!-- mark as held -->
-                  <button
-                    type="button"
-                    class="invisible group-hover/ua:visible shrink-0 mt-0.5 h-7 px-2.5 rounded-lg text-[11px] font-medium border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-emerald-300 dark:hover:border-emerald-700 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all"
-                    title="Mark this activity as held — clears the scheduled date"
-                    @click.stop="markActivityHeld(act.id)"
-                  >Held</button>
+                  <!-- actions: mark as held + delete -->
+                  <div class="invisible group-hover/ua:visible shrink-0 mt-0.5 flex items-center gap-1">
+                    <button
+                      type="button"
+                      class="h-7 px-2.5 rounded-lg text-[11px] font-medium border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-emerald-300 dark:hover:border-emerald-700 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all"
+                      title="Mark this activity as held — clears the scheduled date"
+                      @click.stop="markActivityHeld(act.id)"
+                    >Held</button>
+                    <button
+                      type="button"
+                      class="h-7 w-7 rounded-lg flex items-center justify-center border border-slate-200 dark:border-slate-700 text-slate-300 dark:text-slate-600 hover:border-rose-300 dark:hover:border-rose-700 hover:text-rose-400 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-all"
+                      title="Delete this activity"
+                      @click.stop="(() => { const idx = mockActivities.findIndex(a => a.id === act.id); if (idx >= 0) { mockActivities.splice(idx, 1); showToast('Activity deleted', { label: 'Undo', fn: () => mockActivities.splice(idx, 0, act) }); } })()"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
               </template>
             </template>
