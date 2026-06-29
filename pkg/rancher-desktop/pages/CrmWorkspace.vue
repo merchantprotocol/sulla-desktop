@@ -12154,6 +12154,16 @@
           </svg>
           Copy as text
         </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="openRecord(contextMenuRecord); nextTick(() => { detailTab = 'tasks'; }); closeContextMenu()"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+          </svg>
+          Add task
+        </button>
         <!-- move to stage — shown only when kanban field exists and there are other stages -->
         <template v-if="kanbanField && kanbanColumns.filter(c => c !== KANBAN_UNASSIGNED).length > 1">
           <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
@@ -12271,6 +12281,30 @@
             <span class="truncate"><span class="text-slate-400 dark:text-slate-500">{{ opt.label }}:</span> {{ opt.value }}</span>
           </button>
         </template>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <div class="px-3 pt-1.5 pb-2">
+          <p class="pb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Set reminder</p>
+          <div class="flex items-center gap-1 flex-wrap">
+            <button
+              v-for="preset in [{ days: 1, label: '+1d' }, { days: 3, label: '+3d' }, { days: 7, label: '+1w' }, { days: 14, label: '+2w' }]"
+              :key="preset.days"
+              type="button"
+              class="h-5 px-1.5 rounded text-[10px] font-medium transition-colors"
+              :class="reminders[contextMenuRecord.id]?.date === dateOffset(preset.days)
+                ? 'bg-amber-400 dark:bg-amber-500 text-white'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:text-amber-600 dark:hover:text-amber-400'"
+              :title="`Remind in ${preset.days === 1 ? '1 day' : preset.days === 3 ? '3 days' : preset.days === 7 ? '1 week' : '2 weeks'}`"
+              @click="reminders = { ...reminders, [contextMenuRecord.id]: { date: dateOffset(preset.days), note: '' } }; showToast(`Reminder set for ${dateOffset(preset.days)}`); closeContextMenu()"
+            >{{ preset.label }}</button>
+            <button
+              v-if="reminders[contextMenuRecord.id]?.date"
+              type="button"
+              class="h-5 px-1.5 rounded text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-rose-400 dark:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-colors"
+              title="Clear reminder"
+              @click="(() => { const r = { ...reminders }; delete r[contextMenuRecord.id]; reminders = r; showToast('Reminder cleared'); closeContextMenu(); })()"
+            >Clear</button>
+          </div>
+        </div>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <div class="px-3 pt-1.5 pb-2">
           <p class="pb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Color label</p>
