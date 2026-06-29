@@ -9448,6 +9448,18 @@
           </svg>
           Select all in column
         </button>
+        <button
+          v-if="kanbanField && kanbanColMenu!.col !== KANBAN_UNASSIGNED"
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          title="Filter view to records in this stage"
+          @click="toggleFilter(kanbanField!.key, kanbanColMenu!.col); kanbanColMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+          </svg>
+          Filter to this stage
+        </button>
       </div>
     </transition>
 
