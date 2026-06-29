@@ -3354,8 +3354,21 @@
                           class="w-8 pr-2 text-right tabular-nums select-none"
                           :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'"
                         ><span class="text-[11px] text-slate-300 dark:text-slate-600 font-mono">{{ row.idxInFiltered + 1 }}</span></td>
-                        <td v-for="col in visibleColumns" :key="col.key" class="px-4" :class="[rowDensity === 'compact' ? 'py-1.5' : 'py-3']">
-                          <CrmCellValue :value="row.record.field_values[col.key]" :data-type="col.data_type" :format="col.format" :on-tag-click="col.data_type === 'multi_select' ? (tag: string) => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; } : undefined" />
+                        <td
+                          v-for="col in visibleColumns"
+                          :key="col.key"
+                          class="px-4"
+                          :class="[rowDensity === 'compact' ? 'py-1.5' : 'py-3', col.is_title ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400']"
+                        >
+                          <div
+                            v-if="col.is_title"
+                            @mouseenter="showPreview($event, row.record)"
+                            @mousemove="updatePreviewPos"
+                            @mouseleave="hidePreview"
+                          >
+                            <CrmCellValue :value="row.record.field_values[col.key]" :data-type="col.data_type" :format="col.format" :on-tag-click="col.data_type === 'multi_select' ? (tag: string) => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; } : undefined" />
+                          </div>
+                          <CrmCellValue v-else :value="row.record.field_values[col.key]" :data-type="col.data_type" :format="col.format" :on-tag-click="col.data_type === 'multi_select' ? (tag: string) => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; } : undefined" />
                         </td>
                         <td class="px-4" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                           <div class="flex items-center gap-1.5">
@@ -6831,7 +6844,13 @@
                     class="shrink-0 h-2 w-2 rounded-full"
                     :style="{ background: selectedType?.color ?? '#6366f1' }"
                   />
-                  <span class="text-xs text-slate-700 dark:text-slate-200 truncate flex-1" :title="row.title">{{ row.title }}</span>
+                  <span
+                    class="text-xs text-slate-700 dark:text-slate-200 truncate flex-1"
+                    :title="row.title"
+                    @mouseenter="showPreview($event, row.record)"
+                    @mousemove="updatePreviewPos"
+                    @mouseleave="hidePreview"
+                  >{{ row.title }}</span>
                   <button
                     v-if="activityCountByRecord[row.record.id]"
                     type="button"
