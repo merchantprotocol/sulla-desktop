@@ -3790,6 +3790,31 @@
                 <div class="shrink-0 w-52 border-r border-slate-200 dark:border-slate-700 px-3 py-2 flex items-center gap-2">
                   <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Record</p>
                   <span class="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded px-1 py-0.5 tabular-nums">{{ timelineViewData.rows.length }}</span>
+                  <!-- zoom controls -->
+                  <div class="ml-auto flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      class="h-5 w-5 rounded flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-30"
+                      title="Zoom out (wider range)"
+                      :disabled="timelinePadLevel >= 2"
+                      @click.stop="timelinePadLevel = Math.min(2, timelinePadLevel + 1)"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M11 6H6m5 0V1m0 5a8 8 0 110 16A8 8 0 0111 6z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="h-5 w-5 rounded flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-30"
+                      title="Zoom in (tighter range)"
+                      :disabled="timelinePadLevel <= -2"
+                      @click.stop="timelinePadLevel = Math.max(-2, timelinePadLevel - 1)"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M15 11H11m4 0V7m0 4a8 8 0 10-16 0 8 8 0 0016 0z" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
                 <div class="relative flex-1 h-9 overflow-hidden select-none">
                   <span
@@ -8823,6 +8848,8 @@ const statsViewData = computed(() => {
   return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
 });
 
+const timelinePadLevel = ref(0); // -2 to +2 zoom levels; 0 = default
+
 const timelineViewData = computed(() => {
   if (viewMode.value !== 'timeline') return null;
   const rt = selectedType.value;
@@ -8842,20 +8869,25 @@ const timelineViewData = computed(() => {
     }
   }
 
+  // Zoom: each level multiplies padding by 2x (out) or 0.5x (in)
+  const zoomFactor = 2 ** timelinePadLevel.value;
+  const padLeft = Math.max(1, Math.round(5 * zoomFactor));
+  const padRight = Math.max(2, Math.round(10 * zoomFactor));
+
   // Build padded range; fall back to ±30 days if no records
   let paddedStart: Date;
   let paddedEnd: Date;
   if (allDates.length) {
     const sorted = [...allDates].sort();
     paddedStart = new Date(sorted[0]);
-    paddedStart.setDate(paddedStart.getDate() - 5);
+    paddedStart.setDate(paddedStart.getDate() - padLeft);
     paddedEnd = new Date(sorted[sorted.length - 1]);
-    paddedEnd.setDate(paddedEnd.getDate() + 10);
+    paddedEnd.setDate(paddedEnd.getDate() + padRight);
   } else {
     paddedStart = new Date(DUE_TODAY_STR);
-    paddedStart.setDate(paddedStart.getDate() - 14);
+    paddedStart.setDate(paddedStart.getDate() - Math.round(14 * zoomFactor));
     paddedEnd = new Date(DUE_TODAY_STR);
-    paddedEnd.setDate(paddedEnd.getDate() + 30);
+    paddedEnd.setDate(paddedEnd.getDate() + Math.round(30 * zoomFactor));
   }
 
   const rangeMs = paddedEnd.getTime() - paddedStart.getTime();
