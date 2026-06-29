@@ -1708,12 +1708,20 @@
                       <p class="text-xs font-semibold text-slate-700 dark:text-slate-200">Notifications</p>
                       <span v-if="unreadNotifCount" class="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400">{{ unreadNotifCount }} new</span>
                     </div>
-                    <button
-                      v-if="unreadNotifCount"
-                      type="button"
-                      class="text-xs text-sky-500 dark:text-sky-400 hover:underline"
-                      @click="markAllNotifsRead"
-                    >Mark all read</button>
+                    <div class="flex items-center gap-2">
+                      <button
+                        v-if="unreadNotifCount"
+                        type="button"
+                        class="text-xs text-sky-500 dark:text-sky-400 hover:underline"
+                        @click="markAllNotifsRead"
+                      >Mark all read</button>
+                      <button
+                        v-if="mockNotifications.length"
+                        type="button"
+                        class="text-xs text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:underline"
+                        @click="dismissAllNotifs"
+                      >Clear all</button>
+                    </div>
                   </div>
                   <!-- list -->
                   <div class="max-h-80 overflow-y-auto divide-y divide-slate-50 dark:divide-slate-800">
@@ -1762,7 +1770,7 @@
                           >Open record</button>
                         </div>
                       </div>
-                      <!-- unread dot + dismiss -->
+                      <!-- read/unread dot + dismiss -->
                       <div class="flex flex-col items-center gap-1.5 shrink-0 pt-0.5">
                         <button
                           v-if="!notif.read"
@@ -1771,7 +1779,13 @@
                           title="Mark as read"
                           @click.stop="markNotifRead(notif.id)"
                         />
-                        <span v-else class="h-2 w-2" />
+                        <button
+                          v-else
+                          type="button"
+                          class="h-2 w-2 rounded-full bg-transparent border border-slate-300 dark:border-slate-600 hover:border-rose-400 hover:bg-rose-400 mt-0.5 transition-colors shrink-0 invisible group-hover:visible"
+                          title="Mark as unread"
+                          @click.stop="markNotifUnread(notif.id)"
+                        />
                         <button
                           type="button"
                           class="invisible group-hover:visible text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 rounded p-0.5 transition-colors"
@@ -13882,6 +13896,15 @@ function markAllNotifsRead() {
 
 function dismissNotif(id: string) {
   mockNotifications.value = mockNotifications.value.filter((n) => n.id !== id);
+}
+
+function dismissAllNotifs() {
+  mockNotifications.value = [];
+}
+
+function markNotifUnread(id: string) {
+  const n = mockNotifications.value.find((x) => x.id === id);
+  if (n) n.read = false;
 }
 
 function openNotifRecord(notif: CrmNotification) {
