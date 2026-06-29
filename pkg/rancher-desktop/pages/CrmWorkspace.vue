@@ -9703,6 +9703,31 @@
           <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h8M4 18h8" /></svg>
           Sections
         </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="selectType(typeContextMenu!.key); openSchemaEditor('fields'); showTypeIconColorPicker = true; typeContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>
+          Change icon &amp; color
+        </button>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="selectType(typeContextMenu!.key); openNewRecord(); typeContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" /></svg>
+          New record
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="duplicateRecordType(typeContextMenu!.key); typeContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+          Duplicate type
+        </button>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button
           type="button"
@@ -19843,6 +19868,27 @@ function addNewRecordType() {
   schemaEditorMode.value = 'fields';
   selectType(key);
   showToast(`Type "${label}" created`);
+}
+
+function duplicateRecordType(typeKey: string) {
+  const src = schema.find((t) => t.key === typeKey);
+  if (!src) return;
+  const baseKey = src.key + '_copy';
+  let newKey = baseKey;
+  let n = 2;
+  while (schema.some((t) => t.key === newKey)) newKey = baseKey + n++;
+  const newId = 'rt_' + newKey + '_' + String(Date.now()).slice(-6);
+  schema.push({
+    id: newId,
+    key: newKey,
+    label: src.label + ' (copy)',
+    label_plural: src.label_plural + ' (copy)',
+    icon: src.icon,
+    color: src.color,
+    fields: src.fields.map((f) => ({ ...f, id: f.id + '_dup' })),
+    sections: src.sections ? src.sections.map((s) => ({ ...s, id: s.id + '_dup' })) : undefined,
+  });
+  showToast(`Duplicated "${src.label}"`);
 }
 
 function deleteRecordType(typeKey: string) {
