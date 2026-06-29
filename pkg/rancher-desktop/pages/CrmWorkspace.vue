@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; bulkSnoozeDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; focusGroupSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; bulkSnoozeDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; showTimelineGroupPicker = false; focusSnoozeId = null; focusGroupSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -6259,6 +6259,51 @@
                       </button>
                     </div>
                   </div>
+                  <!-- group-by picker -->
+                  <div
+                    v-if="timelineViewData.selectFields && timelineViewData.selectFields.length"
+                    class="relative ml-1"
+                    @click.stop
+                  >
+                    <button
+                      type="button"
+                      class="flex items-center gap-1 h-5 px-1.5 rounded text-[10px] border transition-colors"
+                      :class="timelineGroupKey
+                        ? 'border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
+                      title="Group rows by a field value"
+                      @click="showTimelineGroupPicker = !showTimelineGroupPicker; showTimelineFieldPicker = false; showTimelineColorPicker = false"
+                    >
+                      <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h8m-8 6h16" /></svg>
+                      Group
+                    </button>
+                    <div
+                      v-if="showTimelineGroupPicker"
+                      class="absolute top-full mt-1 left-0 z-30 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1.5"
+                    >
+                      <p class="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Group rows by</p>
+                      <button
+                        type="button"
+                        class="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                        :class="!timelineGroupKey ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                        @click="timelineGroupKey = null; showTimelineGroupPicker = false"
+                      >
+                        <svg v-if="!timelineGroupKey" class="h-3 w-3 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        <span :class="!timelineGroupKey ? '' : 'ml-5'">No grouping</span>
+                      </button>
+                      <button
+                        v-for="f in timelineViewData.selectFields"
+                        :key="f.key"
+                        type="button"
+                        class="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                        :class="timelineGroupKey === f.key ? 'text-emerald-600 dark:text-emerald-400 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                        @click="timelineGroupKey = f.key; showTimelineGroupPicker = false"
+                      >
+                        <svg v-if="timelineGroupKey === f.key" class="h-3 w-3 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        <span :class="timelineGroupKey === f.key ? '' : 'ml-5'">{{ f.label }}</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <div class="relative flex-1 h-9 overflow-hidden select-none">
                   <span
@@ -6297,14 +6342,24 @@
                 </div>
               </div>
               <!-- record rows -->
-              <div
-                v-for="row in timelineViewData.rows"
-                :key="row.record.id"
-                class="group flex items-center border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
-                :class="openedRecord?.id === row.record.id ? 'bg-sky-50 dark:bg-sky-950/20' : ''"
-                @click="openRecord(row.record)"
-                @contextmenu.prevent="openContextMenu(row.record, $event)"
-              >
+              <template v-for="group in timelineGroupedRows" :key="group.groupKey">
+                <!-- group header shown when group-by is active -->
+                <div
+                  v-if="timelineGroupKey"
+                  class="sticky top-9 z-[5] flex items-center gap-2 px-3 py-1 border-b border-slate-200 dark:border-slate-700 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-sm"
+                >
+                  <span class="shrink-0 h-2 w-2 rounded-full bg-emerald-400 dark:bg-emerald-500" />
+                  <span class="text-xs font-semibold text-slate-600 dark:text-slate-300">{{ group.groupLabel }}</span>
+                  <span class="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded px-1 py-0.5 tabular-nums">{{ group.rows.length }}</span>
+                </div>
+                <div
+                  v-for="row in group.rows"
+                  :key="row.record.id"
+                  class="group flex items-center border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer"
+                  :class="openedRecord?.id === row.record.id ? 'bg-sky-50 dark:bg-sky-950/20' : ''"
+                  @click="openRecord(row.record)"
+                  @contextmenu.prevent="openContextMenu(row.record, $event)"
+                >
                 <!-- name column -->
                 <div class="shrink-0 w-52 border-r border-slate-100 dark:border-slate-800 px-3 py-1.5 flex items-center gap-1.5 min-w-0">
                   <span
@@ -6417,7 +6472,8 @@
                     :class="row.isOverdue ? 'text-rose-400' : 'text-slate-300 dark:text-slate-600'"
                   >{{ row.isOverdue ? 'overdue · ' : '' }}{{ row.durationDays }}d</p>
                 </div>
-              </div>
+                </div>
+              </template>
             </div>
             <!-- footer axis strip -->
             <div class="shrink-0 flex border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/80 py-1">
@@ -18060,6 +18116,8 @@ const showTimelineFieldPicker = ref(false);
 const showTimelineColorPicker = ref(false);
 const timelineColorFieldKey = ref<string | null>(null);
 const timelineDateOverrides = ref<Record<string, { startKey?: string; endKey?: string }>>({});
+const timelineGroupKey = ref<string | null>(null);
+const showTimelineGroupPicker = ref(false);
 
 const timelineViewData = computed(() => {
   if (viewMode.value !== 'timeline') return null;
@@ -18183,6 +18241,28 @@ const timelineViewData = computed(() => {
     ticks,
     todayPct,
   };
+});
+
+const timelineGroupedRows = computed(() => {
+  const data = timelineViewData.value;
+  if (!data) return [];
+  const gkey = timelineGroupKey.value;
+  if (!gkey) return [{ groupKey: '__all__', groupLabel: '', rows: data.rows }];
+  const field = data.selectFields.find((f) => f.key === gkey);
+  const optOrder: string[] = field?.select_options ?? [];
+  const grouped = new Map<string, typeof data.rows>();
+  for (const row of data.rows) {
+    const val = String(row.record.field_values[gkey] ?? '');
+    const bucket = val || '__none__';
+    if (!grouped.has(bucket)) grouped.set(bucket, []);
+    grouped.get(bucket)!.push(row);
+  }
+  const result: Array<{ groupKey: string; groupLabel: string; rows: typeof data.rows }> = [];
+  for (const opt of optOrder) {
+    if (grouped.has(opt)) result.push({ groupKey: opt, groupLabel: opt, rows: grouped.get(opt)! });
+  }
+  if (grouped.has('__none__')) result.push({ groupKey: '__none__', groupLabel: 'No value', rows: grouped.get('__none__')! });
+  return result;
 });
 
 interface ColStatsResult {
