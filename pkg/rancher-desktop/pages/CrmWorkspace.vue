@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -5232,6 +5232,35 @@
                       title="Log a call"
                       @click.stop="openRecord(item.record); nextTick(() => { noteType = 'call'; })"
                     >Call</button>
+                    <!-- snooze button with inline dropdown -->
+                    <div class="relative" @click.stop>
+                      <button
+                        type="button"
+                        class="h-7 px-2 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-violet-100 dark:hover:bg-violet-900/30 text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
+                        :class="snoozedUntil[item.record.id] ? 'text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/20' : ''"
+                        :title="snoozedUntil[item.record.id] ? `Already snoozed until ${snoozedUntil[item.record.id]}` : 'Snooze — hide from focus until a date'"
+                        @click="focusSnoozeId = focusSnoozeId === item.record.id ? null : item.record.id"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <circle cx="12" cy="12" r="10" />
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2" />
+                          <path v-if="snoozedUntil[item.record.id]" stroke-linecap="round" stroke-linejoin="round" d="M9.5 9.5L14.5 14.5" />
+                        </svg>
+                      </button>
+                      <div
+                        v-if="focusSnoozeId === item.record.id"
+                        class="absolute bottom-full mb-1.5 right-0 z-40 w-32 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl py-1 text-xs"
+                      >
+                        <p class="px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Snooze for</p>
+                        <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="snoozedUntil = { ...snoozedUntil, [item.record.id]: dateOffset(1) }; focusSnoozeId = null; showToast(`Snoozed until tomorrow`)">1 day</button>
+                        <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="snoozedUntil = { ...snoozedUntil, [item.record.id]: dateOffset(3) }; focusSnoozeId = null; showToast(`Snoozed for 3 days`)">3 days</button>
+                        <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-violet-50 dark:hover:bg-violet-900/20 text-slate-700 dark:text-slate-200 transition-colors" @click="snoozedUntil = { ...snoozedUntil, [item.record.id]: dateOffset(7) }; focusSnoozeId = null; showToast(`Snoozed for 1 week`)">1 week</button>
+                        <template v-if="snoozedUntil[item.record.id]">
+                          <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+                          <button type="button" class="w-full text-left px-3 py-1.5 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-rose-500 dark:text-rose-400 transition-colors" @click="(() => { const s = { ...snoozedUntil }; delete s[item.record.id]; snoozedUntil = s; focusSnoozeId = null; showToast('Snooze cleared'); })()">Clear snooze</button>
+                        </template>
+                      </div>
+                    </div>
                     <button
                       type="button"
                       class="h-7 px-2.5 rounded-lg text-xs font-medium bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
@@ -11230,6 +11259,7 @@ const linkRoleDraft = ref('');
 const watchedIds = ref<Set<string>>(new Set());
 const snoozedUntil = ref<Record<string, string>>({});
 const snoozeMenuId = ref<string | null>(null);
+const focusSnoozeId = ref<string | null>(null);
 const reminders = ref<Record<string, { date: string; note: string }>>({});
 const reminderMenuId = ref<string | null>(null);
 const reminderDraft = ref({ date: '', note: '' });
