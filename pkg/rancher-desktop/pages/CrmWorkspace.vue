@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1888,6 +1888,23 @@
               </svg>
               Automations
               <span v-if="automationRules.some(r => r.enabled)" class="text-[10px] tabular-nums rounded-full px-1.5 leading-none py-0.5 bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400">{{ automationRules.filter(r => r.enabled).length }}</span>
+            </button>
+
+            <!-- upcoming scheduled activities button -->
+            <button
+              type="button"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
+              :class="upcomingActivities.length
+                ? 'border-sky-300 dark:border-sky-600 text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30 hover:bg-sky-100 dark:hover:bg-sky-950/50'
+                : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
+              :title="upcomingActivities.length ? `${upcomingActivities.length} upcoming scheduled activit${upcomingActivities.length === 1 ? 'y' : 'ies'}` : 'No upcoming scheduled activities'"
+              @click.stop="showUpcomingPanel = true"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Upcoming
+              <span v-if="upcomingActivities.length" class="text-[10px] tabular-nums rounded-full px-1.5 leading-none py-0.5 bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300">{{ upcomingActivities.length }}</span>
             </button>
 
             <!-- notification bell -->
@@ -11497,6 +11514,80 @@
       </div>
     </transition>
 
+    <!-- Upcoming Scheduled Activities panel -->
+    <transition enter-active-class="transition-all duration-200" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition-all duration-150" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+      <div v-if="showUpcomingPanel" class="fixed inset-0 z-50 flex items-center justify-center p-4" @click.self="showUpcomingPanel = false">
+        <div class="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-lg max-h-[80vh] flex flex-col" @click.stop>
+          <!-- header -->
+          <div class="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+            <div class="flex items-center gap-2">
+              <svg class="h-5 w-5 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <h3 class="text-base font-semibold text-slate-900 dark:text-white">Upcoming Activities</h3>
+              <span class="text-xs text-slate-400 dark:text-slate-500">
+                <template v-if="upcomingActivities.length">— {{ upcomingActivities.length }} scheduled</template>
+                <template v-else>— nothing scheduled</template>
+              </span>
+            </div>
+            <button type="button" class="h-8 w-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" @click="showUpcomingPanel = false">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <!-- list -->
+          <div class="flex-1 overflow-y-auto px-6 py-4">
+            <p v-if="!upcomingActivities.length" class="text-sm text-slate-400 dark:text-slate-500 text-center py-6">No upcoming calls or meetings scheduled.</p>
+            <template v-else>
+              <template v-for="grp in upcomingGroups" :key="grp.label">
+                <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 pt-3 first:pt-0 pb-1">{{ grp.label }}</p>
+                <div
+                  v-for="act in grp.acts"
+                  :key="act.id"
+                  class="group/ua flex items-start gap-3 py-2.5 border-b border-slate-50 dark:border-slate-800/60 last:border-0"
+                >
+                  <!-- type icon -->
+                  <span
+                    class="mt-0.5 h-7 w-7 rounded-full flex items-center justify-center shrink-0"
+                    :class="ACTIVITY_ICON_BG[act.type]"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                      <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[act.type]" />
+                    </svg>
+                  </span>
+                  <!-- content -->
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                      <button
+                        type="button"
+                        class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate text-left"
+                        @click="(() => { const rec = mockRecords.find(r => r.id === act.record_id); if (rec) { openRecord(rec); nextTick(() => { detailTab = 'activity'; }); showUpcomingPanel = false; } })()"
+                      >{{ mockRecords.find(r => r.id === act.record_id)?.title ?? act.record_id }}</button>
+                      <span class="text-[10px] tabular-nums font-medium text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/30 rounded-full px-1.5 py-0.5 shrink-0">{{ new Date(act.scheduled_at!).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) }}</span>
+                      <span class="text-[10px] text-slate-400 dark:text-slate-500 capitalize shrink-0">{{ act.type }}</span>
+                    </div>
+                    <p class="text-sm text-slate-600 dark:text-slate-300 leading-snug line-clamp-2">{{ act.content }}</p>
+                    <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ act.author }}</p>
+                  </div>
+                  <!-- mark as held -->
+                  <button
+                    type="button"
+                    class="invisible group-hover/ua:visible shrink-0 mt-0.5 h-7 px-2.5 rounded-lg text-[11px] font-medium border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-emerald-300 dark:hover:border-emerald-700 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all"
+                    title="Mark this activity as held — clears the scheduled date"
+                    @click.stop="markActivityHeld(act.id)"
+                  >Held</button>
+                </div>
+              </template>
+            </template>
+          </div>
+          <!-- footer -->
+          <div class="px-6 py-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <p class="text-xs text-slate-400 dark:text-slate-500">Calls &amp; meetings across all records</p>
+            <button type="button" class="text-xs text-sky-500 dark:text-sky-400 hover:underline" @click="viewMode = 'feed'; feedTypeFilter = 'all'; showUpcomingPanel = false">Open activity feed</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <!-- Automations panel -->
     <transition enter-active-class="transition-all duration-200" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-150" leave-from-class="opacity-100" leave-to-class="opacity-0">
       <div v-if="showAutomationsPanel" class="fixed inset-0 z-50 flex items-center justify-center p-4" @click.self="showAutomationsPanel = false; newRuleDraft = null">
@@ -14927,6 +15018,7 @@ watch(showPalette, (val) => {
 });
 const cellDraftValue = ref<string | number | boolean | null>(null);
 const showShortcuts = ref(false);
+const showUpcomingPanel = ref(false);
 const toasts = ref<Array<{ id: string; message: string; action?: { label: string; fn: () => void } }>>([]);
 const showPalette = ref(false);
 const paletteQuery = ref('');
@@ -17910,6 +18002,36 @@ const feedRows = computed((): ActivityRow[] => {
   return rows;
 });
 
+const upcomingActivities = computed((): CrmActivity[] => {
+  const now = new Date().toISOString();
+  return [...mockActivities]
+    .filter((a) => !!a.scheduled_at && a.scheduled_at > now)
+    .sort((a, b) => new Date(a.scheduled_at!).getTime() - new Date(b.scheduled_at!).getTime());
+});
+
+const upcomingGroups = computed((): { label: string; acts: CrmActivity[] }[] => {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const weekEnd = new Date(today); weekEnd.setDate(today.getDate() + 7);
+  const nextWeekEnd = new Date(today); nextWeekEnd.setDate(today.getDate() + 14);
+  const buckets: { label: string; acts: CrmActivity[] }[] = [
+    { label: 'Today', acts: [] },
+    { label: 'Tomorrow', acts: [] },
+    { label: 'This Week', acts: [] },
+    { label: 'Next Week', acts: [] },
+    { label: 'Later', acts: [] },
+  ];
+  for (const act of upcomingActivities.value) {
+    const d = new Date(act.scheduled_at!); d.setHours(0, 0, 0, 0);
+    if (d.getTime() === today.getTime()) buckets[0].acts.push(act);
+    else if (d.getTime() === tomorrow.getTime()) buckets[1].acts.push(act);
+    else if (d < weekEnd) buckets[2].acts.push(act);
+    else if (d < nextWeekEnd) buckets[3].acts.push(act);
+    else buckets[4].acts.push(act);
+  }
+  return buckets.filter((g) => g.acts.length > 0);
+});
+
 const recordCompleteness = computed((): { filled: number; total: number; missing: string[] } => {
   if (!openedRecord.value || !selectedType.value) return { filled: 0, total: 0, missing: [] };
   const fields = selectedType.value.fields;
@@ -19234,6 +19356,17 @@ function deleteActivity(actId: string) {
     fn: () => {
       mockActivities.splice(idx, 0, removed);
     },
+  });
+}
+
+function markActivityHeld(actId: string) {
+  const act = mockActivities.find((a) => a.id === actId);
+  if (!act) return;
+  const prev = act.scheduled_at;
+  delete act.scheduled_at;
+  showToast('Marked as held', {
+    label: 'Undo',
+    fn: () => { act.scheduled_at = prev; },
   });
 }
 
