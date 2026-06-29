@@ -5146,7 +5146,25 @@
                         </svg>
                       </span>
                       <div class="flex-1 min-w-0">
+                        <!-- inline edit textarea -->
+                        <div v-if="editingActivityId === row.act.id" class="mb-1">
+                          <textarea
+                            ref="editingActivityEl"
+                            v-model="editingActivityText"
+                            rows="3"
+                            class="w-full rounded-lg px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-sky-300 dark:border-sky-700 text-slate-900 dark:text-slate-100 resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                            @keydown.meta.enter.prevent="saveEditActivity"
+                            @keydown.ctrl.enter.prevent="saveEditActivity"
+                            @keydown.escape.prevent="editingActivityId = null"
+                          />
+                          <div class="flex items-center gap-1.5 mt-1">
+                            <button type="button" class="h-6 px-2.5 rounded text-[11px] font-medium bg-sky-600 hover:bg-sky-500 text-white transition-colors" @click="saveEditActivity">Save</button>
+                            <button type="button" class="h-6 px-2 rounded text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors" @click="editingActivityId = null">Cancel</button>
+                            <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-auto">⌘ Enter to save</span>
+                          </div>
+                        </div>
                         <p
+                          v-else
                           class="text-xs leading-relaxed"
                           :class="row.act.type === 'change'
                             ? 'text-slate-400 dark:text-slate-500 font-mono'
@@ -5201,6 +5219,18 @@
                         >
                           <svg class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24">
                             <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/>
+                          </svg>
+                        </button>
+                        <button
+                          v-if="row.act.type !== 'change'"
+                          type="button"
+                          class="p-0.5 rounded text-slate-300 dark:text-slate-700 hover:text-violet-400 dark:hover:text-violet-400 transition-colors"
+                          aria-label="Edit activity"
+                          title="Edit this activity"
+                          @click="startEditActivity(row.act)"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
                         </button>
                         <button
@@ -10539,6 +10569,28 @@ const recordAttachments = computed(() =>
 const activityTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const activitySearchQuery = ref('');
 const pinnedActivityIds = ref<Set<string>>(new Set());
+const editingActivityId = ref<string | null>(null);
+const editingActivityText = ref('');
+const editingActivityEl = ref<HTMLTextAreaElement | null>(null);
+
+function startEditActivity(act: CrmActivity) {
+  editingActivityId.value = act.id;
+  editingActivityText.value = act.content;
+  nextTick(() => {
+    editingActivityEl.value?.focus();
+    editingActivityEl.value?.select();
+  });
+}
+
+function saveEditActivity() {
+  const id = editingActivityId.value;
+  if (!id) return;
+  const text = editingActivityText.value.trim();
+  if (!text) { editingActivityId.value = null; return; }
+  const act = mockActivities.find((a) => a.id === id);
+  if (act) { act.content = text; }
+  editingActivityId.value = null;
+}
 
 function togglePinActivity(id: string) {
   const s = new Set(pinnedActivityIds.value);
