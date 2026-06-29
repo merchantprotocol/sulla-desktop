@@ -5221,14 +5221,24 @@
             >
               <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-2">{{ card.field.label }}</p>
               <div class="grid grid-cols-2 gap-2">
-                <div>
-                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">Sum</p>
+                <button
+                  type="button"
+                  class="text-left rounded-lg p-1 -m-1 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/nc"
+                  title="Click to sort by this field (high → low)"
+                  @click="sortField = card.field.key; sortDir = 'desc'; viewMode = 'table'"
+                >
+                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide group-hover/nc:text-sky-500 dark:group-hover/nc:text-sky-400 transition-colors">Sum</p>
                   <p class="text-lg font-semibold tabular-nums text-slate-900 dark:text-white">{{ card.field.format === 'currency' ? '$' + (card.sum >= 1000 ? Math.round(card.sum / 1000) + 'k' : card.sum) : card.sum.toLocaleString() }}</p>
-                </div>
-                <div>
-                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">Avg</p>
+                </button>
+                <button
+                  type="button"
+                  class="text-left rounded-lg p-1 -m-1 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/nc2"
+                  title="Click to sort by this field (high → low)"
+                  @click="sortField = card.field.key; sortDir = 'desc'; viewMode = 'table'"
+                >
+                  <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide group-hover/nc2:text-sky-500 dark:group-hover/nc2:text-sky-400 transition-colors">Avg</p>
                   <p class="text-lg font-semibold tabular-nums text-slate-900 dark:text-white">{{ card.field.format === 'currency' ? '$' + card.avg : card.avg }}</p>
-                </div>
+                </button>
                 <div>
                   <p class="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wide">Min</p>
                   <p class="text-sm tabular-nums text-slate-600 dark:text-slate-400">{{ card.min.toLocaleString() }}</p>
