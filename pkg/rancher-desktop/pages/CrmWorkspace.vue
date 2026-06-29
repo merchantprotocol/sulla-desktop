@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4813,6 +4813,45 @@
                           <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
                         </svg>
                       </button>
+                      <!-- field change history -->
+                      <div class="relative" @click.stop>
+                        <button
+                          v-if="fieldChangeHistory(openedRecord.id, field).length"
+                          type="button"
+                          class="invisible group-hover/field:visible rounded p-0.5 transition-colors"
+                          :class="fieldHistoryPopover?.fieldKey === field.key
+                            ? 'text-amber-400 dark:text-amber-400 !visible'
+                            : 'text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400'"
+                          :title="`${fieldChangeHistory(openedRecord.id, field).length} change${fieldChangeHistory(openedRecord.id, field).length === 1 ? '' : 's'} — click for history`"
+                          @click.stop="fieldHistoryPopover = fieldHistoryPopover?.fieldKey === field.key ? null : { fieldKey: field.key }"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        </button>
+                        <!-- history popover -->
+                        <div
+                          v-if="fieldHistoryPopover?.fieldKey === field.key"
+                          class="absolute right-0 top-full mt-1 z-30 w-64 rounded-xl border border-amber-200 dark:border-amber-800/60 bg-white dark:bg-slate-900 shadow-xl overflow-hidden"
+                        >
+                          <div class="px-3 py-1.5 border-b border-amber-100 dark:border-amber-900/40 flex items-center justify-between">
+                            <p class="text-[10px] font-semibold uppercase tracking-wider text-amber-500 dark:text-amber-400">{{ field.label }} · change history</p>
+                            <button type="button" class="text-slate-400 hover:text-slate-600" @click="fieldHistoryPopover = null">
+                              <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                          </div>
+                          <ul class="py-1 max-h-48 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                            <li v-for="entry in fieldChangeHistory(openedRecord.id, field)" :key="entry.at" class="px-3 py-1.5">
+                              <p class="text-[10px] text-slate-400 dark:text-slate-500 mb-0.5">{{ formatRelativeTime(entry.at) }} · {{ entry.author }}</p>
+                              <p class="text-xs text-slate-600 dark:text-slate-300">
+                                <span class="line-through text-slate-300 dark:text-slate-600">{{ entry.from || 'empty' }}</span>
+                                <svg class="h-2.5 w-2.5 inline mx-1 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                                <span class="font-medium">{{ entry.to || 'empty' }}</span>
+                              </p>
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
                     </template>
                   </div>
                   <!-- clickable cycle badge for select fields in view mode -->
@@ -10925,6 +10964,33 @@ function saveEditActivity() {
   const act = mockActivities.find((a) => a.id === id);
   if (act) { act.content = text; }
   editingActivityId.value = null;
+}
+
+const fieldHistoryPopover = ref<{ fieldKey: string } | null>(null);
+
+function fieldChangeHistory(
+  recordId: string,
+  field: CrmField,
+): Array<{ from: string; to: string; at: string; author: string }> {
+  const prefix = `${field.label}: `;
+  return mockActivities
+    .filter(
+      (a) =>
+        a.record_id === recordId &&
+        a.type === 'change' &&
+        a.content.startsWith(prefix) &&
+        a.content.includes(' → '),
+    )
+    .map((a) => {
+      const rest = a.content.slice(prefix.length);
+      const arrowIdx = rest.indexOf(' → ');
+      const from = rest.slice(0, arrowIdx).trim();
+      const rawTo = rest.slice(arrowIdx + 3).trim();
+      const to = rawTo.split(' · ')[0].trim();
+      return { from, to, at: a.created_at, author: a.author };
+    })
+    .reverse()
+    .slice(0, 5);
 }
 
 function togglePinActivity(id: string) {
