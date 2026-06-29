@@ -5225,9 +5225,15 @@
             <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
               <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Total records</p>
               <p class="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">{{ statsViewData.total }}</p>
-              <p v-if="statsDatePreset !== 'all'" class="text-xs mt-0.5">
+              <p v-if="statsDatePreset !== 'all'" class="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap">
                 <span class="font-semibold tabular-nums" :class="statsViewData.newRecords > 0 ? 'text-emerald-500' : 'text-slate-400 dark:text-slate-500'">+{{ statsViewData.newRecords }}</span>
-                <span class="text-slate-400 dark:text-slate-500"> new this period</span>
+                <span class="text-slate-400 dark:text-slate-500">new this period</span>
+                <span
+                  v-if="statsViewData.priorNewRecords !== null"
+                  class="tabular-nums text-[10px]"
+                  :class="statsViewData.newRecords > statsViewData.priorNewRecords ? 'text-emerald-400' : statsViewData.newRecords < statsViewData.priorNewRecords ? 'text-rose-400' : 'text-slate-300 dark:text-slate-600'"
+                  :title="`Prior period: ${statsViewData.priorNewRecords} new records`"
+                >{{ statsViewData.newRecords > statsViewData.priorNewRecords ? '↑' : statsViewData.newRecords < statsViewData.priorNewRecords ? '↓' : '=' }} vs prior</span>
               </p>
               <p v-else class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ selectedType?.label_plural }}</p>
             </div>
@@ -5239,7 +5245,15 @@
             <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
               <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Activity</p>
               <p class="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">{{ Object.values(statsViewData.activityCounts).reduce((a, b) => a + b, 0) }}</p>
-              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ statsDatePreset === 'all' ? 'total logged items' : statsDatePreset === '7d' ? 'in the last 7 days' : statsDatePreset === '30d' ? 'in the last 30 days' : statsDatePreset === '90d' ? 'in the last 90 days' : 'year to date' }}</p>
+              <p class="text-xs mt-0.5 flex items-center gap-1.5 flex-wrap">
+                <span class="text-slate-400 dark:text-slate-500">{{ statsDatePreset === 'all' ? 'total logged items' : statsDatePreset === '7d' ? 'last 7 days' : statsDatePreset === '30d' ? 'last 30 days' : statsDatePreset === '90d' ? 'last 90 days' : 'year to date' }}</span>
+                <span
+                  v-if="statsViewData.priorActivityTotal !== null"
+                  class="tabular-nums text-[10px]"
+                  :class="Object.values(statsViewData.activityCounts).reduce((a,b) => a+b, 0) > statsViewData.priorActivityTotal ? 'text-emerald-400' : Object.values(statsViewData.activityCounts).reduce((a,b) => a+b, 0) < statsViewData.priorActivityTotal ? 'text-rose-400' : 'text-slate-300 dark:text-slate-600'"
+                  :title="`Prior period: ${statsViewData.priorActivityTotal} activities`"
+                >{{ Object.values(statsViewData.activityCounts).reduce((a,b) => a+b, 0) > statsViewData.priorActivityTotal ? '↑' : Object.values(statsViewData.activityCounts).reduce((a,b) => a+b, 0) < statsViewData.priorActivityTotal ? '↓' : '=' }} vs prior</span>
+              </p>
             </div>
           </div>
 
@@ -17440,6 +17454,18 @@ const statsViewData = computed(() => {
   const cutoff = statsDateCutoff.value;
   const newRecords = cutoff ? recs.filter((r) => new Date(r.created_at) >= cutoff).length : total;
 
+  // Prior-period bounds for delta comparison (same duration, immediately preceding)
+  let priorCutoff: Date | null = null;
+  let priorEnd: Date | null = null;
+  if (cutoff) {
+    const durationMs = Date.now() - cutoff.getTime();
+    priorEnd = new Date(cutoff.getTime());
+    priorCutoff = new Date(cutoff.getTime() - durationMs);
+  }
+  const priorNewRecords = (priorCutoff && priorEnd)
+    ? recs.filter((r) => { const d = new Date(r.created_at); return d >= priorCutoff! && d < priorEnd!; }).length
+    : null;
+
   const selectCharts = rt.fields
     .filter((f) => f.data_type === 'select' || f.data_type === 'multi_select')
     .map((f) => {
@@ -17484,6 +17510,16 @@ const statsViewData = computed(() => {
     if (!recIds.has(a.record_id) || !(a.type in activityCounts)) continue;
     if (cutoff && new Date(a.created_at) < cutoff) continue;
     activityCounts[a.type as keyof typeof activityCounts]++;
+  }
+  // Prior-period activity total for delta display
+  let priorActivityTotal: number | null = null;
+  if (priorCutoff && priorEnd) {
+    priorActivityTotal = 0;
+    for (const a of mockActivities) {
+      if (!recIds.has(a.record_id)) continue;
+      const d = new Date(a.created_at);
+      if (d >= priorCutoff && d < priorEnd) priorActivityTotal++;
+    }
   }
 
   const completeness = total > 0 ? Math.round((recs.filter((r) => {
@@ -17559,7 +17595,7 @@ const statsViewData = computed(() => {
   }
   const heatmapMax = Math.max(...Object.values(dateCounts), 1);
 
-  return { total, newRecords, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
+  return { total, newRecords, priorNewRecords, completeness, selectCharts, numberCards, activityCounts, priorActivityTotal, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
 });
 
 // ── Activity digest ───────────────────────────────────────────────────────
