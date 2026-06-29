@@ -6554,7 +6554,7 @@
                         placeholder="e.g. {amount} * {probability} / 100"
                         class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400 font-mono"
                       />
-                      <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Use {'{field_key}'} to reference numeric field values. Operators: + - * /</p>
+                      <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Use {'{field_key}'} for field values. Supports +,-,*,/ and functions: IF(cond,a,b) · MIN/MAX/ABS/ROUND · CONCAT/LEN/UPPER/LOWER/TRIM · ISBLANK/CONTAINS</p>
                       <label class="text-xs text-slate-500 dark:text-slate-400 mt-2 mb-1 block">Output format</label>
                       <select v-model="newFieldDraft.formula_format" class="text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50">
                         <option value="">Number</option>
@@ -7029,6 +7029,7 @@ const schema = reactive<CrmRecordType[]>([
       { id: 'f_dl4', key: 'close_date',  label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3, help_text: 'Expected date the deal will close. Used in pipeline forecasting.' },
       { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4, format: 'progress', help_text: 'Estimated probability (0–100) of winning this deal. Drives Expected Value.' },
       { id: 'f_dl6', key: 'expected_value', label: 'Expected value', data_type: 'formula', is_title: false, is_required: false, position: 5, format: 'currency', formula_expression: '{amount} * {probability} / 100', help_text: 'Computed automatically: Amount × Win % ÷ 100.' },
+      { id: 'f_dl7', key: 'deal_tier', label: 'Deal tier', data_type: 'formula', is_title: false, is_required: false, position: 6, formula_expression: 'IF({amount} >= 50000, "Enterprise", IF({amount} >= 10000, "Mid-Market", "SMB"))', help_text: 'Auto-classified: Enterprise ≥$50k · Mid-Market ≥$10k · SMB below.' },
     ],
   },
   {
@@ -11115,30 +11116,146 @@ function formatCardValue(val: string | number | boolean | string[] | null | unde
   return String(val);
 }
 
-function evaluateFormula(record: { field_values: Record<string, unknown> }, field: CrmField): number | string {
-  const expr = field.formula_expression ?? '';
-  if (!expr) return '—';
-  // Resolve {field_key} references to numeric values
-  const resolved = expr.replace(/\{([^}]+)\}/g, (_m, key: string) => {
-    const v = record.field_values[key.trim()];
-    const n = Number(v);
-    return isNaN(n) ? '0' : String(n);
-  });
-  // Tokenize and evaluate left-to-right (no precedence — simple linear expressions only)
-  const tokens = resolved.match(/-?[\d.]+|[+\-*/]/g);
-  if (!tokens || tokens.length < 1) return '?';
-  let result = parseFloat(tokens[0]);
-  if (isNaN(result)) return '?';
-  for (let i = 1; i < tokens.length - 1; i += 2) {
-    const op = tokens[i];
-    const right = parseFloat(tokens[i + 1]);
-    if (isNaN(right)) return '?';
-    if (op === '+') result += right;
-    else if (op === '-') result -= right;
-    else if (op === '*') result *= right;
-    else if (op === '/') result = right !== 0 ? result / right : 0;
+// ── Formula evaluator (recursive-descent parser) ─────────────────────────────
+// Supports: arithmetic (+,-,*,/), comparison (<,>,<=,>=,==,!=), AND/OR,
+// string literals, and built-in functions: IF, ROUND, ABS, MIN, MAX, SUM,
+// CONCAT, LEN, UPPER, LOWER, TRIM, LEFT, RIGHT, ISBLANK, COALESCE, CONTAINS.
+// Field values are substituted as {field_key} before parsing.
+type FVal = number | string;
+interface FCtx { s: string; i: number }
+function fSkip(c: FCtx) { while (c.i < c.s.length && /\s/.test(c.s[c.i])) c.i++; }
+function fOr(c: FCtx): FVal {
+  let l = fAnd(c); fSkip(c);
+  while (c.s.slice(c.i, c.i + 2).toUpperCase() === 'OR') { c.i += 2; l = (!!l || !!fAnd(c)) ? 1 : 0; fSkip(c); }
+  return l;
+}
+function fAnd(c: FCtx): FVal {
+  let l = fCmp(c); fSkip(c);
+  while (c.s.slice(c.i, c.i + 3).toUpperCase() === 'AND') { c.i += 3; l = (!!l && !!fCmp(c)) ? 1 : 0; fSkip(c); }
+  return l;
+}
+function fCmp(c: FCtx): FVal {
+  const l = fAdd(c); fSkip(c);
+  const op2 = c.s.slice(c.i, c.i + 2); const op1 = c.s[c.i];
+  let op = '';
+  if (op2 === '<=' || op2 === '>=' || op2 === '==' || op2 === '!=') { op = op2; c.i += 2; }
+  else if (op1 === '<' || op1 === '>') { op = op1; c.i++; }
+  else if (op1 === '=') { op = '=='; c.i++; }
+  if (!op) return l;
+  fSkip(c);
+  const r = fAdd(c);
+  const ln = typeof l === 'number' ? l : Number(l); const rn = typeof r === 'number' ? r : Number(r);
+  if (op === '<') return ln < rn ? 1 : 0; if (op === '>') return ln > rn ? 1 : 0;
+  if (op === '<=') return ln <= rn ? 1 : 0; if (op === '>=') return ln >= rn ? 1 : 0;
+  if (op === '==' || op === '=') return l == r ? 1 : 0;
+  if (op === '!=') return l != r ? 1 : 0;
+  return l;
+}
+function fAdd(c: FCtx): FVal {
+  let l = fMul(c); fSkip(c);
+  while (c.i < c.s.length && (c.s[c.i] === '+' || c.s[c.i] === '-')) {
+    const op = c.s[c.i++]; fSkip(c); const r = fMul(c);
+    l = op === '+' ? (typeof l === 'string' || typeof r === 'string' ? String(l) + String(r) : l + r)
+      : (typeof l === 'number' ? l : Number(l)) - (typeof r === 'number' ? r : Number(r));
+    fSkip(c);
   }
-  return Math.round(result * 100) / 100;
+  return l;
+}
+function fMul(c: FCtx): FVal {
+  let l = fUnary(c); fSkip(c);
+  while (c.i < c.s.length && (c.s[c.i] === '*' || c.s[c.i] === '/')) {
+    const op = c.s[c.i++]; fSkip(c); const r = fUnary(c);
+    const ln = typeof l === 'number' ? l : Number(l); const rn = typeof r === 'number' ? r : Number(r);
+    l = op === '*' ? ln * rn : (rn !== 0 ? ln / rn : 0); fSkip(c);
+  }
+  return l;
+}
+function fUnary(c: FCtx): FVal {
+  fSkip(c);
+  if (c.s[c.i] === '-') { c.i++; return -(Number(fAtom(c))); }
+  if (c.s[c.i] === '!') { c.i++; return fAtom(c) ? 0 : 1; }
+  return fAtom(c);
+}
+function fAtom(c: FCtx): FVal {
+  fSkip(c); const s = c.s;
+  if (s[c.i] === '"') {
+    c.i++; let str = '';
+    while (c.i < s.length && s[c.i] !== '"') { if (s[c.i] === '\\' && c.i + 1 < s.length) c.i++; str += s[c.i++]; }
+    if (s[c.i] === '"') c.i++;
+    return str;
+  }
+  if (s[c.i] === '(') {
+    c.i++; const v = fOr(c); fSkip(c); if (s[c.i] === ')') c.i++;
+    return v;
+  }
+  const idm = s.slice(c.i).match(/^[A-Za-z_][A-Za-z0-9_]*/);
+  if (idm) {
+    const name = idm[0].toUpperCase(); c.i += idm[0].length; fSkip(c);
+    if (s[c.i] === '(') {
+      c.i++;
+      const args: FVal[] = [];
+      while (c.i < s.length && s[c.i] !== ')') {
+        fSkip(c); if (s[c.i] === ')') break;
+        args.push(fOr(c)); fSkip(c); if (s[c.i] === ',') c.i++;
+      }
+      if (s[c.i] === ')') c.i++;
+      return fCall(name, args);
+    }
+    if (name === 'TRUE') return 1; if (name === 'FALSE') return 0;
+    return 0;
+  }
+  const nm = s.slice(c.i).match(/^[\d]+(?:\.[\d]+)?/);
+  if (nm) { c.i += nm[0].length; return parseFloat(nm[0]); }
+  return 0;
+}
+function fCall(name: string, args: FVal[]): FVal {
+  const ns = args.map((a) => typeof a === 'number' ? a : Number(a));
+  switch (name) {
+    case 'IF': return args[0] ? (args[1] ?? 0) : (args[2] ?? 0);
+    case 'AND': return args.every(Boolean) ? 1 : 0;
+    case 'OR': return args.some(Boolean) ? 1 : 0;
+    case 'NOT': return args[0] ? 0 : 1;
+    case 'ROUND': return Math.round(ns[0] * 10 ** (ns[1] ?? 0)) / 10 ** (ns[1] ?? 0);
+    case 'ABS': return Math.abs(ns[0]);
+    case 'FLOOR': return Math.floor(ns[0]);
+    case 'CEIL': return Math.ceil(ns[0]);
+    case 'SQRT': return Math.sqrt(ns[0]);
+    case 'MIN': return Math.min(...ns);
+    case 'MAX': return Math.max(...ns);
+    case 'SUM': return ns.reduce((a, b) => a + b, 0);
+    case 'CONCAT': return args.map(String).join('');
+    case 'LEN': return String(args[0] ?? '').length;
+    case 'UPPER': return String(args[0] ?? '').toUpperCase();
+    case 'LOWER': return String(args[0] ?? '').toLowerCase();
+    case 'TRIM': return String(args[0] ?? '').trim();
+    case 'LEFT': return String(args[0] ?? '').slice(0, ns[1] ?? 0);
+    case 'RIGHT': { const sv = String(args[0] ?? ''); return sv.slice(Math.max(0, sv.length - (ns[1] ?? 0))); }
+    case 'MID': return String(args[0] ?? '').slice(ns[1] ? ns[1] - 1 : 0, ns[1] ? ns[1] - 1 + (ns[2] ?? 0) : undefined);
+    case 'SUBSTITUTE': return String(args[0] ?? '').split(String(args[1] ?? '')).join(String(args[2] ?? ''));
+    case 'CONTAINS': return String(args[0] ?? '').toLowerCase().includes(String(args[1] ?? '').toLowerCase()) ? 1 : 0;
+    case 'ISBLANK': return (args[0] == null || args[0] === '' || args[0] === 0) ? 1 : 0;
+    case 'COALESCE': return args.find((a) => a != null && a !== '') ?? 0;
+    default: return 0;
+  }
+}
+
+function evaluateFormula(record: { field_values: Record<string, unknown> }, field: CrmField): number | string {
+  const expr = (field.formula_expression ?? '').trim();
+  if (!expr) return '—';
+  // Substitute {field_key} → number or quoted string literal
+  const sub = expr.replace(/\{([^}]+)\}/g, (_m, key: string) => {
+    const v = record.field_values[key.trim()];
+    if (v == null || v === '') return '0';
+    const n = Number(v);
+    return !isNaN(n) ? String(n) : `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  });
+  try {
+    const ctx: FCtx = { s: sub, i: 0 };
+    const result = fOr(ctx);
+    return typeof result === 'number' ? Math.round(result * 10000) / 10000 : result;
+  } catch {
+    return '?';
+  }
 }
 
 // ── Inline sub-components ──────────────────────────────────────────────────
