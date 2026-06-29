@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -3552,13 +3552,18 @@
                     </svg>
                     Possible duplicate{{ possibleDuplicates.length === 1 ? '' : 's' }}
                   </p>
-                  <ul class="space-y-0.5">
-                    <li v-for="dup in possibleDuplicates" :key="dup.id">
+                  <ul class="space-y-1">
+                    <li v-for="dup in possibleDuplicates" :key="dup.id" class="flex items-center gap-2">
                       <button
                         type="button"
-                        class="w-full text-left text-xs text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100 truncate transition-colors underline underline-offset-2"
+                        class="flex-1 text-left text-xs text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100 truncate transition-colors underline underline-offset-2"
                         @click="creatingRecord = false; openRecord(dup)"
                       >{{ dup.title }}</button>
+                      <button
+                        type="button"
+                        class="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800/60 transition-colors"
+                        @click.stop="openMergeWith(dup, { id: '__draft__', title: String(draftValues[selectedType!.fields.find(f => f.is_title)?.key ?? ''] ?? 'New record'), field_values: { ...draftValues }, record_type_key: selectedTypeKey, isDraft: true }); creatingRecord = false"
+                      >Merge</button>
                     </li>
                   </ul>
                 </div>
@@ -5836,6 +5841,11 @@
             <svg class="h-3.5 w-3.5 shrink-0" :fill="watchedIds.has(kanbanCardMenu.recordId) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
             {{ watchedIds.has(kanbanCardMenu.recordId) ? 'Unwatch' : 'Watch' }}
           </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="(() => { const rec = mockRecords.find(r => r.id === kanbanCardMenu!.recordId); if (rec) { mergeTargetPicker = { source: rec }; mergeTargetQuery = ''; } kanbanCardMenu = null; })()">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 12h.01" /></svg>
+            Merge with...
+          </button>
           <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
           <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 dark:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:text-red-600 dark:hover:text-red-400 transition-colors"
             @click="deleteRecord(mockRecords.find(r => r.id === kanbanCardMenu!.recordId)!); kanbanCardMenu = null">
@@ -6830,6 +6840,153 @@
               @click="submitWinLoss"
             >Mark {{ winLossModal.stage }}</button>
             <button type="button" class="rounded-lg py-2 px-4 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" @click="winLossModal = null">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- merge target picker (from kanban card context menu) -->
+    <transition enter-active-class="transition-all duration-100" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition-all duration-75" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+      <div
+        v-if="mergeTargetPicker"
+        class="fixed z-[290] w-72 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+        style="top: 50%; left: 50%; transform: translate(-50%, -50%)"
+        @click.stop
+      >
+        <div class="px-3 py-2.5 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2">
+          <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8" /><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35" /></svg>
+          <input
+            ref="mergeTargetInputEl"
+            v-model="mergeTargetQuery"
+            type="text"
+            placeholder="Search records to merge into…"
+            class="flex-1 text-sm bg-transparent text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none"
+          />
+          <button type="button" class="shrink-0 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400" @click="mergeTargetPicker = null">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <p class="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Merge "{{ mergeTargetPicker.source.title }}" into…</p>
+        <ul class="py-1 max-h-48 overflow-y-auto">
+          <li v-if="!mergeTargetResults.length" class="px-3 py-3 text-xs text-slate-400 dark:text-slate-500 text-center">No matching records</li>
+          <li
+            v-for="rec in mergeTargetResults"
+            :key="rec.id"
+            class="flex items-center gap-2.5 px-3 py-2 cursor-pointer text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @mousedown.prevent="openMergeWith(rec, mergeTargetPicker!.source); mergeTargetPicker = null"
+          >
+            <span class="shrink-0 h-5 w-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold" :style="{ background: selectedType?.color ?? '#6366f1' }">{{ rec.title.slice(0, 1).toUpperCase() }}</span>
+            <span class="flex-1 truncate">{{ rec.title }}</span>
+          </li>
+        </ul>
+      </div>
+    </transition>
+
+    <!-- merge records comparison modal -->
+    <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div
+        v-if="mergeModal"
+        class="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        @click.self="mergeModal = null"
+      >
+        <div class="w-full max-w-2xl mx-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+          <!-- header -->
+          <div class="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+            <div class="h-8 w-8 rounded-full bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center text-violet-600 dark:text-violet-400 shrink-0">
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Merge records</h3>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Choose which value to keep for each field. The secondary record will be removed.</p>
+            </div>
+            <button type="button" class="shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-1" @click="mergeModal = null">
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </div>
+          <!-- column headers -->
+          <div class="grid grid-cols-[1fr_1fr] gap-px px-5 pt-3 pb-2 shrink-0 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+            <div class="flex items-center gap-2">
+              <span class="inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 text-[10px] font-semibold px-2 py-0.5">Keep</span>
+              <span class="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{{ mergeModal.primary.title }}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="inline-flex items-center gap-1 rounded-full bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 text-[10px] font-semibold px-2 py-0.5">Remove</span>
+              <span class="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{{ mergeModal.secondary.title }}</span>
+            </div>
+          </div>
+          <!-- field rows -->
+          <div class="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+            <div
+              v-for="field in (schema.find(s => s.key === mergeModal!.primary.record_type_key)?.fields ?? []).slice().sort((a, b) => a.position - b.position)"
+              :key="field.key"
+              class="grid grid-cols-[1fr_1fr] gap-px"
+              :class="field.is_title ? 'bg-slate-50/60 dark:bg-slate-800/30' : ''"
+            >
+              <!-- primary value cell -->
+              <label
+                class="flex items-start gap-2.5 px-4 py-2.5 cursor-pointer group transition-colors"
+                :class="mergeModal!.choices[field.key] === 'primary' ? 'bg-emerald-50/60 dark:bg-emerald-950/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'"
+              >
+                <input
+                  type="radio"
+                  :name="`merge-field-${field.key}`"
+                  value="primary"
+                  :checked="mergeModal!.choices[field.key] === 'primary'"
+                  class="mt-0.5 shrink-0 accent-emerald-500"
+                  @change="mergeModal!.choices[field.key] = 'primary'"
+                />
+                <div class="flex-1 min-w-0">
+                  <p class="text-[10px] font-medium text-slate-400 dark:text-slate-500 truncate mb-0.5">{{ field.label }}</p>
+                  <p class="text-xs text-slate-700 dark:text-slate-300 break-words">
+                    <span v-if="mergeModal!.primary.field_values[field.key] != null && String(mergeModal!.primary.field_values[field.key]).trim()">
+                      {{ String(mergeModal!.primary.field_values[field.key]) }}
+                    </span>
+                    <span v-else class="text-slate-300 dark:text-slate-600 italic">Empty</span>
+                  </p>
+                </div>
+              </label>
+              <!-- secondary value cell -->
+              <label
+                class="flex items-start gap-2.5 px-4 py-2.5 cursor-pointer group transition-colors border-l border-slate-100 dark:border-slate-800"
+                :class="mergeModal!.choices[field.key] === 'secondary' ? 'bg-rose-50/40 dark:bg-rose-950/10' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'"
+              >
+                <input
+                  type="radio"
+                  :name="`merge-field-${field.key}`"
+                  value="secondary"
+                  :checked="mergeModal!.choices[field.key] === 'secondary'"
+                  class="mt-0.5 shrink-0 accent-rose-500"
+                  @change="mergeModal!.choices[field.key] = 'secondary'"
+                />
+                <div class="flex-1 min-w-0">
+                  <p class="text-[10px] font-medium text-slate-400 dark:text-slate-500 truncate mb-0.5">
+                    {{ field.label }}
+                    <span
+                      v-if="String(mergeModal!.primary.field_values[field.key] ?? '').trim() === String(mergeModal!.secondary.field_values[field.key] ?? '').trim() && String(mergeModal!.primary.field_values[field.key] ?? '').trim()"
+                      class="ml-1 text-[9px] font-semibold rounded-full px-1 py-px bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
+                    >same</span>
+                  </p>
+                  <p class="text-xs text-slate-700 dark:text-slate-300 break-words">
+                    <span v-if="mergeModal!.secondary.field_values[field.key] != null && String(mergeModal!.secondary.field_values[field.key]).trim()">
+                      {{ String(mergeModal!.secondary.field_values[field.key]) }}
+                    </span>
+                    <span v-else class="text-slate-300 dark:text-slate-600 italic">Empty</span>
+                  </p>
+                </div>
+              </label>
+            </div>
+          </div>
+          <!-- footer -->
+          <div class="px-5 py-3.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2 shrink-0 bg-white dark:bg-slate-900">
+            <button
+              type="button"
+              class="flex-1 rounded-lg py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors"
+              @click="executeMerge"
+            >
+              <svg class="h-3.5 w-3.5 inline mr-1.5 -mt-px" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+              Merge records
+            </button>
+            <button type="button" class="rounded-lg py-2 px-4 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" @click="mergeModal = null">Cancel</button>
           </div>
         </div>
       </div>
@@ -8492,6 +8649,71 @@ const winLossModal = ref<{ record: CrmRecord; stage: WinLossStage } | null>(null
 const winLossReason = ref('');
 const winLossNote = ref('');
 watch(winLossModal, (val) => { if (!val) { winLossReason.value = ''; winLossNote.value = ''; } });
+
+// Merge records
+interface MergeDraft {
+  id: string;
+  title: string;
+  field_values: Record<string, unknown>;
+  record_type_key: string;
+  isDraft: true;
+}
+const mergeModal = ref<{ primary: CrmRecord; secondary: CrmRecord | MergeDraft; choices: Record<string, 'primary' | 'secondary'> } | null>(null);
+const mergeTargetPicker = ref<{ source: CrmRecord } | null>(null);
+const mergeTargetQuery = ref('');
+const mergeTargetInputEl = ref<HTMLInputElement | null>(null);
+watch(mergeTargetPicker, (v) => { if (v) nextTick(() => mergeTargetInputEl.value?.focus()); });
+const mergeTargetResults = computed((): CrmRecord[] => {
+  const picker = mergeTargetPicker.value;
+  if (!picker) return [];
+  const q = mergeTargetQuery.value.toLowerCase();
+  return mockRecords
+    .filter((r) => r.id !== picker.source.id && r.record_type_key === picker.source.record_type_key && (q === '' || r.title.toLowerCase().includes(q)))
+    .slice(0, 8);
+});
+
+function openMergeWith(primary: CrmRecord, secondary: CrmRecord | MergeDraft) {
+  const fields = schema.find((s) => s.key === primary.record_type_key)?.fields ?? [];
+  const choices: Record<string, 'primary' | 'secondary'> = {};
+  for (const f of fields) {
+    const pv = String(primary.field_values[f.key] ?? '').trim();
+    const sv = String(secondary.field_values[f.key] ?? '').trim();
+    choices[f.key] = !pv && sv ? 'secondary' : 'primary';
+  }
+  mergeModal.value = { primary, secondary, choices };
+}
+
+function executeMerge() {
+  const modal = mergeModal.value;
+  if (!modal) return;
+  const { primary, secondary, choices } = modal;
+  const fields = schema.find((s) => s.key === primary.record_type_key)?.fields ?? [];
+  for (const f of fields) {
+    if (choices[f.key] === 'secondary') {
+      primary.field_values[f.key] = secondary.field_values[f.key];
+    }
+  }
+  primary.updated_at = new Date().toISOString();
+  if (!('isDraft' in secondary)) {
+    for (const act of mockActivities) {
+      if (act.record_id === secondary.id) act.record_id = primary.id;
+    }
+    const idx = mockRecords.findIndex((r) => r.id === secondary.id);
+    if (idx !== -1) mockRecords.splice(idx, 1);
+  }
+  mockActivities.unshift({
+    id: 'act-merge-' + String(mockActivities.length),
+    record_id: primary.id,
+    type: 'change',
+    content: `Merged with "${secondary.title}"`,
+    author: 'You',
+    created_at: new Date().toISOString(),
+  });
+  mergeModal.value = null;
+  openRecord(primary);
+  showToast(`Records merged into "${primary.title}"`);
+}
+
 interface NewRuleDraft {
   name: string;
   enabled: boolean;
