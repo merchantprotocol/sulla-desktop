@@ -7907,6 +7907,7 @@
                 <div
                   v-for="field in (row.kind === 'field' ? [row.field] : [])"
                   :key="field.id"
+                  :data-field-key="field.key"
                   class="space-y-1 group/field"
                 >
                   <div class="flex items-center gap-1">
@@ -14176,16 +14177,21 @@
             <span class="text-xs font-semibold text-slate-700 dark:text-slate-200">Field completeness</span>
             <span class="tabular-nums font-bold text-sm" :class="completenessPercent >= 80 ? 'text-emerald-600 dark:text-emerald-400' : completenessPercent >= 50 ? 'text-amber-500 dark:text-amber-400' : 'text-rose-500 dark:text-rose-400'">{{ recordCompleteness.filled }}<span class="text-[10px] font-normal text-slate-400 dark:text-slate-500"> / {{ recordCompleteness.total }}</span></span>
           </div>
-          <div class="px-3 py-2 space-y-1 max-h-52 overflow-y-auto">
+          <div class="px-3 py-2 space-y-0.5 max-h-52 overflow-y-auto">
             <div
               v-for="field in (selectedType?.fields ?? [])"
               :key="field.key"
-              class="flex items-center gap-2"
-              :class="recordCompleteness.missing.includes(field.label) ? 'opacity-50' : ''"
+              class="flex items-center gap-2 rounded px-1 py-0.5 -mx-1 transition-colors"
+              :class="recordCompleteness.missing.includes(field.label)
+                ? 'opacity-60 cursor-pointer hover:opacity-100 hover:bg-rose-50 dark:hover:bg-rose-950/20 group/cfmiss'
+                : ''"
+              :title="recordCompleteness.missing.includes(field.label) ? `Click to jump to ${field.label}` : undefined"
+              @click="recordCompleteness.missing.includes(field.label) ? scrollToDetailField(field.key) : undefined"
             >
               <svg v-if="!recordCompleteness.missing.includes(field.label)" class="h-3 w-3 shrink-0 text-emerald-500 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
-              <svg v-else class="h-3 w-3 shrink-0 text-slate-300 dark:text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              <svg v-else class="h-3 w-3 shrink-0 text-slate-300 dark:text-slate-600 group-hover/cfmiss:text-rose-400 dark:group-hover/cfmiss:text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
               <span class="flex-1 text-[10px] text-slate-600 dark:text-slate-400 truncate" :title="field.label">{{ field.label }}</span>
+              <svg v-if="recordCompleteness.missing.includes(field.label)" class="h-2.5 w-2.5 shrink-0 text-slate-300 dark:text-slate-600 group-hover/cfmiss:text-rose-400 dark:group-hover/cfmiss:text-rose-500 opacity-0 group-hover/cfmiss:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
             </div>
           </div>
         </div>
@@ -16348,6 +16354,25 @@ function bulkSnooze(days: number) {
   const label = days === 1 ? 'tomorrow' : days === 3 ? '3 days' : '1 week';
   showToast(`Snoozed ${selectedIds.value.size} record${selectedIds.value.size === 1 ? '' : 's'} until ${label}`);
   clearSelection();
+}
+
+function scrollToDetailField(fieldKey: string) {
+  for (const sec of detailPanelSections.value) {
+    if (sec.fields.some((f) => f.key === fieldKey)) {
+      if (collapsedSections.value.has(sec.id)) {
+        const next = new Set(collapsedSections.value);
+        next.delete(sec.id);
+        collapsedSections.value = next;
+      }
+      break;
+    }
+  }
+  showCompletenessBreakdown.value = false;
+  detailTab.value = 'details';
+  nextTick(() => {
+    const el = document.querySelector(`[data-field-key="${fieldKey}"]`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
 }
 
 function snoozeAllInGroup(groupId: string, days: number) {
