@@ -3216,21 +3216,23 @@
                             >
                               <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            <span
+                            <button
                               v-if="scoringRulesForType.length"
-                              class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold"
+                              type="button"
+                              class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold cursor-pointer transition-opacity hover:opacity-75"
                               :class="scoreRecord(row.record) >= 70
                                 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
                                 : scoreRecord(row.record) >= 40
                                   ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400'
                                   : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
-                              :title="`Score: ${scoreRecord(row.record)} / 100`"
+                              :title="`Score: ${scoreRecord(row.record)} / 100 — click for breakdown`"
+                              @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = row.record; showScoreBreakdown = !showScoreBreakdown; }"
                             >
                               <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                               </svg>
                               {{ scoreRecord(row.record) }}
-                            </span>
+                            </button>
                           </div>
                         </td>
                         <td class="px-2 opacity-0 group-hover:opacity-100 transition-opacity" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
@@ -3476,21 +3478,23 @@
                       >
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      <span
+                      <button
                         v-if="scoringRulesForType.length"
-                        class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold"
+                        type="button"
+                        class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold cursor-pointer transition-opacity hover:opacity-75"
                         :class="scoreRecord(record) >= 70
                           ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
                           : scoreRecord(record) >= 40
                             ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400'
                             : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
-                        :title="`Score: ${scoreRecord(record)} / 100`"
+                        :title="`Score: ${scoreRecord(record)} / 100 — click for breakdown`"
+                        @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = record; showScoreBreakdown = !showScoreBreakdown; }"
                       >
                         <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                         </svg>
                         {{ scoreRecord(record) }}
-                      </span>
+                      </button>
                       <!-- due-date urgency badges -->
                       <svg
                         v-if="overdueIds.has(record.id)"
@@ -3962,21 +3966,23 @@
                       </span>
                     </template>
                     <!-- lead score badge on card -->
-                    <span
+                    <button
                       v-if="!kanbanCompact && scoringRulesForType.length"
-                      class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold mb-1.5 ml-0.5"
+                      type="button"
+                      class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold mb-1.5 ml-0.5 cursor-pointer transition-opacity hover:opacity-75"
                       :class="scoreRecord(record) >= 70
                         ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400'
                         : scoreRecord(record) >= 40
                           ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400'
                           : 'bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500'"
-                      :title="`Score: ${scoreRecord(record)} / 100`"
+                      :title="`Score: ${scoreRecord(record)} / 100 — click for breakdown`"
+                      @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = record; showScoreBreakdown = !showScoreBreakdown; }"
                     >
                       <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
                       {{ scoreRecord(record) }}
-                    </span>
+                    </button>
                     <!-- pending task count badge -->
                     <span
                       v-if="!kanbanCompact && pendingTaskCountByRecord[record.id]"
@@ -6771,7 +6777,7 @@
                     ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400 hover:bg-amber-100'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'"
                 :title="`Score: ${scoreRecord(openedRecord)} / 100 — ${scoringRulesForType.length} rule${scoringRulesForType.length === 1 ? '' : 's'}. Click for breakdown.`"
-                @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; showScoreBreakdown = !showScoreBreakdown; }"
+                @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = openedRecord; showScoreBreakdown = !showScoreBreakdown; }"
               >
                 <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -13342,18 +13348,18 @@
     <Teleport to="body">
       <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
         <div
-          v-if="showScoreBreakdown && openedRecord && scoringRulesForType.length"
+          v-if="showScoreBreakdown && scoreBreakdownRecord && scoringRulesForType.length"
           class="fixed z-[9999] w-56 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
           :style="{ top: `${scoreBreakdownPos.top}px`, left: `${scoreBreakdownPos.left}px` }"
           @click.stop
         >
           <div class="px-3 pt-3 pb-2 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <span class="text-xs font-semibold text-slate-700 dark:text-slate-200">Score breakdown</span>
-            <span class="tabular-nums font-bold text-sm" :class="scoreRecord(openedRecord) >= 70 ? 'text-emerald-600 dark:text-emerald-400' : scoreRecord(openedRecord) >= 40 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'">{{ scoreRecord(openedRecord) }}<span class="text-[10px] font-normal text-slate-400 dark:text-slate-500"> / 100</span></span>
+            <span class="tabular-nums font-bold text-sm" :class="scoreRecord(scoreBreakdownRecord) >= 70 ? 'text-emerald-600 dark:text-emerald-400' : scoreRecord(scoreBreakdownRecord) >= 40 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'">{{ scoreRecord(scoreBreakdownRecord) }}<span class="text-[10px] font-normal text-slate-400 dark:text-slate-500"> / 100</span></span>
           </div>
           <div class="px-3 py-2 space-y-1 max-h-48 overflow-y-auto">
             <div
-              v-for="row in scoreBreakdown(openedRecord)"
+              v-for="row in scoreBreakdown(scoreBreakdownRecord)"
               :key="row.label"
               class="flex items-center gap-2"
               :class="row.triggered ? '' : 'opacity-40'"
@@ -14704,6 +14710,7 @@ const scoringRules = ref<ScoringRule[]>([
 const showScoringModal = ref(false);
 const showScoreBreakdown = ref(false);
 const scoreBreakdownPos = ref({ top: 0, left: 0 });
+const scoreBreakdownRecord = ref<CrmRecord | null>(null);
 const scoringDraftCondition = ref<ScoringRule['condition']>('field_filled');
 const scoringDraftFieldKey = ref('');
 const scoringDraftValue = ref('');
