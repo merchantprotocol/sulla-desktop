@@ -2361,6 +2361,21 @@
                             >
                               <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
+                            <span
+                              v-if="scoringRulesForType.length"
+                              class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold"
+                              :class="scoreRecord(row.record) >= 70
+                                ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
+                                : scoreRecord(row.record) >= 40
+                                  ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
+                              :title="`Score: ${scoreRecord(row.record)} / 100`"
+                            >
+                              <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                              </svg>
+                              {{ scoreRecord(row.record) }}
+                            </span>
                           </div>
                         </td>
                         <td class="w-10 px-4 opacity-0 group-hover:opacity-100 transition-opacity" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
@@ -2559,6 +2574,21 @@
                       >
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
+                      <span
+                        v-if="scoringRulesForType.length"
+                        class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold"
+                        :class="scoreRecord(record) >= 70
+                          ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
+                          : scoreRecord(record) >= 40
+                            ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
+                        :title="`Score: ${scoreRecord(record)} / 100`"
+                      >
+                        <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        {{ scoreRecord(record) }}
+                      </span>
                       <!-- due-date urgency badges -->
                       <svg
                         v-if="overdueIds.has(record.id)"
@@ -2942,6 +2972,22 @@
                         {{ daysInStage(record) }}d
                       </span>
                     </template>
+                    <!-- lead score badge on card -->
+                    <span
+                      v-if="!kanbanCompact && scoringRulesForType.length"
+                      class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold mb-1.5 ml-0.5"
+                      :class="scoreRecord(record) >= 70
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400'
+                        : scoreRecord(record) >= 40
+                          ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400'
+                          : 'bg-slate-50 dark:bg-slate-800/60 text-slate-400 dark:text-slate-500'"
+                      :title="`Score: ${scoreRecord(record)} / 100`"
+                    >
+                      <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      {{ scoreRecord(record) }}
+                    </span>
                     <div v-if="!kanbanCompact" class="space-y-1">
                       <div
                         v-for="f in kanbanCardFields"
