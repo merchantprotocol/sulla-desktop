@@ -7243,8 +7243,27 @@
                               <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                             </svg>
                           </button>
-                          <span class="flex-1 text-xs" :class="item.d ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-200'">{{ item.t }}</span>
+                          <!-- inline edit mode -->
+                          <input
+                            v-if="editingChecklistItemKey === `${openedRecord.id}|${field.key}|${idx}`"
+                            v-model="editingChecklistItemDraft"
+                            type="text"
+                            class="flex-1 text-xs px-1.5 py-0.5 rounded border border-sky-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-sky-400"
+                            @keydown.enter.prevent="commitChecklistItemRename(openedRecord, field.key, idx)"
+                            @keydown.escape.prevent="editingChecklistItemKey = null"
+                            @blur="commitChecklistItemRename(openedRecord, field.key, idx)"
+                            @click.stop
+                          />
+                          <!-- display mode -->
+                          <span
+                            v-else
+                            class="flex-1 text-xs cursor-text"
+                            :class="item.d ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white'"
+                            title="Click to edit"
+                            @click.stop="editingChecklistItemKey = `${openedRecord.id}|${field.key}|${idx}`; editingChecklistItemDraft = item.t"
+                          >{{ item.t }}</span>
                           <button
+                            v-if="editingChecklistItemKey !== `${openedRecord.id}|${field.key}|${idx}`"
                             type="button"
                             class="invisible group-hover/ci:visible shrink-0 rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 transition-colors"
                             @click="removeChecklistItem(openedRecord, field.key, idx)"
@@ -13807,6 +13826,8 @@ const tagColors = ref<Record<string, TagColorId>>({});
 const tagColorPickerTag = ref<string | null>(null);
 const tagColorPickerPos = ref({ top: 0, left: 0 });
 const checklistAddText = ref<Record<string, string>>({});
+const editingChecklistItemKey = ref<string | null>(null);
+const editingChecklistItemDraft = ref('');
 const dismissedDuplicateWarning = ref<Set<string>>(new Set());
 const tagFilters = ref<Set<string>>(new Set());
 const tagFilterMode = ref<'and' | 'or'>('and');
@@ -18167,6 +18188,18 @@ function addChecklistItem(record: CrmRecord, fieldKey: string) {
 function removeChecklistItem(record: CrmRecord, fieldKey: string, idx: number) {
   const items = parseChecklist(record.field_values[fieldKey]);
   items.splice(idx, 1);
+  record.field_values[fieldKey] = serializeChecklist(items);
+}
+
+function commitChecklistItemRename(record: CrmRecord, fieldKey: string, idx: number) {
+  const key = `${record.id}|${fieldKey}|${idx}`;
+  if (editingChecklistItemKey.value !== key) return;
+  editingChecklistItemKey.value = null;
+  const draft = editingChecklistItemDraft.value.trim();
+  if (!draft) return;
+  const items = parseChecklist(record.field_values[fieldKey]);
+  if (!items[idx] || items[idx].t === draft) return;
+  items[idx] = { ...items[idx], t: draft };
   record.field_values[fieldKey] = serializeChecklist(items);
 }
 
