@@ -7270,20 +7270,32 @@
                   </div>
                   <!-- clickable cycle badge for select fields in view mode -->
                   <template v-if="!editingRecord && field.data_type === 'select'">
-                    <button
-                      v-if="openedRecord.field_values[field.key]"
-                      type="button"
-                      class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 cursor-pointer"
-                      :class="getOptionStyle(field, String(openedRecord.field_values[field.key])) ? '' : selectBadgeClass(String(openedRecord.field_values[field.key]))"
-                      :style="getOptionStyle(field, String(openedRecord.field_values[field.key]))"
-                      :title="`Click to cycle ${field.label} (${field.select_options?.join(' → ')})`"
-                      @click="cycleSelectField(openedRecord, field)"
-                    >
-                      {{ openedRecord.field_values[field.key] }}
-                      <svg class="h-2.5 w-2.5 opacity-60 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
-                      </svg>
-                    </button>
+                    <div v-if="openedRecord.field_values[field.key]" class="group/sel inline-flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 cursor-pointer"
+                        :class="getOptionStyle(field, String(openedRecord.field_values[field.key])) ? '' : selectBadgeClass(String(openedRecord.field_values[field.key]))"
+                        :style="getOptionStyle(field, String(openedRecord.field_values[field.key]))"
+                        :title="`Click to cycle ${field.label} (${field.select_options?.join(' → ')})`"
+                        @click="cycleSelectField(openedRecord, field)"
+                      >
+                        {{ openedRecord.field_values[field.key] }}
+                        <svg class="h-2.5 w-2.5 opacity-60 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+                        </svg>
+                      </button>
+                      <button
+                        v-if="!lockedRecordIds.has(openedRecord.id)"
+                        type="button"
+                        class="invisible group-hover/sel:visible h-4 w-4 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-all"
+                        title="Clear selection"
+                        @click.stop="openedRecord.field_values[field.key] = null; openedRecord.updated_at = new Date().toISOString(); runAutomations(openedRecord, field.key, null)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
                     <button
                       v-else
                       type="button"
