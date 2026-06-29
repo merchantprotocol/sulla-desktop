@@ -7434,95 +7434,182 @@
                 </div>
 
                 <!-- task list -->
-                <div v-if="recordTasks.length" class="space-y-1 mt-1">
-                  <div
-                    v-for="task in recordTasks"
-                    :key="task.id"
-                    class="group flex items-start gap-2.5 rounded-lg px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
-                  >
-                    <!-- priority dot — click to cycle high→medium→low→none -->
-                    <button
-                      type="button"
-                      class="mt-1 flex-shrink-0 h-2.5 w-2.5 rounded-sm transition-all opacity-0 group-hover:opacity-100"
-                      :class="task.priority === 'high'   ? 'opacity-100 bg-rose-500'
-                            : task.priority === 'medium' ? 'opacity-100 bg-amber-400'
-                            : task.priority === 'low'    ? 'opacity-100 bg-slate-400 dark:bg-slate-500'
-                            : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'"
-                      :title="task.priority ? `Priority: ${task.priority} — click to change` : 'Set priority'"
-                      @click.stop="(() => { const t = mockTasks.find(x => x.id === task.id); if (!t) return; t.priority = t.priority === 'high' ? 'medium' : t.priority === 'medium' ? 'low' : t.priority === 'low' ? undefined : 'high'; })()"
-                    />
-                    <button
-                      type="button"
-                      class="mt-0.5 flex-shrink-0 h-4 w-4 rounded border-2 transition-colors flex items-center justify-center"
-                      :class="task.done
-                        ? 'bg-emerald-500 border-emerald-500 text-white'
-                        : 'border-slate-300 dark:border-slate-600 hover:border-emerald-400'"
-                      @click="toggleTask(task.id)"
+                <div v-if="recordTasks.length" class="space-y-0.5 mt-1">
+                  <template v-for="task in recordTasks" :key="task.id">
+                    <!-- parent task row -->
+                    <div
+                      class="group flex items-start gap-2.5 rounded-lg px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
                     >
-                      <svg v-if="task.done" class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                      </svg>
-                    </button>
-                    <div class="flex-1 min-w-0">
-                      <!-- inline edit form -->
-                      <template v-if="editingTaskId === task.id">
-                        <input
-                          :value="editingTaskText"
-                          type="text"
-                          class="w-full text-sm px-2 py-0.5 rounded border border-sky-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400/50"
-                          @input="editingTaskText = ($event.target as HTMLInputElement).value"
-                          @keydown.enter.prevent="saveTaskEdit"
-                          @keydown.esc.prevent="cancelTaskEdit"
-                        />
-                        <div class="flex items-center gap-3 mt-1 flex-wrap">
+                      <!-- priority dot — click to cycle high→medium→low→none -->
+                      <button
+                        type="button"
+                        class="mt-1 flex-shrink-0 h-2.5 w-2.5 rounded-sm transition-all opacity-0 group-hover:opacity-100"
+                        :class="task.priority === 'high'   ? 'opacity-100 bg-rose-500'
+                              : task.priority === 'medium' ? 'opacity-100 bg-amber-400'
+                              : task.priority === 'low'    ? 'opacity-100 bg-slate-400 dark:bg-slate-500'
+                              : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'"
+                        :title="task.priority ? `Priority: ${task.priority} — click to change` : 'Set priority'"
+                        @click.stop="(() => { const t = mockTasks.find(x => x.id === task.id); if (!t) return; t.priority = t.priority === 'high' ? 'medium' : t.priority === 'medium' ? 'low' : t.priority === 'low' ? undefined : 'high'; })()"
+                      />
+                      <button
+                        type="button"
+                        class="mt-0.5 flex-shrink-0 h-4 w-4 rounded border-2 transition-colors flex items-center justify-center"
+                        :class="task.done
+                          ? 'bg-emerald-500 border-emerald-500 text-white'
+                          : 'border-slate-300 dark:border-slate-600 hover:border-emerald-400'"
+                        @click="toggleTask(task.id)"
+                      >
+                        <svg v-if="task.done" class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </button>
+                      <div class="flex-1 min-w-0">
+                        <!-- inline edit form -->
+                        <template v-if="editingTaskId === task.id">
                           <input
-                            :value="editingTaskDue"
-                            type="date"
-                            class="text-xs px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50"
-                            @input="editingTaskDue = ($event.target as HTMLInputElement).value"
+                            :value="editingTaskText"
+                            type="text"
+                            class="w-full text-sm px-2 py-0.5 rounded border border-sky-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+                            @input="editingTaskText = ($event.target as HTMLInputElement).value"
+                            @keydown.enter.prevent="saveTaskEdit"
+                            @keydown.esc.prevent="cancelTaskEdit"
                           />
-                          <div class="flex items-center gap-1">
-                            <button
-                              v-for="p in (['high', 'medium', 'low'] as const)"
-                              :key="p"
-                              type="button"
-                              class="h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors"
-                              :class="editingTaskPriority === p
-                                ? p === 'high'   ? 'bg-rose-500 text-white'
-                                : p === 'medium' ? 'bg-amber-400 text-white'
-                                :                  'bg-slate-400 text-white'
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
-                              @click="editingTaskPriority = editingTaskPriority === p ? '' : p"
-                            >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
+                          <div class="flex items-center gap-3 mt-1 flex-wrap">
+                            <input
+                              :value="editingTaskDue"
+                              type="date"
+                              class="text-xs px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+                              @input="editingTaskDue = ($event.target as HTMLInputElement).value"
+                            />
+                            <div class="flex items-center gap-1">
+                              <button
+                                v-for="p in (['high', 'medium', 'low'] as const)"
+                                :key="p"
+                                type="button"
+                                class="h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wide transition-colors"
+                                :class="editingTaskPriority === p
+                                  ? p === 'high'   ? 'bg-rose-500 text-white'
+                                  : p === 'medium' ? 'bg-amber-400 text-white'
+                                  :                  'bg-slate-400 text-white'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                                @click="editingTaskPriority = editingTaskPriority === p ? '' : p"
+                              >{{ p === 'high' ? 'H' : p === 'medium' ? 'M' : 'L' }}</button>
+                            </div>
+                            <button type="button" class="text-xs text-sky-600 dark:text-sky-400 hover:underline" @click="saveTaskEdit">Save</button>
+                            <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:underline" @click="cancelTaskEdit">Cancel</button>
                           </div>
-                          <button type="button" class="text-xs text-sky-600 dark:text-sky-400 hover:underline" @click="saveTaskEdit">Save</button>
-                          <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:underline" @click="cancelTaskEdit">Cancel</button>
-                        </div>
-                      </template>
-                      <!-- display mode -->
-                      <template v-else>
-                        <p
-                          class="text-sm leading-snug cursor-pointer"
-                          :class="task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'"
-                          @click="startTaskEdit(task)"
-                        >{{ task.text }}</p>
-                        <p v-if="task.due_date" class="text-xs mt-0.5"
-                          :class="task.due_date < DUE_TODAY_STR ? 'text-red-400 dark:text-red-500' : task.due_date <= DUE_SOON_STR ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
-                        >Due {{ task.due_date }}</p>
-                      </template>
+                        </template>
+                        <!-- display mode -->
+                        <template v-else>
+                          <p
+                            class="text-sm leading-snug cursor-pointer"
+                            :class="task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'"
+                            @click="startTaskEdit(task)"
+                          >{{ task.text }}</p>
+                          <p v-if="task.due_date" class="text-xs mt-0.5"
+                            :class="task.due_date < DUE_TODAY_STR ? 'text-red-400 dark:text-red-500' : task.due_date <= DUE_SOON_STR ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'"
+                          >Due {{ task.due_date }}</p>
+                          <!-- subtask summary / expand toggle -->
+                          <button
+                            v-if="recordSubtasks.get(task.id)?.length"
+                            type="button"
+                            class="mt-0.5 flex items-center gap-1 text-xs text-slate-400 dark:text-slate-500 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                            @click.stop="(() => { const next = new Set(expandedTaskIds); next.has(task.id) ? next.delete(task.id) : next.add(task.id); expandedTaskIds = next; })()"
+                          >
+                            <svg class="h-3 w-3 transition-transform" :class="expandedTaskIds.has(task.id) ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                            {{ (recordSubtasks.get(task.id) ?? []).filter(s => s.done).length }}/{{ recordSubtasks.get(task.id)!.length }} subtasks
+                          </button>
+                          <!-- add subtask trigger -->
+                          <button
+                            v-if="editingTaskId !== task.id && addingSubtaskOf !== task.id"
+                            type="button"
+                            class="mt-0.5 flex items-center gap-1 text-xs text-slate-300 dark:text-slate-700 hover:text-sky-500 dark:hover:text-sky-400 opacity-0 group-hover:opacity-100 transition-all"
+                            @click.stop="addingSubtaskOf = task.id; newSubtaskDraft = ''; (() => { const next = new Set(expandedTaskIds); next.add(task.id); expandedTaskIds = next; })()"
+                          >
+                            <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                            </svg>
+                            Add subtask
+                          </button>
+                        </template>
+                      </div>
+                      <button
+                        v-if="editingTaskId !== task.id"
+                        type="button"
+                        class="shrink-0 mt-0.5 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                        title="Delete task"
+                        @click="deleteTask(task.id)"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                     </div>
-                    <button
-                      v-if="editingTaskId !== task.id"
-                      type="button"
-                      class="shrink-0 mt-0.5 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
-                      title="Delete task"
-                      @click="deleteTask(task.id)"
-                    >
-                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
+                    <!-- subtask rows (expanded) -->
+                    <template v-if="expandedTaskIds.has(task.id)">
+                      <div
+                        v-for="sub in recordSubtasks.get(task.id)"
+                        :key="sub.id"
+                        class="group/sub ml-7 flex items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors border-l-2 border-slate-100 dark:border-slate-800"
+                      >
+                        <button
+                          type="button"
+                          class="mt-0.5 flex-shrink-0 h-3.5 w-3.5 rounded border-2 flex items-center justify-center transition-colors"
+                          :class="sub.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 dark:border-slate-600 hover:border-emerald-400'"
+                          @click="toggleTask(sub.id)"
+                        >
+                          <svg v-if="sub.done" class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </button>
+                        <template v-if="editingTaskId === sub.id">
+                          <input
+                            :value="editingTaskText"
+                            type="text"
+                            class="flex-1 text-xs px-2 py-0.5 rounded border border-sky-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400/50"
+                            @input="editingTaskText = ($event.target as HTMLInputElement).value"
+                            @keydown.enter.prevent="saveTaskEdit"
+                            @keydown.esc.prevent="cancelTaskEdit"
+                          />
+                          <button type="button" class="text-xs text-sky-600 dark:text-sky-400 hover:underline shrink-0 ml-1" @click="saveTaskEdit">Save</button>
+                          <button type="button" class="text-xs text-slate-400 hover:text-slate-600 shrink-0" @click="cancelTaskEdit">Cancel</button>
+                        </template>
+                        <p
+                          v-else
+                          class="flex-1 text-xs leading-snug cursor-pointer mt-0.5"
+                          :class="sub.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'"
+                          @click="startTaskEdit(sub)"
+                        >{{ sub.text }}</p>
+                        <button
+                          v-if="editingTaskId !== sub.id"
+                          type="button"
+                          class="shrink-0 h-4 w-4 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover/sub:opacity-100 transition-all"
+                          title="Delete subtask"
+                          @click="deleteTask(sub.id)"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <!-- add subtask inline input -->
+                      <div v-if="addingSubtaskOf === task.id" class="ml-7 flex items-center gap-2 px-2 py-1.5 border-l-2 border-sky-200 dark:border-sky-800/60">
+                        <div class="h-3.5 w-3.5 flex-shrink-0 rounded border-2 border-slate-300 dark:border-slate-600" />
+                        <input
+                          v-model="newSubtaskDraft"
+                          type="text"
+                          placeholder="New subtask…"
+                          class="flex-1 text-xs px-2 py-1 rounded border border-sky-400 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                          @keydown.enter.prevent="addSubtask(task.id)"
+                          @keydown.esc.prevent="addingSubtaskOf = null; newSubtaskDraft = ''"
+                        />
+                        <button type="button" class="text-xs text-sky-600 dark:text-sky-400 hover:underline shrink-0" @click="addSubtask(task.id)">Add</button>
+                        <button type="button" class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 shrink-0" @click="addingSubtaskOf = null; newSubtaskDraft = ''">Cancel</button>
+                      </div>
+                    </template>
+                  </template>
                 </div>
 
                 <!-- empty state -->
@@ -7538,16 +7625,19 @@
                     Clear completed ({{ recordTasks.filter(t => t.done).length }})
                   </button>
                 </div>
-                <!-- progress bar when tasks exist -->
-                <div v-if="recordTasks.length" class="mt-3">
+                <!-- progress bar when tasks exist (counts all tasks + subtasks) -->
+                <div v-if="openedRecord && mockTasks.filter(t => t.record_id === openedRecord.id).length" class="mt-3">
                   <div class="flex items-center justify-between mb-1">
-                    <span class="text-xs text-slate-400 dark:text-slate-500">{{ recordTasks.filter(t => t.done).length }} / {{ recordTasks.length }} done</span>
-                    <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ Math.round((recordTasks.filter(t => t.done).length / recordTasks.length) * 100) }}%</span>
+                    <span class="text-xs text-slate-400 dark:text-slate-500">
+                      {{ mockTasks.filter(t => t.record_id === openedRecord.id && t.done).length }}
+                      / {{ mockTasks.filter(t => t.record_id === openedRecord.id).length }} done
+                    </span>
+                    <span class="text-xs tabular-nums text-slate-400 dark:text-slate-500">{{ Math.round((mockTasks.filter(t => t.record_id === openedRecord.id && t.done).length / mockTasks.filter(t => t.record_id === openedRecord.id).length) * 100) }}%</span>
                   </div>
                   <div class="h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                     <div
                       class="h-full rounded-full bg-emerald-400 dark:bg-emerald-500 transition-all duration-300"
-                      :style="{ width: `${Math.round((recordTasks.filter(t => t.done).length / recordTasks.length) * 100)}%` }"
+                      :style="{ width: `${Math.round((mockTasks.filter(t => t.record_id === openedRecord.id && t.done).length / mockTasks.filter(t => t.record_id === openedRecord.id).length) * 100)}%` }"
                     />
                   </div>
                 </div>
@@ -10818,6 +10908,7 @@ interface CrmTask {
   created_at: string;
   due_date?: string;
   priority?: 'high' | 'medium' | 'low';
+  parent_id?: string;
 }
 
 type AutomationActionType = 'set_field' | 'create_task' | 'notify';
@@ -11166,6 +11257,12 @@ const mockTasks = reactive<CrmTask[]>([
   { id: 'tk4', record_id: 'r8',  text: 'Confirm legal sign-off timeline', done: false, created_at: '2026-06-26T09:00:00Z', due_date: dateOffset(5), priority: 'high' },
   { id: 'tk5', record_id: 'r8',  text: 'Send revised contract PDF', done: true,  created_at: '2026-06-20T11:00:00Z' },
   { id: 'tk6', record_id: 'r9',  text: 'Process renewal agreement',  done: false, created_at: '2026-06-24T15:00:00Z', due_date: dateOffset(3), priority: 'medium' },
+  // subtasks for tk1
+  { id: 'stk1', record_id: 'r1', text: 'Attach updated pricing sheet', done: false, created_at: '2026-06-25T10:02:00Z', parent_id: 'tk1' },
+  { id: 'stk2', record_id: 'r1', text: 'Include ROI case study',       done: true,  created_at: '2026-06-25T10:03:00Z', parent_id: 'tk1' },
+  // subtasks for tk4
+  { id: 'stk3', record_id: 'r8', text: 'Email legal team for update',  done: false, created_at: '2026-06-26T09:01:00Z', parent_id: 'tk4' },
+  { id: 'stk4', record_id: 'r8', text: 'Review redlines in clause 5',  done: false, created_at: '2026-06-26T09:02:00Z', parent_id: 'tk4' },
 ]);
 
 const mockAttachments = reactive<CrmAttachment[]>([
@@ -11778,6 +11875,9 @@ const editingTaskId = ref<string | null>(null);
 const editingTaskText = ref('');
 const editingTaskDue = ref('');
 const editingTaskPriority = ref<'high' | 'medium' | 'low' | ''>('');
+const expandedTaskIds = ref<Set<string>>(new Set());
+const addingSubtaskOf = ref<string | null>(null);
+const newSubtaskDraft = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
 const quickNoteRecordId = ref<string | null>(null);
 const quickNoteText = ref('');
@@ -14217,7 +14317,7 @@ const recordTasks = computed(() => {
   if (!openedRecord.value) return [];
   const PRANK = TASK_PRIORITY_RANK;
   return mockTasks
-    .filter((t) => t.record_id === openedRecord.value!.id && !(hideCompletedTasks.value && t.done))
+    .filter((t) => t.record_id === openedRecord.value!.id && !t.parent_id && !(hideCompletedTasks.value && t.done))
     .sort((a, b) => {
       if (a.done !== b.done) return a.done ? 1 : -1;
       // within incomplete tasks: sort by priority first
@@ -14235,7 +14335,23 @@ const recordTasks = computed(() => {
     });
 });
 
-const recordTasksPendingCount = computed(() => recordTasks.value.filter((t) => !t.done).length);
+const recordSubtasks = computed((): Map<string, CrmTask[]> => {
+  if (!openedRecord.value) return new Map();
+  const map = new Map<string, CrmTask[]>();
+  mockTasks
+    .filter((t) => t.record_id === openedRecord.value!.id && !!t.parent_id)
+    .forEach((t) => {
+      const pid = t.parent_id!;
+      if (!map.has(pid)) map.set(pid, []);
+      map.get(pid)!.push(t);
+    });
+  return map;
+});
+
+const recordTasksPendingCount = computed(() => {
+  if (!openedRecord.value) return 0;
+  return mockTasks.filter((t) => t.record_id === openedRecord.value!.id && !t.done).length;
+});
 
 // ── Global tasks view computeds ─────────────────────────────────────────────
 const allTasksInView = computed(() => {
@@ -14244,6 +14360,7 @@ const allTasksInView = computed(() => {
   );
   return mockTasks
     .filter((t) => typeRecordIds.has(t.record_id))
+    .filter((t) => !t.parent_id)  // top-level only in global view
     .filter((t) => !(tasksViewHideDone.value && t.done))
     .filter((t) => !tasksViewPriorityFilter.value || t.priority === tasksViewPriorityFilter.value)
     .map((t) => ({ task: t, record: mockRecords.find((r) => r.id === t.record_id) as CrmRecord | undefined }));
@@ -14254,7 +14371,7 @@ const allTasksOverdueCount = computed((): number => {
     mockRecords.filter((r) => r.record_type_key === selectedTypeKey.value).map((r) => r.id),
   );
   return mockTasks.filter(
-    (t) => !t.done && !!t.due_date && t.due_date < DUE_TODAY_STR && typeRecordIds.has(t.record_id),
+    (t) => !t.done && !t.parent_id && !!t.due_date && t.due_date < DUE_TODAY_STR && typeRecordIds.has(t.record_id),
   ).length;
 });
 
@@ -15678,6 +15795,25 @@ function addTask() {
   newTaskPriority.value = '';
 }
 
+function addSubtask(parentId: string) {
+  const text = newSubtaskDraft.value.trim();
+  if (!text || !openedRecord.value) return;
+  mockTasks.push({
+    id: 'stk-' + String(mockTasks.length) + '-' + String(Date.now()).slice(-5),
+    record_id: openedRecord.value.id,
+    text,
+    done: false,
+    created_at: new Date().toISOString(),
+    parent_id: parentId,
+  });
+  newSubtaskDraft.value = '';
+  addingSubtaskOf.value = null;
+  // auto-expand the parent to show new subtask
+  const next = new Set(expandedTaskIds.value);
+  next.add(parentId);
+  expandedTaskIds.value = next;
+}
+
 function startTaskEdit(task: CrmTask) {
   editingTaskId.value = task.id;
   editingTaskText.value = task.text;
@@ -15708,10 +15844,19 @@ function toggleTask(id: string) {
 }
 
 function deleteTask(id: string) {
-  const idx = mockTasks.findIndex((t) => t.id === id);
-  if (idx === -1) return;
-  const [removed] = mockTasks.splice(idx, 1);
-  showToast('Task deleted', { label: 'Undo', fn: () => { mockTasks.splice(idx, 0, removed); } });
+  // collect parent + all its subtasks
+  const toRemove = mockTasks.reduce<Array<{ idx: number; task: CrmTask }>>((acc, t, i) => {
+    if (t.id === id || t.parent_id === id) acc.push({ idx: i, task: t });
+    return acc;
+  }, []);
+  if (!toRemove.length) return;
+  const removed = toRemove.map((r) => r.task);
+  // splice from highest idx down to preserve indices
+  toRemove.slice().reverse().forEach((r) => mockTasks.splice(r.idx, 1));
+  showToast(`Task deleted${removed.length > 1 ? ` (+ ${removed.length - 1} subtask${removed.length - 1 === 1 ? '' : 's'})` : ''}`, {
+    label: 'Undo',
+    fn: () => { removed.forEach((t) => mockTasks.push(t)); },
+  });
 }
 
 function highlightText(text: string, query: string): Array<{ text: string; match: boolean }> {
