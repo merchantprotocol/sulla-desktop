@@ -2762,12 +2762,25 @@
             <div
               v-for="f in activeFilters"
               :key="f.fieldKey + ':' + f.value"
-              class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300"
+              class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs border"
+              :class="f.negate
+                ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300'
+                : 'bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300'"
             >
-              <span>{{ allColumns.find((c) => c.key === f.fieldKey)?.label }}: <b>{{ f.value }}</b></span>
               <button
                 type="button"
-                class="ml-0.5 text-sky-400 hover:text-sky-600 dark:hover:text-sky-200 transition-colors leading-none"
+                class="rounded px-1 text-[10px] font-bold leading-tight transition-colors shrink-0"
+                :class="f.negate
+                  ? 'bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 hover:bg-rose-200 dark:hover:bg-rose-800/40'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-rose-100 dark:hover:bg-rose-900/40 hover:text-rose-500 dark:hover:text-rose-400'"
+                :title="f.negate ? 'Excluding this value — click to include instead' : 'Including this value — click to exclude instead (NOT)'"
+                @click="toggleFilterNegate(f.fieldKey, f.value)"
+              >{{ f.negate ? 'NOT' : '=' }}</button>
+              <span class="px-0.5">{{ allColumns.find((c) => c.key === f.fieldKey)?.label }}: <b>{{ f.value }}</b></span>
+              <button
+                type="button"
+                class="ml-0.5 transition-colors leading-none"
+                :class="f.negate ? 'text-rose-400 hover:text-rose-600 dark:hover:text-rose-200' : 'text-sky-400 hover:text-sky-600 dark:hover:text-sky-200'"
                 :aria-label="`Remove ${f.fieldKey} filter`"
                 @click="toggleFilter(f.fieldKey, f.value)"
               >
@@ -14449,7 +14462,7 @@ interface FilterPreset {
   id: string;
   name: string;
   typeKey: string;
-  filters: Array<{ fieldKey: string; value: string }>;
+  filters: Array<{ fieldKey: string; value: string; negate?: boolean }>;
   fieldTextFilters: Record<string, string>;
   numberMinFilters: Record<string, number | null>;
   numberMaxFilters: Record<string, number | null>;
@@ -15336,7 +15349,7 @@ const showPalette = ref(false);
 const paletteQuery = ref('');
 const paletteIdx = ref(0);
 const paletteInputEl = ref<HTMLInputElement | null>(null);
-const activeFilters = ref<Array<{ fieldKey: string; value: string }>>([]);
+const activeFilters = ref<Array<{ fieldKey: string; value: string; negate?: boolean }>>([]);
 const pinnedIds = ref<Set<string>>(new Set());
 const showPinnedOnly = ref(false);
 const showWatchedOnly = ref(false);
@@ -16582,19 +16595,33 @@ const filteredRecords = computed(() => {
   }
 
   if (activeFilters.value.length) {
-    const byField = new Map<string, string[]>();
+    const regularByField = new Map<string, string[]>();
+    const negatedByField = new Map<string, string[]>();
     for (const f of activeFilters.value) {
-      const existing = byField.get(f.fieldKey) ?? [];
-      existing.push(f.value);
-      byField.set(f.fieldKey, existing);
+      if (f.negate) {
+        const existing = negatedByField.get(f.fieldKey) ?? [];
+        existing.push(f.value);
+        negatedByField.set(f.fieldKey, existing);
+      } else {
+        const existing = regularByField.get(f.fieldKey) ?? [];
+        existing.push(f.value);
+        regularByField.set(f.fieldKey, existing);
+      }
     }
     result = result.filter((r) => {
-      for (const [fk, vals] of byField) {
+      for (const [fk, vals] of regularByField) {
         const fv = r.field_values[fk];
         const matches = Array.isArray(fv)
           ? vals.some((v) => fv.includes(v))
           : vals.some((v) => String(fv ?? '') === v);
         if (!matches) return false;
+      }
+      for (const [fk, vals] of negatedByField) {
+        const fv = r.field_values[fk];
+        const matches = Array.isArray(fv)
+          ? vals.some((v) => fv.includes(v))
+          : vals.some((v) => String(fv ?? '') === v);
+        if (matches) return false;
       }
       return true;
     });
@@ -19093,6 +19120,14 @@ function toggleFilter(fieldKey: string, value: string) {
   } else {
     activeFilters.value = [...activeFilters.value, { fieldKey, value }];
   }
+}
+
+function toggleFilterNegate(fieldKey: string, value: string) {
+  const idx = activeFilters.value.findIndex((f) => f.fieldKey === fieldKey && f.value === value);
+  if (idx < 0) return;
+  const updated = [...activeFilters.value];
+  updated[idx] = { ...updated[idx], negate: !updated[idx].negate };
+  activeFilters.value = updated;
 }
 
 function clearFilters() {
