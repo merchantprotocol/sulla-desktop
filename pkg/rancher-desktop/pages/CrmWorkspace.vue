@@ -12430,7 +12430,7 @@
                   >
                     <p class="text-[10px] font-semibold uppercase tracking-wide text-violet-500 dark:text-violet-400">Options</p>
                     <div
-                      v-for="opt in selectedType.fields.find(f => f.id === editOptionColorsFieldId)?.select_options ?? []"
+                      v-for="(opt, optIdx) in selectedType.fields.find(f => f.id === editOptionColorsFieldId)?.select_options ?? []"
                       :key="opt"
                       class="group/sopt flex items-center gap-2"
                     >
@@ -12495,6 +12495,28 @@
                         @click.stop="removeSelectOption(editOptionColorsFieldId!, opt)"
                       >
                         <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                      <!-- move up -->
+                      <button
+                        type="button"
+                        class="invisible group-hover/sopt:visible shrink-0 rounded p-0.5 transition-colors"
+                        :class="optIdx === 0 ? 'text-slate-200 dark:text-slate-700 cursor-not-allowed' : 'text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400'"
+                        :disabled="optIdx === 0"
+                        title="Move up"
+                        @click.stop="reorderSelectOption(editOptionColorsFieldId!, optIdx, -1)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" /></svg>
+                      </button>
+                      <!-- move down -->
+                      <button
+                        type="button"
+                        class="invisible group-hover/sopt:visible shrink-0 rounded p-0.5 transition-colors"
+                        :class="optIdx === (selectedType.fields.find(f => f.id === editOptionColorsFieldId)?.select_options ?? []).length - 1 ? 'text-slate-200 dark:text-slate-700 cursor-not-allowed' : 'text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400'"
+                        :disabled="optIdx === (selectedType.fields.find(f => f.id === editOptionColorsFieldId)?.select_options ?? []).length - 1"
+                        title="Move down"
+                        @click.stop="reorderSelectOption(editOptionColorsFieldId!, optIdx, 1)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
                       </button>
                     </div>
                     <!-- add new option row -->
@@ -19661,6 +19683,19 @@ function commitRenameSelectOption(fieldId: string, oldVal: string) {
     for (const rec of mockRecords) {
       if (rec.field_values[field.key] === oldVal) rec.field_values[field.key] = newVal;
     }
+    return;
+  }
+}
+
+function reorderSelectOption(fieldId: string, fromIdx: number, dir: -1 | 1) {
+  for (const type of schema) {
+    const field = type.fields.find((f) => f.id === fieldId);
+    if (!field) continue;
+    const opts = [...(field.select_options ?? [])];
+    const toIdx = fromIdx + dir;
+    if (toIdx < 0 || toIdx >= opts.length) return;
+    [opts[fromIdx], opts[toIdx]] = [opts[toIdx], opts[fromIdx]];
+    field.select_options = opts;
     return;
   }
 }
