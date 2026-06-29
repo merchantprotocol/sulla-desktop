@@ -9985,6 +9985,8 @@ interface SavedView {
   showWatchedOnly: boolean;
   showIncompleteOnly: boolean;
   groupByField: string | null;
+  tagFilters?: string[];
+  groupDateMode?: 'week' | 'month' | 'quarter';
 }
 
 interface FilterPreset {
@@ -15155,6 +15157,8 @@ function saveCurrentView() {
     showWatchedOnly: showWatchedOnly.value,
     showIncompleteOnly: showIncompleteOnly.value,
     groupByField: groupByField.value,
+    tagFilters: [...tagFilters.value],
+    groupDateMode: groupDateMode.value,
   };
   savedViews.value = [...savedViews.value, view];
   showSaveViewPopover.value = false;
@@ -15174,6 +15178,8 @@ function applySavedView(view: SavedView) {
   showWatchedOnly.value = view.showWatchedOnly;
   showIncompleteOnly.value = view.showIncompleteOnly ?? false;
   groupByField.value = view.groupByField ?? null;
+  tagFilters.value = new Set(view.tagFilters ?? []);
+  groupDateMode.value = view.groupDateMode ?? 'month';
   searchQuery.value = '';
   closePanel();
 }
