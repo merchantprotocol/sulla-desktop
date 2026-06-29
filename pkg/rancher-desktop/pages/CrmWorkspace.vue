@@ -6000,6 +6000,17 @@
                     title="Scroll to today"
                     @click.stop="(() => { const el = timelineScrollEl; if (!el) return; const w = el.scrollWidth - 208; el.scrollLeft = Math.max(0, w * timelineViewData!.todayPct / 100 - el.clientWidth / 2 + 104); })()"
                   >Today</button>
+                  <!-- row sort -->
+                  <select
+                    v-model="timelineSortKey"
+                    class="h-5 rounded border border-slate-200 dark:border-slate-700 text-[10px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 px-1 focus:outline-none focus:ring-1 focus:ring-sky-400/40 cursor-pointer"
+                    title="Sort timeline rows"
+                  >
+                    <option value="start">Sort: Start</option>
+                    <option value="end">Sort: End</option>
+                    <option value="name">Sort: Name</option>
+                    <option value="duration">Sort: Duration</option>
+                  </select>
                   <!-- zoom controls -->
                   <div class="ml-auto flex items-center gap-0.5">
                     <button
@@ -17763,6 +17774,7 @@ const funnelData = computed((): Array<{
 });
 
 const timelinePadLevel = ref(0); // -2 to +2 zoom levels; 0 = default
+const timelineSortKey = ref<'start' | 'end' | 'name' | 'duration'>('start');
 const timelineScrollEl = ref<HTMLElement | null>(null);
 const showTimelineFieldPicker = ref(false);
 const showTimelineColorPicker = ref(false);
@@ -17846,7 +17858,19 @@ const timelineViewData = computed(() => {
     const fieldHex = colorField ? (colorField.select_option_colors?.[fieldVal] ?? null) : null;
     const barColor = isOverdue ? '#f87171' : (fieldHex ?? (selectedType.value?.color ?? '#6366f1'));
     return { record: r, title, startIso, endIso, startPct, widthPct, isOverdue, durationDays, barColor };
-  }).sort((a, b) => a.startIso.localeCompare(b.startIso));
+  }).sort((a, b) => {
+    const sk = timelineSortKey.value;
+    if (sk === 'end') {
+      const ae = a.endIso ?? '9999-12-31'; const be = b.endIso ?? '9999-12-31';
+      return ae.localeCompare(be);
+    }
+    if (sk === 'name') return a.title.localeCompare(b.title);
+    if (sk === 'duration') {
+      const ad = a.durationDays ?? 0; const bd = b.durationDays ?? 0;
+      return bd - ad; // longest first
+    }
+    return a.startIso.localeCompare(b.startIso);
+  });
 
   // Month tick marks
   const ticks: Array<{ label: string; pct: number }> = [];
