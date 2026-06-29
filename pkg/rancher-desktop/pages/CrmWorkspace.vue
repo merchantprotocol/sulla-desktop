@@ -8599,6 +8599,18 @@
           </svg>
           Column stats
         </button>
+        <button
+          v-if="colHeaderMenu && (fieldTextFilters[colHeaderMenu.fieldKey] || numberMinFilters[colHeaderMenu.fieldKey] != null || numberMaxFilters[colHeaderMenu.fieldKey] != null || dateAfterFilters[colHeaderMenu.fieldKey] || dateBeforeFilters[colHeaderMenu.fieldKey] || activeFilters.some(f => f.fieldKey === colHeaderMenu!.fieldKey))"
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-rose-500 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-colors"
+          @click="(() => { const k = colHeaderMenu!.fieldKey; fieldTextFilters = { ...fieldTextFilters, [k]: '' }; numberMinFilters = { ...numberMinFilters, [k]: null }; numberMaxFilters = { ...numberMaxFilters, [k]: null }; dateAfterFilters = { ...dateAfterFilters, [k]: '' }; dateBeforeFilters = { ...dateBeforeFilters, [k]: '' }; activeFilters = activeFilters.filter(f => f.fieldKey !== k); colHeaderMenu = null; })()"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18 18l-4-4m0 4l4-4" />
+          </svg>
+          Clear column filter
+        </button>
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           @click="hiddenColumnKeys = new Set([...hiddenColumnKeys, colHeaderMenu!.fieldKey]); colHeaderMenu = null">
           <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
