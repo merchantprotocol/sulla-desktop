@@ -5155,12 +5155,31 @@
 
         <!-- ── Stats/Insights view ── -->
         <div v-if="viewMode === 'stats' && statsViewData" class="flex-1 overflow-y-auto p-6 space-y-6">
+          <!-- date range preset selector -->
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs font-medium text-slate-400 dark:text-slate-500 mr-1">Period:</span>
+            <button
+              v-for="p in ([{ key: '7d', label: '7 days' }, { key: '30d', label: '30 days' }, { key: '90d', label: '90 days' }, { key: 'ytd', label: 'Year to date' }, { key: 'all', label: 'All time' }] as const)"
+              :key="p.key"
+              type="button"
+              class="h-6 px-2.5 rounded-full text-xs font-medium transition-colors"
+              :class="statsDatePreset === p.key
+                ? 'bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-700'
+                : 'text-slate-500 dark:text-slate-400 border border-transparent hover:border-slate-200 dark:hover:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'"
+              @click="statsDatePreset = p.key"
+            >{{ p.label }}</button>
+          </div>
+
           <!-- top summary cards -->
           <div class="grid grid-cols-3 gap-4">
             <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
               <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Total records</p>
               <p class="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">{{ statsViewData.total }}</p>
-              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ selectedType?.label_plural }}</p>
+              <p v-if="statsDatePreset !== 'all'" class="text-xs mt-0.5">
+                <span class="font-semibold tabular-nums" :class="statsViewData.newRecords > 0 ? 'text-emerald-500' : 'text-slate-400 dark:text-slate-500'">+{{ statsViewData.newRecords }}</span>
+                <span class="text-slate-400 dark:text-slate-500"> new this period</span>
+              </p>
+              <p v-else class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ selectedType?.label_plural }}</p>
             </div>
             <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
               <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Completeness</p>
@@ -5170,7 +5189,7 @@
             <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
               <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1">Activity</p>
               <p class="text-2xl font-bold text-slate-900 dark:text-white tabular-nums">{{ Object.values(statsViewData.activityCounts).reduce((a, b) => a + b, 0) }}</p>
-              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">total logged items</p>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ statsDatePreset === 'all' ? 'total logged items' : statsDatePreset === '7d' ? 'in the last 7 days' : statsDatePreset === '30d' ? 'in the last 30 days' : statsDatePreset === '90d' ? 'in the last 90 days' : 'year to date' }}</p>
             </div>
           </div>
 
@@ -5621,7 +5640,10 @@
 
           <!-- activity breakdown -->
           <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-            <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Activity breakdown</p>
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Activity breakdown</p>
+              <span v-if="statsDatePreset !== 'all'" class="text-[10px] text-slate-400 dark:text-slate-500">{{ statsDatePreset === '7d' ? 'Last 7 days' : statsDatePreset === '30d' ? 'Last 30 days' : statsDatePreset === '90d' ? 'Last 90 days' : 'Year to date' }}</span>
+            </div>
             <div class="flex gap-4 flex-wrap">
               <button
                 v-for="(count, type) in statsViewData.activityCounts"
@@ -17299,11 +17321,26 @@ const hasTableTotals = computed(() =>
   Object.values(tableColumnStats.value).some((v) => v !== null),
 );
 
+const statsDatePreset = ref<'7d' | '30d' | '90d' | 'ytd' | 'all'>('30d');
+
+const statsDateCutoff = computed((): Date | null => {
+  const p = statsDatePreset.value;
+  if (p === 'all') return null;
+  const today = new Date(DUE_TODAY_STR);
+  if (p === '7d') { today.setDate(today.getDate() - 7); return today; }
+  if (p === '30d') { today.setDate(today.getDate() - 30); return today; }
+  if (p === '90d') { today.setDate(today.getDate() - 90); return today; }
+  // ytd — Jan 1 of current year
+  return new Date(today.getFullYear(), 0, 1);
+});
+
 const statsViewData = computed(() => {
   const rt = selectedType.value;
   if (!rt) return null;
   const recs = mockRecords.filter((r) => r.record_type_key === rt.key);
   const total = recs.length;
+  const cutoff = statsDateCutoff.value;
+  const newRecords = cutoff ? recs.filter((r) => new Date(r.created_at) >= cutoff).length : total;
 
   const selectCharts = rt.fields
     .filter((f) => f.data_type === 'select' || f.data_type === 'multi_select')
@@ -17346,9 +17383,9 @@ const statsViewData = computed(() => {
   const activityCounts = { note: 0, email: 0, call: 0, meeting: 0, change: 0 };
   const recIds = new Set(recs.map((r) => r.id));
   for (const a of mockActivities) {
-    if (recIds.has(a.record_id) && a.type in activityCounts) {
-      activityCounts[a.type as keyof typeof activityCounts]++;
-    }
+    if (!recIds.has(a.record_id) || !(a.type in activityCounts)) continue;
+    if (cutoff && new Date(a.created_at) < cutoff) continue;
+    activityCounts[a.type as keyof typeof activityCounts]++;
   }
 
   const completeness = total > 0 ? Math.round((recs.filter((r) => {
@@ -17424,7 +17461,7 @@ const statsViewData = computed(() => {
   }
   const heatmapMax = Math.max(...Object.values(dateCounts), 1);
 
-  return { total, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
+  return { total, newRecords, completeness, selectCharts, numberCards, activityCounts, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax };
 });
 
 // ── Activity digest ───────────────────────────────────────────────────────
