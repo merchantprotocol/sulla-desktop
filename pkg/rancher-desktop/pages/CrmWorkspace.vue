@@ -4931,9 +4931,11 @@
               <div
                 v-for="row in pipelineVelocity"
                 :key="row.stage"
-                class="flex items-center gap-3"
+                class="flex items-center gap-3 cursor-pointer group/vel"
+                :title="`${row.count} record${row.count === 1 ? '' : 's'} in ${row.stage} — click to filter`"
+                @click="kanbanField && (toggleFilter(kanbanField.key, row.stage), viewMode = 'table')"
               >
-                <div class="w-24 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right leading-tight">{{ row.stage }}</div>
+                <div class="w-24 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right leading-tight group-hover/vel:text-sky-600 dark:group-hover/vel:text-sky-400 transition-colors">{{ row.stage }}</div>
                 <div class="flex-1 relative h-6 rounded overflow-hidden bg-slate-100 dark:bg-slate-800">
                   <div
                     class="absolute inset-y-0 left-0 rounded flex items-center transition-all duration-500"
@@ -5051,10 +5053,13 @@
           <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-3">Activity breakdown</p>
             <div class="flex gap-4 flex-wrap">
-              <div
+              <button
                 v-for="(count, type) in statsViewData.activityCounts"
                 :key="type"
-                class="flex items-center gap-2"
+                type="button"
+                class="flex items-center gap-2 rounded-lg p-1.5 -m-1.5 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors group/ab"
+                :title="`${count} ${type} activities — click to view in feed`"
+                @click="feedTypeFilter = type as typeof feedTypeFilter; viewMode = 'feed'"
               >
                 <span
                   class="h-6 w-6 rounded-full flex items-center justify-center text-xs shrink-0"
@@ -5066,9 +5071,9 @@
                 </span>
                 <div>
                   <p class="text-sm font-semibold tabular-nums text-slate-900 dark:text-white">{{ count }}</p>
-                  <p class="text-[10px] capitalize text-slate-400 dark:text-slate-500">{{ type }}</p>
+                  <p class="text-[10px] capitalize text-slate-400 dark:text-slate-500 group-hover/ab:text-sky-500 dark:group-hover/ab:text-sky-400 transition-colors">{{ type }}</p>
                 </div>
-              </div>
+              </button>
             </div>
           </div>
 
