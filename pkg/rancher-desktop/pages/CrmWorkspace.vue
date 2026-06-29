@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -6449,6 +6449,76 @@
               <div>
                 <h2 class="text-base font-semibold text-slate-900 dark:text-white">Focus</h2>
                 <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ focusGroups.reduce((n, g) => n + g.records.length, 0) }} {{ selectedType?.label ?? 'record' }}{{ focusGroups.reduce((n, g) => n + g.records.length, 0) === 1 ? '' : 's' }} need attention</p>
+              </div>
+              <!-- threshold settings -->
+              <div class="relative" @click.stop>
+                <button
+                  type="button"
+                  class="flex items-center justify-center h-7 w-7 rounded-lg text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                  :class="showFocusSettings ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300' : ''"
+                  title="Attention thresholds"
+                  @click.stop="showFocusSettings = !showFocusSettings"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+                <!-- settings popover -->
+                <div
+                  v-if="showFocusSettings"
+                  class="absolute top-full right-0 mt-1 z-40 w-64 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-3.5 space-y-3"
+                  @click.stop
+                >
+                  <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Attention thresholds</p>
+                  <div class="space-y-2">
+                    <div class="flex items-center gap-2">
+                      <label class="flex-1 text-xs text-slate-600 dark:text-slate-400">Stale in stage after</label>
+                      <div class="flex items-center gap-1">
+                        <input
+                          v-model.number="focusStaleThreshold"
+                          type="number"
+                          min="1"
+                          max="365"
+                          class="w-14 h-6 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white text-center focus:outline-none focus:ring-2 focus:ring-sky-400/40 tabular-nums"
+                        />
+                        <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">days</span>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <label class="flex-1 text-xs text-slate-600 dark:text-slate-400">No activity after</label>
+                      <div class="flex items-center gap-1">
+                        <input
+                          v-model.number="focusInactiveThreshold"
+                          type="number"
+                          min="1"
+                          max="365"
+                          class="w-14 h-6 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white text-center focus:outline-none focus:ring-2 focus:ring-sky-400/40 tabular-nums"
+                        />
+                        <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">days</span>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <label class="flex-1 text-xs text-slate-600 dark:text-slate-400">Incomplete profile below</label>
+                      <div class="flex items-center gap-1">
+                        <input
+                          v-model.number="focusCompletenessThreshold"
+                          type="number"
+                          min="1"
+                          max="100"
+                          class="w-14 h-6 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white text-center focus:outline-none focus:ring-2 focus:ring-sky-400/40 tabular-nums"
+                        />
+                        <span class="text-xs text-slate-400 dark:text-slate-500 shrink-0">%</span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    v-if="focusStaleThreshold !== 21 || focusInactiveThreshold !== 30 || focusCompletenessThreshold !== 50"
+                    type="button"
+                    class="w-full h-6 rounded-lg text-[10px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    @click="focusStaleThreshold = 21; focusInactiveThreshold = 30; focusCompletenessThreshold = 50"
+                  >Reset to defaults</button>
+                </div>
               </div>
             </div>
 
@@ -15116,6 +15186,10 @@ const watchedIds = ref<Set<string>>(new Set());
 const snoozedUntil = ref<Record<string, string>>({});
 const snoozeMenuId = ref<string | null>(null);
 const focusSnoozeId = ref<string | null>(null);
+const showFocusSettings = ref(false);
+const focusStaleThreshold = ref(21);
+const focusInactiveThreshold = ref(30);
+const focusCompletenessThreshold = ref(50);
 const dismissedActivityIds = reactive<Set<string>>(new Set());
 const reminders = ref<Record<string, { date: string; note: string }>>({});
 const reminderMenuId = ref<string | null>(null);
@@ -16822,8 +16896,9 @@ const focusGroups = computed((): Array<{
     .filter((r) => overdueIds.value.has(r.id))
     .map((r) => { seen.add(r.id); return { record: r, reason: 'Overdue', detail: 'Has an activity past its scheduled date' }; });
 
+  const staleDays = focusStaleThreshold.value;
   const stale = typeRecs
-    .filter((r) => !seen.has(r.id) && (daysInStage(r) ?? 0) > 21)
+    .filter((r) => !seen.has(r.id) && (daysInStage(r) ?? 0) > staleDays)
     .map((r) => {
       seen.add(r.id);
       const d = daysInStage(r) ?? 0;
@@ -16831,11 +16906,12 @@ const focusGroups = computed((): Array<{
       return { record: r, reason: `${d}d in stage`, detail: stageName ? `In "${stageName}" for ${d} days — consider moving forward or closing` : `No stage movement in ${d} days` };
     });
 
+  const inactiveDays = focusInactiveThreshold.value;
   const noActivity = typeRecs
     .filter((r) => !seen.has(r.id))
     .filter((r) => {
       const lastTs = lastActivityByRecord.value[r.id];
-      return !lastTs || nowMs - lastTs > 30 * 86_400_000;
+      return !lastTs || nowMs - lastTs > inactiveDays * 86_400_000;
     })
     .map((r) => {
       seen.add(r.id);
@@ -16848,19 +16924,20 @@ const focusGroups = computed((): Array<{
       };
     });
 
+  const complPct = focusCompletenessThreshold.value;
   const incomplete = typeRecs
-    .filter((r) => !seen.has(r.id) && recordCompleteness(r) < 50)
+    .filter((r) => !seen.has(r.id) && recordCompleteness(r) < complPct)
     .map((r) => {
       seen.add(r.id);
       const pct = recordCompleteness(r);
-      return { record: r, reason: `${pct}% complete`, detail: `Profile less than half filled — add key details to improve data quality` };
+      return { record: r, reason: `${pct}% complete`, detail: `Profile below ${complPct}% — add key details to improve data quality` };
     });
 
   return [
     { id: 'overdue', label: 'Overdue activities', description: 'Activities that are past their scheduled date', records: overdue },
-    { id: 'stale', label: 'Stale in stage', description: 'In the same pipeline stage for more than 3 weeks', records: stale },
-    { id: 'no-activity', label: 'No recent activity', description: 'Not touched in 30+ days', records: noActivity },
-    { id: 'incomplete', label: 'Incomplete profile', description: 'Less than 50% of fields filled in', records: incomplete },
+    { id: 'stale', label: 'Stale in stage', description: `In the same pipeline stage for more than ${staleDays} days`, records: stale },
+    { id: 'no-activity', label: 'No recent activity', description: `Not touched in ${inactiveDays}+ days`, records: noActivity },
+    { id: 'incomplete', label: 'Incomplete profile', description: `Less than ${complPct}% of fields filled in`, records: incomplete },
   ].filter((g) => g.records.length > 0);
 });
 
