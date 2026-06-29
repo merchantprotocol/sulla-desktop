@@ -17512,6 +17512,12 @@ const PALETTE_COMMANDS: PaletteCmd[] = [
   { id: 'archive',   label: 'Toggle archived', description: 'Show / hide archived records', action: () => { showArchived.value = !showArchived.value; showToast(showArchived.value ? 'Showing archived records' : 'Archived records hidden'); } },
   { id: 'selall',    label: 'Select all',      description: 'Select all filtered records',  action: () => { selectedIds.value = new Set(filteredRecords.value.map((r) => r.id)); showToast(`${filteredRecords.value.length} records selected`); } },
   { id: 'dark',      label: 'Toggle dark mode', description: 'Switch between light and dark theme', action: () => { toggleTheme(); } },
+  { id: 'pinonly',   label: 'Toggle pinned only', description: 'Show only pinned records', action: () => { showPinnedOnly.value = !showPinnedOnly.value; showToast(showPinnedOnly.value ? 'Showing pinned only' : 'Showing all records'); } },
+  { id: 'watchonly', label: 'Toggle watched only', description: 'Show only watched records', action: () => { showWatchedOnly.value = !showWatchedOnly.value; showToast(showWatchedOnly.value ? 'Showing watched only' : 'Showing all records'); } },
+  { id: 'incomplete', label: 'Toggle incomplete only', description: 'Show only incomplete records', action: () => { showIncompleteOnly.value = !showIncompleteOnly.value; showToast(showIncompleteOnly.value ? 'Showing incomplete only' : 'Showing all records'); } },
+  { id: 'compact',   label: 'Toggle compact kanban', description: 'Switch kanban between compact and full card mode', action: () => { kanbanCompact.value = !kanbanCompact.value; showToast(kanbanCompact.value ? 'Compact kanban' : 'Full kanban cards'); } },
+  { id: 'sidebar',   label: 'Toggle sidebar', description: 'Collapse or expand the left sidebar', action: () => { sidebarCollapsed.value = !sidebarCollapsed.value; } },
+  { id: 'deselect',  label: 'Deselect all',   description: 'Clear the current record selection', action: () => { selectedIds.value = new Set(); } },
 ];
 
 const paletteCommandMode = computed(() => paletteQuery.value.startsWith('>'));
