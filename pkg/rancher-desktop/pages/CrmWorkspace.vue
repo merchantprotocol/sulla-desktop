@@ -5000,12 +5000,14 @@
                 <div
                   v-for="bar in chart.bars"
                   :key="bar.label"
-                  class="flex items-center gap-2"
+                  class="flex items-center gap-2 cursor-pointer group/sbar"
+                  :title="`${bar.count} records with ${chart.field.label} = ${bar.label} — click to filter`"
+                  @click="toggleFilter(chart.field.key, bar.label); viewMode = 'table'"
                 >
-                  <div class="w-28 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right">{{ bar.label }}</div>
+                  <div class="w-28 shrink-0 text-xs text-slate-600 dark:text-slate-400 truncate text-right group-hover/sbar:text-sky-600 dark:group-hover/sbar:text-sky-400 transition-colors">{{ bar.label }}</div>
                   <div class="flex-1 h-5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                     <div
-                      class="h-full rounded-full transition-all duration-300"
+                      class="h-full rounded-full transition-all duration-300 group-hover/sbar:opacity-80"
                       :style="{ width: `${bar.barPct}%`, background: chart.field.select_option_colors?.[bar.label] ?? '#6366f1' }"
                     />
                   </div>
