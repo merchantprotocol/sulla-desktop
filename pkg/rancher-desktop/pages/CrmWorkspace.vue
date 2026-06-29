@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -937,6 +937,47 @@
               </svg>
               Duplicate
             </button>
+            <!-- bulk convert -->
+            <div class="relative">
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm border transition-colors"
+                :class="showBulkConvertDropdown
+                  ? 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800'"
+                :title="`Convert ${selectedIds.size} selected record${selectedIds.size === 1 ? '' : 's'} to a different type`"
+                @click.stop="showBulkConvertDropdown = !showBulkConvertDropdown"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+                Convert
+                <svg class="h-3 w-3 ml-0.5 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div
+                v-if="showBulkConvertDropdown"
+                class="absolute top-full mt-1 left-0 z-50 min-w-[180px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1"
+                @click.stop
+              >
+                <p class="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">Convert to type</p>
+                <button
+                  v-for="rt in schema.filter(s => s.key !== selectedTypeKey)"
+                  :key="rt.key"
+                  type="button"
+                  class="w-full flex items-center gap-2.5 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-left"
+                  @click="bulkConvert(rt.key); showBulkConvertDropdown = false"
+                >
+                  <span
+                    class="h-5 w-5 rounded text-[11px] flex items-center justify-center font-bold shrink-0 select-none"
+                    :style="`background:${rt.color}22;color:${rt.color}`"
+                  >{{ rt.icon }}</span>
+                  {{ rt.label }}
+                </button>
+                <p v-if="schema.filter(s => s.key !== selectedTypeKey).length === 0" class="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">No other types</p>
+              </div>
+            </div>
             <!-- bulk compare (exactly 2 selected) -->
             <button
               v-if="selectedIds.size === 2"
@@ -18367,6 +18408,48 @@ function bulkDuplicate() {
   }
   selectedIds.value = new Set(newIds);
   showToast(`${newIds.length} record${newIds.length === 1 ? '' : 's'} duplicated`);
+}
+
+const showBulkConvertDropdown = ref(false);
+
+function bulkConvert(targetTypeKey: string) {
+  const ids = [...selectedIds.value];
+  if (!ids.length) return;
+  const tgtType = schema.find((s) => s.key === targetTypeKey);
+  if (!tgtType) return;
+  const now = new Date().toISOString();
+  let converted = 0;
+  for (const id of ids) {
+    const src = mockRecords.find((r) => r.id === id);
+    if (!src || src.record_type_key === targetTypeKey) continue;
+    const srcFields = schema.find((s) => s.key === src.record_type_key)?.fields ?? [];
+    const tgtFields = tgtType.fields;
+    const newFieldValues: Record<string, string | number | boolean | string[] | null> = {};
+    for (const sf of srcFields) {
+      const byLabel = tgtFields.find((tf) => tf.label.toLowerCase() === sf.label.toLowerCase() && tf.data_type === sf.data_type);
+      const byKey = tgtFields.find((tf) => tf.key === sf.key && tf.data_type === sf.data_type);
+      const byType = tgtFields.find((tf) => tf.data_type === sf.data_type);
+      const tgtKey = (byLabel ?? byKey ?? byType)?.key;
+      if (tgtKey && src.field_values[sf.key] != null) newFieldValues[tgtKey] = src.field_values[sf.key];
+    }
+    const titleField = tgtType.fields.find((f) => f.is_title);
+    if (titleField && !newFieldValues[titleField.key]) newFieldValues[titleField.key] = src.title;
+    src.record_type_key = targetTypeKey;
+    src.field_values = newFieldValues;
+    src.updated_at = now;
+    mockActivities.unshift({
+      id: `act-bcvt-${src.id}-${String(mockActivities.length)}`,
+      record_id: src.id,
+      type: 'change',
+      content: `Converted to ${tgtType.label}`,
+      author: 'You',
+      created_at: now,
+    });
+    converted++;
+  }
+  if (openedRecord.value && ids.includes(openedRecord.value.id)) closePanel();
+  selectedIds.value = new Set();
+  showToast(`${converted} record${converted === 1 ? '' : 's'} converted to ${tgtType.label}`);
 }
 
 function restoreBulkDeleted() {
