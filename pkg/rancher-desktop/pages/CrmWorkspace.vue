@@ -7012,6 +7012,17 @@
                     <p class="text-sm font-medium text-slate-800 dark:text-white truncate">{{ item.record.title }}</p>
                     <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{{ item.detail }}</p>
                   </div>
+                  <!-- completeness badge -->
+                  <span
+                    v-if="recordCompleteness(item.record) < 100"
+                    class="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums"
+                    :class="recordCompleteness(item.record) >= 80
+                      ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400'
+                      : recordCompleteness(item.record) >= 50
+                        ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400'
+                        : 'bg-red-50 dark:bg-red-950/30 text-red-500 dark:text-red-400'"
+                    :title="`Profile completeness: ${recordCompleteness(item.record)}%`"
+                  >{{ recordCompleteness(item.record) }}%</span>
                   <!-- reason badge -->
                   <span
                     class="shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold"
