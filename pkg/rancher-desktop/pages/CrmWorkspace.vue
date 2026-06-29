@@ -6193,6 +6193,8 @@
                       type="button"
                       class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate text-left shrink-0 max-w-[50%]"
                       @click="const rec = mockRecords.find(r => r.id === row.act.record_id); if (rec) { openRecord(rec); }"
+                      @mouseenter="(() => { const r = mockRecords.find(x => x.id === row.act.record_id); if (r) onMentionMouseenter(r, $event.currentTarget as HTMLElement); })()"
+                      @mouseleave="onMentionMouseleave"
                     >{{ mockRecords.find(r => r.id === row.act.record_id)?.title ?? row.act.record_id }}</button>
                     <span
                       v-if="overdueIds.has(row.act.record_id)"
@@ -6725,6 +6727,8 @@
                         class="inline-flex items-center gap-1 text-xs text-sky-600 dark:text-sky-400 hover:underline transition-colors"
                         :title="`Open ${item.record.title}`"
                         @click="openRecord(item.record!)"
+                        @mouseenter="onMentionMouseenter(item.record!, $event.currentTarget as HTMLElement)"
+                        @mouseleave="onMentionMouseleave"
                       >
                         <span
                           class="h-3.5 w-3.5 rounded flex items-center justify-center shrink-0"
