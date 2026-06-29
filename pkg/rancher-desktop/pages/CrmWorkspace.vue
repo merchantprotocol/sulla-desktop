@@ -6174,20 +6174,34 @@
                 <div class="flex-1 h-px bg-slate-100 dark:bg-slate-800" />
               </div>
               <div v-else class="group flex gap-3 py-2.5 border-b border-slate-50 dark:border-slate-800/60 last:border-0 items-start">
-                <!-- type icon -->
-                <span class="mt-0.5 h-7 w-7 rounded-full flex items-center justify-center shrink-0" :class="ACTIVITY_ICON_BG[row.act.type]">
+                <!-- type icon — click to toggle type filter -->
+                <button
+                  type="button"
+                  class="mt-0.5 h-7 w-7 rounded-full flex items-center justify-center shrink-0 transition-all"
+                  :class="[ACTIVITY_ICON_BG[row.act.type], feedTypeFilter === row.act.type ? 'ring-2 ring-offset-1 ring-current' : 'hover:scale-110']"
+                  :title="feedTypeFilter === row.act.type ? `Showing only ${row.act.type} — click to show all` : `Filter feed to ${row.act.type} only`"
+                  @click.stop="feedTypeFilter = feedTypeFilter === row.act.type ? 'all' : row.act.type"
+                >
                   <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
                     <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[row.act.type]" />
                   </svg>
-                </span>
+                </button>
                 <div class="flex-1 min-w-0">
-                  <!-- record link + stage badge -->
+                  <!-- record link + stage badge + overdue/due-soon indicator -->
                   <div class="flex items-center gap-1.5 mb-0.5 min-w-0">
                     <button
                       type="button"
-                      class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate text-left shrink-0 max-w-[55%]"
+                      class="text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline truncate text-left shrink-0 max-w-[50%]"
                       @click="const rec = mockRecords.find(r => r.id === row.act.record_id); if (rec) { openRecord(rec); }"
                     >{{ mockRecords.find(r => r.id === row.act.record_id)?.title ?? row.act.record_id }}</button>
+                    <span
+                      v-if="overdueIds.has(row.act.record_id)"
+                      class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400"
+                    >Overdue</span>
+                    <span
+                      v-else-if="dueSoonIds.has(row.act.record_id)"
+                      class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400"
+                    >Due soon</span>
                     <span
                       v-if="kanbanField && mockRecords.find(r => r.id === row.act.record_id)?.field_values[kanbanField.key]"
                       class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none"
