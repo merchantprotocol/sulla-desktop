@@ -4301,6 +4301,7 @@
                   { key: 'activity', label: 'Activity', count: recordActivities.length },
                   { key: 'related', label: 'Related', count: (openedRecord.links?.length ?? 0) + inverseLinks.length },
                   { key: 'tasks', label: 'Tasks', count: recordTasksPendingCount },
+                  { key: 'files', label: 'Files', count: recordAttachments.length },
                 ] as const)"
                 :key="tab.key"
                 type="button"
@@ -5003,6 +5004,62 @@
                     />
                   </div>
                 </div>
+              </template>
+
+              <!-- Files tab -->
+              <template v-else-if="detailTab === 'files'">
+                <!-- drop zone / upload bar -->
+                <div
+                  class="rounded-xl border-2 border-dashed transition-colors px-4 py-3 flex items-center gap-3"
+                  :class="filesDragOver
+                    ? 'border-sky-400 bg-sky-50/40 dark:bg-sky-950/20'
+                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'"
+                  @dragover.prevent="filesDragOver = true"
+                  @dragleave="filesDragOver = false"
+                  @drop.prevent="dropFiles($event)"
+                >
+                  <svg class="h-5 w-5 shrink-0 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                  </svg>
+                  <p class="text-sm text-slate-400 dark:text-slate-500">
+                    <span v-if="filesDragOver" class="text-sky-600 dark:text-sky-400 font-medium">Drop to attach</span>
+                    <span v-else>Drag files here to attach</span>
+                  </p>
+                </div>
+
+                <!-- file list -->
+                <div v-if="recordAttachments.length" class="space-y-1 mt-1">
+                  <div
+                    v-for="att in recordAttachments"
+                    :key="att.id"
+                    class="group flex items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors"
+                  >
+                    <!-- ext icon -->
+                    <span
+                      class="shrink-0 h-8 w-8 rounded-md flex items-center justify-center text-white text-[10px] font-bold uppercase leading-none"
+                      :style="{ background: attachmentExtIcon(att.name) }"
+                    >{{ att.name.split('.').pop()?.slice(0, 4) }}</span>
+                    <!-- name + meta -->
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm text-slate-700 dark:text-slate-300 truncate" :title="att.name">{{ att.name }}</p>
+                      <p class="text-xs text-slate-400 dark:text-slate-500">{{ formatFileSize(att.size) }} &middot; {{ formatDate(att.uploaded_at) }}</p>
+                    </div>
+                    <!-- delete -->
+                    <button
+                      type="button"
+                      class="shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-all"
+                      title="Remove file"
+                      @click="deleteAttachment(att.id)"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- empty state -->
+                <p v-else class="text-sm text-slate-400 dark:text-slate-600 text-center pt-4">No files attached yet</p>
               </template>
             </div>
 
@@ -7040,6 +7097,16 @@ interface CrmTask {
   due_date?: string;
 }
 
+interface CrmAttachment {
+  id: string;
+  record_id: string;
+  name: string;
+  size: number;
+  mime_type: string;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
 interface SavedView {
   id: string;
   name: string;
@@ -7329,6 +7396,16 @@ const mockTasks = reactive<CrmTask[]>([
   { id: 'tk6', record_id: 'r9',  text: 'Process renewal agreement',  done: false, created_at: '2026-06-24T15:00:00Z', due_date: dateOffset(3) },
 ]);
 
+const mockAttachments = reactive<CrmAttachment[]>([
+  { id: 'af1', record_id: 'r1',  name: 'Proposal_v3.pdf',        size: 1_240_000, mime_type: 'application/pdf',        uploaded_by: 'JB', uploaded_at: '2026-06-24T09:15:00Z' },
+  { id: 'af2', record_id: 'r1',  name: 'Contract_signed.pdf',    size: 870_500,   mime_type: 'application/pdf',        uploaded_by: 'JB', uploaded_at: '2026-06-25T14:02:00Z' },
+  { id: 'af3', record_id: 'r1',  name: 'Meeting_notes.docx',     size: 48_200,    mime_type: 'application/msword',     uploaded_by: 'JB', uploaded_at: '2026-06-26T11:30:00Z' },
+  { id: 'af4', record_id: 'r8',  name: 'Legal_review.pdf',       size: 3_100_000, mime_type: 'application/pdf',        uploaded_by: 'JB', uploaded_at: '2026-06-20T10:00:00Z' },
+  { id: 'af5', record_id: 'r8',  name: 'Budget_Q3.xlsx',         size: 125_000,   mime_type: 'application/vnd.ms-excel', uploaded_by: 'JB', uploaded_at: '2026-06-22T16:45:00Z' },
+  { id: 'af6', record_id: 'r9',  name: 'Renewal_deck.pdf',       size: 2_890_000, mime_type: 'application/pdf',        uploaded_by: 'JB', uploaded_at: '2026-06-23T08:00:00Z' },
+  { id: 'af7', record_id: 'r9',  name: 'Call_recording.mp4',     size: 48_500_000, mime_type: 'video/mp4',             uploaded_by: 'JB', uploaded_at: '2026-06-23T09:15:00Z' },
+]);
+
 // ── Kanban stage ordering per record type ─────────────────────────────────
 
 const STAGE_ORDER: Record<string, string[]> = {
@@ -7434,7 +7511,8 @@ const bulkDeletedSnapshot = ref<Array<{
   wasWatched: boolean;
 }> | null>(null);
 let bulkDeletedSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
-const detailTab = ref<'details' | 'activity' | 'related' | 'tasks'>('details');
+const detailTab = ref<'details' | 'activity' | 'related' | 'tasks' | 'files'>('details');
+const filesDragOver = ref(false);
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
 const cellContextMenu = ref<{ record: CrmRecord; col: CrmField; x: number; y: number } | null>(null);
@@ -9134,6 +9212,14 @@ const recordTasks = computed(() =>
 
 const recordTasksPendingCount = computed(() => recordTasks.value.filter((t) => !t.done).length);
 
+const recordAttachments = computed(() =>
+  openedRecord.value
+    ? mockAttachments
+        .filter((a) => a.record_id === openedRecord.value!.id)
+        .sort((a, b) => new Date(b.uploaded_at).getTime() - new Date(a.uploaded_at).getTime())
+    : [],
+);
+
 const activityTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const activitySearchQuery = ref('');
 const pinnedActivityIds = ref<Set<string>>(new Set());
@@ -10720,6 +10806,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (e.key === '2') { detailTab.value = 'activity'; e.preventDefault(); return; }
     if (e.key === '3') { detailTab.value = 'related'; e.preventDefault(); return; }
     if (e.key === '4') { detailTab.value = 'tasks'; e.preventDefault(); return; }
+    if (e.key === '5') { detailTab.value = 'files'; e.preventDefault(); return; }
     if (e.key === '[' && openedRecordIndex.value > 0) { openRecord(filteredRecords.value[openedRecordIndex.value - 1]); e.preventDefault(); return; }
     if (e.key === ']' && openedRecordIndex.value < filteredRecords.value.length - 1) { openRecord(filteredRecords.value[openedRecordIndex.value + 1]); e.preventDefault(); return; }
     if (e.key === 'c' && !e.metaKey && !e.ctrlKey) { copyRecordLink(openedRecord.value); e.preventDefault(); return; }
@@ -11258,6 +11345,49 @@ function recordInitials(title: string): string {
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function attachmentExtIcon(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'pdf') return '#e84242';
+  if (['doc', 'docx'].includes(ext)) return '#2b7cd3';
+  if (['xls', 'xlsx', 'csv'].includes(ext)) return '#1e7e44';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return '#9333ea';
+  if (['mp4', 'mov', 'avi', 'mkv'].includes(ext)) return '#f97316';
+  if (['zip', 'gz', 'tar', 'rar'].includes(ext)) return '#64748b';
+  return '#6366f1';
+}
+
+function deleteAttachment(id: string) {
+  const idx = mockAttachments.findIndex((a) => a.id === id);
+  if (idx === -1) return;
+  const [removed] = mockAttachments.splice(idx, 1);
+  showToast('File removed', { label: 'Undo', fn: () => { mockAttachments.splice(idx, 0, removed); } });
+}
+
+function dropFiles(e: DragEvent) {
+  filesDragOver.value = false;
+  if (!openedRecord.value || !e.dataTransfer?.files.length) return;
+  const now = new Date().toISOString();
+  Array.from(e.dataTransfer.files).forEach((f, i) => {
+    mockAttachments.push({
+      id: 'af-drop-' + String(Date.now()) + '-' + String(i),
+      record_id: openedRecord.value!.id,
+      name: f.name,
+      size: f.size,
+      mime_type: f.type || 'application/octet-stream',
+      uploaded_by: 'JB',
+      uploaded_at: now,
+    });
+  });
+  showToast(`${e.dataTransfer.files.length} file${e.dataTransfer.files.length === 1 ? '' : 's'} attached`);
 }
 
 function formatAge(iso: string): string {
