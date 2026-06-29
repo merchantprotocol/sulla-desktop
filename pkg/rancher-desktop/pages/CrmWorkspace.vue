@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1825,6 +1825,53 @@
                   </div>
                 </div>
               </div>
+              <!-- kanban group-by (swimlane) picker -->
+              <div v-if="viewMode === 'kanban'" class="relative border-l border-slate-200 dark:border-slate-700" @click.stop>
+                <button
+                  type="button"
+                  class="flex items-center gap-1 h-9 px-3 text-xs transition-colors"
+                  :class="kanbanSwimlaneKey
+                    ? 'text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/30'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                  :title="kanbanSwimlaneKey ? `Swimlanes: ${(selectedType?.fields ?? []).find(f => f.key === kanbanSwimlaneKey)?.label}` : 'Group kanban cards by a secondary field (swimlanes)'"
+                  @click="showKanbanSwimlanePopover = !showKanbanSwimlanePopover"
+                >
+                  <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                  Group
+                  <span v-if="kanbanSwimlaneKey" class="text-[10px] text-violet-500 dark:text-violet-400 ml-0.5 truncate max-w-[72px]">
+                    {{ (selectedType?.fields ?? []).find(f => f.key === kanbanSwimlaneKey)?.label }}
+                  </span>
+                </button>
+                <div
+                  v-if="showKanbanSwimlanePopover"
+                  class="absolute top-full right-0 mt-1 z-40 w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg py-2"
+                >
+                  <p class="px-3 pt-0.5 pb-1.5 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Group by (swimlanes)</p>
+                  <button
+                    type="button"
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    :class="!kanbanSwimlaneKey ? 'font-semibold' : ''"
+                    @click="kanbanSwimlaneKeysByType = { ...kanbanSwimlaneKeysByType, [selectedTypeKey]: null }; showKanbanSwimlanePopover = false"
+                  >
+                    <span class="h-3.5 w-3.5 rounded border border-slate-300 dark:border-slate-600" />
+                    None
+                  </button>
+                  <button
+                    v-for="f in (selectedType?.fields ?? []).filter(f => f.data_type === 'select' && f.key !== kanbanField?.key)"
+                    :key="f.key"
+                    type="button"
+                    class="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    :class="kanbanSwimlaneKey === f.key ? 'font-semibold text-violet-600 dark:text-violet-400' : ''"
+                    @click="kanbanSwimlaneKeysByType = { ...kanbanSwimlaneKeysByType, [selectedTypeKey]: f.key }; showKanbanSwimlanePopover = false"
+                  >
+                    <svg v-if="kanbanSwimlaneKey === f.key" class="h-3.5 w-3.5 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                    <span v-else class="h-3.5 w-3.5 rounded border border-slate-300 dark:border-slate-600 shrink-0" />
+                    {{ f.label }}
+                  </button>
+                </div>
+              </div>
               <!-- gallery column-count picker — shown only in gallery mode -->
               <template v-if="viewMode === 'gallery'">
                 <button
@@ -3011,8 +3058,20 @@
                   @dragleave="kanbanDragOverCol = null"
                   @drop.prevent="dropCardToColumn(col)"
                 >
+                  <template
+                    v-for="item in (kanbanColumnItems[col] ?? [])"
+                    :key="item.kind === 'record' ? item.record.id : 'lane-' + item.lane"
+                  >
+                  <!-- swimlane subheader -->
+                  <div
+                    v-if="item.kind === 'lane'"
+                    class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-1 pt-2 pb-0.5 select-none"
+                  >
+                    <span class="flex-1 truncate">{{ item.lane }}</span>
+                    <span class="tabular-nums font-normal">{{ item.count }}</span>
+                  </div>
                   <button
-                    v-for="record in (kanbanGroups[col] ?? [])"
+                    v-for="record in (item.kind === 'record' ? [item.record] : [])"
                     :key="record.id"
                     type="button"
                     draggable="true"
@@ -3195,6 +3254,7 @@
                       </button>
                     </div>
                   </button>
+                  </template>
 
                   <!-- search no-matches indicator -->
                 <div
@@ -11756,6 +11816,37 @@ const kanbanGroupsTotal = computed((): Record<string, number> => {
     }
   }
   return totals;
+});
+
+const kanbanSwimlaneKeysByType = ref<Record<string, string | null>>({});
+const kanbanSwimlaneKey = computed((): string | null => kanbanSwimlaneKeysByType.value[selectedTypeKey.value] ?? null);
+const showKanbanSwimlanePopover = ref(false);
+
+type KanbanColumnItem = { kind: 'lane'; lane: string; count: number } | { kind: 'record'; record: CrmRecord };
+
+const kanbanColumnItems = computed((): Record<string, KanbanColumnItem[]> => {
+  const result: Record<string, KanbanColumnItem[]> = {};
+  for (const col of kanbanColumns.value) {
+    const recs = kanbanGroups.value[col] ?? [];
+    const swKey = kanbanSwimlaneKey.value;
+    if (!swKey) {
+      result[col] = recs.map((r) => ({ kind: 'record' as const, record: r }));
+    } else {
+      const groups = new Map<string, CrmRecord[]>();
+      for (const r of recs) {
+        const val = String(r.field_values[swKey] ?? '') || '(none)';
+        if (!groups.has(val)) groups.set(val, []);
+        groups.get(val)!.push(r);
+      }
+      const items: KanbanColumnItem[] = [];
+      for (const [lane, laneRecs] of groups) {
+        items.push({ kind: 'lane', lane, count: laneRecs.length });
+        laneRecs.forEach((r) => items.push({ kind: 'record', record: r }));
+      }
+      result[col] = items;
+    }
+  }
+  return result;
 });
 
 const kanbanColCompletionPct = computed((): Record<string, number> => {
