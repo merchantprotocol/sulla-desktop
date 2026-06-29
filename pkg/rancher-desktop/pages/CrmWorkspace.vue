@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -2370,6 +2370,7 @@
                         @click.stop="col.data_type === 'select' && record.field_values[col.key]
                           ? toggleFilter(col.key, String(record.field_values[col.key]))
                           : undefined"
+                        @contextmenu.stop.prevent="openCellContextMenu(record, col, $event)"
                       >
                         <!-- highlight matching text in text-like cells when search is active -->
                         <span
@@ -5633,6 +5634,76 @@
       </div>
     </transition>
 
+    <!-- cell context menu -->
+    <transition enter-active-class="transition-all duration-100" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition-all duration-75" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+      <div
+        v-if="cellContextMenu"
+        class="fixed z-50 w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden py-1"
+        :style="{ top: `${cellContextMenu.y}px`, left: `${cellContextMenu.x}px` }"
+        @click.stop
+      >
+        <p class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">{{ cellContextMenu.col.label }}</p>
+        <!-- copy value -->
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="copyFieldValue(cellContextMenu!.record.field_values[cellContextMenu!.col.key]); cellContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+          Copy value
+        </button>
+        <!-- edit -->
+        <button
+          v-if="cellContextMenu.col.data_type !== 'formula' && !cellContextMenu.col.is_required"
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="startCellEdit(cellContextMenu!.record, cellContextMenu!.col); cellContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+          Edit
+        </button>
+        <!-- filter by value (select fields) -->
+        <button
+          v-if="(cellContextMenu.col.data_type === 'select' || cellContextMenu.col.data_type === 'multi_select') && cellContextMenu.record.field_values[cellContextMenu.col.key]"
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="toggleFilter(cellContextMenu!.col.key, String(cellContextMenu!.record.field_values[cellContextMenu!.col.key])); cellContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M7 9h10M11 14h2" /></svg>
+          Filter by this value
+        </button>
+        <!-- sort -->
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="sortField = cellContextMenu!.col.key; sortDir = 'asc'; cellContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" /></svg>
+          Sort A → Z
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="sortField = cellContextMenu!.col.key; sortDir = 'desc'; cellContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m-4 4l-4-4" /></svg>
+          Sort Z → A
+        </button>
+        <!-- clear -->
+        <div v-if="cellContextMenu.record.field_values[cellContextMenu.col.key] != null" class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          v-if="cellContextMenu.record.field_values[cellContextMenu.col.key] != null"
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 transition-colors"
+          @click="(() => { const rec = cellContextMenu!.record; const key = cellContextMenu!.col.key; const prev = rec.field_values[key]; rec.field_values[key] = null; cellContextMenu = null; showToast('Value cleared', { label: 'Undo', fn: () => { rec.field_values[key] = prev; } }); })()"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          Clear value
+        </button>
+      </div>
+    </transition>
+
     <!-- conditional formatting panel -->
     <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100" leave-to-class="opacity-0">
       <div v-if="showFormatPanel" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="showFormatPanel = false">
@@ -7299,6 +7370,7 @@ let bulkDeletedSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 const detailTab = ref<'details' | 'activity' | 'related' | 'tasks'>('details');
 const contextMenuRecord = ref<CrmRecord | null>(null);
 const contextMenuPos = ref({ x: 0, y: 0 });
+const cellContextMenu = ref<{ record: CrmRecord; col: CrmField; x: number; y: number } | null>(null);
 const bulkStageDropdown = ref(false);
 const collapsedColumns = ref<Set<string>>(new Set());
 const showFilterDropdown = ref(false);
@@ -9159,6 +9231,19 @@ function openContextMenu(record: CrmRecord, e: MouseEvent) {
 
 function closeContextMenu() {
   contextMenuRecord.value = null;
+}
+
+function openCellContextMenu(record: CrmRecord, col: CrmField, e: MouseEvent) {
+  e.preventDefault();
+  e.stopPropagation();
+  const menuW = 200;
+  const menuH = 220;
+  cellContextMenu.value = {
+    record,
+    col,
+    x: Math.min(e.clientX, window.innerWidth - menuW - 8),
+    y: Math.min(e.clientY, window.innerHeight - menuH - 8),
+  };
 }
 
 const contextMenuSelectFilters = computed(() => {
