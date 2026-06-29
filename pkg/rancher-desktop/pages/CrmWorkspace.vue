@@ -4234,6 +4234,49 @@
             </div>
           </div>
 
+          <!-- health cards row -->
+          <div class="grid grid-cols-3 gap-4">
+            <button
+              type="button"
+              class="rounded-xl border p-4 text-left transition-colors"
+              :class="overdueIds.size
+                ? 'border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/20 hover:bg-rose-100 dark:hover:bg-rose-900/30'
+                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900'"
+              :title="overdueIds.size ? `${overdueIds.size} overdue — click to filter` : 'No overdue records'"
+              @click="overdueIds.size && (viewMode = 'table', showOverdueOnly = !showOverdueOnly)"
+            >
+              <p class="text-xs font-semibold uppercase tracking-widest mb-1" :class="overdueIds.size ? 'text-rose-400 dark:text-rose-500' : 'text-slate-400 dark:text-slate-500'">Overdue</p>
+              <p class="text-2xl font-bold tabular-nums" :class="overdueIds.size ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400 dark:text-slate-600'">{{ overdueIds.size }}</p>
+              <p class="text-xs mt-0.5" :class="overdueIds.size ? 'text-rose-400 dark:text-rose-500' : 'text-slate-400 dark:text-slate-500'">{{ overdueIds.size ? 'click to filter table' : 'all on track' }}</p>
+            </button>
+            <button
+              type="button"
+              class="rounded-xl border p-4 text-left transition-colors"
+              :class="dueSoonIds.size
+                ? 'border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-900/30'
+                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900'"
+              :title="dueSoonIds.size ? `${dueSoonIds.size} due soon — click to filter` : 'Nothing due soon'"
+              @click="dueSoonIds.size && (viewMode = 'table', showDueSoonOnly = !showDueSoonOnly)"
+            >
+              <p class="text-xs font-semibold uppercase tracking-widest mb-1" :class="dueSoonIds.size ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'">Due soon</p>
+              <p class="text-2xl font-bold tabular-nums" :class="dueSoonIds.size ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400 dark:text-slate-600'">{{ dueSoonIds.size }}</p>
+              <p class="text-xs mt-0.5" :class="dueSoonIds.size ? 'text-amber-400 dark:text-amber-500' : 'text-slate-400 dark:text-slate-500'">{{ dueSoonIds.size ? 'click to filter table' : 'nothing upcoming' }}</p>
+            </button>
+            <button
+              type="button"
+              class="rounded-xl border p-4 text-left transition-colors"
+              :class="focusGroups.reduce((n, g) => n + g.records.length, 0)
+                ? 'border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/20 hover:bg-sky-100 dark:hover:bg-sky-900/30'
+                : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900'"
+              :title="focusGroups.reduce((n, g) => n + g.records.length, 0) ? 'Click to open Focus view' : 'No records need attention'"
+              @click="focusGroups.reduce((n, g) => n + g.records.length, 0) && (viewMode = 'focus')"
+            >
+              <p class="text-xs font-semibold uppercase tracking-widest mb-1" :class="focusGroups.reduce((n, g) => n + g.records.length, 0) ? 'text-sky-500 dark:text-sky-400' : 'text-slate-400 dark:text-slate-500'">Needs attention</p>
+              <p class="text-2xl font-bold tabular-nums" :class="focusGroups.reduce((n, g) => n + g.records.length, 0) ? 'text-sky-600 dark:text-sky-400' : 'text-slate-400 dark:text-slate-600'">{{ focusGroups.reduce((n, g) => n + g.records.length, 0) }}</p>
+              <p class="text-xs mt-0.5" :class="focusGroups.reduce((n, g) => n + g.records.length, 0) ? 'text-sky-400 dark:text-sky-500' : 'text-slate-400 dark:text-slate-500'">{{ focusGroups.reduce((n, g) => n + g.records.length, 0) ? 'click to open focus view' : 'all good' }}</p>
+            </button>
+          </div>
+
           <!-- record count goal card -->
           <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
             <div class="flex items-center justify-between mb-3">
