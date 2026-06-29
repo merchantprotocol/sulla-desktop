@@ -5707,16 +5707,36 @@
                     @dblclick.stop="startTaskEdit(item.task)"
                   >{{ item.task.text }}</p>
                   <div class="flex items-center gap-2 mt-1 flex-wrap">
-                    <!-- due date -->
-                    <span
-                      v-if="item.task.due_date"
-                      class="text-xs"
+                    <!-- due date — click to edit inline -->
+                    <template v-if="globalTaskDueDateEditId === item.task.id">
+                      <input
+                        type="date"
+                        :value="mockTasks.find(t => t.id === item.task.id)?.due_date ?? ''"
+                        class="text-xs h-5 rounded border border-sky-300 dark:border-sky-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 px-1 focus:outline-none focus:ring-1 focus:ring-sky-400"
+                        @change="(() => { const t = mockTasks.find(x => x.id === item.task.id); if (t) t.due_date = ($event.target as HTMLInputElement).value || undefined; globalTaskDueDateEditId = null; })()"
+                        @blur="globalTaskDueDateEditId = null"
+                        @keydown.esc.stop="globalTaskDueDateEditId = null"
+                      />
+                    </template>
+                    <button
+                      v-else-if="item.task.due_date"
+                      type="button"
+                      class="text-xs transition-colors hover:opacity-70"
                       :class="!item.task.done && item.task.due_date < DUE_TODAY_STR
                         ? 'text-rose-500 dark:text-rose-400 font-medium'
                         : !item.task.done && item.task.due_date <= DUE_SOON_STR
                           ? 'text-amber-500 dark:text-amber-400'
                           : 'text-slate-400 dark:text-slate-500'"
-                    >Due {{ item.task.due_date }}</span>
+                      title="Click to change due date"
+                      @click.stop="globalTaskDueDateEditId = item.task.id"
+                    >Due {{ item.task.due_date }}</button>
+                    <button
+                      v-else
+                      type="button"
+                      class="text-xs text-slate-300 dark:text-slate-700 hover:text-slate-500 dark:hover:text-slate-400 opacity-0 group-hover/gtask:opacity-100 transition-all"
+                      title="Set due date"
+                      @click.stop="globalTaskDueDateEditId = item.task.id"
+                    >+ Due date</button>
                     <!-- recurrence badge -->
                     <span
                       v-if="item.task.recurrence"
@@ -12576,6 +12596,7 @@ const expandedTaskIds = ref<Set<string>>(new Set());
 const addingSubtaskOf = ref<string | null>(null);
 const newSubtaskDraft = ref('');
 const showTaskTemplateDropdown = ref(false);
+const globalTaskDueDateEditId = ref<string | null>(null);
 const newTaskAssignee = ref('');
 const editingTaskAssignee = ref('');
 const taskInputEl = ref<HTMLInputElement | null>(null);
