@@ -4461,7 +4461,7 @@
                       ? 'text-slate-400 dark:text-slate-500 line-through opacity-60'
                       : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
                   :title="`Move to ${stage}`"
-                  @click="openedRecord.field_values[kanbanField.key] = stage; showToast(`Stage: ${stage}`)"
+                  @click="setStage(openedRecord, stage)"
                 >
                   {{ stage }}
                 </button>
@@ -6754,6 +6754,87 @@
       </div>
     </transition>
 
+    <!-- win / loss reason capture modal -->
+    <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0" enter-to-class="opacity-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div
+        v-if="winLossModal"
+        class="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        @click.self="winLossModal = null"
+      >
+        <div class="w-full max-w-sm mx-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
+          <!-- header -->
+          <div
+            class="flex items-start gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800"
+            :class="winLossModal.stage === 'Closed Won' ? 'bg-emerald-50 dark:bg-emerald-950/20' : 'bg-rose-50 dark:bg-rose-950/20'"
+          >
+            <div
+              class="shrink-0 h-8 w-8 rounded-full flex items-center justify-center"
+              :class="winLossModal.stage === 'Closed Won' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400' : 'bg-rose-100 dark:bg-rose-900/40 text-rose-500 dark:text-rose-400'"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path v-if="winLossModal.stage === 'Closed Won'" stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <path v-else stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3
+                class="text-sm font-semibold"
+                :class="winLossModal.stage === 'Closed Won' ? 'text-emerald-800 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'"
+              >{{ winLossModal.stage === 'Closed Won' ? 'Congrats — deal won!' : 'Deal marked lost' }}</h3>
+              <p class="text-xs text-slate-400 dark:text-slate-500 mt-0.5 truncate">{{ winLossModal.record.title }}</p>
+            </div>
+            <button type="button" class="shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-1" @click="winLossModal = null">
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <!-- body -->
+          <div class="px-5 py-4 space-y-3">
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-slate-500 dark:text-slate-400">
+                {{ winLossModal.stage === 'Closed Won' ? 'Win reason' : 'Loss reason' }}
+                <span class="text-slate-300 dark:text-slate-600 font-normal">(optional)</span>
+              </label>
+              <select
+                v-model="winLossReason"
+                class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+              >
+                <option value="">Select a reason…</option>
+                <option
+                  v-for="r in (winLossModal.stage === 'Closed Won' ? WIN_LOSS_REASONS.won : WIN_LOSS_REASONS.lost)"
+                  :key="r"
+                  :value="r"
+                >{{ r }}</option>
+              </select>
+            </div>
+            <div class="space-y-1">
+              <label class="block text-xs font-medium text-slate-500 dark:text-slate-400">Note <span class="text-slate-300 dark:text-slate-600 font-normal">(optional)</span></label>
+              <textarea
+                v-model="winLossNote"
+                rows="2"
+                placeholder="Any additional context…"
+                class="w-full resize-none text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                @keydown.meta.enter.prevent="submitWinLoss"
+                @keydown.ctrl.enter.prevent="submitWinLoss"
+                @keydown.escape.prevent="winLossModal = null"
+              />
+            </div>
+          </div>
+          <!-- footer -->
+          <div class="px-5 py-3.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
+            <button
+              type="button"
+              class="flex-1 rounded-lg py-2 text-sm font-medium text-white transition-colors"
+              :class="winLossModal.stage === 'Closed Won' ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-rose-600 hover:bg-rose-500'"
+              @click="submitWinLoss"
+            >Mark {{ winLossModal.stage }}</button>
+            <button type="button" class="rounded-lg py-2 px-4 text-sm font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors" @click="winLossModal = null">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <!-- bulk note modal -->
     <transition
       enter-active-class="transition-all duration-150"
@@ -8399,6 +8480,18 @@ const automationRules = reactive<AutomationRule[]>([
   { id: 'ar4', name: 'Lead lost → alert',    enabled: false, trigger_type_key: 'deal',    trigger_field_key: 'stage',  trigger_value: 'Closed Lost', action_type: 'notify',     action_message: 'Deal marked Closed Lost. Consider a follow-up in 30 days.' },
 ]);
 const showAutomationsPanel = ref(false);
+
+// ── Win / Loss reason capture ─────────────────────────────────────────────
+const WIN_LOSS_REASONS = {
+  won:  ['Price competitiveness', 'Product fit', 'Relationship / trust', 'Speed of sale', 'Referral', 'Superior support', 'Other'],
+  lost: ['Lost to competitor', 'Budget constraints', 'No decision / ghosted', 'Pricing too high', 'Poor product fit', 'Timing not right', 'Feature gap', 'Internal politics', 'Other'],
+} as const;
+type WinLossStage = 'Closed Won' | 'Closed Lost';
+const WIN_LOSS_STAGES: readonly WinLossStage[] = ['Closed Won', 'Closed Lost'] as const;
+const winLossModal = ref<{ record: CrmRecord; stage: WinLossStage } | null>(null);
+const winLossReason = ref('');
+const winLossNote = ref('');
+watch(winLossModal, (val) => { if (!val) { winLossReason.value = ''; winLossNote.value = ''; } });
 interface NewRuleDraft {
   name: string;
   enabled: boolean;
@@ -10698,6 +10791,39 @@ function runAutomations(record: CrmRecord, changedFieldKey: string, newValue: un
       showToast(`Automation: ${rule.action_message}`);
     }
   }
+}
+
+function setStage(record: CrmRecord, newStage: string) {
+  const field = kanbanField.value;
+  if (!field) return;
+  if ((WIN_LOSS_STAGES as readonly string[]).includes(newStage)) {
+    winLossModal.value = { record, stage: newStage as WinLossStage };
+    return;
+  }
+  const prev = String(record.field_values[field.key] ?? '');
+  record.field_values[field.key] = newStage;
+  record.updated_at = new Date().toISOString();
+  mockActivities.unshift({ id: 'act-stg-' + String(mockActivities.length), record_id: record.id, type: 'change', content: `${field.label}: ${prev || '—'} → ${newStage}`, author: 'You', created_at: new Date().toISOString() });
+  runAutomations(record, field.key, newStage);
+  showToast(`Stage: ${newStage}`);
+}
+
+function submitWinLoss() {
+  const modal = winLossModal.value;
+  if (!modal) return;
+  const field = kanbanField.value;
+  if (!field) return;
+  const { record, stage } = modal;
+  const prev = String(record.field_values[field.key] ?? '');
+  record.field_values[field.key] = stage;
+  record.updated_at = new Date().toISOString();
+  const reasonStr = winLossReason.value.trim() || 'Reason not specified';
+  const noteStr = winLossNote.value.trim();
+  const content = `${field.label}: ${prev || '—'} → ${stage} · ${stage === 'Closed Won' ? 'Win reason' : 'Loss reason'}: ${reasonStr}${noteStr ? ' · ' + noteStr : ''}`;
+  mockActivities.unshift({ id: 'act-wl-' + String(mockActivities.length), record_id: record.id, type: 'change', content, author: 'You', created_at: new Date().toISOString() });
+  runAutomations(record, field.key, stage);
+  winLossModal.value = null;
+  showToast(`Deal marked ${stage}`);
 }
 
 function cancelCellEdit() {
