@@ -1212,33 +1212,37 @@
               <button
                 type="button"
                 class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border transition-colors"
-                :class="tagFilter
+                :class="tagFilters.size
                   ? 'border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/30 text-teal-600 dark:text-teal-400 hover:bg-teal-100 dark:hover:bg-teal-900/30'
                   : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200'"
-                :title="tagFilter ? `Filtered by tag: ${tagFilter}` : 'Filter by tag'"
+                :title="tagFilters.size ? `Filtered by ${tagFilters.size} tag${tagFilters.size === 1 ? '' : 's'} (AND)` : 'Filter by tag'"
                 @click.stop="$event.currentTarget.nextElementSibling?.classList.toggle('hidden')"
               >
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-5 5a2 2 0 01-2.828 0l-7-7A2 2 0 013 10V5a2 2 0 012-2z" />
                 </svg>
-                {{ tagFilter ?? 'Tags' }}
-                <svg v-if="tagFilter" class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" @click.stop="tagFilter = null">
+                {{ tagFilters.size ? `${tagFilters.size} tag${tagFilters.size === 1 ? '' : 's'}` : 'Tags' }}
+                <svg v-if="tagFilters.size" class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" @click.stop="tagFilters = new Set()">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
-              <div class="hidden absolute top-full left-0 mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 min-w-[140px]">
+              <div class="hidden absolute top-full left-0 mt-1 z-50 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 min-w-[160px]">
+                <p class="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Tags (AND filter)</p>
                 <button
                   v-for="t in allTags"
                   :key="t"
                   type="button"
                   class="flex items-center gap-2 w-full text-left px-3 py-1.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
-                  :class="tagFilter === t ? 'text-teal-600 dark:text-teal-400 font-medium' : 'text-slate-700 dark:text-slate-300'"
-                  @click="tagFilter = tagFilter === t ? null : t; $event.currentTarget.closest('.relative')?.querySelector('.hidden')?.classList.add('hidden')"
+                  :class="tagFilters.has(t) ? 'text-teal-600 dark:text-teal-400 font-medium' : 'text-slate-700 dark:text-slate-300'"
+                  @click.stop="(() => { const next = new Set(tagFilters); if (next.has(t)) next.delete(t); else next.add(t); tagFilters = next; })()"
                 >
-                  <svg v-if="tagFilter === t" class="h-3.5 w-3.5 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
-                  <span v-else class="h-3.5 w-3.5" />
+                  <svg v-if="tagFilters.has(t)" class="h-3.5 w-3.5 text-teal-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                  <span v-else class="h-3.5 w-3.5 shrink-0" />
                   {{ t }}
                 </button>
+                <div v-if="tagFilters.size" class="border-t border-slate-100 dark:border-slate-800 mt-1 pt-1 px-3 pb-1.5">
+                  <button type="button" class="text-xs text-rose-400 hover:text-rose-500 transition-colors" @click.stop="tagFilters = new Set()">Clear all</button>
+                </div>
               </div>
             </div>
 
@@ -10606,7 +10610,7 @@ const tagColorPickerTag = ref<string | null>(null);
 const tagColorPickerPos = ref({ top: 0, left: 0 });
 const checklistAddText = ref<Record<string, string>>({});
 const dismissedDuplicateWarning = ref<Set<string>>(new Set());
-const tagFilter = ref<string | null>(null);
+const tagFilters = ref<Set<string>>(new Set());
 const tagInput = ref('');
 const showTagInput = ref(false);
 const showDetailColorPicker = ref(false);
@@ -11696,9 +11700,9 @@ const filteredRecords = computed(() => {
     result = result.filter((r) => colorLabels.value[r.id] === fc);
   }
 
-  if (tagFilter.value) {
-    const ft = tagFilter.value;
-    result = result.filter((r) => (recordTags.value[r.id] ?? []).includes(ft));
+  if (tagFilters.value.size) {
+    const ft = tagFilters.value;
+    result = result.filter((r) => { const rt = recordTags.value[r.id] ?? []; return [...ft].every((t) => rt.includes(t)); });
   }
 
   if (staleDaysFilter.value) {
@@ -13992,7 +13996,7 @@ function selectType(key: string) {
   showInlineAdd.value = false;
   inlineAddTitle.value = '';
   colorLabelFilter.value = null;
-  tagFilter.value = null;
+  tagFilters.value = new Set();
   showTagInput.value = false;
   staleDaysFilter.value = null;
   showOverdueOnly.value = false;
@@ -15032,7 +15036,7 @@ function onKeyR(e: KeyboardEvent) {
   showIncompleteOnly.value = false;
   groupByField.value = null;
   colorLabelFilter.value = null;
-  tagFilter.value = null;
+  tagFilters.value = new Set();
   staleDaysFilter.value = null;
   createdPreset.value = null;
   if (hadState) showToast('View reset');
