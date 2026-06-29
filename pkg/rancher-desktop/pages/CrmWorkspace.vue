@@ -3541,6 +3541,27 @@
                 >
                   This field is required.
                 </p>
+                <!-- possible duplicate warning -->
+                <div
+                  v-if="possibleDuplicates.length"
+                  class="mt-2 rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/20 px-2.5 py-2"
+                >
+                  <p class="flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400 mb-1">
+                    <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    Possible duplicate{{ possibleDuplicates.length === 1 ? '' : 's' }}
+                  </p>
+                  <ul class="space-y-0.5">
+                    <li v-for="dup in possibleDuplicates" :key="dup.id">
+                      <button
+                        type="button"
+                        class="w-full text-left text-xs text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100 truncate transition-colors underline underline-offset-2"
+                        @click="creatingRecord = false; openRecord(dup)"
+                      >{{ dup.title }}</button>
+                    </li>
+                  </ul>
+                </div>
               </div>
 
               <div
@@ -9944,6 +9965,32 @@ const allSelected = computed(
     filteredRecords.value.length > 0 &&
     filteredRecords.value.every((r) => selectedIds.value.has(r.id)),
 );
+
+// ── Duplicate detection ───────────────────────────────────────────────────
+function titleSimilarity(a: string, b: string): number {
+  const na = a.toLowerCase().trim();
+  const nb = b.toLowerCase().trim();
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  if (na.includes(nb) || nb.includes(na)) return 0.85;
+  const aWords = new Set(na.split(/\W+/).filter((w) => w.length > 2));
+  const bWords = new Set(nb.split(/\W+/).filter((w) => w.length > 2));
+  const shared = [...aWords].filter((w) => bWords.has(w)).length;
+  const total = new Set([...aWords, ...bWords]).size;
+  return total > 0 ? shared / total : 0;
+}
+
+const possibleDuplicates = computed((): CrmRecord[] => {
+  if (!creatingRecord.value) return [];
+  const titleFieldKey = selectedType.value?.fields.find((f) => f.is_title)?.key ?? '';
+  if (!titleFieldKey) return [];
+  const draft = String(draftValues.value[titleFieldKey] ?? '').trim();
+  if (draft.length < 3) return [];
+  return mockRecords
+    .filter((r) => r.record_type_key === selectedTypeKey.value && titleSimilarity(draft, r.title) >= 0.4)
+    .sort((a, b) => titleSimilarity(draft, b.title) - titleSimilarity(draft, a.title))
+    .slice(0, 3);
+});
 
 // ── Actions ────────────────────────────────────────────────────────────────
 
