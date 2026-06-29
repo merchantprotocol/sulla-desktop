@@ -5594,9 +5594,22 @@
                 </button>
                 <!-- task content -->
                 <div class="flex-1 min-w-0">
+                  <!-- inline editing -->
+                  <input
+                    v-if="editingTaskId === item.task.id"
+                    :value="editingTaskText"
+                    type="text"
+                    class="w-full text-sm bg-transparent border-0 border-b border-sky-400 focus:outline-none text-slate-800 dark:text-slate-200 pb-0.5"
+                    @input="editingTaskText = ($event.target as HTMLInputElement).value"
+                    @keydown.enter.prevent="saveTaskEdit"
+                    @keydown.esc.stop="cancelTaskEdit"
+                    @blur="saveTaskEdit"
+                  />
                   <p
-                    class="text-sm leading-snug"
+                    v-else
+                    class="text-sm leading-snug cursor-text"
                     :class="item.task.done ? 'line-through text-slate-400 dark:text-slate-600' : 'text-slate-800 dark:text-slate-200'"
+                    @dblclick.stop="startTaskEdit(item.task)"
                   >{{ item.task.text }}</p>
                   <div class="flex items-center gap-2 mt-1 flex-wrap">
                     <!-- due date -->
@@ -5609,6 +5622,17 @@
                           ? 'text-amber-500 dark:text-amber-400'
                           : 'text-slate-400 dark:text-slate-500'"
                     >Due {{ item.task.due_date }}</span>
+                    <!-- recurrence badge -->
+                    <span
+                      v-if="item.task.recurrence"
+                      class="inline-flex items-center gap-0.5 text-[10px] font-medium text-violet-500 dark:text-violet-400"
+                      :title="`Repeats ${item.task.recurrence}`"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      {{ item.task.recurrence }}
+                    </span>
                     <!-- record name -->
                     <button
                       v-if="item.record"
