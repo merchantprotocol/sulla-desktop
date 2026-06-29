@@ -4591,7 +4591,7 @@
                       </span>
                       <span v-if="activityCountByRecord[record.id]" class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400" :title="`${activityCountByRecord[record.id]} activities`">{{ activityCountByRecord[record.id] }}</span>
                       <span v-if="pendingTaskCountByRecord[record.id]" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400" :title="`${pendingTaskCountByRecord[record.id]} pending tasks`"><svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>{{ pendingTaskCountByRecord[record.id] }}</span>
-                      <span v-if="scoringRules.length && scoreRecord(record) > 0" class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold" :class="scoreRecord(record) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(record) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400' : 'bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400'" :title="`Score: ${scoreRecord(record)} / 100`">{{ scoreRecord(record) }}</span>
+                      <button v-if="scoringRules.length && scoreRecord(record) > 0" type="button" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold cursor-pointer transition-opacity hover:opacity-75" :class="scoreRecord(record) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(record) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400' : 'bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400'" :title="`Score: ${scoreRecord(record)} / 100 — click for breakdown`" @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = record; showScoreBreakdown = !showScoreBreakdown; }"><svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>{{ scoreRecord(record) }}</button>
                     </div>
                     <div class="mt-auto pt-2">
                       <div class="h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
@@ -4797,12 +4797,19 @@
                     <svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
                     {{ pendingTaskCountByRecord[record.id] }}
                   </span>
-                  <span
+                  <button
                     v-if="scoringRules.length && scoreRecord(record) > 0"
-                    class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold"
+                    type="button"
+                    class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold cursor-pointer transition-opacity hover:opacity-75"
                     :class="scoreRecord(record) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(record) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400' : 'bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400'"
-                    :title="`Score: ${scoreRecord(record)} / 100`"
-                  >{{ scoreRecord(record) }}</span>
+                    :title="`Score: ${scoreRecord(record)} / 100 — click for breakdown`"
+                    @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = record; showScoreBreakdown = !showScoreBreakdown; }"
+                  >
+                    <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    {{ scoreRecord(record) }}
+                  </button>
                 </div>
                 <!-- completeness bar -->
                 <div class="mt-auto pt-2">
