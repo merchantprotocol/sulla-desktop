@@ -4711,6 +4711,9 @@
                       :title="record.title"
                       @click="openRecord(record)"
                       @contextmenu.prevent="openContextMenu(record, $event)"
+                      @mouseenter="showPreview($event, record)"
+                      @mousemove="updatePreviewPos"
+                      @mouseleave="hidePreview"
                     >{{ record.title }}</button>
                     <!-- month calendar event hover actions -->
                     <div class="shrink-0 flex items-center gap-0 mr-0.5 opacity-0 group-hover/cem:opacity-100 transition-opacity">
@@ -4728,12 +4731,35 @@
                       <button
                         type="button"
                         class="rounded p-0.5 transition-colors"
+                        :class="watchedIds.has(record.id) ? 'text-sky-300 !opacity-100' : 'text-current opacity-60 hover:text-sky-300 hover:opacity-100'"
+                        :title="watchedIds.has(record.id) ? 'Unwatch' : 'Watch'"
+                        @click.stop="toggleWatch(record.id)"
+                      >
+                        <svg class="h-2.5 w-2.5" :fill="watchedIds.has(record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded p-0.5 transition-colors"
                         :class="quickNoteRecordId === record.id ? 'text-sky-300 !opacity-100' : 'text-current opacity-60 hover:text-sky-300 hover:opacity-100'"
                         title="Log a quick note"
                         @click.stop="openQuickNote(record.id, $event)"
                       >
                         <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                        </svg>
+                      </button>
+                      <!-- add task -->
+                      <button
+                        type="button"
+                        class="rounded p-0.5 transition-colors text-current opacity-60 hover:text-amber-400 hover:opacity-100"
+                        title="Add task"
+                        @click.stop="openRecord(record); nextTick(() => { detailTab = 'tasks'; })"
+                      >
+                        <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                         </svg>
                       </button>
                     </div>
@@ -4812,6 +4838,9 @@
                       :title="record.title"
                       @click="openRecord(record)"
                       @contextmenu.prevent="openContextMenu(record, $event)"
+                      @mouseenter="showPreview($event, record)"
+                      @mousemove="updatePreviewPos"
+                      @mouseleave="hidePreview"
                     >{{ record.title }}</button>
                     <!-- hover actions -->
                     <div class="shrink-0 flex items-center gap-0.5 mr-1 opacity-0 group-hover/ce:opacity-100 transition-opacity">
