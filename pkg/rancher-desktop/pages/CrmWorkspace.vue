@@ -4319,6 +4319,13 @@
                       </svg>
                       {{ field.label }}
                       <span v-if="field.is_required" class="text-red-400">*</span>
+                      <!-- field help text indicator -->
+                      <span
+                        v-if="field.help_text"
+                        class="inline-flex items-center justify-center h-3.5 w-3.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 text-[9px] font-bold cursor-help shrink-0 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                        :title="field.help_text"
+                        aria-label="Field description"
+                      >?</span>
                     </label>
                     <template v-if="!editingRecord">
                       <!-- copy field value -->
@@ -6557,6 +6564,15 @@
                         class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400"
                       />
                     </div>
+                    <div>
+                      <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Help text <span class="font-normal opacity-60">(tooltip shown on ? icon)</span></label>
+                      <input
+                        v-model="newFieldDraft.help_text"
+                        type="text"
+                        placeholder="Explain what this field means or how to fill it…"
+                        class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400"
+                      />
+                    </div>
                     <div class="flex gap-2">
                       <button type="button" class="flex-1 h-8 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors" @click="showAddFieldForm = false">Cancel</button>
                       <button type="button" class="flex-1 h-8 rounded-lg text-sm font-semibold bg-violet-500 hover:bg-violet-600 text-white transition-colors" @click="addFieldToCurrentType">Add field</button>
@@ -6823,6 +6839,7 @@ interface CrmField {
   default_value?: string;
   formula_expression?: string;
   visible_when?: { fieldKey: string; operator: 'eq' | 'neq' | 'empty' | 'not_empty'; value: string };
+  help_text?: string;
 }
 
 interface CrmRecordType {
@@ -6992,10 +7009,10 @@ const schema = reactive<CrmRecordType[]>([
     fields: [
       { id: 'f_dl1', key: 'name',        label: 'Deal name',  data_type: 'text',   is_title: true,  is_required: true,  position: 0 },
       { id: 'f_dl2', key: 'stage',       label: 'Stage',      data_type: 'select', is_title: false, is_required: true,  position: 1, select_options: ['Lead', 'Qualified', 'Proposal', 'Negotiation', 'Closed Won', 'Closed Lost'], select_option_colors: { Lead: '#f97316', Qualified: '#8b5cf6', Proposal: '#3b82f6', Negotiation: '#eab308', 'Closed Won': '#22c55e', 'Closed Lost': '#ef4444' } },
-      { id: 'f_dl3', key: 'amount',      label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2, format: 'currency' },
-      { id: 'f_dl4', key: 'close_date',  label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3 },
-      { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4, format: 'progress' },
-      { id: 'f_dl6', key: 'expected_value', label: 'Expected value', data_type: 'formula', is_title: false, is_required: false, position: 5, format: 'currency', formula_expression: '{amount} * {probability} / 100' },
+      { id: 'f_dl3', key: 'amount',      label: 'Amount',     data_type: 'number', is_title: false, is_required: false, position: 2, format: 'currency', help_text: 'Total contract value in USD, before any discounts.' },
+      { id: 'f_dl4', key: 'close_date',  label: 'Close date', data_type: 'date',   is_title: false, is_required: false, position: 3, help_text: 'Expected date the deal will close. Used in pipeline forecasting.' },
+      { id: 'f_dl5', key: 'probability', label: 'Win %',      data_type: 'number', is_title: false, is_required: false, position: 4, format: 'progress', help_text: 'Estimated probability (0–100) of winning this deal. Drives Expected Value.' },
+      { id: 'f_dl6', key: 'expected_value', label: 'Expected value', data_type: 'formula', is_title: false, is_required: false, position: 5, format: 'currency', formula_expression: '{amount} * {probability} / 100', help_text: 'Computed automatically: Amount × Win % ÷ 100.' },
     ],
   },
   {
@@ -7531,7 +7548,7 @@ const fieldLabelInputEl = ref<HTMLInputElement | null>(null);
 const showTypeIconColorPicker = ref(false);
 const visibilityRuleFieldId = ref<string | null>(null);
 const editOptionColorsFieldId = ref<string | null>(null);
-const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string; formula_expression: string; formula_format: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '' });
+const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string; formula_expression: string; formula_format: string; help_text: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
 const SCHEMA_ICON_OPTIONS: IconKey[] = ['user', 'building', 'chart', 'target', 'check', 'folder', 'tag', 'list', 'layers', 'star'];
 const SCHEMA_COLOR_PRESETS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#6366f1', '#ec4899', '#ef4444', '#14b8a6', '#f97316', '#64748b'];
@@ -10759,7 +10776,7 @@ function showToast(message: string, action?: { label: string; fn: () => void }) 
 function openSchemaEditor(mode: 'fields' | 'new-type' = 'fields') {
   schemaEditorMode.value = mode;
   showAddFieldForm.value = false;
-  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '' };
+  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '' };
   newTypeDraft.value = { label: '', key: '', icon: 'folder', color: '#6366f1' };
   showSchemaEditor.value = true;
 }
@@ -10825,8 +10842,9 @@ function addFieldToCurrentType() {
     ...(draft.default_value.trim() ? { default_value: draft.default_value.trim() } : {}),
     ...(draft.data_type === 'formula' && draft.formula_expression.trim() ? { formula_expression: draft.formula_expression.trim() } : {}),
     ...(draft.data_type === 'formula' && draft.formula_format ? { format: draft.formula_format as FieldFormat } : {}),
+    ...(draft.help_text.trim() ? { help_text: draft.help_text.trim() } : {}),
   });
-  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '' };
+  newFieldDraft.value = { label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '' };
   showAddFieldForm.value = false;
   showToast(`Field "${label}" added to ${type.label}`);
 }
