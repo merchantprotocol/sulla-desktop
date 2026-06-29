@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment()"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -98,59 +98,86 @@
                 @dragleave="sidebarTypeDragOver = null"
                 @drop.prevent="dropSidebarTypeReorder(rt.key)"
                 @dragend="() => { sidebarTypeDragSrc = null; sidebarTypeDragOver = null; }"
+                @contextmenu.prevent="openTypeContextMenu(rt.key, $event)"
               >
-                <button
-                  type="button"
-                  class="flex-1 flex items-center gap-2.5 px-3 py-2 text-left transition-colors min-w-0"
-                  :class="selectedTypeKey === rt.key
-                    ? 'text-slate-900 dark:text-white font-semibold'
-                    : 'text-slate-600 dark:text-slate-400 group-hover/type:text-slate-900 dark:group-hover/type:text-white'"
-                  @click="selectType(rt.key)"
-                >
+                <!-- inline rename mode -->
+                <template v-if="renamingTypeKey === rt.key">
                   <span
-                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                    class="flex h-6 w-6 shrink-0 mx-3 items-center justify-center rounded-md"
                     :style="{ background: rt.color + '22', color: rt.color }"
                   >
                     <component :is="ICON_COMPONENTS[rt.icon]" class="h-3.5 w-3.5" />
                   </span>
-                  <span class="flex-1 truncate text-sm">{{ rt.label_plural }}</span>
-                  <span
-                    class="shrink-0 h-1.5 w-1.5 rounded-full"
-                    :class="(completenessRateByType[rt.key] ?? 0) >= 80 ? 'bg-emerald-400 dark:bg-emerald-500' : (completenessRateByType[rt.key] ?? 0) >= 50 ? 'bg-amber-400 dark:bg-amber-500' : 'bg-rose-400 dark:bg-rose-500'"
-                    :title="`${completenessRateByType[rt.key] ?? 0}% of ${rt.label_plural.toLowerCase()} fully complete`"
+                  <input
+                    ref="renamingTypeInputEl"
+                    v-model="renameTypeDraft"
+                    type="text"
+                    maxlength="60"
+                    class="flex-1 h-7 rounded px-2 text-sm bg-white dark:bg-slate-800 border border-violet-400 dark:border-violet-600 text-slate-900 dark:text-slate-100 focus:outline-none"
+                    @keydown.enter.prevent="commitTypeRename"
+                    @keydown.escape.stop="renamingTypeKey = null"
+                    @blur="commitTypeRename"
+                    @click.stop
+                    @vue:mounted="($el as HTMLInputElement).select()"
                   />
-                  <span
-                    class="text-xs text-slate-400 dark:text-slate-500 tabular-nums group-hover/type:opacity-0 transition-opacity"
-                    :title="typeCurrencyQuickStat[rt.key] ? `${recordCountByType[rt.key] ?? 0} records · ${typeCurrencyQuickStat[rt.key]} total` : undefined"
-                  >{{ typeCurrencyQuickStat[rt.key] ?? (recordCountByType[rt.key] ?? 0) }}</span>
-                  <span
-                    v-if="overdueCountByType[rt.key]"
-                    class="shrink-0 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold tabular-nums leading-4 text-center bg-red-500 text-white"
-                    :title="`${overdueCountByType[rt.key]} overdue ${rt.label_plural.toLowerCase()}`"
-                  >{{ overdueCountByType[rt.key] }}</span>
-                </button>
-                <!-- quick-create + button, appears on hover -->
-                <button
-                  type="button"
-                  :title="`New ${rt.label}`"
-                  class="shrink-0 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/type:opacity-100 transition-all text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
-                  @click.stop="selectType(rt.key); openNewRecord()"
-                >
-                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-                  </svg>
-                </button>
-                <!-- edit fields gear button, appears on hover -->
-                <button
-                  type="button"
-                  :title="`Edit ${rt.label} fields`"
-                  class="shrink-0 mr-2 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/type:opacity-100 transition-all text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-                  @click.stop="selectType(rt.key); openSchemaEditor('fields')"
-                >
-                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                </button>
+                  <button type="button" class="shrink-0 mx-1 h-5 px-1.5 rounded text-[10px] font-medium text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-950/30 transition-colors" @click.stop="commitTypeRename">Save</button>
+                  <button type="button" class="shrink-0 mr-2 text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click.stop="renamingTypeKey = null">✕</button>
+                </template>
+                <!-- normal mode -->
+                <template v-else>
+                  <button
+                    type="button"
+                    class="flex-1 flex items-center gap-2.5 px-3 py-2 text-left transition-colors min-w-0"
+                    :class="selectedTypeKey === rt.key
+                      ? 'text-slate-900 dark:text-white font-semibold'
+                      : 'text-slate-600 dark:text-slate-400 group-hover/type:text-slate-900 dark:group-hover/type:text-white'"
+                    @click="selectType(rt.key)"
+                  >
+                    <span
+                      class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                      :style="{ background: rt.color + '22', color: rt.color }"
+                    >
+                      <component :is="ICON_COMPONENTS[rt.icon]" class="h-3.5 w-3.5" />
+                    </span>
+                    <span class="flex-1 truncate text-sm">{{ rt.label_plural }}</span>
+                    <span
+                      class="shrink-0 h-1.5 w-1.5 rounded-full"
+                      :class="(completenessRateByType[rt.key] ?? 0) >= 80 ? 'bg-emerald-400 dark:bg-emerald-500' : (completenessRateByType[rt.key] ?? 0) >= 50 ? 'bg-amber-400 dark:bg-amber-500' : 'bg-rose-400 dark:bg-rose-500'"
+                      :title="`${completenessRateByType[rt.key] ?? 0}% of ${rt.label_plural.toLowerCase()} fully complete`"
+                    />
+                    <span
+                      class="text-xs text-slate-400 dark:text-slate-500 tabular-nums group-hover/type:opacity-0 transition-opacity"
+                      :title="typeCurrencyQuickStat[rt.key] ? `${recordCountByType[rt.key] ?? 0} records · ${typeCurrencyQuickStat[rt.key]} total` : undefined"
+                    >{{ typeCurrencyQuickStat[rt.key] ?? (recordCountByType[rt.key] ?? 0) }}</span>
+                    <span
+                      v-if="overdueCountByType[rt.key]"
+                      class="shrink-0 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold tabular-nums leading-4 text-center bg-red-500 text-white"
+                      :title="`${overdueCountByType[rt.key]} overdue ${rt.label_plural.toLowerCase()}`"
+                    >{{ overdueCountByType[rt.key] }}</span>
+                  </button>
+                  <!-- quick-create + button, appears on hover -->
+                  <button
+                    type="button"
+                    :title="`New ${rt.label}`"
+                    class="shrink-0 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/type:opacity-100 transition-all text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    @click.stop="selectType(rt.key); openNewRecord()"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                  </button>
+                  <!-- edit fields gear button, appears on hover -->
+                  <button
+                    type="button"
+                    :title="`Edit ${rt.label} fields`"
+                    class="shrink-0 mr-2 h-5 w-5 rounded flex items-center justify-center opacity-0 group-hover/type:opacity-100 transition-all text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    @click.stop="selectType(rt.key); openSchemaEditor('fields')"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  </button>
+                </template>
               </div>
             </template>
           </nav>
@@ -9254,6 +9281,58 @@
       </div>
     </transition>
 
+    <!-- record type context menu -->
+    <transition enter-active-class="transition-all duration-100" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition-all duration-75" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+      <div
+        v-if="typeContextMenu"
+        class="fixed z-[200] w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden py-1"
+        :style="{ top: `${typeContextMenu.y}px`, left: `${typeContextMenu.x}px` }"
+        @click.stop
+      >
+        <p class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 truncate">
+          {{ schema.find(t => t.key === typeContextMenu!.key)?.label_plural ?? typeContextMenu.key }}
+        </p>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="startTypeRename(typeContextMenu!.key); typeContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+          Rename
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="selectType(typeContextMenu!.key); openSchemaEditor('fields'); typeContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+          Edit fields
+        </button>
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="selectType(typeContextMenu!.key); openSchemaEditor('sections'); typeContextMenu = null"
+        >
+          <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h8M4 18h8" /></svg>
+          Sections
+        </button>
+        <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-colors"
+          :class="(recordCountByType[typeContextMenu.key] ?? 0) > 0
+            ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+            : 'text-red-500 dark:text-red-400 hover:bg-rose-50 dark:hover:bg-rose-950/20'"
+          :title="(recordCountByType[typeContextMenu.key] ?? 0) > 0 ? 'Remove all records first' : 'Permanently delete this type'"
+          :disabled="(recordCountByType[typeContextMenu.key] ?? 0) > 0"
+          @click="(() => { const k = typeContextMenu!.key; typeContextMenu = null; deleteRecordType(k); })()"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+          Delete type
+        </button>
+      </div>
+    </transition>
+
     <!-- kanban card overflow menu -->
     <transition
       enter-active-class="transition-all duration-100"
@@ -13255,6 +13334,10 @@ const saveViewName = ref('');
 const saveViewInputEl = ref<HTMLInputElement | null>(null);
 const renamingViewId = ref<string | null>(null);
 const renameViewDraft = ref('');
+const typeContextMenu = ref<{ key: string; x: number; y: number } | null>(null);
+const renamingTypeKey = ref<string | null>(null);
+const renameTypeDraft = ref('');
+const renamingTypeInputEl = ref<HTMLInputElement | null>(null);
 watch(showSaveViewPopover, (val) => {
   if (val) { saveViewName.value = ''; nextTick(() => saveViewInputEl.value?.focus()); }
 });
@@ -18452,6 +18535,33 @@ function commitRenameView() {
     savedViews.value = savedViews.value.map(v => v.id === id ? { ...v, name } : v);
   }
   renamingViewId.value = null;
+}
+
+function openTypeContextMenu(typeKey: string, e: MouseEvent) {
+  typeContextMenu.value = { key: typeKey, x: e.clientX, y: e.clientY };
+}
+
+function startTypeRename(typeKey: string) {
+  const type = schema.find((t) => t.key === typeKey);
+  if (!type) return;
+  renamingTypeKey.value = typeKey;
+  renameTypeDraft.value = type.label;
+}
+
+function commitTypeRename() {
+  const typeKey = renamingTypeKey.value;
+  renamingTypeKey.value = null;
+  if (!typeKey) return;
+  const draft = renameTypeDraft.value.trim();
+  if (!draft) return;
+  const type = schema.find((t) => t.key === typeKey);
+  if (!type) return;
+  const oldLabel = type.label;
+  type.label = draft;
+  if (type.label_plural === oldLabel + 's' || type.label_plural === oldLabel) {
+    type.label_plural = draft.endsWith('s') ? draft : draft + 's';
+  }
+  showToast(`Type renamed to "${draft}"`);
 }
 
 function duplicateRecord(record: CrmRecord) {
