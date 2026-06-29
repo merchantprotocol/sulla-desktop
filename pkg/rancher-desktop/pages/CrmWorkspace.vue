@@ -1608,11 +1608,17 @@
                 class="absolute right-0 top-full mt-1 z-30 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1"
                 @click.stop
               >
-                <div class="px-3 py-2 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide border-b border-slate-100 dark:border-slate-800">
-                  Fields
+                <div class="px-2.5 pt-2 pb-1.5 border-b border-slate-100 dark:border-slate-800">
+                  <input
+                    v-model="columnsMenuSearch"
+                    type="text"
+                    placeholder="Search fields…"
+                    class="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-700 dark:text-slate-300 placeholder-slate-400 dark:placeholder-slate-600 px-2 py-1 focus:outline-none focus:border-sky-400 dark:focus:border-sky-600"
+                    @click.stop
+                  >
                 </div>
                 <label
-                  v-for="col in allColumns"
+                  v-for="col in allColumns.filter(c => !columnsMenuSearch.trim() || c.label.toLowerCase().includes(columnsMenuSearch.toLowerCase()))"
                   :key="col.key"
                   class="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer select-none"
                   :class="col.is_title
@@ -10550,6 +10556,7 @@ let colResizeDragKey: string | null = null;
 let colResizeDragStart = 0;
 let colResizeDragStartWidth = 0;
 const showColumnsMenu = ref(false);
+const columnsMenuSearch = ref('');
 const sidebarCollapsed = ref(false);
 const pendingDeleteId = ref<string | null>(null);
 let pendingDeleteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -11675,6 +11682,7 @@ onMounted(() => {
   } catch { /* storage not available */ }
 });
 
+watch(showColumnsMenu, (val) => { if (!val) columnsMenuSearch.value = ''; });
 watch(viewMode, (val) => {
   try { localStorage.setItem(LS_KEY_VIEW_MODE, val); } catch { /* ignore */ }
   if (val !== 'gallery') galleryFocusIdx.value = -1;
