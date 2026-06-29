@@ -3521,6 +3521,7 @@
                       kanbanDragCardId === record.id ? 'opacity-40' : '']"
                     :style="colorLabels[record.id] ? { borderTopColor: colorLabels[record.id], borderTopWidth: '3px' } : undefined"
                     @click="openRecord(record)"
+                    @contextmenu.prevent="openContextMenu(record, $event)"
                     @dragstart.stop="(e) => { kanbanDragCardId = record.id; e.dataTransfer && (e.dataTransfer.effectAllowed = 'move'); }"
                     @dragend="kanbanDragCardId = null; kanbanDragOverCol = null"
                   >
