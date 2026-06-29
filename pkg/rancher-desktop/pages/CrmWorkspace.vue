@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1558,6 +1558,56 @@
                 </svg>
                 Timeline
               </button>
+              <!-- kanban card fields picker — shown only in kanban mode -->
+              <div v-if="viewMode === 'kanban'" class="relative border-l border-slate-200 dark:border-slate-700" @click.stop>
+                <button
+                  type="button"
+                  class="flex items-center gap-1 h-9 px-3 text-xs transition-colors"
+                  :class="kanbanPreviewFieldKeys[selectedTypeKey]?.length
+                    ? 'text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30'
+                    : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                  :title="kanbanPreviewFieldKeys[selectedTypeKey]?.length ? `Card fields: ${(kanbanPreviewFieldKeys[selectedTypeKey] ?? []).length} selected` : 'Choose which fields appear on kanban cards'"
+                  @click="showKanbanFieldsPopover = !showKanbanFieldsPopover"
+                >
+                  <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h8" />
+                  </svg>
+                  Fields
+                </button>
+                <div
+                  v-if="showKanbanFieldsPopover"
+                  class="absolute top-full right-0 mt-1 z-40 w-52 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-lg py-2"
+                >
+                  <p class="px-3 pt-0.5 pb-2 text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Card preview fields</p>
+                  <div class="space-y-0.5 px-1 max-h-60 overflow-y-auto">
+                    <label
+                      v-for="field in (selectedType?.fields ?? []).filter(f => !f.is_title && f.key !== kanbanField?.key).sort((a, b) => a.position - b.position)"
+                      :key="field.key"
+                      class="flex items-center gap-2.5 w-full px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        class="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 text-sky-600"
+                        :checked="(kanbanPreviewFieldKeys[selectedTypeKey] ?? []).includes(field.key)"
+                        @change="(() => {
+                          const cur = kanbanPreviewFieldKeys[selectedTypeKey] ?? [];
+                          const checked = (($event as Event).target as HTMLInputElement).checked;
+                          const next = checked ? [...cur, field.key] : cur.filter(k => k !== field.key);
+                          kanbanPreviewFieldKeys = { ...kanbanPreviewFieldKeys, [selectedTypeKey]: next };
+                        })()"
+                      />
+                      <span class="text-sm text-slate-700 dark:text-slate-300 truncate">{{ field.label }}</span>
+                    </label>
+                  </div>
+                  <div class="px-3 pt-2 mt-1 border-t border-slate-100 dark:border-slate-800">
+                    <button
+                      type="button"
+                      class="text-xs text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 transition-colors"
+                      @click="kanbanPreviewFieldKeys = { ...kanbanPreviewFieldKeys, [selectedTypeKey]: [] }; showKanbanFieldsPopover = false"
+                    >Reset to default (auto)</button>
+                  </div>
+                </div>
+              </div>
               <!-- gallery column-count picker — shown only in gallery mode -->
               <template v-if="viewMode === 'gallery'">
                 <button
@@ -7522,6 +7572,8 @@ const filterPresetNameInput = ref('');
 
 const galleryPreviewFieldKeys = ref<Record<string, string[]>>({});
 const showGalleryFieldsPopover = ref(false);
+const kanbanPreviewFieldKeys = ref<Record<string, string[]>>({});
+const showKanbanFieldsPopover = ref(false);
 
 onMounted(() => {
   try {
@@ -8852,6 +8904,12 @@ const importPreviewRows = computed((): Array<Record<string, string>> => {
 // Secondary fields shown on each kanban card (first 2 non-title, non-groupBy fields)
 const kanbanCardFields = computed(() => {
   const groupKey = kanbanField.value?.key;
+  const configured = kanbanPreviewFieldKeys.value[selectedTypeKey.value] ?? [];
+  if (configured.length) {
+    return (selectedType.value?.fields ?? [])
+      .filter((f) => configured.includes(f.key))
+      .sort((a, b) => configured.indexOf(a.key) - configured.indexOf(b.key));
+  }
   return (selectedType.value?.fields ?? [])
     .filter((f) => !f.is_title && f.key !== groupKey && f.data_type !== 'boolean')
     .sort((a, b) => a.position - b.position)
