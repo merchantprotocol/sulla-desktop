@@ -3681,6 +3681,11 @@
                       />
                       <div class="h-9 w-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 select-none" :style="{ background: (selectedType?.color ?? '#3b82f6') + '22', color: selectedType?.color ?? '#3b82f6' }">{{ recordInitials(record.title) }}</div>
                       <div class="flex-1" />
+                      <!-- watch toggle -->
+                      <button type="button" class="shrink-0 mt-1 rounded transition-colors" :class="watchedIds.has(record.id) ? 'text-sky-500' : 'text-slate-200 dark:text-slate-700 hover:text-sky-400 opacity-0 group-hover/gc:opacity-100'" :title="watchedIds.has(record.id) ? 'Unwatch' : 'Watch'" @click.stop="toggleWatch(record.id)">
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                      </button>
+                      <!-- pin toggle -->
                       <button type="button" class="shrink-0 mt-1 rounded transition-colors" :class="pinnedIds.has(record.id) ? 'text-amber-400' : 'text-slate-200 dark:text-slate-700 hover:text-amber-400 dark:hover:text-amber-400 opacity-0 group-hover/gc:opacity-100'" :title="pinnedIds.has(record.id) ? 'Unpin' : 'Pin'" :aria-label="pinnedIds.has(record.id) ? 'Unpin record' : 'Pin record'" @click.stop="togglePin(record.id)">
                         <svg v-if="pinnedIds.has(record.id)" class="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
                         <svg v-else class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
@@ -3769,6 +3774,21 @@
                     :style="{ background: (selectedType?.color ?? '#3b82f6') + '22', color: selectedType?.color ?? '#3b82f6' }"
                   >{{ recordInitials(record.title) }}</div>
                   <div class="flex-1" />
+                  <!-- watch toggle -->
+                  <button
+                    type="button"
+                    class="shrink-0 mt-1 rounded transition-colors"
+                    :class="watchedIds.has(record.id)
+                      ? 'text-sky-500'
+                      : 'text-slate-200 dark:text-slate-700 hover:text-sky-400 opacity-0 group-hover/gc:opacity-100'"
+                    :title="watchedIds.has(record.id) ? 'Unwatch' : 'Watch'"
+                    @click.stop="toggleWatch(record.id)"
+                  >
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                  </button>
+                  <!-- pin toggle -->
                   <button
                     type="button"
                     class="shrink-0 mt-1 rounded transition-colors"
