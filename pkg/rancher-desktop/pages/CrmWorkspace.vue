@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4712,6 +4712,41 @@
                     </span>
                     <span class="text-xs font-medium text-slate-500 dark:text-slate-400 capitalize">{{ noteType }}</span>
                     <span v-if="noteText.startsWith('> ')" class="text-xs text-sky-400 dark:text-sky-500">· replying</span>
+                    <!-- email template picker -->
+                    <div v-if="noteType === 'email'" class="relative ml-auto">
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                        :class="showEmailTemplatePicker ? 'text-sky-500 dark:text-sky-400' : ''"
+                        @click="showEmailTemplatePicker = !showEmailTemplatePicker"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Templates
+                      </button>
+                      <div
+                        v-if="showEmailTemplatePicker"
+                        class="absolute right-0 top-full mt-1 z-30 w-56 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl overflow-hidden"
+                      >
+                        <div class="px-3 py-1.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                          <p class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Email templates</p>
+                          <button type="button" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" @click="showEmailTemplatePicker = false">
+                            <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                        <ul class="py-1">
+                          <li
+                            v-for="tpl in emailTemplates"
+                            :key="tpl.id"
+                            class="px-3 py-2 text-xs text-slate-700 dark:text-slate-300 hover:bg-sky-50 dark:hover:bg-sky-950/30 hover:text-slate-900 dark:hover:text-white cursor-pointer transition-colors"
+                            @mousedown.prevent="applyEmailTemplate(tpl)"
+                          >{{ tpl.name }}</li>
+                        </ul>
+                      </div>
+                    </div>
                   </div>
                   <div class="relative">
                     <textarea
@@ -7489,6 +7524,12 @@ interface CrmAttachment {
   uploaded_at: string;
 }
 
+interface EmailTemplate {
+  id: string;
+  name: string;
+  body: string; // supports {{name}} and {{field_key}} placeholders
+}
+
 interface SavedView {
   id: string;
   name: string;
@@ -7964,6 +8005,23 @@ const activityTextareaEl = ref<HTMLTextAreaElement | null>(null);
 watch(loggingNote, (val) => { if (val) nextTick(() => activityTextareaEl.value?.focus()); });
 const noteText = ref('');
 const noteType = ref<'note' | 'email' | 'call' | 'meeting'>('note');
+const showEmailTemplatePicker = ref(false);
+watch(noteType, () => { showEmailTemplatePicker.value = false; });
+
+const emailTemplates: EmailTemplate[] = [
+  { id: 'et1', name: 'Follow-up after call',
+    body: 'Hi {{name}},\n\nThanks for taking the time to speak today. I\'ll be sending over a proposal shortly.\n\nLooking forward to moving forward — let me know if you have any questions.\n\nBest,\n[Your name]' },
+  { id: 'et2', name: 'Send proposal',
+    body: 'Hi {{name}},\n\nPlease find attached the proposal we discussed. It covers our recommended approach and pricing for your review.\n\nI\'m happy to walk through it together on a quick call — just let me know what works for your schedule.\n\nBest,\n[Your name]' },
+  { id: 'et3', name: 'Check-in',
+    body: 'Hi {{name}},\n\nJust wanted to check in and see how things are going. Have you had a chance to review what we sent over?\n\nHappy to answer any questions or schedule a follow-up at your convenience.\n\nBest,\n[Your name]' },
+  { id: 'et4', name: 'Closing — next steps',
+    body: 'Hi {{name}},\n\nThanks for our conversation today. To confirm the next steps:\n\n1. [Agreed action]\n2. [Timeline]\n\nFeel free to reach out with any questions. Looking forward to wrapping this up!\n\nBest,\n[Your name]' },
+  { id: 'et5', name: 'Welcome — deal won',
+    body: 'Hi {{name}},\n\nWelcome aboard — we\'re thrilled to have you! Here\'s what happens next:\n\n- You\'ll receive a welcome email from our onboarding team within 24 hours\n- Your account manager will schedule a kick-off call this week\n\nWe look forward to a great partnership.\n\nWarm regards,\n[Your name]' },
+  { id: 'et6', name: 'Re-engagement',
+    body: 'Hi {{name}},\n\nIt\'s been a while since we last connected and I wanted to reach out. We\'ve made a few updates I think you\'d find interesting.\n\nWould you be open to a quick 15-minute call this week to catch up?\n\nBest,\n[Your name]' },
+];
 const noteScheduledAt = ref('');
 const noteScheduledTime = ref('');
 const atMentionOpen = ref(false);
@@ -10800,6 +10858,20 @@ function logNote(record: CrmRecord) {
   loggingNote.value = false;
   const label = scheduledDate ? `${noteType.value} scheduled for ${scheduledDate}` : `${noteType.value.charAt(0).toUpperCase() + noteType.value.slice(1)} logged`;
   showToast(label);
+}
+
+function applyEmailTemplate(tpl: EmailTemplate) {
+  const rec = openedRecord.value;
+  if (!rec) return;
+  const typeFields = schema.find((s) => s.key === rec.record_type_key)?.fields ?? [];
+  let body = tpl.body.replace(/\{\{name\}\}/g, rec.title);
+  for (const field of typeFields) {
+    const val = String(rec.field_values[field.key] ?? '');
+    body = body.replace(new RegExp(`\\{\\{${field.key}\\}\\}`, 'g'), val);
+  }
+  noteText.value = body;
+  showEmailTemplatePicker.value = false;
+  nextTick(() => activityTextareaEl.value?.focus());
 }
 
 function deleteActivity(actId: string) {
