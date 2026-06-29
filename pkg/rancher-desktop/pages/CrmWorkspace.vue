@@ -9433,23 +9433,30 @@
               <!-- Files tab -->
               <template v-else-if="detailTab === 'files'">
                 <!-- drop zone / upload bar -->
-                <div
-                  class="rounded-xl border-2 border-dashed transition-colors px-4 py-3 flex items-center gap-3"
+                <label
+                  class="block rounded-xl border-2 border-dashed transition-colors px-4 py-3 flex items-center gap-3 cursor-pointer"
                   :class="filesDragOver
                     ? 'border-sky-400 bg-sky-50/40 dark:bg-sky-950/20'
-                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'"
+                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50/60 dark:hover:bg-slate-800/30'"
                   @dragover.prevent="filesDragOver = true"
                   @dragleave="filesDragOver = false"
                   @drop.prevent="dropFiles($event)"
                 >
+                  <input
+                    ref="attachFileInputEl"
+                    type="file"
+                    multiple
+                    class="sr-only"
+                    @change="handleAttachFileInput"
+                  />
                   <svg class="h-5 w-5 shrink-0 text-slate-400 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
                   </svg>
                   <p class="text-sm text-slate-400 dark:text-slate-500">
                     <span v-if="filesDragOver" class="text-sky-600 dark:text-sky-400 font-medium">Drop to attach</span>
-                    <span v-else>Drag files here to attach</span>
+                    <template v-else>Drag files here or <span class="text-sky-500 dark:text-sky-400 hover:underline">browse</span></template>
                   </p>
-                </div>
+                </label>
 
                 <!-- file list -->
                 <div v-if="recordAttachments.length" class="space-y-1 mt-1">
@@ -14467,6 +14474,7 @@ let bulkDeletedSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
 const detailTab = ref<'details' | 'activity' | 'related' | 'tasks' | 'files' | 'notes'>('details');
 const recordNotes = reactive<Record<string, string>>({});
 const filesDragOver = ref(false);
+const attachFileInputEl = ref<HTMLInputElement | null>(null);
 const renamingAttachmentId = ref<string | null>(null);
 const renameAttachmentDraft = ref('');
 const previewAttachmentId = ref<string | null>(null);
@@ -20719,6 +20727,26 @@ function dropFiles(e: DragEvent) {
     });
   });
   showToast(`${e.dataTransfer.files.length} file${e.dataTransfer.files.length === 1 ? '' : 's'} attached`);
+}
+
+function handleAttachFileInput(e: Event) {
+  const input = e.target as HTMLInputElement;
+  if (!openedRecord.value || !input.files?.length) return;
+  const now = new Date().toISOString();
+  const count = input.files.length;
+  Array.from(input.files).forEach((f, i) => {
+    mockAttachments.push({
+      id: 'af-browse-' + String(Date.now()) + '-' + String(i),
+      record_id: openedRecord.value!.id,
+      name: f.name,
+      size: f.size,
+      mime_type: f.type || 'application/octet-stream',
+      uploaded_by: 'JB',
+      uploaded_at: now,
+    });
+  });
+  showToast(`${count} file${count === 1 ? '' : 's'} attached`);
+  input.value = '';
 }
 
 function formatAge(iso: string): string {
