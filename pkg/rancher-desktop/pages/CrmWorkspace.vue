@@ -3217,8 +3217,10 @@
                           <div class="flex items-center gap-1.5">
                             <span
                               v-if="activityCountByRecord[row.record.id]"
-                              class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400"
+                              class="inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 cursor-default"
                               :title="`${activityCountByRecord[row.record.id]} activities`"
+                              @mouseenter="showActivityPreview(row.record.id, $event.currentTarget as HTMLElement)"
+                              @mouseleave="hideActivityPreview"
                             >{{ activityCountByRecord[row.record.id] }}</span>
                             <span
                               v-if="pendingTaskCountByRecord[row.record.id]"
@@ -3500,6 +3502,8 @@
                         type="button"
                         class="shrink-0 h-4 min-w-[1rem] rounded-full px-1 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 hover:bg-sky-100 dark:hover:bg-sky-900/30 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
                         :title="`${activityCountByRecord[record.id]} activit${activityCountByRecord[record.id] === 1 ? 'y' : 'ies'}`"
+                        @mouseenter="showActivityPreview(record.id, $event.currentTarget as HTMLElement)"
+                        @mouseleave="hideActivityPreview"
                         @click.stop="openRecord(record); nextTick(() => { detailTab = 'activity'; })"
                       >{{ activityCountByRecord[record.id] }}</button>
                       <svg
@@ -4664,7 +4668,7 @@
                         </svg>
                         {{ overdueIds.has(record.id) ? 'Overdue' : 'Due soon' }}
                       </span>
-                      <span v-if="activityCountByRecord[record.id]" class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400" :title="`${activityCountByRecord[record.id]} activities`">{{ activityCountByRecord[record.id] }}</span>
+                      <span v-if="activityCountByRecord[record.id]" class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 cursor-default" :title="`${activityCountByRecord[record.id]} activities`" @mouseenter="showActivityPreview(record.id, $event.currentTarget as HTMLElement)" @mouseleave="hideActivityPreview">{{ activityCountByRecord[record.id] }}</span>
                       <span v-if="pendingTaskCountByRecord[record.id]" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400" :title="`${pendingTaskCountByRecord[record.id]} pending tasks`"><svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>{{ pendingTaskCountByRecord[record.id] }}</span>
                       <span v-if="record.links?.length" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400" :title="`${record.links.length} linked record${record.links.length === 1 ? '' : 's'}`"><svg class="h-2 w-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>{{ record.links.length }}</span>
                       <button v-if="scoringRules.length && scoreRecord(record) > 0" type="button" class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-semibold cursor-pointer transition-opacity hover:opacity-75" :class="scoreRecord(record) >= 70 ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400' : scoreRecord(record) >= 40 ? 'bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400' : 'bg-rose-50 dark:bg-rose-950/30 text-rose-500 dark:text-rose-400'" :title="`Score: ${scoreRecord(record)} / 100 — click for breakdown`" @click.stop="(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); scoreBreakdownPos = { top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) }; scoreBreakdownRecord = record; showScoreBreakdown = !showScoreBreakdown; }"><svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>{{ scoreRecord(record) }}</button>
@@ -4862,8 +4866,10 @@
                 >
                   <span
                     v-if="activityCountByRecord[record.id]"
-                    class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400"
+                    class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400 cursor-default"
                     :title="`${activityCountByRecord[record.id]} activities`"
+                    @mouseenter="showActivityPreview(record.id, $event.currentTarget as HTMLElement)"
+                    @mouseleave="hideActivityPreview"
                   >{{ activityCountByRecord[record.id] }}</span>
                   <span
                     v-if="pendingTaskCountByRecord[record.id]"
@@ -6003,8 +6009,10 @@
                   <span class="text-xs text-slate-700 dark:text-slate-200 truncate flex-1" :title="row.title">{{ row.title }}</span>
                   <span
                     v-if="activityCountByRecord[row.record.id]"
-                    class="shrink-0 inline-flex items-center rounded-full px-1 py-0.5 text-[9px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-500 dark:text-sky-400"
+                    class="shrink-0 inline-flex items-center rounded-full px-1 py-0.5 text-[9px] tabular-nums font-medium bg-sky-50 dark:bg-sky-950/30 text-sky-500 dark:text-sky-400 cursor-default"
                     :title="`${activityCountByRecord[row.record.id]} activities`"
+                    @mouseenter="showActivityPreview(row.record.id, $event.currentTarget as HTMLElement)"
+                    @mouseleave="hideActivityPreview"
                   >{{ activityCountByRecord[row.record.id] }}</span>
                   <span
                     v-if="pendingTaskCountByRecord[row.record.id]"
@@ -13529,6 +13537,45 @@
       </transition>
     </Teleport>
 
+    <!-- activity preview hover popover -->
+    <Teleport to="body">
+      <transition enter-active-class="transition-all duration-150" enter-from-class="opacity-0 scale-95" enter-to-class="opacity-100 scale-100" leave-active-class="transition-all duration-100" leave-from-class="opacity-100 scale-100" leave-to-class="opacity-0 scale-95">
+        <div
+          v-if="activityPreviewId && activityPreviewItems.length"
+          class="fixed z-[9999] w-60 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+          :style="{ top: `${activityPreviewPos.top}px`, left: `${activityPreviewPos.left}px` }"
+          @mouseenter="keepActivityPreview"
+          @mouseleave="hideActivityPreview"
+          @click.stop
+        >
+          <div class="px-3 pt-2.5 pb-1.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <span class="text-[10px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Recent activity</span>
+            <span class="tabular-nums text-[10px] text-slate-400 dark:text-slate-500">{{ activityCountByRecord[activityPreviewId] }} total</span>
+          </div>
+          <div class="py-1">
+            <div
+              v-for="act in activityPreviewItems"
+              :key="act.id"
+              class="flex items-start gap-2 px-3 py-1.5"
+            >
+              <span
+                class="mt-0.5 h-4 w-4 rounded-full flex items-center justify-center shrink-0"
+                :class="ACTIVITY_ICON_BG[act.type]"
+              >
+                <svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" :d="ACTIVITY_ICONS[act.type]" />
+                </svg>
+              </span>
+              <div class="flex-1 min-w-0">
+                <p class="text-[11px] text-slate-600 dark:text-slate-300 truncate leading-tight">{{ act.content.replace(/^\[[^\]]+\]\s*/, '').slice(0, 80) }}</p>
+                <p class="text-[9px] text-slate-400 dark:text-slate-500 mt-0.5">{{ act.author }} · {{ formatRelativeTime(act.created_at) }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
+
     <!-- quick-note popover -->
     <teleport to="body">
       <transition
@@ -14865,6 +14912,26 @@ const scoreBreakdownPos = ref({ top: 0, left: 0 });
 const scoreBreakdownRecord = ref<CrmRecord | null>(null);
 const showCompletenessBreakdown = ref(false);
 const completenessBreakdownPos = ref({ top: 0, left: 0 });
+const activityPreviewId = ref<string | null>(null);
+const activityPreviewPos = ref({ top: 0, left: 0 });
+let activityPreviewTimer: ReturnType<typeof setTimeout> | null = null;
+const activityPreviewItems = computed(() =>
+  activityPreviewId.value
+    ? mockActivities.filter(a => a.record_id === activityPreviewId.value).slice(-3).reverse()
+    : []
+);
+function showActivityPreview(recordId: string, el: HTMLElement) {
+  if (activityPreviewTimer) { clearTimeout(activityPreviewTimer); activityPreviewTimer = null; }
+  const r = el.getBoundingClientRect();
+  activityPreviewId.value = recordId;
+  activityPreviewPos.value = { top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 248)) };
+}
+function hideActivityPreview() {
+  activityPreviewTimer = setTimeout(() => { activityPreviewId.value = null; }, 200);
+}
+function keepActivityPreview() {
+  if (activityPreviewTimer) { clearTimeout(activityPreviewTimer); activityPreviewTimer = null; }
+}
 const scoringDraftCondition = ref<ScoringRule['condition']>('field_filled');
 const scoringDraftFieldKey = ref('');
 const scoringDraftValue = ref('');
