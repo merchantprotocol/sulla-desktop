@@ -2603,12 +2603,17 @@
                 >
                   <!-- row checkbox -->
                   <td class="pl-6 pr-2" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'" @click.stop>
-                    <input
-                      type="checkbox"
-                      :checked="selectedIds.has(record.id)"
-                      class="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer"
-                      @click="onCheckboxClick(record, idx, $event)"
-                    >
+                    <div class="flex items-center gap-1.5">
+                      <input
+                        type="checkbox"
+                        :checked="selectedIds.has(record.id)"
+                        class="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-sky-600 cursor-pointer"
+                        @click="onCheckboxClick(record, idx, $event)"
+                      >
+                      <svg v-if="lockedRecordIds.has(record.id)" class="h-3 w-3 text-orange-400 dark:text-orange-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" title="Record is locked">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    </div>
                   </td>
                   <td
                     v-for="col in visibleColumns"
@@ -5460,6 +5465,14 @@
             <div class="flex-1 px-5 py-4 space-y-4 overflow-y-auto">
               <!-- Details tab -->
               <template v-if="editingRecord || detailTab === 'details'">
+                <!-- locked record banner -->
+                <div v-if="!editingRecord && lockedRecordIds.has(openedRecord.id)" class="flex items-center gap-2 rounded-lg border border-orange-200 dark:border-orange-800/60 bg-orange-50 dark:bg-orange-950/20 px-3 py-2">
+                  <svg class="h-3.5 w-3.5 shrink-0 text-orange-500 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  <p class="text-xs text-orange-700 dark:text-orange-300 flex-1">This record is locked. Edits are disabled.</p>
+                  <button type="button" class="text-xs font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-200 transition-colors shrink-0" @click="toggleRecordLock(openedRecord.id)">Unlock</button>
+                </div>
                 <!-- field search — only shown when type has enough fields -->
                 <div v-if="!editingRecord && (selectedType?.fields?.length ?? 0) > 6" class="relative">
                   <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-300 dark:text-slate-600 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -6776,8 +6789,13 @@
               <div class="flex gap-2">
                 <button
                   type="button"
-                  class="flex-1 rounded-lg py-2 text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                  @click="startEditing(openedRecord)"
+                  class="flex-1 rounded-lg py-2 text-sm font-medium transition-colors"
+                  :class="lockedRecordIds.has(openedRecord.id)
+                    ? 'text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/40 cursor-not-allowed'
+                    : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700'"
+                  :disabled="lockedRecordIds.has(openedRecord.id)"
+                  :title="lockedRecordIds.has(openedRecord.id) ? 'Record is locked — unlock to edit' : undefined"
+                  @click="!lockedRecordIds.has(openedRecord.id) && startEditing(openedRecord)"
                 >
                   Edit
                 </button>
