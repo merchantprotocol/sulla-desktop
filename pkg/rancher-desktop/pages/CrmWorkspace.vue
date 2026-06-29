@@ -1588,6 +1588,20 @@
               </svg>
               {{ collapsedTimelineGroups.size ? 'Expand all' : 'Collapse all' }}
             </button>
+            <!-- tasks collapse-all / expand-all — shown in tasks view -->
+            <button
+              v-if="viewMode === 'tasks' && tasksViewGroups.length > 1"
+              type="button"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-lg text-sm border border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-colors"
+              :title="collapsedTaskGroups.size ? 'Expand all task groups' : 'Collapse all task groups'"
+              @click="collapsedTaskGroups = collapsedTaskGroups.size ? new Set() : new Set(tasksViewGroups.map(g => g.id))"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path v-if="collapsedTaskGroups.size" stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                <path v-else stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7M5 9l7-7 7 7" />
+              </svg>
+              {{ collapsedTaskGroups.size ? 'Expand all' : 'Collapse all' }}
+            </button>
 
             <!-- date group mode selector — visible when grouping by a date field -->
             <template v-if="groupByField && viewMode === 'table' && allColumns.find(c => c.key === groupByField)?.data_type === 'date'">
@@ -7829,7 +7843,12 @@
           <div v-else class="p-6 space-y-6 max-w-3xl mx-auto">
             <div v-for="group in tasksViewGroups" :key="group.id" class="space-y-1">
               <!-- group header -->
-              <div class="group/tasksgrp flex items-center gap-2 mb-2">
+              <div
+                class="group/tasksgrp flex items-center gap-2 mb-2 cursor-pointer select-none"
+                :title="collapsedTaskGroups.has(group.id) ? `Expand — ${group.items.length} task${group.items.length === 1 ? '' : 's'}` : 'Collapse group'"
+                @click="(() => { const next = new Set(collapsedTaskGroups); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); collapsedTaskGroups = next; })()"
+              >
+                <svg class="shrink-0 h-3 w-3 text-slate-400 dark:text-slate-500 transition-transform duration-150" :class="collapsedTaskGroups.has(group.id) ? '-rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
                 <span
                   class="shrink-0 h-2 w-2 rounded-full"
                   :class="group.color === 'rose' ? 'bg-rose-500'
@@ -7861,6 +7880,7 @@
                 </button>
               </div>
               <!-- task rows -->
+              <template v-if="!collapsedTaskGroups.has(group.id)">
               <div
                 v-for="item in group.items"
                 :key="item.task.id"
@@ -8062,6 +8082,7 @@
                   </svg>
                 </button>
               </div>
+              </template>
             </div>
           </div>
         </div>
@@ -16020,6 +16041,8 @@ const feedDatePreset = ref<'7d' | '30d' | '90d' | 'all'>('all');
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const tasksViewGroupBy = ref<'due' | 'priority' | 'record'>('due');
+const collapsedTaskGroups = ref<Set<string>>(new Set());
+watch(tasksViewGroupBy, () => { collapsedTaskGroups.value = new Set(); });
 const tasksViewSortKey = ref<'due' | 'priority' | 'name' | 'created'>('due');
 const tasksViewHideDone = ref(true);
 const tasksViewPriorityFilter = ref<'high' | 'medium' | 'low' | ''>('');
