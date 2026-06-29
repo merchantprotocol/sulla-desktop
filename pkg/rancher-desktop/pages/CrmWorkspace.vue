@@ -3139,7 +3139,7 @@
                           :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'"
                         ><span class="text-[11px] text-slate-300 dark:text-slate-600 font-mono">{{ row.idxInFiltered + 1 }}</span></td>
                         <td v-for="col in visibleColumns" :key="col.key" class="px-4" :class="[rowDensity === 'compact' ? 'py-1.5' : 'py-3']">
-                          <CrmCellValue :value="row.record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                          <CrmCellValue :value="row.record.field_values[col.key]" :data-type="col.data_type" :format="col.format" :on-tag-click="col.data_type === 'multi_select' ? (tag: string) => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; } : undefined" />
                         </td>
                         <td class="px-4" :class="rowDensity === 'compact' ? 'py-1.5' : 'py-3'">
                           <div class="flex items-center gap-1.5">
@@ -3309,7 +3309,7 @@
                             <span v-else>{{ part.text }}</span>
                           </template>
                         </span>
-                        <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" />
+                        <CrmCellValue v-else :value="record.field_values[col.key]" :data-type="col.data_type" :format="col.format" :on-tag-click="col.data_type === 'multi_select' ? (tag: string) => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; } : undefined" />
                         <span
                           v-if="record.links?.length"
                           class="shrink-0 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs tabular-nums bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500"
@@ -3358,7 +3358,7 @@
                             @click.stop="toggleRowExpand(record.id)"
                           >{{ expandedRowIds.has(record.id) ? 'less' : 'more' }}</button>
                         </template>
-                        <CrmCellValue v-else :value="col.data_type === 'formula' ? evaluateFormula(record, col) as (string | number) : col.data_type === 'rollup' ? evaluateRollup(record, col) as (string | number) : record.field_values[col.key]" :data-type="col.data_type === 'formula' ? (typeof evaluateFormula(record, col) === 'string' ? 'text' : 'number') : col.data_type === 'rollup' ? 'number' : col.data_type" :format="col.format" />
+                        <CrmCellValue v-else :value="col.data_type === 'formula' ? evaluateFormula(record, col) as (string | number) : col.data_type === 'rollup' ? evaluateRollup(record, col) as (string | number) : record.field_values[col.key]" :data-type="col.data_type === 'formula' ? (typeof evaluateFormula(record, col) === 'string' ? 'text' : 'number') : col.data_type === 'rollup' ? 'number' : col.data_type" :format="col.format" :on-tag-click="col.data_type === 'multi_select' ? (tag: string) => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; } : undefined" />
                         <!-- funnel icon on select cells to hint at click-to-filter -->
                         <span
                           v-if="col.data_type === 'select' && record.field_values[col.key]"
@@ -4463,7 +4463,7 @@
                     <div v-if="galleryPreviewFields.length" class="space-y-1.5 mb-3">
                       <div v-for="field in galleryPreviewFields" :key="field.key" class="flex items-start gap-2">
                         <span class="text-xs text-slate-400 dark:text-slate-500 w-20 shrink-0 truncate pt-px">{{ field.label }}</span>
-                        <CrmCellValue :value="record.field_values[field.key]" :data-type="field.data_type" :format="field.format" class="text-xs truncate" />
+                        <CrmCellValue :value="record.field_values[field.key]" :data-type="field.data_type" :format="field.format" class="text-xs truncate" :on-tag-click="field.data_type === 'multi_select' ? (tag: string) => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; } : undefined" />
                       </div>
                     </div>
                     <div v-if="(recordTags[record.id] ?? []).length" class="flex flex-wrap gap-1 mb-3">
@@ -20346,6 +20346,7 @@ const CrmCellValue = defineComponent({
     value: { type: [String, Number, Boolean, Array, null] as unknown as () => string | number | boolean | string[] | null, default: null },
     dataType: { type: String as () => DataType, required: true },
     format: { type: String as () => FieldFormat, default: undefined },
+    onTagClick: { type: Function as unknown as () => ((tag: string) => void) | undefined, default: undefined },
   },
   setup(props) {
     return () => {
@@ -20365,7 +20366,9 @@ const CrmCellValue = defineComponent({
         return h('span', { class: 'flex flex-wrap gap-0.5' },
           arr.map((tag) => h('span', {
             key: tag,
-            class: 'inline-flex items-center rounded-full px-1.5 py-0 text-xs font-medium bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800',
+            class: 'inline-flex items-center rounded-full px-1.5 py-0 text-xs font-medium bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800' + (props.onTagClick ? ' cursor-pointer hover:bg-sky-100 dark:hover:bg-sky-900/60 transition-colors' : ''),
+            title: props.onTagClick ? `Filter by "${tag}"` : undefined,
+            onClick: props.onTagClick ? (e: Event) => { e.stopPropagation(); props.onTagClick!(tag); } : undefined,
           }, tag)),
         );
       }
