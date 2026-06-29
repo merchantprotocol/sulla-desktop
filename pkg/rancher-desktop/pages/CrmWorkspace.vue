@@ -267,6 +267,40 @@
             </button>
           </div>
 
+          <!-- overdue / today tasks (hidden when collapsed) -->
+          <div v-if="overdueAndTodayTasks.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
+            <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
+              Tasks due
+            </p>
+            <button
+              v-for="item in overdueAndTodayTasks"
+              :key="item.task.id"
+              type="button"
+              class="w-full flex items-start gap-2 px-3 py-1.5 rounded-lg text-left transition-colors group"
+              :class="openedRecord?.id === item.record?.id
+                ? 'bg-slate-100 dark:bg-slate-800'
+                : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+              @click="item.record && (openFromPalette(item.record), nextTick(() => { detailTab = 'tasks'; }))"
+            >
+              <span
+                class="shrink-0 mt-0.5 h-4 w-4 rounded border-2 transition-colors flex items-center justify-center"
+                :class="item.isOverdue
+                  ? 'border-rose-400 dark:border-rose-500 bg-rose-50 dark:bg-rose-950/20'
+                  : 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/20'"
+              >
+                <svg class="h-2 w-2" :class="item.isOverdue ? 'text-rose-500' : 'text-amber-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3" />
+                </svg>
+              </span>
+              <span class="flex-1 min-w-0">
+                <span class="block text-xs truncate text-slate-700 dark:text-slate-300">{{ item.task.text }}</span>
+                <span class="block text-[10px] tabular-nums" :class="item.isOverdue ? 'text-rose-500 dark:text-rose-400' : 'text-amber-500 dark:text-amber-400'">
+                  {{ item.isOverdue ? 'Overdue · ' : 'Today · ' }}{{ item.record?.title }}
+                </span>
+              </span>
+            </button>
+          </div>
+
           <!-- global activity feed (hidden when collapsed) -->
           <div v-if="globalRecentActivities.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
@@ -8247,6 +8281,20 @@ const globalRecentActivities = computed(() => {
     const ageLabel = ageDays === 0 ? 'today' : ageDays === 1 ? '1d ago' : `${ageDays}d ago`;
     return { activity: a, record: rec, rt, ageLabel };
   }).filter((item) => item.record !== null);
+});
+
+const overdueAndTodayTasks = computed(() => {
+  const today = DUE_TODAY_STR;
+  return mockTasks
+    .filter((t) => !t.done && t.due_date && t.due_date <= today)
+    .sort((a, b) => (a.due_date! < b.due_date! ? -1 : a.due_date! > b.due_date! ? 1 : 0))
+    .slice(0, 8)
+    .map((t) => ({
+      task: t,
+      record: mockRecords.find((r) => r.id === t.record_id) ?? null,
+      isOverdue: t.due_date! < today,
+    }))
+    .filter((item) => item.record !== null);
 });
 
 // Due-date urgency — first date field in type is used as the due-date proxy
