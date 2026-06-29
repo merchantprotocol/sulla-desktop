@@ -3533,12 +3533,21 @@
                   <!-- swimlane subheader -->
                   <div
                     v-if="item.kind === 'lane'"
-                    class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-1 pt-2 pb-0.5 select-none"
+                    class="group/swlane flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 px-1 pt-2 pb-0.5 select-none cursor-pointer hover:text-slate-500 dark:hover:text-slate-400 transition-colors"
+                    @click="toggleSwimLane(col, item.lane)"
                   >
+                    <svg
+                      class="h-2.5 w-2.5 shrink-0 transition-transform"
+                      :class="collapsedSwimlanes.has(col + '\x00' + item.lane) ? '-rotate-90' : ''"
+                      fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"
+                    >
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
                     <span class="flex-1 truncate">{{ item.lane }}</span>
                     <span class="tabular-nums font-normal">{{ item.count }}</span>
                   </div>
                   <button
+                    v-show="item.kind !== 'record' || !item.lane || !collapsedSwimlanes.has(col + '\x00' + item.lane)"
                     v-for="record in (item.kind === 'record' ? [item.record] : [])"
                     :key="record.id"
                     type="button"
@@ -14938,7 +14947,7 @@ function commitStageProbability() {
   stageProbabilitiesByType.value = { ...stageProbabilitiesByType.value, [selectedTypeKey.value]: next };
 }
 
-type KanbanColumnItem = { kind: 'lane'; lane: string; count: number } | { kind: 'record'; record: CrmRecord };
+type KanbanColumnItem = { kind: 'lane'; lane: string; count: number } | { kind: 'record'; record: CrmRecord; lane: string | null };
 
 const kanbanColumnItems = computed((): Record<string, KanbanColumnItem[]> => {
   const result: Record<string, KanbanColumnItem[]> = {};
@@ -14946,7 +14955,7 @@ const kanbanColumnItems = computed((): Record<string, KanbanColumnItem[]> => {
     const recs = kanbanGroups.value[col] ?? [];
     const swKey = kanbanSwimlaneKey.value;
     if (!swKey) {
-      result[col] = recs.map((r) => ({ kind: 'record' as const, record: r }));
+      result[col] = recs.map((r) => ({ kind: 'record' as const, record: r, lane: null }));
     } else {
       const groups = new Map<string, CrmRecord[]>();
       for (const r of recs) {
@@ -14957,13 +14966,22 @@ const kanbanColumnItems = computed((): Record<string, KanbanColumnItem[]> => {
       const items: KanbanColumnItem[] = [];
       for (const [lane, laneRecs] of groups) {
         items.push({ kind: 'lane', lane, count: laneRecs.length });
-        laneRecs.forEach((r) => items.push({ kind: 'record', record: r }));
+        laneRecs.forEach((r) => items.push({ kind: 'record', record: r, lane }));
       }
       result[col] = items;
     }
   }
   return result;
 });
+
+const collapsedSwimlanes = ref<Set<string>>(new Set());
+watch(kanbanSwimlaneKey, () => { collapsedSwimlanes.value = new Set(); });
+function toggleSwimLane(col: string, lane: string) {
+  const key = col + '\x00' + lane;
+  const next = new Set(collapsedSwimlanes.value);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  collapsedSwimlanes.value = next;
+}
 
 const kanbanColCompletionPct = computed((): Record<string, number> => {
   const result: Record<string, number> = {};
