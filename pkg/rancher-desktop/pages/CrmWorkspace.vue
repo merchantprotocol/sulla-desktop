@@ -8776,6 +8776,11 @@
             <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
             Duplicate
           </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="(() => { const rec = mockRecords.find(r => r.id === kanbanCardMenu!.recordId); if (rec) copyRecordLink(rec); kanbanCardMenu = null; })()">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+            Copy link
+          </button>
           <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
             :class="pinnedIds.has(kanbanCardMenu.recordId) ? 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
             @click="togglePin(kanbanCardMenu!.recordId); kanbanCardMenu = null">
@@ -8798,6 +8803,19 @@
             <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
             {{ archivedIds.has(kanbanCardMenu.recordId) ? 'Unarchive' : 'Archive' }}
           </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors"
+            :class="lockedRecordIds.has(kanbanCardMenu.recordId) ? 'text-orange-500 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-950/20' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'"
+            @click="toggleRecordLock(kanbanCardMenu!.recordId); kanbanCardMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+            {{ lockedRecordIds.has(kanbanCardMenu.recordId) ? 'Unlock' : 'Lock' }}
+          </button>
+          <template v-if="schema.length > 1">
+            <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              @click="(() => { const rec = mockRecords.find(r => r.id === kanbanCardMenu!.recordId); if (rec) { convertModal = { record: rec }; convertTargetTypeKey = schema.find(t => t.key !== rec.record_type_key)?.key ?? ''; } kanbanCardMenu = null; })()">
+              <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
+              Convert to...
+            </button>
+          </template>
           <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
           <div class="px-3 py-2">
             <p class="pb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Color label</p>
