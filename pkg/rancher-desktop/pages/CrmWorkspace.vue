@@ -5001,6 +5001,38 @@
               >{{ recordHealthScore.grade }}</span>
             </div>
 
+            <!-- potential duplicate warning -->
+            <div
+              v-if="potentialDuplicates.length && !dismissedDuplicateWarning.has(openedRecord.id)"
+              class="flex items-start gap-2.5 px-4 py-2 border-b border-amber-100 dark:border-amber-900/40 bg-amber-50/80 dark:bg-amber-950/20"
+            >
+              <svg class="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-500 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div class="flex-1 min-w-0">
+                <p class="text-[11px] font-semibold text-amber-700 dark:text-amber-300">{{ potentialDuplicates.length }} potential duplicate{{ potentialDuplicates.length === 1 ? '' : 's' }} found</p>
+                <div class="flex flex-wrap gap-1 mt-0.5">
+                  <button
+                    v-for="dup in potentialDuplicates"
+                    :key="dup.id"
+                    type="button"
+                    class="text-[10px] underline underline-offset-2 text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 transition-colors"
+                    @click="openRecord(dup)"
+                  >{{ dup.title }}</button>
+                </div>
+              </div>
+              <button
+                type="button"
+                class="shrink-0 mt-0.5 text-amber-400 dark:text-amber-500 hover:text-amber-600 dark:hover:text-amber-300 transition-colors"
+                title="Dismiss"
+                @click="dismissedDuplicateWarning = new Set([...dismissedDuplicateWarning, openedRecord.id])"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
             <!-- tags row -->
             <div class="flex flex-wrap items-center gap-1.5 px-5 py-2 border-b border-slate-100 dark:border-slate-800/80 min-h-[36px]">
               <span
@@ -10067,6 +10099,7 @@ const tagColors = ref<Record<string, TagColorId>>({});
 const tagColorPickerTag = ref<string | null>(null);
 const tagColorPickerPos = ref({ top: 0, left: 0 });
 const checklistAddText = ref<Record<string, string>>({});
+const dismissedDuplicateWarning = ref<Set<string>>(new Set());
 const tagFilter = ref<string | null>(null);
 const tagInput = ref('');
 const showTagInput = ref(false);
@@ -12454,6 +12487,23 @@ const recordHealthScore = computed((): { score: number; grade: 'A' | 'B' | 'C' |
   const score = Math.round(completenessPoints + recencyPoints + linkPoints);
   const grade: 'A' | 'B' | 'C' | 'D' = score >= 80 ? 'A' : score >= 60 ? 'B' : score >= 40 ? 'C' : 'D';
   return { score, grade };
+});
+
+function titleSimilarity(a: string, b: string): number {
+  const words = (s: string) => new Set(s.toLowerCase().trim().split(/\s+/).filter((w) => w.length > 2));
+  const wa = words(a); const wb = words(b);
+  if (!wa.size && !wb.size) return 1;
+  if (!wa.size || !wb.size) return 0;
+  const shared = [...wa].filter((w) => wb.has(w)).length;
+  return shared / Math.max(wa.size, wb.size);
+}
+
+const potentialDuplicates = computed((): CrmRecord[] => {
+  if (!openedRecord.value) return [];
+  const current = openedRecord.value;
+  return mockRecords
+    .filter((r) => r.id !== current.id && r.record_type_key === current.record_type_key && titleSimilarity(r.title, current.title) >= 0.5)
+    .slice(0, 5);
 });
 
 const previewFields = computed(() =>
