@@ -244,6 +244,16 @@
                 </button>
                 <button
                   type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center opacity-0 group-hover/sv:opacity-100 transition-all text-slate-400 hover:text-violet-400 dark:hover:text-violet-400"
+                  :title="`Duplicate '${sv.name}'`"
+                  @click.stop="duplicateSavedView(sv)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
                   class="shrink-0 mr-2 h-4 w-4 rounded flex items-center justify-center opacity-0 group-hover/sv:opacity-100 transition-all text-slate-400 hover:text-red-400 dark:hover:text-red-400"
                   :title="`Delete '${sv.name}'`"
                   @click.stop="deleteSavedView(sv.id)"
@@ -18762,6 +18772,16 @@ function applySavedView(view: SavedView) {
 
 function deleteSavedView(id: string) {
   savedViews.value = savedViews.value.filter((v) => v.id !== id);
+}
+
+function duplicateSavedView(sv: SavedView) {
+  const copy: SavedView = {
+    ...JSON.parse(JSON.stringify(sv)),
+    id: 'sv-' + String(Date.now()) + '-' + String(savedViews.value.length),
+    name: sv.name + ' (copy)',
+  };
+  savedViews.value = [...savedViews.value, copy];
+  showToast(`View duplicated as "${copy.name}"`);
 }
 
 function startRenameView(sv: SavedView) {
