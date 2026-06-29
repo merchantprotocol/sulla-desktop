@@ -7485,6 +7485,41 @@
                     {{ hideCompletedTasks ? 'Incomplete only' : 'All tasks' }}
                   </button>
                 </div>
+                <!-- task search + sort row -->
+                <div class="flex items-center gap-1.5 mb-1">
+                  <div class="relative flex-1">
+                    <svg class="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 dark:text-slate-500 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input
+                      v-model="taskDetailSearch"
+                      type="text"
+                      placeholder="Filter tasks…"
+                      class="w-full h-6 pl-6 pr-2 rounded-lg text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder-slate-300 dark:placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                    />
+                    <button
+                      v-if="taskDetailSearch"
+                      type="button"
+                      class="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400"
+                      @click="taskDetailSearch = ''"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  <select
+                    v-model="taskDetailSort"
+                    class="h-6 px-1.5 pr-5 rounded-lg text-[10px] bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-400/40 appearance-none cursor-pointer"
+                    style="background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E\"); background-repeat: no-repeat; background-position: right 4px center;"
+                  >
+                    <option value="smart">Smart</option>
+                    <option value="due">Due date</option>
+                    <option value="priority">Priority</option>
+                    <option value="assignee">Assignee</option>
+                    <option value="created">Newest</option>
+                  </select>
+                </div>
                 <!-- quick add -->
                 <div class="space-y-1.5">
                   <div class="flex gap-2">
@@ -12309,6 +12344,8 @@ const newTaskDraft = ref('');
 const newTaskDueDraft = ref('');
 const newTaskPriority = ref<'high' | 'medium' | 'low' | ''>('');
 const hideCompletedTasks = ref(false);
+const taskDetailSearch = ref('');
+const taskDetailSort = ref<'smart' | 'due' | 'priority' | 'created' | 'assignee'>('smart');
 const editingTaskId = ref<string | null>(null);
 const editingTaskText = ref('');
 const editingTaskDue = ref('');
@@ -14759,21 +14796,40 @@ const TASK_PRIORITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 
 const recordTasks = computed(() => {
   if (!openedRecord.value) return [];
   const PRANK = TASK_PRIORITY_RANK;
+  const q = taskDetailSearch.value.trim().toLowerCase();
+  const sort = taskDetailSort.value;
   return mockTasks
     .filter((t) => t.record_id === openedRecord.value!.id && !t.parent_id && !(hideCompletedTasks.value && t.done))
+    .filter((t) => !q || t.text.toLowerCase().includes(q) || (t.assignee && t.assignee.toLowerCase().includes(q)))
     .sort((a, b) => {
-      if (a.done !== b.done) return a.done ? 1 : -1;
-      // within incomplete tasks: sort by priority first
-      if (!a.done) {
+      if (sort === 'smart') {
+        if (a.done !== b.done) return a.done ? 1 : -1;
+        if (!a.done) {
+          const ap = a.priority ? (PRANK[a.priority] ?? 3) : 3;
+          const bp = b.priority ? (PRANK[b.priority] ?? 3) : 3;
+          if (ap !== bp) return ap - bp;
+        }
+        const aDue = a.due_date ?? '';
+        const bDue = b.due_date ?? '';
+        if (aDue && bDue) return aDue < bDue ? -1 : aDue > bDue ? 1 : 0;
+        if (aDue) return -1;
+        if (bDue) return 1;
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      }
+      if (sort === 'due') {
+        const aDue = a.due_date ?? '9999';
+        const bDue = b.due_date ?? '9999';
+        return aDue < bDue ? -1 : aDue > bDue ? 1 : 0;
+      }
+      if (sort === 'priority') {
         const ap = a.priority ? (PRANK[a.priority] ?? 3) : 3;
         const bp = b.priority ? (PRANK[b.priority] ?? 3) : 3;
-        if (ap !== bp) return ap - bp;
+        return ap - bp;
       }
-      const aDue = a.due_date ?? '';
-      const bDue = b.due_date ?? '';
-      if (aDue && bDue) return aDue < bDue ? -1 : aDue > bDue ? 1 : 0;
-      if (aDue) return -1;
-      if (bDue) return 1;
+      if (sort === 'assignee') {
+        return (a.assignee ?? '').localeCompare(b.assignee ?? '');
+      }
+      // created
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
 });
