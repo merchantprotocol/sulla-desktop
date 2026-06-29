@@ -2433,6 +2433,10 @@
                       @click="toggleSort(col.key, $event.shiftKey)"
                       @dblclick.stop="startColRename(col)"
                     >
+                      <!-- field type icon -->
+                      <svg class="h-3 w-3 shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" :d="DATA_TYPE_ICONS[col.data_type] ?? DATA_TYPE_ICONS['text']" />
+                      </svg>
                       {{ col.label }}
                       <!-- pinned indicator -->
                       <svg
