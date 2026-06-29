@@ -21,6 +21,7 @@
     @keydown.i.exact="onKeyI"
     @keydown.m.exact="onKeyM"
     @keydown.j.exact="onKeyJ"
+    @keydown.k.exact="onKeyK"
     @keydown.o.exact="onKeyO"
     @keydown.x.exact="onKeyX"
     @keydown.bracket-left.exact="onKeyBracketLeft"
@@ -8532,6 +8533,7 @@
                 { keys: ['I'], desc: 'Stats / Insights view' },
                 { keys: ['M'], desc: 'Timeline / Gantt view' },
                 { keys: ['J'], desc: 'Activity Feed view' },
+                { keys: ['K'], desc: 'Global tasks view' },
                 { keys: ['O'], desc: 'Focus / needs-attention view' },
                 { keys: ['⌘', 'A'], desc: 'Select all records (table view)' },
                 { keys: ['Tab'], desc: 'Next cell (while editing inline) — Shift+Tab goes back' },
@@ -17563,6 +17565,13 @@ function onKeyJ(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
   viewMode.value = 'feed';
+}
+
+function onKeyK(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  viewMode.value = 'tasks';
 }
 
 function onKeyO(e: KeyboardEvent) {
