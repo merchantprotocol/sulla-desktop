@@ -5279,6 +5279,66 @@
                       <span class="text-[10px] text-slate-300 dark:text-slate-600 ml-1" :title="field.formula_expression">= {{ field.formula_expression }}</span>
                     </div>
                   </template>
+                  <template v-else-if="field.data_type === 'checklist'">
+                    <div class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+                      <template v-for="(item, idx) in parseChecklist(openedRecord.field_values[field.key])" :key="idx">
+                        <div class="group/ci flex items-center gap-2 px-2.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 last:border-b-0 transition-colors">
+                          <button
+                            type="button"
+                            class="shrink-0 h-4 w-4 rounded border-2 flex items-center justify-center transition-colors"
+                            :class="item.d ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 dark:border-slate-600 hover:border-emerald-400 dark:hover:border-emerald-500'"
+                            @click="toggleChecklistItem(openedRecord, field.key, idx)"
+                          >
+                            <svg v-if="item.d" class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          </button>
+                          <span class="flex-1 text-xs" :class="item.d ? 'line-through text-slate-400 dark:text-slate-500' : 'text-slate-700 dark:text-slate-200'">{{ item.t }}</span>
+                          <button
+                            type="button"
+                            class="invisible group-hover/ci:visible shrink-0 rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 transition-colors"
+                            @click="removeChecklistItem(openedRecord, field.key, idx)"
+                          >
+                            <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      </template>
+                      <div class="flex items-center gap-1.5 px-2.5 py-1.5">
+                        <input
+                          :value="checklistAddText[`${openedRecord.id}|${field.key}`] ?? ''"
+                          type="text"
+                          placeholder="Add item…"
+                          class="flex-1 text-xs bg-transparent text-slate-700 dark:text-slate-200 placeholder-slate-300 dark:placeholder-slate-600 outline-none"
+                          @input="checklistAddText = { ...checklistAddText, [`${openedRecord.id}|${field.key}`]: ($event.target as HTMLInputElement).value }"
+                          @keydown.enter.prevent="addChecklistItem(openedRecord, field.key)"
+                        />
+                        <button
+                          type="button"
+                          class="shrink-0 h-5 w-5 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/30 transition-colors"
+                          @click="addChecklistItem(openedRecord, field.key)"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <!-- progress summary -->
+                    <div v-if="parseChecklist(openedRecord.field_values[field.key]).length" class="flex items-center gap-2 mt-1">
+                      <div class="flex-1 h-1 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                        <div
+                          class="h-full rounded-full transition-all"
+                          :class="parseChecklist(openedRecord.field_values[field.key]).every(i => i.d) ? 'bg-emerald-400' : 'bg-sky-400'"
+                          :style="{ width: `${Math.round((parseChecklist(openedRecord.field_values[field.key]).filter(i => i.d).length / parseChecklist(openedRecord.field_values[field.key]).length) * 100)}%` }"
+                        />
+                      </div>
+                      <span class="text-[10px] tabular-nums text-slate-400 dark:text-slate-500 shrink-0">
+                        {{ parseChecklist(openedRecord.field_values[field.key]).filter(i => i.d).length }}/{{ parseChecklist(openedRecord.field_values[field.key]).length }}
+                      </span>
+                    </div>
+                  </template>
                   <CrmFieldInput
                     v-else
                     :data-type="field.data_type"
@@ -8622,6 +8682,7 @@
                           <option value="phone">Phone</option>
                           <option value="url">URL</option>
                           <option value="formula">Formula (computed)</option>
+                          <option value="checklist">Checklist</option>
                         </select>
                       </div>
                     </div>
@@ -8650,7 +8711,7 @@
                         class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400"
                       />
                     </div>
-                    <div v-if="newFieldDraft.data_type !== 'boolean'">
+                    <div v-if="newFieldDraft.data_type !== 'boolean' && newFieldDraft.data_type !== 'checklist'">
                       <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Default value <span class="font-normal opacity-60">(optional)</span></label>
                       <input
                         v-model="newFieldDraft.default_value"
@@ -9031,7 +9092,8 @@ const { isDark, toggleTheme } = useTheme();
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select' | 'rating' | 'formula';
+type DataType = 'text' | 'number' | 'email' | 'phone' | 'url' | 'boolean' | 'date' | 'select' | 'multi_select' | 'rating' | 'formula' | 'checklist';
+interface ChecklistItem { t: string; d: boolean; }
 type IconKey = 'user' | 'building' | 'chart' | 'target' | 'check' | 'folder' | 'tag' | 'list' | 'layers' | 'star';
 
 type FieldFormat = 'currency' | 'percent' | 'progress' | undefined;
@@ -9233,6 +9295,7 @@ const DATA_TYPE_ICONS: Record<DataType, string> = {
   multi_select: 'M9 12l2 2 4-4M4 6h16M4 10h8M4 14h8M4 18h5',
   rating:       'M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z',
   formula:      'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z',
+  checklist:    'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4',
 };
 
 // ── Mock schema (mirrors crm_record_types + crm_fields) ───────────────────
@@ -10003,6 +10066,7 @@ type TagColorId = typeof TAG_COLOR_PALETTE[number]['id'];
 const tagColors = ref<Record<string, TagColorId>>({});
 const tagColorPickerTag = ref<string | null>(null);
 const tagColorPickerPos = ref({ top: 0, left: 0 });
+const checklistAddText = ref<Record<string, string>>({});
 const tagFilter = ref<string | null>(null);
 const tagInput = ref('');
 const showTagInput = ref(false);
@@ -13597,6 +13661,38 @@ function setColorLabel(recordId: string, color: string) {
   else { const next = { ...colorLabels.value }; delete next[recordId]; colorLabels.value = next; }
 }
 
+function parseChecklist(val: unknown): ChecklistItem[] {
+  if (!val || typeof val !== 'string') return [];
+  try { return JSON.parse(val) as ChecklistItem[]; } catch { return []; }
+}
+
+function serializeChecklist(items: ChecklistItem[]): string {
+  return JSON.stringify(items);
+}
+
+function toggleChecklistItem(record: CrmRecord, fieldKey: string, idx: number) {
+  const items = parseChecklist(record.field_values[fieldKey]);
+  if (!items[idx]) return;
+  items[idx] = { ...items[idx], d: !items[idx].d };
+  record.field_values[fieldKey] = serializeChecklist(items);
+}
+
+function addChecklistItem(record: CrmRecord, fieldKey: string) {
+  const key = `${record.id}|${fieldKey}`;
+  const text = (checklistAddText.value[key] ?? '').trim();
+  if (!text) return;
+  const items = parseChecklist(record.field_values[fieldKey]);
+  items.push({ t: text, d: false });
+  record.field_values[fieldKey] = serializeChecklist(items);
+  checklistAddText.value = { ...checklistAddText.value, [key]: '' };
+}
+
+function removeChecklistItem(record: CrmRecord, fieldKey: string, idx: number) {
+  const items = parseChecklist(record.field_values[fieldKey]);
+  items.splice(idx, 1);
+  record.field_values[fieldKey] = serializeChecklist(items);
+}
+
 function addTag(recordId: string, tag: string) {
   const t = tag.trim().toLowerCase();
   if (!t) return;
@@ -14890,6 +14986,20 @@ const CrmCellValue = defineComponent({
             class: 'inline-flex items-center rounded-full px-1.5 py-0 text-xs font-medium bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800',
           }, tag)),
         );
+      }
+      if (props.dataType === 'checklist') {
+        const items: ChecklistItem[] = (() => { try { return props.value ? (JSON.parse(String(props.value)) as ChecklistItem[]) : []; } catch { return []; } })();
+        if (!items.length) return h('span', { class: 'text-slate-300 dark:text-slate-600' }, '—');
+        const done = items.filter((i) => i.d).length;
+        const total = items.length;
+        const pct = Math.round((done / total) * 100);
+        const color = pct === 100 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#64748b';
+        return h('span', { class: 'flex items-center gap-1.5 min-w-0' }, [
+          h('span', { class: 'flex-1 h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden', style: 'max-width:64px' }, [
+            h('span', { class: 'h-full rounded-full block transition-all', style: `width:${pct}%;background:${color}` }),
+          ]),
+          h('span', { class: 'tabular-nums text-xs shrink-0', style: `color:${color}` }, `${done}/${total}`),
+        ]);
       }
       if (props.value == null || props.value === '') {
         return h('span', { class: 'text-slate-300 dark:text-slate-600' }, '—');
