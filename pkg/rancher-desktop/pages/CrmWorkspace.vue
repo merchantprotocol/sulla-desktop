@@ -8473,6 +8473,25 @@
           </svg>
           Sort Z → A
         </button>
+        <!-- secondary sort — only when a primary sort is already active and this column isn't already primary -->
+        <template v-if="sortField && colHeaderMenu && sortField !== colHeaderMenu.fieldKey">
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="sortField2 = colHeaderMenu!.fieldKey; sortDir2 = 'asc'; colHeaderMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 4h13M8 9h7" stroke-opacity="0.5" />
+            </svg>
+            Add as secondary sort ↑
+          </button>
+          <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+            @click="sortField2 = colHeaderMenu!.fieldKey; sortDir2 = 'desc'; colHeaderMenu = null">
+            <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 4h13M8 9h7" stroke-opacity="0.5" />
+            </svg>
+            Add as secondary sort ↓
+          </button>
+        </template>
         <template v-if="allColumns.find(c => c.key === colHeaderMenu?.fieldKey)?.data_type === 'select'">
           <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
           <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
