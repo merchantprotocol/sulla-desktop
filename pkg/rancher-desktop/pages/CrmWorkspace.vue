@@ -8063,18 +8063,58 @@
 
               <!-- Notes tab — freeform per-record scratchpad -->
               <template v-else-if="detailTab === 'notes'">
-                <div class="flex items-center justify-between -mt-1 mb-2">
-                  <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Notes</p>
+                <div class="flex items-center gap-1.5 -mt-1 mb-2">
+                  <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 flex-1">Notes</p>
+                  <!-- copy note -->
+                  <button
+                    v-if="recordNotes[openedRecord.id]?.trim()"
+                    type="button"
+                    class="h-5 px-1.5 rounded text-[10px] text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-colors flex items-center gap-1"
+                    title="Copy note to clipboard"
+                    @click="navigator.clipboard?.writeText(recordNotes[openedRecord.id] ?? '').then(() => showToast('Note copied'))"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Copy
+                  </button>
+                  <!-- insert timestamp -->
+                  <button
+                    type="button"
+                    class="h-5 px-1.5 rounded text-[10px] text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-colors flex items-center gap-1"
+                    title="Insert current date (⌘T)"
+                    @click="(() => { const el = notesTextareaEl; const now = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }); const stamp = `\n[${now}] `; if (el) { const s = el.selectionStart ?? (recordNotes[openedRecord.id] ?? '').length; const cur = recordNotes[openedRecord.id] ?? ''; recordNotes[openedRecord.id] = cur.slice(0, s) + stamp + cur.slice(s); nextTick(() => { el.selectionStart = el.selectionEnd = s + stamp.length; el.focus(); }); } else { recordNotes[openedRecord.id] = (recordNotes[openedRecord.id] ?? '') + stamp; } })()"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    Stamp
+                  </button>
+                  <!-- clear note -->
+                  <button
+                    v-if="recordNotes[openedRecord.id]?.trim()"
+                    type="button"
+                    class="h-5 px-1.5 rounded text-[10px] text-rose-300 dark:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 hover:text-rose-500 dark:hover:text-rose-400 transition-colors flex items-center gap-1"
+                    title="Clear note"
+                    @click="(() => { const prev = recordNotes[openedRecord.id]; recordNotes[openedRecord.id] = ''; showToast('Note cleared', { label: 'Undo', fn: () => { recordNotes[openedRecord.id] = prev; } }); })()"
+                  >
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    Clear
+                  </button>
                   <span
                     v-if="recordNotes[openedRecord.id]?.trim()"
-                    class="text-[10px] text-slate-400 dark:text-slate-500 tabular-nums"
-                  >{{ recordNotes[openedRecord.id].trim().split(/\s+/).filter(Boolean).length }} words</span>
+                    class="text-[10px] text-slate-300 dark:text-slate-700 tabular-nums"
+                  >{{ recordNotes[openedRecord.id].trim().split(/\s+/).filter(Boolean).length }}w</span>
                 </div>
                 <textarea
+                  ref="notesTextareaEl"
                   :value="recordNotes[openedRecord.id] ?? ''"
                   placeholder="Write anything — research, context, open questions…"
                   class="w-full min-h-[200px] flex-1 resize-none text-sm text-slate-800 dark:text-slate-200 placeholder-slate-300 dark:placeholder-slate-600 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-sky-400/50 focus:border-sky-400 transition-colors leading-relaxed"
                   @input="recordNotes[openedRecord.id] = ($event.target as HTMLTextAreaElement).value"
+                  @keydown.meta.t.prevent="(() => { const el = notesTextareaEl; const now = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }); const stamp = `\n[${now}] `; if (el) { const s = el.selectionStart ?? (recordNotes[openedRecord.id] ?? '').length; const cur = recordNotes[openedRecord.id] ?? ''; recordNotes[openedRecord.id] = cur.slice(0, s) + stamp + cur.slice(s); nextTick(() => { el.selectionStart = el.selectionEnd = s + stamp.length; }); } })()"
                 />
                 <p class="mt-2 text-[10px] text-slate-300 dark:text-slate-700">Private scratchpad — saved in this session. Separate from the activity log.</p>
               </template>
@@ -15004,6 +15044,7 @@ function toggleEmailThread(threadKey: string) {
 const editingActivityId = ref<string | null>(null);
 const editingActivityText = ref('');
 const editingActivityEl = ref<HTMLTextAreaElement | null>(null);
+const notesTextareaEl = ref<HTMLTextAreaElement | null>(null);
 
 function startEditActivity(act: CrmActivity) {
   editingActivityId.value = act.id;
