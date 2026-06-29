@@ -11113,13 +11113,23 @@
                 <option value="is_empty">is empty</option>
                 <option value="is_not_empty">is not empty</option>
               </select>
-              <input
-                v-if="!['is_empty', 'is_not_empty'].includes(rule.operator)"
-                v-model="rule.value"
-                type="text"
-                placeholder="value"
-                class="w-24 h-7 rounded-lg px-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-400"
-              >
+              <template v-if="!['is_empty', 'is_not_empty'].includes(rule.operator)">
+                <select
+                  v-if="['equals', 'not_equals', 'contains'].includes(rule.operator) && (selectedType?.fields ?? []).find(f => f.key === rule.fieldKey)?.data_type === 'select'"
+                  v-model="rule.value"
+                  class="w-24 h-7 rounded-lg px-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                >
+                  <option value="">— any —</option>
+                  <option v-for="opt in (selectedType?.fields ?? []).find(f => f.key === rule.fieldKey)?.select_options ?? []" :key="opt" :value="opt">{{ opt }}</option>
+                </select>
+                <input
+                  v-else
+                  v-model="rule.value"
+                  type="text"
+                  placeholder="value"
+                  class="w-24 h-7 rounded-lg px-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                >
+              </template>
               <span v-else class="w-24" />
               <div class="flex items-center gap-0.5">
                 <button
@@ -13066,14 +13076,25 @@
                           <option value="empty">is empty</option>
                           <option value="not_empty">is not empty</option>
                         </select>
-                        <input
-                          v-if="field.visible_when && (field.visible_when.operator === 'eq' || field.visible_when.operator === 'neq')"
-                          :value="field.visible_when.value"
-                          type="text"
-                          placeholder="value"
-                          class="flex-1 min-w-0 text-xs px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
-                          @input="(e) => { if (field.visible_when) field.visible_when = { ...field.visible_when, value: (e.target as HTMLInputElement).value }; }"
-                        />
+                        <template v-if="field.visible_when && (field.visible_when.operator === 'eq' || field.visible_when.operator === 'neq')">
+                          <select
+                            v-if="(selectedType?.fields ?? []).find(f2 => f2.key === field.visible_when!.fieldKey)?.data_type === 'select'"
+                            :value="field.visible_when.value"
+                            class="flex-1 min-w-0 text-xs px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                            @change="(e) => { if (field.visible_when) field.visible_when = { ...field.visible_when, value: (e.target as HTMLSelectElement).value }; }"
+                          >
+                            <option value="">— any —</option>
+                            <option v-for="opt in (selectedType?.fields ?? []).find(f2 => f2.key === field.visible_when!.fieldKey)?.select_options ?? []" :key="opt" :value="opt">{{ opt }}</option>
+                          </select>
+                          <input
+                            v-else
+                            :value="field.visible_when.value"
+                            type="text"
+                            placeholder="value"
+                            class="flex-1 min-w-0 text-xs px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-sky-400/40"
+                            @input="(e) => { if (field.visible_when) field.visible_when = { ...field.visible_when, value: (e.target as HTMLInputElement).value }; }"
+                          />
+                        </template>
                       </div>
                       <div class="flex items-center gap-2">
                         <button v-if="field.visible_when" type="button" class="text-xs text-rose-400 hover:text-rose-500 transition-colors" @click="field.visible_when = undefined">Clear rule</button>
@@ -13309,7 +13330,16 @@
                     </div>
                     <div v-if="newFieldDraft.data_type !== 'boolean' && newFieldDraft.data_type !== 'checklist' && newFieldDraft.data_type !== 'formula' && newFieldDraft.data_type !== 'rollup'">
                       <label class="text-xs text-slate-500 dark:text-slate-400 mb-1 block">Default value <span class="font-normal opacity-60">(optional)</span></label>
+                      <select
+                        v-if="(newFieldDraft.data_type === 'select' || newFieldDraft.data_type === 'multi_select') && newFieldDraft.select_options_raw.trim()"
+                        v-model="newFieldDraft.default_value"
+                        class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50"
+                      >
+                        <option value="">— none —</option>
+                        <option v-for="opt in newFieldDraft.select_options_raw.split(',').map((s: string) => s.trim()).filter(Boolean)" :key="opt" :value="opt">{{ opt }}</option>
+                      </select>
                       <input
+                        v-else
                         v-model="newFieldDraft.default_value"
                         type="text"
                         :placeholder="newFieldDraft.data_type === 'number' ? 'e.g. 0' : newFieldDraft.data_type === 'date' ? 'e.g. 2026-01-01' : newFieldDraft.data_type === 'select' || newFieldDraft.data_type === 'multi_select' ? 'e.g. Option A' : newFieldDraft.data_type === 'rating' ? '1–5' : 'e.g. Default text'"
