@@ -1677,6 +1677,23 @@
               </button>
             </div>
 
+            <!-- zebra stripe toggle — table view only -->
+            <button
+              v-if="viewMode === 'table'"
+              type="button"
+              class="h-9 w-9 flex items-center justify-center rounded-lg border transition-colors"
+              :class="showRowStripes
+                ? 'border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/30 text-sky-600 dark:text-sky-400'
+                : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+              title="Toggle alternating row shading"
+              @click="showRowStripes = !showRowStripes"
+            >
+              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.35" d="M4 8h16M4 12h16M4 16h16" />
+              </svg>
+            </button>
+
             <!-- view toggle — table always available; board when type has select field; calendar when type has date field -->
             <div
               v-if="canKanban || canCalendar"
@@ -2625,6 +2642,7 @@
                   :class="[openedRecord?.id === record.id
                     ? 'bg-sky-50 dark:bg-sky-950/20'
                     : 'hover:bg-white dark:hover:bg-slate-900',
+                    showRowStripes && idx % 2 === 1 ? 'bg-slate-50/70 dark:bg-slate-800/25' : '',
                     dragOverId === record.id && dragSrcId !== record.id ? 'ring-inset ring-2 ring-sky-400' : '']"
                   :style="(() => { const cl = colorLabels[record.id]; const cr = evaluateConditionalRules(record); return { ...(cl ? { boxShadow: `inset 3px 0 0 ${cl}` } : {}), ...(cr ? { background: cr + '18' } : {}), opacity: dragSrcId === record.id ? '0.4' : undefined }; })()"
                   :data-record-id="record.id"
@@ -10392,6 +10410,7 @@ const feedTypeFilter = ref<CrmActivity['type'] | 'all'>('all');
 const galleryColCount = ref<2 | 3 | 4>(3);
 const galleryFocusIdx = ref(-1);
 const rowDensity = ref<'comfortable' | 'compact'>('comfortable');
+const showRowStripes = ref(false);
 const creatingRecord = ref(false);
 const draftValues = ref<Record<string, string | number | boolean | null>>({});
 const createFormErrors = ref<Set<string>>(new Set());
