@@ -7385,6 +7385,19 @@
                     <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
                     {{ item.record.links.length }}
                   </span>
+                  <span
+                    v-if="reminders[item.record.id]?.date"
+                    class="shrink-0 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-medium"
+                    :class="reminders[item.record.id].date <= DUE_TODAY_STR
+                      ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-500 dark:text-amber-400'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'"
+                    :title="`Reminder: ${reminders[item.record.id].date}${reminders[item.record.id].note ? ' — ' + reminders[item.record.id].note : ''}`"
+                  >
+                    <svg class="h-2 w-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                    {{ reminders[item.record.id].date }}
+                  </span>
                   <!-- quick actions -->
                   <div class="shrink-0 flex items-center gap-1 opacity-0 group-hover/focus:opacity-100 transition-opacity">
                     <!-- pin -->
