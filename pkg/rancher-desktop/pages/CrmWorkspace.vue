@@ -313,21 +313,33 @@
                 :style="{ background: (schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6') + '22', color: schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6' }"
               >{{ recordInitials(rec.title) }}</span>
               <span class="flex-1 truncate">{{ rec.title }}</span>
-              <!-- eye icon: hidden on hover, replaced by unwatch button -->
+              <!-- eye icon: hidden on hover, replaced by quick note + unwatch -->
               <svg class="shrink-0 h-3 w-3 text-sky-400 dark:text-sky-500 group-hover/swrec:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
               </svg>
-              <button
-                type="button"
-                class="hidden group-hover/swrec:flex shrink-0 items-center justify-center h-4 w-4 rounded text-sky-400 hover:text-slate-400 dark:hover:text-slate-500 transition-colors"
-                title="Unwatch"
-                @click.stop="toggleWatch(rec.id)"
-              >
-                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div class="hidden group-hover/swrec:flex items-center gap-0.5">
+                <button
+                  type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                  title="Log a quick note"
+                  @click.stop="openQuickNote(rec.id, $event)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center text-sky-400 hover:text-slate-400 dark:hover:text-slate-500 transition-colors"
+                  title="Unwatch"
+                  @click.stop="toggleWatch(rec.id)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -352,20 +364,32 @@
                 :style="{ background: (schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6') + '22', color: schema.find(rt => rt.key === rec.record_type_key)?.color ?? '#3b82f6' }"
               >{{ recordInitials(rec.title) }}</span>
               <span class="flex-1 truncate">{{ rec.title }}</span>
-              <!-- star: hidden on hover, replaced by unpin button -->
+              <!-- star: hidden on hover, replaced by quick note + unpin -->
               <svg class="shrink-0 h-3 w-3 text-amber-400 group-hover/sprec:hidden" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
               </svg>
-              <button
-                type="button"
-                class="hidden group-hover/sprec:flex shrink-0 items-center justify-center h-4 w-4 rounded text-amber-400 hover:text-slate-400 dark:hover:text-slate-500 transition-colors"
-                title="Unpin"
-                @click.stop="togglePin(rec.id)"
-              >
-                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div class="hidden group-hover/sprec:flex items-center gap-0.5">
+                <button
+                  type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                  title="Log a quick note"
+                  @click.stop="openQuickNote(rec.id, $event)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center text-amber-400 hover:text-slate-400 dark:hover:text-slate-500 transition-colors"
+                  title="Unpin"
+                  @click.stop="togglePin(rec.id)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -505,17 +529,29 @@
               </span>
               <!-- age label (hides on hover to make room for dismiss) -->
               <span class="shrink-0 text-[10px] text-slate-300 dark:text-slate-600 mt-0.5 tabular-nums group-hover/gact:hidden">{{ item.ageLabel }}</span>
-              <!-- dismiss button -->
-              <button
-                type="button"
-                class="hidden group-hover/gact:flex shrink-0 h-4 w-4 rounded items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-colors mt-0.5"
-                title="Dismiss from feed"
-                @click.stop="dismissedActivityIds.add(item.activity.id)"
-              >
-                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <!-- quick note + dismiss (appear on hover) -->
+              <div class="hidden group-hover/gact:flex items-center gap-0.5 mt-0.5">
+                <button
+                  type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                  title="Log a quick note"
+                  @click.stop="item.record && openQuickNote(item.record.id, $event)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 h-4 w-4 rounded flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-colors"
+                  title="Dismiss from feed"
+                  @click.stop="dismissedActivityIds.add(item.activity.id)"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -8488,6 +8524,16 @@
                     </div>
                     <button
                       type="button"
+                      class="invisible group-hover/link:visible shrink-0 rounded p-0.5 mt-0.5 text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                      title="Log a quick note"
+                      @click.stop="(() => { const r = mockRecords.find(rec => rec.id === link.target_id); if (r) openQuickNote(r.id, $event); })()"
+                    >
+                      <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
                       class="invisible group-hover/link:visible shrink-0 rounded p-0.5 mt-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-400 transition-colors"
                       aria-label="Remove link"
                       title="Remove link"
@@ -8534,6 +8580,30 @@
                           @mouseleave="onMentionMouseleave"
                         >{{ r.title }}</p>
                         <p class="text-xs text-slate-400 dark:text-slate-500 capitalize">{{ schema.find(rt => rt.key === r.record_type_key)?.label }}</p>
+                      </div>
+                      <!-- hover actions: pin + quick note -->
+                      <div class="invisible group-hover/backlink:visible flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          class="rounded p-0.5 transition-colors"
+                          :class="pinnedIds.has(r.id) ? 'text-amber-400 !visible' : 'text-slate-300 dark:text-slate-600 hover:text-amber-400 dark:hover:text-amber-400'"
+                          :title="pinnedIds.has(r.id) ? 'Unpin' : 'Pin'"
+                          @click.stop="togglePin(r.id)"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          class="rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-sky-500 dark:hover:text-sky-400 transition-colors"
+                          title="Log a quick note"
+                          @click.stop="openQuickNote(r.id, $event)"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                        </button>
                       </div>
                       <button
                         type="button"
