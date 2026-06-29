@@ -4238,6 +4238,17 @@
                       {{ activityCountByRecord[record.id] }}
                       <span v-if="lastActivityByRecord[record.id]" class="opacity-60 font-normal">· {{ formatAge(new Date(lastActivityByRecord[record.id]).toISOString()) }}</span>
                     </button>
+                    <!-- tags -->
+                    <div v-if="!kanbanCompact && (recordTags[record.id] ?? []).length" class="flex flex-wrap gap-1 mt-1 mb-0.5">
+                      <span
+                        v-for="tag in (recordTags[record.id] ?? [])"
+                        :key="tag"
+                        class="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors cursor-pointer hover:opacity-80"
+                        :style="tagStyle(tag)"
+                        :title="`Filter by tag: ${tag}`"
+                        @click.stop="(() => { const next = new Set(tagFilters); next.has(tag) ? next.delete(tag) : next.add(tag); tagFilters = next; viewMode = 'table'; })()"
+                      >{{ tag }}</span>
+                    </div>
                     <div v-if="!kanbanCompact" class="space-y-1">
                       <div
                         v-for="f in kanbanCardFields"
