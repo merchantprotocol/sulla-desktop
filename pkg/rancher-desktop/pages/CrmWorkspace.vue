@@ -2115,7 +2115,7 @@
 
           <!-- active filter pills -->
           <div
-            v-if="activeFilters.length || groupByField || showOverdueOnly || showDueSoonOnly || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null) || Object.values(dateAfterFilters).some(v => v) || Object.values(dateBeforeFilters).some(v => v)"
+            v-if="activeFilters.length || groupByField || showOverdueOnly || showDueSoonOnly || tagFilters.size || Object.values(fieldTextFilters).some(v => v.trim()) || Object.values(numberMinFilters).some(v => v != null) || Object.values(numberMaxFilters).some(v => v != null) || Object.values(dateAfterFilters).some(v => v) || Object.values(dateBeforeFilters).some(v => v)"
             class="flex items-center gap-2 px-6 py-2.5 border-b border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-950/50 flex-wrap"
           >
             <!-- group-by chip -->
@@ -2207,6 +2207,26 @@
                   class="ml-0.5 text-orange-400 hover:text-orange-600 dark:hover:text-orange-200 transition-colors leading-none"
                   :aria-label="`Remove ${fkey} max filter`"
                   @click="numberMaxFilters = { ...numberMaxFilters, [fkey]: null }"
+                >
+                  <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </template>
+            <!-- tag filter chips (AND mode) -->
+            <template v-for="tag in tagFilters" :key="'tag:' + tag">
+              <div
+                class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300"
+                :style="tagStyle(tag)"
+              >
+                <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+                </svg>
+                <span>Tag: <b>{{ tag }}</b></span>
+                <button
+                  type="button"
+                  class="ml-0.5 opacity-70 hover:opacity-100 transition-opacity leading-none"
+                  :aria-label="`Remove tag filter: ${tag}`"
+                  @click="tagFilters = new Set([...tagFilters].filter(t => t !== tag))"
                 >
                   <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
