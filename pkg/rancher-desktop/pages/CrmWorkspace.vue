@@ -8854,6 +8854,15 @@
                         class="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-violet-400/50 focus:border-violet-400 font-mono"
                       />
                       <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Use {'{field_key}'} for field values. Supports +,-,*,/ and functions: IF(cond,a,b) · MIN/MAX/ABS/ROUND · CONCAT/LEN/UPPER/LOWER/TRIM · ISBLANK/CONTAINS</p>
+                      <!-- live formula preview -->
+                      <div v-if="formulaLivePreview" class="mt-2 flex items-center gap-2 rounded-lg border border-violet-100 dark:border-violet-900/40 bg-violet-50/60 dark:bg-violet-950/20 px-2.5 py-1.5">
+                        <svg class="h-3 w-3 shrink-0 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <span class="text-[10px] text-violet-400 dark:text-violet-500 shrink-0">Preview</span>
+                        <span class="flex-1 text-xs font-mono font-semibold text-violet-700 dark:text-violet-300 truncate">{{ formulaLivePreview }}</span>
+                        <span class="text-[10px] text-violet-300 dark:text-violet-600 shrink-0 truncate">using first record</span>
+                      </div>
                       <label class="text-xs text-slate-500 dark:text-slate-400 mt-2 mb-1 block">Output format</label>
                       <select v-model="newFieldDraft.formula_format" class="text-sm px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-400/50">
                         <option value="">Number</option>
@@ -10734,6 +10743,25 @@ const visibilityRuleFieldId = ref<string | null>(null);
 const editOptionColorsFieldId = ref<string | null>(null);
 const newFieldDraft = ref<{ label: string; key: string; data_type: DataType; select_options_raw: string; default_value: string; formula_expression: string; formula_format: string; help_text: string }>({ label: '', key: '', data_type: 'text', select_options_raw: '', default_value: '', formula_expression: '', formula_format: '', help_text: '' });
 const newTypeDraft = ref<{ label: string; key: string; icon: IconKey; color: string }>({ label: '', key: '', icon: 'folder', color: '#6366f1' });
+const formulaLivePreview = computed((): string => {
+  if (newFieldDraft.value.data_type !== 'formula' || !newFieldDraft.value.formula_expression.trim()) return '';
+  const sample = filteredRecords.value[0] ?? mockRecords.find((r) => r.record_type_key === selectedTypeKey.value);
+  if (!sample) return 'no records';
+  try {
+    const mockField = {
+      key: '_preview_', label: 'Preview', data_type: 'formula' as DataType,
+      formula_expression: newFieldDraft.value.formula_expression,
+      is_title: false, is_required: false, id: '_preview_', position: 0,
+    } as CrmField;
+    const val = evaluateFormula(sample, mockField);
+    const fmt = newFieldDraft.value.formula_format;
+    if (fmt === 'currency' && typeof val === 'number') return '$' + val.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    if (fmt === 'percent') return String(val) + '%';
+    return String(val);
+  } catch {
+    return 'Error';
+  }
+});
 const SCHEMA_ICON_OPTIONS: IconKey[] = ['user', 'building', 'chart', 'target', 'check', 'folder', 'tag', 'list', 'layers', 'star'];
 const SCHEMA_COLOR_PRESETS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#6366f1', '#ec4899', '#ef4444', '#14b8a6', '#f97316', '#64748b'];
 const annotationDraft = ref('');
