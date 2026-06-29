@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; bulkSnoozeDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; showTimelineGroupPicker = false; focusSnoozeId = null; focusGroupSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; bulkSnoozeDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showBulkConvertDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; showCompletenessBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; showTimelineGroupPicker = false; showCalColorPicker = false; focusSnoozeId = null; focusGroupSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false; showUpcomingPanel = false; showFocusSettings = false; showSearchHistory = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4468,6 +4468,51 @@
               </svg>
               Tasks
             </button>
+            <!-- color-by-field picker -->
+            <div
+              v-if="selectedType && selectedType.fields.some(f => f.data_type === 'select')"
+              class="relative"
+              @click.stop
+            >
+              <button
+                type="button"
+                class="flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs font-medium border transition-colors"
+                :class="calendarColorFieldKey
+                  ? 'bg-violet-50 dark:bg-violet-950/20 border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'"
+                title="Color events by a select field"
+                @click="showCalColorPicker = !showCalColorPicker"
+              >
+                <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>
+                Color
+              </button>
+              <div
+                v-if="showCalColorPicker"
+                class="absolute top-full mt-1 left-0 z-30 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1.5"
+              >
+                <p class="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Color events by</p>
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                  :class="!calendarColorFieldKey ? 'text-violet-600 dark:text-violet-400 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                  @click="calendarColorFieldKey = null; showCalColorPicker = false"
+                >
+                  <svg v-if="!calendarColorFieldKey" class="h-3 w-3 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                  <span :class="!calendarColorFieldKey ? '' : 'ml-5'">Default color</span>
+                </button>
+                <button
+                  v-for="f in selectedType.fields.filter(f => f.data_type === 'select')"
+                  :key="f.key"
+                  type="button"
+                  class="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                  :class="calendarColorFieldKey === f.key ? 'text-violet-600 dark:text-violet-400 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                  @click="calendarColorFieldKey = f.key; showCalColorPicker = false"
+                >
+                  <svg v-if="calendarColorFieldKey === f.key" class="h-3 w-3 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                  <span :class="calendarColorFieldKey === f.key ? '' : 'ml-5'">{{ f.label }}</span>
+                </button>
+              </div>
+            </div>
             <span class="ml-auto text-xs text-slate-400 dark:text-slate-500">Grouped by: <b class="text-slate-600 dark:text-slate-300">{{ calendarDateField?.label }}</b></span>
           </div>
           <!-- day-of-week headers (shared by both modes) -->
@@ -4516,15 +4561,13 @@
                     :key="record.id"
                     draggable="true"
                     class="group/cem w-full flex items-center rounded-md overflow-hidden transition-colors cursor-grab active:cursor-grabbing"
-                    :class="openedRecord?.id === record.id
-                      ? 'text-white'
-                      : colorLabels[record.id]
-                        ? 'text-white hover:opacity-90'
-                        : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60'"
+                    :class="openedRecord?.id === record.id || colorLabels[record.id] || calColorByRecord[record.id]
+                      ? 'text-white hover:opacity-90'
+                      : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60'"
                     :style="openedRecord?.id === record.id
-                      ? { background: colorLabels[record.id] ?? '#0ea5e9' }
-                      : colorLabels[record.id]
-                        ? { background: colorLabels[record.id] }
+                      ? { background: colorLabels[record.id] ?? calColorByRecord[record.id] ?? '#0ea5e9' }
+                      : (colorLabels[record.id] || calColorByRecord[record.id])
+                        ? { background: colorLabels[record.id] ?? calColorByRecord[record.id] }
                         : undefined"
                     @dragstart="onCalEventDragStart($event, record.id)"
                     @dragend="calDragRecordId = null; calDragOverDate = null"
@@ -4619,15 +4662,13 @@
                     :key="record.id"
                     draggable="true"
                     class="group/ce w-full flex items-center text-xs rounded-lg font-medium cursor-grab active:cursor-grabbing"
-                    :class="openedRecord?.id === record.id
-                      ? 'text-white'
-                      : colorLabels[record.id]
-                        ? 'text-white hover:opacity-90'
-                        : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60'"
+                    :class="openedRecord?.id === record.id || colorLabels[record.id] || calColorByRecord[record.id]
+                      ? 'text-white hover:opacity-90'
+                      : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/60'"
                     :style="openedRecord?.id === record.id
-                      ? { background: colorLabels[record.id] ?? '#0ea5e9' }
-                      : colorLabels[record.id]
-                        ? { background: colorLabels[record.id] }
+                      ? { background: colorLabels[record.id] ?? calColorByRecord[record.id] ?? '#0ea5e9' }
+                      : (colorLabels[record.id] || calColorByRecord[record.id])
+                        ? { background: colorLabels[record.id] ?? calColorByRecord[record.id] }
                         : undefined"
                     @dragstart="onCalEventDragStart($event, record.id)"
                     @dragend="calDragRecordId = null; calDragOverDate = null"
@@ -17527,6 +17568,21 @@ const calWeekOffset = ref(0);
 let calDragRecordId: string | null = null;
 const calDragOverDate = ref<string | null>(null);
 const calShowTasks = ref(true);
+const calendarColorFieldKey = ref<string | null>(null);
+const showCalColorPicker = ref(false);
+
+const calColorByRecord = computed((): Record<string, string | null> => {
+  const key = calendarColorFieldKey.value;
+  if (!key || !selectedType.value) return {};
+  const field = selectedType.value.fields.find((f) => f.key === key && f.data_type === 'select');
+  if (!field) return {};
+  const out: Record<string, string | null> = {};
+  for (const r of filteredRecords.value) {
+    const val = String(r.field_values[key] ?? '');
+    out[r.id] = field.select_option_colors?.[val] ?? null;
+  }
+  return out;
+});
 
 const calTasksByDate = computed((): Record<string, CrmTask[]> => {
   const typeRecordIds = new Set(
