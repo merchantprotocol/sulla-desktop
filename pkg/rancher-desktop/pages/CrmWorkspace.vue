@@ -20,6 +20,8 @@
     @keydown.g.exact="onKeyG"
     @keydown.i.exact="onKeyI"
     @keydown.m.exact="onKeyM"
+    @keydown.j.exact="onKeyJ"
+    @keydown.o.exact="onKeyO"
     @keydown.x.exact="onKeyX"
     @keydown.bracket-left.exact="onKeyBracketLeft"
     @keydown.up.exact.prevent="onKeyArrow(-1)"
@@ -7403,6 +7405,8 @@
                 { keys: ['V'], desc: 'Gallery view' },
                 { keys: ['I'], desc: 'Stats / Insights view' },
                 { keys: ['M'], desc: 'Timeline / Gantt view' },
+                { keys: ['J'], desc: 'Activity Feed view' },
+                { keys: ['O'], desc: 'Focus / needs-attention view' },
                 { keys: ['⌘', 'A'], desc: 'Select all records (table view)' },
                 { keys: ['Tab'], desc: 'Next cell (while editing inline) — Shift+Tab goes back' },
                 { keys: ['↑', '↓'], desc: 'Prev / next record' },
@@ -7421,6 +7425,7 @@
                 { keys: ['2'], desc: 'Activity tab' },
                 { keys: ['3'], desc: 'Related tab' },
                 { keys: ['4'], desc: 'Tasks tab' },
+                { keys: ['5'], desc: 'Files tab' },
                 { keys: ['['], desc: 'Previous record in list' },
                 { keys: [']'], desc: 'Next record in list' },
                 { keys: ['U'], desc: 'Archive / unarchive record' },
@@ -15908,6 +15913,20 @@ function onKeyM(e: KeyboardEvent) {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (editingRecord.value || creatingRecord.value) return;
   viewMode.value = 'timeline';
+}
+
+function onKeyJ(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  viewMode.value = 'feed';
+}
+
+function onKeyO(e: KeyboardEvent) {
+  const tag = (e.target as HTMLElement)?.tagName ?? '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (editingRecord.value || creatingRecord.value) return;
+  viewMode.value = 'focus';
 }
 
 function onKeyS(e: KeyboardEvent) {
