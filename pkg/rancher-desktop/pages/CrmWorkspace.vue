@@ -335,13 +335,15 @@
           <!-- upcoming reminders (hidden when collapsed) -->
           <div v-if="upcomingReminders.length && !sidebarCollapsed" class="px-2 pb-2 border-t border-slate-200 dark:border-slate-700">
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Reminders</p>
-            <button
+            <div
               v-for="item in upcomingReminders"
               :key="item.id"
-              type="button"
-              class="w-full flex items-start gap-2 px-3 py-1.5 rounded-lg text-left transition-colors"
+              role="button"
+              tabindex="0"
+              class="group/rem w-full flex items-start gap-2 px-3 py-1.5 rounded-lg text-left transition-colors cursor-pointer"
               :class="openedRecord?.id === item.id ? 'bg-slate-100 dark:bg-slate-800' : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
               @click="item.rec && openFromPalette(item.rec)"
+              @keydown.enter="item.rec && openFromPalette(item.rec)"
             >
               <span
                 class="shrink-0 mt-0.5 h-4 w-4 rounded-full flex items-center justify-center"
@@ -359,7 +361,18 @@
                 >{{ item.isOverdue ? 'Overdue · ' : item.isToday ? 'Today · ' : '' }}{{ item.date }}</span>
                 <span v-if="item.note" class="block text-[10px] text-slate-400 dark:text-slate-500 truncate italic">{{ item.note }}</span>
               </span>
-            </button>
+              <!-- hover-reveal dismiss -->
+              <button
+                type="button"
+                class="invisible group-hover/rem:visible shrink-0 mt-0.5 rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-rose-400 dark:hover:text-rose-500 transition-colors"
+                title="Clear reminder"
+                @click.stop="clearReminder(item.id)"
+              >
+                <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <!-- overdue / today tasks (hidden when collapsed) -->
@@ -367,15 +380,17 @@
             <p class="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">
               Tasks due
             </p>
-            <button
+            <div
               v-for="item in overdueAndTodayTasks"
               :key="item.task.id"
-              type="button"
-              class="w-full flex items-start gap-2 px-3 py-1.5 rounded-lg text-left transition-colors group"
+              role="button"
+              tabindex="0"
+              class="group/stask w-full flex items-start gap-2 px-3 py-1.5 rounded-lg text-left transition-colors cursor-pointer"
               :class="openedRecord?.id === item.record?.id
                 ? 'bg-slate-100 dark:bg-slate-800'
                 : 'hover:bg-slate-50 dark:hover:bg-slate-800/60'"
               @click="item.record && (openFromPalette(item.record), nextTick(() => { detailTab = 'tasks'; }))"
+              @keydown.enter="item.record && (openFromPalette(item.record), nextTick(() => { detailTab = 'tasks'; }))"
             >
               <span
                 class="shrink-0 mt-0.5 h-4 w-4 rounded border-2 transition-colors flex items-center justify-center"
@@ -393,7 +408,18 @@
                   {{ item.isOverdue ? 'Overdue · ' : 'Today · ' }}{{ item.record?.title }}
                 </span>
               </span>
-            </button>
+              <!-- hover-reveal mark done -->
+              <button
+                type="button"
+                class="invisible group-hover/stask:visible shrink-0 mt-0.5 rounded p-0.5 text-slate-300 dark:text-slate-600 hover:text-emerald-500 dark:hover:text-emerald-400 transition-colors"
+                title="Mark as done"
+                @click.stop="toggleTask(item.task.id)"
+              >
+                <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <!-- global activity feed (hidden when collapsed) -->
@@ -3697,6 +3723,35 @@
                         </svg>
                         <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
                           <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                        </svg>
+                      </button>
+                      <!-- watch toggle -->
+                      <button
+                        type="button"
+                        class="shrink-0 mt-0.5 rounded transition-colors"
+                        :class="watchedIds.has(record.id)
+                          ? 'text-sky-300 opacity-100'
+                          : 'text-slate-200 dark:text-slate-700 hover:text-sky-300 dark:hover:text-sky-400 opacity-0 group-hover/card:opacity-100'"
+                        :title="watchedIds.has(record.id) ? 'Unwatch' : 'Watch'"
+                        @click.stop="toggleWatch(record.id)"
+                      >
+                        <svg class="h-3 w-3" :fill="watchedIds.has(record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      </button>
+                      <!-- quick note -->
+                      <button
+                        type="button"
+                        class="shrink-0 mt-0.5 rounded transition-colors"
+                        :class="quickNoteRecordId === record.id
+                          ? 'text-sky-300 opacity-100'
+                          : 'text-slate-200 dark:text-slate-700 hover:text-sky-300 dark:hover:text-sky-400 opacity-0 group-hover/card:opacity-100'"
+                        title="Log a quick note"
+                        @click.stop="openQuickNote(record.id, $event)"
+                      >
+                        <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                         </svg>
                       </button>
                       <span
@@ -10895,6 +10950,16 @@
           </div>
         </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
+        <button
+          type="button"
+          class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+          @click="(() => { const col = allColumns.find(c => c.key === colHeaderMenu!.fieldKey); if (col) startColRename(col); colHeaderMenu = null; })()"
+        >
+          <svg class="h-3.5 w-3.5 shrink-0 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          </svg>
+          Rename column
+        </button>
         <button type="button" class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
           @click="togglePinColumn(colHeaderMenu!.fieldKey); colHeaderMenu = null"
         >
