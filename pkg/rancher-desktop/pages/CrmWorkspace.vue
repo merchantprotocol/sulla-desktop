@@ -167,13 +167,24 @@
               <button
                 type="button"
                 class="flex-1 flex items-center gap-2 px-3 py-1.5 text-left text-xs min-w-0 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
+                :title="`${sv.name} — ${sv.viewMode} view${sv.filters.length ? `, ${sv.filters.length} filter${sv.filters.length === 1 ? '' : 's'}` : ''}`"
                 @click="applySavedView(sv)"
               >
-                <svg class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                <!-- view mode icon -->
+                <svg v-if="sv.viewMode === 'kanban'" class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <rect x="3" y="3" width="5" height="18" rx="1" /><rect x="10" y="3" width="5" height="12" rx="1" /><rect x="17" y="3" width="5" height="15" rx="1" />
+                </svg>
+                <svg v-else-if="sv.viewMode === 'calendar'" class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <svg v-else-if="sv.viewMode === 'gallery'" class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+                </svg>
+                <svg v-else class="h-3 w-3 shrink-0 text-violet-400 dark:text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 6h18M3 14h18M3 18h18" />
                 </svg>
                 <span class="truncate">{{ sv.name }}</span>
-                <span class="shrink-0 text-xs text-slate-300 dark:text-slate-700 font-medium capitalize">{{ sv.typeKey }}</span>
+                <span v-if="sv.filters.length" class="shrink-0 inline-flex items-center rounded-full px-1 text-[9px] font-semibold bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">{{ sv.filters.length }}</span>
               </button>
               <button
                 type="button"
