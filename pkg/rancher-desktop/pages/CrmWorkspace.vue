@@ -5324,6 +5324,43 @@
                     class="shrink-0 inline-flex items-center rounded-full px-1 py-0.5 text-[9px] tabular-nums font-medium bg-amber-50 dark:bg-amber-950/30 text-amber-500 dark:text-amber-400"
                     :title="`${pendingTaskCountByRecord[row.record.id]} pending tasks`"
                   >{{ pendingTaskCountByRecord[row.record.id] }}</span>
+                  <!-- hover actions -->
+                  <div class="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      class="rounded p-0.5 transition-colors"
+                      :class="pinnedIds.has(row.record.id) ? 'text-amber-400 opacity-100 group-hover:opacity-100' : 'text-slate-300 dark:text-slate-600 hover:text-amber-400'"
+                      :title="pinnedIds.has(row.record.id) ? 'Unpin' : 'Pin'"
+                      @click.stop="togglePin(row.record.id)"
+                    >
+                      <svg class="h-3 w-3" :fill="pinnedIds.has(row.record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded p-0.5 transition-colors"
+                      :class="watchedIds.has(row.record.id) ? 'text-sky-500 opacity-100 group-hover:opacity-100' : 'text-slate-300 dark:text-slate-600 hover:text-sky-400'"
+                      :title="watchedIds.has(row.record.id) ? 'Unwatch' : 'Watch'"
+                      @click.stop="toggleWatch(row.record.id)"
+                    >
+                      <svg class="h-3 w-3" :fill="watchedIds.has(row.record.id) ? 'currentColor' : 'none'" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded p-0.5 transition-colors"
+                      :class="quickNoteRecordId === row.record.id ? 'text-sky-500 opacity-100 group-hover:opacity-100' : 'text-slate-300 dark:text-slate-600 hover:text-sky-400'"
+                      title="Log a quick note"
+                      @click.stop="openQuickNote(row.record.id, $event)"
+                    >
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
                 <!-- Gantt bar area -->
                 <div class="relative flex-1 h-9">
