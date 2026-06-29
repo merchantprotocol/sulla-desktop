@@ -8363,8 +8363,28 @@
         </template>
         <template v-if="allColumns.find(c => c.key === colHeaderMenu?.fieldKey)?.data_type === 'date'">
           <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
-          <div class="px-3 py-2 space-y-1.5">
+          <div class="px-3 py-2 space-y-2">
             <p class="text-xs text-slate-400 dark:text-slate-500 font-medium">Date range:</p>
+            <!-- quick preset chips -->
+            <div class="flex flex-wrap gap-1">
+              <button
+                v-for="preset in [
+                  { label: 'Today', after: DUE_TODAY_STR, before: DUE_TODAY_STR },
+                  { label: 'This week', after: (() => { const d = new Date(DUE_TODAY_STR); d.setDate(d.getDate() - d.getDay()); return d.toISOString().slice(0,10); })(), before: (() => { const d = new Date(DUE_TODAY_STR); d.setDate(d.getDate() - d.getDay() + 6); return d.toISOString().slice(0,10); })() },
+                  { label: 'This month', after: DUE_TODAY_STR.slice(0,7) + '-01', before: (() => { const d = new Date(DUE_TODAY_STR); d.setMonth(d.getMonth() + 1, 0); return d.toISOString().slice(0,10); })() },
+                  { label: 'Last 30 days', after: (() => { const d = new Date(DUE_TODAY_STR); d.setDate(d.getDate() - 30); return d.toISOString().slice(0,10); })(), before: DUE_TODAY_STR },
+                  { label: 'Last 90 days', after: (() => { const d = new Date(DUE_TODAY_STR); d.setDate(d.getDate() - 90); return d.toISOString().slice(0,10); })(), before: DUE_TODAY_STR },
+                  { label: 'This year', after: DUE_TODAY_STR.slice(0,4) + '-01-01', before: DUE_TODAY_STR.slice(0,4) + '-12-31' },
+                ]"
+                :key="preset.label"
+                type="button"
+                class="px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors"
+                :class="dateAfterFilters[colHeaderMenu?.fieldKey ?? ''] === preset.after && dateBeforeFilters[colHeaderMenu?.fieldKey ?? ''] === preset.before
+                  ? 'bg-sky-100 dark:bg-sky-900/40 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                @click.stop="dateAfterFilters = { ...dateAfterFilters, [colHeaderMenu!.fieldKey]: preset.after }; dateBeforeFilters = { ...dateBeforeFilters, [colHeaderMenu!.fieldKey]: preset.before }"
+              >{{ preset.label }}</button>
+            </div>
             <div class="space-y-1">
               <div class="flex items-center gap-1.5">
                 <span class="text-xs text-slate-400 dark:text-slate-500 w-10 shrink-0">After</span>
