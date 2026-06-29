@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -1424,6 +1424,120 @@
               Automations
               <span v-if="automationRules.some(r => r.enabled)" class="text-[10px] tabular-nums rounded-full px-1.5 leading-none py-0.5 bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400">{{ automationRules.filter(r => r.enabled).length }}</span>
             </button>
+
+            <!-- notification bell -->
+            <div class="relative">
+              <button
+                type="button"
+                class="relative flex items-center justify-center h-9 w-9 rounded-lg border transition-colors"
+                :class="unreadNotifCount
+                  ? 'border-rose-300 dark:border-rose-700 text-rose-500 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-950/50'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-200'"
+                title="Notifications"
+                @click.stop="showNotifPanel = !showNotifPanel"
+              >
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                <span
+                  v-if="unreadNotifCount"
+                  class="absolute -top-1 -right-1 h-4 min-w-[1rem] rounded-full px-0.5 text-[9px] font-bold bg-rose-500 text-white flex items-center justify-center leading-none"
+                >{{ unreadNotifCount }}</span>
+              </button>
+              <!-- notification dropdown -->
+              <transition
+                enter-active-class="transition-all duration-150 origin-top-right"
+                enter-from-class="opacity-0 scale-95"
+                enter-to-class="opacity-100 scale-100"
+                leave-active-class="transition-all duration-100 origin-top-right"
+                leave-from-class="opacity-100 scale-100"
+                leave-to-class="opacity-0 scale-95"
+              >
+                <div
+                  v-if="showNotifPanel"
+                  class="absolute top-full right-0 mt-1.5 z-50 w-80 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl overflow-hidden"
+                  @click.stop
+                >
+                  <!-- header -->
+                  <div class="flex items-center justify-between px-4 py-2.5 border-b border-slate-100 dark:border-slate-800">
+                    <div class="flex items-center gap-1.5">
+                      <p class="text-xs font-semibold text-slate-700 dark:text-slate-200">Notifications</p>
+                      <span v-if="unreadNotifCount" class="text-[10px] font-bold rounded-full px-1.5 py-0.5 bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400">{{ unreadNotifCount }} new</span>
+                    </div>
+                    <button
+                      v-if="unreadNotifCount"
+                      type="button"
+                      class="text-xs text-sky-500 dark:text-sky-400 hover:underline"
+                      @click="markAllNotifsRead"
+                    >Mark all read</button>
+                  </div>
+                  <!-- list -->
+                  <div class="max-h-80 overflow-y-auto divide-y divide-slate-50 dark:divide-slate-800">
+                    <p v-if="!mockNotifications.length" class="px-4 py-8 text-center text-xs text-slate-400 dark:text-slate-500 italic">No notifications</p>
+                    <div
+                      v-for="notif in mockNotifications"
+                      :key="notif.id"
+                      class="group flex items-start gap-2.5 px-3 py-2.5 transition-colors"
+                      :class="notif.read
+                        ? 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60'
+                        : 'bg-rose-50/50 dark:bg-rose-950/20 hover:bg-rose-50 dark:hover:bg-rose-950/30'"
+                    >
+                      <!-- kind icon badge -->
+                      <span
+                        class="mt-0.5 h-6 w-6 rounded-full flex items-center justify-center shrink-0 text-white"
+                        :class="{
+                          'bg-violet-500': notif.kind === 'automation',
+                          'bg-amber-500': notif.kind === 'stale',
+                          'bg-rose-500': notif.kind === 'due',
+                          'bg-emerald-500': notif.kind === 'score',
+                        }"
+                      >
+                        <svg v-if="notif.kind === 'automation'" class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <svg v-else-if="notif.kind === 'stale'" class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <svg v-else-if="notif.kind === 'due'" class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <svg v-else class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                        </svg>
+                      </span>
+                      <!-- content -->
+                      <div class="flex-1 min-w-0">
+                        <p class="text-xs leading-snug text-slate-700 dark:text-slate-200" :class="notif.read ? 'font-normal' : 'font-medium'">{{ notif.message }}</p>
+                        <div class="flex items-center gap-2 mt-1">
+                          <p class="text-[10px] text-slate-400 dark:text-slate-500">{{ relativeTime(notif.at) }}</p>
+                          <button
+                            v-if="notif.recordId"
+                            type="button"
+                            class="text-[10px] text-sky-500 dark:text-sky-400 hover:underline"
+                            @click="openNotifRecord(notif)"
+                          >Open record</button>
+                        </div>
+                      </div>
+                      <!-- unread dot + dismiss -->
+                      <div class="flex flex-col items-center gap-1.5 shrink-0 pt-0.5">
+                        <span v-if="!notif.read" class="h-2 w-2 rounded-full bg-rose-500 mt-0.5" />
+                        <span v-else class="h-2 w-2" />
+                        <button
+                          type="button"
+                          class="invisible group-hover:visible text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 rounded p-0.5 transition-colors"
+                          title="Dismiss"
+                          @click.stop="dismissNotif(notif.id)"
+                        >
+                          <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </transition>
+            </div>
 
             <!-- columns toggle — table view only -->
             <div v-if="viewMode === 'table'" class="relative">
@@ -9790,6 +9904,53 @@ const automationRules = reactive<AutomationRule[]>([
   { id: 'ar4', name: 'Lead lost → alert',    enabled: false, trigger_type_key: 'deal',    trigger_field_key: 'stage',  trigger_value: 'Closed Lost', action_type: 'notify',     action_message: 'Deal marked Closed Lost. Consider a follow-up in 30 days.' },
 ]);
 const showAutomationsPanel = ref(false);
+
+// ── In-app notification center ────────────────────────────────────────────
+interface CrmNotification {
+  id: string;
+  kind: 'automation' | 'stale' | 'due' | 'score';
+  message: string;
+  recordId?: string;
+  recordTitle?: string;
+  at: string;
+  read: boolean;
+}
+
+const mockNotifications = ref<CrmNotification[]>([
+  { id: 'n1', kind: 'automation', message: 'Apex Coaching — Q3 Expansion moved to Closed Won → close date auto-set to today', recordId: 'r8', recordTitle: 'Apex Coaching — Q3 Expansion', at: '2026-06-28T10:15:00Z', read: false },
+  { id: 'n2', kind: 'stale', message: 'Priya Sharma has had no activity in 21 days', recordId: 'r2', recordTitle: 'Priya Sharma', at: '2026-06-28T09:00:00Z', read: false },
+  { id: 'n3', kind: 'due', message: 'GrowthForge Pilot close date is today', recordId: 'r13', recordTitle: 'GrowthForge Pilot', at: '2026-06-28T08:30:00Z', read: false },
+  { id: 'n4', kind: 'score', message: 'Jordan Mitchell scored 85/100 — in the top 10% of contacts', recordId: 'r1', recordTitle: 'Jordan Mitchell', at: '2026-06-27T16:45:00Z', read: true },
+  { id: 'n5', kind: 'automation', message: 'ScaleLab Renewal won — onboarding welcome task created', recordId: 'r9', recordTitle: 'ScaleLab Renewal', at: '2026-06-27T14:20:00Z', read: true },
+  { id: 'n6', kind: 'stale', message: 'Marcus Tran has had no activity in 18 days', recordId: 'r3', recordTitle: 'Marcus Tran', at: '2026-06-27T09:00:00Z', read: true },
+  { id: 'n7', kind: 'due', message: 'FunnelWorks Enterprise close date is in 1 day', recordId: 'r14', recordTitle: 'FunnelWorks Enterprise', at: '2026-06-26T15:00:00Z', read: true },
+  { id: 'n8', kind: 'score', message: 'Sara Okonkwo score dropped to 20/100 — review recommended', recordId: 'r4', recordTitle: 'Sara Okonkwo', at: '2026-06-26T11:30:00Z', read: true },
+]);
+
+const showNotifPanel = ref(false);
+
+const unreadNotifCount = computed(() => mockNotifications.value.filter((n) => !n.read).length);
+
+function markNotifRead(id: string) {
+  const n = mockNotifications.value.find((x) => x.id === id);
+  if (n) n.read = true;
+}
+
+function markAllNotifsRead() {
+  mockNotifications.value.forEach((n) => { n.read = true; });
+}
+
+function dismissNotif(id: string) {
+  mockNotifications.value = mockNotifications.value.filter((n) => n.id !== id);
+}
+
+function openNotifRecord(notif: CrmNotification) {
+  if (!notif.recordId) return;
+  const record = mockRecords.find((r) => r.id === notif.recordId);
+  if (record) openRecord(record);
+  markNotifRead(notif.id);
+  showNotifPanel.value = false;
+}
 
 // ── Win / Loss reason capture ─────────────────────────────────────────────
 const WIN_LOSS_REASONS = {
