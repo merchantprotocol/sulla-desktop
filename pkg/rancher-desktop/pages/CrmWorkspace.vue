@@ -31,7 +31,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -4912,6 +4912,50 @@
                         <button type="button" class="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors" @click="(() => { const o = { ...timelineDateOverrides }; delete o[selectedTypeKey]; timelineDateOverrides = o; showTimelineFieldPicker = false })()">Reset to defaults</button>
                       </div>
                     </div>
+                  <!-- color-by select field picker -->
+                  <div
+                    v-if="timelineViewData.selectFields && timelineViewData.selectFields.length"
+                    class="relative ml-1"
+                    @click.stop
+                  >
+                    <button
+                      type="button"
+                      class="flex items-center gap-1 h-5 px-1.5 rounded text-[10px] border transition-colors"
+                      :class="timelineColorFieldKey
+                        ? 'border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-950/30'
+                        : 'border-slate-200 dark:border-slate-700 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'"
+                      title="Color bars by a field value"
+                      @click="showTimelineColorPicker = !showTimelineColorPicker; showTimelineFieldPicker = false"
+                    >
+                      <svg class="h-3 w-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>
+                      Color
+                    </button>
+                    <div
+                      v-if="showTimelineColorPicker"
+                      class="absolute top-full mt-1 left-0 z-30 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1.5"
+                    >
+                      <p class="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Color bars by</p>
+                      <button
+                        type="button"
+                        class="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                        :class="!timelineColorFieldKey ? 'text-violet-600 dark:text-violet-400 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                        @click="timelineColorFieldKey = null; showTimelineColorPicker = false"
+                      >
+                        <svg v-if="!timelineColorFieldKey" class="h-3 w-3 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        <span :class="!timelineColorFieldKey ? '' : 'ml-5'">Record type color</span>
+                      </button>
+                      <button
+                        v-for="f in timelineViewData.selectFields"
+                        :key="f.key"
+                        type="button"
+                        class="w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+                        :class="timelineColorFieldKey === f.key ? 'text-violet-600 dark:text-violet-400 font-semibold' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'"
+                        @click="timelineColorFieldKey = f.key; showTimelineColorPicker = false"
+                      >
+                        <svg v-if="timelineColorFieldKey === f.key" class="h-3 w-3 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        <span :class="timelineColorFieldKey === f.key ? '' : 'ml-5'">{{ f.label }}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
                 <div class="relative flex-1 h-9 overflow-hidden select-none">
@@ -4980,7 +5024,7 @@
                     :style="{
                       left: row.startPct + '%',
                       width: Math.max(row.widthPct, 1) + '%',
-                      background: row.isOverdue ? '#f87171' : (selectedType?.color ?? '#6366f1'),
+                      background: row.barColor,
                     }"
                     :title="row.title + ' · ' + row.startIso + (row.endIso ? ' → ' + row.endIso : ' → ongoing')"
                   >
@@ -13371,6 +13415,8 @@ const funnelData = computed((): Array<{
 
 const timelinePadLevel = ref(0); // -2 to +2 zoom levels; 0 = default
 const showTimelineFieldPicker = ref(false);
+const showTimelineColorPicker = ref(false);
+const timelineColorFieldKey = ref<string | null>(null);
 const timelineDateOverrides = ref<Record<string, { startKey?: string; endKey?: string }>>({});
 
 const timelineViewData = computed(() => {
@@ -13380,6 +13426,9 @@ const timelineViewData = computed(() => {
   const recs = filteredRecords.value;
   const titleField = rt.fields.find((f) => f.is_title);
   const dateFields = rt.fields.filter((f) => f.data_type === 'date');
+  const selectFields = rt.fields.filter((f) => f.data_type === 'select');
+  const colorFKey = timelineColorFieldKey.value;
+  const colorField = colorFKey ? selectFields.find((f) => f.key === colorFKey) ?? null : null;
   const END_KEYS = ['due_date', 'end_date', 'close_date', 'expected_close', 'closed_at', 'deadline'];
   const overrides = timelineDateOverrides.value[rt.key] ?? {};
   const startDateField = overrides.startKey
@@ -13443,7 +13492,10 @@ const timelineViewData = computed(() => {
     const durationDays = endIso
       ? Math.max(0, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 86_400_000))
       : null;
-    return { record: r, title, startIso, endIso, startPct, widthPct, isOverdue, durationDays };
+    const fieldVal = colorField ? String(r.field_values[colorField.key] ?? '') : '';
+    const fieldHex = colorField ? (colorField.select_option_colors?.[fieldVal] ?? null) : null;
+    const barColor = isOverdue ? '#f87171' : (fieldHex ?? (selectedType.value?.color ?? '#6366f1'));
+    return { record: r, title, startIso, endIso, startPct, widthPct, isOverdue, durationDays, barColor };
   }).sort((a, b) => a.startIso.localeCompare(b.startIso));
 
   // Month tick marks
@@ -13472,6 +13524,7 @@ const timelineViewData = computed(() => {
     startDateField,
     endDateField,
     dateFields,
+    selectFields,
     totalDays,
     ticks,
     todayPct,
