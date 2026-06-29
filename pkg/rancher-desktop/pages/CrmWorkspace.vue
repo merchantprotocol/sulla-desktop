@@ -6503,6 +6503,27 @@
               </div>
             </div>
           </div>
+          <!-- activity by team member -->
+          <div v-if="statsViewData.activityByAuthor.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-xs font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500">Activity by team member</p>
+              <span class="text-[10px] text-slate-400 dark:text-slate-500">% of total activities</span>
+            </div>
+            <div class="space-y-1.5">
+              <div v-for="row in statsViewData.activityByAuthor" :key="row.author" class="flex items-center gap-2">
+                <div class="w-24 shrink-0 text-xs truncate text-right pr-1 text-slate-600 dark:text-slate-400 leading-tight" :title="row.author">{{ row.author }}</div>
+                <div class="flex-1 h-5 rounded-md bg-slate-100 dark:bg-slate-800 overflow-hidden relative">
+                  <div
+                    class="absolute inset-y-0 left-0 rounded-md bg-violet-400 dark:bg-violet-500 transition-all duration-300 flex items-center"
+                    :style="{ width: `${Math.max(row.pct, row.count ? 4 : 0)}%` }"
+                  >
+                    <span v-if="row.count" class="px-1.5 text-[10px] font-semibold text-white tabular-nums leading-none">{{ row.count }}</span>
+                  </div>
+                </div>
+                <span class="shrink-0 text-[10px] tabular-nums w-8 text-right font-medium text-slate-500 dark:text-slate-400">{{ row.pct }}%</span>
+              </div>
+            </div>
+          </div>
           </div>
         </div>
 
@@ -18504,11 +18525,21 @@ const statsViewData = computed(() => {
 
   const activityCounts = { note: 0, email: 0, call: 0, meeting: 0, change: 0 };
   const recIds = new Set(recs.map((r) => r.id));
+  const authorMap: Record<string, number> = {};
   for (const a of mockActivities) {
-    if (!recIds.has(a.record_id) || !(a.type in activityCounts)) continue;
+    if (!recIds.has(a.record_id)) continue;
     if (cutoff && new Date(a.created_at) < cutoff) continue;
+    if (a.type !== 'change' && a.author) {
+      authorMap[a.author] = (authorMap[a.author] ?? 0) + 1;
+    }
+    if (!(a.type in activityCounts)) continue;
     activityCounts[a.type as keyof typeof activityCounts]++;
   }
+  const authorTotal = Object.values(authorMap).reduce((s, n) => s + n, 0);
+  const activityByAuthor = Object.entries(authorMap)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([author, count]) => ({ author, count, pct: authorTotal > 0 ? Math.round((count / authorTotal) * 100) : 0 }));
   // Prior-period activity total for delta display
   let priorActivityTotal: number | null = null;
   if (priorCutoff && priorEnd) {
@@ -18622,7 +18653,7 @@ const statsViewData = computed(() => {
       })
     : [];
 
-  return { total, newRecords, priorNewRecords, completeness, selectCharts, numberCards, activityCounts, priorActivityTotal, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax, fieldFillRates, scoreDistribution };
+  return { total, newRecords, priorNewRecords, completeness, selectCharts, numberCards, activityCounts, priorActivityTotal, pipelineFunnel, weeklyRate, heatmapWeeks, heatmapMax, fieldFillRates, scoreDistribution, activityByAuthor };
 });
 
 // ── Activity digest ───────────────────────────────────────────────────────
