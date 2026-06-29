@@ -34,7 +34,7 @@
     @keydown.meta.enter.exact.prevent="onKeySave"
     @keydown.ctrl.enter.exact.prevent="onKeySave"
     @keydown="onGlobalKeydown"
-    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null"
+    @click="showColumnsMenu = false; cancelCellEdit(); closeContextMenu(); cellContextMenu = null; bulkStageDropdown = false; showFilterDropdown = false; kanbanCardMenu = null; galleryCardMenu = null; galleryGroupMenu = null; showSaveViewPopover = false; colHeaderMenu = null; showStaleDropdown = false; groupMenu = null; kanbanColMenu = null; showTemplatePanel = false; showBulkTagDropdown = false; showFilterPresetsPanel = false; cancelKanbanInlineAdd(); showDetailColorPicker = false; showGalleryFieldsPopover = false; showKanbanFieldsPopover = false; showTypeIconColorPicker = false; editOptionColorsFieldId = null; quickNoteRecordId = null; snoozeMenuId = null; reminderMenuId = null; showEmailTemplatePicker = false; showCadencePicker = false; mergeTargetPicker = null; showSnippetPicker = false; fieldHistoryPopover = null; showNotifPanel = false; tagColorPickerTag = null; editingLinkRoleId = null; showKanbanSwimlanePopover = false; showScoreBreakdown = false; convertModal = null; compareModal = null; showTimelineFieldPicker = false; showTimelineColorPicker = false; focusSnoozeId = null; cancelRenameAttachment(); typeContextMenu = null; renamingTypeKey = null; kanbanColRenaming = false"
   >
     <div class="flex flex-col h-full">
       <AgentHeader
@@ -9836,6 +9836,34 @@
           </svg>
           Filter to this stage
         </button>
+        <!-- rename stage -->
+        <template v-if="kanbanColMenu!.col !== KANBAN_UNASSIGNED">
+          <template v-if="kanbanColRenaming">
+            <div class="px-3 py-2 flex items-center gap-2">
+              <input
+                ref="kanbanColRenameInputEl"
+                v-model="kanbanColRenameDraft"
+                type="text"
+                maxlength="60"
+                class="flex-1 h-7 rounded-lg px-2 text-xs bg-slate-50 dark:bg-slate-800 border border-violet-400 dark:border-violet-600 text-slate-900 dark:text-slate-100 focus:outline-none"
+                @keydown.enter.prevent="commitKanbanColRename"
+                @keydown.escape.stop="kanbanColRenaming = false"
+                @vue:mounted="($el as HTMLInputElement).select()"
+              />
+              <button type="button" class="shrink-0 h-6 px-2 rounded text-xs font-medium text-sky-600 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/30 hover:bg-sky-100 dark:hover:bg-sky-900/30 transition-colors" @click="commitKanbanColRename">Save</button>
+            </div>
+          </template>
+          <template v-else>
+            <button
+              type="button"
+              class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              @click="kanbanColRenameDraft = kanbanColMenu!.col; kanbanColRenaming = true"
+            >
+              <svg class="h-3.5 w-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+              Rename stage
+            </button>
+          </template>
+        </template>
         <div class="my-1 border-t border-slate-100 dark:border-slate-800" />
         <button
           type="button"
@@ -13835,9 +13863,12 @@ const showFormatPanel = ref(false);
 const groupMenu = ref<{ key: string; label: string; count: number; x: number; y: number } | null>(null);
 const wipLimits = ref<Record<string, number>>({});
 const kanbanColMenu = ref<{ col: string; x: number; y: number } | null>(null);
+const kanbanColRenaming = ref(false);
+const kanbanColRenameDraft = ref('');
 const wipLimitEditing = ref<string | null>(null);
 const wipLimitDraft = ref('');
 const wipLimitInputEl = ref<HTMLInputElement | null>(null);
+const kanbanColRenameInputEl = ref<HTMLInputElement | null>(null);
 watch(wipLimitEditing, (val) => { if (val) nextTick(() => wipLimitInputEl.value?.focus()); });
 const showMergeModal = ref(false);
 interface RecordTemplate { id: string; name: string; typeKey: string; fieldValues: Record<string, unknown> }
@@ -15215,6 +15246,32 @@ function commitWipLimit(col: string) {
   if (n > 0) { wipLimits.value = { ...wipLimits.value, [col]: n }; }
   wipLimitEditing.value = null;
   wipLimitDraft.value = '';
+}
+
+function commitKanbanColRename() {
+  const menu = kanbanColMenu.value;
+  kanbanColRenaming.value = false;
+  if (!menu || !kanbanColRenameDraft.value.trim()) return;
+  const newVal = kanbanColRenameDraft.value.trim();
+  const oldVal = menu.col;
+  if (newVal === oldVal || !kanbanField.value) return;
+  const field = kanbanField.value;
+  if ((field.select_options ?? []).includes(newVal)) {
+    showToast('A stage with that name already exists');
+    return;
+  }
+  field.select_options = (field.select_options ?? []).map((o) => (o === oldVal ? newVal : o));
+  if (field.select_option_colors?.[oldVal]) {
+    field.select_option_colors = { ...field.select_option_colors, [newVal]: field.select_option_colors[oldVal] };
+    const c = { ...field.select_option_colors };
+    delete c[oldVal];
+    field.select_option_colors = c;
+  }
+  for (const rec of mockRecords) {
+    if (rec.field_values[field.key] === oldVal) rec.field_values[field.key] = newVal;
+  }
+  kanbanColMenu.value = null;
+  showToast(`Stage renamed to "${newVal}"`);
 }
 
 function stageColorHex(stage: string): string {
