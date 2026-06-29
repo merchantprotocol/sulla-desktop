@@ -12552,6 +12552,16 @@
                       >
                         <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                       </button>
+                      <!-- duplicate field button -->
+                      <button
+                        v-if="!field.is_title"
+                        type="button"
+                        class="shrink-0 h-7 w-7 rounded-md flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950/20 opacity-0 group-hover/field:opacity-100 transition-all"
+                        title="Duplicate field"
+                        @click.stop="(() => { const type = selectedType; if (!type) return; const newKey = field.key + '_copy'; const newId = field.id + '_dup' + Date.now().toString().slice(-4); type.fields.push({ ...field, id: newId, key: newKey, label: field.label + ' (copy)', is_title: false, is_required: false, position: Math.max(...type.fields.map(f => f.position)) + 1 }); showToast(`Field duplicated`); })()"
+                      >
+                        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                      </button>
                       <!-- delete button — hidden for title/required fields -->
                       <button
                         v-if="!field.is_title && !field.is_required"
