@@ -8,7 +8,6 @@ import { bridgeToolManifests } from './bridge/manifests';
 import { browserToolManifests } from './browser/manifests';
 import { calendarToolManifests } from './calendar/manifests';
 import { captureToolManifests } from './capture/manifests';
-import { crmToolManifests } from './crm/manifests';
 import { dockerToolManifests } from './docker/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
 import { functionToolManifests } from './function/manifests';
@@ -37,7 +36,6 @@ toolRegistry.registerManifests([
   ...browserToolManifests,
   ...calendarToolManifests,
   ...captureToolManifests,
-  ...crmToolManifests,
   ...dockerToolManifests,
   ...extensionsToolManifests,
   ...functionToolManifests,

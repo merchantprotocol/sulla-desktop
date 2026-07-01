@@ -2,7 +2,6 @@
 // Central registry for all seeders
 // DatabaseManager imports this to run tracked seeders
 
-import { initialize as crmSystemSeeder } from './CrmSystemSeeder';
 import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteCredentialsSeeder';
 import { initialize as observationsImportSeeder } from './ObservationsImportSeeder';
 
@@ -21,10 +20,6 @@ export const seedersRegistry = [
   {
     name: 'observations-import-seeder',
     run:  observationsImportSeeder,
-  },
-  {
-    name: 'crm-system-seeder',
-    run:  crmSystemSeeder,
   },
   // {
   //   name: 'core-data-seed',
