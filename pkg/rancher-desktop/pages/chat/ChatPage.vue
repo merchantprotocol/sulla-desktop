@@ -347,9 +347,16 @@ async function onActivate(id: ThreadId): Promise<void> {
     registry.open(state, props.tabId);
     return;
   }
-  // localStorage miss — try database fallback
+  // localStorage miss — try the durable chat_messages DB backup. Every chat
+  // thread is saved there (LocalStoragePersister.save), so this rehydrates
+  // conversations from prior sessions / after a localStorage eviction.
   const dbState = await persister.loadAsync(id);
-  if (dbState) registry.open(dbState, props.tabId);
+  if (dbState) {
+    registry.open(dbState, props.tabId);
+    return;
+  }
+  // Truly nowhere to load from — the transcript isn't available.
+  onArchivedClick(id);
 }
 
 // ─── Pinboard entries (top of history rail) ───────────────────────
@@ -481,6 +488,22 @@ function onForkEvent(ev: Event): void {
 
 // ─── File tree → file editor tab ────────────────────────────────────
 const { createTab, updateTab } = useBrowserTabs();
+
+// Keep this chat tab's label in sync with the active conversation's title.
+// The controller derives a title from the first user message
+// (autoTitleFromFirstUserMessage) and honors explicit renames, so the tab
+// chrome follows whatever title the user sees for the conversation instead of
+// a generic "New Chat". Immediate so a hydrated thread's title shows at once.
+watch(
+  () => controller.thread.value.title,
+  (title) => {
+    const clean = (title || '').trim();
+    if (props.tabId && clean && clean !== 'New chat' && clean !== 'New Chat') {
+      updateTab(props.tabId, { title: clean });
+    }
+  },
+  { immediate: true },
+);
 
 const BROWSER_RENDERABLE_EXTS = new Set([
   '.html', '.htm', '.md', '.markdown', '.json', '.jsonc',

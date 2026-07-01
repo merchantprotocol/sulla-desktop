@@ -55,6 +55,16 @@ export interface ConversationEvent {
 
 // ── Formatting helpers (conversation) ──
 
+/**
+ * Ephemeral subconscious conversations (memory-recall, observation
+ * writer/recall, summarizer, tool-result digester) use a `subconscious_*`
+ * threadId (see GraphRegistry). They are internal machinery, not user-facing
+ * chats, and must never be written to conversation history or the logs.
+ */
+function isSubconsciousConversationId(id: string): boolean {
+  return typeof id === 'string' && id.startsWith('subconscious_');
+}
+
 const SEPARATOR = '════════════════════════════════════════════════════════════════';
 const THIN_SEP = '────────────────────────────────────────────────────────────────';
 
@@ -398,6 +408,11 @@ class SullaLogger extends EventEmitter {
 
   /** Start a new conversation — writes an entry to the index. */
   start(meta: ConversationMeta): void {
+    // Subconscious agents (memory-recall, observation writer/recall, summarizer,
+    // tool-result digester) run as ephemeral `subconscious_*` conversations.
+    // They are internal machinery, never user-facing history — never record
+    // them to the conversation_history DB or the on-disk index/JSONL logs.
+    if (isSubconsciousConversationId(meta.id)) return;
     try {
       this.ensureDir();
       this.resolveFilePath(meta.id, meta.channel);
@@ -443,6 +458,8 @@ class SullaLogger extends EventEmitter {
 
   /** Append an event to a conversation's event log. */
   log(conversationId: string, event: ConversationEvent): void {
+    // Never persist subconscious machinery to history/logs (see start()).
+    if (isSubconsciousConversationId(conversationId)) return;
     try {
       this.ensureDir();
       const filePath = this.resolveFilePath(conversationId);

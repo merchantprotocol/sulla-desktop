@@ -94,8 +94,13 @@ function isRehydratable(id: ThreadId): boolean {
 }
 
 function onRowClick(id: ThreadId): void {
-  if (isRehydratable(id)) emit('activate', id);
-  else emit('archived-click', id);
+  // Always attempt activation. The parent's onActivate() walks the full
+  // hydration chain — in-memory registry → localStorage → chat_messages DB —
+  // so a thread that's only in the Postgres backup (localStorage evicted or a
+  // prior session) still rehydrates. Only if EVERY source misses does the
+  // parent surface the "archived / unavailable" status. The rehydratableIds
+  // set now only drives the dim visual hint, not click behavior.
+  emit('activate', id);
 }
 
 function dayKey(t: number): string {
