@@ -25,7 +25,7 @@ export class ExecHostWorker extends BaseTool {
       return { successBoolean: false, responseString: 'Missing required field: command (or cmd).' };
     }
 
-    if (!isHostAccessEnabled()) {
+    if (!await isHostAccessEnabled()) {
       return { successBoolean: false, responseString: HOST_ACCESS_DISABLED_MESSAGE };
     }
 
