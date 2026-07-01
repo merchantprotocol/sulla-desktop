@@ -2,10 +2,15 @@ import { BaseNode } from './BaseNode';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 import { throwIfAborted } from '../services/AbortService';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+import Logging from '@pkg/utils/logging';
 
 import type { NodeRunPolicy } from './BaseNode';
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { ChatMessage, NormalizedResponse } from '../languagemodels/BaseLanguageModel';
+
+// Dedicated perf-timing log (perf.log) — routes via the Logging facility so it
+// actually lands in a readable file (raw console.log in the agent does not).
+const perf = Logging.perf;
 
 // ============================================================================
 // AGENT PROMPT — Now section-based via SystemPromptBuilder.
@@ -91,11 +96,14 @@ export class AgentNode extends BaseNode {
     // runSubconsciousMiddleware) so routines aren't slowed by recall/
     // observation sub-agents on every orchestrator turn.
     const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
+    let subconsciousMs = 0;
     if (!isToolCallLoop) {
+      const subStart = Date.now();
       const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
       await runSubconsciousMiddleware(state, {
         includeObservations: shouldInjectObservations,
       });
+      subconsciousMs = Date.now() - subStart;
     }
 
     // Inject the compact per-turn <turn_context> block (current time, agent
@@ -154,7 +162,16 @@ export class AgentNode extends BaseNode {
     // ----------------------------------------------------------------
     // 2. EXECUTE — LLM reads conversation, calls tools, responds
     // ----------------------------------------------------------------
+    const executeStart = Date.now();
     const agentResult = await this.executeAgent(enrichedPrompt, state);
+    const executeMs = Date.now() - executeStart;
+
+    // Perf: split the user-visible turn into the blocking subconscious prelude
+    // vs the main agent execution. Only log on fresh turns (not tool-call loop
+    // iterations) so the numbers map to one user message.
+    if (!isToolCallLoop) {
+      perf.log(`[TurnTiming] threadId=${ (state.metadata as any).threadId } subconsciousMs=${ subconsciousMs } executeMs=${ executeMs } totalMs=${ subconsciousMs + executeMs } msgs=${ state.messages.length }`);
+    }
 
     // If aborted while the LLM was responding, stop immediately —
     // don't process the result or let the graph loop back.

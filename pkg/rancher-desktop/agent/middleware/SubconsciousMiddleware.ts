@@ -21,8 +21,14 @@ import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
+import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '../nodes/Graph';
+
+// Dedicated perf-timing log (perf.log). The existing console.log lines below
+// never surfaced in any log file — the agent's raw console output isn't
+// captured — so all timing goes through the Logging facility instead.
+const perf = Logging.perf;
 
 // ============================================================================
 // CONFIGURATION
@@ -107,11 +113,20 @@ export async function runSubconsciousMiddleware(
   const launched: string[] = [];
   const awaitedTasks: Promise<void>[] = [];
 
+  // Per-sub-agent timing — records how long each awaited subconscious task
+  // takes so we can see WHICH one (recall, obs-recall, summarizer, digester)
+  // dominates the blocking prelude. Settles even on rejection.
+  const timings: Record<string, number> = {};
+  const timed = (name: string, p: Promise<void>): Promise<void> => {
+    const t0 = Date.now();
+    return p.finally(() => { timings[name] = Date.now() - t0 });
+  };
+
   // 1. Summarizer — only when conversation is long (awaited: modifies messages)
   const shouldSummarize = state.messages.length > TRIGGER_WINDOW_SIZE;
   if (shouldSummarize) {
     launched.push('summarizer');
-    awaitedTasks.push(runSummarizer(state));
+    awaitedTasks.push(timed('summarizer', runSummarizer(state)));
   }
 
   // 1b. Tool-Result Digester — triggered by compactable TOKEN MASS, not
@@ -122,13 +137,13 @@ export async function runSubconsciousMiddleware(
   const digestPlan = collectDigestibleToolResults(state);
   if (digestPlan.estTokens >= DIGEST_TRIGGER_TOKEN_MASS) {
     launched.push('tool-result-digester');
-    awaitedTasks.push(runToolResultDigester(state, digestPlan.eligible));
+    awaitedTasks.push(timed('digester', runToolResultDigester(state, digestPlan.eligible)));
   }
 
   // 2. Memory Recall — always (awaited: writes to state.metadata.recallContext)
   launched.push('memory-recall');
   const recallPromise = runMemoryRecall(state, options.recallVariant);
-  awaitedTasks.push(recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx }));
+  awaitedTasks.push(timed('memory-recall', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
 
   // 3a. Observation Writer — fire-and-forget: writes/archives observation rows
   //     via DB tools. Never touches state.messages. No need to await.
@@ -145,7 +160,7 @@ export async function runSubconsciousMiddleware(
   if (options.includeObservations) {
     launched.push('observation-recall');
     const obsRecallPromise = runObservationRecall(state);
-    awaitedTasks.push(obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx }));
+    awaitedTasks.push(timed('observation-recall', obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx })));
   }
 
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
@@ -167,6 +182,10 @@ export async function runSubconsciousMiddleware(
   const recallLen = ((state.metadata as any).recallContext || '').length;
   const obsRecallLen = ((state.metadata as any).observationContext || '').length;
   console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | observationContext: ${ obsRecallLen } chars`);
+
+  // Perf: total blocking prelude + per-sub-agent breakdown (which one dominates).
+  const breakdown = Object.entries(timings).map(([n, ms]) => `${ n }=${ ms }ms`).join(', ');
+  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] recallChars=${ recallLen } obsChars=${ obsRecallLen }`);
 }
 
 // ============================================================================

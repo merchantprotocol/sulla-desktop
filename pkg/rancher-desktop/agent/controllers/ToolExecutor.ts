@@ -17,11 +17,18 @@ import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { BaseTool } from '../tools/base';
 import { toolRegistry } from '../tools/registry';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+import Logging from '@pkg/utils/logging';
 
 import type { NormalizedResponse, ChatMessage } from '../languagemodels/BaseLanguageModel';
 import type { NodeRunContext } from '../nodes/BaseNode';
 import type { BaseThreadState } from '../nodes/Graph';
 import type { ToolResult } from '../types';
+
+// Dedicated perf-timing log (perf.log). Times every IN-PROCESS tool.invoke —
+// this is the path the qwen subconscious recall/observation agents run through
+// (their file_search/search_conversations/read_file don't go through the
+// claude CLI), so this is where the "recall hang" is actually measured.
+const perf = Logging.perf;
 
 // ============================================================================
 // Constants
@@ -221,7 +228,21 @@ export class ToolExecutor {
             };
           }
 
+          const invokeStart = Date.now();
           const result = await tool.invoke(args);
+          const invokeMs = Date.now() - invokeStart;
+          // Perf: how long this in-process tool actually took to run. node=
+          // tells subconscious recall (SubconsciousAgentNode) apart from the
+          // primary agent. argHint surfaces the query/path so a slow file_search
+          // is identifiable. Compare the sum of these against [SubconsciousTiming]
+          // totalMs — if tools dominate, it's the search; if not, it's the model.
+          let argHint = '';
+          try {
+            const a = args as any;
+            const raw = a?.query ?? a?.pattern ?? a?.path ?? a?.file_path ?? a?.slug ?? '';
+            argHint = String(raw).slice(0, 80);
+          } catch { /* best-effort */ }
+          perf.log(`[InProcToolTiming] node=${ this.ctx.nodeName } tool=${ toolName } ms=${ invokeMs } success=${ result?.success === true } arg="${ argHint }"`);
           // Long-running tools (scrape, LLM-heavy sub-calls) can take a
           // while — bump activity on return so the watchdog doesn't
           // mistake legitimate tool wait for an idle agent.

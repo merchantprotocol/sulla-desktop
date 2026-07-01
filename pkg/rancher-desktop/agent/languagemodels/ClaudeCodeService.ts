@@ -13,6 +13,10 @@ import paths from '@pkg/utils/paths';
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
 const log = Logging.background;
+// Dedicated perf-timing log (~/Library/Logs/rancher-desktop/perf.log). All
+// latency instrumentation routes here via the Logging facility (NOT console.log,
+// which never lands in a readable file) so timing is greppable in one place.
+const perf = Logging.perf;
 
 /**
  * ClaudeCodeService — runs `claude -p` inside the Lima VM and streams the
@@ -606,6 +610,33 @@ Rules that apply on every turn:
       let errorMessage = '';
       let sessionInUse = false;
 
+      // ── Perf: per-tool execution timing inside the claude CLI ──────────
+      // The tool-use loop (Grep/Glob/Read/Bash/etc.) runs INSIDE the spawned
+      // CLI, so the only way to measure how long each tool actually takes is
+      // to time the gap between a tool_use block's input completing and its
+      // matching tool_result arriving. Keyed by the tool_use id so parallel
+      // tool calls are timed independently.
+      const toolStarts = new Map<string, { name: string; startedAt: number }>();
+      const toolTotals = new Map<string, { count: number; ms: number }>();
+      let firstTokenAt = 0;
+      const runStartedAt = Date.now();
+      const noteToolStart = (id?: string, name?: string) => {
+        if (!id || toolStarts.has(id)) return;
+        toolStarts.set(id, { name: name ?? 'tool', startedAt: Date.now() });
+      };
+      const noteToolResult = (id?: string, resultChars = 0) => {
+        if (!id) return;
+        const started = toolStarts.get(id);
+        if (!started) return;
+        toolStarts.delete(id);
+        const ms = Date.now() - started.startedAt;
+        const agg = toolTotals.get(started.name) ?? { count: 0, ms: 0 };
+        agg.count += 1;
+        agg.ms += ms;
+        toolTotals.set(started.name, agg);
+        perf.log(`[ToolTiming] tool=${ started.name } ms=${ ms } resultChars=${ resultChars } convId=${ convId }`);
+      };
+
       const onAbort = () => {
         stopHeartbeat();
         // 1) Kill the host-side limactl process. This closes the SSH-style
@@ -781,6 +812,7 @@ Rules that apply on every turn:
           // Text chunks → stream to caller as content
           if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
             stopHeartbeat();
+            if (!firstTokenAt) firstTokenAt = Date.now();
             textCollected += ev.delta.text;
             try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
             return;
@@ -802,6 +834,9 @@ Rules that apply on every turn:
           if (ev.type === 'content_block_stop' && ev.content_block?.type === 'tool_use') {
             stopHeartbeat();
             const name = ev.content_block.name ?? 'tool';
+            // Input is fully streamed → the CLI is about to RUN the tool. Start
+            // the clock here so input-generation time isn't counted as tool time.
+            noteToolStart(ev.content_block.id, name);
             emitActivity(activityForToolUse(name, ev.content_block.input));
             emitFilePatch(name, ev.content_block.input);
             return;
@@ -822,14 +857,51 @@ Rules that apply on every turn:
           for (const b of blocks) {
             if (b?.type === 'tool_use' && b.name) {
               noteIfNativeAsk(b.name);
+              // Fallback start for CLI versions that batch the whole assistant
+              // message instead of emitting streamed content_block_stop events.
+              // Idempotent — won't override an earlier stream-path start.
+              noteToolStart(b.id, b.name);
               emitActivity(activityForToolUse(b.name, b.input));
               emitFilePatch(b.name, b.input);
             }
           }
         }
 
+        // Tool results arrive as a `user`-type message carrying tool_result
+        // blocks (each references its tool_use_id). This is the moment the
+        // tool finished running inside the CLI — stop its clock.
+        if (parsed.type === 'user' && parsed.message?.content) {
+          const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
+          for (const b of blocks) {
+            if (b?.type === 'tool_result') {
+              let chars = 0;
+              if (typeof b.content === 'string') {
+                chars = b.content.length;
+              } else if (Array.isArray(b.content)) {
+                chars = b.content.reduce((n: number, c: any) => n + (typeof c?.text === 'string' ? c.text.length : 0), 0);
+              }
+              noteToolResult(b.tool_use_id, chars);
+            }
+          }
+        }
+
         // Final result event — capture full text and record usage/cost.
         if (parsed.type === 'result') {
+          // Perf summary: split the run into tool-execution time vs the rest
+          // (model generation + CLI overhead). Directly answers "is it the
+          // search/tool layer or the model that's slow?"
+          const totalMs = Date.now() - runStartedAt;
+          let toolMs = 0;
+          let toolCount = 0;
+          const breakdown: string[] = [];
+          toolTotals.forEach((agg, name) => {
+            toolMs += agg.ms;
+            toolCount += agg.count;
+            breakdown.push(`${ name }x${ agg.count }=${ agg.ms }ms`);
+          });
+          const ttft = firstTokenAt ? firstTokenAt - runStartedAt : -1;
+          perf.log(`[RunTiming] convId=${ convId } totalMs=${ totalMs } toolMs=${ toolMs } toolCount=${ toolCount } model+overheadMs=${ totalMs - toolMs } ttftMs=${ ttft } tools=[${ breakdown.join(', ') }]`);
+
           if (parsed.is_error) {
             errored = true;
             if (typeof parsed.result === 'string' && parsed.result) {
