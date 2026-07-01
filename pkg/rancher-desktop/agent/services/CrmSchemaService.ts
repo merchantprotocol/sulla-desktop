@@ -1131,12 +1131,13 @@ export class CrmSchemaService {
       is_required?: boolean;
       is_unique?: boolean;
       is_title?: boolean;
+      position?: number;
     },
     tenantId = DEFAULT_TENANT_ID,
   ): Promise<OpResult> {
     try {
       const rows = await postgresClient.query(
-        `SELECT id, key, label, config, is_required, is_unique, is_title, is_system, record_type_id
+        `SELECT id, key, label, config, is_required, is_unique, is_title, is_system, position, record_type_id
          FROM crm_fields WHERE id = $1 AND tenant_id = $2 AND archived = false LIMIT 1`,
         [fieldId, tenantId],
       );
@@ -1146,7 +1147,8 @@ export class CrmSchemaService {
 
       const before = {
         label: field.label, config: field.config,
-        is_required: field.is_required, is_unique: field.is_unique, is_title: field.is_title,
+        is_required: field.is_required, is_unique: field.is_unique,
+        is_title: field.is_title, position: field.position,
       };
 
       const setParts: string[] = [];
@@ -1157,6 +1159,9 @@ export class CrmSchemaService {
       if (updates.config !== undefined) setParts.push(`config = ${ push(JSON.stringify(updates.config)) }::jsonb`);
       if (updates.is_required !== undefined) setParts.push(`is_required = ${ push(updates.is_required) }`);
       if (updates.is_unique !== undefined) setParts.push(`is_unique = ${ push(updates.is_unique) }`);
+      if (updates.position !== undefined && Number.isInteger(updates.position) && updates.position >= 0) {
+        setParts.push(`position = ${ push(updates.position) }`);
+      }
       if (updates.is_title === true) {
         await postgresClient.query(
           `UPDATE crm_fields SET is_title = false, updated_at = now()
@@ -1259,6 +1264,159 @@ export class CrmSchemaService {
       })),
       dashboards,
     };
+  }
+
+  /**
+   * Patch a record type's display metadata — label, label_plural, icon, color,
+   * description, or position. Cannot change the key (stable API identifier) or
+   * touch system types. Writes an audit row and returns an undo token.
+   */
+  static async updateRecordType(
+    recordTypeId: string,
+    updates: {
+      label?: string;
+      label_plural?: string;
+      icon?: string;
+      color?: string;
+      description?: string;
+      position?: number;
+    },
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<OpResult> {
+    try {
+      const rows = await postgresClient.query(
+        `SELECT id, key, label, label_plural, icon, color, description, position, is_system
+         FROM crm_record_types WHERE id = $1 AND tenant_id = $2 AND archived = false LIMIT 1`,
+        [recordTypeId, tenantId],
+      );
+      if (!rows.length) return { ok: false, error: `Record type ${ recordTypeId } not found.` };
+      const type = rows[0];
+      if (type.is_system) return { ok: false, error: `Record type "${ type.key }" is a system type and cannot be modified.` };
+
+      const before = {
+        label: type.label, label_plural: type.label_plural,
+        icon: type.icon, color: type.color, description: type.description, position: type.position,
+      };
+
+      const setParts: string[] = [];
+      const params: any[] = [recordTypeId, tenantId];
+      const push = (v: any): string => { params.push(v); return `$${ params.length }`; };
+
+      if (updates.label !== undefined) setParts.push(`label = ${ push(updates.label) }`);
+      if (updates.label_plural !== undefined) setParts.push(`label_plural = ${ push(updates.label_plural) }`);
+      if (updates.icon !== undefined) setParts.push(`icon = ${ push(updates.icon) }`);
+      if (updates.color !== undefined) setParts.push(`color = ${ push(updates.color) }`);
+      if (updates.description !== undefined) setParts.push(`description = ${ push(updates.description) }`);
+      if (updates.position !== undefined && Number.isInteger(updates.position) && updates.position >= 0) {
+        setParts.push(`position = ${ push(updates.position) }`);
+      }
+
+      if (!setParts.length) return { ok: false, error: 'No updatable properties provided.' };
+      setParts.push('updated_at = now()');
+
+      await postgresClient.query(
+        `UPDATE crm_record_types SET ${ setParts.join(', ') } WHERE id = $1 AND tenant_id = $2`,
+        params,
+      );
+
+      const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+        op: 'updateRecordType', entityType: 'record_type', entityId: recordTypeId,
+        before, after: { ...before, ...updates }, tenantId,
+      });
+      return { ok: true, id: recordTypeId, undoToken };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** List left-nav menu items, ordered by position, with target info. */
+  static async listMenuItems(tenantId = DEFAULT_TENANT_ID): Promise<Array<{
+    id: string; label: string; icon: string | null; target_type: string;
+    target_id: string | null; target_url: string | null; position: number; is_system: boolean; auto_created: boolean;
+  }>> {
+    return postgresClient.query(
+      `SELECT id, label, icon, target_type, target_id, target_url, position, is_system, auto_created
+       FROM crm_menu_items WHERE tenant_id = $1 AND archived = false
+       ORDER BY position ASC`,
+      [tenantId],
+    );
+  }
+
+  static async archiveView(viewId: string, tenantId = DEFAULT_TENANT_ID): Promise<OpResult> {
+    try {
+      const rows = await postgresClient.query(
+        `SELECT id, name, is_system FROM crm_views WHERE id = $1 AND tenant_id = $2 AND archived = false LIMIT 1`,
+        [viewId, tenantId],
+      );
+      if (!rows.length) return { ok: false, error: `View ${ viewId } not found.` };
+      if (rows[0].is_system) return { ok: false, error: `View "${ rows[0].name }" is a system view and cannot be archived.` };
+      await postgresClient.query(
+        `UPDATE crm_views SET archived = true, updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+        [viewId, tenantId],
+      );
+      const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+        op: 'archiveView', entityType: 'view', entityId: viewId, tenantId,
+      });
+      return { ok: true, id: viewId, undoToken };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  static async archiveDashboard(dashboardId: string, tenantId = DEFAULT_TENANT_ID): Promise<OpResult> {
+    try {
+      const rows = await postgresClient.query(
+        `SELECT id, name, is_system FROM crm_dashboards WHERE id = $1 AND tenant_id = $2 AND archived = false LIMIT 1`,
+        [dashboardId, tenantId],
+      );
+      if (!rows.length) return { ok: false, error: `Dashboard ${ dashboardId } not found.` };
+      if (rows[0].is_system) return { ok: false, error: `Dashboard "${ rows[0].name }" is a system dashboard and cannot be archived.` };
+      await postgresClient.query(
+        `UPDATE crm_dashboards SET archived = true, updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+        [dashboardId, tenantId],
+      );
+      const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+        op: 'archiveDashboard', entityType: 'dashboard', entityId: dashboardId, tenantId,
+      });
+      return { ok: true, id: dashboardId, undoToken };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  static async archiveWidget(widgetId: string, tenantId = DEFAULT_TENANT_ID): Promise<OpResult> {
+    try {
+      const rows = await postgresClient.query(
+        `SELECT id, name FROM crm_widgets WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+        [widgetId, tenantId],
+      );
+      if (!rows.length) return { ok: false, error: `Widget ${ widgetId } not found.` };
+      await postgresClient.query(
+        `UPDATE crm_widgets SET archived = true, updated_at = now() WHERE id = $1 AND tenant_id = $2`,
+        [widgetId, tenantId],
+      );
+      const undoToken = await CrmSchemaService.writeAudit(postgresClient, {
+        op: 'archiveWidget', entityType: 'widget', entityId: widgetId, tenantId,
+      });
+      return { ok: true, id: widgetId, undoToken };
+    } catch (err: any) {
+      return { ok: false, error: String(err?.message ?? err) };
+    }
+  }
+
+  /** List widgets for a dashboard, joined with record type key for context. */
+  static async listWidgets(
+    dashboardId: string,
+    tenantId = DEFAULT_TENANT_ID,
+  ): Promise<Array<{ id: string; name: string; kind: string; record_type_key: string | null; record_type_id: string | null; config: unknown }>> {
+    return postgresClient.query(
+      `SELECT w.id, w.name, w.kind, w.record_type_id, rt.key AS record_type_key, w.config
+       FROM crm_widgets w
+       LEFT JOIN crm_record_types rt ON rt.id = w.record_type_id
+       WHERE w.dashboard_id = $1 AND w.tenant_id = $2 AND w.archived = false
+       ORDER BY w.position ASC, w.id ASC`,
+      [dashboardId, tenantId],
+    );
   }
 
   static async listViews(

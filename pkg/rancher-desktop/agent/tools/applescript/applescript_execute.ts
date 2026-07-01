@@ -63,7 +63,7 @@ export class ApplescriptExecuteWorker extends BaseTool {
     // ── Host-access gate ────────────────────────────────────────
     // Driving a terminal emulator via osascript is a host shell escape.
     // Block it unless the user has enabled host machine access.
-    if (TERMINAL_EMULATOR_APPS.has(String(target_app).toLowerCase()) && !isHostAccessEnabled()) {
+    if (TERMINAL_EMULATOR_APPS.has(String(target_app).toLowerCase()) && !await isHostAccessEnabled()) {
       return {
         successBoolean: false,
         responseString:  HOST_ACCESS_DISABLED_MESSAGE,

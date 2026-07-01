@@ -28,6 +28,7 @@ export class CrmUpdateFieldWorker extends BaseTool {
       if (input?.is_required !== undefined) updates.is_required = Boolean(input.is_required);
       if (input?.is_unique !== undefined) updates.is_unique = Boolean(input.is_unique);
       if (input?.is_title !== undefined) updates.is_title = Boolean(input.is_title);
+      if (input?.position !== undefined && Number.isInteger(Number(input.position))) updates.position = Number(input.position);
 
       if (!Object.keys(updates).length) return fail('No updatable properties provided.');
 

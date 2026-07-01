@@ -128,7 +128,11 @@ Sulla Desktop tools are ALWAYS preferred over generic Claude Code tools. When Su
 
 **Workflow Invocation:**
 - ✅ ALWAYS: \`exec({ command: "sulla <category>/<tool> '...'" })\` for CLI tools
-- ❌ NEVER: \`execute_workflow\` for CLI tools — it only handles named Sulla workflows`;
+- ❌ NEVER: \`execute_workflow\` for CLI tools — it only handles named Sulla workflows
+
+**Host Command Execution (when host access is enabled):**
+- ✅ ALWAYS: \`sulla meta/exechost '{"command":"...","cwd":"..."}'\` — silent, output returned inline, full login-shell PATH
+- ❌ NEVER: \`sulla applescript/applescript_execute\` with \`target_app: "Terminal"\` — pops visible Terminal windows`;
 
   return {
     id:             'tooling',

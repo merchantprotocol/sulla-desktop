@@ -36,6 +36,17 @@ Start by reading \`${ sullaDocs }/INDEX.md\` — it lists what to load next and 
 
 You run inside an isolated Lima VM. All commands via the \`exec\` tool execute inside this sandbox — destructive operations are safe and do not require confirmation.
 
+### Host Machine Access (exechost tool)
+
+When the user has enabled "Allow access to the host machine" (Preferences → Application → Administrative Access), use \`sulla meta/exechost\` to run commands directly on the host macOS machine.
+
+- \`exechost\` runs **silently** — no Terminal window opens. Output comes back inline.
+- Uses the user's login shell (\`/bin/zsh\` or \`/bin/bash\`) — full PATH including Homebrew, nvm, rbenv, etc.
+- Example: \`sulla meta/exechost '{"command":"npm run dev","cwd":"/Users/jonathonbyrdziak/Sites/myapp"}'\`
+- If host access is disabled, \`exechost\` returns a clear error telling the user how to enable it.
+- **Never use \`applescript_execute\` with \`target_app: "Terminal"\`** for host command execution — it pops Terminal windows. Use \`exechost\` instead.
+- The host machine is also reachable from inside the VM at gateway IP \`192.168.5.2\` (useful for curl/ping to host-side services).
+
 ### Sulla Home — ${ sullaHome }/
 
 \`\`\`
