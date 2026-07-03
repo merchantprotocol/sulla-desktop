@@ -241,6 +241,7 @@ export class ConversationHistoryModel {
         return await postgresClient.query<ConversationHistoryRecord>(`
           SELECT * FROM ${ ConversationHistoryModel.TABLE }
           WHERE type = $1 AND status != 'deleted'
+            AND (channel_id NOT LIKE 'subconscious%' OR channel_id IS NULL)
           ORDER BY last_active_at DESC
           LIMIT $2
         `, [type, limit]);
@@ -248,6 +249,7 @@ export class ConversationHistoryModel {
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
         WHERE status != 'deleted'
+          AND (channel_id NOT LIKE 'subconscious%' OR channel_id IS NULL)
         ORDER BY last_active_at DESC
         LIMIT $1
       `, [limit]);
@@ -266,6 +268,7 @@ export class ConversationHistoryModel {
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
         WHERE (title ILIKE $1 OR summary ILIKE $1) AND status != 'deleted'
+          AND (channel_id NOT LIKE 'subconscious%' OR channel_id IS NULL)
         ORDER BY last_active_at DESC
         LIMIT 100
       `, [pattern]);
@@ -283,6 +286,7 @@ export class ConversationHistoryModel {
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
         WHERE created_at >= $1 AND created_at <= $2 AND status != 'deleted'
+          AND (channel_id NOT LIKE 'subconscious%' OR channel_id IS NULL)
         ORDER BY last_active_at DESC
       `, [from.toISOString(), to.toISOString()]);
     } catch (err) {

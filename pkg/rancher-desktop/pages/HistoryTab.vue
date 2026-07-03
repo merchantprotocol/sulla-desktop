@@ -314,7 +314,7 @@ interface DateGroup {
 }
 
 const { isDark } = useTheme();
-const { createTab } = useBrowserTabs();
+const { createTab, restoreHistoryTab } = useBrowserTabs();
 const router = useRouter();
 
 const searchQuery = ref('');
@@ -421,10 +421,11 @@ function openEntry(entry: HistoryEntry) {
   if (entry.type === 'browser' && entry.url && entry.url !== 'about:blank') {
     tab = createTab(entry.url);
   } else {
-    tab = createTab('about:blank', { mode: 'chat' as any });
+    // Restore with the original tab_id so LocalStoragePersister can find the
+    // thread state keyed to that tab. Falls back to entry.id if tab_id is absent.
+    tab = restoreHistoryTab(entry.tab_id || entry.id, entry.title);
   }
 
-  // Switch to the new tab
   router.push(`/Browser/${ tab.id }`);
   emit('navigate-entry', entry);
 }

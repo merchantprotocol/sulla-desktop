@@ -31,6 +31,7 @@
         @activate="onActivate"
         @jump-to="onJumpTo"
         @archived-click="onArchivedClick"
+        @close="controller.toggleHistory()"
       />
 
       <main class="main">
@@ -73,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import Canvas             from './components/chrome/Canvas.vue';
 import StatusBadges       from './components/chrome/StatusBadges.vue';
@@ -136,6 +137,9 @@ const props = defineProps<{
   tabId?: string;
   /** Optional override model id on first boot. */
   initialModelId?: string;
+  /** Whether this tab is the currently visible tab. Suppresses keyboard
+   *  shortcut handlers on background (visibility:hidden) tabs. */
+  isActive?: boolean;
 }>();
 
 // ─── Emits (to BrowserTab for mode switching + URL opening) ────────
@@ -420,6 +424,7 @@ async function onJumpTo(target: { threadId: ThreadId; messageId: any }): Promise
 const { active: dragActive } = useDragDrop(controller);
 useKeyboardShortcuts({
   controller,
+  isActive: toRef(props, 'isActive'),
   onVoiceToggle: () => {
     // The Composer owns voice lifecycle; we just emit a window event
     // it listens for, so we don't have to thread a ref through.

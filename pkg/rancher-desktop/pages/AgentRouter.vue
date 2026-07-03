@@ -146,7 +146,7 @@ import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
-import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
+import { useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -165,6 +165,12 @@ watch(sidePanelBlocked, (blocked) => {
 });
 
 const isBrowserRoute = computed(() => route.path.startsWith('/Browser/'));
+
+// Persist active tab ID whenever the route changes so restarts can resume it
+watch(() => route.path, (path) => {
+  const match = path.match(/^\/Browser\/(.+)$/);
+  if (match) persistActiveTabId(match[1]);
+});
 
 // ── Global ModeRail wiring ──
 // The rail lives here (outside the per-tab BrowserTab) so it stays
@@ -481,10 +487,14 @@ onMounted(async() => {
   window.addEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.addEventListener('sulla:file-tree-state-changed', onFileTreeStateChanged as EventListener);
 
-  // Ensure at least one tab exists and navigate to it on fresh start
-  const initialTab = ensureOneTab();
+  // Ensure at least one tab exists, then navigate to the last-active tab from
+  // the previous session if it's still in the restored list, falling back to
+  // tabs[0] if the persisted ID no longer exists.
+  ensureOneTab();
   if (!route.path.startsWith('/Browser/')) {
-    router.replace(`/Browser/${ initialTab.id }`);
+    const persistedId = getPersistedActiveTabId();
+    const target = (persistedId && browserTabs.find(t => t.id === persistedId)) || browserTabs[0];
+    if (target) router.replace(`/Browser/${ target.id }`);
   }
 
   // Attempt vault auto-unlock via safeStorage before anything else
