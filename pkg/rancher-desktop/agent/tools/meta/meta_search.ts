@@ -3,10 +3,14 @@ import * as os from 'os';
 import { BaseTool, ToolResponse } from '../base';
 
 import { resolveSullaDocsDir } from '@pkg/agent/utils/sullaPaths';
-import { indexDirectory, search, QmdTimeoutError, QmdTooManyFilesError, type QmdSearchResult } from '@pkg/main/qmdService';
+import {
+  indexDirectory, search, getLastCoverage, SearchTimeoutError, SearchTooManyFilesError, type FileSearchResult,
+} from '@pkg/main/fileSearchService';
 
 /**
- * Search Tool — fast semantic search across any directory using QMD vector indexing.
+ * Search Tool — fast full-text (BM25) search across any directory via the
+ * tiered fileSearchService engine (live scan for small dirs, incremental
+ * contentless-FTS5 index for large ones).
  *
  * Always searches the bundled sulla-docs directory in addition to the requested
  * (or default) target dir, so the agent can discover tool / subsystem docs
@@ -58,8 +62,8 @@ export class MetaSearchWorker extends BaseTool {
       }
 
       const perDirLimit = limit || 20;
-      const primary: QmdSearchResult[] = await search(query, dirPath, perDirLimit);
-      let docsHits: QmdSearchResult[] = [];
+      const primary: FileSearchResult[] = await search(query, dirPath, perDirLimit);
+      let docsHits: FileSearchResult[] = [];
 
       if (includeSecondPass && sullaDocsDir) {
         try {
@@ -98,7 +102,7 @@ export class MetaSearchWorker extends BaseTool {
           const checked = sullaDocsDir ? `${ dirPath } and ${ sullaDocsDir }` : dirPath;
           return {
             successBoolean: true,
-            responseString: `No results found for "${ query }" in ${ checked }`,
+            responseString: `No results found for "${ query }" in ${ checked }${ coverageNote(dirPath) }`,
           };
         }
 
@@ -113,13 +117,13 @@ export class MetaSearchWorker extends BaseTool {
         responseString: formatResults(primary, docsHits, query, dirPath, sullaDocsDir),
       };
     } catch (error) {
-      if (error instanceof QmdTooManyFilesError) {
+      if (error instanceof SearchTooManyFilesError) {
         return {
           successBoolean: false,
           responseString: `Search not run: ${ error.message } Pass a more specific dirPath (e.g. a single repo or subdirectory).`,
         };
       }
-      if (error instanceof QmdTimeoutError) {
+      if (error instanceof SearchTimeoutError) {
         return {
           successBoolean: false,
           responseString: `Search timed out: ${ error.message }. Narrow the dirPath or simplify the query.`,
@@ -145,19 +149,52 @@ async function safeIndex(dirPath: string): Promise<IndexOutcome> {
     const result = await indexDirectory(dirPath);
     return { kind: 'ok', result };
   } catch (err) {
-    if (err instanceof QmdTooManyFilesError) {
+    if (err instanceof SearchTooManyFilesError) {
       return { kind: 'tooManyFiles', message: err.message };
     }
-    if (err instanceof QmdTimeoutError) {
+    if (err instanceof SearchTimeoutError) {
       return { kind: 'timeout', message: err.message };
     }
     throw err;
   }
 }
 
+// Coverage honesty: when the last search against dirPath ran off a truncated
+// or partial FTS index, say so instead of silently pretending full coverage.
+function coverageNote(dirPath: string): string {
+  const cov = getLastCoverage(dirPath);
+
+  if (!cov || (!cov.truncated && cov.indexedCount >= cov.candidateCount)) {
+    return '';
+  }
+  const indexed = cov.indexedCount.toLocaleString('en-US');
+  const candidates = cov.candidateCount.toLocaleString('en-US');
+
+  return `\n\nNote: index covers ${ indexed } of ${ candidates } candidate files (last pass ${ formatAge(Date.now() - cov.lastPassAt) } ago). ` +
+    'Pass reindex:true or narrow dirPath for deeper coverage.';
+}
+
+function formatAge(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+
+  if (minutes < 1) {
+    return 'under a minute';
+  }
+  if (minutes < 60) {
+    return `${ minutes }m`;
+  }
+  const hours = Math.floor(minutes / 60);
+
+  if (hours < 48) {
+    return `${ hours }h`;
+  }
+
+  return `${ Math.floor(hours / 24) }d`;
+}
+
 function formatResults(
-  primary: QmdSearchResult[],
-  docs: QmdSearchResult[],
+  primary: FileSearchResult[],
+  docs: FileSearchResult[],
   query: string,
   dirPath: string,
   sullaDocsDir: string | null,
@@ -174,10 +211,15 @@ function formatResults(
     blocks.push(`\n## Results in sulla-docs — ${ sullaDocsDir } (${ docs.length })\n${ renderHits(docs) }`);
   }
 
+  const note = coverageNote(dirPath);
+  if (note) {
+    blocks.push(note);
+  }
+
   return blocks.join('\n');
 }
 
-function renderHits(results: QmdSearchResult[]): string {
+function renderHits(results: FileSearchResult[]): string {
   return results
     .map((r, i) => {
       const parts = [`${ i + 1 }. ${ r.path }`];

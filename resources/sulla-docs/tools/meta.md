@@ -39,18 +39,18 @@ Returns ready-to-run command examples with parameter schemas + credential status
 
 ⚠️ The returned strings must be wrapped in `exec()`. They are not directly callable. The output is documentation, not execution.
 
-### `meta/file_search` — Semantic search over files
+### `meta/file_search` — Full-text search over files
 ```bash
 sulla meta/file_search '{"query":"workflow scheduler","dirPath":"/Users/.../sulla","limit":20}'
 sulla meta/file_search '{"query":"how do I run a function"}'           # primary dir = home, sulla-docs auto-included
 sulla meta/file_search '{"query":"...","includeSullaDocs":false}'      # search only dirPath
 ```
 
-Vector-indexed semantic search across both filenames and contents. Faster and broader than `grep` for conceptual queries ("error handling for HTTP timeouts"). For exact strings use grep instead.
+Full-text keyword search (BM25-ranked) across both filenames and contents. Faster and broader than `grep` for multi-word keyword queries ("error handling HTTP timeout"). For exact strings use grep instead. It's keyword matching, not semantic/vector search — pick the words that would actually appear in the file.
 
 **Always also searches the bundled `sulla-docs/` reference** (the docs you're reading right now) unless you pass `includeSullaDocs: false`. Results are grouped per directory so you can see which hits came from where. This means most "where do I do X?" queries get authoritative tool docs returned for free without remembering paths.
 
-First search in a dir triggers indexing — subsequent searches are fast.
+Tiered engine: small directories (up to ~2,000 text files) are scanned live on every search, so results are always fresh with no index to maintain. Larger directories use an incremental on-disk FTS index (tokens only, no file bodies) built automatically in a crash-isolated helper process — the first search in a big dir triggers indexing, subsequent searches are fast. Index passes are budgeted, so very large trees may take a few passes to reach full coverage; results include a coverage note whenever the index is partial (pass `reindex:true` or narrow `dirPath` to deepen it). Sensitive paths (`.ssh`, `.gnupg`, `.aws`, etc.) and cloud-placeholder (online-only) files are never scanned or indexed.
 
 ### `meta/read_file` — Read with line ranges
 ```bash

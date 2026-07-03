@@ -15,7 +15,7 @@ sulla <category> --help
 ## meta — system foundation + workflow execution (13 tools)
 - `sulla meta/exec` — Run shell commands inside the Lima VM (root, 2-min default timeout, 160KB output cap)
 - `sulla meta/browse_tools` — Discover tools by category or keyword (returns docs, not executions)
-- `sulla meta/file_search` — Semantic vector search across files
+- `sulla meta/file_search` — Full-text (BM25) keyword search across files
 - `sulla meta/read_file` — Read file with optional line range
 - `sulla meta/request_user_input` — Pause mid-turn and ask the user for an approve/deny decision (blocks until user clicks; 5 min default timeout)
 - `sulla meta/spawn_agent` — Launch sub-agents (canonical for spawn_agent; NOT under `agents/`)

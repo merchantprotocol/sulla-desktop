@@ -725,18 +725,6 @@ export interface IpcMainInvokeEvents {
   'editor-footer-stats': () => { availableBytes: number; unprocessedTrainingBytes: number };
   // #endregion
 
-  // #region QMD Search
-  'qmd-index':  (dirPath: string, glob?: string) => { indexed: number; updated: number; removed: number };
-  'qmd-search': (query: string, dirPath: string) => {
-    path:    string;
-    name:    string;
-    line:    number;
-    preview: string;
-    score:   number;
-    source:  'fts' | 'filename';
-  }[];
-  // #endregion
-
   // #region System Resources
   'system-resources': () => { totalMemoryGB: number; availableMemoryGB: number; availableDiskGB: number };
   // #endregion

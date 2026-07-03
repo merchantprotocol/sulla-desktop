@@ -123,7 +123,7 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'file_search',
-    description: 'Fast semantic search across any directory PLUS the bundled sulla-docs (agent + tool reference) by default. Faster and more comprehensive than find or grep — use this as your default search tool. Searches file contents and filenames using QMD vector indexing. Automatically indexes on first search. Pass includeSullaDocs:false to skip the sulla-docs second pass.',
+    description: 'Fast full-text keyword search (BM25-ranked) across any directory PLUS the bundled sulla-docs (agent + tool reference) by default. Faster than find or grep for multi-word queries — use this as your default search tool. Matches file contents and filenames. Small directories are live-scanned (always fresh); large ones use an incremental on-disk index built automatically, with coverage reported when partial. Pass includeSullaDocs:false to skip the sulla-docs second pass.',
     category:    'meta',
     schemaDef:   {
       query:            { type: 'string', description: 'Search query — keywords, concepts, or questions to match against file contents and names.' },

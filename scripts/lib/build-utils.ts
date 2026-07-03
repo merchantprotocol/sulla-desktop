@@ -133,7 +133,6 @@ export default {
       externals:   [
         ...Object.keys(this.packageMeta.dependencies),
         'pg-native', 'ws', 'bufferutil', 'utf-8-validate',
-        /^@tobilu\/qmd/,
         /^fast-glob/,
       ],
       devtool:     this.isDevelopment ? 'source-map' : false,
