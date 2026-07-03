@@ -7,6 +7,12 @@
 -->
 <template>
   <aside v-if="open" class="history">
+    <!-- ─── Header ─── -->
+    <div class="history-panel-header">
+      <span class="history-panel-title">History</span>
+      <button class="history-close" title="Close" @click="$emit('close')">✕</button>
+    </div>
+
     <!-- ─── Pinboard ─── -->
     <template v-if="pinned.length > 0">
       <div class="history-head">Pinned</div>
@@ -82,6 +88,7 @@ const emit = defineEmits<{
   (e: 'activate', id: ThreadId): void;
   (e: 'jump-to', target: { threadId: ThreadId; messageId: MessageId }): void;
   (e: 'archived-click', id: ThreadId): void;
+  (e: 'close'): void;
 }>();
 
 // Defaulted locally because readonly array defaults aren't friendly in props.
@@ -143,6 +150,24 @@ const grouped = computed(() => {
   backdrop-filter: blur(8px);
   display: flex; flex-direction: column;
   height: 100%;
+}
+.history-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid rgba(168, 192, 220, 0.06);
+}
+.history-panel-title {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.28em;
+  text-transform: uppercase; color: var(--steel-400);
+}
+.history-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--read-4); font-size: 13px; line-height: 1;
+  padding: 2px 4px; border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.history-close:hover {
+  color: var(--read-2); background: rgba(80, 150, 179, 0.1);
 }
 .history-head {
   padding: 22px 18px 12px;

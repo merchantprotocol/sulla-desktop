@@ -216,6 +216,25 @@ export const nativeGitHubIntegration: Record<string, Integration> = {
     version:     '1.0.0',
     lastUpdated: '2026-02-28',
     developer:   'Cloudflare',
+    formGuide:   'Find your Account ID in the right sidebar of the Cloudflare dashboard. Create an API Token under My Profile → API Tokens.',
+    properties:  [
+      {
+        key:         'account_id',
+        title:       'Account ID',
+        hint:        'Your Cloudflare Account ID — shown in the right sidebar of any zone or the dashboard homepage.',
+        type:        'text',
+        required:    true,
+        placeholder: 'e.g. 44b9670fe26b5a11b117315215b8fed6',
+      },
+      {
+        key:         'api_token',
+        title:       'API Token',
+        hint:        'A scoped API Token from My Profile → API Tokens. Use the "Edit zone DNS" template or create a custom token with the permissions you need.',
+        type:        'password',
+        required:    true,
+        placeholder: 'Cloudflare API Token',
+      },
+    ],
   },
   pagerduty: {
     id:          'pagerduty',

@@ -3,6 +3,7 @@
 */
 
 import { onMounted, onBeforeUnmount } from 'vue';
+import type { Ref } from 'vue';
 
 import { useChatController } from '../controller/useChatController';
 import type { ChatController } from '../controller/ChatController';
@@ -13,12 +14,21 @@ export interface KeyboardShortcutOptions {
    *  pass it in explicitly — Vue doesn't let a component inject its
    *  own provide. */
   controller?: ChatController;
+  /**
+   * Whether this chat tab is the currently visible one. When false every
+   * keystroke is ignored — prevents background (visibility:hidden) tabs from
+   * intercepting shortcuts meant for the active tab.
+   */
+  isActive?: Ref<boolean>;
 }
 
 export function useKeyboardShortcuts(opts: KeyboardShortcutOptions = {}): void {
   const c = opts.controller ?? useChatController();
 
   function handle(e: KeyboardEvent) {
+    // Skip if this tab is not the active/visible one — avoids background tabs
+    // stealing shortcuts when the user is looking at a different tab.
+    if (opts.isActive && !opts.isActive.value) return;
     const metaish = e.metaKey || e.ctrlKey;
     const tag  = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
     const inEditable = tag === 'input' || tag === 'textarea' || (e.target as HTMLElement | null)?.isContentEditable;

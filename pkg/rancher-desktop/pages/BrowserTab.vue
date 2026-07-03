@@ -211,6 +211,7 @@
       <div class="flex-1 min-h-0 overflow-hidden">
         <BrowserTabChat
           :tab-id="props.tabId"
+          :is-active="props.isVisible"
           @set-mode="onSetMode"
           @navigate-url="onNavigateUrl"
         />

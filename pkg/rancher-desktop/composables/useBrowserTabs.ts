@@ -31,9 +31,10 @@ export interface ClosedTab {
   closedAt: number;
 }
 
-const STORAGE_KEY = 'sulla:browser-tabs';
-const HISTORY_KEY = 'sulla:closed-tabs';
-const ORDER_KEY = 'sulla:tab-order';
+const STORAGE_KEY    = 'sulla:browser-tabs';
+const HISTORY_KEY    = 'sulla:closed-tabs';
+const ORDER_KEY      = 'sulla:tab-order';
+const ACTIVE_TAB_KEY = 'sulla:active-tab';
 const MAX_HISTORY = 25;
 // Cap the restored-tab count to stop a runaway agent from creating hundreds
 // of tabs, persisting them, and blacking out the main chat window on next
@@ -69,8 +70,16 @@ function loadPersistedTabs(): BrowserTab[] {
     if (capped.length < parsed.length) {
       console.warn(`[useBrowserTabs] Restored ${ capped.length } tab(s) after dedupe+cap (was ${ parsed.length } in storage)`);
     }
-    // Rehydrate: reset loading state
-    return capped.map((t: any) => ({ ...t, loading: false }));
+    // Rehydrate: reset loading state, strip any persisted HTML content
+    // (document-mode tabs will show "unavailable" and can be reopened), and
+    // reject javascript: URLs that could have been written to localStorage by
+    // a malicious page before this guard was in place.
+    return capped
+      .filter((t: any) => !/^javascript:/i.test(t?.url || ''))
+      .map((t: any) => {
+        const { content: _c, ...rest } = t;
+        return { ...rest, loading: false };
+      });
   } catch {
     return [];
   }
@@ -78,28 +87,35 @@ function loadPersistedTabs(): BrowserTab[] {
 
 function persistTabs(tabList: BrowserTab[]): void {
   try {
-    // Agent-origin tabs (created by the `browser/tab` tool — they carry an
-    // `assetId`) are ephemeral. They should not survive app restart: the
-    // agent can always reopen what it needs on the next run, and persisting
-    // them is exactly how we end up restoring hundreds of WebContentsViews
-    // and blacking out the main chat window. Only user-initiated tabs
-    // (no assetId) persist.
-    // file-editor tabs reference absolute file paths that may become stale
-    // across sessions (e.g. moved files, path-validation errors on restart).
-    // The file tree is always available to reopen them, so don't persist them.
-    const userTabs = tabList.filter(t => !t.assetId && t.mode !== 'file-editor');
-    // Strip large HTML content + enforce the cap on write too, so a live
-    // runaway can't balloon localStorage between app launches.
-    const capped = userTabs.length > MAX_RESTORED_TABS
-      ? userTabs.slice(userTabs.length - MAX_RESTORED_TABS)
-      : userTabs;
-    const toStore = capped.map((t) => {
-      if (t.content && t.content.length > 50_000) {
-        return { ...t, content: undefined };
+    // Persist user-initiated tabs (no assetId) AND chat-mode tabs regardless
+    // of origin — chat tabs carry conversation state keyed to tab.id and must
+    // survive restart. Non-chat agent browser tabs remain ephemeral (they were
+    // opened for a specific run and the agent can reopen them). file-editor
+    // tabs reference absolute paths that may become stale across sessions.
+    const persistable = tabList.filter(t =>
+      t.mode !== 'file-editor' &&
+      (!t.assetId || t.mode === 'chat'),
+    );
+    const capped = persistable.length > MAX_RESTORED_TABS
+      ? persistable.slice(persistable.length - MAX_RESTORED_TABS)
+      : persistable;
+    // Strip assetId so restored chat tabs come back as user-origin tabs (no
+    // agent-tab cap eviction, no conflict with the main-process TabRegistry).
+    // Never persist the content field — it holds raw HTML from document-mode
+    // tabs. Persisting it is a persistent-XSS vector (HtmlMessageRenderer
+    // executes script tags via shadow.innerHTML on restore).
+    const toStore = capped.map(({ assetId: _a, content: _c, ...rest }) => rest);
+    const serialized = JSON.stringify(toStore);
+    try {
+      localStorage.setItem(STORAGE_KEY, serialized);
+    } catch (quota: any) {
+      // QuotaExceededError — drop all content blobs and retry once rather
+      // than silently losing the entire tab list.
+      if (quota?.name === 'QuotaExceededError' || quota?.code === 22) {
+        const stripped = JSON.stringify(toStore.map(t => ({ ...t, content: undefined })));
+        try { localStorage.setItem(STORAGE_KEY, stripped); } catch { /* give up */ }
       }
-      return t;
-    });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+    }
   } catch { /* best-effort */ }
 }
 
@@ -255,6 +271,28 @@ const tabOrder = ref<string[]>(loadTabOrder());
 watch(tabOrder, (current) => {
   persistTabOrder([...current]);
 }, { deep: true });
+
+// ── Active tab persistence ──
+// Persisted separately so AgentRouter can navigate to the last-active tab on
+// restart instead of always landing on tabs[0].
+
+export function getPersistedActiveTabId(): string | null {
+  try {
+    return localStorage.getItem(ACTIVE_TAB_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function persistActiveTabId(id: string | null): void {
+  try {
+    if (id) {
+      localStorage.setItem(ACTIVE_TAB_KEY, id);
+    } else {
+      localStorage.removeItem(ACTIVE_TAB_KEY);
+    }
+  } catch { /* best-effort */ }
+}
 
 function generateId(): string {
   return `tab_${ Date.now().toString(36) }_${ Math.random().toString(36).slice(2, 8) }`;
@@ -433,6 +471,28 @@ export function useBrowserTabs() {
     tabOrder.value = ids;
   }
 
+  /**
+   * Re-open a conversation from history by its original tab ID.
+   * If a tab with that ID is already open, returns it. Otherwise creates a new
+   * chat tab with the SAME id so LocalStoragePersister finds its thread state.
+   */
+  function restoreHistoryTab(tabId: string, title: string, favicon = ''): BrowserTab {
+    const existing = tabs.find(t => t.id === tabId);
+    if (existing) return existing;
+
+    const tab: BrowserTab = {
+      id:      tabId,
+      url:     'about:blank',
+      title:   title || 'Chat',
+      favicon,
+      loading: false,
+      mode:    'chat',
+    };
+    tabs.push(tab);
+    recordTabToHistory(tab);
+    return tab;
+  }
+
   return {
     tabs:       readonly(tabs),
     closedTabs: readonly(closedTabs),
@@ -443,6 +503,7 @@ export function useBrowserTabs() {
     getTab,
     ensureOneTab,
     restoreClosedTab,
+    restoreHistoryTab,
     clearClosedTabs,
     reorderTabs,
   };
