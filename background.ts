@@ -472,6 +472,14 @@ Electron.app.whenReady().then(async() => {
     noModalDialogs = commandLineArgs.includes('--no-modal-dialogs');
     setupProtocolHandlers();
 
+    // Gatekeeper App Translocation runs the app from a randomized read-only
+    // mount, which breaks lima provisioning (limactl copy/scp into the VM
+    // fails with opaque errors). Bail out with instructions before any
+    // backend work starts.
+    if (await checkForAppTranslocation()) {
+      return;
+    }
+
     // Linux/Windows cold-launch: the sulla:// URL the user clicked is
     // appended to our own process.argv. macOS delivers it through the
     // 'open-url' event registered earlier, so this is a no-op there.
@@ -796,6 +804,64 @@ async function doFirstRunDialog() {
     await firstRunCoordinator.setCondition('wizardFinished');
   }
   firstRunDialogComplete = true;
+}
+
+/**
+ * Detect macOS Gatekeeper App Translocation. When a quarantined app is
+ * launched without being moved via Finder (e.g. run straight from the DMG or
+ * ~/Downloads), macOS executes it from a randomized read-only mount under
+ * /private/var/.../AppTranslocation/. Lima cannot provision the VM from
+ * there, so startup fails deep inside limactl with unhelpful scp errors.
+ * Catch it up front and tell the user how to fix it.
+ *
+ * @returns true if the app is translocated (a fatal dialog was shown and the
+ * app is quitting); the caller should abort startup.
+ */
+async function checkForAppTranslocation(): Promise<boolean> {
+  if (os.platform() !== 'darwin') {
+    return false;
+  }
+  const appPath = Electron.app.getAppPath();
+
+  if (!appPath.includes('/AppTranslocation/') && !process.execPath.includes('/AppTranslocation/')) {
+    return false;
+  }
+
+  const title = 'Move Sulla Desktop to your Applications folder';
+  const detail = [
+    'macOS is running Sulla Desktop from a temporary read-only location ("App Translocation"). ' +
+    'This happens when the app is launched directly from the disk image or the Downloads folder, ' +
+    'and it prevents the virtual machine from starting.',
+    '',
+    'To fix this:',
+    '1. Quit Sulla Desktop.',
+    '2. In Finder, drag Sulla Desktop into the Applications folder. ' +
+    '(Use Finder — copying with the terminal will not clear the quarantine.)',
+    '3. Launch Sulla Desktop from the Applications folder.',
+    '',
+    'If it is already in Applications and you still see this message, run this in Terminal, then relaunch:',
+    'xattr -dr com.apple.quarantine "/Applications/Sulla Desktop.app"',
+  ].join('\n');
+
+  console.log(`App Translocation detected: running from ${ appPath }; refusing to start.`);
+
+  if (noModalDialogs) {
+    console.log(`Fatal error:\n${ title }\n\n${ detail }`);
+  } else {
+    await Electron.dialog.showMessageBox({
+      type:      'error',
+      title,
+      message:   title,
+      detail,
+      buttons:   ['Quit'],
+      defaultId: 0,
+    });
+  }
+
+  gone = true;
+  Electron.app.quit();
+
+  return true;
 }
 
 async function checkForRootPrivs() {
