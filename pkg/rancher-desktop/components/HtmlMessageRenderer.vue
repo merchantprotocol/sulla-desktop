@@ -6,6 +6,7 @@
 </template>
 
 <script setup lang="ts">
+import DOMPurify from 'dompurify';
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 
 const props = withDefaults(defineProps<{
@@ -304,6 +305,25 @@ function stripMetaRefresh(html: string): string {
   return html.replace(/<meta[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, '');
 }
 
+/**
+ * This component renders in the MAIN window renderer, which runs with
+ * nodeIntegration:true / contextIsolation:false — an executed <script> here
+ * has full Node access (require('child_process'), fs, ...). Document-tab
+ * content originates from agent output, and agents read untrusted web pages,
+ * so unsanitized HTML is a prompt-injection→RCE chain. Scripts and event
+ * handlers are therefore stripped, matching IsolatedHtml.vue in the chat
+ * transcript. Interactive documents need a sandboxed surface (WebContentsView
+ * without node), not script execution in this renderer.
+ */
+function sanitize(html: string): string {
+  return DOMPurify.sanitize(stripMetaRefresh(html), {
+    USE_PROFILES: { html: true },
+    ADD_TAGS:     ['style'],
+    FORBID_TAGS:  ['script', 'iframe', 'object', 'embed', 'base'],
+    FORBID_ATTR:  ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
+  });
+}
+
 function render(): void {
   const el = hostEl.value;
   if (!el || !props.content) return;
@@ -313,23 +333,10 @@ function render(): void {
       shadow = el.attachShadow({ mode: 'open' });
     }
 
-    const sanitizedContent = stripMetaRefresh(props.content);
-
     shadow.innerHTML = `
       <style>${ getDefaultStyles() }</style>
-      <div class="html-message-wrapper">${ sanitizedContent }</div>
+      <div class="html-message-wrapper">${ sanitize(props.content) }</div>
     `;
-
-    // Execute script tags manually since innerHTML doesn't execute them
-    const scripts = shadow.querySelectorAll('script');
-    scripts.forEach((oldScript) => {
-      const newScript = document.createElement('script');
-      for (const attr of oldScript.attributes) {
-        newScript.setAttribute(attr.name, attr.value);
-      }
-      newScript.textContent = oldScript.textContent;
-      oldScript.parentNode?.replaceChild(newScript, oldScript);
-    });
 
     // Set up resize observer on the wrapper
     const wrapper = shadow.querySelector('.html-message-wrapper');
@@ -346,7 +353,7 @@ function render(): void {
     el.style.cssText = 'all: initial; display: block; max-height: 80vh; overflow-y: auto;';
     el.innerHTML = `
       <div style="font-family: sans-serif; font-size: 14px; line-height: 1.6;">
-        ${ stripMetaRefresh(props.content) }
+        ${ sanitize(props.content) }
       </div>
     `;
   }

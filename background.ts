@@ -226,7 +226,11 @@ Electron.app.on('second-instance', async(_event, argv) => {
 // takes care of any propagation of settings we want to do
 // when settings change
 mainEvents.on('settings-update', async(newSettings) => {
-  console.log(`mainEvents settings-update: ${ JSON.stringify(newSettings) }`);
+  // Do NOT log the settings object itself: it embeds credentials
+  // (remoteApiKey, sullaPassword, sullaN8nEncryptionKey, ...) and multi-KB
+  // prompt strings — one full dump per update was both a plaintext secret
+  // leak into background.log and the single largest source of log bloat.
+  console.log(`mainEvents settings-update: version=${ newSettings.version } (${ JSON.stringify(newSettings).length } bytes)`);
   const runInDebugMode = settingsImpl.runInDebugMode(newSettings.application.debug);
 
   if (runInDebugMode) {
