@@ -82,6 +82,26 @@ export interface SubconsciousMiddlewareOptions {
  * Run the subconscious middleware pipeline.
  * Launches applicable agents in parallel, then merges their results into state.
  */
+/**
+ * True when the state carries at least one real user text message — the
+ * thing the recall/observation agents exist to analyze. Tool-result-only
+ * user turns and messages injected by the subconscious itself don't count.
+ */
+function hasAnalyzableUserMessage(state: BaseThreadState): boolean {
+  return state.messages.some((m: any) => {
+    if (m?.role !== 'user') return false;
+    if ((m?.metadata as any)?.source === 'subconscious') return false;
+    const c = m?.content;
+
+    if (typeof c === 'string') return c.trim().length > 0;
+    if (Array.isArray(c)) {
+      return c.some((b: any) => b?.type === 'text' && typeof b.text === 'string' && b.text.trim().length > 0);
+    }
+
+    return false;
+  });
+}
+
 export async function runSubconsciousMiddleware(
   state: BaseThreadState,
   options: SubconsciousMiddlewareOptions,
@@ -140,14 +160,26 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('digester', runToolResultDigester(state, digestPlan.eligible)));
   }
 
-  // 2. Memory Recall — always (awaited: writes to state.metadata.recallContext)
-  launched.push('memory-recall');
-  const recallPromise = runMemoryRecall(state, options.recallVariant);
-  awaitedTasks.push(timed('memory-recall', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
+  // The recall/observation agents analyze the conversation's user messages.
+  // When a cycle carries none (channel-join pings, system-triggered turns),
+  // dispatching them sends only the bare instruction text — the agent
+  // correctly returns nothing, but a whole subconscious LLM round-trip is
+  // burned per agent, per occurrence. Heartbeat recall is exempt: its prompt
+  // loads active projects and doesn't depend on a latest user message.
+  const analyzable = hasAnalyzableUserMessage(state);
+
+  // 2. Memory Recall — awaited: writes to state.metadata.recallContext
+  if (options.recallVariant === 'heartbeat' || analyzable) {
+    launched.push('memory-recall');
+    const recallPromise = runMemoryRecall(state, options.recallVariant);
+    awaitedTasks.push(timed('memory-recall', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
+  } else {
+    console.log('[SubconsciousMiddleware] Memory Recall skipped — no user message in state to analyze');
+  }
 
   // 3a. Observation Writer — fire-and-forget: writes/archives observation rows
   //     via DB tools. Never touches state.messages. No need to await.
-  if (options.includeObservations) {
+  if (options.includeObservations && analyzable) {
     launched.push('observation-writer (fire-and-forget)');
     runObservationAgent(state).catch((error) => {
       console.error('[SubconsciousMiddleware] Observation Writer failed (fire-and-forget):', error instanceof Error ? error.message : error);
@@ -157,7 +189,7 @@ export async function runSubconsciousMiddleware(
   // 3b. Observation Recall — awaited: surfaces relevant observations from the
   //     DB table and writes them to state.metadata.observationContext so the
   //     primary agent gets targeted observation context instead of the full blob.
-  if (options.includeObservations) {
+  if (options.includeObservations && analyzable) {
     launched.push('observation-recall');
     const obsRecallPromise = runObservationRecall(state);
     awaitedTasks.push(timed('observation-recall', obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx })));
