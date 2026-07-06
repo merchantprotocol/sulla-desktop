@@ -296,6 +296,19 @@ function readJwtExpSeconds(jwt: string): number {
   }
 }
 
+// Refresh is attempted from nearly every authenticated code path, so an
+// unreachable cloud produced thousands of identical warn lines per day
+// (observed: 4,084 in one background.log). Log the first failure, then
+// every 40th, and announce recovery so outage windows stay visible.
+let refreshFailCount = 0;
+
+function warnRefreshFailure(message: string): void {
+  refreshFailCount++;
+  if (refreshFailCount === 1 || refreshFailCount % 40 === 0) {
+    console.warn(`${ message }${ refreshFailCount > 1 ? ` (${ refreshFailCount } consecutive failures, logging every 40th)` : '' }`);
+  }
+}
+
 /**
  * Exchange the stored refresh token for a new access token. On success, the
  * session's accessToken (and refreshToken, if rotated) are written back to
@@ -313,7 +326,7 @@ async function refreshAccessToken(): Promise<string> {
       body:    JSON.stringify({ refreshToken: session.tokens.refreshToken }),
     });
     if (!res.ok) {
-      console.warn(`[sullaCloudAuth] Refresh failed: HTTP ${ res.status }`);
+      warnRefreshFailure(`[sullaCloudAuth] Refresh failed: HTTP ${ res.status }`);
       return '';
     }
     const data = await res.json() as { accessToken: string; refreshToken?: string };
@@ -325,9 +338,13 @@ async function refreshAccessToken(): Promise<string> {
       },
     };
     await saveSession(refreshed);
+    if (refreshFailCount > 1) {
+      console.log(`[sullaCloudAuth] Refresh recovered after ${ refreshFailCount } consecutive failures`);
+    }
+    refreshFailCount = 0;
     return data.accessToken;
   } catch (err: any) {
-    console.warn('[sullaCloudAuth] Refresh error:', err?.message || err);
+    warnRefreshFailure(`[sullaCloudAuth] Refresh error: ${ err?.message || err }`);
     return '';
   }
 }

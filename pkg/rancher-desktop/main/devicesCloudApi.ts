@@ -20,6 +20,11 @@ const HEARTBEAT_INTERVAL_MS = 45_000;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let cachedDeviceId: string | null = null;
 
+// The 45s heartbeat retries forever, so an unreachable cloud logged the same
+// failure ~1,900×/day. Log the first failure per endpoint, then every 40th,
+// and announce recovery.
+const failCounts = new Map<string, number>();
+
 async function postJson(path: string, body: unknown): Promise<boolean> {
   try {
     const token = await getCurrentAccessToken();
@@ -32,9 +37,20 @@ async function postJson(path: string, body: unknown): Promise<boolean> {
       },
       body: JSON.stringify(body),
     });
+    const n = failCounts.get(path);
+
+    if (n && n > 1) {
+      console.log(`[DevicesApi] ${ path } recovered after ${ n } consecutive failures`);
+    }
+    failCounts.delete(path);
     return res.ok;
   } catch (err) {
-    console.log(`[DevicesApi] ${ path } failed: ${ err }`);
+    const n = (failCounts.get(path) ?? 0) + 1;
+
+    failCounts.set(path, n);
+    if (n === 1 || n % 40 === 0) {
+      console.log(`[DevicesApi] ${ path } failed: ${ err }${ n > 1 ? ` (${ n } consecutive failures, logging every 40th)` : '' }`);
+    }
     return false;
   }
 }

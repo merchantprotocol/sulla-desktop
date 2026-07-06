@@ -239,11 +239,45 @@ function getChild(): Electron.UtilityProcess {
   const constants = JSON.stringify({
     SMALL_TIER_MAX, MAX_INDEX_FILES, MAX_FILE_BYTES, INDEX_BYTE_BUDGET, INDEX_TIMEOUT_MS,
   });
-  const child = utilityProcess.fork(getSidecarPath(), [getAppRoot(), constants], { serviceName: 'sulla-file-search' });
+  // Config rides in env, not argv — utilityProcess argv layout is not part of
+  // the stable contract, and a misread argv[3] means JSON.parse throws before
+  // the sidecar can even report why. stdio is piped so a crashing sidecar's
+  // stderr lands in background.log instead of vanishing.
+  const child = utilityProcess.fork(getSidecarPath(), [], {
+    serviceName: 'sulla-file-search',
+    stdio:       ['ignore', 'pipe', 'pipe'],
+    env:         {
+      ...process.env,
+      SULLA_SEARCH_APP_ROOT:  getAppRoot(),
+      SULLA_SEARCH_CONSTANTS: constants,
+    },
+  });
+
+  child.stdout?.on('data', (d: Buffer) => {
+    const line = d.toString().trim();
+
+    if (line) {
+      console.log(`[file_search][sidecar] ${ line }`);
+    }
+  });
+  child.stderr?.on('data', (d: Buffer) => {
+    const line = d.toString().trim();
+
+    if (line) {
+      console.error(`[file_search][sidecar:stderr] ${ line }`);
+    }
+  });
 
   _child = child;
 
   child.on('message', (msg: any) => {
+    // A sidecar that dies at boot reports the root cause before exiting so
+    // the crash breaker log line is actionable, not just "exit code 1".
+    if (msg?.bootError) {
+      console.error(`[file_search] sidecar BOOT FAILURE: ${ msg.bootError }`);
+
+      return;
+    }
     const pending = _pending.get(msg?.id);
 
     if (!pending) {
@@ -601,21 +635,41 @@ function firstMatchingLine(body: string, terms: string[]): { line: number; snipp
 
 const SIDECAR_SOURCE = `'use strict';
 // sulla file-search sidecar (generated — source of truth is fileSearchService.ts)
-// argv[2] = appRoot (where node_modules lives), argv[3] = JSON budget constants.
+// Config arrives via env (SULLA_SEARCH_APP_ROOT / SULLA_SEARCH_CONSTANTS),
+// with argv[2]/argv[3] as a legacy fallback.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createRequire } = require('module');
 
-const APP_ROOT = process.argv[2];
-const CONST = JSON.parse(process.argv[3]);
+// Any failure past this point that nothing catches would otherwise surface in
+// the parent as a bare "exit code 1" — report the cause first, then die.
+function reportFatal(prefix, err) {
+  try {
+    process.parentPort.postMessage({ bootError: prefix + ': ' + String((err && err.stack) || err) });
+  } catch { /* parent gone — stderr below is the fallback */ }
+  try { console.error('[sidecar] ' + prefix + ':', (err && err.stack) || err); } catch { /* stderr closed */ }
+  process.exit(1);
+}
+process.on('uncaughtException', (err) => reportFatal('uncaughtException', err));
+process.on('unhandledRejection', (err) => reportFatal('unhandledRejection', err));
 
-// Resolve deps from the app's node_modules, not from where this generated
-// file lives (~/.cache/sulla-search).
-const appRequire = createRequire(path.join(APP_ROOT, 'package.json'));
-const Database = appRequire('better-sqlite3');
-const fastGlob = appRequire('fast-glob');
+let APP_ROOT;
+let CONST;
+let Database;
+let fastGlob;
+try {
+  APP_ROOT = process.env.SULLA_SEARCH_APP_ROOT || process.argv[2];
+  CONST = JSON.parse(process.env.SULLA_SEARCH_CONSTANTS || process.argv[3]);
+  // Resolve deps from the app's node_modules, not from where this generated
+  // file lives (~/.cache/sulla-search).
+  const appRequire = createRequire(path.join(APP_ROOT, 'package.json'));
+  Database = appRequire('better-sqlite3');
+  fastGlob = appRequire('fast-glob');
+} catch (err) {
+  reportFatal('boot (appRoot=' + APP_ROOT + ')', err);
+}
 
 // ── Candidate-file rules (injected from fileSearchService.ts) ───
 const TEXT_EXTS = new Set(${ JSON.stringify(TEXT_EXTENSIONS) });
@@ -700,6 +754,9 @@ function getDb() {
   }
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
+  // Retry on SQLITE_BUSY instead of throwing immediately — a previous sidecar
+  // killed mid-write can hold the WAL lock briefly while its OS handles close.
+  db.pragma('busy_timeout = 5000');
   // Bounded page cache (~16 MB) keeps this sidecar's memory footprint flat.
   db.pragma('cache_size = -16000');
   db.exec(
