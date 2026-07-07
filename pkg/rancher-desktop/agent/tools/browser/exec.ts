@@ -11,44 +11,90 @@ import { resolveBridge, isBridgeResolved } from './resolve_bridge';
  * Enhanced with __sulla log capture, timing, mutation counting,
  * navigation detection, optional waitFor/waitForIdle/screenshot,
  * and full error stack traces.
+ *
+ * Silent-failure hardening (fix/eval-js-silent-failures):
+ *  - Single expressions are auto-returned (devtools-console semantics) —
+ *    models routinely send `document.title` and expect a value back.
+ *  - Syntax errors are caught by pre-validation in the main process and
+ *    reported as errors; they used to come back `Result: undefined` with
+ *    success=true because the bridge swallowed the compile rejection.
+ *  - The `timeout` param is actually enforced (it was accepted and
+ *    silently ignored — code awaiting a never-settling promise hung the
+ *    tool call forever).
+ *  - Results and console args are serialized defensively in-page so
+ *    circular structures / DOM nodes can't crash the response path or
+ *    the user's own console.log calls.
  */
-export class ExecInPageWorker extends BaseTool {
-  name = '';
-  description = '';
 
-  protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { code, screenshot, waitFor, waitForIdle, timeout = 30000 } = input;
-    if (!code || typeof code !== 'string') {
-      return { successBoolean: false, responseString: 'code parameter is required.' };
-    }
+/** How the user code must be wrapped to produce a value. */
+export type CodeForm = 'expression' | 'body' | 'invalid';
 
-    const result = await resolveBridge(input.assetId);
-    if (!isBridgeResolved(result)) return result;
+/**
+ * Classify user code: a single expression gets auto-returned (console
+ * semantics); anything that only parses as a statement list runs as a
+ * function body (explicit `return` sends the value); code that parses as
+ * neither is a syntax error we can report without a page round-trip.
+ *
+ * Both probes compile inside an async arrow so top-level `await` is legal
+ * exactly like it will be in the page wrapper. `new Function` compiles
+ * without executing, and main-process V8 matches the renderer's parser.
+ */
+export function classifyCode(code: string): { form: CodeForm; parseError?: string } {
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function(`"use strict"; return (async () => (\n${ code }\n));`);
 
-    try {
-      // Wrap code to capture console output, __sulla logs, timing,
-      // mutations, navigation, errors with stacks, and page state.
-      const wrapped = `
+    return { form: 'expression' };
+  } catch { /* not a single expression — try statement-list form */ }
+
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function(`"use strict"; return (async () => {\n${ code }\n});`);
+
+    return { form: 'body' };
+  } catch (e) {
+    return { form: 'invalid', parseError: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Build the in-page diagnostic wrapper around the user code. Exported for tests. */
+export function buildWrapper(code: string, form: 'expression' | 'body'): string {
+  const invocation = form === 'expression'
+    ? `__result = await (async function() { return (\n${ code }\n); })();`
+    : `__result = await (async function() {\n${ code }\n})();`;
+
+  return `
 (async function() {
   const __logs = [];
+  // Circular-safe stringifier — console.log of a circular object used to
+  // throw inside the USER'S code because the capture called bare
+  // JSON.stringify on every argument.
+  const __str = function(a) {
+    if (typeof a === 'string') return a;
+    try { return JSON.stringify(a); } catch (e) { return String(a); }
+  };
   const __origLog = console.log;
   const __origWarn = console.warn;
   const __origError = console.error;
-  console.log = function() { __logs.push('[log] ' + Array.from(arguments).map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')); __origLog.apply(console, arguments); };
-  console.warn = function() { __logs.push('[warn] ' + Array.from(arguments).map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')); __origWarn.apply(console, arguments); };
-  console.error = function() { __logs.push('[error] ' + Array.from(arguments).map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')); __origError.apply(console, arguments); };
+  console.log = function() { __logs.push('[log] ' + Array.from(arguments).map(__str).join(' ')); __origLog.apply(console, arguments); };
+  console.warn = function() { __logs.push('[warn] ' + Array.from(arguments).map(__str).join(' ')); __origWarn.apply(console, arguments); };
+  console.error = function() { __logs.push('[error] ' + Array.from(arguments).map(__str).join(' ')); __origError.apply(console, arguments); };
 
   // Clear __sulla.__log before execution
   if (window.__sulla && Array.isArray(window.__sulla.__log)) {
     window.__sulla.__log.length = 0;
   }
 
-  // Track mutations
+  // Track mutations. document.body can legitimately be null (about:blank,
+  // document-start timing) — observing null threw before the user code
+  // even ran, and the bridge turned that into a silent undefined.
   let __mutationCount = 0;
   const __observer = new MutationObserver(function(mutations) {
     __mutationCount += mutations.length;
   });
-  __observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+  if (document.body) {
+    __observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+  }
 
   // Track navigation
   const __startUrl = location.href;
@@ -56,7 +102,7 @@ export class ExecInPageWorker extends BaseTool {
   let __result, __error, __errorStack;
   const __t0 = performance.now();
   try {
-    __result = await (async function() { ${ code } })();
+    ${ invocation }
   } catch(e) {
     __error = e.message || String(e);
     __errorStack = e.stack || null;
@@ -76,8 +122,23 @@ export class ExecInPageWorker extends BaseTool {
     ? window.__sulla.__log.slice()
     : [];
 
+  // Serialize the result defensively IN PAGE. executeJavaScript clones the
+  // whole return envelope; a circular / non-cloneable __result used to
+  // reject the clone and lose every diagnostic with it.
+  let __safeResult = __result;
+  let __resultNote = null;
+  if (__result !== null && (typeof __result === 'object' || typeof __result === 'function')) {
+    try {
+      __safeResult = JSON.parse(JSON.stringify(__result));
+    } catch (e) {
+      __safeResult = String(__result);
+      __resultNote = 'Result was not JSON-serializable (' + (e.message || String(e)) + ') — returning String(result). Return plain data (objects/arrays/primitives), not DOM nodes or circular structures.';
+    }
+  }
+
   return {
-    result: __result,
+    result: __safeResult,
+    resultNote: __resultNote,
     error: __error,
     errorStack: __errorStack,
     logs: __logs,
@@ -89,8 +150,73 @@ export class ExecInPageWorker extends BaseTool {
     title: document.title,
   };
 })()`;
+}
 
-      const returnValue = await result.bridge.execInPage(wrapped) as any;
+export class ExecInPageWorker extends BaseTool {
+  name = '';
+  description = '';
+
+  protected async _validatedCall(input: any): Promise<ToolResponse> {
+    const { code, screenshot, waitFor, waitForIdle, timeout = 30000 } = input;
+    if (!code || typeof code !== 'string') {
+      return { successBoolean: false, responseString: 'code parameter is required.' };
+    }
+
+    const result = await resolveBridge(input.assetId);
+    if (!isBridgeResolved(result)) return result;
+
+    // Pre-validate syntax in the main process. A compile error in the page
+    // used to be swallowed by the bridge and surface as a silent
+    // `Result: undefined` with success=true.
+    const classified = classifyCode(code);
+    if (classified.form === 'invalid') {
+      return {
+        successBoolean: false,
+        responseString: `[${ result.assetId }] Syntax error in code: ${ classified.parseError }\n`
+          + 'The code never reached the page. Fix the syntax and retry. '
+          + 'Single expressions are auto-returned; multi-statement code needs an explicit `return` to send a value back.',
+      };
+    }
+
+    try {
+      const wrapped = buildWrapper(code, classified.form);
+
+      // Enforce the documented timeout — it was accepted and ignored, so
+      // code awaiting a never-settling promise hung the tool call forever.
+      // On timeout the page script may keep running; we just stop waiting.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(
+            `eval_js timed out after ${ timeout }ms — the code is likely awaiting a promise that never settles. `
+            + 'The page script may still be running. Prefer polling with short evals over long in-page waits.',
+          )),
+          timeout,
+        );
+      });
+
+      const execPromise = result.bridge.execInPageStrict(wrapped);
+      // If the timeout wins the race, the exec promise may reject later —
+      // pre-attach a handler so that never becomes an unhandled rejection.
+      execPromise.catch(() => { /* reported via the race or irrelevant after timeout */ });
+
+      let returnValue: any;
+      try {
+        returnValue = await Promise.race([execPromise, timeoutPromise]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+
+      // The strict bridge propagates rejections, so a missing envelope here
+      // means something exotic (e.g. the page overrode Promise). Report it
+      // rather than printing a fake `Result: undefined`.
+      if (!returnValue || typeof returnValue !== 'object') {
+        return {
+          successBoolean: false,
+          responseString: `[${ result.assetId }] Execution returned no diagnostic envelope (got ${ typeof returnValue }). `
+            + 'The page may have navigated mid-execution or interfered with the wrapper. Retry, or use browser/snapshot to check page state.',
+        };
+      }
 
       // Post-execution: waitFor
       if (waitFor && typeof waitFor === 'string') {
@@ -135,15 +261,34 @@ export class ExecInPageWorker extends BaseTool {
       }
 
       const val = returnValue?.result;
-      const serialized = val === undefined
-        ? 'undefined'
-        : val === null
-          ? 'null'
-          : typeof val === 'string'
-            ? val
-            : JSON.stringify(val, null, 2);
+      let serialized: string;
+      if (val === undefined) {
+        serialized = 'undefined';
+      } else if (val === null) {
+        serialized = 'null';
+      } else if (typeof val === 'string') {
+        serialized = val;
+      } else {
+        // In-page serialization already JSON-round-tripped objects, but stay
+        // defensive — a crash here used to destroy a successful result.
+        try {
+          serialized = JSON.stringify(val, null, 2);
+        } catch (e) {
+          serialized = `${ String(val) } (unserializable: ${ e instanceof Error ? e.message : String(e) })`;
+        }
+      }
 
       parts.push(`Result: ${ serialized }`);
+      if (returnValue?.resultNote) {
+        parts.push(`Note: ${ returnValue.resultNote }`);
+      }
+
+      // The #1 confusion with this tool: statement-form code that never
+      // returns. Say so explicitly instead of leaving a bare `undefined`.
+      if (!returnValue?.error && val === undefined && classified.form === 'body' && !/\breturn\b/.test(code)) {
+        parts.push('Note: the code ran as a function body and returned nothing. Add an explicit `return <value>` to send a value back (single expressions are auto-returned).');
+      }
+
       parts.push(`Timing: ${ returnValue?.timing?.toFixed(1) ?? '?' }ms`);
       parts.push(`Mutations: ${ returnValue?.mutations ?? 0 }`);
       parts.push(`Navigated: ${ returnValue?.navigated ?? false }`);

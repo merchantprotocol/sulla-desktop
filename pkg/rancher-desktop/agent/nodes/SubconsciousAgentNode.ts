@@ -109,6 +109,9 @@ function extractOutcome(text: string, hadToolCalls: boolean): SubconsciousOutcom
 export class SubconsciousAgentNode extends BaseNode {
   constructor() {
     super('subconscious', 'Subconscious');
+    // Subconscious tools are independent read-only searches — run a batch of
+    // tool calls concurrently so batch latency is max(tool), not sum(tools).
+    this.parallelToolCalls = true;
   }
 
   async execute(state: BaseThreadState): Promise<NodeResult<BaseThreadState>> {

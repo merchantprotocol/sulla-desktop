@@ -4,7 +4,7 @@ import { BaseTool, ToolResponse } from '../base';
 
 import { resolveSullaDocsDir } from '@pkg/agent/utils/sullaPaths';
 import {
-  indexDirectory, search, getLastCoverage, SearchTimeoutError, SearchTooManyFilesError, type FileSearchResult,
+  indexDirectory, search, getLastCoverage, SearchTooManyFilesError, type FileSearchResult,
 } from '@pkg/main/fileSearchService';
 
 /**
@@ -80,19 +80,13 @@ export class MetaSearchWorker extends BaseTool {
 
       if (primary.length === 0 && docsHits.length === 0) {
         // Try indexing the primary dir and searching again before giving up.
-        // safeIndex returns a sentinel on guardrail/timeout so we surface a
+        // safeIndex returns a sentinel on the size guardrail so we surface a
         // useful error to the LLM instead of pretending the search succeeded.
         const indexOutcome = await safeIndex(dirPath);
         if (indexOutcome.kind === 'tooManyFiles') {
           return {
             successBoolean: false,
             responseString: `Search not run: ${ indexOutcome.message } Pass a more specific dirPath (e.g. a single repo or subdirectory).`,
-          };
-        }
-        if (indexOutcome.kind === 'timeout') {
-          return {
-            successBoolean: false,
-            responseString: `Search not run: indexing ${ dirPath } timed out. Narrow the dirPath to a smaller subtree.`,
           };
         }
 
@@ -123,12 +117,6 @@ export class MetaSearchWorker extends BaseTool {
           responseString: `Search not run: ${ error.message } Pass a more specific dirPath (e.g. a single repo or subdirectory).`,
         };
       }
-      if (error instanceof SearchTimeoutError) {
-        return {
-          successBoolean: false,
-          responseString: `Search timed out: ${ error.message }. Narrow the dirPath or simplify the query.`,
-        };
-      }
       return {
         successBoolean: false,
         responseString: `Search failed: ${ error instanceof Error ? error.message : String(error) }`,
@@ -139,11 +127,10 @@ export class MetaSearchWorker extends BaseTool {
 
 type IndexOutcome =
   | { kind: 'ok'; result: { indexed: number; updated: number; removed: number } }
-  | { kind: 'tooManyFiles'; message: string }
-  | { kind: 'timeout'; message: string };
+  | { kind: 'tooManyFiles'; message: string };
 
-// Wrap indexDirectory so the caller can react to guardrail / timeout errors
-// without nesting another try/catch. Other errors propagate.
+// Wrap indexDirectory so the caller can react to the size guardrail without
+// nesting another try/catch. Other errors propagate.
 async function safeIndex(dirPath: string): Promise<IndexOutcome> {
   try {
     const result = await indexDirectory(dirPath);
@@ -151,9 +138,6 @@ async function safeIndex(dirPath: string): Promise<IndexOutcome> {
   } catch (err) {
     if (err instanceof SearchTooManyFilesError) {
       return { kind: 'tooManyFiles', message: err.message };
-    }
-    if (err instanceof SearchTimeoutError) {
-      return { kind: 'timeout', message: err.message };
     }
     throw err;
   }

@@ -3,11 +3,16 @@
  *
  * Replaces the qmd/worker_threads implementation. All heavy work (SQLite FTS5,
  * enumeration, file reads) runs in an Electron utilityProcess sidecar so the
- * main process never blocks — and, unlike a worker_thread, a stuck sidecar can
- * simply be kill()ed. Terminating a worker parked inside a synchronous
- * better-sqlite3 native call segfaulted the whole app (SIGSEGV in
- * v8::Isolate::Dispose()), which forced an abandon-don't-terminate mitigation
- * that leaked stuck threads until OOM. Process isolation removes that hazard.
+ * main process never blocks. Process isolation exists for crash containment:
+ * a worker_thread parked inside a synchronous better-sqlite3 native call
+ * segfaulted the whole app (SIGSEGV in v8::Isolate::Dispose()) when
+ * terminated, while a sidecar crash only costs a respawn on the next request.
+ *
+ * There are NO request timeouts and NO kill-on-slow behavior here by design:
+ * subconscious agents are never fenced (Jonathon's rule). A slow search waits
+ * as long as it takes; latency is managed by making the engine fast (warm
+ * index, exact-term FTS queries) and by chunking background index passes so
+ * live searches are never stuck behind long maintenance work.
  *
  * Storage is a contentless FTS5 index (~/.cache/sulla-search/index.sqlite):
  * tokens only, never file bodies — the old qmd store kept full bodies and grew
@@ -50,8 +55,6 @@ export interface SearchCoverage {
 
 // ── Budgets and limits ──────────────────────────────────────────
 
-const SEARCH_TIMEOUT_MS = 15_000;
-const INDEX_TIMEOUT_MS = 120_000;
 // Skip files larger than this in both tiers. Minified bundles / vendored blobs
 // (one observed at 27 MB) add almost no search value but bloat the FTS index
 // and make every query slower. ~1 MB covers all real source/docs.
@@ -66,24 +69,15 @@ const MAX_INDEX_FILES = 500_000;
 // bodies. Unread files simply aren't in the files table yet, so the next pass
 // resumes where this one stopped — passes converge monotonically.
 const INDEX_BYTE_BUDGET = 512 * 1024 * 1024;
-
-// Upper bound on how long a request may sit in the sidecar's queue before it
-// is actually picked up (the sidecar serializes work). Must comfortably exceed
-// the longest op that could be ahead of it — an in-flight index. Until the
-// sidecar acks that it has started a given request, only this cap applies, so
-// a search never times out merely because an index is running ahead of it.
-const QUEUE_TIMEOUT_MS = INDEX_TIMEOUT_MS + 30_000;
-
-// Crash breaker: more than CRASH_LIMIT abnormal exits (crash or killed for
-// timeout) within CRASH_WINDOW_MS puts the service in degraded mode for
-// DEGRADED_MS — no respawn loops, no wedged app.
-const CRASH_LIMIT = 3;
-const CRASH_WINDOW_MS = 10 * 60_000;
-const DEGRADED_MS = 10 * 60_000;
+// Work-chunking (NOT a timeout): a single index pass also stops cleanly after
+// this much wall time, alongside the byte budget above. The sidecar serializes
+// work, so bounding one pass keeps a live search from sitting behind hours of
+// maintenance; the next pass resumes exactly where this one stopped. No
+// request is ever failed or killed because of this value.
+const INDEX_PASS_TIME_BUDGET_MS = 120_000;
 
 // ── Candidate-file rules ────────────────────────────────────────
-// Defined once here and injected into the sidecar source at spawn time so the
-// sidecar and the parent's degraded-mode direct scanner can never drift apart.
+// Defined once here and injected into the sidecar source at spawn time.
 
 const TEXT_EXTENSIONS = [
   'md', 'txt', 'ts', 'js', 'vue', 'json', 'yaml', 'yml', 'jsx', 'tsx',
@@ -108,13 +102,6 @@ const SENSITIVE_DIR_NAMES = ['.ssh', '.gnupg', '.aws', '.azure', '.password-stor
 
 // ── Errors ──────────────────────────────────────────────────────
 
-export class SearchTimeoutError extends Error {
-  constructor(action: string, ms: number) {
-    super(`file search ${ action } timed out after ${ ms }ms`);
-    this.name = 'SearchTimeoutError';
-  }
-}
-
 export class SearchTooManyFilesError extends Error {
   constructor(public count: number, public limit: number, public dirPath: string) {
     super(`file search index aborted: ${ count } files in ${ dirPath } exceeds limit of ${ limit }. Narrow the dirPath.`);
@@ -127,18 +114,11 @@ export class SearchTooManyFilesError extends Error {
 interface Pending {
   resolve: (v: any) => void;
   reject:  (e: Error) => void;
-  timer:   NodeJS.Timeout;
-  onAck:   () => void;
 }
 
 let _child: Electron.UtilityProcess | null = null;
 let _requestId = 0;
 const _pending = new Map<number, Pending>();
-// Set before an intentional kill (timeout or shutdown) so the exit handler
-// doesn't double-count the resulting non-zero exit as a fresh crash.
-let _expectedExit = false;
-let _crashTimes: number[] = [];
-let _degradedUntil = 0;
 const _lastCoverage = new Map<string, SearchCoverage | null>();
 
 /**
@@ -225,23 +205,6 @@ function cleanupLegacyIndex(): void {
   }
 }
 
-function isDegraded(): boolean {
-  return Date.now() < _degradedUntil;
-}
-
-function recordCrash(reason: string): void {
-  const now = Date.now();
-
-  _crashTimes.push(now);
-  _crashTimes = _crashTimes.filter(t => t > now - CRASH_WINDOW_MS);
-  console.warn(`[file_search] sidecar abnormal exit (${ _crashTimes.length } in last 10m): ${ reason }`);
-  if (_crashTimes.length > CRASH_LIMIT) {
-    _degradedUntil = now + DEGRADED_MS;
-    console.error(`[file_search] CRASH BREAKER OPEN: ${ _crashTimes.length } sidecar failures within ${ CRASH_WINDOW_MS / 60_000 }m — ` +
-      `degraded mode (direct scan for small dirs only) until ${ new Date(_degradedUntil).toISOString() }`);
-  }
-}
-
 function getChild(): Electron.UtilityProcess {
   if (_child) {
     return _child;
@@ -251,7 +214,7 @@ function getChild(): Electron.UtilityProcess {
 
   const { utilityProcess } = require('electron') as typeof import('electron');
   const constants = JSON.stringify({
-    SMALL_TIER_MAX, MAX_INDEX_FILES, MAX_FILE_BYTES, INDEX_BYTE_BUDGET, INDEX_TIMEOUT_MS,
+    SMALL_TIER_MAX, MAX_INDEX_FILES, MAX_FILE_BYTES, INDEX_BYTE_BUDGET, INDEX_PASS_TIME_BUDGET_MS,
   });
   // Config rides in env, not argv — utilityProcess argv layout is not part of
   // the stable contract, and a misread argv[3] means JSON.parse throws before
@@ -286,7 +249,7 @@ function getChild(): Electron.UtilityProcess {
 
   child.on('message', (msg: any) => {
     // A sidecar that dies at boot reports the root cause before exiting so
-    // the crash breaker log line is actionable, not just "exit code 1".
+    // the exit log line is actionable, not just "exit code 1".
     if (msg?.bootError) {
       console.error(`[file_search] sidecar BOOT FAILURE: ${ msg.bootError }`);
 
@@ -297,14 +260,6 @@ function getChild(): Electron.UtilityProcess {
     if (!pending) {
       return;
     }
-    // Sidecar signals it has dequeued and started this request: swap the queue
-    // cap for the real per-request processing timeout.
-    if (msg.ack) {
-      pending.onAck();
-
-      return;
-    }
-    clearTimeout(pending.timer);
     _pending.delete(msg.id);
     if (msg.error) {
       if (msg.errorName === 'SearchTooManyFilesError' && msg.errorCount && msg.errorLimit && msg.errorDirPath) {
@@ -321,13 +276,9 @@ function getChild(): Electron.UtilityProcess {
     if (_child === child) {
       _child = null;
     }
-    if (_expectedExit) {
-      _expectedExit = false;
-    } else if (code !== 0) {
-      recordCrash(`exit code ${ code }`);
-    }
+    // Crash recovery, not a gate: reject what was in flight so callers see a
+    // real error, and let the next request respawn a fresh sidecar.
     for (const [id, pending] of _pending) {
-      clearTimeout(pending.timer);
       pending.reject(new Error(`file search sidecar exited with code ${ code }`));
       _pending.delete(id);
     }
@@ -336,70 +287,15 @@ function getChild(): Electron.UtilityProcess {
   return child;
 }
 
-// Kill the sidecar. Used when a request times out — the sidecar serializes
-// work, so a stuck operation would block every subsequent call. Unlike the old
-// worker_threads implementation (where terminate() mid-native-call segfaulted
-// the whole app), killing a separate process is unconditionally safe — that is
-// the point of the utilityProcess isolation. Next request respawns.
-function killChild(reason: string): void {
-  if (!_child) {
-    return;
-  }
-  console.warn(`[file_search] killing sidecar: ${ reason }`);
-  const child = _child;
-
-  _child = null;
-
-  for (const [id, pending] of _pending) {
-    clearTimeout(pending.timer);
-    pending.reject(new Error(`file search sidecar killed: ${ reason }`));
-    _pending.delete(id);
-  }
-
-  _expectedExit = true;
-  recordCrash(reason);
-  try {
-    child.kill();
-  } catch { /* already gone */ }
-}
-
-function postRequest(action: string, params: any, timeoutMs: number): Promise<any> {
+// No timeout, no watchdog: the request settles when the sidecar answers (or
+// dies, which the exit handler above turns into a rejection). Subconscious
+// agents wait as long as the work takes.
+function postRequest(action: string, params: any): Promise<any> {
   const id = ++_requestId;
   const child = getChild();
 
   return new Promise((resolve, reject) => {
-    const fail = (ms: number, why: string) => {
-      if (!_pending.has(id)) {
-        return;
-      }
-      _pending.delete(id);
-      killChild(`${ action } request ${ id } ${ why }`);
-      reject(new SearchTimeoutError(action, ms));
-    };
-
-    const arm = (ms: number, why: string): NodeJS.Timeout => {
-      const t = setTimeout(() => fail(ms, why), ms);
-
-      // Don't keep the event loop alive on this timer.
-      if (typeof t.unref === 'function') t.unref();
-
-      return t;
-    };
-
-    // Phase 1: queue-wait cap. Phase 2 (on ack): real processing timeout. This
-    // split is what stops a search from timing out while it's still queued
-    // behind a long-running index in the sidecar.
-    const entry: Pending = {
-      resolve,
-      reject,
-      timer: arm(QUEUE_TIMEOUT_MS, `stuck in queue > ${ QUEUE_TIMEOUT_MS }ms`),
-      onAck: () => {
-        clearTimeout(entry.timer);
-        entry.timer = arm(timeoutMs, `exceeded ${ timeoutMs }ms`);
-      },
-    };
-
-    _pending.set(id, entry);
+    _pending.set(id, { resolve, reject });
     child.postMessage({ id, action, ...params });
   });
 }
@@ -411,13 +307,11 @@ export function closeFileSearch(): void {
     const child = _child;
 
     _child = null;
-    _expectedExit = true;
     try {
       child.kill();
     } catch { /* shutting down */ }
   }
   for (const [id, pending] of _pending) {
-    clearTimeout(pending.timer);
     pending.reject(new Error('file search service closed'));
     _pending.delete(id);
   }
@@ -436,11 +330,8 @@ export async function indexDirectory(
   dirPath: string,
   glob?: string,
 ): Promise<{ indexed: number; updated: number; removed: number; candidateCount?: number; truncated?: boolean }> {
-  if (isDegraded()) {
-    throw new Error('file search engine unavailable (sidecar crash breaker open), retry shortly');
-  }
   const t0 = Date.now();
-  const result = await postRequest('index', { dirPath, glob }, INDEX_TIMEOUT_MS);
+  const result = await postRequest('index', { dirPath, glob });
 
   console.log(`[file_search] index root=${ path.resolve(dirPath) } indexed=${ result.indexed } updated=${ result.updated } ` +
     `removed=${ result.removed } candidates=${ result.candidateCount ?? 'n/a' } truncated=${ result.truncated === true } totalMs=${ Date.now() - t0 }`);
@@ -456,11 +347,7 @@ export async function search(
   const root = path.resolve(dirPath);
   const t0 = Date.now();
 
-  if (isDegraded()) {
-    return degradedDirectScan(query, root, limit, t0);
-  }
-
-  const res = await postRequest('search', { query, dirPath: root, limit }, SEARCH_TIMEOUT_MS);
+  const res = await postRequest('search', { query, dirPath: root, limit });
   const coverage: SearchCoverage | null = res.coverage ?? null;
 
   _lastCoverage.set(root, coverage);
@@ -502,8 +389,8 @@ const WARMUP_PASS_GAP_MS = 5_000;
 // reads at most INDEX_BYTE_BUDGET of new file bodies.
 const WARMUP_MAX_PASSES = 24;
 const MAINTENANCE_INTERVAL_MS = 30 * 60_000;
-// When the sidecar is busy with live work (or the crash breaker is open),
-// retry shortly instead of skipping a whole interval.
+// When the sidecar is busy with live work, retry shortly instead of skipping
+// a whole interval.
 const MAINTENANCE_BUSY_RETRY_MS = 60_000;
 
 let _maintenanceTimer: NodeJS.Timeout | null = null;
@@ -535,7 +422,7 @@ async function maintenancePass(root: string): Promise<void> {
   if (_maintenanceStopped) {
     return;
   }
-  if (isDegraded() || _pending.size > 0) {
+  if (_pending.size > 0) {
     scheduleMaintenance(root, MAINTENANCE_BUSY_RETRY_MS);
 
     return;
@@ -561,7 +448,7 @@ async function warmupLoop(root: string): Promise<void> {
   let deferrals = 0;
 
   while (!_maintenanceStopped && pass < WARMUP_MAX_PASSES) {
-    if (isDegraded() || _pending.size > 0) {
+    if (_pending.size > 0) {
       if (++deferrals > 30) {
         break;
       }
@@ -622,163 +509,11 @@ export function stopFileSearchMaintenance(): void {
   }
 }
 
-// ── Degraded-mode direct scan ───────────────────────────────────
-// Fallback while the crash breaker is open: a bounded scan in the main process
-// (async fs, no sidecar). Only viable for small-tier roots; anything larger is
-// refused rather than blocking the main process on an unbounded read.
-
-function isSensitiveDirName(name: string): boolean {
-  return SENSITIVE_DIR_NAMES.includes(name) || name.startsWith('.keychain');
-}
-
-async function degradedDirectScan(query: string, root: string, limit: number, t0: number): Promise<FileSearchResult[]> {
-  const candidates: { abs: string; rel: string; size: number }[] = [];
-  const queue = [root];
-  let exceeded = false;
-
-  while (queue.length > 0 && !exceeded) {
-    const dir = queue.shift() as string;
-    let entries: fs.Dirent[];
-
-    try {
-      entries = await fs.promises.readdir(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const ent of entries) {
-      const name = ent.name;
-
-      if (ent.isSymbolicLink()) {
-        continue;
-      }
-      if (ent.isDirectory()) {
-        if (!name.startsWith('.') && !EXCLUDE_DIRS.includes(name) && !isSensitiveDirName(name)) {
-          queue.push(path.join(dir, name));
-        }
-        continue;
-      }
-      if (!ent.isFile() || name.startsWith('.')) {
-        continue;
-      }
-      const dot = name.lastIndexOf('.');
-
-      if (dot <= 0 || !TEXT_EXTENSIONS.includes(name.slice(dot + 1).toLowerCase())) {
-        continue;
-      }
-      const abs = path.join(dir, name);
-      let st: fs.Stats;
-
-      try {
-        st = await fs.promises.stat(abs);
-      } catch {
-        continue;
-      }
-      // Cloud placeholders: zero blocks but non-zero size means online-only;
-      // reading would trigger a network download. blocks is undefined on Windows.
-      if (name.endsWith('.icloud') || (typeof st.blocks === 'number' && st.blocks === 0 && st.size > 0)) {
-        continue;
-      }
-      candidates.push({ abs, rel: path.relative(root, abs), size: st.size });
-      if (candidates.length > SMALL_TIER_MAX) {
-        exceeded = true;
-        break;
-      }
-    }
-  }
-
-  if (exceeded) {
-    throw new Error(`file search engine unavailable (sidecar crash breaker open) and ${ root } is too large for a direct scan — retry shortly or narrow the dirPath`);
-  }
-
-  const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
-  const results: FileSearchResult[] = [];
-
-  if (terms.length > 0) {
-    for (const c of candidates) {
-      if (c.size > MAX_FILE_BYTES) {
-        continue;
-      }
-      let body: string;
-
-      try {
-        body = await fs.promises.readFile(c.abs, 'utf-8');
-      } catch {
-        continue;
-      }
-      const lowerBody = body.toLowerCase();
-      const lowerRel = c.rel.toLowerCase();
-      let hits = 0;
-      let nameHit = false;
-      let all = true;
-
-      for (const term of terms) {
-        let count = 0;
-        let idx = lowerBody.indexOf(term);
-
-        while (idx !== -1 && count < 100) {
-          count++;
-          idx = lowerBody.indexOf(term, idx + term.length);
-        }
-        if (lowerRel.includes(term)) {
-          nameHit = true;
-        } else if (count === 0) {
-          all = false;
-          break;
-        }
-        hits += count;
-      }
-      if (!all) {
-        continue;
-      }
-      let density = hits / Math.max(1, body.length / 1000);
-
-      if (nameHit) {
-        density += 2;
-      }
-      const lineHit = firstMatchingLine(body, terms);
-
-      results.push({
-        path:    c.abs,
-        name:    path.basename(c.abs),
-        line:    lineHit?.line ?? 0,
-        preview: lineHit?.snippet ?? c.rel,
-        score:   density / (1 + density),
-        source:  nameHit && hits === 0 ? 'filename' : 'scan',
-      });
-    }
-    results.sort((a, b) => b.score - a.score);
-  }
-
-  const top = results.slice(0, limit);
-
-  // A completed direct scan is full coverage by construction — don't let a
-  // stale FTS coverage entry from before the breaker opened linger.
-  _lastCoverage.set(root, null);
-  logSearchTiming(root, top.length, { tier: 'degraded-scan', scanMs: Date.now() - t0 }, null, Date.now() - t0);
-
-  return top;
-}
-
-function firstMatchingLine(body: string, terms: string[]): { line: number; snippet: string } | null {
-  const searchable = body.length > 50_000 ? body.slice(0, 50_000) : body;
-  const lines = searchable.split('\n');
-
-  for (let i = 0; i < lines.length; i++) {
-    const lower = lines[i].toLowerCase();
-
-    if (terms.some(t => lower.includes(t))) {
-      return { line: i + 1, snippet: lines[i].trim().slice(0, 200) };
-    }
-  }
-
-  return null;
-}
-
 // ── Inline sidecar source ───────────────────────────────────────
 // Plain CommonJS, written to ~/.cache/sulla-search/sidecar.cjs at spawn time
 // and run as an Electron utilityProcess. It owns the SQLite handle and all
-// filesystem enumeration, keeping the main process responsive and making a
-// hard kill() safe. NOTE: this is a template literal — backslashes in the
+// filesystem enumeration, keeping the main process responsive and containing
+// any crash. NOTE: this is a template literal — backslashes in the
 // regexes below are doubled so the generated file gets single ones, and the
 // only ${ } interpolations are the deliberate constant injections.
 
@@ -918,7 +653,8 @@ function getDb() {
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   // Retry on SQLITE_BUSY instead of throwing immediately — a previous sidecar
-  // killed mid-write can hold the WAL lock briefly while its OS handles close.
+  // that died mid-write (crash or app shutdown) can hold the WAL lock briefly
+  // while its OS handles close.
   db.pragma('busy_timeout = 5000');
   // Bounded page cache (~16 MB) keeps this sidecar's memory footprint flat.
   db.pragma('cache_size = -16000');
@@ -958,8 +694,7 @@ function buildFTS5Query(query) {
   // Exact terms, never prefix ('"t"*'): without prefix indexes, FTS5 answers
   // a prefix query by range-scanning the whole term b-tree and merging every
   // matching doclist. Over a code corpus (huge vocabulary) that measured 66s
-  // vs 2.7s exact for the same two-term query on an 86k-doc index — and the
-  // slow form is what tripped the parent's SEARCH_TIMEOUT sidecar kill.
+  // vs 2.7s exact for the same two-term query on an 86k-doc index.
   return terms.map(t => '"' + t + '"').join(' AND ');
 }
 
@@ -1140,9 +875,10 @@ async function handleIndex(msg) {
   const deleteFts = db.prepare('DELETE FROM files_fts WHERE rowid = ?');
   const insertFts = db.prepare('INSERT INTO files_fts (rowid, name, body) VALUES (?, ?, ?)');
 
-  // Stop cleanly before the caller's INDEX_TIMEOUT would kill us mid-run.
-  // WAL + per-batch transactions mean even a hard kill can't corrupt.
-  const deadline = t0 + CONST.INDEX_TIMEOUT_MS - 10000;
+  // Work-chunking, not a timeout: one pass stops cleanly at this deadline (or
+  // the byte budget below) and the next pass resumes exactly where it stopped.
+  // Bounding a pass keeps live searches from queuing behind hours of indexing.
+  const deadline = t0 + CONST.INDEX_PASS_TIME_BUDGET_MS;
   let indexed = 0;
   let updated = 0;
   let bytesRead = 0;
@@ -1216,9 +952,6 @@ async function handleIndex(msg) {
 process.parentPort.on('message', async (e) => {
   const msg = e.data;
   if (!msg || typeof msg.id !== 'number') return;
-  // Ack tells the parent we've dequeued and started work, so it can swap the
-  // queue-wait cap for the real per-request processing timeout.
-  try { process.parentPort.postMessage({ id: msg.id, ack: true }); } catch { /* parent gone */ }
   try {
     let result;
     if (msg.action === 'search') result = handleSearch(msg);
