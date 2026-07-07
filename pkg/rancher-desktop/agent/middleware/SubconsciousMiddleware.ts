@@ -34,8 +34,13 @@ const perf = Logging.perf;
 // CONFIGURATION
 // ============================================================================
 
-/** Message count threshold before the summarizer runs */
-const TRIGGER_WINDOW_SIZE = 45;
+/**
+ * Message count threshold before the summarizer runs. Was 45 — by the time
+ * it woke, threads carried 45-50 messages of un-summarized history through
+ * every turn. 30 wakes it a full wave earlier while staying comfortably
+ * above the summarizer's own protected-recent window.
+ */
+const TRIGGER_WINDOW_SIZE = 30;
 
 /**
  * Compactable tool-result token mass that triggers the digester.
