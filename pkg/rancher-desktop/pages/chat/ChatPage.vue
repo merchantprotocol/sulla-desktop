@@ -161,13 +161,39 @@ function initController(): ChatController {
     if (storedId) {
       const state = persister.load(storedId);
       if (state) return registry.open(state, props.tabId);
-      // Stale pointer — tab remembers a thread that was never persisted
-      // (or got removed). Drop the pointer so we don't keep pointing at
-      // a ghost on every reopen. Fresh thread gets created below.
-      persister.clearTabThread(props.tabId);
+      // localStorage miss — but the thread may still live in the durable
+      // chat_messages DB backup. This is the normal case when reopening
+      // from the History sidebar: threads scribed by the relay/mobile
+      // persistence path (or blobs the startup GC evicted for budget) never
+      // land in THIS renderer's localStorage. Spin up a provisional fresh
+      // controller so the tab mounts, then hydrate it in place from the DB.
+      // Only drop the pointer if the DB has nothing either — clearing it on
+      // a mere localStorage miss was the bug that made History reopen blank.
+      void hydrateFromDbBackup(storedId);
     }
   }
   return registry.create({ tabId: props.tabId });
+}
+
+// Async DB-backup rehydration for a tab whose thread blob wasn't in
+// localStorage. Runs after initController returns; hydrates the live
+// controller in place (emits threadHydrated so the transcript renders),
+// or clears the now-confirmed-stale pointer if nothing is found.
+async function hydrateFromDbBackup(id: ThreadId): Promise<void> {
+  try {
+    const dbState = await persister.loadAsync(id);
+    if (dbState) {
+      controller.hydrate(dbState);
+      // Re-point the tab at the recovered thread id (the provisional fresh
+      // thread briefly overwrote the pointer via the immediate watch below).
+      if (props.tabId) persister.setTabThread(props.tabId, dbState.thread.id);
+      return;
+    }
+    // Truly nowhere to load from — now it's safe to forget the pointer.
+    if (props.tabId) persister.clearTabThread(props.tabId);
+  } catch (e) {
+    console.error('[ChatPage] history DB rehydrate failed:', e);
+  }
 }
 
 const controller = initController();
