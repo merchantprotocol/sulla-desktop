@@ -294,6 +294,21 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
+  lifecycle.register('file-search', [],
+    async() => {
+      const { startFileSearchMaintenance } = await import('@pkg/main/fileSearchService');
+
+      startFileSearchMaintenance();
+      console.log('[Background] File-search index warm-up scheduled');
+    },
+    async() => {
+      const { stopFileSearchMaintenance, closeFileSearch } = await import('@pkg/main/fileSearchService');
+
+      stopFileSearchMaintenance();
+      closeFileSearch();
+    },
+  );
+
   // MCP servers are initialized lazily — on first tool listing or tool call.
   console.log('[Background] MCP servers will initialize on first use (lazy init)');
 
