@@ -163,6 +163,10 @@ class DesktopRelayClient {
     this.reconnectDelay = RECONNECT_BASE_MS;
     this.openSocket().catch((err) => {
       console.warn('[DesktopRelay] openSocket failed:', err);
+      // A throw here (e.g. token/DB read during boot) previously left the
+      // relay dead until app restart — the reconnect loop only armed itself
+      // once a socket existed. Hand the failure to the same backoff machinery.
+      this.scheduleReconnect();
     });
   }
 
@@ -728,8 +732,29 @@ export function initDesktopRelayEvents(): void {
     } catch { /* electron not ready */ }
   });
 
-  // Kick off the connection on load if a pairing already exists
-  client.start().catch((err) => {
-    console.warn('[DesktopRelay] start() failed:', err);
-  });
+  // Kick off the connection on load if a pairing already exists. start()
+  // reads the pairing from Postgres, which may still be coming up inside the
+  // VM on a cold boot — retry with a flat backoff instead of dying once and
+  // leaving the relay offline until the next app restart.
+  (async() => {
+    const RETRY_MS = 10_000;
+    const DEADLINE_MS = 5 * 60_000;
+    const t0 = Date.now();
+
+    for (;;) {
+      try {
+        await client.start();
+
+        return;
+      } catch (err) {
+        if (Date.now() - t0 >= DEADLINE_MS) {
+          console.error('[DesktopRelay] start() still failing after 5min — giving up until next app start:', err);
+
+          return;
+        }
+        console.warn(`[DesktopRelay] start() failed (retrying in ${ RETRY_MS / 1000 }s):`, err instanceof Error ? err.message : err);
+        await new Promise(resolve => setTimeout(resolve, RETRY_MS));
+      }
+    }
+  })();
 }

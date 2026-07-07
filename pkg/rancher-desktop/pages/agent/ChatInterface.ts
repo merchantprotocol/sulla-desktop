@@ -69,10 +69,14 @@ export class ChatInterface {
     // Restore persisted messages from localStorage
     this.restoreMessages();
 
-    // Watch persona messages for persistence
+    // Watch persona messages for persistence. The UI mirror updates
+    // immediately; the localStorage write is debounced because this deep
+    // watcher fires on EVERY streaming delta — an undebounced persist did a
+    // full JSON.stringify of the message window per chunk (tens of MB of
+    // serialization work across one long response).
     watch(() => this.persona.messages, () => {
       this.messages.value = [...this.persona.messages];
-      this.persistMessages();
+      this.schedulePersist();
     }, { deep: true });
 
     // Watch graphRunning to process next queued message when current one completes
@@ -92,6 +96,17 @@ export class ChatInterface {
     });
 
     this.messages.value = [...this.persona.messages];
+  }
+
+  /** Trailing-debounce timer for persistMessages — see the messages watcher. */
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private schedulePersist(): void {
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      this.persistMessages();
+    }, 500);
   }
 
   private persistMessages(): void {
@@ -211,6 +226,13 @@ export class ChatInterface {
   }
 
   dispose(): void {
+    // Flush any debounce-pending persist so the tail of the last response
+    // isn't lost when the tab/component goes away inside the 500ms window.
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+      this.persistMessages();
+    }
     this.persona.stopListening();
   }
 
