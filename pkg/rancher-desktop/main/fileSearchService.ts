@@ -144,6 +144,14 @@ const _lastCoverage = new Map<string, SearchCoverage | null>();
 /**
  * Resolve the app root so the sidecar can find node_modules.
  * Walks up from Electron's app path (or cwd) looking for node_modules/better-sqlite3.
+ *
+ * Packaged builds: app.getAppPath() is .../Contents/Resources/app.asar and
+ * node_modules lives inside the archive, so the existsSync below only matches
+ * through Electron's asar-patched fs. That asar path is the CORRECT return
+ * value — the sidecar's createRequire must resolve pure-JS deps (fast-glob)
+ * from the archive, while better-sqlite3's native binary is unpacked to the
+ * app.asar.unpacked sibling and redirected automatically. The explicit
+ * unpacked check is a fallback for any case where the asar view misses it.
  */
 function getAppRoot(): string {
   const { app } = require('electron');
@@ -154,8 +162,14 @@ function getAppRoot(): string {
     if (fs.existsSync(path.join(dir, 'node_modules', 'better-sqlite3'))) {
       return dir;
     }
+    if (dir.endsWith('app.asar') &&
+        fs.existsSync(path.join(`${ dir }.unpacked`, 'node_modules', 'better-sqlite3'))) {
+      return dir;
+    }
     dir = path.dirname(dir);
   }
+
+  console.error(`[file_search] app root not found walking up from ${ app.getAppPath() } — falling back to cwd ${ process.cwd() }`);
 
   return process.cwd();
 }
@@ -665,8 +679,22 @@ try {
   // Resolve deps from the app's node_modules, not from where this generated
   // file lives (~/.cache/sulla-search).
   const appRequire = createRequire(path.join(APP_ROOT, 'package.json'));
-  Database = appRequire('better-sqlite3');
-  fastGlob = appRequire('fast-glob');
+  // Packaged fallback: if resolution through the asar view fails (utility
+  // process without asar-aware require, or the native dlopen redirect
+  // missing), retry from the real-disk app.asar.unpacked copy — the full
+  // sidecar dep tree is unpacked there (packaging/electron-builder.yml).
+  function sidecarRequire(name) {
+    try {
+      return appRequire(name);
+    } catch (err) {
+      const i = APP_ROOT.indexOf('app.asar');
+      if (i === -1) throw err;
+      const unpacked = APP_ROOT.slice(0, i) + 'app.asar.unpacked';
+      return createRequire(path.join(unpacked, 'package.json'))(name);
+    }
+  }
+  Database = sidecarRequire('better-sqlite3');
+  fastGlob = sidecarRequire('fast-glob');
 } catch (err) {
   reportFatal('boot (appRoot=' + APP_ROOT + ')', err);
 }
