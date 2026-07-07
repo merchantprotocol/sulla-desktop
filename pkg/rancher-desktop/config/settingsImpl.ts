@@ -68,6 +68,15 @@ export function save(cfg: Settings) {
     // update the in-memory copy so subsequent calls to getSettings() will
     // return an up to date settings object
     settings = cfg;
+
+    // The host-access gate reads the SullaSettingsModel dual store (Redis +
+    // Postgres), not this file — agent tools never see settings.json. Push the
+    // checkbox value across on every save. Best-effort: a save before the DB
+    // is up is covered by the boot-time reconciliation in the 'host-access-sync'
+    // lifecycle service.
+    void import('@pkg/agent/tools/util/hostAccess')
+      .then(m => m.setHostAccessEnabled(cfg.application.hostAccess === true))
+      .catch(err => console.log('[settings] hostAccess dual-store sync failed (boot reconciliation will retry):', err));
   } catch (err) {
     if (err) {
       const { showErrorDialogWithReport } = require('@pkg/main/errorReporter');

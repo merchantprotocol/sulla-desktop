@@ -6,6 +6,30 @@ appId: io.sulla.desktop
 asar: true
 asarUnpack:
   - '**/*.node'
+  # Whole-module unpack (not just the .node): the file-search sidecar is a
+  # utilityProcess that resolves better-sqlite3 + fast-glob via createRequire,
+  # and better-sqlite3's `bindings` loader probes real filesystem paths for
+  # build/Release/better_sqlite3.node. The sidecar's ENTIRE runtime dep tree
+  # stays on real disk so it boots even without asar-aware resolution.
+  - 'node_modules/better-sqlite3/**'
+  - 'node_modules/bindings/**'
+  - 'node_modules/file-uri-to-path/**'
+  - 'node_modules/fast-glob/**'
+  - 'node_modules/@nodelib/**'
+  - 'node_modules/run-parallel/**'
+  - 'node_modules/queue-microtask/**'
+  - 'node_modules/fastq/**'
+  - 'node_modules/reusify/**'
+  - 'node_modules/glob-parent/**'
+  - 'node_modules/is-glob/**'
+  - 'node_modules/is-extglob/**'
+  - 'node_modules/merge2/**'
+  - 'node_modules/micromatch/**'
+  - 'node_modules/braces/**'
+  - 'node_modules/fill-range/**'
+  - 'node_modules/to-regex-range/**'
+  - 'node_modules/is-number/**'
+  - 'node_modules/picomatch/**'
   - 'node_modules/puppeteer-extra-plugin/**'
   - 'node_modules/clone-deep/**'
   - 'node_modules/puppeteer/**'

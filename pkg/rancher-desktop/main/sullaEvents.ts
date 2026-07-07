@@ -76,19 +76,56 @@ export function initSullaEvents(): void {
   initSullaCloudAuthEvents();
 
   // ─────────────────────────────────────────────────────────────
-  // Workflow boot recovery
+  // DB-gated boot tasks: workflow recovery + gateway lobby
   // ─────────────────────────────────────────────────────────────
 
-  // Kick off recovery after a short delay to let the DB finish its
-  // connection warm-up (migrations run on connect).
-  setTimeout(async() => {
+  // Postgres runs inside the Lima VM and can take a minute+ to come up on a
+  // cold boot. These tasks used to fire on a blind 5s timer (workflow
+  // recovery) or one unretried initialize() (gateway lobby), die with
+  // ECONNREFUSED 127.0.0.1:30116, and stay dead until the next app restart.
+  // Retry DB initialization with a flat backoff, then run both once.
+  (async() => {
+    const DB_BOOT_RETRY_MS = 5_000;
+    const DB_BOOT_DEADLINE_MS = 5 * 60_000;
+    const t0 = Date.now();
+    let dbReady = false;
+
+    while (Date.now() - t0 < DB_BOOT_DEADLINE_MS) {
+      try {
+        const { getDatabaseManager } = await import('@pkg/agent/database/DatabaseManager');
+
+        await getDatabaseManager().initialize(); // returns immediately once initialized
+        dbReady = true;
+        break;
+      } catch {
+        await new Promise(resolve => setTimeout(resolve, DB_BOOT_RETRY_MS));
+      }
+    }
+
+    if (!dbReady) {
+      console.error(`[initSullaEvents] Database not ready after ${ DB_BOOT_DEADLINE_MS / 1000 }s — workflow recovery and gateway lobby skipped this session`);
+
+      return;
+    }
+
     try {
       const { recoverOnBoot } = await import('@pkg/agent/workflow/WorkflowRecoveryService');
+
       await recoverOnBoot();
     } catch (err) {
       console.error('[initSullaEvents] Workflow boot recovery failed:', err);
     }
-  }, 5000);
+
+    // Auto-connect gateway lobby listener. All decision-making lives in
+    // GatewayConnectionController.
+    try {
+      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
+
+      await getGatewayConnectionController().initialize();
+    } catch (err) {
+      console.warn('[Sulla] Gateway lobby auto-connect failed:', err);
+    }
+  })();
 
   // ─────────────────────────────────────────────────────────────
   // Settings handlers
@@ -827,20 +864,9 @@ export function initSullaEvents(): void {
     }
   });
 
-  // Auto-connect gateway lobby listener once DB is ready.
-  // All decision-making lives in GatewayConnectionController.
-  (async() => {
-    try {
-      const { getDatabaseManager } = await import('@pkg/agent/database/DatabaseManager');
-      const dbManager = getDatabaseManager();
-      await dbManager.initialize(); // returns immediately if already initialized, waits otherwise
-
-      const { getGatewayConnectionController } = await import('@pkg/agent/controllers/GatewayConnectionController');
-      await getGatewayConnectionController().initialize();
-    } catch (err) {
-      console.warn('[Sulla] Gateway lobby auto-connect failed:', err);
-    }
-  })();
+  // Gateway lobby auto-connect moved into the DB-gated boot block above —
+  // its single unretried dbManager.initialize() died with ECONNREFUSED on
+  // cold boots while the VM's Postgres was still starting.
 
   // ─────────────────────────────────────────────────────────────
   // Filesystem handlers (chat file explorer rail)

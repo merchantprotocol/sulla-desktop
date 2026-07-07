@@ -766,8 +766,20 @@ function getMacApplicationMenu(): MenuItem[] {
         { type: 'separator' },
         { role: 'front' },
         { type: 'separator' },
-        { role: 'reload', label: '&Reload' },
-        { role: 'forceReload', label: '&Force Reload' },
+        // NOT role: 'reload' — the built-in roles always reload the focused
+        // BrowserWindow's own renderer. When the user is looking at a browser
+        // tab (a WebContentsView overlaying the main window), Cmd+R must
+        // reload THAT page, not blow away the whole app renderer under it.
+        {
+          label:       '&Reload',
+          accelerator: 'CmdOrCtrl+R',
+          click:       (_item, focusedWindow) => reloadFocusedSurface(focusedWindow, false),
+        },
+        {
+          label:       '&Force Reload',
+          accelerator: 'Shift+CmdOrCtrl+R',
+          click:       (_item, focusedWindow) => reloadFocusedSurface(focusedWindow, true),
+        },
         ...(!Electron.app.isPackaged
           ? [
             { type: 'separator' } as MenuItemConstructorOptions,
@@ -877,6 +889,43 @@ function getWindowsApplicationMenu(): MenuItem[] {
     getHistoryMenu(),
     getHelpMenu(false),
   ];
+}
+
+/**
+ * Cmd+R / Cmd+Shift+R target for the View menu. If a browser tab's
+ * WebContentsView currently has focus (the user is looking at a web page),
+ * reload that page. Otherwise fall back to reloading the focused window's
+ * renderer — the behavior of the built-in 'reload'/'forceReload' roles.
+ */
+async function reloadFocusedSurface(focusedWindow: Electron.BaseWindow | undefined, force: boolean): Promise<void> {
+  try {
+    const { BrowserTabViewManager } = await import('@pkg/window/browserTabViewManager');
+    const mgr = BrowserTabViewManager.getInstance();
+    const focusedTabId = mgr.getFocusedTab();
+    const tabWc = focusedTabId ? mgr.getWebContents(focusedTabId) : null;
+
+    if (tabWc && !tabWc.isDestroyed()) {
+      if (force) {
+        tabWc.reloadIgnoringCache();
+      } else {
+        tabWc.reload();
+      }
+
+      return;
+    }
+  } catch (err) {
+    console.error('[MainMenu] scoped reload failed, falling back to window reload:', err);
+  }
+
+  const win = (focusedWindow instanceof Electron.BrowserWindow) ? focusedWindow : BrowserWindow.getFocusedWindow();
+
+  if (win && !win.webContents.isDestroyed()) {
+    if (force) {
+      win.webContents.reloadIgnoringCache();
+    } else {
+      win.webContents.reload();
+    }
+  }
 }
 
 /**

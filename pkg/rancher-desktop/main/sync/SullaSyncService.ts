@@ -159,14 +159,47 @@ class SullaSyncServiceImpl {
     }
   }
 
+  // Consecutive-failure log suppression. When the cloud is unreachable, every
+  // sync cycle logs identical push/pull/fetch failures — observed at >2,000
+  // lines/day in background.log. Log the first failure per endpoint, then
+  // every 40th, and log recovery so outage windows stay visible.
+  private failCounts = new Map<string, number>();
+
+  private warnSuppressed(key: string, message: string, err?: unknown): void {
+    const n = (this.failCounts.get(key) ?? 0) + 1;
+
+    this.failCounts.set(key, n);
+    if (n === 1 || n % 40 === 0) {
+      const suffix = n > 1 ? ` (${ n } consecutive failures, logging every 40th)` : '';
+
+      if (err === undefined) {
+        log.warn(`${ message }${ suffix }`);
+      } else {
+        log.warn(`${ message }${ suffix }:`, err);
+      }
+    }
+  }
+
+  private clearFailures(key: string): void {
+    const n = this.failCounts.get(key);
+
+    if (n && n > 1) {
+      log.log(`[SullaSync] ${ key } recovered after ${ n } consecutive failures`);
+    }
+    this.failCounts.delete(key);
+  }
+
   private async authedFetch(path: string, init?: RequestInit): Promise<Response | null> {
     const token = await getCurrentAccessToken();
     if (!token) {
       // Not signed in — sync is effectively disabled until the user auths.
       return null;
     }
+    // Strip the query string so paginated pulls (?after=N) dedupe as one endpoint.
+    const failKey = `fetch ${ path.split('?')[0] }`;
+
     try {
-      return await fetch(`${ API_BASE }${ path }`, {
+      const res = await fetch(`${ API_BASE }${ path }`, {
         ...init,
         headers: {
           'Content-Type':  'application/json',
@@ -174,8 +207,13 @@ class SullaSyncServiceImpl {
           ...(init?.headers as Record<string, string> | undefined),
         },
       });
+
+      this.clearFailures(failKey);
+
+      return res;
     } catch (err) {
-      log.warn(`[SullaSync] fetch ${ path } failed:`, err);
+      this.warnSuppressed(failKey, `[SullaSync] ${ failKey } failed`, (err as any)?.message ?? err);
+
       return null;
     }
   }
@@ -231,9 +269,10 @@ class SullaSyncServiceImpl {
     });
 
     if (!res || !res.ok) {
-      log.warn(`[SullaSync] push failed, status=${ res?.status ?? 'no-response' }`);
+      this.warnSuppressed('push-status', `[SullaSync] push failed, status=${ res?.status ?? 'no-response' }`);
       return 0;
     }
+    this.clearFailures('push-status');
 
     try {
       await res.json() as PushResponse;
@@ -253,9 +292,10 @@ class SullaSyncServiceImpl {
       const afterSeq = await getLastSeq();
       const res = await this.authedFetch(`/sync/pull?after=${ afterSeq }`);
       if (!res || !res.ok) {
-        log.warn(`[SullaSync] pull failed, status=${ res?.status ?? 'no-response' } after=${ afterSeq }`);
+        this.warnSuppressed('pull-status', `[SullaSync] pull failed, status=${ res?.status ?? 'no-response' } after=${ afterSeq }`);
         break;
       }
+      this.clearFailures('pull-status');
 
       let data: PullResponse;
       try {

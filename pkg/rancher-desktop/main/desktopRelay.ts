@@ -85,6 +85,8 @@ class DesktopRelayClient {
   private currentRoom: string | null = null;
   private reconnectDelay = RECONNECT_BASE_MS;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Consecutive failed reconnect cycles — drives log suppression only. */
+  private failedAttempts = 0;
   private intentionallyClosed = false;
   private connected = false;
   private lastError = '';
@@ -161,6 +163,10 @@ class DesktopRelayClient {
     this.reconnectDelay = RECONNECT_BASE_MS;
     this.openSocket().catch((err) => {
       console.warn('[DesktopRelay] openSocket failed:', err);
+      // A throw here (e.g. token/DB read during boot) previously left the
+      // relay dead until app restart — the reconnect loop only armed itself
+      // once a socket existed. Hand the failure to the same backoff machinery.
+      this.scheduleReconnect();
     });
   }
 
@@ -197,7 +203,9 @@ class DesktopRelayClient {
    */
   private forceReconnect(reason: string) {
     if (this.intentionallyClosed) return;
-    console.warn(`[DesktopRelay] Forcing reconnect — ${ reason }`);
+    if (this.failedAttempts <= 1 || this.failedAttempts % 20 === 0) {
+      console.warn(`[DesktopRelay] Forcing reconnect — ${ reason }${ this.failedAttempts > 1 ? ` (attempt ${ this.failedAttempts }, logging every 20th)` : '' }`);
+    }
     this.teardownLiveness();
     if (this.ws) {
       try { this.ws.close(); } catch { /* already closed */ }
@@ -225,7 +233,9 @@ class DesktopRelayClient {
     const url = `${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop&token=${ encodeURIComponent(token) }`;
 
     // Log without the token to avoid leaking into local log files.
-    console.log(`[DesktopRelay] Connecting: ${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop`);
+    if (this.failedAttempts <= 1 || this.failedAttempts % 20 === 0) {
+      console.log(`[DesktopRelay] Connecting: ${ RELAY_URL }/relay/${ encodeURIComponent(room) }?role=desktop`);
+    }
 
     const ws = new WebSocket(url);
     this.ws = ws;
@@ -245,7 +255,12 @@ class DesktopRelayClient {
       this.lastError = '';
       this.reconnectDelay = RECONNECT_BASE_MS;
       this.lastInboundAt = Date.now();
-      console.log(`[DesktopRelay] Connected — room=${ room }`);
+      if (this.failedAttempts > 1) {
+        console.log(`[DesktopRelay] Connected — room=${ room } (recovered after ${ this.failedAttempts } attempts)`);
+      } else {
+        console.log(`[DesktopRelay] Connected — room=${ room }`);
+      }
+      this.failedAttempts = 0;
       this.broadcastStatus();
 
       // Flush frames queued while the socket was reconnecting. Critical for
@@ -281,14 +296,18 @@ class DesktopRelayClient {
     ws.addEventListener('close', () => {
       this.connected = false;
       this.teardownLiveness();
-      console.log('[DesktopRelay] Socket closed');
+      if (this.failedAttempts <= 1) {
+        console.log('[DesktopRelay] Socket closed');
+      }
       this.broadcastStatus();
       if (!this.intentionallyClosed) this.scheduleReconnect();
     });
 
     ws.addEventListener('error', (e: any) => {
       this.lastError = e?.message || 'WebSocket error';
-      console.warn('[DesktopRelay] Error:', this.lastError);
+      if (this.failedAttempts <= 1 || this.failedAttempts % 20 === 0) {
+        console.warn('[DesktopRelay] Error:', this.lastError);
+      }
       this.broadcastStatus();
       // Some runtimes don't fire `close` after `error`, especially on
       // half-open sockets. Force the reconnect path so we never sit idle
@@ -301,7 +320,13 @@ class DesktopRelayClient {
     if (this.reconnectTimer || !this.currentRoom) return;
     const delay = this.reconnectDelay;
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
-    console.log(`[DesktopRelay] Reconnecting in ${ delay }ms`);
+    // During a long outage the 30s-capped backoff retries ~120×/hour and each
+    // cycle used to log 3-4 lines (>1,000 pairs observed in one log). Log the
+    // first attempt of an outage, then every 20th.
+    this.failedAttempts++;
+    if (this.failedAttempts === 1 || this.failedAttempts % 20 === 0) {
+      console.log(`[DesktopRelay] Reconnecting in ${ delay }ms${ this.failedAttempts > 1 ? ` (attempt ${ this.failedAttempts })` : '' }`);
+    }
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.openSocket().catch((err) => {
@@ -707,8 +732,29 @@ export function initDesktopRelayEvents(): void {
     } catch { /* electron not ready */ }
   });
 
-  // Kick off the connection on load if a pairing already exists
-  client.start().catch((err) => {
-    console.warn('[DesktopRelay] start() failed:', err);
-  });
+  // Kick off the connection on load if a pairing already exists. start()
+  // reads the pairing from Postgres, which may still be coming up inside the
+  // VM on a cold boot — retry with a flat backoff instead of dying once and
+  // leaving the relay offline until the next app restart.
+  (async() => {
+    const RETRY_MS = 10_000;
+    const DEADLINE_MS = 5 * 60_000;
+    const t0 = Date.now();
+
+    for (;;) {
+      try {
+        await client.start();
+
+        return;
+      } catch (err) {
+        if (Date.now() - t0 >= DEADLINE_MS) {
+          console.error('[DesktopRelay] start() still failing after 5min — giving up until next app start:', err);
+
+          return;
+        }
+        console.warn(`[DesktopRelay] start() failed (retrying in ${ RETRY_MS / 1000 }s):`, err instanceof Error ? err.message : err);
+        await new Promise(resolve => setTimeout(resolve, RETRY_MS));
+      }
+    }
+  })();
 }
