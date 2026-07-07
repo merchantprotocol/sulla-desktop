@@ -487,6 +487,141 @@ function logSearchTiming(root: string, results: number, timing: any, coverage: S
   console.log(parts.join(' '));
 }
 
+// ── Boot warm-up + self-maintenance ─────────────────────────────
+// The FTS index is persistent (~/.cache/sulla-search/index.sqlite) but was
+// historically built lazily: the first large-root search of a session paid
+// enumeration — and on a fresh install the whole multi-pass build — inline,
+// inside a chat turn. Instead, build to convergence once shortly after boot,
+// then keep it fresh with periodic incremental passes. A pass only starts
+// while the sidecar has no in-flight requests, so live searches are never
+// queued behind maintenance.
+
+const WARMUP_DELAY_MS = 20_000;
+const WARMUP_PASS_GAP_MS = 5_000;
+// Upper bound on convergence passes for a worst-case fresh build; each pass
+// reads at most INDEX_BYTE_BUDGET of new file bodies.
+const WARMUP_MAX_PASSES = 24;
+const MAINTENANCE_INTERVAL_MS = 30 * 60_000;
+// When the sidecar is busy with live work (or the crash breaker is open),
+// retry shortly instead of skipping a whole interval.
+const MAINTENANCE_BUSY_RETRY_MS = 60_000;
+
+let _maintenanceTimer: NodeJS.Timeout | null = null;
+let _maintenanceStarted = false;
+let _maintenanceStopped = false;
+
+function maintenanceSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+
+    if (typeof t.unref === 'function') t.unref();
+  });
+}
+
+function scheduleMaintenance(root: string, delayMs: number): void {
+  if (_maintenanceStopped) {
+    return;
+  }
+  if (_maintenanceTimer) {
+    clearTimeout(_maintenanceTimer);
+  }
+  _maintenanceTimer = setTimeout(() => {
+    void maintenancePass(root);
+  }, delayMs);
+  if (typeof _maintenanceTimer.unref === 'function') _maintenanceTimer.unref();
+}
+
+async function maintenancePass(root: string): Promise<void> {
+  if (_maintenanceStopped) {
+    return;
+  }
+  if (isDegraded() || _pending.size > 0) {
+    scheduleMaintenance(root, MAINTENANCE_BUSY_RETRY_MS);
+
+    return;
+  }
+  try {
+    await indexDirectory(root);
+  } catch (err) {
+    if (err instanceof SearchTooManyFilesError) {
+      // Permanent for this tree size — rescheduling would fail identically.
+      console.warn(`[file_search] maintenance disabled for ${ root }: ${ err.message }`);
+
+      return;
+    }
+    console.warn(`[file_search] maintenance pass failed for ${ root }:`, err instanceof Error ? err.message : err);
+  }
+  scheduleMaintenance(root, MAINTENANCE_INTERVAL_MS);
+}
+
+// Run index passes until the root converges (a pass completes without hitting
+// the byte budget or deadline), then hand off to periodic maintenance.
+async function warmupLoop(root: string): Promise<void> {
+  let pass = 0;
+  let deferrals = 0;
+
+  while (!_maintenanceStopped && pass < WARMUP_MAX_PASSES) {
+    if (isDegraded() || _pending.size > 0) {
+      if (++deferrals > 30) {
+        break;
+      }
+      await maintenanceSleep(MAINTENANCE_BUSY_RETRY_MS);
+      continue;
+    }
+    pass++;
+    try {
+      const result = await indexDirectory(root);
+
+      if (result.truncated !== true) {
+        break;
+      }
+    } catch (err) {
+      if (err instanceof SearchTooManyFilesError) {
+        console.warn(`[file_search] warm-up abandoned for ${ root }: ${ err.message }`);
+
+        return;
+      }
+      console.warn(`[file_search] warm-up pass ${ pass } failed for ${ root }:`, err instanceof Error ? err.message : err);
+    }
+    await maintenanceSleep(WARMUP_PASS_GAP_MS);
+  }
+  if (_maintenanceStopped) {
+    return;
+  }
+  console.log(`[file_search] warm-up complete for ${ root } after ${ pass } pass(es); ` +
+    `maintenance every ${ MAINTENANCE_INTERVAL_MS / 60_000 } min`);
+  scheduleMaintenance(root, MAINTENANCE_INTERVAL_MS);
+}
+
+/**
+ * Build the FTS index for `root` to full coverage shortly after boot, then
+ * keep it fresh with an incremental pass every MAINTENANCE_INTERVAL_MS.
+ * Idempotent; stop with stopFileSearchMaintenance().
+ */
+export function startFileSearchMaintenance(root: string = os.homedir()): void {
+  if (_maintenanceStarted) {
+    return;
+  }
+  _maintenanceStarted = true;
+  _maintenanceStopped = false;
+  const resolved = path.resolve(root);
+
+  console.log(`[file_search] warm-up scheduled for ${ resolved } in ${ WARMUP_DELAY_MS / 1000 }s`);
+  _maintenanceTimer = setTimeout(() => {
+    void warmupLoop(resolved);
+  }, WARMUP_DELAY_MS);
+  if (typeof _maintenanceTimer.unref === 'function') _maintenanceTimer.unref();
+}
+
+export function stopFileSearchMaintenance(): void {
+  _maintenanceStopped = true;
+  _maintenanceStarted = false;
+  if (_maintenanceTimer) {
+    clearTimeout(_maintenanceTimer);
+    _maintenanceTimer = null;
+  }
+}
+
 // ── Degraded-mode direct scan ───────────────────────────────────
 // Fallback while the crash breaker is open: a bounded scan in the main process
 // (async fs, no sidecar). Only viable for small-tier roots; anything larger is
@@ -820,7 +955,12 @@ function sanitizeFTS5Term(term) {
 function buildFTS5Query(query) {
   const terms = (query || '').split(/\\s+/).map(sanitizeFTS5Term).filter(t => t.length > 0);
   if (terms.length === 0) return null;
-  return terms.map(t => '"' + t + '"*').join(' AND ');
+  // Exact terms, never prefix ('"t"*'): without prefix indexes, FTS5 answers
+  // a prefix query by range-scanning the whole term b-tree and merging every
+  // matching doclist. Over a code corpus (huge vocabulary) that measured 66s
+  // vs 2.7s exact for the same two-term query on an 86k-doc index — and the
+  // slow form is what tripped the parent's SEARCH_TIMEOUT sidecar kill.
+  return terms.map(t => '"' + t + '"').join(' AND ');
 }
 
 function quickSnippet(body, query) {
