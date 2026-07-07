@@ -294,6 +294,19 @@ export async function instantiateSullaStart(): Promise<void> {
     },
   );
 
+  // The Preferences host-access checkbox persists to settings.json, but the
+  // exechost/AppleScript gate reads the SullaSettingsModel dual store — push
+  // the on-disk value across once the stores are reachable, so a toggle made
+  // while the DB was down (or before this sync existed) still takes effect.
+  lifecycle.register('host-access-sync', ['database-manager', 'redis'],
+    async() => {
+      const { reconcileHostAccessFromDisk } = await import('@pkg/agent/tools/util/hostAccess');
+
+      await reconcileHostAccessFromDisk();
+    },
+    async() => { /* nothing to tear down */ },
+  );
+
   // MCP servers are initialized lazily — on first tool listing or tool call.
   console.log('[Background] MCP servers will initialize on first use (lazy init)');
 
