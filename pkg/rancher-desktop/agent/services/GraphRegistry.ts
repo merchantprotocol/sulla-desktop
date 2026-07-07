@@ -892,6 +892,8 @@ export const GraphRegistry = {
         ? 'Load active projects, goals, and human presence. Return a structured summary — project names, statuses, blockers, and file paths. Do NOT paste full PRD contents.'
         : 'Read the latest user message in the conversation and decide what context is needed. Only search relevant categories — or return nothing if the message is casual.',
       messages:               [...parentState.messages],
+      // Recent tail only: recall reads the latest exchange, then SEARCHES.
+      contextWindow:          20,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'memory-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
@@ -919,6 +921,9 @@ export const GraphRegistry = {
       tools:                  OBSERVATION_AGENT_TOOLS,
       userMessage:            'Review this conversation. Search for existing observations before adding any new ones (update instead of duplicate). Soft-archive stale or superseded entries. Update identity files if warranted. If nothing needs to change, finish immediately.',
       messages:               [...parentState.messages],
+      // Wider than recall — the writer mines the conversation for facts —
+      // but still bounded; the summarizer compacts anything older anyway.
+      contextWindow:          30,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
@@ -946,6 +951,8 @@ export const GraphRegistry = {
       tools:                  OBSERVATION_RECALL_TOOLS,
       userMessage:            'Read the recent conversation context and return only the observations that are relevant or possibly relevant to what the human is asking about. Return compact lines only — nothing if nothing is relevant.',
       messages:               [...parentState.messages],
+      // Recent tail only: obs-recall reads the latest exchange, then searches the table.
+      contextWindow:          20,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
@@ -1326,11 +1333,62 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
   }
 }
 
+/**
+ * Cap the conversation context handed to a subconscious agent: keep only the
+ * most recent `windowSize` messages and truncate oversized text/tool_result
+ * blocks. Recall/observation agents analyze the RECENT conversation and then
+ * work through their search tools — handing them the whole thread (with
+ * multi-KB tool dumps) just inflates every one of their LLM round-trips.
+ * This is an INPUT diet, not a time limit: the agents still run for as long
+ * as their job takes. Parent message objects are never mutated — truncated
+ * messages are shallow clones.
+ */
+function windowedContext(messages: any[], windowSize: number, maxBlockChars: number): any[] {
+  const marker = '\n…[earlier content truncated for subconscious context — use your search tools for full detail]';
+
+  return messages.slice(-windowSize).map((m) => {
+    const c = m?.content;
+
+    if (typeof c === 'string') {
+      return c.length > maxBlockChars ? { ...m, content: c.slice(0, maxBlockChars) + marker } : m;
+    }
+    if (Array.isArray(c)) {
+      let changed = false;
+      const blocks = c.map((b) => {
+        if (b?.type === 'tool_result') {
+          const text = typeof b.content === 'string' ? b.content : JSON.stringify(b.content ?? '');
+
+          if (text.length > maxBlockChars) {
+            changed = true;
+
+            return { ...b, content: text.slice(0, maxBlockChars) + marker };
+          }
+        }
+        if (b?.type === 'text' && typeof b.text === 'string' && b.text.length > maxBlockChars) {
+          changed = true;
+
+          return { ...b, text: b.text.slice(0, maxBlockChars) + marker };
+        }
+
+        return b;
+      });
+
+      return changed ? { ...m, content: blocks } : m;
+    }
+
+    return m;
+  });
+}
+
 async function buildSubconsciousState(opts: {
   systemPrompt:          string;
   tools:                 string[];
   userMessage:           string;
   messages?:             any[];
+  /** Keep only the last N conversation messages as agent context (see windowedContext) */
+  contextWindow?:        number;
+  /** Per-block truncation size used with contextWindow; default 4000 chars */
+  maxContextBlockChars?: number;
   maxIterations?:        number;
   temperature?:          number;
   format?:               'json';
@@ -1363,10 +1421,13 @@ async function buildSubconsciousState(opts: {
     opts.tools.map(name => toolRegistry.convertToolToLLM(name)),
   );
 
-  // Build messages: use provided messages array + append user message, or just user message
-  const messages: any[] = opts.messages
-    ? [...opts.messages, { role: 'user', content: opts.userMessage, metadata: { source: 'subconscious' } }]
-    : [{ role: 'user', content: opts.userMessage, metadata: { source: 'subconscious' } }];
+  // Build messages: use provided messages array + append user message, or just user message.
+  // When contextWindow is set, the agent gets the conversation TAIL with long
+  // blocks truncated instead of the full thread — see windowedContext().
+  const context: any[] = opts.messages
+    ? (opts.contextWindow ? windowedContext(opts.messages, opts.contextWindow, opts.maxContextBlockChars ?? 4_000) : [...opts.messages])
+    : [];
+  const messages: any[] = [...context, { role: 'user', content: opts.userMessage, metadata: { source: 'subconscious' } }];
 
   return {
     messages,

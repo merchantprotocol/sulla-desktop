@@ -38,15 +38,6 @@ const perf = Logging.perf;
 const TRIGGER_WINDOW_SIZE = 45;
 
 /**
- * Hard wall-clock cap on the awaited recall agents (memory-recall and
- * observation-recall). They enrich the turn but must never own it: perf.log
- * showed unfenced recalls blocking turn starts for 24–119s while returning
- * zero context. Past the fence the turn starts without recall context and a
- * late result is discarded (the primary agent has already been injected).
- */
-const RECALL_FENCE_MS = 20_000;
-
-/**
  * Compactable tool-result token mass that triggers the digester.
  *
  * Cache-aware batching: Anthropic prompt caching is strict-prefix — editing
@@ -177,48 +168,19 @@ export async function runSubconsciousMiddleware(
   // loads active projects and doesn't depend on a latest user message.
   const analyzable = hasAnalyzableUserMessage(state);
 
-  // Recall agents only WRITE METADATA (recallContext / observationContext),
-  // so they can be time-fenced: if one overruns, the turn proceeds without
-  // its context and a late result is dropped on the floor. Without this
-  // fence, perf.log showed turn preludes blocked 24–119 SECONDS by recall
-  // agents that ultimately returned nothing (each degraded file_search took
-  // 20–30s). The summarizer/digester are NOT fenced — they mutate
-  // state.messages and must never race the primary agent.
-  const fencedMetadataWrite = (
-    name: string,
-    p: Promise<string | null>,
-    apply: (ctx: string | null) => void,
-  ): Promise<void> => new Promise<void>((resolve) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        console.warn(`[SubconsciousMiddleware] ${ name } exceeded ${ RECALL_FENCE_MS }ms fence — starting turn without it`);
-        resolve();
-      }
-    }, RECALL_FENCE_MS);
-
-    p.then((ctx) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        apply(ctx);
-      }
-      resolve();
-    }).catch(() => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-      }
-      resolve();
-    });
-  });
+  // Recall is NEVER time-limited — the primary agent waits as long as recall
+  // needs, because starting a turn without the right context is worse than
+  // starting it late (Jonathon, 2026-07-06). Recall latency is addressed by
+  // making its TOOLS fast (the file_search sidecar fix took its searches
+  // from 20-30s degraded scans to sub-second indexed queries) and by not
+  // dispatching at all when a turn carries nothing to analyze — not by
+  // cutting the agents off mid-job.
 
   // 2. Memory Recall — awaited: writes to state.metadata.recallContext
   if (options.recallVariant === 'heartbeat' || analyzable) {
     launched.push('memory-recall');
     const recallPromise = runMemoryRecall(state, options.recallVariant);
-    awaitedTasks.push(timed('memory-recall', fencedMetadataWrite('memory-recall', recallPromise, ctx => { (state.metadata as any).recallContext = ctx })));
+    awaitedTasks.push(timed('memory-recall', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
   } else {
     console.log('[SubconsciousMiddleware] Memory Recall skipped — no user message in state to analyze');
   }
@@ -238,7 +200,7 @@ export async function runSubconsciousMiddleware(
   if (options.includeObservations && analyzable) {
     launched.push('observation-recall');
     const obsRecallPromise = runObservationRecall(state);
-    awaitedTasks.push(timed('observation-recall', fencedMetadataWrite('observation-recall', obsRecallPromise, ctx => { (state.metadata as any).observationContext = ctx })));
+    awaitedTasks.push(timed('observation-recall', obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx })));
   }
 
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
