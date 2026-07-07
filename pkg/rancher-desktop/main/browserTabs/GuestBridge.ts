@@ -54,6 +54,18 @@ export class GuestBridge {
     return this.exec(code);
   }
 
+  /**
+   * Like execInPage() but PROPAGATES rejections instead of mapping them to
+   * undefined. eval_js uses this so compile errors, mid-exec navigations,
+   * and unserializable results surface as real errors — the swallowing
+   * exec() made all of them come back as a silent `Result: undefined`
+   * with success=true, which the model can't distinguish from a legitimate
+   * undefined return.
+   */
+  execInPageStrict(code: string): Promise<unknown> {
+    return this.wc.executeJavaScript(code, true);
+  }
+
   // ── Guest bridge methods (DOM helpers from window.sullaBridge) ────
   async getActionableMarkdown(): Promise<string> {
     return String((await this.call('getActionableMarkdown')) || '');
