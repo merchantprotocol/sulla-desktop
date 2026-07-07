@@ -196,10 +196,10 @@ export const browserToolManifests: ToolManifest[] = [
 
   {
     name:        'eval_js',
-    description: 'Evaluate arbitrary JavaScript in the active browser tab with enhanced diagnostics. Returns result, console logs, timing, DOM mutation count, navigation detection, and page state. Captures window.__sulla.__log entries (cleared before execution). Use window.__sulla.waitFor(selector) and window.__sulla.waitForIdle() helpers for post-execution synchronization. Optionally capture a screenshot after. Use for anything the other browser tools cannot do.',
+    description: 'Evaluate arbitrary JavaScript in the active browser tab with enhanced diagnostics. A single expression is auto-returned like a devtools console (`document.title` works as-is); multi-statement code must use an explicit `return` to send a value back. Top-level await is supported and returned promises are awaited. Syntax errors and runtime errors are reported with stacks; non-JSON-serializable results (DOM nodes, circular structures) are stringified with a note. Also returns console logs, timing, DOM mutation count, navigation detection, and page state. Captures window.__sulla.__log entries (cleared before execution). Use window.__sulla.waitFor(selector) and window.__sulla.waitForIdle() helpers for post-execution synchronization. Optionally capture a screenshot after. Use for anything the other browser tools cannot do.',
     category:    'browser',
     schemaDef:   {
-      code:        { type: 'string', description: 'JavaScript code to execute in the page. The return value is sent back.' },
+      code:        { type: 'string', description: 'JavaScript code to execute in the page. A single expression is auto-returned (devtools semantics); multi-statement code needs an explicit `return <value>`. Top-level await works; returned promises are awaited. Return plain data (objects/arrays/primitives) — DOM nodes and circular structures are stringified.' },
       screenshot:  { type: 'boolean', optional: true, description: 'Capture a screenshot after execution. Returns a compact reference under `screenshot` — image saved to disk, never inline base64.' },
       waitFor:     { type: 'string', optional: true, description: 'CSS selector to wait for after code execution (uses window.__sulla.waitFor if available).' },
       waitForIdle: { type: 'boolean', optional: true, description: 'Wait for the page to become idle after execution (uses window.__sulla.waitForIdle if available).' },
