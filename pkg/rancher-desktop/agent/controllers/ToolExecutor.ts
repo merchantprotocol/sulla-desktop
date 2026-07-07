@@ -80,6 +80,12 @@ export interface ToolExecutorContext {
   /** Current node run context (null when not inside an LLM call) */
   currentNodeRunContext: NodeRunContext | null;
 
+  /** When true, all tool calls in one LLM reply are invoked concurrently and
+   *  their results appended in the original call order. Enabled for
+   *  subconscious agents (read-only search tools) where batch latency should
+   *  be max(tool) rather than sum(tools). */
+  parallelToolCalls?: boolean;
+
   /** Send a chat message over WebSocket. `extras` is merged into the WS
    *  event `data` alongside content/role/kind — used to ride structured
    *  payloads (citations, workflow documents) on the same event. */
@@ -136,6 +142,10 @@ export class ToolExecutor {
     }
 
     throwIfAborted(state, 'Tool execution aborted');
+
+    if (this.ctx.parallelToolCalls && toolCalls.length > 1) {
+      return this.executeToolCallsParallel(state, toolCalls, allowedTools);
+    }
 
     const results: { toolName: string; success: boolean; result?: unknown; error?: string }[] = [];
 
@@ -307,6 +317,175 @@ export class ToolExecutor {
         results.push({ toolName, success: false, error: 'Unknown tool' });
         this.pushToTranscript(toolName, false, 'Unknown tool');
         continue;
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Parallel variant of executeToolCalls: every invocation in the batch starts
+   * together and results are appended in the original call order, so the
+   * message stream and transcript look identical to the sequential path while
+   * batch latency drops from sum(tools) to max(tools). Only reached when
+   * ctx.parallelToolCalls is set (subconscious agents — their tools are
+   * independent read-only searches; ordering between them carries no meaning).
+   */
+  private async executeToolCallsParallel(
+    state: BaseThreadState,
+    toolCalls: { name: string; id?: string; args: any }[],
+    allowedTools?: string[],
+  ): Promise<{ toolName: string; success: boolean; result?: unknown; error?: string }[]> {
+    type Launched = {
+      toolRunId: string;
+      toolName:  string;
+      args:      any;
+      // Pre-flight rejections (loop/policy/allowlist/unknown-tool) settle
+      // immediately; real invocations settle when the tool returns.
+      outcome:   Promise<{ result?: ToolResult; error?: string; loopBlock?: boolean }>;
+      started:   number;
+    };
+    const launched: Launched[] = [];
+
+    // Phase 1 — pre-flight checks in call order, then fire every invocation
+    // without awaiting it. Checks stay sequential: they're cheap, and loop
+    // detection reads __toolRuns which phase 2 appends to.
+    for (const call of toolCalls) {
+      const toolRunId = call.id || `${ call.name }_${ Date.now() }_${ Math.random().toString(36).substr(2, 9) }`;
+      const toolName = call.name;
+      const args = call.args;
+
+      await this.emitToolCallEvent(state, toolRunId, toolName, args);
+
+      // Loop detection — same rule as the sequential path.
+      const LOOP_THRESHOLD = 7;
+      const dedupeKey = this.buildToolRunDedupeKey(toolName, args);
+      const toolRuns = (state.metadata as any).__toolRuns as { dedupeKey: string }[] | undefined;
+      let consecutiveCount = 0;
+      if (toolRuns?.length) {
+        for (let i = toolRuns.length - 1; i >= 0; i--) {
+          if (toolRuns[i].dedupeKey === dedupeKey) consecutiveCount++;
+          else break;
+        }
+      }
+      if (consecutiveCount >= LOOP_THRESHOLD) {
+        const loopMsg = `Loop detected: this exact tool call ("${ toolName }" with the same arguments) was executed ${ consecutiveCount } times consecutively. Use the previous result instead of calling it again.`;
+        launched.push({ toolRunId, toolName, args, outcome: Promise.resolve({ error: loopMsg, loopBlock: true }), started: Date.now() });
+        continue;
+      }
+
+      const policyBlockReason = await this.getToolPolicyBlockReason(state, toolName);
+      if (policyBlockReason) {
+        launched.push({ toolRunId, toolName, args, outcome: Promise.resolve({ error: policyBlockReason }), started: Date.now() });
+        continue;
+      }
+
+      if (allowedTools?.length && !allowedTools.includes(toolName)) {
+        launched.push({ toolRunId, toolName, args, outcome: Promise.resolve({ error: `Tool not allowed in this node: ${ toolName }` }), started: Date.now() });
+        continue;
+      }
+
+      let tool: any;
+      try {
+        tool = await toolRegistry.getTool(toolName);
+      } catch {
+        launched.push({ toolRunId, toolName, args, outcome: Promise.resolve({ error: `Unknown tool: ${ toolName }` }), started: Date.now() });
+        continue;
+      }
+
+      if (tool instanceof BaseTool) {
+        tool.setState(state);
+        tool.sendChatMessage = (content: string, kind = 'progress', extras?: Record<string, unknown>) =>
+          this.ctx.wsChatMessage(state, content, 'assistant', kind, extras);
+        tool.emitProgress = async(data: any) => {
+          await this.dispatchToWebSocket(state.metadata.wsChannel || DEFAULT_WS_CHANNEL, {
+            type:      'progress_update',
+            data:      { ...data, kind: 'progress', thread_id: state.metadata.threadId },
+            timestamp: Date.now(),
+          });
+        };
+      }
+
+      const started = Date.now();
+      launched.push({
+        toolRunId,
+        toolName,
+        args,
+        started,
+        outcome: Promise.resolve(tool.invoke(args))
+          .then((result: ToolResult) => ({ result }))
+          .catch((err: any) => ({ error: err?.message || String(err) })),
+      });
+    }
+
+    // Phase 2 — settle in call order and run the exact plumbing the
+    // sequential path runs: emit result, append message, persist, transcript.
+    const results: { toolName: string; success: boolean; result?: unknown; error?: string }[] = [];
+
+    for (const entry of launched) {
+      const { toolRunId, toolName, args } = entry;
+      const settled = await entry.outcome;
+      const invokeMs = Date.now() - entry.started;
+
+      if (settled.result !== undefined) {
+        const result = settled.result;
+        let argHint = '';
+        try {
+          const a = args as any;
+          const raw = a?.query ?? a?.pattern ?? a?.path ?? a?.file_path ?? a?.slug ?? '';
+          argHint = String(raw).slice(0, 80);
+        } catch { /* best-effort */ }
+        perf.log(`[InProcToolTiming] node=${ this.ctx.nodeName } tool=${ toolName } ms=${ invokeMs } success=${ result?.success === true } parallel=true arg="${ argHint }"`);
+        state.metadata.lastActivityMs = Date.now();
+
+        const toolSuccess = result?.success === true;
+        const toolError = typeof result?.error === 'string'
+          ? result.error
+          : (!toolSuccess && typeof result?.result === 'string' ? result.result : undefined);
+
+        await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result);
+        await this.appendToolResultMessage(state, toolName, {
+          toolName, success: toolSuccess, result, error: toolError, toolCallId: toolRunId,
+        });
+        this.persistStructuredToolRunRecord(state, {
+          toolName, toolRunId, args, success: toolSuccess, result, error: toolError,
+        });
+        results.push({ toolName, success: toolSuccess, result, error: toolError });
+        this.pushToTranscript(toolName, toolSuccess, toolError, result);
+        this.trackFailureSignature(state, toolName, toolSuccess, toolError, result);
+
+        const convId = (state.metadata as any).conversationId;
+        if (convId) {
+          try {
+            const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
+            getLogger().logToolCall(convId, toolName, args, result);
+          } catch { /* best-effort */ }
+        }
+      } else {
+        const error = settled.error || 'Tool execution failed';
+
+        await this.emitToolResultEvent(state, toolRunId, false, error);
+        await this.appendToolResultMessage(state, toolName, {
+          toolName, success: false, error, toolCallId: toolRunId,
+        });
+        // Mirror the sequential path: loop blocks are not persisted as
+        // structured run records (a blocked call shouldn't extend the streak).
+        if (!settled.loopBlock) {
+          this.persistStructuredToolRunRecord(state, {
+            toolName, toolRunId, args, success: false, error,
+          });
+          this.trackFailureSignature(state, toolName, false, error, null);
+        }
+        results.push({ toolName, success: false, error });
+        this.pushToTranscript(toolName, false, error);
+
+        const convId = (state.metadata as any).conversationId;
+        if (convId && !settled.loopBlock) {
+          try {
+            const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
+            getLogger().logToolCall(convId, toolName, args, { error });
+          } catch { /* best-effort */ }
+        }
       }
     }
 

@@ -536,6 +536,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   private _chatController:       ChatController | null = null;
   private _toolExecutor:         ToolExecutor | null = null;
 
+  /** Subclasses set true to run batched tool calls concurrently (results are
+   *  still appended in call order). See ToolExecutorContext.parallelToolCalls. */
+  protected parallelToolCalls = false;
+
   constructor(id: string, name: string) {
     this.id = id;
     this.name = name;
@@ -547,6 +551,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this._toolExecutor = new ToolExecutor({
         nodeId:                this.id,
         nodeName:              this.name,
+        parallelToolCalls:     this.parallelToolCalls,
         get currentNodeRunContext() { return null }, // overridden below
         wsChatMessage:         (state, content, role, kind) => this.wsChatMessage(state, content, role, kind),
         bumpStateVersion:      (state) => this.bumpStateVersion(state),

@@ -84,6 +84,19 @@ only the categories that relate to it. For example:
 
 Never search all categories by default. Be selective.
 
+## Speed — the human is waiting
+
+Time is of the essence: the primary agent (and the human) BLOCK until you
+finish. Tool calls you issue in the SAME response execute in PARALLEL; calls
+spread across separate responses each cost a full model round-trip. So:
+- Decide up front everything you plausibly need and issue ALL of those tool
+  calls in ONE response — one parallel batch beats a chain of single calls.
+- Combine related terms into one query instead of near-duplicate searches.
+- Aim for at most 2-3 rounds total: index lookup + broad parallel sweep →
+  targeted follow-up reads → store digests and answer.
+- Returning nothing quickly is a GOOD outcome when nothing is relevant —
+  never keep searching just to have something to show.
+
 ## STEP 0 — Check the citation index FIRST
 
 Before any file_search or read_file call, call \`recall_index_lookup\` with the
@@ -241,7 +254,10 @@ const HEARTBEAT_RECALL_PROMPT = `You are a READ-ONLY recall process for the hear
 
 ## Your checklist
 
-Complete these steps in order, then finish:
+Complete these steps in order, then finish. Speed matters: tool calls issued
+in the SAME response run in PARALLEL — batch independent reads/calls together
+(e.g. all PROJECT.md reads at once; presence + jobs in the same round) instead
+of one call per response.
 
 ### 0. Citation Index
 Call \`recall_index_lookup\` with topic \`heartbeat-projects\` plus the
@@ -485,6 +501,11 @@ Rules:
 - Format each result as: \`[id] priority date — content\`
 - If nothing is relevant, return an empty string — do NOT pad with filler.
 - Do NOT narrate your process. Output only the filtered observation lines.
+
+Speed: the primary agent BLOCKS until you finish. Tool calls in the SAME
+response run in PARALLEL — issue every search you need (different phrasings,
+plus list_observations) as ONE batch in your first response, then answer.
+Do not search one term at a time across multiple rounds.
 
 Be selective: a 5-entry relevant subset is better than 30 entries dumped verbatim.`;
 
