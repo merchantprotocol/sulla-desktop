@@ -14,7 +14,14 @@
  * Fails CLOSED: any read error (DB down, unset) is treated as disabled.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
+
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
+import paths from '@pkg/utils/paths';
+import Logging from '@pkg/utils/logging';
+
+const console = Logging.background;
 
 /** Settings property key — flat camelCase, matching the other settings. */
 export const HOST_ACCESS_SETTING_KEY = 'hostAccess';
@@ -35,6 +42,30 @@ export async function isHostAccessEnabled(): Promise<boolean> {
  *  reads come back as a real boolean). */
 export async function setHostAccessEnabled(enabled: boolean): Promise<void> {
   await SullaSettingsModel.set(HOST_ACCESS_SETTING_KEY, enabled, 'boolean');
+}
+
+/**
+ * One-way reconciliation: the Preferences checkbox persists to the
+ * rancher-desktop settings.json, which this gate deliberately does not read —
+ * so the checkbox is the authoritative record of user consent and its value
+ * must be pushed into the dual store. Reads the file directly (rather than
+ * getSettings()) so the result doesn't depend on settings-load order; a
+ * missing or unreadable file reconciles to disabled.
+ *
+ * Called at boot (after Postgres/Redis are up) and after every settings save.
+ */
+export async function reconcileHostAccessFromDisk(): Promise<void> {
+  let enabled = false;
+
+  try {
+    const raw = await fs.promises.readFile(path.join(paths.config, 'settings.json'), 'utf-8');
+
+    enabled = JSON.parse(raw)?.application?.hostAccess === true;
+  } catch {
+    // No settings.json yet — fail closed.
+  }
+  await setHostAccessEnabled(enabled);
+  console.log(`[hostAccess] reconciled from settings.json: ${ enabled }`);
 }
 
 /** Standard message shown when an agent tries to reach the host with the
