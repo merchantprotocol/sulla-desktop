@@ -15,11 +15,21 @@ export class GrokService extends OpenAICompatibleService {
       valMap[v.property] = v.value;
     }
 
+    // Prefer the OAuth session (Sign in with Grok) over a pasted API key.
+    // getOAuthAccessToken auto-refreshes when expired; GrokOAuth's
+    // onTokenReceived busts this cached instance on every refresh so a live
+    // token is re-read here. The UI stores OAuth tokens under the fixed
+    // 'oauth' account id (see AgentIntegrationDetail.handleOAuthConnect).
+    let apiKey = valMap.api_key || '';
+    try {
+      apiKey = await integrationService.getOAuthAccessToken('grok', 'oauth');
+    } catch { /* not OAuth-connected — fall back to api_key */ }
+
     return new GrokService({
       id:      'grok',
       model:   valMap.model || '',
       baseUrl: 'https://api.x.ai/v1',
-      apiKey:  valMap.api_key || '',
+      apiKey,
     });
   }
 

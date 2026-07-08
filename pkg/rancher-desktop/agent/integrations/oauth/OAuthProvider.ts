@@ -70,6 +70,14 @@ export interface OAuthProviderConfig {
    */
   fixedCallbackPath?:    string;
   /**
+   * Hostname used in the redirect_uri. Defaults to 'localhost' when a fixed
+   * callback port is set (OpenAI registers localhost), '127.0.0.1' otherwise.
+   * Providers whose OAuth app registers the literal loopback IP (e.g. xAI's
+   * http://127.0.0.1:56121/callback) must set 'localhost' to false here or the
+   * redirect_uri check fails server-side.
+   */
+  useLocalhostHostname?: boolean;
+  /**
    * If true, present the authorization page inside an embedded Electron
    * BrowserWindow owned by Sulla Desktop instead of handing off to the user's
    * default system browser. Required for providers whose credentials must be

@@ -106,7 +106,7 @@ export class OAuthService {
       expectedState:        state,
       fixedPort:            cfg.fixedCallbackPort,
       callbackPath:         cfg.fixedCallbackPath,
-      useLocalhostHostname: !!cfg.fixedCallbackPort,
+      useLocalhostHostname: cfg.useLocalhostHostname ?? !!cfg.fixedCallbackPort,
     });
     console.log(`${ LOG_PREFIX } Callback server listening at ${ redirectUri }`);
 
