@@ -235,6 +235,40 @@ class LLMRegistryImpl {
     return this.getPrimaryService();
   }
 
+  /**
+   * Agent-definition model override. When an agent's config.yaml declares
+   * `model:` (explicit model ID or tier name 'fast'|'balanced'|'powerful')
+   * and/or `provider:`, resolve a dedicated service instance for that agent.
+   *
+   * Returns null when the agent declares no override — callers fall back to
+   * the role slots (primary / subconscious). Resolution failures also return
+   * null rather than throwing so a bad agent config degrades to slot routing.
+   */
+  async getAgentOverrideService(agentCfg?: { model?: string; provider?: string }): Promise<BaseLanguageModel | null> {
+    const model = typeof agentCfg?.model === 'string' ? agentCfg.model.trim() : '';
+    const provider = typeof agentCfg?.provider === 'string' ? agentCfg.provider.trim() : '';
+
+    if (!model && !provider) return null;
+
+    try {
+      const mps = tryGetModelProviderService();
+      const effectiveProvider = provider || (mps
+        ? mps.getPrimaryProvider()
+        : await SullaSettingsModel.get('primaryProvider', 'grok'));
+
+      const modelOverride = model
+        ? (isTierName(model)
+          ? await resolveTierToModelId(effectiveProvider, model as ModelTier)
+          : model)
+        : undefined;
+
+      return await this.getServiceByProvider(effectiveProvider, modelOverride);
+    } catch (err) {
+      console.warn(`[LLMRegistry] Agent model override failed (provider="${ provider }", model="${ model }") — falling back to slot routing:`, err);
+      return null;
+    }
+  }
+
   async getRemoteModel(): Promise<string> {
     const svc = await this.getRemoteService();
     return svc.getModel();
@@ -405,6 +439,7 @@ export const getCurrentModel = async() => await LLMRegistry.getCurrentModel();
 // Primary / Secondary / Heartbeat provider exports
 export const getPrimaryService = async() => await LLMRegistry.getPrimaryService();
 export const getSecondaryService = async() => await LLMRegistry.getSecondaryService();
+export const getAgentOverrideService = async(agentCfg?: { model?: string; provider?: string }) => await LLMRegistry.getAgentOverrideService(agentCfg);
 export const getHeartbeatService = async() => await LLMRegistry.getHeartbeatLLM();
 export const getSubconsciousService = async() => await LLMRegistry.getSubconsciousLLM();
 

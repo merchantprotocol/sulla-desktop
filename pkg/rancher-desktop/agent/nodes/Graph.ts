@@ -182,6 +182,8 @@ export interface AgentGraphState extends BaseThreadState {
       integrations?: string[];  // allowlist of integration slugs (empty = none, ["*"] = all)
       prompt?:       string;          // compiled .md files, no variable substitution
       excludeSoul?:  boolean;         // if true, skip the global soul prompt from settings
+      model?:        string;          // per-agent model override: explicit model ID or tier name ('fast'|'balanced'|'powerful')
+      provider?:     string;          // per-agent provider override (defaults to primary provider when only model is set)
 
       // Execution outcomes (set during runtime)
       status?:               'done' | 'blocked' | 'continue' | 'in_progress';
