@@ -102,8 +102,17 @@ export class AgentNode extends BaseNode {
       const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
       await runSubconsciousMiddleware(state, {
         includeObservations: shouldInjectObservations,
+        // Surface each subconscious launch/completion as a thinking line.
+        // The mobile relay translates these into activity frames, so the
+        // phone's status line moves during the (unbounded) recall wait
+        // instead of freezing on the initial "Thinking…".
+        onProgress: (message) => { void this.wsChatMessage(state, message, 'assistant', 'thinking') },
       });
       subconsciousMs = Date.now() - subStart;
+      // Close the bubble the progress lines opened — in voice mode the
+      // end-of-turn sentinel flush is skipped, so without this the last
+      // subconscious bubble would stay stuck "live" on the desktop UI.
+      await this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
     }
 
     // Inject the compact per-turn <turn_context> block (current time, agent
