@@ -4,7 +4,7 @@ import path from 'node:path'; // used by enrichPrompt for active_projects_file
 import { ChatController, type ChatMode } from '../controllers/ChatController';
 import { ToolExecutor } from '../controllers/ToolExecutor';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
+import { getAgentOverrideService, getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { throwIfAborted } from '../services/AbortService';
 import { parseJson } from '../services/JsonParseService';
@@ -671,9 +671,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // so the system prompt's provider-conditional sections (e.g. Anthropic
     // cache blocks vs OpenAI response format) match the model we'll invoke.
     const isSubAgentForPrompt = !!(state.metadata as any).isSubAgent;
-    const llm = isSubAgentForPrompt
+    const overrideLLMForPrompt = await getAgentOverrideService((state.metadata as any).agent);
+    const llm = overrideLLMForPrompt ?? (isSubAgentForPrompt
       ? await getSubconsciousService()
-      : await getPrimaryService();
+      : await getPrimaryService());
     const providerName = llm?.getProviderName?.() || 'anthropic';
 
     const mode = options.promptMode || 'full';
@@ -908,14 +909,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     systemPrompt: string,
     options: LLMCallOptions = {},
   ): Promise<NormalizedResponse | null> {
-    // Subconscious agents (memory-recall, observation, unstuck-research) need
-    // a fast tool-emitting chat peer, not the autonomous Claude-Code-style
-    // primary. Route them to the dedicated subconscious provider (falls back
-    // to secondary, then primary).
+    // Agent-definition override first: an agent whose config.yaml declares
+    // model/provider gets its own service instance regardless of role slot.
+    // Otherwise: subconscious agents (memory-recall, observation,
+    // unstuck-research) need a fast tool-emitting chat peer, not the
+    // autonomous Claude-Code-style primary. Route them to the dedicated
+    // subconscious provider (falls back to secondary, then primary).
     const isSubAgent = !!(state.metadata as any).isSubAgent;
-    this.llm = isSubAgent
+    const agentOverrideLLM = await getAgentOverrideService((state.metadata as any).agent);
+    this.llm = agentOverrideLLM ?? (isSubAgent
       ? await getSubconsciousService()
-      : await getPrimaryService();
+      : await getPrimaryService());
 
     const nodeRunContext = this.createNodeRunContext(state, {
       systemPrompt,

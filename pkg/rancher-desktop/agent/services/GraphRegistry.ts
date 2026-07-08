@@ -1347,6 +1347,8 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
       integrations: parsed.integrations || [],
       prompt:       sections.length > 0 ? sections.join('\n\n') : undefined,
       excludeSoul:  parsed.excludeSoul === true,
+      model:        typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : undefined,
+      provider:     typeof parsed.provider === 'string' && parsed.provider.trim() ? parsed.provider.trim() : undefined,
     };
   } catch (err) {
     console.error(`[GraphRegistry] Failed to load agent config for ${ agentId }:`, err);
