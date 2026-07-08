@@ -24,6 +24,7 @@ class CodexOAuthProvider extends OAuthProvider {
     builtInClientId:      'app_EMoamEEZ73f0CkXaXp7hrann',
     fixedCallbackPort:    1455,
     fixedCallbackPath:    '/auth/callback',
+    openInEmbeddedWindow: true,
     extraAuthorizeParams: {
       id_token_add_organizations: 'true',
       originator:                 'codex_cli_rs',

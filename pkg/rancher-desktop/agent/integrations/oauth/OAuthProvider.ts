@@ -69,6 +69,23 @@ export interface OAuthProviderConfig {
    * Defaults to '/oauth/callback' if not specified.
    */
   fixedCallbackPath?:    string;
+  /**
+   * Hostname used in the redirect_uri. Defaults to 'localhost' when a fixed
+   * callback port is set (OpenAI registers localhost), '127.0.0.1' otherwise.
+   * Providers whose OAuth app registers the literal loopback IP (e.g. xAI's
+   * http://127.0.0.1:56121/callback) must set 'localhost' to false here or the
+   * redirect_uri check fails server-side.
+   */
+  useLocalhostHostname?: boolean;
+  /**
+   * If true, present the authorization page inside an embedded Electron
+   * BrowserWindow owned by Sulla Desktop instead of handing off to the user's
+   * default system browser. Required for providers whose credentials must be
+   * captured in-app and materialized for an in-VM consumer (e.g. the `codex`
+   * CLI reading ~/.codex/auth.json): an external browser would complete the
+   * handshake outside Sulla and the in-VM tool would never receive the result.
+   */
+  openInEmbeddedWindow?: boolean;
 }
 
 /**
