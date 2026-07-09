@@ -28,10 +28,9 @@ Direct `getUserMedia` calls bypass all of this processing and should only be use
 
 | File | Responsibility |
 |------|---------------|
-| `VoiceRecorderService.ts` | Microphone stream acquisition, audio level monitoring, VAD silence detection, batch recording via MediaRecorder, browser SpeechRecognition fallback, non-speech filtering, transcription dispatch via IPC |
 | `TTSPlayerService.ts` | TTS playback queue, sequential sentence playback, look-ahead prefetch, sequence counter for race condition prevention, content deduplication (10s window), browser SpeechSynthesis fallback |
-| `VoicePipeline.ts` | State machine (IDLE / LISTENING / THINKING / SPEAKING), fragment accumulation, turn detection (silence / speaker change / time-based), interim bubble management, speak message detection via Vue message watcher, barge-in coordination, secretary analysis parsing |
-| `useVoiceSession.ts` | Vue composable that creates all three services, bridges service events to Vue refs, polls `pipeline.state` (100ms) and `recordingDuration` (250ms), auto-disposes on component unmount |
+| `useVoiceSession.ts` | Vue composable that runs the whole voice session on the audio-driver PCM + whisper pipeline: mic/transcription IPC lifecycle, interim bubble, silence-based send, pipeline state machine (IDLE / LISTENING / THINKING / SPEAKING), VAD-driven barge-in with grace period, TTS bridging via TTSPlayerService; auto-disposes on unmount |
+| `voiceStateProvider.ts` | provide/inject bridge exposing voice state + actions (incl. `pipelineState`) to descendant components (composer, empty-state landing) — replaces 4-level props threading; hosts without a session get inert defaults |
 | `VoiceLogger.ts` | Unified `[VOICE:COMPONENT:EVENT] key=value` logging to both DevTools console and persistent log files via IPC. Components: REC, VAD, STT, PIPE, TTS, TIMING |
 | `TypedEventEmitter.ts` | Lightweight typed event system with `on()` returning unsubscribe functions. Base class for VoiceRecorderService and TTSPlayerService |
 
@@ -66,24 +65,13 @@ Microphone
   -> VoicePipeline or consumer feature processes transcript
 ```
 
-**Legacy STT Flow (Direct getUserMedia — being migrated):**
-```
-Microphone
-  -> MediaStream (getUserMedia)
-  -> AudioContext + AnalyserNode (VAD: RMS level monitoring at 100ms intervals)
-  -> MediaRecorder (batch recording, webm/opus)
-  -> VAD silence confirmed (threshold exceeded for vadSilenceDuration ms)
-  -> MediaRecorder.stop() -> audioBlob
-  -> IPC 'audio-transcribe' -> TranscriptionService
-  -> ElevenLabs Scribe V2 (or Enterprise Gateway)
-  -> TranscriptionResult { text, words[] with speaker_id }
-  -> Non-speech filtering (strip [background noise], [singing], etc.)
-  -> VoiceRecorderService emits 'fragment' event
-  -> VoicePipeline.handleFragment() -> buffer accumulation, interim bubble update
-  -> VoiceRecorderService emits 'silence' event (after transcription completes)
-  -> VoicePipeline.handleSilence() -> flush()
-  -> ChatInterface.send({ inputSource: 'microphone', voiceMode, pipelineSequence })
-```
+**Legacy STT Flow — REMOVED (2026-07-08):** The direct-getUserMedia recorder
+(`VoiceRecorderService.ts`) and its `VoicePipeline.ts` state machine no longer
+exist in the codebase; chat voice runs exclusively on the Audio Driver pipeline
+above, coordinated by `useVoiceSession.ts`. The remaining renderer `getUserMedia`
+calls are the Audio Driver's own capture layer (`audio-capture.js`), the Raw Mic
+Test diagnostic, and AgentRoutines screen recording — by design, not migration
+leftovers.
 
 **Multi-Channel Audio Flow (Secretary Mode with Audio Driver):**
 ```
@@ -449,33 +437,35 @@ A voice turn has no single ID that flows from speech detection through transcrip
 
 State transitions:
 ```
-IDLE ──(speechStart)──> LISTENING
-LISTENING ──(flush)──> THINKING
-THINKING ──(speak detected)──> SPEAKING
-SPEAKING ──(queue empty)──> IDLE
-THINKING ──(graph complete)──> IDLE or LISTENING (if buffer has content)
-SPEAKING/THINKING ──(speechStart: barge-in)──> LISTENING
+IDLE ──(startRecording)──> LISTENING
+LISTENING ──(silence ≥2s → transcript sent)──> THINKING
+THINKING ──(speak dispatched / playback starts)──> SPEAKING
+SPEAKING ──(queue empty)──> LISTENING (still recording) or IDLE
+THINKING ──(graph ends with no TTS)──> LISTENING (still recording) or IDLE
+SPEAKING ──(sustained speech ≥400ms: barge-in)──> LISTENING
 ```
 
-- State drives UI indicators and event handling behavior
-- Flush timer runs only in LISTENING state (interval varies by mode)
-- All transitions logged via `logPipelineState(from, to)`
+- State drives UI indicators, including the composer's pipeline-stage chip
+  (Thinking / Speaking + elapsed time) that shows where round-trip time goes
 
 **Source files:**
-- `composables/voice/VoicePipeline.ts` (lines 228-240: transitionTo, lines 248-342: event handlers)
+- `composables/voice/useVoiceSession.ts` (pipelineState ref + transition sites)
 
 ### 4.12 Barge-In
 
 **As a user, I want to interrupt Sulla while she's speaking so I can redirect the conversation.**
 
-- When VAD detects `speechStart` during SPEAKING or THINKING state:
-  - `TTSPlayerService.stop()` — clears queue, pauses audio, cancels prefetch, increments sequence counter
-  - `ChatInterface.stop()` — aborts in-progress graph run
-  - Transitions to LISTENING
+- While recording with TTS playing, the audio-driver VAD `speaking` frames are tracked
+- Speech sustained for `BARGE_IN_GRACE_MS` (400ms) triggers `TTSPlayerService.stop()` —
+  clears queue, pauses audio, cancels prefetch, increments sequence counter
+- The grace period keeps coughs, back-channel acknowledgements ("mm-hm"), and VAD
+  blips from killing playback mid-sentence
+- The graph run is NOT aborted — the user's words become the next turn; the stop
+  button stays visible independently if they want to abort the run
 - Logged via `logBargeIn()`
 
 **Source files:**
-- `composables/voice/VoicePipeline.ts` (lines 248-269: handleSpeechStart barge-in)
+- `composables/voice/useVoiceSession.ts` (onMicVad handler)
 
 ### 4.13 Interim Voice Bubble
 

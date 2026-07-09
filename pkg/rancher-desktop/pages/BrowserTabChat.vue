@@ -24,187 +24,12 @@
               :key="m.id"
               class="mb-8"
             >
-              <div
-                v-if="m.kind === 'voice_interim'"
-                class="flex justify-end"
-              >
-                <div class="max-w-[min(760px,92%)] rounded-3xl p-6 bg-surface-alt ring-1 ring-edge-subtle opacity-70">
-                  <div class="whitespace-pre-wrap text-content italic">
-                    <span class="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse mr-2 align-middle" />{{ m.content }}
-                  </div>
-                </div>
-              </div>
-              <div
-                v-else-if="m.role === 'user'"
-                class="flex justify-end"
-              >
-                <div class="max-w-[min(760px,92%)]">
-                  <div class="sulla-name text-right mb-1" style="color: var(--text-muted);">
-                    You
-                  </div>
-                  <div class="rounded-3xl p-6 bg-surface-alt ring-1 ring-edge-subtle">
-                    <img
-                      v-if="m.image?.dataUrl"
-                      :src="m.image.dataUrl"
-                      :alt="m.image.alt || 'Attached image'"
-                      class="mb-2 max-h-64 rounded-xl object-contain"
-                    >
-                    <div class="whitespace-pre-wrap text-content">
-                      {{ m.content }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div
-                v-else-if="m.kind === 'tool' && m.toolCard"
-                class="max-w-[min(760px,92%)]"
-              >
-                <ChatToolCard :tool-card="m.toolCard" />
-              </div>
-
-              <SubAgentBubble
-                v-else-if="m.kind === 'sub_agent_activity' && m.subAgentActivity"
-                :activity="m.subAgentActivity"
-                :is-dark="isDark"
+              <!-- Message kinds are rendered by registry-resolved components;
+                   see pages/chat/messages/registry.ts -->
+              <component
+                :is="componentForMessage(m)"
+                :message="m"
               />
-
-              <!-- ── Compact Inline Thinking (DNA Helix) ── -->
-              <div
-                v-else-if="m.kind === 'thinking'"
-                class="thinking-inline"
-                :class="{
-                  completed: !!(m as any)._completed && !expandedThinking.has(m.id),
-                  expanded: !!(m as any)._completed && expandedThinking.has(m.id),
-                }"
-                @click="toggleThinking(m.id)"
-              >
-                <div
-                  v-if="!(m as any)._completed"
-                  class="ti-helix-col"
-                >
-                  <div class="helix-container">
-                    <div class="helix-dot t1" /><div class="helix-dot t2" /><div class="helix-dot t3" /><div class="helix-dot t4" /><div class="helix-dot t5" />
-                    <div class="helix-dot b1" /><div class="helix-dot b2" /><div class="helix-dot b3" /><div class="helix-dot b4" /><div class="helix-dot b5" />
-                    <div class="helix-rung" /><div class="helix-rung" /><div class="helix-rung" /><div class="helix-rung" /><div class="helix-rung" />
-                  </div>
-                  <div class="ti-stem" />
-                  <div class="ti-elapsed">
-                    {{ thinkingElapsed(m) }}
-                  </div>
-                </div>
-                <div class="ti-content">
-                  <div class="ti-label">
-                    {{ (m as any)._completed ? `Synthesized in ${thinkingElapsed(m)}` : 'Synthesizing' }}
-                  </div>
-                  <div class="ti-stream">
-                    <div
-                      :ref="el => scrollThinkingToBottom(el)"
-                      class="ti-stream-inner"
-                    >
-                      <div
-                        v-for="(line, idx) in splitThinkingLines(m.content)"
-                        :key="idx"
-                        class="ti-thought"
-                      >
-                        <span class="ti-thought-num">{{ String(idx + 1).padStart(2, '0') }}</span>
-                        <span v-html="renderMarkdown(line)" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div
-                v-else-if="m.kind === 'streaming'"
-                class="max-w-[min(760px,92%)]"
-              >
-                <div class="flex gap-3">
-                  <img
-                    :src="botLogoUrl"
-                    alt=""
-                    class="h-8 w-8 rounded-full"
-                    aria-hidden="true"
-                  >
-                  <div>
-                    <div class="sulla-name dark:text-slate-400">
-                      {{ botName }}
-                    </div>
-                    <div
-                      class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
-                      v-html="renderMarkdown(m.content)"
-                    /><span
-                      v-if="!(m as any)._completed"
-                      class="streaming-cursor"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div
-                v-else-if="m.kind === 'html'"
-                class="max-w-[min(760px,92%)]"
-              >
-                <div class="flex gap-3">
-                  <img
-                    :src="botLogoUrl"
-                    alt=""
-                    class="h-8 w-8 rounded-full"
-                    aria-hidden="true"
-                  >
-                  <div class="flex-1 min-w-0">
-                    <div class="sulla-name dark:text-slate-400">
-                      {{ botName }}
-                    </div>
-                    <HtmlMessageRenderer
-                      :content="m.content"
-                      :is-dark="isDark"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div
-                v-else
-                class="max-w-[min(760px,92%)]"
-              >
-                <div
-                  v-if="m.image"
-                  class="space-y-2"
-                >
-                  <img
-                    :src="m.image.dataUrl"
-                    :alt="m.image.alt || ''"
-                    class="block h-auto max-w-full rounded-xl border border-black/10 dark:border-white/10"
-                  >
-                  <div
-                    v-if="m.image.alt"
-                    class="text-xs text-content-secondary"
-                  >
-                    {{ m.image.alt }}
-                  </div>
-                </div>
-                <div
-                  v-else
-                  class="flex gap-3"
-                >
-                  <img
-                    :src="botLogoUrl"
-                    alt=""
-                    class="h-8 w-8 rounded-full"
-                    aria-hidden="true"
-                  >
-                  <div>
-                    <div class="sulla-name dark:text-slate-400">
-                      {{ botName }}
-                    </div>
-                    <div
-                      class="prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert"
-                      v-html="renderMarkdown(m.content)"
-                    />
-                  </div>
-                </div>
-              </div>
             </div>
 
             <!-- Queued Messages (like Windsurf) -->
@@ -343,9 +168,10 @@
               </div>
             </div>
 
-            <!-- Thinking indicator (graph running, not TTS) -->
+            <!-- Thinking indicator — reflects only graph activity; shows alongside
+                 the speaking indicator when Sulla talks while still working -->
             <div
-              v-if="loading || (graphRunning && !isTTSPlaying)"
+              v-if="loading || graphRunning"
               class="mb-3 flex items-center gap-2 px-4"
             >
               <div class="typing-dots">
@@ -428,17 +254,10 @@
                 :show-overlay="false"
                 :has-messages="hasMessages"
                 :graph-running="graphRunning"
-                :tts-playing="isTTSPlaying"
-                :is-recording="isRecording"
-                :audio-level="audioLevel"
-                :recording-duration="recordingDuration"
-                :voice-configured="isVoiceConfigured"
                 :model-selector="modelSelector"
                 @send="sendWithAttachments"
                 @stop="stop"
                 @primary-action="handlePrimaryAction"
-                @toggle-recording="voice.toggleRecording()"
-                @stop-tts="voice.stopTTS()"
               />
             </div>
           </div>
@@ -456,11 +275,6 @@
           v-model:query="query"
           :loading="loading"
           :graph-running="graphRunning"
-          :tts-playing="isTTSPlaying"
-          :is-recording="isRecording"
-          :audio-level="audioLevel"
-          :recording-duration="recordingDuration"
-          :voice-configured="isVoiceConfigured"
           :model-selector="modelSelector"
           :is-first-chat="isFirstChat"
           :show-goals-onboarding="showGoalsOnboarding"
@@ -468,8 +282,6 @@
           @send="send"
           @stop="stop"
           @primary-action="handlePrimaryAction"
-          @toggle-recording="voice.toggleRecording()"
-          @stop-tts="voice.stopTTS()"
           @pick="(mode: string) => emit('set-mode', mode as BrowserTabMode)"
           @start-onboarding="startOnboarding"
           @start-business-onboarding="startBusinessOnboarding"
@@ -533,24 +345,21 @@
 </template>
 
 <script setup lang="ts">
-import DOMPurify from 'dompurify';
-import { marked } from 'marked';
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { ref, computed, readonly, watch, nextTick, onMounted, onUnmounted } from 'vue';
 
 import AgentComposer from './agent/AgentComposer.vue';
 import { AgentModelSelectorController } from './agent/AgentModelSelectorController';
 import { ChatInterface, type ChatMessage } from './agent/ChatInterface';
 import ChatContextMenu from './chat/ChatContextMenu.vue';
+import { provideChatDisplay } from './chat/messages/context';
+import { componentForMessage } from './chat/messages/registry';
 import ChatOptionsVariantB from './chat-options/ChatOptionsVariantB.vue';
-import SubAgentBubble from './editor/workflow/SubAgentBubble.vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { chatLogger as console } from '@pkg/agent/utils/agentLogger';
-import ChatToolCard from '@pkg/components/ChatToolCard.vue';
-import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { useTheme } from '@pkg/composables/useTheme';
-import { useVoiceSession } from '@pkg/composables/voice';
+import { provideVoiceState, useVoiceSession } from '@pkg/composables/voice';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { QueuedMessage } from './agent/ChatMessageQueue';
@@ -681,6 +490,9 @@ const injectQueuedMessage = (messageId: string) => {
 // use it as the initial prompt and auto-send, then clear it.
 const botName = ref('Sulla');
 
+// Bot identity + theme for the registry-resolved message components.
+provideChatDisplay({ botName, botLogoUrl, isDark });
+
 onMounted(async() => {
   // Load bot name from settings
   botName.value = await SullaSettingsModel.get('botName', 'Sulla');
@@ -763,81 +575,6 @@ const displayMessages = computed(() => {
   });
 });
 
-const expandedThinking = ref(new Set<string>());
-const thinkingStartTimes = new Map<string, number>();
-const thinkingFinalTimes = new Map<string, string>();
-const thinkingTick = ref(0);
-
-/** Reactive tick that drives the live elapsed counter — fires every 100ms */
-let _thinkingTimer: ReturnType<typeof setInterval> | null = null;
-
-function ensureThinkingTimer() {
-  if (!_thinkingTimer) {
-    _thinkingTimer = setInterval(() => { thinkingTick.value++ }, 100);
-  }
-}
-
-/** Split thinking content into individual lines for card rendering */
-const splitThinkingLines = (content: string): string[] => {
-  if (!content) return [];
-  return content
-    .split(/\n+/)
-    .map(l => l.trim())
-    .filter(l => l.length > 0);
-};
-
-const thinkingElapsed = (m: any): string => {
-  if (!thinkingStartTimes.has(m.id)) {
-    thinkingStartTimes.set(m.id, Date.now());
-    ensureThinkingTimer();
-  }
-  // Once completed, freeze the final time
-  if (m._completed) {
-    if (!thinkingFinalTimes.has(m.id)) {
-      const elapsed = ((Date.now() - thinkingStartTimes.get(m.id)!) / 1000).toFixed(1);
-      thinkingFinalTimes.set(m.id, `${ elapsed }s`);
-    }
-    return thinkingFinalTimes.get(m.id)!;
-  }
-  // Live counter — thinkingTick dependency makes this reactive
-  void thinkingTick.value;
-  return `${ ((Date.now() - thinkingStartTimes.get(m.id)!) / 1000).toFixed(1) }s`;
-};
-
-onUnmounted(() => {
-  if (_thinkingTimer) {
-    clearInterval(_thinkingTimer);
-    _thinkingTimer = null;
-  }
-});
-
-const toggleThinking = (id: string) => {
-  const next = new Set(expandedThinking.value);
-  if (next.has(id)) {
-    next.delete(id);
-  } else {
-    next.add(id);
-  }
-  expandedThinking.value = next;
-};
-
-const scrollThinkingToBottom = (el: any) => {
-  if (el instanceof HTMLElement) {
-    nextTick(() => { el.scrollTop = el.scrollHeight });
-  }
-};
-
-const renderMarkdown = (markdown: string): string => {
-  const raw = typeof markdown === 'string' ? markdown : String(markdown || '');
-  const html = (marked(raw) as string) || '';
-  return DOMPurify.sanitize(html, {
-    USE_PROFILES:       { html: true },
-    ADD_TAGS:           ['audio', 'source'],
-    ADD_ATTR:           ['controls', 'preload', 'src', 'type'],
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel|file):|data:image\/(?:png|gif|jpe?g|webp);base64,|\/|\.|#)/i,
-  });
-};
-
 const composerRef = ref<InstanceType<typeof AgentComposer> | null>(null);
 
 /** Returns true if the input looks like a URL the user wants to navigate to */
@@ -915,10 +652,23 @@ async function checkVoiceConfig() {
 checkVoiceConfig();
 
 // ─── Voice Session ───────────────────────────────────────────
-// OOP voice system: VoiceRecorderService + TTSPlayerService + VoicePipeline
-// coordinated by useVoiceSession composable. Auto-cleans up on unmount.
+// Audio-driver PCM + whisper STT with TTSPlayerService playback,
+// coordinated by useVoiceSession. Auto-cleans up on unmount.
 const voice = useVoiceSession({ chatController, messages, onError: showVoiceToast });
-const { isRecording, audioLevel, recordingDuration, isTTSPlaying } = voice;
+const { isRecording, isTTSPlaying } = voice;
+
+// Share voice state with the composer and empty-state landing via
+// provide/inject instead of threading props through each level.
+provideVoiceState({
+  isRecording:       voice.isRecording,
+  audioLevel:        voice.audioLevel,
+  recordingDuration: voice.recordingDuration,
+  isTTSPlaying:      voice.isTTSPlaying,
+  pipelineState:     voice.pipelineState,
+  voiceConfigured:   readonly(isVoiceConfigured),
+  toggleRecording:   voice.toggleRecording,
+  stopTTS:           voice.stopTTS,
+});
 
 // Auto-scroll
 const chatScrollContainer = ref<HTMLElement | null>(null);
@@ -1033,228 +783,8 @@ onUnmounted(() => {
   30% { opacity: 1; transform: translateY(-4px); }
 }
 
-/* ── Streaming cursor ── */
-.streaming-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1em;
-  background: var(--accent-primary, #3b82f6);
-  margin-left: 2px;
-  vertical-align: text-bottom;
-  animation: blinkCursor 0.8s step-end infinite;
-}
-
-@keyframes blinkCursor {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-
-/* ── DNA Helix ── */
-.helix-container {
-  width: 40px;
-  height: 28px;
-  position: relative;
-  flex-shrink: 0;
-}
-
-.helix-dot {
-  position: absolute;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent-primary, #5096b3);
-}
-
-.helix-dot.t1 { animation: helixTop 1.6s ease-in-out infinite 0s; left: 2px; }
-.helix-dot.t2 { animation: helixTop 1.6s ease-in-out infinite 0.2s; left: 10px; }
-.helix-dot.t3 { animation: helixTop 1.6s ease-in-out infinite 0.4s; left: 18px; }
-.helix-dot.t4 { animation: helixTop 1.6s ease-in-out infinite 0.6s; left: 26px; }
-.helix-dot.t5 { animation: helixTop 1.6s ease-in-out infinite 0.8s; left: 34px; }
-
-.helix-dot.b1 { animation: helixBot 1.6s ease-in-out infinite 0s; left: 2px; }
-.helix-dot.b2 { animation: helixBot 1.6s ease-in-out infinite 0.2s; left: 10px; }
-.helix-dot.b3 { animation: helixBot 1.6s ease-in-out infinite 0.4s; left: 18px; }
-.helix-dot.b4 { animation: helixBot 1.6s ease-in-out infinite 0.6s; left: 26px; }
-.helix-dot.b5 { animation: helixBot 1.6s ease-in-out infinite 0.8s; left: 34px; }
-
-@keyframes helixTop {
-  0%, 100% { top: 2px;  opacity: 1;   transform: scale(1); }
-  50%      { top: 20px; opacity: 0.3; transform: scale(0.6); }
-}
-
-@keyframes helixBot {
-  0%, 100% { top: 20px; opacity: 0.3; transform: scale(0.6); }
-  50%      { top: 2px;  opacity: 1;   transform: scale(1); }
-}
-
-.helix-rung {
-  position: absolute;
-  width: 1px;
-  background: rgba(80, 150, 179, 0.15);
-  top: 6px;
-  height: 16px;
-  animation: rungPulse 1.6s ease-in-out infinite;
-}
-.helix-rung:nth-child(11) { left: 4px;  animation-delay: 0s; }
-.helix-rung:nth-child(12) { left: 12px; animation-delay: 0.2s; }
-.helix-rung:nth-child(13) { left: 20px; animation-delay: 0.4s; }
-.helix-rung:nth-child(14) { left: 28px; animation-delay: 0.6s; }
-.helix-rung:nth-child(15) { left: 36px; animation-delay: 0.8s; }
-
-@keyframes rungPulse {
-  0%, 100% { opacity: 0.15; }
-  25%, 75% { opacity: 0.4; }
-  50%      { opacity: 0.15; }
-}
-
-/* ── Compact Inline Thinking ── */
-.thinking-inline {
-  display: flex;
-  gap: 14px;
-  padding: 0;
-  align-items: flex-start;
-  cursor: pointer;
-}
-
-.ti-helix-col {
-  padding-top: 2px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.ti-stem {
-  width: 1px;
-  flex: 1;
-  min-height: 20px;
-  background: rgba(80, 150, 179, 0.1);
-  animation: stemPulse 2s ease-in-out infinite;
-}
-
-@keyframes stemPulse {
-  0%, 100% { opacity: 0.3; }
-  50%      { opacity: 0.8; }
-}
-
-.ti-elapsed {
-  font-size: 9px;
-  color: rgba(80, 150, 179, 0.35);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.ti-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.ti-label {
-  font-size: 12px;
-  color: var(--accent-primary, #5096b3);
-  font-weight: 500;
-  margin-bottom: 8px;
-}
-
-/* Scrolling thought stream */
-.ti-stream {
-  position: relative;
-  max-height: 110px;
-  overflow: hidden;
-}
-
-.ti-stream::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 20px;
-  background: linear-gradient(to bottom, var(--bg-page, #0d1117), transparent);
-  pointer-events: none;
-  z-index: 2;
-}
-
-.ti-stream::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 24px;
-  background: linear-gradient(to top, var(--bg-page, #0d1117), transparent);
-  pointer-events: none;
-  z-index: 2;
-}
-
-.ti-stream-inner {
-  max-height: inherit;
-  overflow-y: auto;
-  scrollbar-width: none;
-}
-
-.ti-stream-inner::-webkit-scrollbar {
-  display: none;
-}
-
-.ti-thought {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 6px 10px;
-  margin-bottom: 6px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-muted, rgba(230, 237, 243, 0.35));
-  font-style: italic;
-  border-left: 2px solid rgba(80, 150, 179, 0.12);
-  border-radius: 0 4px 4px 0;
-  background: rgba(80, 150, 179, 0.03);
-}
-
-.ti-thought-num {
-  color: rgba(80, 150, 179, 0.3);
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 600;
-  flex-shrink: 0;
-}
-
-.ti-thought :deep(p) {
-  margin: 0;
-  display: inline;
-}
-
-/* ── Completed (collapsed) ── */
-.thinking-inline.completed {
-  align-items: center;
-  transition: opacity 0.3s;
-}
-
-.thinking-inline.completed .ti-stream { display: none; }
-.thinking-inline.completed .ti-stem { display: none; }
-.thinking-inline.completed .ti-elapsed { display: none; }
-.thinking-inline.completed .ti-label {
-  color: rgba(80, 150, 179, 0.4);
-  margin-bottom: 0;
-}
-.thinking-inline.completed:hover .ti-label { color: rgba(80, 150, 179, 0.55); }
-
-/* ── Expanded (completed + clicked open) ── */
-.thinking-inline.expanded {
-  align-items: flex-start;
-}
-
-.thinking-inline.expanded .ti-stream {
-  max-height: none;
-}
-.thinking-inline.expanded .ti-stream::before,
-.thinking-inline.expanded .ti-stream::after { display: none; }
-.thinking-inline.expanded .ti-thought { color: var(--text-muted, rgba(230, 237, 243, 0.45)); }
-.thinking-inline.expanded .ti-stem { animation: none; opacity: 0.2; }
-.thinking-inline.expanded .ti-label { color: rgba(80, 150, 179, 0.4); }
-
-/* Tool card styles are in ChatToolCard.vue */
+/* Per-message-kind styles (helix, thinking, streaming cursor, tool cards)
+   live in their components under pages/chat/messages/ */
 
 /* Theme-aware scrollbar styling for overflow-y-auto containers */
 .overflow-y-auto::-webkit-scrollbar {

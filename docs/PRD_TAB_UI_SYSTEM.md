@@ -314,6 +314,14 @@ Improvements to the existing system that address documented complexity issues.
 
 ### SH-1: MessageRenderer Component with Registry Pattern
 
+> **Status: ✅ Implemented 2026-07-08.** `pages/chat/messages/registry.ts` exposes
+> `componentForMessage(m)`; BrowserTabChat's loop is a single dynamic
+> `<component :is>`. Per-kind components (User, VoiceInterim, Tool, SubAgent,
+> Thinking, Streaming, Html, AssistantText) own their styles and local state;
+> shared bot identity/theme flows via `messages/context.ts` provide/inject and
+> markdown via `messages/markdown.ts`. (No wrapper `MessageRenderer.vue` was
+> needed — the registry resolves directly in the loop.)
+
 **As a** developer, **I want** a registry-based message rendering system where each message kind has its own component file, **so that** I can add a new message kind by creating one file without modifying BrowserTabChat's template.
 
 **Acceptance criteria:**
@@ -325,6 +333,13 @@ Improvements to the existing system that address documented complexity issues.
 - All existing rendering behavior is preserved exactly
 
 ### SH-2: VoiceStateProvider (Shared Provide/Inject)
+
+> **Status: ✅ Implemented 2026-07-08.** `composables/voice/voiceStateProvider.ts`
+> (`provideVoiceState` / `useVoiceState`). BrowserTabChat provides; AgentComposer
+> injects state + actions directly (voice props and `toggle-recording`/`stop-tts`
+> emits removed from AgentComposer, ChatOptionsVariantB, SidePanelChat). Hosts
+> without a voice session get inert defaults. Also exposes `pipelineState`, which
+> the composer renders as a latency stage chip (Thinking/Speaking + elapsed).
 
 **As a** developer, **I want** voice state (isRecording, audioLevel, recordingDuration, isTTSPlaying) and voice actions (toggleRecording, stopTTS) to be available via Vue's provide/inject system, **so that** any descendant component can access voice state without props threading through intermediate components.
 
@@ -348,6 +363,13 @@ Improvements to the existing system that address documented complexity issues.
 - All existing behavior is preserved exactly
 
 ### SH-4: Independent State Indicators
+
+> **Status: ✅ Implemented 2026-07-08.** Graph stop button is independent of the
+> TTS speaker button (both visible when Sulla speaks mid-run); thinking dots
+> reflect only `loading || graphRunning`; mic start is no longer blocked by a
+> running graph (still hidden during TTS to avoid speaker-bleed barge-in on
+> start). Complemented by VAD barge-in with a 400ms grace period in
+> `useVoiceSession.ts`.
 
 **As a** user, **I want** clear, non-conflicting visual indicators for recording, TTS playback, and graph processing, **so that** I always know what the system is doing without confusing one state for another.
 
