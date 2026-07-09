@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
-import { ensureCodexAuthFile, codexAuthPath } from '../util/codexAuthFile';
+import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
 import { redisClient } from '../database/RedisClient';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
@@ -24,9 +24,12 @@ const log = Logging.background;
  * on PATH in the VM — no MCP wiring needed for native tool access).
  *
  * Auth: ~/.codex/auth.json, written by CodexOAuth on sign-in and on every
- * scheduled token refresh. The home dir is mounted writable in the VM, so
- * the CLI also self-refreshes tokens in place. With ChatGPT sign-in, usage
- * draws from the user's ChatGPT Plus/Pro plan — no API billing.
+ * scheduled token refresh. The host home is mounted into the Lima VM, and
+ * every spawn exports CODEX_HOME/HOME to that host path — limactl shell
+ * otherwise sets HOME to the guest path (/home/<user>.linux), which would
+ * hide the auth file and 401 every request. The CLI also self-refreshes
+ * tokens in place. With ChatGPT sign-in, usage draws from the user's
+ * ChatGPT Plus/Pro plan — no API billing.
  *
  * Token strategy — hybrid (first-turn seed + `exec resume` thereafter):
  *   - First turn for a conversation: serialize the full curated
@@ -445,10 +448,17 @@ Rules that apply on every turn:
     }
     codexArgs.push('-'); // read the prompt from stdin
 
+    // limactl shell sets HOME to the guest path (/home/<user>.linux), so
+    // codex would look for auth under the guest home and miss the host
+    // ~/.codex/auth.json written by CodexOAuth. Force CODEX_HOME (and HOME
+    // for any secondary path resolution) to the host home mount.
+    const hostCodexHome = shq(codexHomeDir());
+    const hostHome = shq(path.dirname(codexHomeDir()));
+
     // `exec` replaces the inner sh with codex so there's no shell layer
     // between the SSH session and the CLI — best chance of signal
     // propagation when we kill limactl on the host side.
-    const innerCmd = `exec ${ codexArgs.join(' ') }`;
+    const innerCmd = `export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }; exec ${ codexArgs.join(' ') }`;
     const args = ['shell', '0', '--', 'sh', '-c', innerCmd];
 
     return await new Promise((resolve, reject) => {
