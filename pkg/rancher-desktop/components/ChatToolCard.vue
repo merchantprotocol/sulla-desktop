@@ -90,7 +90,7 @@ import { ref, computed } from 'vue';
 
 import type { ChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 
-const EXEC_TOOL_NAMES = new Set(['exec', 'exec_command', 'shell', 'bash', 'run_command']);
+const EXEC_TOOL_NAMES = new Set(['exec', 'exec_command', 'shell', 'bash', 'run_command', 'exechost']);
 
 const props = defineProps<{
   toolCard: NonNullable<ChatMessage['toolCard']>;
@@ -105,6 +105,7 @@ function toggle() {
 
 const displayLabel = computed(() => {
   if (props.toolCard.label) return props.toolCard.label;
+  if (props.toolCard.toolName === 'exechost') return 'Host';
   return EXEC_TOOL_NAMES.has(props.toolCard.toolName) ? 'Bash' : props.toolCard.toolName;
 });
 
