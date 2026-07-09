@@ -1400,14 +1400,20 @@ const handleOAuthConnect = async() => {
   try {
     await integrationService.setAccountLabel(integration.value.id, targetAccountId, integration.value.name + ' OAuth');
 
-    // Start the OAuth flow — this opens the browser and waits for callback
-    await integrationService.startOAuthFlow(
-      integration.value.id,
-      integration.value.oauthProviderId!,
+    // Start the OAuth flow in the MAIN process — it opens the (possibly
+    // embedded) auth window and waits for the callback. Must run in main:
+    // embedded-window providers (Codex, Grok) construct a BrowserWindow, which
+    // is undefined in the renderer ("BrowserWindow is not a constructor").
+    const oauthResult = await ipcRenderer.invoke('integration-oauth:start', {
+      integrationId: integration.value.id,
+      providerId:    integration.value.oauthProviderId!,
       clientId,
       clientSecret,
-      targetAccountId,
-    );
+      accountId:     targetAccountId,
+    });
+    if (!oauthResult?.success) {
+      throw new Error(oauthResult?.error || 'OAuth authorization failed. Please try again.');
+    }
 
     // Set the OAuth account as active
     await integrationService.setActiveAccount(integration.value.id, targetAccountId);

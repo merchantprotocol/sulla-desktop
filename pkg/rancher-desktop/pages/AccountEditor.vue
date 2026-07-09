@@ -866,9 +866,18 @@ async function handleOAuthConnect() {
       }
     }
     await integrationService.setAccountLabel(props.integrationId, targetAccountId, integration.value.name + ' OAuth');
-    await integrationService.startOAuthFlow(
-      props.integrationId, integration.value.oauthProviderId!, clientId, clientSecret, targetAccountId,
-    );
+    // Run the OAuth flow in the MAIN process so embedded-window providers
+    // (Codex, Grok) can construct a BrowserWindow — undefined in the renderer.
+    const oauthResult = await ipcRenderer.invoke('integration-oauth:start', {
+      integrationId: props.integrationId,
+      providerId:    integration.value.oauthProviderId!,
+      clientId,
+      clientSecret,
+      accountId:     targetAccountId,
+    });
+    if (!oauthResult?.success) {
+      throw new Error(oauthResult?.error || 'OAuth failed. Please try again.');
+    }
     await integrationService.setActiveAccount(props.integrationId, targetAccountId);
     emit('saved', targetAccountId);
   } catch (err: any) {

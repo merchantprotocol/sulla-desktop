@@ -10,6 +10,7 @@ import { initTabsIpc } from './browserTabs/tabsIpc';
 import { initClaudeCodeTestEvents } from './claudeCodeTest';
 import { initClaudeOAuthEvents } from './claudeOAuth';
 import { initOpenAIOAuthEvents } from './openaiOAuth';
+import { initIntegrationOAuthEvents } from './integrationOAuth';
 import { initDesktopRelayEvents } from './desktopRelay';
 import { initSullaCloudAuthEvents } from './sullaCloudAuth';
 import { initConversationHistoryIpc } from './conversationHistoryIpc';
@@ -71,6 +72,7 @@ export function initSullaEvents(): void {
   initChatMessagesIpc();
   initClaudeOAuthEvents();
   initOpenAIOAuthEvents();
+  initIntegrationOAuthEvents();
   initClaudeCodeTestEvents();
   initDesktopRelayEvents();
   initSullaCloudAuthEvents();
