@@ -297,6 +297,16 @@ export interface IpcMainInvokeEvents {
   /** OpenAI OAuth flow */
   'openai-oauth:start': () => { success: boolean; error?: string };
 
+  /** Generic integration OAuth flow — runs in main so embedded auth windows (Codex, Grok) can construct BrowserWindow */
+  'integration-oauth:start': (payload: {
+    integrationId: string;
+    providerId:    string;
+    clientId?:     string;
+    clientSecret?: string;
+    accountId?:    string;
+    extraScopes?:  string[];
+  }) => { success: boolean; error?: string };
+
   /** Sulla Cloud account auth (phone OTP / email / Apple) */
   'sulla-cloud:get-status':            () => { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string };
   'sulla-cloud:send-otp':              (phone: string) => { ok: boolean; error?: string; status: { signedIn: boolean; userId: string; activeContractorId: string; phone: string; name: string; contractorCount: number; lastError?: string } };
