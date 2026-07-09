@@ -1782,3 +1782,152 @@
   background: #b91c1c !important;
   box-shadow: 0 0 8px rgba(185, 28, 28, 0.6) !important;
 }
+
+/* ═════════════════════════════════════════════════════════════════
+   ToolQuestion / ToolApproval cards — Light Mode
+   Scoped component styles use translucent dark-theme rgba fills
+   (e.g. rgba(0,0,0,0.18) inputs, faint steel tints) that wash out
+   on the light canvas. Force solid high-contrast surfaces so the
+   cards remain readable when protocol-light is active.
+   ═════════════════════════════════════════════════════════════════ */
+
+/* ToolQuestion */
+.theme-protocol-light .question {
+  background: #ffffff !important;
+  border-color: rgba(80, 150, 179, 0.35) !important;
+  box-shadow: 0 1px 3px rgba(26, 35, 50, 0.06), 0 0 0 1px rgba(80, 150, 179, 0.08) !important;
+}
+
+.theme-protocol-light .question .head {
+  color: #3a7fa0 !important;
+}
+
+.theme-protocol-light .question .head::before {
+  background: #5096b3 !important;
+  color: #ffffff !important;
+}
+
+.theme-protocol-light .question .chip {
+  color: #3a7fa0 !important;
+  border-color: rgba(80, 150, 179, 0.35) !important;
+  background: rgba(80, 150, 179, 0.08) !important;
+}
+
+.theme-protocol-light .question .qtext {
+  color: #1a2332 !important;
+}
+
+.theme-protocol-light .question .opt {
+  background: #eef2f8 !important;
+  border-color: rgba(168, 188, 207, 0.45) !important;
+}
+
+.theme-protocol-light .question .opt:hover:not(:disabled) {
+  background: rgba(80, 150, 179, 0.12) !important;
+  border-color: #5096b3 !important;
+}
+
+.theme-protocol-light .question .opt.picked {
+  background: rgba(80, 150, 179, 0.18) !important;
+  border-color: #5096b3 !important;
+  box-shadow: 0 0 0 1px rgba(80, 150, 179, 0.25) !important;
+}
+
+.theme-protocol-light .question .opt-label {
+  color: #1a2332 !important;
+}
+
+.theme-protocol-light .question .opt-desc {
+  color: #6a7d94 !important;
+}
+
+.theme-protocol-light .question .other {
+  background: #ffffff !important;
+  border-color: rgba(168, 188, 207, 0.5) !important;
+  color: #1a2332 !important;
+}
+
+.theme-protocol-light .question .other:focus {
+  border-color: #5096b3 !important;
+  box-shadow: 0 0 0 2px rgba(80, 150, 179, 0.2) !important;
+}
+
+.theme-protocol-light .question .other::placeholder {
+  color: #94a8bc !important;
+}
+
+.theme-protocol-light .question .submit {
+  background: #5096b3 !important;
+  border-color: #3a7fa0 !important;
+  color: #ffffff !important;
+}
+
+.theme-protocol-light .question .submit:hover:not(:disabled) {
+  background: #3a7fa0 !important;
+  box-shadow: 0 0 14px rgba(80, 150, 179, 0.35) !important;
+}
+
+.theme-protocol-light .question .answer-q {
+  color: #6a7d94 !important;
+}
+
+.theme-protocol-light .question .answer-v {
+  color: #16803c !important;
+}
+
+/* ToolApproval */
+.theme-protocol-light .approval {
+  background: #fffbeb !important;
+  border-color: rgba(180, 83, 9, 0.4) !important;
+  box-shadow: 0 1px 3px rgba(26, 35, 50, 0.06), 0 0 0 1px rgba(180, 83, 9, 0.08) !important;
+}
+
+.theme-protocol-light .approval .head {
+  color: #b45309 !important;
+}
+
+.theme-protocol-light .approval .head::before {
+  background: #b45309 !important;
+  color: #ffffff !important;
+}
+
+.theme-protocol-light .approval .what {
+  color: #1a2332 !important;
+}
+
+.theme-protocol-light .approval .cmd {
+  background: #ffffff !important;
+  border-color: rgba(180, 83, 9, 0.3) !important;
+  color: #1a2332 !important;
+}
+
+.theme-protocol-light .approval .actions .approve {
+  background: #5096b3 !important;
+  border-color: #3a7fa0 !important;
+  color: #ffffff !important;
+}
+
+.theme-protocol-light .approval .actions .approve:hover {
+  background: #3a7fa0 !important;
+  box-shadow: 0 0 14px rgba(80, 150, 179, 0.35) !important;
+}
+
+.theme-protocol-light .approval .actions .deny {
+  background: #ffffff !important;
+  color: #6a7d94 !important;
+  border-color: rgba(168, 188, 207, 0.5) !important;
+}
+
+.theme-protocol-light .approval .actions .deny:hover {
+  color: #b91c1c !important;
+  border-color: #b91c1c !important;
+  background: rgba(185, 28, 28, 0.06) !important;
+}
+
+.theme-protocol-light .approval.approved::after {
+  color: #16803c !important;
+}
+
+.theme-protocol-light .approval.denied::after {
+  color: #b91c1c !important;
+}

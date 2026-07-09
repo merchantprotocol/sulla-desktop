@@ -298,6 +298,18 @@ export class ChatController {
   /** Drains the first queued message if no run is active. */
   drainQueueIfIdle(): void {
     if (isRunning(this.runState.value)) return;
+    // Never drain while a tool_question / tool_approval card is still
+    // waiting on the user. The backend is parked on ApprovalService and
+    // the card is the only surface that can unblock it — kicking off a
+    // new user turn here races the pending card and makes it look like
+    // "ask_user_question never showed up" (the card is scrolled off /
+    // overwritten by the next turn).
+    const hasPendingGate = this.thread.value.messages.some((m) => {
+      if (m.kind === 'tool_question') return (m as ToolQuestionMessage).status === 'pending';
+      if (m.kind === 'tool_approval') return (m as ToolApprovalMessage).decision === 'pending';
+      return false;
+    });
+    if (hasPendingGate) return;
     const [first, ...rest] = this.queue.value;
     if (!first) return;
     this.queue.value = rest;
