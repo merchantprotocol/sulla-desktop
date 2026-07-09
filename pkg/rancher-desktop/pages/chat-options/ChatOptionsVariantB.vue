@@ -29,17 +29,10 @@
         :show-overlay="false"
         :has-messages="false"
         :graph-running="graphRunning"
-        :tts-playing="ttsPlaying"
-        :is-recording="isRecording"
-        :audio-level="audioLevel"
-        :recording-duration="recordingDuration"
-        :voice-configured="voiceConfigured"
         :model-selector="modelSelector"
         @send="$emit('send')"
         @stop="$emit('stop')"
         @primary-action="$emit('primary-action')"
-        @toggle-recording="$emit('toggle-recording')"
-        @stop-tts="$emit('stop-tts')"
       />
     </div>
 
@@ -119,11 +112,6 @@ const props = defineProps<{
   query:                   string;
   loading:                 boolean;
   graphRunning:            boolean;
-  ttsPlaying?:             boolean;
-  isRecording?:            boolean;
-  audioLevel?:             number;
-  recordingDuration?:      string;
-  voiceConfigured?:        boolean;
   modelSelector:           any;
   isFirstChat?:            boolean;
   showGoalsOnboarding?:    boolean;
@@ -135,8 +123,6 @@ const emit = defineEmits<{
   send:                        [];
   stop:                        [];
   'primary-action':            [];
-  'toggle-recording':          [];
-  'stop-tts':                  [];
   pick:                        [mode: string];
   'start-onboarding':          [];
   'start-business-onboarding': [];

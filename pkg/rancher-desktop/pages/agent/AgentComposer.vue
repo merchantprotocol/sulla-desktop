@@ -251,6 +251,16 @@
           </div>
 
           <div class="flex items-center gap-2">
+            <!-- Voice pipeline stage: shows where the round-trip time is going -->
+            <div
+              v-if="voiceStageLabel"
+              class="voice-stage-chip mb-0.5"
+            >
+              <span class="voice-stage-dot" />
+              <span>{{ voiceStageLabel }}</span>
+              <span class="voice-stage-time">{{ stageElapsed }}s</span>
+            </div>
+
             <button
               v-if="queryValue.trim() || pendingAttachments.length > 0"
               type="button"
@@ -300,7 +310,7 @@
                 class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 text-white animate-pulse hover:cursor-pointer transition-colors"
                 aria-label="Stop recording (Ctrl+Shift+V)"
                 title="Stop recording (Ctrl+Shift+V)"
-                @click="emit('toggle-recording')"
+                @click="toggleRecording()"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -324,13 +334,13 @@
 
             <!-- Sulla speaking: speaker icon with animated waves (independent of recording) -->
             <button
-              v-if="hasMessages && ttsPlaying"
+              v-if="hasMessages && isTTSPlaying"
               type="button"
               class="sulla-speaking-btn mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:cursor-pointer transition-colors"
               aria-label="Mute Sulla"
               title="Mute Sulla"
               :disabled="showOverlay"
-              @click="emit('stop-tts')"
+              @click="stopTTS()"
             >
               <svg
                 width="22"
@@ -363,9 +373,10 @@
               </svg>
             </button>
 
-            <!-- Graph running (not TTS, not recording): standard stop button -->
+            <!-- Graph running: standard stop button — independent of TTS so the
+                 user can always stop the run, even while Sulla is speaking -->
             <button
-              v-else-if="hasMessages && graphRunning && !isRecording"
+              v-if="hasMessages && graphRunning && !isRecording"
               type="button"
               class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 text-white disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer dark:bg-red-500 dark:text-white"
               aria-label="Stop"
@@ -391,15 +402,17 @@
               </svg>
             </button>
 
-            <!-- Mic start button: only when idle (not recording, not typing, not running, not playing) and voice is configured -->
+            <!-- Mic start button: available whenever not already recording/typing,
+                 including while the graph runs (speech queues like typed messages).
+                 Hidden during TTS so speaker bleed can't trigger an instant barge-in. -->
             <button
-              v-if="voiceConfigured && !isRecording && !queryValue.trim() && !graphRunning && !ttsPlaying"
+              v-if="voiceConfigured && !isRecording && !queryValue.trim() && !isTTSPlaying"
               type="button"
               class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-content text-page disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer transition-colors"
               aria-label="Voice (Ctrl+Shift+V)"
               title="Start voice mode (Ctrl+Shift+V)"
               :disabled="showOverlay"
-              @click="emit('toggle-recording')"
+              @click="toggleRecording()"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -434,31 +447,54 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
+import { useVoiceState } from '@pkg/composables/voice';
+
 import type { AgentModelSelectorController } from './AgentModelSelectorController';
 
 const props = withDefaults(defineProps<{
-  modelValue:         string;
-  loading:            boolean;
-  showOverlay:        boolean;
-  hasMessages:        boolean;
-  graphRunning:       boolean;
-  ttsPlaying?:        boolean;
-  isRecording?:       boolean;
-  audioLevel?:        number;
-  recordingDuration?: string;
-  voiceConfigured?:   boolean;
-  modelSelector:      AgentModelSelectorController;
-  formClass?:         string;
-  panelClass?:        string;
+  modelValue:    string;
+  loading:       boolean;
+  showOverlay:   boolean;
+  hasMessages:   boolean;
+  graphRunning:  boolean;
+  modelSelector: AgentModelSelectorController;
+  formClass?:    string;
+  panelClass?:   string;
 }>(), {
-  formClass:          'group/composer mx-auto w-full',
-  panelClass:         '',
-  ttsPlaying:         false,
-  isRecording:        false,
-  audioLevel:         0,
-  recordingDuration:  '0:00',
-  voiceConfigured:    false,
+  formClass: 'group/composer mx-auto w-full',
+  panelClass: '',
 });
+
+// Voice state comes from the owning chat page via provide/inject —
+// no props threading. Hosts without a voice session get inert defaults.
+const {
+  isRecording, audioLevel, recordingDuration, isTTSPlaying,
+  pipelineState, voiceConfigured, toggleRecording, stopTTS,
+} = useVoiceState();
+
+// ── Voice pipeline stage chip (latency feedback) ──
+// Shows which leg of the voice round trip time is being spent in.
+const STAGE_LABELS: Partial<Record<string, string>> = {
+  THINKING: 'Thinking',
+  SPEAKING: 'Speaking',
+};
+const stageStart = ref(0);
+const stageNow = ref(0);
+let stageTimer: ReturnType<typeof setInterval> | null = null;
+
+watch(pipelineState, (state) => {
+  stageStart.value = Date.now();
+  stageNow.value = stageStart.value;
+  if (state !== 'IDLE' && !stageTimer) {
+    stageTimer = setInterval(() => { stageNow.value = Date.now() }, 250);
+  } else if (state === 'IDLE' && stageTimer) {
+    clearInterval(stageTimer);
+    stageTimer = null;
+  }
+});
+
+const voiceStageLabel = computed(() => STAGE_LABELS[pipelineState.value] ?? '');
+const stageElapsed = computed(() => ((stageNow.value - stageStart.value) / 1000).toFixed(1));
 
 export interface PendingAttachment {
   name:      string;
@@ -472,8 +508,6 @@ const emit = defineEmits<{
   send:                [];
   stop:                [];
   primaryAction:       [];
-  'toggle-recording':  [];
-  'stop-tts':          [];
 }>();
 
 const composerTextareaEl = ref<HTMLTextAreaElement | null>(null);
@@ -626,7 +660,7 @@ watch(() => props.modelValue, async() => {
 function handleVoiceShortcut(e: KeyboardEvent): void {
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
     e.preventDefault();
-    emit('toggle-recording');
+    void toggleRecording();
   }
 }
 
@@ -639,6 +673,10 @@ onMounted(async() => {
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleVoiceShortcut);
+  if (stageTimer) {
+    clearInterval(stageTimer);
+    stageTimer = null;
+  }
   if (composerMirrorEl) {
     composerMirrorEl.remove();
     composerMirrorEl = null;
@@ -674,6 +712,37 @@ onUnmounted(() => {
 
 @keyframes sullaWavePulse {
   0%, 100% { opacity: 0.2; }
+  50% { opacity: 1; }
+}
+
+/* ── Voice pipeline stage chip ── */
+.voice-stage-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  white-space: nowrap;
+}
+
+.voice-stage-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  animation: stagePulse 1.2s ease-in-out infinite;
+}
+
+.voice-stage-time {
+  color: var(--text-dim);
+}
+
+@keyframes stagePulse {
+  0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
 }
 </style>

@@ -19,9 +19,10 @@
  * Called once per BrowserTabChat instance.
  */
 
-import { ref, readonly, onUnmounted, type Ref } from 'vue';
+import { ref, readonly, watch, onUnmounted, type Ref } from 'vue';
 
 import { TTSPlayerService } from './TTSPlayerService';
+import { logBargeIn } from './VoiceLogger';
 
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -68,6 +69,11 @@ function formatDuration(seconds: number): string {
 // How long silence must persist before we finalize and send (ms)
 const SILENCE_SEND_DELAY = 2000;
 
+// How long the user must speak continuously before we treat it as a
+// barge-in and cut TTS off. Short sounds (coughs, "mm-hm", chair squeaks
+// the VAD flags as speech) should never kill Sulla mid-sentence.
+const BARGE_IN_GRACE_MS = 400;
+
 // ─── Composable ─────────────────────────────────────────────────
 
 export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessionReturn {
@@ -112,6 +118,15 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
       }
     }),
   );
+
+  // A turn that produces a text-only reply never fires playbackStart, so
+  // THINKING would stick forever. Leave THINKING when the graph run ends
+  // without any TTS playing.
+  watch(chatController.graphRunning, (running) => {
+    if (!running && pipelineState.value === 'THINKING' && !isTTSPlaying.value) {
+      pipelineState.value = isRecording.value ? 'LISTENING' : 'IDLE';
+    }
+  });
 
   // ── Transcript state ──
   let interimMessageId: string | null = null;
@@ -212,11 +227,29 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     }
   };
 
-  // ── VAD event handler (for audio level meter only) ──
+  // ── VAD event handler (audio level meter + barge-in) ──
+
+  // Timestamp of the first VAD "speaking" frame while TTS was playing;
+  // 0 when the user is not speaking over Sulla.
+  let bargeInSpeechStart = 0;
 
   const onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
     if (!isRecording.value) return;
     audioLevel.value = Math.round(Math.min(100, data.level * 100));
+
+    // Barge-in: sustained user speech while Sulla is speaking stops TTS.
+    // The grace period keeps brief noises from interrupting playback.
+    if (data.speaking && isTTSPlaying.value) {
+      if (bargeInSpeechStart === 0) {
+        bargeInSpeechStart = Date.now();
+      } else if (Date.now() - bargeInSpeechStart >= BARGE_IN_GRACE_MS) {
+        logBargeIn();
+        ttsPlayer.stop();
+        bargeInSpeechStart = 0;
+      }
+    } else {
+      bargeInSpeechStart = 0;
+    }
   };
 
   // ── Actions ──
