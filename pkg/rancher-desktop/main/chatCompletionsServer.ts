@@ -1144,6 +1144,52 @@ export class ChatCompletionsServer {
         // Accept both { params: { ... } } and flat { action: "upsert", ... } formats
         const body = req.body || {};
         const params = body.params && typeof body.params === 'object' ? body.params : body;
+
+        // Interactive tools (ask_user_question / request_user_input) need a
+        // live chat channel to render their card. ToolExecutor injects
+        // sendChatMessage for in-process agent turns, but the CLI path
+        // (`sulla meta/ask_user_question`) hits this HTTP handler with a
+        // bare tool instance — without injection emitMessage() returns
+        // false and the card never appears in the UI. Wire a best-effort
+        // emitter that targets the active sulla-desktop chat.
+        const interactiveNames = new Set(['ask_user_question', 'request_user_input']);
+        const toolName = String((tool as any)?.name || endpoint || '').trim();
+        if (interactiveNames.has(toolName) && typeof (tool as any).sendChatMessage !== 'function') {
+          try {
+            const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
+            const { getWebSocketClientService } = await import('@pkg/agent/services/WebSocketClientService');
+            const active = GraphRegistry.findActiveChat?.() ?? null;
+            const channel = active?.wsChannel || 'sulla-desktop';
+            const threadId = active?.threadId;
+            const ws = getWebSocketClientService();
+            (tool as any).sendChatMessage = async(
+              content: string,
+              kind = 'progress',
+              extras?: Record<string, unknown>,
+            ): Promise<boolean> => {
+              console.log(
+                `[ChatCompletionsAPI] CLI interactive tool emit — tool="${ toolName }", channel="${ channel }", thread="${ threadId || '(none)' }", kind="${ kind }"`,
+              );
+              return ws.send(channel, {
+                type: 'assistant_message',
+                data: {
+                  content,
+                  role:      'assistant',
+                  kind,
+                  thread_id: threadId,
+                  timestamp: Date.now(),
+                  ...(extras ?? {}),
+                },
+              });
+            };
+            if (active?.state) {
+              try { (tool as any).setState?.(active.state); } catch { /* best-effort */ }
+            }
+          } catch (err) {
+            console.warn('[ChatCompletionsAPI] failed to wire interactive tool chat emit:', err);
+          }
+        }
+
         const result = await tool.call(params);
         return res.json({ success: true, result });
       }

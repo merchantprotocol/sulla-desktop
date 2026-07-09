@@ -26,7 +26,7 @@ export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 export const MIN_TIMEOUT_MS = 5 * 1000;
 export const MAX_TIMEOUT_MS = 30 * 60 * 1000;
 
-const DEFAULT_WS_CHANNEL = 'heartbeat';
+const DEFAULT_WS_CHANNEL = 'sulla-desktop';
 
 /** Clamp a caller-supplied timeout into the allowed band, falling back to
  *  the default when absent or non-numeric. */
@@ -102,10 +102,13 @@ export async function emitQuestionCardViaWs(
   questionId: string,
   questions:  UserQuestion[],
 ): Promise<boolean> {
-  const connectionId = wsChannel || DEFAULT_WS_CHANNEL;
+  // Prefer the caller's channel, then sulla-desktop (the chat the user is
+  // looking at). Never fall back to "heartbeat" — that channel is invisible
+  // in the chat UI and is the classic "question never showed up" failure.
+  const connectionId = (wsChannel && wsChannel.trim()) || DEFAULT_WS_CHANNEL;
   try {
     const ws = getWebSocketClientService();
-    return await ws.send(connectionId, {
+    const sent = await ws.send(connectionId, {
       type: 'assistant_message',
       data: {
         content:   '',
@@ -116,7 +119,18 @@ export async function emitQuestionCardViaWs(
         toolQuestion: { questionId, questions },
       },
     });
-  } catch {
+    if (!sent) {
+      console.warn(
+        `[ask_user_question] emitQuestionCardViaWs failed — channel="${ connectionId }", thread="${ threadId || '(none)' }", questionId="${ questionId }"`,
+      );
+    } else {
+      console.log(
+        `[ask_user_question] question card emitted → channel="${ connectionId }", thread="${ threadId || '(none)' }", questionId="${ questionId }", questions=${ questions.length }`,
+      );
+    }
+    return sent;
+  } catch (err) {
+    console.warn('[ask_user_question] emitQuestionCardViaWs threw:', err);
     return false;
   }
 }

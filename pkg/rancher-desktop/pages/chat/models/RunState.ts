@@ -14,7 +14,7 @@ export type RunState =
   | { phase: 'error'; message: string; at: number };
 
 export const isRunning = (r: RunState): boolean =>
-  r.phase === 'thinking' || r.phase === 'tool' || r.phase === 'streaming';
+  r.phase === 'thinking' || r.phase === 'tool' || r.phase === 'streaming' || r.phase === 'awaiting_approval';
 
 export const canContinue = (r: RunState): boolean =>
   r.phase === 'paused' && r.reason === 'limit';

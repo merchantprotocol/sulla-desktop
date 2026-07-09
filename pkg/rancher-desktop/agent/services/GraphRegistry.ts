@@ -1083,6 +1083,39 @@ export const GraphRegistry = {
 
     return updatedCount;
   },
+
+  /**
+   * Best-effort lookup of the live sulla-desktop chat the user is looking
+   * at. Used by interactive tools (`ask_user_question`, `request_user_input`)
+   * when they are invoked outside a ToolExecutor context (CLI / HTTP) and
+   * need a channel + thread to render their card into.
+   *
+   * Prefers graphs whose wsChannel is `sulla-desktop` and that still look
+   * "alive" (not waitingForUser with a completed cycle). Falls back to the
+   * most recently registered sulla-desktop entry, then any agent graph.
+   */
+  findActiveChat(): { wsChannel: string; threadId: string; state: BaseThreadState } | null {
+    const preferred: Array<{ wsChannel: string; threadId: string; state: BaseThreadState; score: number }> = [];
+    for (const [key, record] of registry.entries()) {
+      const state = record.state;
+      const wsChannel = String(state?.metadata?.wsChannel || '').trim();
+      const threadId = String(state?.metadata?.threadId || key || '').trim();
+      if (!wsChannel || !threadId) continue;
+      // Skip pure subconscious / heartbeat-only graphs — they are not the chat UI.
+      if (wsChannel === 'heartbeat' || wsChannel.startsWith('subconscious')) continue;
+      let score = 0;
+      if (wsChannel === 'sulla-desktop') score += 100;
+      if (!(state.metadata as any)?.cycleComplete) score += 10;
+      if ((state.metadata as any)?.hadUserMessages) score += 5;
+      // Prefer non-sub-agent primary graphs.
+      if (!(state.metadata as any)?.isSubAgent) score += 20;
+      preferred.push({ wsChannel, threadId, state, score });
+    }
+    if (preferred.length === 0) return null;
+    preferred.sort((a, b) => b.score - a.score);
+    const best = preferred[0];
+    return { wsChannel: best.wsChannel, threadId: best.threadId, state: best.state };
+  },
 };
 
 const DEFAULT_AGENT_FALLBACK = 'chat-controller';
