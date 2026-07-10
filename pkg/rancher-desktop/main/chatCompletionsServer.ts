@@ -15,6 +15,13 @@ const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 const API_TOKEN_FILE = 'chat-api-token.json';
 const WS_CHANNEL = 'tasker';
 
+// Shipped proxy defaults for integrations whose upstream API host is fixed.
+// grok: OAuth tokens only work on the grok-cli subscription proxy, never on
+// api.x.ai (separate billing lane) — see GrokService for the full contract.
+const DEFAULT_INTEGRATION_BASE_URLS: Record<string, string> = {
+  grok: 'https://cli-chat-proxy.grok.com',
+};
+
 export class ChatCompletionsServer {
   private app = express();
   private server:            any = null;
@@ -1298,15 +1305,18 @@ export class ChatCompletionsServer {
       const svc = getIntegrationService();
       await svc.initialize();
 
-      // Resolve base_url from the integration's stored credentials
+      // Resolve base_url from the integration's stored credentials, falling
+      // back to the shipped default for integrations whose upstream host is
+      // fixed — fresh installs shouldn't need to hand-enter it.
       const baseUrlValue = await svc.getIntegrationValue(slug, 'base_url', accountId);
-      if (!baseUrlValue?.value) {
+      const resolvedBaseUrl = baseUrlValue?.value || DEFAULT_INTEGRATION_BASE_URLS[slug];
+      if (!resolvedBaseUrl) {
         return res.status(400).json({
           success: false,
           error:   `No base_url configured for integration "${ slug }" account "${ accountId }". Set it via Settings → Integrations.`,
         });
       }
-      const baseUrl = baseUrlValue.value.replace(/\/+$/, '');
+      const baseUrl = resolvedBaseUrl.replace(/\/+$/, '');
 
       // Build the target URL
       const url = new URL(baseUrl + reqPath);
@@ -1322,6 +1332,18 @@ export class ChatCompletionsServer {
         Accept:          'application/json',
         ...extraHeaders,
       };
+
+      // Grok's subscription proxy 426s any request that lacks the grok-cli
+      // identification headers — inject them so proxy callers work without
+      // knowing that contract. Caller-supplied headers win.
+      if (slug === 'grok') {
+        const { grokCliHeaders } = await import('@pkg/agent/languagemodels/GrokService');
+        for (const [k, v] of Object.entries(grokCliHeaders())) {
+          if (!(k in headers)) {
+            headers[k] = v;
+          }
+        }
+      }
 
       // Resolve auth — skip if caller already provided an Authorization header
       if (!headers.Authorization) {
