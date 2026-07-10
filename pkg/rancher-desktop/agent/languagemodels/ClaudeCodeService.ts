@@ -600,6 +600,16 @@ Rules that apply on every turn:
           // Don't emit transient status messages as separate thinking bubbles
           // Tool activities and model thinking will provide feedback
         }, 3000);
+
+        lastStreamActivityAt = Date.now();
+        stallTimer = setInterval(() => {
+          const silentMs = Date.now() - lastStreamActivityAt;
+          if (silentMs < STALL_TIMEOUT_MS) return;
+          stalled = true;
+          stopStallWatchdog();
+          log.warn(`[ClaudeCodeService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing claude (convId=${ convId })`);
+          killSpawn();
+        }, STALL_CHECK_MS);
       });
 
       let stdoutBuffer = '';
@@ -637,23 +647,16 @@ Rules that apply on every turn:
         perf.log(`[ToolTiming] tool=${ started.name } ms=${ ms } resultChars=${ resultChars } convId=${ convId }`);
       };
 
-      const onAbort = () => {
-        stopHeartbeat();
-        // 1) Kill the host-side limactl process. This closes the SSH-style
-        //    session to the VM. With `exec` in the inner shell (see above),
-        //    the remote claude usually receives SIGHUP and dies.
-        try { proc.kill('SIGTERM') } catch { /* already dead */ }
-
-        // 2) Belt-and-suspenders: explicitly kill any lingering claude
-        //    process inside the VM. Without a TTY, SSH signal propagation
-        //    isn't guaranteed — fire a follow-up pkill so an orphaned
-        //    claude doesn't keep burning tokens after the user hits stop.
-        //    Safe because the VM only ever runs claude via this service
-        //    (user-level claude lives on the host, not in the VM).
+      // Kill any lingering claude process inside the VM. Without a TTY, SSH
+      // signal propagation isn't guaranteed — fire a follow-up pkill so an
+      // orphaned claude doesn't keep burning tokens after the user hits stop.
+      // Safe because the VM only ever runs claude via this service
+      // (user-level claude lives on the host, not in the VM).
+      const killRemoteClaude = (sig: 'TERM' | 'KILL') => {
         try {
           const killProc = childProcess.spawn(
             limactlPath,
-            ['shell', '0', '--', 'pkill', '-TERM', '-f', 'claude -p'],
+            ['shell', '0', '--', 'pkill', `-${ sig }`, '-f', 'claude -p'],
             {
               env:      { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
               stdio:    'ignore',
@@ -664,6 +667,53 @@ Rules that apply on every turn:
         } catch (err) {
           log.log(`[ClaudeCodeService] Remote pkill failed: ${ (err as Error)?.message ?? err }`);
         }
+      };
+
+      // Kill the spawn on both sides of the SSH boundary:
+      //   1) SIGTERM the host-side limactl process — closes the SSH-style
+      //      session; with `exec` in the inner shell (see above) the remote
+      //      claude usually receives SIGHUP and dies.
+      //   2) pkill inside the VM (see killRemoteClaude).
+      //   3) Escalate to SIGKILL after a grace period — a limactl wedged in
+      //      the SSH mux can ignore SIGTERM entirely, which is exactly the
+      //      state that strands a hung run.
+      const killSpawn = () => {
+        try { proc.kill('SIGTERM') } catch { /* already dead */ }
+        killRemoteClaude('TERM');
+        const escalate = setTimeout(() => {
+          if (proc.exitCode === null) {
+            try { proc.kill('SIGKILL') } catch { /* already dead */ }
+            killRemoteClaude('KILL');
+          }
+        }, 5_000);
+        escalate.unref?.();
+      };
+
+      // ── Stall watchdog ──────────────────────────────────────────────
+      // A claude process whose upstream connection dies mid-run can sit
+      // silent forever (observed: 7.7h), and wedged spawns block later ones
+      // from even delivering their prompt — the whole backend goes dark.
+      // Watchdog scope is THIS CLI child process only, never agent-level
+      // execution: recall agents and long runs are unbounded by design.
+      // Liveness = any stdout/stderr byte, so extended thinking and long
+      // in-CLI tool runs (10 min Bash default) reset the clock; only a
+      // completely dead stream trips the kill.
+      const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
+      const STALL_CHECK_MS = 30 * 1_000;
+      let lastStreamActivityAt = Date.now();
+      let stalled = false;
+      let stallTimer: NodeJS.Timeout | null = null;
+      const stopStallWatchdog = () => {
+        if (stallTimer) {
+          clearInterval(stallTimer);
+          stallTimer = null;
+        }
+      };
+
+      const onAbort = () => {
+        stopHeartbeat();
+        stopStallWatchdog();
+        killSpawn();
       };
       if (options.signal) {
         if (options.signal.aborted) onAbort();
@@ -963,6 +1013,7 @@ Rules that apply on every turn:
       };
 
       proc.stdout.on('data', (chunk) => {
+        lastStreamActivityAt = Date.now();
         stdoutBuffer += chunk.toString('utf-8');
         const lines = stdoutBuffer.split('\n');
         stdoutBuffer = lines.pop() ?? '';
@@ -970,6 +1021,7 @@ Rules that apply on every turn:
       });
 
       proc.stderr.on('data', (chunk) => {
+        lastStreamActivityAt = Date.now();
         const text = chunk.toString('utf-8');
         stderrBuffer += text;
         const trimmed = text.trim();
@@ -984,14 +1036,24 @@ Rules that apply on every turn:
 
       proc.on('error', (err) => {
         stopHeartbeat();
+        stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
         reject(err);
       });
 
       proc.on('close', (code) => {
         stopHeartbeat();
+        stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+
+        // Stall-watchdog kill — surface a clear, retryable error instead of
+        // falling through to the generic no-output message.
+        if (stalled) {
+          const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
+          reject(new Error(`Claude Code stalled — no stream activity for ${ silentMin } minutes, so the run was terminated. Please try again.`));
+          return;
+        }
 
         // Session lock collision — drop the cached id and retry once with a
         // fresh session so the user doesn't see a dead-end error.
