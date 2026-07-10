@@ -51,12 +51,12 @@ export class OpenAICompatibleService extends BaseLanguageModel {
    * Send request to remote provider with retry + local LLM fallback.
    */
   protected async sendRawRequest(messages: ChatMessage[], options: any): Promise<any> {
-    const endpoint = ModelDetectionService.getEndpoint(this.model);
+    const endpoint = this.endpointFor(this.model);
     const url = `${ this.baseUrl }${ endpoint }`;
     let body = this.buildRequestBody(messages, options);
 
     // Transform request body for /responses API (uses 'input' instead of 'messages')
-    if (ModelDetectionService.usesResponsesAPI(this.model)) {
+    if (this.usesResponsesAPIFor(this.model)) {
       body = this.transformToResponsesAPI(body);
     }
     const conversationId = typeof options?.conversationId === 'string' ? options.conversationId : undefined;
@@ -122,7 +122,13 @@ export class OpenAICompatibleService extends BaseLanguageModel {
           throw new Error(`HTTP ${ res.status }: ${ text || res.statusText }`);
         }
 
-        const rawResponse = await res.json();
+        // The /responses API returns an `output` item array instead of
+        // `choices` — normalize to chat-completions shape so the empty-response
+        // detector below and normalizeResponse() both keep working.
+        const rawJson = await res.json();
+        const rawResponse = this.usesResponsesAPIFor(this.model)
+          ? this.responsesToChatShape(rawJson)
+          : rawJson;
 
         // Detect empty completions — provider returned 200 but no usable content
         const choice = rawResponse?.choices?.[0];
@@ -170,12 +176,12 @@ export class OpenAICompatibleService extends BaseLanguageModel {
     messages: ChatMessage[],
     options: any,
   ): Promise<Response | null> {
-    const endpoint = ModelDetectionService.getEndpoint(this.model);
+    const endpoint = this.endpointFor(this.model);
     const url = `${ this.baseUrl }${ endpoint }`;
     let body = this.buildRequestBody(messages, options);
 
     // Transform request body for /responses API (uses 'input' instead of 'messages')
-    if (ModelDetectionService.usesResponsesAPI(this.model)) {
+    if (this.usesResponsesAPIFor(this.model)) {
       body = this.transformToResponsesAPI(body);
     }
 
@@ -249,6 +255,13 @@ export class OpenAICompatibleService extends BaseLanguageModel {
   ): Promise<NormalizedResponse> {
     if (!response.body) {
       throw new Error('Response has no body for streaming');
+    }
+
+    // The /responses API streams typed events (response.output_text.delta,
+    // response.output_item.done, response.completed) rather than
+    // chat-completions delta chunks — route to the dedicated parser.
+    if (this.usesResponsesAPIFor(this.model)) {
+      return this.parseResponsesStream(response, callbacks, signal);
     }
 
     let content = '';
@@ -376,6 +389,216 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         tool_calls:         toolCalls.length > 0 ? toolCalls : undefined,
         finish_reason:      this.normalizeFinishReason(finishReason),
         reasoning:          reasoning.trim() || undefined,
+        rawProviderContent,
+      },
+    };
+  }
+
+  /**
+   * Which endpoint path a model uses. Defaults to name-based detection;
+   * providers whose endpoint depends on auth mode rather than model name
+   * (e.g. Grok's subscription proxy) override this.
+   */
+  protected endpointFor(model: string): string {
+    return ModelDetectionService.getEndpoint(model);
+  }
+
+  /**
+   * Whether requests/responses for a model use the /responses API shape.
+   * Kept as an instance hook for the same reason as endpointFor().
+   */
+  protected usesResponsesAPIFor(model: string): boolean {
+    return ModelDetectionService.usesResponsesAPI(model);
+  }
+
+  /**
+   * Convert a non-streaming /responses API payload into chat-completions
+   * shape ({ choices, usage }) so the rest of the pipeline —
+   * empty-completion detection, normalizeResponse(), conversation logging —
+   * needs no knowledge of the Responses API.
+   */
+  protected responsesToChatShape(raw: any): any {
+    // Already chat shape (or unrecognizable) — pass through untouched.
+    if (!raw || raw.choices) {
+      return raw;
+    }
+
+    const output = Array.isArray(raw.output) ? raw.output : [];
+    const textParts: string[] = [];
+    let reasoning = '';
+    const toolCalls: any[] = [];
+
+    for (const item of output) {
+      if (item?.type === 'message' && Array.isArray(item.content)) {
+        for (const block of item.content) {
+          if (block?.type === 'output_text' && typeof block.text === 'string') {
+            textParts.push(block.text);
+          } else if (block?.type === 'refusal' && typeof block.refusal === 'string') {
+            textParts.push(block.refusal);
+          }
+        }
+      } else if (item?.type === 'function_call') {
+        toolCalls.push({
+          id:       item.call_id ?? item.id,
+          type:     'function',
+          function: {
+            name:      item.name,
+            arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments ?? {}),
+          },
+        });
+      } else if (item?.type === 'reasoning' && Array.isArray(item.summary)) {
+        reasoning += item.summary.map((s: any) => (typeof s?.text === 'string' ? s.text : '')).join('\n');
+      }
+    }
+
+    // Some servers also send the convenience `output_text` aggregate.
+    const content = textParts.join('') || (typeof raw.output_text === 'string' ? raw.output_text : '');
+    const finishReason = toolCalls.length > 0
+      ? 'tool_calls'
+      : raw.incomplete_details?.reason === 'max_output_tokens' ? 'length' : 'stop';
+
+    return {
+      id:      raw.id,
+      model:   raw.model,
+      choices: [{
+        message: {
+          content,
+          ...(reasoning.trim() ? { reasoning: reasoning.trim() } : {}),
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        },
+        finish_reason: finishReason,
+      }],
+      usage: {
+        prompt_tokens:     raw.usage?.input_tokens ?? 0,
+        completion_tokens: raw.usage?.output_tokens ?? 0,
+        total_tokens:      raw.usage?.total_tokens ??
+          ((raw.usage?.input_tokens ?? 0) + (raw.usage?.output_tokens ?? 0)),
+      },
+    };
+  }
+
+  /**
+   * Parse a /responses API SSE stream into token callbacks + NormalizedResponse.
+   *
+   * Event types handled (identified via the JSON `type` field, falling back
+   * to the SSE `event:` name): response.output_text.delta,
+   * response.reasoning_text.delta / response.reasoning_summary_text.delta,
+   * response.output_item.done (function calls), response.completed /
+   * response.incomplete (usage + finish), response.failed / error.
+   */
+  protected async parseResponsesStream(
+    response: Response,
+    callbacks: StreamCallbacks,
+    signal?: AbortSignal,
+  ): Promise<NormalizedResponse> {
+    if (!response.body) {
+      throw new Error('Response has no body for streaming');
+    }
+
+    let content = '';
+    let reasoning = '';
+    let finishReason: string | undefined;
+    const toolCalls: { id?: string; name: string; args: any }[] = [];
+    let promptTokens = 0;
+    let completionTokens = 0;
+
+    for await (const event of readSSEEvents(response.body, signal)) {
+      if (event.data === '[DONE]') {
+        break;
+      }
+
+      let parsed: any;
+
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        continue;
+      }
+
+      const type = parsed.type ?? event.event;
+
+      switch (type) {
+      case 'response.output_text.delta':
+        if (typeof parsed.delta === 'string') {
+          content += parsed.delta;
+          callbacks.onToken(parsed.delta);
+        }
+        break;
+
+      case 'response.reasoning_text.delta':
+      case 'response.reasoning_summary_text.delta':
+        if (typeof parsed.delta === 'string') {
+          reasoning += parsed.delta;
+        }
+        break;
+
+      case 'response.output_item.done': {
+        const item = parsed.item;
+
+        if (item?.type === 'function_call') {
+          let args: any = {};
+
+          try {
+            args = JSON.parse(item.arguments || '{}');
+          } catch {
+            args = item.arguments || {};
+          }
+          toolCalls.push({ id: item.call_id ?? item.id, name: item.name, args });
+        }
+        break;
+      }
+
+      case 'response.completed':
+      case 'response.incomplete': {
+        const usage = parsed.response?.usage;
+
+        if (usage) {
+          promptTokens = usage.input_tokens ?? promptTokens;
+          completionTokens = usage.output_tokens ?? completionTokens;
+        }
+        finishReason = type === 'response.incomplete'
+          ? 'length'
+          : toolCalls.length > 0 ? 'tool_calls' : 'stop';
+        break;
+      }
+
+      case 'response.failed':
+        throw new Error(`Responses stream failed: ${ parsed.response?.error?.message ?? 'unknown error' }`);
+
+      case 'error':
+        throw new Error(`Responses stream error: ${ parsed.message ?? event.data }`);
+      }
+    }
+
+    // Build rawProviderContent (Anthropic-style blocks) when tools were called,
+    // mirroring the chat-completions stream parser above.
+    let rawProviderContent: any;
+
+    if (toolCalls.length > 0) {
+      const blocks: any[] = [];
+
+      if (content.trim()) {
+        blocks.push({ type: 'text', text: content.trim() });
+      }
+      for (const tc of toolCalls) {
+        blocks.push({
+          type: 'tool_use', id: tc.id, name: tc.name, input: tc.args ?? {},
+        });
+      }
+      rawProviderContent = blocks;
+    }
+
+    return {
+      content:  content.trim(),
+      metadata: {
+        tokens_used:       promptTokens + completionTokens,
+        time_spent:        0, // filled by chatStream()
+        prompt_tokens:     promptTokens,
+        completion_tokens: completionTokens,
+        model:             this.model,
+        tool_calls:        toolCalls.length > 0 ? toolCalls : undefined,
+        finish_reason:     this.normalizeFinishReason(finishReason),
+        reasoning:         reasoning.trim() || undefined,
         rawProviderContent,
       },
     };
