@@ -36,7 +36,7 @@ function isPrimaryChatConversation(conversationId: string): boolean {
   return typeof conversationId === 'string' && conversationId.startsWith('thread_');
 }
 
-function deriveMessageId(conversationId: string, role: string, content: string, ts: string): string {
+export function deriveMessageId(conversationId: string, role: string, content: string, ts: string): string {
   // Deterministic id so a repeated logMessage call can't duplicate the row.
   const h = crypto
     .createHash('sha1')
@@ -55,6 +55,14 @@ interface MirrorInput {
   role:           string;
   content:        string;
   ts:             string;
+  /**
+   * Explicit message id. When the turn already has an identity on another
+   * device (mobile inserts its user turn locally before relaying it), writing
+   * under that same id lets ON CONFLICT dedup collapse the copies everywhere
+   * — local, cloud, and the other device — instead of the same logical turn
+   * living under two different row ids. Omitted → derived content-hash id.
+   */
+  id?:            string;
 }
 
 export async function mirrorMessageToClaudeMessages(input: MirrorInput): Promise<void> {
@@ -102,7 +110,7 @@ async function writeTurnToSyncLog(input: MirrorInput): Promise<void> {
 
   const preview = truncate(content, 100);
   const title = truncate(content, 60);
-  const msgId = deriveMessageId(conversationId, role, content, ts);
+  const msgId = input.id || deriveMessageId(conversationId, role, content, ts);
 
   try {
     // Ensure a conversation row exists (idempotent). The title is only set

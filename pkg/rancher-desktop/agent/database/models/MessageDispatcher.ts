@@ -1198,6 +1198,7 @@ const TOOL_VERB_MAP: Record<string, string> = {
   shell:                       'Running',
   bash:                        'Running',
   run_command:                 'Running',
+  exechost:                    'Running on host',
   // Search
   file_search:                 'Searching',
   // Git / GitHub

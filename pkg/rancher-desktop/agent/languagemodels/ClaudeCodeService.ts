@@ -728,6 +728,35 @@ Rules that apply on every turn:
         try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
       };
 
+      // Extended-thinking passthrough. thinking_delta events used to be
+      // silently dropped, so the longest "nothing is happening" stretches of
+      // a turn (pure reasoning, no tools) showed zero signal in the thinking
+      // bubble or on the mobile relay. Accumulate deltas and emit throttled
+      // 💭 snippets at sentence/newline boundaries — at most one per
+      // THINKING_EMIT_MS, each capped so the phone's one-line status stays
+      // readable.
+      const THINKING_EMIT_MS = 1200;
+      const THINKING_MAX_SNIPPET = 220;
+      let thinkingBuf = '';
+      let lastThinkingEmitAt = 0;
+      const flushThinking = (force = false) => {
+        const nowMs = Date.now();
+        if (!force && nowMs - lastThinkingEmitAt < THINKING_EMIT_MS) return;
+        let cut = thinkingBuf.length;
+        if (!force) {
+          // Emit up to the last sentence/newline boundary; hold the tail for
+          // the next tick so snippets read as complete thoughts.
+          const boundary = thinkingBuf.search(/[.!?\n][^.!?\n]*$/);
+          if (boundary < 0) return;
+          cut = boundary + 1;
+        }
+        const snippet = thinkingBuf.slice(0, cut).replace(/\s+/g, ' ').trim();
+        thinkingBuf = thinkingBuf.slice(cut);
+        if (!snippet) return;
+        lastThinkingEmitAt = nowMs;
+        emitActivity(`💭 ${ snippet.length > THINKING_MAX_SNIPPET ? `${ snippet.slice(0, THINKING_MAX_SNIPPET - 1) }…` : snippet }`);
+      };
+
       // File patches we've already surfaced this turn. Keyed by
       // `${name}:${file_path}:${hash}` so the same edit fired via both
       // content_block_stop and the whole-message assistant event only
@@ -818,6 +847,14 @@ Rules that apply on every turn:
             return;
           }
 
+          // Thinking deltas → live reasoning trace (throttled, see flushThinking)
+          if (ev.type === 'content_block_delta' && ev.delta?.type === 'thinking_delta' && typeof ev.delta.thinking === 'string') {
+            stopHeartbeat();
+            thinkingBuf += ev.delta.thinking;
+            flushThinking();
+            return;
+          }
+
           // Tool use block starting → emit a short activity message. Input
           // isn't filled in yet here for partial streaming, so the message
           // starts generic and content_block_stop below refines it.
@@ -845,6 +882,13 @@ Rules that apply on every turn:
           // Thinking block starting → stop the heartbeat
           if (ev.type === 'content_block_start' && ev.content_block?.type === 'thinking') {
             stopHeartbeat();
+            return;
+          }
+
+          // Thinking block finished → flush whatever reasoning remains so the
+          // last thought isn't stranded below the boundary/throttle gates.
+          if (ev.type === 'content_block_stop' && ev.content_block?.type === 'thinking') {
+            flushThinking(true);
             return;
           }
         }
