@@ -28,6 +28,35 @@ sulla meta/exec '{
 - Long-running commands keep running even on timeout — child processes aren't killed.
 - This is the dispatcher for **every** other CLI tool: `sulla browser/tab '...'` actually runs as `exec({ command: "sulla browser/tab '...'" })`.
 
+### `meta/exechost` — Host shell (LAST RESORT ONLY)
+```bash
+sulla meta/exechost '{
+  "command": "open -a Docker",
+  "cwd":     "/Users/jonathonbyrdziak",
+  "timeout": 60000
+}'
+```
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `command` (or `cmd`) | required | Shell command. Runs on the **host macOS**, not Lima. |
+| `cwd` | none | Absolute working dir on the host |
+| `timeout` | 60000 (1 min) | ms |
+| `stdin` | none | Piped to the command |
+
+**VM-first rule (non-negotiable):**
+- Everyday work stays in the Lima VM via regular `exec` / `file_search` / `read_file` / `write_file`.
+- The host home directory is mounted into the VM at the **same absolute path**, so project files, installs, builds, tests, and sulla CLI calls do **not** need host execution.
+- Use `exechost` **only** when the parent host MUST be used:
+  - Host-only binaries / GUI apps (e.g. macOS app bundles under `/Applications`)
+  - Host Docker Desktop or other host-only daemons unavailable inside Lima
+  - User-installed host tools that truly cannot be installed or used in the VM
+  - Explicit user request to run something on the host
+- Do **not** use `exechost` for routine search/edit/build/test just because files live under the host home path.
+- Prefer reaching host-side services from inside the VM at gateway IP `192.168.5.2` when network access is enough.
+- Requires Preferences → Application → Administrative Access → "Allow access to the host machine". Fails closed when disabled.
+- Prefer `exechost` over AppleScript→Terminal when host execution is truly required (silent, no Terminal window).
+
 ### `meta/browse_tools` — Discover tools
 ```bash
 sulla meta/browse_tools '{"category":"github"}'
@@ -189,7 +218,9 @@ sulla observation/add_observational_memory '{"priority":"high","content":"Twenty
 ## Hard rules
 
 - **Never call CLI tools without wrapping in `exec`.** Browse_tools output is documentation, not execution.
-- **`exec` runs in Lima, not on host.** Don't expect host-only paths to work (Mac App bundles, /Applications, etc. — go through AppleScript).
+- **`exec` runs in Lima, not on host.** Default to it for everyday work. Home files are mounted into the VM at the same path.
+- **`exechost` is LAST RESORT.** Use only when the parent host MUST be used (host-only binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or explicit user request). Never for routine search/edit/build/test.
+- **Prefer VM → host network (`192.168.5.2`) over host shell** when you only need to reach a host-side service.
 - **`write_file` is home-dir only.** Don't attempt to write into `/tmp/`, `/etc/`, or anywhere outside `~`. Tested and confirmed: returns "Write operations are restricted to the home directory" otherwise.
 - **Observational memory is finite.** Don't fill it with verbose status updates — save only durable, surprising, or non-obvious facts.
 - **`browse_tools` is the source of truth for tool existence.** When in doubt, check it before calling. Don't hallucinate tool names.

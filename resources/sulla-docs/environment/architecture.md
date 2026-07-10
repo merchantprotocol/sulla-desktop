@@ -70,6 +70,8 @@ All function containers mount `~/sulla/functions/` read-only.
 
 **`sulla` CLI** lives at `/usr/local/bin/sulla` inside Lima. Always invoke via `exec({ command: "sulla ..." })`.
 
+**VM-first execution:** Agents should keep everyday shell work inside Lima via `exec`. Use `meta/exechost` only when the parent host MUST be used (host-only apps/daemons). Home is mounted into Lima at the same path, so host project files are already reachable without leaving the sandbox.
+
 ---
 
 ## Vue Renderer

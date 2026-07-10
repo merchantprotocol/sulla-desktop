@@ -12,8 +12,9 @@ sulla <category> --help
 
 ---
 
-## meta — system foundation + workflow execution (13 tools)
-- `sulla meta/exec` — Run shell commands inside the Lima VM (root, 2-min default timeout, 160KB output cap)
+## meta — system foundation + workflow execution (14 tools)
+- `sulla meta/exec` — Run shell commands inside the Lima VM (root, 2-min default timeout, 160KB output cap) — **default for everyday work**
+- `sulla meta/exechost` — LAST RESORT host-macOS shell (only when parent host MUST be used; gated by hostAccess)
 - `sulla meta/browse_tools` — Discover tools by category or keyword (returns docs, not executions)
 - `sulla meta/file_search` — Full-text (BM25) keyword search across files
 - `sulla meta/read_file` — Read file with optional line range

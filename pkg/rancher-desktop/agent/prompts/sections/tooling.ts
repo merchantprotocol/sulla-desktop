@@ -130,8 +130,10 @@ Sulla Desktop tools are ALWAYS preferred over generic Claude Code tools. When Su
 - ✅ ALWAYS: \`exec({ command: "sulla <category>/<tool> '...'" })\` for CLI tools
 - ❌ NEVER: \`execute_workflow\` for CLI tools — it only handles named Sulla workflows
 
-**Host Command Execution (when host access is enabled):**
-- ✅ ALWAYS: \`sulla meta/exechost '{"command":"...","cwd":"..."}'\` — silent, output returned inline, full login-shell PATH
+**Host Command Execution (rare — host MUST be required):**
+- ✅ DEFAULT: regular \`exec\` / VM sandbox for everyday work (search, read, edit, install, build, test, sulla CLI). Home files are already mounted into the VM.
+- ✅ ONLY when the parent host is truly required: \`sulla meta/exechost '{"command":"...","cwd":"..."}'\` — silent, output returned inline, full login-shell PATH
+- ❌ NEVER use \`exechost\` for routine tasks that work inside the VM
 - ❌ NEVER: \`sulla applescript/applescript_execute\` with \`target_app: "Terminal"\` — pops visible Terminal windows`;
 
   return {
