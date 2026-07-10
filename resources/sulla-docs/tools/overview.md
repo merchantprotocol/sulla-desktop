@@ -43,6 +43,9 @@ RIGHT (for an actual workflow):
 ### Never hardcode credentials
 Always resolve from vault. Never put API keys in code or prompts.
 
+### `exechost` is last resort, not everyday shell
+Default to regular `exec` (Lima VM) for search, edit, install, build, test, and sulla CLI. The host home directory is mounted into the VM at the same path. Use `meta/exechost` only when the parent host MUST be used (host-only apps/daemons, tools unavailable in the VM, or explicit user request). Prefer VM network access to host services at `192.168.5.2` when that is enough.
+
 ### `browse_tools` returns strings, not executions
 `browse_tools` lists tools — it does not run them. Wrap the returned command in `exec()` to actually invoke it.
 
@@ -52,7 +55,7 @@ Always resolve from vault. Never put API keys in code or prompts.
 
 | Category | Tools | Primary Use |
 |----------|-------|------------|
-| `meta` | exec, browse_tools, file_search, read_file, write_file, add_observational_memory, remove_observational_memory | System, file ops, tool discovery |
+| `meta` | exec, exechost (last resort), browse_tools, file_search, read_file, write_file, request_user_input, workflow helpers | System, file ops, tool discovery |
 | `browser` | tab, screenshot, eval_js, snapshot, text, form, click, fill, scroll, manage_cookies, background_browse | Web automation |
 | `github` | git_push, git_pull, git_commit, git_add, git_status, git_log, git_diff, git_branch, github_create_pr, github_create_issue | Git & GitHub |
 | `function` | function_list, function_run | Custom function execution |

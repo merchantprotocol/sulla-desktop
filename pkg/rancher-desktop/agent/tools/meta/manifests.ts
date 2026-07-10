@@ -30,7 +30,7 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'exechost',
-    description: 'Run a shell command directly on the HOST macOS machine — NOT inside the Lima VM. Uses the user\'s login shell (/bin/zsh or /bin/bash) so PATH includes Homebrew, nvm, rbenv, and any other user-installed tools. Output is returned directly to the agent — no Terminal window opens. Requires "Allow access to the host machine" to be enabled in Preferences → Application → Administrative Access. Use this instead of the AppleScript→Terminal bridge whenever you need silent host execution.',
+    description: 'LAST RESORT host shell — runs a command on the HOST macOS machine, NOT the Lima VM. Default to regular exec (VM sandbox) for everyday work; home files are already mounted into the VM. Use exechost ONLY when the parent host MUST be used (host-only binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or explicit user request). Uses the user\'s login shell (/bin/zsh or /bin/bash) so PATH includes Homebrew/nvm/rbenv. Silent output, no Terminal window. Requires "Allow access to the host machine" in Preferences → Application → Administrative Access. Prefer this over AppleScript→Terminal when host execution is truly required.',
     category:    'meta',
     schemaDef:   {
       command: { type: 'string', optional: true, description: 'The exact shell command to run on the host' },

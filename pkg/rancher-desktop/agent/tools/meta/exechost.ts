@@ -3,17 +3,23 @@ import { runCommand } from '../util/CommandRunner';
 import { HOST_ACCESS_DISABLED_MESSAGE, isHostAccessEnabled } from '../util/hostAccess';
 
 /**
- * ExecHost — runs a shell command directly on the host macOS machine,
- * NOT inside the Lima VM. Uses the user's login shell so that PATH
- * includes Homebrew, nvm, rbenv, etc. — any tool the user has installed.
+ * ExecHost — LAST RESORT shell on the host macOS machine (NOT the Lima VM).
  *
+ * Everyday work must stay in the VM via the regular `exec` tool. The host
+ * home directory is mounted into Lima at the same path, so project files,
+ * installs, builds, tests, and sulla CLI calls do not need host execution.
+ * Use this tool only when the parent host MUST be used (host-only
+ * binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or
+ * an explicit user request). Prefer reaching host services from the VM at
+ * gateway IP 192.168.5.2 when that is enough.
+ *
+ * Uses the user's login shell so PATH includes Homebrew, nvm, rbenv, etc.
  * Gated by application.hostAccess (Preferences → Application →
  * Administrative Access → "Allow access to the host machine"). Fails
  * closed if that setting is off.
  *
- * Use this instead of the AppleScript→Terminal bridge whenever you need
- * to run host commands silently — no Terminal window pops up, output is
- * returned directly to the agent.
+ * Prefer this over the AppleScript→Terminal bridge when host execution is
+ * truly required — no Terminal window pops up; output returns inline.
  */
 export class ExecHostWorker extends BaseTool {
   name = '';
