@@ -92,6 +92,16 @@ export async function scribeRelayTurn(input: MirrorInput): Promise<void> {
   await writeTurnToSyncLog(input);
 }
 
+export async function claudeMessageExists(id: string): Promise<boolean> {
+  if (!id) return false;
+  const rows = await postgresClient.query(
+    'SELECT 1 FROM claude_messages WHERE id = $1 LIMIT 1',
+    [id],
+  );
+
+  return rows.length > 0;
+}
+
 async function writeTurnToSyncLog(input: MirrorInput): Promise<void> {
   const { conversationId, role, content, ts } = input;
 

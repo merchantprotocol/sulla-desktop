@@ -34,7 +34,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
-import { deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
+import { claudeMessageExists, deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -414,7 +414,12 @@ class DesktopRelayClient {
       // channel — BackendGraphWebSocketService.handleChannelMessage handles
       // stop_run by aborting the active agent run (which propagates through
       // ClaudeCodeService → limactl kill + in-VM claude pkill).
-      const conversationId = msg.conversationId ?? this.currentRoom ?? '__default__';
+      const conversationId = msg.conversationId;
+      if (!conversationId) {
+        console.warn('[DesktopRelay] Rejecting cancel without conversationId');
+        this.sendMissingConversationError(msg.userMessageId);
+        return;
+      }
       console.log(`[DesktopRelay] Cancel received for conversationId=${ conversationId }`);
       const wsService = getWebSocketClientService();
       wsService.send(MOBILE_RELAY_CHANNEL, {
@@ -429,7 +434,7 @@ class DesktopRelayClient {
       // Ack back to mobile so it knows the run ended without waiting for
       // `done` (which may never arrive after an abort). The mobile session
       // socket stays open — this is not a close signal.
-      this.send({ type: 'stopped' });
+      this.sendChatFrame(conversationId, { type: 'stopped' });
       return;
     }
 
@@ -439,10 +444,15 @@ class DesktopRelayClient {
       const lastUser = (msg.messages ?? []).slice().reverse().find((m: any) => m.role === 'user');
       const content = (lastUser?.content ?? '').trim();
       if (!content) return;
-      const conversationId = msg.conversationId ?? this.currentRoom ?? undefined;
+      const conversationId = msg.conversationId;
+      if (!conversationId) {
+        console.warn('[DesktopRelay] Rejecting inject without conversationId');
+        this.sendMissingConversationError(msg.userMessageId);
+        return;
+      }
       console.log(`[DesktopRelay] Inject received for conversationId=${ conversationId ?? '(none)' }`);
       // Injected mid-run turns are part of the conversation record too.
-      this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
+      await this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
       const wsService = getWebSocketClientService();
       wsService.send(MOBILE_RELAY_CHANNEL, {
         type:      'inject_message',
@@ -480,8 +490,20 @@ class DesktopRelayClient {
    */
   private async handleChatRequest(msg: IncomingMessage) {
     const messages = msg.messages ?? [];
-    const conversationId = msg.conversationId ?? this.currentRoom ?? undefined;
+    const conversationId = msg.conversationId;
     console.log(`[DesktopRelay] Chat request — ${ messages.length } messages, conversationId=${ conversationId ?? '(none)' }`);
+
+    if (!conversationId) {
+      console.warn('[DesktopRelay] Rejecting chat without conversationId');
+      this.sendMissingConversationError(msg.userMessageId);
+      return;
+    }
+
+    if (!msg.userMessageId) {
+      console.warn(`[DesktopRelay] Rejecting chat for conversationId=${ conversationId } without userMessageId`);
+      this.sendChatFrame(conversationId, { type: 'error', reason: 'missing_user_message_id' });
+      return;
+    }
 
     // Extract the user prompt from the incoming frame. The agent maintains
     // its own conversation state keyed by threadId; we only need the fresh
@@ -492,7 +514,13 @@ class DesktopRelayClient {
     const content = (lastUser?.content ?? '').trim();
     if (!content) {
       console.warn('[DesktopRelay] Chat request had no user content; ignoring');
-      this.send({ type: 'error', reason: 'empty_user_message' });
+      this.sendChatFrame(conversationId, { type: 'error', reason: 'empty_user_message', userMessageId: msg.userMessageId });
+      return;
+    }
+
+    if (await claudeMessageExists(msg.userMessageId)) {
+      console.log(`[DesktopRelay] Duplicate mobile chat ignored — conversationId=${ conversationId }, userMessageId=${ msg.userMessageId }`);
+      this.sendChatFrame(conversationId, { type: 'ack', userMessageId: msg.userMessageId, duplicate: true });
       return;
     }
 
@@ -501,7 +529,11 @@ class DesktopRelayClient {
     // Scribe the user turn FIRST — the sync log is the authoritative record,
     // and the turn must survive even if the agent dispatch or the socket
     // fails right after this point.
-    this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
+    await this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
+
+    // ACK after the user turn is persisted so mobile can clear its outbox
+    // without risking a socket-only acknowledgement.
+    this.sendChatFrame(conversationId, { type: 'ack', userMessageId: msg.userMessageId });
 
     const wsService = getWebSocketClientService();
     wsService.send(MOBILE_RELAY_CHANNEL, {
@@ -518,20 +550,14 @@ class DesktopRelayClient {
       timestamp: Date.now(),
     });
 
-    // ACK immediately so mobile knows the desktop received the message and the
-    // agent loop is starting. Without this, mobile sits in silence until the
-    // first streaming chunk arrives — which can look like a timeout.
-    this.send({ type: 'ack' });
-
     // Start a keepalive for this conversation so mobile's idle-timeout doesn't
     // fire during long tool-execution phases (e.g. ClaudeCode running 60–120 s
     // with no streaming). The timer sends a lightweight `keepalive` frame every
     // 15 s and is cleared when the agent emits graph_execution_complete.
     // Skipped while mobile is offline — resumed on peer rejoin.
-    const convId = conversationId ?? '__default__';
-    this.activeConversations.add(convId);
+    this.activeConversations.add(conversationId);
     if (this.mobilePeerOnline) {
-      this.startKeepalive(convId);
+      this.startKeepalive(conversationId);
     }
   }
 
@@ -580,15 +606,19 @@ class DesktopRelayClient {
     // corrupt each other's delta computation.
     const streamedByThread = new Map<string, string>();
     const finalTextByThread = new Map<string, string>();
-    let lastActivity = '';
+    const lastActivityByThread = new Map<string, string>();
 
-    wsService.onMessage(MOBILE_RELAY_CHANNEL, (msg: WebSocketMessage) => {
+    wsService.onMessage(MOBILE_RELAY_CHANNEL, async(msg: WebSocketMessage) => {
       if (msg.type === 'assistant_message') {
         const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
         const kind = typeof data.kind === 'string' ? data.kind : '';
         const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
         const raw = typeof data.content === 'string' ? data.content : '';
         if (!raw) return;
+        if (!threadId) {
+          console.warn(`[DesktopRelay] Dropping ${ kind || 'assistant' } frame without thread_id/conversationId`);
+          return;
+        }
         // Defense-in-depth: agent already strips wrappers, but a final strip
         // here guarantees nothing slips through if a new message kind is
         // added that doesn't pass through the normal strip path.
@@ -597,12 +627,12 @@ class DesktopRelayClient {
 
         if (kind === 'thinking') {
           // Tool-use / reasoning indicator. De-dup consecutive duplicates.
-          if (stripped === lastActivity) return;
-          lastActivity = stripped;
-          this.send({ type: 'activity', message: stripped });
+          if (stripped === lastActivityByThread.get(threadId)) return;
+          lastActivityByThread.set(threadId, stripped);
           // Scribe tool activity so the history view (and a phone that was
           // asleep) can show what the agent did, not just what it said.
-          this.scribeTurn(threadId, 'tool', stripped);
+          await this.scribeTurn(threadId, 'tool', stripped);
+          this.sendChatFrame(threadId, { type: 'activity', message: stripped });
           return;
         }
 
@@ -616,7 +646,7 @@ class DesktopRelayClient {
           const prev = streamedByThread.get(threadId) ?? '';
           if (stripped === prev) return; // no-op tick
           streamedByThread.set(threadId, stripped);
-          this.send({ type: 'chunk', delta: stripped });
+          this.sendChatFrame(threadId, { type: 'chunk', delta: stripped });
           return;
         }
 
@@ -635,8 +665,8 @@ class DesktopRelayClient {
           // id, so its copy and ours dedup to one row after sync.
           const ts = new Date().toISOString();
           const id = deriveMessageId(threadId, 'assistant', stripped, ts);
-          this.scribeTurn(threadId, 'assistant', stripped, { id, ts });
-          this.send({ type: 'message', content: stripped, id });
+          await this.scribeTurn(threadId, 'assistant', stripped, { id, ts });
+          this.sendChatFrame(threadId, { type: 'message', content: stripped, id });
           return;
         }
 
@@ -656,6 +686,10 @@ class DesktopRelayClient {
         const content = typeof data.content === 'string' ? data.content : '';
         if (content !== 'graph_execution_complete') return;
         const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
+        if (!threadId) {
+          console.warn('[DesktopRelay] Dropping done frame without thread_id/conversationId');
+          return;
+        }
         const committed = finalTextByThread.get(threadId);
         const finalText = committed ?? streamedByThread.get(threadId) ?? '';
         // Streaming-only runs never hit the `progress` branch, so their text
@@ -664,16 +698,16 @@ class DesktopRelayClient {
         if (!committed && finalText) {
           const ts = new Date().toISOString();
           doneId = deriveMessageId(threadId, 'assistant', finalText, ts);
-          this.scribeTurn(threadId, 'assistant', finalText, { id: doneId, ts });
+          await this.scribeTurn(threadId, 'assistant', finalText, { id: doneId, ts });
         }
         streamedByThread.delete(threadId);
         finalTextByThread.delete(threadId);
-        lastActivity = '';
+        lastActivityByThread.delete(threadId);
         // Stop the keepalive — run is complete.
         const t = this.keepaliveTimers.get(threadId);
         if (t) { clearInterval(t); this.keepaliveTimers.delete(threadId); }
         this.activeConversations.delete(threadId);
-        this.send({ type: 'done', content: finalText, id: doneId });
+        this.sendChatFrame(threadId, { type: 'done', content: finalText, id: doneId });
         return;
       }
 
@@ -685,13 +719,46 @@ class DesktopRelayClient {
     });
   }
 
-  private send(payload: unknown) {
+  private sendMissingConversationError(userMessageId?: string) {
+    // D1 rejection is the one intentional exception to the outbound
+    // conversationId guard: the inbound frame was malformed, so there is no
+    // route id to stamp.
+    this.sendUnchecked({ type: 'error', reason: 'missing_conversation_id', userMessageId });
+  }
+
+  private sendChatFrame(conversationId: string | undefined, payload: Record<string, unknown>) {
+    if (!conversationId) {
+      const type = typeof payload.type === 'string' ? payload.type : 'unknown';
+      console.error(`[DesktopRelay] BUG: refusing to send ${ type } frame without conversationId`);
+      return;
+    }
+    this.send({ ...payload, conversationId });
+  }
+
+  private sendUnchecked(payload: Record<string, unknown>) {
+    const json = JSON.stringify(payload);
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn('[DesktopRelay] Dropped malformed-frame error — socket not open');
+      return;
+    }
+    try {
+      this.ws.send(json);
+    } catch (err) {
+      console.warn('[DesktopRelay] Send failed:', err);
+    }
+  }
+
+  private send(payload: Record<string, unknown>) {
+    const type = typeof payload.type === 'string' ? payload.type : undefined;
+    if (type && this.requiresConversationId(type) && typeof payload.conversationId !== 'string') {
+      console.error(`[DesktopRelay] BUG: refusing to send ${ type } frame without conversationId`);
+      return;
+    }
     const json = JSON.stringify(payload);
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       // Queue completion/error frames so they're delivered after reconnect.
       // Streaming/activity frames are ephemeral — dropping them is acceptable.
-      const type = (payload as any)?.type as string | undefined;
-      if (type === 'done' || type === 'stopped' || type === 'error' || type === 'message') {
+      if (type === 'done' || type === 'stopped' || type === 'error' || type === 'message' || type === 'ack') {
         this.pendingFrames.push(json);
         console.warn(`[DesktopRelay] Queued ${ type } frame — socket not open`);
       } else {
@@ -718,7 +785,7 @@ class DesktopRelayClient {
     if (this.keepaliveTimers.has(conversationId)) return;
     const timer = setInterval(() => {
       if (!this.keepaliveTimers.has(conversationId)) return;
-      this.send({ type: 'keepalive' });
+      this.sendChatFrame(conversationId, { type: 'keepalive' });
     }, 15_000);
     this.keepaliveTimers.set(conversationId, timer);
     // Safety valve: clear after 10 min regardless — prevents leaks if the
@@ -729,17 +796,22 @@ class DesktopRelayClient {
     }, 10 * 60 * 1_000);
   }
 
+  private requiresConversationId(type: string): boolean {
+    return type === 'ack' || type === 'activity' || type === 'chunk' || type === 'done' ||
+      type === 'error' || type === 'keepalive' || type === 'message' || type === 'stopped';
+  }
+
   /**
    * Write a committed relay turn to the sync log (local claude_messages +
-   * sync_queue push). Fire-and-forget: scribing must never block or fail
-   * the real-time WS path, and SullaSyncService retries cloud delivery on
-   * its own. Turns without a conversationId are skipped — in that case the
-   * agent runs under a self-created `thread_…` id and the SullaLogger
-   * mirror is the scribe instead.
+   * sync_queue push). Scribing failures are logged, never thrown — the
+   * real-time WS path must survive a bad DB write, and SullaSyncService
+   * retries cloud delivery on its own. Turns without a conversationId are
+   * skipped — in that case the agent runs under a self-created `thread_…`
+   * id and the SullaLogger mirror is the scribe instead.
    */
-  private scribeTurn(conversationId: string | undefined, role: 'user' | 'assistant' | 'tool', content: string, opts?: { id?: string, ts?: string }) {
+  private async scribeTurn(conversationId: string | undefined, role: 'user' | 'assistant' | 'tool', content: string, opts?: { id?: string, ts?: string }): Promise<void> {
     if (!conversationId || !content.trim()) return;
-    scribeRelayTurn({
+    await scribeRelayTurn({
       conversationId, role, content, ts: opts?.ts ?? new Date().toISOString(), id: opts?.id,
     }).catch((err) => {
       console.warn(`[DesktopRelay] Failed to scribe ${ role } turn for ${ conversationId }:`, err);
