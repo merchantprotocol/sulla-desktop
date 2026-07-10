@@ -121,6 +121,11 @@ class DesktopRelayClient {
   // Critical completion frames (done/stopped/error) that couldn't be sent
   // because the socket was reconnecting. Flushed immediately on `open`.
   private pendingFrames: string[] = [];
+  // Conversations with an in-flight agent run. Keepalive only runs while the
+  // mobile peer is online; peer_offline pauses it so we don't spam the DO
+  // with undeliverable frames during a mobile reconnect.
+  private activeConversations = new Set<string>();
+  private mobilePeerOnline = true;
 
   async start(): Promise<void> {
     const paired = (await SullaSettingsModel.get('pairedMobileUserId', '')) ?? '';
@@ -180,6 +185,8 @@ class DesktopRelayClient {
     for (const t of this.keepaliveTimers.values()) clearInterval(t);
     this.keepaliveTimers.clear();
     this.pendingFrames = [];
+    this.activeConversations.clear();
+    this.mobilePeerOnline = true;
     if (this.ws) {
       try { this.ws.close(); } catch { /* ignore */ }
       this.ws = null;
@@ -345,7 +352,12 @@ class DesktopRelayClient {
     }
 
     if (msg.type === 'connected') {
-      // ACK from the DO — already handled via 'open'
+      // ACK from the DO — already handled via 'open'. Also means we (re)joined
+      // the room; if mobile is already there keepalives can resume.
+      this.mobilePeerOnline = true;
+      for (const convId of this.activeConversations) {
+        this.startKeepalive(convId);
+      }
       return;
     }
 
@@ -356,6 +368,18 @@ class DesktopRelayClient {
     }
 
     if (msg.type === 'error') {
+      if (msg.reason === 'peer_offline') {
+        // Mobile dropped out of the room. Keep the agent run alive and queue
+        // completion frames; just stop burning keepalive traffic until the
+        // peer rejoins (connected frame / next successful send).
+        if (this.mobilePeerOnline) {
+          console.warn('[DesktopRelay] Mobile peer offline — pausing keepalives until reconnect');
+        }
+        this.mobilePeerOnline = false;
+        for (const t of this.keepaliveTimers.values()) clearInterval(t);
+        this.keepaliveTimers.clear();
+        return;
+      }
       console.warn(`[DesktopRelay] Relay error: ${ msg.reason }`);
       return;
     }
@@ -395,6 +419,7 @@ class DesktopRelayClient {
       // Stop the keepalive — run is cancelled.
       const kt = this.keepaliveTimers.get(conversationId);
       if (kt) { clearInterval(kt); this.keepaliveTimers.delete(conversationId); }
+      this.activeConversations.delete(conversationId);
       // Ack back to mobile so it knows the run ended without waiting for
       // `done` (which may never arrive after an abort). The mobile session
       // socket stays open — this is not a close signal.
@@ -496,8 +521,12 @@ class DesktopRelayClient {
     // fire during long tool-execution phases (e.g. ClaudeCode running 60–120 s
     // with no streaming). The timer sends a lightweight `keepalive` frame every
     // 15 s and is cleared when the agent emits graph_execution_complete.
+    // Skipped while mobile is offline — resumed on peer rejoin.
     const convId = conversationId ?? '__default__';
-    this.startKeepalive(convId);
+    this.activeConversations.add(convId);
+    if (this.mobilePeerOnline) {
+      this.startKeepalive(convId);
+    }
   }
 
   /**
@@ -629,6 +658,7 @@ class DesktopRelayClient {
         // Stop the keepalive — run is complete.
         const t = this.keepaliveTimers.get(threadId);
         if (t) { clearInterval(t); this.keepaliveTimers.delete(threadId); }
+        this.activeConversations.delete(threadId);
         this.send({ type: 'done', content: finalText });
         return;
       }
@@ -657,6 +687,14 @@ class DesktopRelayClient {
     }
     try {
       this.ws.send(json);
+      // A successful forward implies the peer accepted the frame at least once
+      // recently. Resume keepalives if we had paused on peer_offline.
+      if (!this.mobilePeerOnline) {
+        this.mobilePeerOnline = true;
+        for (const convId of this.activeConversations) {
+          this.startKeepalive(convId);
+        }
+      }
     } catch (err) {
       console.warn('[DesktopRelay] Send failed:', err);
     }
