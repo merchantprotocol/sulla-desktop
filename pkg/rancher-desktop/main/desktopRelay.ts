@@ -34,7 +34,7 @@ import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { getCurrentAccessToken } from '@pkg/main/sullaCloudAuth';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
-import { scribeRelayTurn } from '@pkg/main/sync/syncMirror';
+import { deriveMessageId, scribeRelayTurn } from '@pkg/main/sync/syncMirror';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -70,6 +70,12 @@ interface IncomingMessage {
    * match silently drop the message.
    */
   targetDeviceId?: string;
+  /**
+   * Row id the mobile client already inserted its user turn under (chat and
+   * inject frames). Scribing under the SAME id makes the desktop's copy and
+   * the mobile's copy the same row after sync, instead of a duplicate pair.
+   */
+  userMessageId?:  string;
   role?:           Role;
   reason?:         string;
 }
@@ -411,7 +417,7 @@ class DesktopRelayClient {
       const conversationId = msg.conversationId ?? this.currentRoom ?? undefined;
       console.log(`[DesktopRelay] Inject received for conversationId=${ conversationId ?? '(none)' }`);
       // Injected mid-run turns are part of the conversation record too.
-      this.scribeTurn(conversationId, 'user', content);
+      this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
       const wsService = getWebSocketClientService();
       wsService.send(MOBILE_RELAY_CHANNEL, {
         type:      'inject_message',
@@ -470,7 +476,7 @@ class DesktopRelayClient {
     // Scribe the user turn FIRST — the sync log is the authoritative record,
     // and the turn must survive even if the agent dispatch or the socket
     // fails right after this point.
-    this.scribeTurn(conversationId, 'user', content);
+    this.scribeTurn(conversationId, 'user', content, { id: msg.userMessageId });
 
     const wsService = getWebSocketClientService();
     wsService.send(MOBILE_RELAY_CHANNEL, {
@@ -594,9 +600,14 @@ class DesktopRelayClient {
           finalTextByThread.set(threadId, stripped);
           streamedByThread.delete(threadId);
           // Scribe before the WS send — committed turns must survive even
-          // if the phone is asleep and the frame is never delivered.
-          this.scribeTurn(threadId, 'assistant', stripped);
-          this.send({ type: 'message', content: stripped });
+          // if the phone is asleep and the frame is never delivered. The id
+          // is derived here (not awaited from the scribe) so the frame ships
+          // without waiting on the DB write; mobile persists under this SAME
+          // id, so its copy and ours dedup to one row after sync.
+          const ts = new Date().toISOString();
+          const id = deriveMessageId(threadId, 'assistant', stripped, ts);
+          this.scribeTurn(threadId, 'assistant', stripped, { id, ts });
+          this.send({ type: 'message', content: stripped, id });
           return;
         }
 
@@ -620,8 +631,11 @@ class DesktopRelayClient {
         const finalText = committed ?? streamedByThread.get(threadId) ?? '';
         // Streaming-only runs never hit the `progress` branch, so their text
         // was never scribed. Committed (progress) text was already written.
+        let doneId: string | undefined;
         if (!committed && finalText) {
-          this.scribeTurn(threadId, 'assistant', finalText);
+          const ts = new Date().toISOString();
+          doneId = deriveMessageId(threadId, 'assistant', finalText, ts);
+          this.scribeTurn(threadId, 'assistant', finalText, { id: doneId, ts });
         }
         streamedByThread.delete(threadId);
         finalTextByThread.delete(threadId);
@@ -629,7 +643,7 @@ class DesktopRelayClient {
         // Stop the keepalive — run is complete.
         const t = this.keepaliveTimers.get(threadId);
         if (t) { clearInterval(t); this.keepaliveTimers.delete(threadId); }
-        this.send({ type: 'done', content: finalText });
+        this.send({ type: 'done', content: finalText, id: doneId });
         return;
       }
 
@@ -685,10 +699,10 @@ class DesktopRelayClient {
    * agent runs under a self-created `thread_…` id and the SullaLogger
    * mirror is the scribe instead.
    */
-  private scribeTurn(conversationId: string | undefined, role: 'user' | 'assistant' | 'tool', content: string) {
+  private scribeTurn(conversationId: string | undefined, role: 'user' | 'assistant' | 'tool', content: string, opts?: { id?: string, ts?: string }) {
     if (!conversationId || !content.trim()) return;
     scribeRelayTurn({
-      conversationId, role, content, ts: new Date().toISOString(),
+      conversationId, role, content, ts: opts?.ts ?? new Date().toISOString(), id: opts?.id,
     }).catch((err) => {
       console.warn(`[DesktopRelay] Failed to scribe ${ role } turn for ${ conversationId }:`, err);
     });

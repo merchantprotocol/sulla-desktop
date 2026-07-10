@@ -60,6 +60,9 @@ const formatters: Record<string, Formatter> = {
   bash:         execFormatter,
   run_command:  execFormatter,
 
+  // Host machine exec (macOS login shell — not the Lima VM)
+  exechost:     exechostFormatter,
+
   // ── File Search ─────────────────────────────────────────────────────────
   file_search(args) {
     const query = str(args.query);
@@ -498,6 +501,22 @@ function execFormatter(args: Args, result?: unknown): Partial<ToolCardDisplay> {
   return {
     label:        'Bash',
     summary:      cmd ? truncate(cmd, 70) : 'Running command',
+    input:        cmd || undefined,
+    output:       extractOutput(result),
+    outputFormat: 'code',
+  };
+}
+
+// Host-machine exec — same shape as bash, but labeled so the user can
+// tell a macOS host command from a Lima VM command at a glance.
+function exechostFormatter(args: Args, result?: unknown): Partial<ToolCardDisplay> {
+  const cmd = str(args.command || args.cmd);
+  const cwd = str(args.cwd);
+  const shortCwd = cwd ? cwd.replace(/^\/Users\/[^/]+/, '~') : '';
+  const where = shortCwd ? ` in ${ truncate(shortCwd, 40) }` : '';
+  return {
+    label:        'Host',
+    summary:      cmd ? `Host: ${ truncate(cmd, 60) }${ where }` : 'Running on host',
     input:        cmd || undefined,
     output:       extractOutput(result),
     outputFormat: 'code',

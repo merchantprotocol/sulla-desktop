@@ -81,6 +81,15 @@ export interface SubconsciousMiddlewareOptions {
   includeObservations: boolean;
   /** Optional recall variant — changes the recall prompt/tools for specific agents */
   recallVariant?:      'default' | 'heartbeat';
+  /**
+   * Live progress sink. The awaited subconscious phase blocks the primary
+   * agent (recall is never time-limited by design), so without a signal the
+   * UI — especially the mobile relay, whose only live indicator is the
+   * activity line — shows a dead "Thinking…" for the whole wait. The caller
+   * wires this to a thinking-kind chat emit; each launch/completion gets one
+   * short line ("Recalling memories…", "Memory recall done (12.4s)").
+   */
+  onProgress?:         (message: string) => void;
 }
 
 /**
@@ -138,20 +147,28 @@ export async function runSubconsciousMiddleware(
   const launched: string[] = [];
   const awaitedTasks: Promise<void>[] = [];
 
+  const progress = (message: string) => {
+    try { options.onProgress?.(message) } catch { /* progress must never break the pipeline */ }
+  };
+
   // Per-sub-agent timing — records how long each awaited subconscious task
   // takes so we can see WHICH one (recall, obs-recall, summarizer, digester)
   // dominates the blocking prelude. Settles even on rejection.
   const timings: Record<string, number> = {};
-  const timed = (name: string, p: Promise<void>): Promise<void> => {
+  const timed = (name: string, label: string, p: Promise<void>): Promise<void> => {
     const t0 = Date.now();
-    return p.finally(() => { timings[name] = Date.now() - t0 });
+    progress(`${ label }…`);
+    return p.finally(() => {
+      timings[name] = Date.now() - t0;
+      progress(`${ label } done (${ ((Date.now() - t0) / 1000).toFixed(1) }s)`);
+    });
   };
 
   // 1. Summarizer — only when conversation is long (awaited: modifies messages)
   const shouldSummarize = state.messages.length > TRIGGER_WINDOW_SIZE;
   if (shouldSummarize) {
     launched.push('summarizer');
-    awaitedTasks.push(timed('summarizer', runSummarizer(state)));
+    awaitedTasks.push(timed('summarizer', 'Summarizing older conversation', runSummarizer(state)));
   }
 
   // 1b. Tool-Result Digester — triggered by compactable TOKEN MASS, not
@@ -162,7 +179,7 @@ export async function runSubconsciousMiddleware(
   const digestPlan = collectDigestibleToolResults(state);
   if (digestPlan.estTokens >= DIGEST_TRIGGER_TOKEN_MASS) {
     launched.push('tool-result-digester');
-    awaitedTasks.push(timed('digester', runToolResultDigester(state, digestPlan.eligible)));
+    awaitedTasks.push(timed('digester', 'Compacting stale tool results', runToolResultDigester(state, digestPlan.eligible)));
   }
 
   // The recall/observation agents analyze the conversation's user messages.
@@ -185,7 +202,7 @@ export async function runSubconsciousMiddleware(
   if (options.recallVariant === 'heartbeat' || analyzable) {
     launched.push('memory-recall');
     const recallPromise = runMemoryRecall(state, options.recallVariant);
-    awaitedTasks.push(timed('memory-recall', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
+    awaitedTasks.push(timed('memory-recall', 'Recalling memories', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
   } else {
     console.log('[SubconsciousMiddleware] Memory Recall skipped — no user message in state to analyze');
   }
@@ -205,7 +222,7 @@ export async function runSubconsciousMiddleware(
   if (options.includeObservations && analyzable) {
     launched.push('observation-recall');
     const obsRecallPromise = runObservationRecall(state);
-    awaitedTasks.push(timed('observation-recall', obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx })));
+    awaitedTasks.push(timed('observation-recall', 'Checking observations', obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx })));
   }
 
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
