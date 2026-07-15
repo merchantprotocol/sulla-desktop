@@ -1,6 +1,26 @@
 import type { Integration } from '../types';
 
 export const nativeFinanceIntegrations: Record<string, Integration> = {
+  robinhood: {
+    id:              'robinhood',
+    sort:            0,
+    paid:            false,
+    beta:            true,
+    comingSoon:      false,
+    connected:       false,
+    name:            'Robinhood',
+    description:     'Connects your Robinhood Agentic account and exposes Robinhood Trading MCP tools to your agents.',
+    category:        'Finance',
+    icon:            'robinhood.svg',
+    version:         '1.0.0',
+    lastUpdated:     '2026-07-15',
+    developer:       'Robinhood',
+    oauth:           true,
+    oauthProviderId: 'robinhood',
+    formGuide:       'Robinhood requires a desktop browser, an existing individual brokerage account, and will prompt you to open an Agentic account during authorization.',
+    properties:      [],
+  },
+
   stripe: {
     id:          'stripe',
     sort:        1,

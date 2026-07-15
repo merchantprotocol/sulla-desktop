@@ -32,6 +32,11 @@ interface OAuthTokenRow {
   updated_at:     Date;
 }
 
+interface DynamicClientRegistrationResponse {
+  client_id?:    string;
+  [key: string]: unknown;
+}
+
 // ─── Active refresh timers ────────────────────────────────────────
 
 const refreshTimers = new Map<string, NodeJS.Timeout>();
@@ -86,8 +91,10 @@ export class OAuthService {
     }
     const cfg = provider.config;
 
-    // Resolve effective client_id (built-in takes precedence for public clients)
-    const effectiveClientId = cfg.builtInClientId || clientId;
+    // Resolve effective client_id (built-in takes precedence for public clients).
+    // Providers with registrationEndpoint can fill this after the callback
+    // server starts, because DCR needs the actual redirect_uri for this flow.
+    let effectiveClientId = cfg.builtInClientId || clientId;
     const effectiveClientSecret = cfg.clientAuthMethod === 'none' ? '' : clientSecret;
 
     // Generate CSRF state
@@ -113,6 +120,23 @@ export class OAuthService {
     let authWindow: BrowserWindow | null = null;
 
     try {
+      if (!effectiveClientId && cfg.registrationEndpoint) {
+        const registration = await this.registerDynamicClient(cfg, redirectUri);
+        effectiveClientId = registration.clientId;
+        const integrationService = getIntegrationService();
+        await integrationService.setIntegrationValue({
+          integration_id: integrationId,
+          account_id:     accountId,
+          property:       'oauth_client_id',
+          value:          effectiveClientId,
+        });
+        console.log(`${ LOG_PREFIX } Registered OAuth client for ${ integrationId }/${ accountId }`);
+      }
+
+      if (!effectiveClientId) {
+        throw new Error(`${ LOG_PREFIX } Missing client_id for OAuth provider ${ providerId }`);
+      }
+
       // Build authorize URL
       const authorizeUrl = this.buildAuthorizeUrl(cfg, effectiveClientId, redirectUri, state, extraScopes, codeChallenge);
 
@@ -137,10 +161,13 @@ export class OAuthService {
 
       // Exchange code for tokens
       const tokens = await this.exchangeCode(cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier);
+      if (cfg.registrationEndpoint) {
+        tokens.oauth_client_id = effectiveClientId;
+      }
       console.log(`${ LOG_PREFIX } Token exchange successful`);
 
       // Let the provider do post-processing
-      await provider.onTokenReceived(tokens);
+      await provider.onTokenReceived(tokens, { integrationId, accountId, providerId, clientId: effectiveClientId });
 
       // Persist tokens
       await this.storeTokens(integrationId, accountId, providerId, tokens);
@@ -180,7 +207,7 @@ export class OAuthService {
         sandbox:          true,
       },
     });
-    void win.loadURL(url);
+    win.loadURL(url).catch(() => undefined);
     return win;
   }
 
@@ -247,6 +274,48 @@ export class OAuthService {
     }
 
     return `${ cfg.authorizeUrl }?${ params.toString() }`;
+  }
+
+  // ── Dynamic Client Registration ───────────────────────────────
+
+  private async registerDynamicClient(
+    cfg: OAuthProviderConfig,
+    redirectUri: string,
+  ): Promise<{ clientId: string; response: DynamicClientRegistrationResponse }> {
+    if (!cfg.registrationEndpoint) {
+      throw new Error(`${ LOG_PREFIX } OAuth provider ${ cfg.id } has no registrationEndpoint`);
+    }
+
+    const metadata = {
+      client_name:                `Sulla Desktop - ${ cfg.name }`,
+      grant_types:                ['authorization_code', 'refresh_token'],
+      response_types:             ['code'],
+      token_endpoint_auth_method: cfg.clientAuthMethod === 'none' ? 'none' : (cfg.clientAuthMethod ?? 'body'),
+      ...cfg.registrationClientMetadata,
+      redirect_uris:              [redirectUri],
+    };
+
+    const res = await fetch(cfg.registrationEndpoint, {
+      method:  'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept:         'application/json',
+        'User-Agent':   'Sulla-Desktop/1.0',
+      },
+      body: JSON.stringify(metadata),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${ LOG_PREFIX } Dynamic client registration failed (${ res.status }): ${ text }`);
+    }
+
+    const json = await res.json() as DynamicClientRegistrationResponse;
+    if (!json.client_id || typeof json.client_id !== 'string') {
+      throw new Error(`${ LOG_PREFIX } Dynamic client registration response missing client_id`);
+    }
+
+    return { clientId: json.client_id, response: json };
   }
 
   // ── Exchange auth code for tokens ─────────────────────────────
@@ -372,11 +441,12 @@ export class OAuthService {
       json.expires_at = Date.now() + json.expires_in * 1000;
     }
 
-    await provider.onTokenReceived(json);
     await this.storeTokens(integrationId, accountId, providerId, json);
 
     // Reschedule the next refresh
     this.scheduleRefresh(integrationId, accountId, providerId, clientId, clientSecret, json);
+
+    await provider.onTokenReceived(json, { integrationId, accountId, providerId, clientId });
 
     console.log(`${ LOG_PREFIX } Token refreshed for ${ integrationId }/${ accountId }`);
     return json;
@@ -468,7 +538,11 @@ export class OAuthService {
     // DB (e.g. CodexOAuth's ~/.codex/auth.json) so disconnect actually stops
     // authentication.
     try {
-      await provider?.onTokensRevoked();
+      await provider?.onTokensRevoked({
+        integrationId,
+        accountId,
+        providerId: stored.provider_id,
+      });
     } catch (err) {
       console.warn(`${ LOG_PREFIX } provider onTokensRevoked failed (non-fatal):`, err);
     }
@@ -511,7 +585,8 @@ export class OAuthService {
         clientId = providerCfg.builtInClientId;
       } else {
         const integrationService = getIntegrationService();
-        const cidVal = await integrationService.getIntegrationValue(integrationId, 'client_id', accountId);
+        const cidVal = await integrationService.getIntegrationValue(integrationId, 'oauth_client_id', accountId) ||
+          await integrationService.getIntegrationValue(integrationId, 'client_id', accountId);
         if (!cidVal?.value) {
           throw new Error(`${ LOG_PREFIX } Token expired and no client_id available for refresh`);
         }
@@ -608,7 +683,8 @@ export class OAuthService {
         let cs = '';
 
         if (!cid) {
-          const cidVal = await integrationService.getIntegrationValue(row.integration_id, 'client_id', row.account_id);
+          const cidVal = await integrationService.getIntegrationValue(row.integration_id, 'oauth_client_id', row.account_id) ||
+            await integrationService.getIntegrationValue(row.integration_id, 'client_id', row.account_id);
           cid = cidVal?.value || '';
         }
         if (providerCfg?.clientAuthMethod !== 'none') {

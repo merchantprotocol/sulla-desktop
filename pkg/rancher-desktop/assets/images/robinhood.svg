@@ -1,0 +1,5 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Robinhood">
+  <rect width="128" height="128" rx="28" fill="#00C805"/>
+  <path d="M82 16C57.9 23.8 39.1 43.9 32.6 69.1c13.6-11.8 29.7-19.5 48.2-23.1C64 54.2 49.7 66.7 38.4 83.6c16.5-9 33.5-13.5 50.9-13.5-14 6.9-25.8 16.6-35.5 29.1 20.1-6.9 34-20.2 41.8-39.9 5.8-14.6 4.5-29-3.9-43.3H82Z" fill="#0B1F12"/>
+  <path d="M31 91c15.9-13.4 33-22.1 51.4-26.1" stroke="white" stroke-width="7" stroke-linecap="round" opacity=".82"/>
+</svg>
