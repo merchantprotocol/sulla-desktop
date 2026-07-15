@@ -49,6 +49,24 @@ export class CheckAgentJobsWorker extends BaseTool {
         };
       }
 
+      if (job.status === 'stopped') {
+        const done = job.results.filter(r => r.status === 'completed').length;
+        const result = {
+          jobId:          job.jobId,
+          status:         'stopped',
+          taskCount:      job.taskCount,
+          partialResults: job.results.length,
+          message:        `Job was stopped via stop_agent_job. ${ done } of ${ job.taskCount } task(s) had completed before cancellation; the rest were aborted.`,
+        };
+
+        deleteJob(jobId);
+
+        return {
+          successBoolean: false,
+          responseString: JSON.stringify(result, null, 2),
+        };
+      }
+
       // Completed — return results and clean up
       const allSuccess = job.results.every(r => r.status === 'completed');
 

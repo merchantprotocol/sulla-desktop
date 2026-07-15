@@ -42,4 +42,14 @@ export const agentToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./check_agent_jobs'),
   },
+  {
+    name:        'stop_agent_job',
+    description: 'Kill switch for a running async sub-agent job (from spawn_agent(async: true)). Fires the job\'s abort signal, which cascades to every sub-agent it spawned, unwinding them cooperatively (an in-flight LLM/tool call finishes first, then the loop stops). Use when a job was misfired, duplicated, or is no longer needed. Poll check_agent_jobs afterwards to confirm it settled as \'stopped\'.',
+    category:    'agents',
+    schemaDef:   {
+      jobId: { type: 'string', description: 'The job ID to cancel (returned by the async spawn_agent call).' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./stop_agent_job'),
+  },
 ];
