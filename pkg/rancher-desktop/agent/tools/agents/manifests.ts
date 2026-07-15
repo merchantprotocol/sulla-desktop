@@ -95,4 +95,12 @@ export const agentToolManifests: ToolManifest[] = [
     operationTypes: ['execute'],
     loader:         () => import('./close_agent_conversation'),
   },
+  {
+    name:           'list_agents',
+    description:    'List the live named agents you can message (heartbeat, workbench, mobile-relay, other frontends) with their channel, status, and uptime — the roster from turn context, queryable on demand. Message any with a <channel:CHANNEL>text</channel:CHANNEL> tag (fire-and-forget; the reply arrives on a later turn). For a synchronous back-and-forth with a freshly delegated sub-agent, use start_agent_conversation instead.',
+    category:       'agents',
+    schemaDef:      {},
+    operationTypes: ['read'],
+    loader:         () => import('./list_agents'),
+  },
 ];
