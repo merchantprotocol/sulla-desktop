@@ -65,7 +65,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `redis.md` — 12 Redis tools + how Sulla uses Redis (`sulla:bridge:human_presence`)
 - `pg.md` — 6 Postgres tools + all 16 tables + critical do-not-write list
 - `slack.md` — Slack tools, two-token auth, scopes, common patterns
-- `agents.md` — spawn_agent / check_agent_jobs; sub-agents vs channels vs workflows
+- `agents.md` — spawn_agent, check_agent_jobs, stop_agent_job (kill switch), conversations (start/send/read/close), list_agents; sub-agents vs channels vs workflows
 
 ## workflows/
 - `schema.md` — Top-level YAML structure, template syntax, edge handles
