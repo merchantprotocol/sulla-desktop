@@ -10,6 +10,7 @@
 import { appendTranscript, setStatus } from './agentConversations';
 
 import type { AgentConversation } from './agentConversations';
+import type { AbortService } from '../../services/AbortService';
 
 export interface TurnResult {
   status: 'completed' | 'blocked' | 'error';
@@ -48,8 +49,8 @@ export async function runConversationTurn(
   subState.metadata.subAgentDepth = (parentState?.metadata?.subAgentDepth ?? 0) + 1;
   subState.metadata.workflowParentChannel = parentState?.metadata?.wsChannel || 'sulla-desktop';
 
-  // Propagate the parent's abort signal so a user stop reaches the sub-agent.
-  const parentAbort: AbortSignal | undefined = parentState?.metadata?.options?.abort;
+  // Propagate the parent's abort service so a user stop reaches the sub-agent.
+  const parentAbort: AbortService | undefined = parentState?.metadata?.options?.abort;
   if (parentAbort) {
     subState.metadata.options ??= {};
     subState.metadata.options.abort = parentAbort;
