@@ -77,20 +77,8 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./list_observations'),
   },
   {
-    name:        'request_user_input',
-    description: 'Pause and ask the user for an approve/deny decision before proceeding. Renders a prompt card in the chat transcript and BLOCKS until the user clicks Approve or Deny (or the timeout elapses — default 5 min). Returns {decision: "approved" | "denied" | "timed_out", note?}. Use whenever you need explicit consent for a risky or reversible action, or when the next step is ambiguous and you want the user to pick. This is a binary gate, not a free-form question-asker.',
-    category:    'meta',
-    schemaDef:   {
-      question:  { type: 'string', description: 'One-line user-facing summary of what you want approval for. Phrase it as a neutral summary, not a loaded yes/no.' },
-      command:   { type: 'string', optional: true, description: 'The exact action / command / payload being approved. Rendered in mono-font for transparency. Omit when the action is obvious from the question.' },
-      timeoutMs: { type: 'number', optional: true, description: 'Timeout in ms (min 5000, max 1800000, default 300000 = 5 min). On timeout resolves as "timed_out" — treat as soft deny.' },
-    },
-    operationTypes: ['read'],
-    loader:         () => import('./request_user_input'),
-  },
-  {
     name:        'ask_user_question',
-    description: 'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min). Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question. Use when the next step depends on a decision only the user can make — picking between approaches, confirming an assumption, or supplying a missing detail. For a simple yes/no go-ahead, prefer request_user_input.',
+    description: 'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min). Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question. Use whenever the next step depends on a decision only the user can make — picking between approaches, confirming an assumption, supplying a missing detail, or getting a yes/no go-ahead (offer Approve / Deny options).',
     category:    'meta',
     schemaDef:   {
       questions: {

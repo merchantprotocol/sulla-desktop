@@ -123,10 +123,18 @@ export class SubconsciousAgentNode extends BaseNode {
     const meta = state.metadata as any;
     const allowedToolNames: string[] | undefined = meta.allowedToolNames;
 
+    // An explicitly empty allowlist (summarizer / digester are pure-text) means
+    // NO tools — disable them outright rather than letting the empty array fall
+    // through to dynamic discovery, which would hand these background agents the
+    // slim native set (including the interactive tools they can never resolve on
+    // the subconscious channel).
+    const disableTools = Array.isArray(allowedToolNames) && allowedToolNames.length === 0;
+
     // Call LLM with tools
     const reply = await this.normalizedChat(state, systemPrompt, {
       temperature:      meta.temperature ?? 0,
       allowedToolNames,
+      disableTools,
       format:           meta.format,
       maxTokens:        meta.maxTokens,
     });

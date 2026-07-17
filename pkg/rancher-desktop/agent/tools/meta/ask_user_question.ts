@@ -5,12 +5,12 @@
  * ApprovalService until the user picks options (or types a free-form
  * answer) — or the timeout fires.
  *
- * This is the richer sibling of `request_user_input` (a binary
- * approve/deny gate). Use it when you need the user to *choose* between
- * concrete options or supply a small piece of information before you can
- * proceed. It is sent to EVERY model — not the Sulla CLI catalog — so any
- * provider can call it, and claude-code reciprocates its own native
- * AskUserQuestion through the matching MCP tool.
+ * This is the single "pause and ask the human" tool. Use it when you need
+ * the user to *choose* between concrete options, supply a small piece of
+ * information, or give a yes/no go-ahead (offer Approve / Deny options)
+ * before you can proceed. It is sent to EVERY model — not the Sulla CLI
+ * catalog — so any provider can call it, and claude-code reciprocates its
+ * own native AskUserQuestion through the matching MCP tool.
  */
 
 import { BaseTool, type InputSchemaDef, type ToolResponse } from '../base';
@@ -26,7 +26,7 @@ import {
 
 export class AskUserQuestionWorker extends BaseTool {
   name = 'ask_user_question';
-  description = 'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min). Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question. Use this whenever the next step depends on a decision only the user can make — picking between approaches, confirming an assumption, or supplying a missing detail. For a simple yes/no go-ahead, prefer request_user_input instead.';
+  description = 'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min). Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question. Use this whenever the next step depends on a decision only the user can make — picking between approaches, confirming an assumption, supplying a missing detail, or getting a yes/no go-ahead (offer Approve / Deny options).';
 
   schemaDef: InputSchemaDef = {
     questions: {
