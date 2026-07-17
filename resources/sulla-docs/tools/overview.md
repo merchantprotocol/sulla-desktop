@@ -55,7 +55,7 @@ Default to regular `exec` (Lima VM) for search, edit, install, build, test, and 
 
 | Category | Tools | Primary Use |
 |----------|-------|------------|
-| `meta` | exec, exechost (last resort), browse_tools, file_search, read_file, write_file, request_user_input, workflow helpers | System, file ops, tool discovery |
+| `meta` | exec, exechost (last resort), browse_tools, file_search, read_file, write_file, ask_user_question, workflow helpers | System, file ops, tool discovery |
 | `browser` | tab, screenshot, eval_js, snapshot, text, form, click, fill, scroll, manage_cookies, background_browse | Web automation |
 | `github` | git_push, git_pull, git_commit, git_add, git_status, git_log, git_diff, git_branch, github_create_pr, github_create_issue | Git & GitHub |
 | `function` | function_list, function_run | Custom function execution |

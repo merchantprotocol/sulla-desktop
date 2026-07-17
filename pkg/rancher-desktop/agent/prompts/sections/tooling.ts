@@ -37,12 +37,12 @@ Make parallel tool calls when possible.`;
   }
 
   // Slim tool mode — only the minimal native set is pushed (browse_tools,
-  // exec, read_file, write_file, request_user_input); teach catalog
+  // exec, read_file, write_file, ask_user_question); teach catalog
   // discovery instead of listing capabilities. Kept short on purpose.
   if (ctx.toolMode === 'slim') {
     const slimContent = `## Tools
 
-You have a minimal native toolset: \`browse_tools\`, \`exec\`, \`read_file\`, \`write_file\`, \`request_user_input\`. Every other capability (browser, docker, github, calendar, vault, slack, workflows, kubernetes, …) lives in the sulla CLI tool catalog.
+You have a minimal native toolset: \`browse_tools\`, \`exec\`, \`read_file\`, \`write_file\`, \`ask_user_question\`. Every other capability (browser, docker, github, calendar, vault, slack, workflows, kubernetes, …) lives in the sulla CLI tool catalog.
 
 **Workflow — always in this order:**
 1. Discover: \`browse_tools({ category: "docker" })\` or \`browse_tools({ query: "send slack message" })\` — returns ready-to-run commands with parameter JSON
@@ -58,8 +58,7 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'                       # MCP to
 **Rules:**
 - ❌ NEVER invent tool names or sulla commands — browse_tools first when unsure
 - ❌ NEVER use \`execute_workflow\` for CLI commands — it only runs named Sulla workflows
-- Use \`request_user_input\` before risky or destructive actions outside the VM
-- Use \`ask_user_question\` to ask the user multiple-choice questions — it renders an interactive card and BLOCKS until they answer. Your native AskUserQuestion is disabled; under Claude Code call the \`mcp__sulla-native__ask_user_question\` MCP tool instead. Never just ask in plain text when you need a real answer.
+- Use \`ask_user_question\` whenever you need a real answer from the user — to pick between options, confirm an assumption, or get a yes/no go-ahead before a risky or destructive action outside the VM (offer Approve / Deny options). It renders an interactive card and BLOCKS until they answer. Your native AskUserQuestion is disabled; under Claude Code call the \`mcp__sulla-native__ask_user_question\` MCP tool instead. Never just ask in plain text when you need a real answer.
 
 Make parallel tool calls when possible.`;
 

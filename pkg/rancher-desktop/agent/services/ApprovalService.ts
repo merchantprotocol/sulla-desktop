@@ -34,8 +34,7 @@ export interface ApprovalOrigin {
     | 'workflow'
     | 'vault'
     | 'function'
-    | 'integration'
-    | 'request_user_input';
+    | 'integration';
   [field: string]: unknown;
 }
 

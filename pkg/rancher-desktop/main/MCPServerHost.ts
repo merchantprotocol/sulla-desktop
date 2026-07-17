@@ -381,6 +381,19 @@ export class MCPServerHost {
         },
       },
       async ({ questions, timeoutMs }) => {
+        // The claude-code MCP path bypasses BaseNode's in-loop tool filtering,
+        // so honor the calling agent's allowlist here. Restricted background
+        // agents (heartbeat, subconscious) carry an explicit allowedToolNames
+        // that omits ask_user_question — they run on channels with no human to
+        // answer, so a card would only deadlock. Refuse rather than hang.
+        const allow = (session.state.metadata as any).allowedToolNames;
+        if (Array.isArray(allow) && allow.length > 0 && !allow.includes('ask_user_question')) {
+          return {
+            content: [{ type: 'text' as const, text: 'ask_user_question is unavailable to this agent — it runs autonomously with no interactive chat attached. Proceed with your best judgment.' }],
+            isError: true,
+          };
+        }
+
         const { questions: normalized, error } = normalizeQuestions({ questions });
         if (error) {
           return { content: [{ type: 'text' as const, text: error }], isError: true };
