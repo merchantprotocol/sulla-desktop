@@ -37,6 +37,7 @@ interface ProductionRow {
   attributes: {
     id:         string;
     name:       string;
+    enabled?:   boolean;
     definition: Record<string, unknown>;
   };
 }
@@ -169,6 +170,10 @@ export class WorkflowSchedulerService {
 
     let count = 0;
     for (const row of rows) {
+      // listByStatus only filters on status — respect the enabled flag here
+      // so disabling a production workflow actually stops its cron.
+      if (row.attributes.enabled === false) continue;
+
       const { id, name } = row.attributes;
       const definition = row.attributes.definition || {};
       const nodes = Array.isArray((definition as any).nodes) ? (definition as any).nodes as ScheduleNode[] : [];
