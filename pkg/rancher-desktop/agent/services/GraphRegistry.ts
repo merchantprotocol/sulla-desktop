@@ -694,13 +694,15 @@ export const GraphRegistry = {
     graph: Graph<AgentGraphState>;
     state: AgentGraphState;
   }> {
-    if (registry.has(wsChannel)) {
-      return Promise.resolve(registry.get(wsChannel) as any);
-    }
-
+    // One conversation per heartbeat cycle: never resume a cached thread.
+    // A long-lived thread pins the system prompt to whatever was built when
+    // the conversation started (prompt updates never reach the model) and
+    // accumulates self-reinforcing history. Continuity lives in recall,
+    // observations, and the bookkeeping files — not chat scrollback.
     const graph = createHeartbeatGraph();
     const state = await buildHeartbeatState(wsChannel, prompt ?? '');
 
+    // Keep the latest entry for observability/recovery consumers.
     registry.set(wsChannel, { graph, state });
     return { graph, state };
   },
