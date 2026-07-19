@@ -22,6 +22,7 @@ export default {
     '<rootDir>/dist',
     '<rootDir>/pkg/rancher-desktop/dist',
     '<rootDir>/.git',
+    '<rootDir>/.claude',
     '<rootDir>/e2e',
     '<rootDir>/screenshots',
   ],
@@ -42,6 +43,7 @@ export default {
   },
   testPathIgnorePatterns: [
     '<rootDir>/node_modules/',
+    '<rootDir>/.claude/',
     '<rootDir>/pkg/rancher-desktop/sudo-prompt/',
   ],
 };
