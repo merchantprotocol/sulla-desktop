@@ -31,6 +31,9 @@ export default {
     '^@pkg/(.*)$':   '<rootDir>/pkg/rancher-desktop/$1',
   },
   setupFiles: [
+    // Must run first: polyfills TextEncoder/TextDecoder onto the jsdom
+    // global so suites that import `pg` can load (jsdom omits them).
+    '<rootDir>/pkg/rancher-desktop/utils/testUtils/setupTextEncoder.ts',
     '<rootDir>/pkg/rancher-desktop/utils/testUtils/setupVue.ts',
   ],
   testEnvironment:        'jsdom',
