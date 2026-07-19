@@ -10,6 +10,8 @@
 
 import schedule from 'node-schedule';
 
+import { SCHEDULE_TRIGGER } from '@pkg/pages/editor/workflow/types';
+
 // ── Types ──
 
 interface ScheduleNode {
@@ -172,7 +174,7 @@ export class WorkflowSchedulerService {
       const nodes = Array.isArray((definition as any).nodes) ? (definition as any).nodes as ScheduleNode[] : [];
 
       for (const node of nodes) {
-        if (node?.data?.category !== 'trigger' || node?.data?.subtype !== 'schedule') continue;
+        if (node?.data?.category !== SCHEDULE_TRIGGER.category || node?.data?.subtype !== SCHEDULE_TRIGGER.subtype) continue;
         if (this.registerScheduleNode(id, name, node)) count++;
       }
     }

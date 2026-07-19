@@ -18,6 +18,17 @@ export type WorkflowNodeSubtype =
   | FlowControlNodeSubtype
   | IONodeSubtype;
 
+/**
+ * The one trigger shape WorkflowSchedulerService actually arms —
+ * scanAndSchedule filters on exactly this category/subtype pair. Shared
+ * by the scheduler and the workflow validator so the armable shape and
+ * the validated shape cannot drift apart (#493).
+ */
+export const SCHEDULE_TRIGGER = {
+  category: 'trigger',
+  subtype:  'schedule',
+} as const satisfies { category: WorkflowNodeCategory; subtype: TriggerNodeSubtype };
+
 // ── Per-node config types ──
 
 export interface TriggerNodeConfig {
