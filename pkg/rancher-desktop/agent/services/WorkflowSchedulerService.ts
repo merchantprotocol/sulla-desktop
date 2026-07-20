@@ -51,8 +51,11 @@ interface ProductionRow {
  *   daily         → M H * * *
  *   weekly        → M H * * D
  *   monthly       → M H D * *
+ *
+ * Exported so tools that reason about schedules (e.g. catch_up_schedules)
+ * derive the exact same cron the scheduler arms — one source of truth.
  */
-function buildCronExpression(config: Record<string, unknown>): string | null {
+export function buildCronExpression(config: Record<string, unknown>): string | null {
   const freq = (config.frequency as string) || 'daily';
   const minute = Number(config.minute ?? 0);
   const hour = Number(config.hour ?? 9);

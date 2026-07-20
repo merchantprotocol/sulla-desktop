@@ -100,6 +100,7 @@
     "better-sqlite3": "12.6.2",
     "cookie-universal": "2.2.2",
     "cors": "2.8.6",
+    "cron-parser": "^4.2.0",
     "cross-spawn": "7.0.6",
     "dayjs": "1.11.19",
     "ddgs": "1.0.4",
