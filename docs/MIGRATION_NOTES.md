@@ -61,3 +61,32 @@ An earlier doc draft also listed an `agent-runtime` — that has been dropped. A
 - Rename `workflow-*` IPC handlers → `routine-*` (keep old names as shims for one release).
 - Update UI labels from "Workflow" to "Routine" in the canvas and chrome.
 - `sulla workflow export` → `sulla routine export`.
+
+## 7. Migration-number collision: routine/heartbeat renumbered 0029-0032 → 0037-0040
+
+**Date:** 2026-07-20
+
+Two unmerged feature branches independently claimed migration numbers 0029+:
+
+- `feat/crm-dynamic-schema-migrations` — adds **0029-0036** (CRM dynamic schema:
+  record_types, fields, relationships, records, field_values, record_links,
+  presentation, audit). These were **already executed on the production install**
+  (recorded in `sulla_migrations`, `executed_at` 2026-06-25) — the running binary
+  was built from this branch.
+- The routine-stewardship / issue-discovery stack (#499/#500) — originally added
+  **0029-0032** (routine_stewardship_views, routine_digest_views,
+  routine_promotion_candidates_view, heartbeat_seen_issues) on a base off `main`
+  that had neither set.
+
+Because the migration runner (`DatabaseManager.runMigrations`) tracks applied
+migrations **by name** and fails fast on any `up` error, and because production
+had already consumed 0029-0036 for CRM, the routine/heartbeat migrations were
+renumbered to **0037-0040** (same order). This makes them sort *after* the CRM
+set regardless of the eventual merge order and keeps the registry unambiguous
+once both branches land on `main`. The migrations were authored idempotently
+(`CREATE OR REPLACE VIEW`, `CREATE TABLE/INDEX IF NOT EXISTS`) and their objects
+already exist on the live DB, so re-running under the new names is a no-op that
+simply records the 0037-0040 rows on the next boot.
+
+Gaps in the sequence (missing 0003-0007, 0015) are pre-existing and harmless —
+the runner iterates the registry array, not a contiguous range.
