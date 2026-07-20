@@ -23,6 +23,7 @@ import { up as up_0027, down as down_0027 } from './0027_create_audit_history_ta
 import { up as up_0028, down as down_0028 } from './0028_create_observations_table';
 import { up as up_0029, down as down_0029 } from './0029_create_routine_stewardship_views';
 import { up as up_0030, down as down_0030 } from './0030_create_routine_digest_views';
+import { up as up_0031, down as down_0031 } from './0031_create_routine_promotion_candidates_view';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -49,4 +50,5 @@ export const migrationsRegistry = [
   { name: '0028_create_observations_table',   up: up_0028, down: down_0028 },
   { name: '0029_create_routine_stewardship_views', up: up_0029, down: down_0029 },
   { name: '0030_create_routine_digest_views', up: up_0030, down: down_0030 },
+  { name: '0031_create_routine_promotion_candidates_view', up: up_0031, down: down_0031 },
 ] as const;

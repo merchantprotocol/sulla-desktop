@@ -88,6 +88,17 @@ export const workflowToolManifests: ToolManifest[] = [
     loader:         () => import('./routine_report'),
   },
   {
+    name:        'find_repeated_tasks',
+    description: 'Promotion detector for routine stewardship: returns operations that have recurred across >= threshold DISTINCT sessions (deterministic shape-signature over the per-action tool log; zero-LLM) as candidates to codify into a routine (needs judgment) or a zero-token function (deterministic). Call this when deciding what recurring work to push down the cost ladder. Args: threshold (optional, default 3 distinct sessions), limit (optional, default 20).',
+    category:    'workflow',
+    schemaDef:   {
+      threshold: { type: 'number', optional: true, description: 'Minimum distinct conversations a signature must appear in to count as recurring. Default 3.' },
+      limit:     { type: 'number', optional: true, description: 'Max candidates to return, most-recurring first. Default 20.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./find_repeated_tasks'),
+  },
+  {
     name:        'display_workflow',
     description: 'Surface a saved routine as a workflow artifact in the chat sidebar. Reads ~/sulla/routines/<slug>/routine.yaml and publishes the full document so the frontend opens (or updates in place) a workflow artifact pane next to the conversation. Use this AFTER import_workflow whenever the user should see the routine being built, and re-run it after each material edit to keep the sidebar card in sync. Artifact is deduped by workflow name — repeat calls for the same slug update one card, not many.',
     category:    'workflow',
