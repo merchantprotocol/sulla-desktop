@@ -82,6 +82,33 @@ export const githubToolManifests: ToolManifest[] = [
     loader:         () => import('./github_get_issues'),
   },
   {
+    name:        'heartbeat_new_issues',
+    description: 'Heartbeat issue-discovery (#500) "touched-before" filter: given the open-issue union from scan_active_issues, returns only issues Heartbeat has NOT handled before — anti-joined against the heartbeat_seen_issues seen-set and excluding issues already assigned to Heartbeat or bearing the claim label. Deterministic, zero-LLM, read-only. Call before triaging so the same issue is never picked up twice.',
+    category:    'github',
+    schemaDef:   {
+      issues:         { type: 'array', items: { type: 'object' }, description: 'The open-issue array from scan_active_issues. Each item: { owner, repo, number|issue_number, node_id?, title?, assignees?, labels? }.' },
+      heartbeat_login: { type: 'string', optional: true, description: 'GitHub login Heartbeat self-assigns as. Issues already assigned to it are excluded as already-claimed.' },
+      claim_label:    { type: 'string', optional: true, description: "Label used to stake a claim (default 'heartbeat'). Issues already bearing it are excluded." },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./heartbeat_new_issues'),
+  },
+  {
+    name:        'heartbeat_claim_issue',
+    description: 'Heartbeat issue-discovery (#500) atomic claim + collision guard: records an issue in the heartbeat_seen_issues seen-set via INSERT ... ON CONFLICT DO NOTHING. Returns won=true if THIS call staked the claim (proceed to self-assign on GitHub + triage) or won=false if another cycle/agent already claimed it (back off). Call this FIRST, before any GitHub-side self-assign, so two agents cannot both pick up the same issue.',
+    category:    'github',
+    schemaDef:   {
+      owner:        { type: 'string', description: 'Repository owner (username or organization)' },
+      repo:         { type: 'string', description: 'Repository name' },
+      issue_number: { type: 'number', description: 'Issue number to claim' },
+      node_id:      { type: 'string', optional: true, description: 'GitHub GraphQL node id of the issue (for audit).' },
+      title:        { type: 'string', optional: true, description: 'Issue title (for audit/readability).' },
+      claim_method: { type: 'string', optional: true, description: "How the claim is staked on GitHub: 'assign' | 'label' | 'comment' | 'preexisting' | 'seen' (default 'seen')." },
+    },
+    operationTypes: ['create', 'execute'],
+    loader:         () => import('./heartbeat_claim_issue'),
+  },
+  {
     name:        'github_init',
     description: 'Initialize a git repository at the specified absolute path.',
     category:    'github',
