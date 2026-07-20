@@ -68,6 +68,26 @@ export const workflowToolManifests: ToolManifest[] = [
     loader:         () => import('./set_workflow_status'),
   },
   {
+    name:           'routines_digest',
+    description:     'Deterministic delta + exceptions-only digest of routine health (zero-LLM to produce, tiny to consume). All-green with nothing new = one line; otherwise lists only routines whose last run failed, that have a zombie run, or that were newly created in the last 24h. This is the standing routine-stewardship context — read it, do NOT re-query routine state.',
+    category:       'workflow',
+    schemaDef:      {},
+    operationTypes: ['read'],
+    loader:         () => import('./routines_digest'),
+  },
+  {
+    name:        'routine_report',
+    description: 'Drill-down report for a routine flagged by routines_digest: last-run status, timing, error, and the step-by-step tool-call trace (from workflow_checkpoints) explaining why it did what it did. The diagnosis payload — pull it only when the digest flags a failure/zombie, never into standing context.',
+    category:    'workflow',
+    schemaDef:   {
+      slug:        { type: 'string', optional: true, description: 'Routine slug (source_template_slug), e.g. "planning-triage". Provide slug or executionId.' },
+      executionId: { type: 'string', optional: true, description: 'Target a specific execution_id instead of the latest run(s).' },
+      last_k:      { type: 'number', optional: true, description: 'How many most-recent runs to report. Default 1 (latest).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./routine_report'),
+  },
+  {
     name:        'display_workflow',
     description: 'Surface a saved routine as a workflow artifact in the chat sidebar. Reads ~/sulla/routines/<slug>/routine.yaml and publishes the full document so the frontend opens (or updates in place) a workflow artifact pane next to the conversation. Use this AFTER import_workflow whenever the user should see the routine being built, and re-run it after each material edit to keep the sidebar card in sync. Artifact is deduped by workflow name — repeat calls for the same slug update one card, not many.',
     category:    'workflow',
