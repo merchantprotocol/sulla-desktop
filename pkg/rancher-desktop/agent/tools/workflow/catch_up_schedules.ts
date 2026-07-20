@@ -41,6 +41,15 @@ export class CatchUpSchedulesWorker extends BaseTool {
     const lookbackMs = lookbackDays * 24 * 60 * 60 * 1000;
     const now = new Date();
 
+    // A scheduled fire can land a hair BEFORE its exact cron boundary (timer
+    // coalescing / tick granularity): e.g. a Mon-04:00 cron observed firing at
+    // 03:59:59.112 — 888ms early. Without a grace window the strict
+    // `latestStart >= prevFire` comparison reads that perfectly on-time run as
+    // "missed" and (outside dryRun) dispatches a DUPLICATE. Any two legitimate
+    // fires of the same schedule are at least an hour apart, so a small grace
+    // can never collapse two real fires into one.
+    const FIRE_GRACE_MS = 60 * 1000;
+
     const { WorkflowModel } = await import('../../database/models/WorkflowModel');
     const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
     const { buildCronExpression } = await import('../../services/WorkflowSchedulerService');
@@ -94,7 +103,7 @@ export class CatchUpSchedulesWorker extends BaseTool {
         const latestStartRaw = latest?.attributes.started_at;
         const latestStart = latestStartRaw ? new Date(latestStartRaw) : null;
 
-        if (latestStart && latestStart.getTime() >= prevFire.getTime()) {
+        if (latestStart && latestStart.getTime() >= prevFire.getTime() - FIRE_GRACE_MS) {
           lines.push(`  • ${ name } — ok: fired ${ latestStart.toISOString() } (expected ${ prevFire.toISOString() })`);
           continue;
         }
