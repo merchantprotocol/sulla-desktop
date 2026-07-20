@@ -122,6 +122,23 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
   }
 
   /**
+   * Find the most recent execution for a workflow, regardless of status.
+   * Used by catch_up_schedules to decide whether a scheduled fire was missed.
+   */
+  static async findLatestByWorkflow(workflowId: string): Promise<WorkflowExecutionModel | null> {
+    const row = await postgresClient.queryOne(
+      `SELECT * FROM workflow_executions
+       WHERE workflow_id = $1
+       ORDER BY started_at DESC LIMIT 1`,
+      [workflowId],
+    );
+    if (!row) return null;
+    const m = new WorkflowExecutionModel();
+    m.databaseFill(row as any);
+    return m;
+  }
+
+  /**
    * Find any active (running or suspended) execution for a workflow.
    * Used for concurrent-run guard.
    */

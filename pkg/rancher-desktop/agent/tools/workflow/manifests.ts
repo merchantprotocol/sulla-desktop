@@ -44,6 +44,17 @@ export const workflowToolManifests: ToolManifest[] = [
     loader:         () => import('./refresh_schedules'),
   },
   {
+    name:        'catch_up_schedules',
+    description: 'Detect scheduled workflow fires that were missed (app off or scheduler dormant when the cron time passed) and dispatch them through the real executor. Compares each armed schedule\'s previous expected fire time against workflow_executions. Use after a restart or whenever a routine may have missed its window; dryRun reports without firing.',
+    category:    'workflow',
+    schemaDef:   {
+      dryRun:       { type: 'boolean', optional: true, description: 'Report missed fires without dispatching them. Default: false.' },
+      lookbackDays: { type: 'number', optional: true, description: 'Only treat fires missed within this many days as recoverable. Default 7, max 31.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./catch_up_schedules'),
+  },
+  {
     name:        'set_workflow_status',
     description: 'Enable/disable a workflow or change its status (draft | production | archive) by id or exact name, then re-arm the scheduler so the change takes effect immediately without an app restart. Reports the workflow\'s armed cron state after the change.',
     category:    'workflow',
