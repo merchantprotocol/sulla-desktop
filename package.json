@@ -292,6 +292,13 @@
     "color-string": "2.1.0",
     "supports-color": "10.2.0",
     "wrap-ansi": "9.0.0",
-    "has-ansi": "6.0.0"
+    "has-ansi": "6.0.0",
+    "string-length": {
+      "strip-ansi": "6.0.1",
+      "ansi-regex": "5.0.1"
+    },
+    "pretty-format": {
+      "ansi-styles": "5.2.0"
+    }
   }
 }
