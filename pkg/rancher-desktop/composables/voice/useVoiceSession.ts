@@ -22,6 +22,7 @@
 import { ref, readonly, watch, onUnmounted, type Ref } from 'vue';
 
 import { TTSPlayerService } from './TTSPlayerService';
+import { createVoiceTurnAccumulator } from './VoiceTurnAccumulator';
 import { logBargeIn } from './VoiceLogger';
 
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -134,11 +135,6 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
 
   // ── Transcript state ──
   let interimMessageId: string | null = null;
-  let accumulatedTranscript = '';
-  let lastTranscriptTime = 0;
-
-  // ── Silence debounce ──
-  let silenceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ── Recording duration timer ──
   let durationSeconds = 0;
@@ -188,62 +184,27 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     interimMessageId = null;
   }
 
-  function sendAccumulatedTranscript() {
-    const text = accumulatedTranscript.trim();
-    accumulatedTranscript = '';
-    removeInterimMessage();
-
-    if (text) {
-      console.log('[VoiceSession] Sending transcript to chat:', text.substring(0, 80));
-      chatController.query.value = text;
-      chatController.send({ inputSource: 'voice' });
-      pipelineState.value = 'THINKING';
-    }
-  }
-
   // ── Whisper transcript handler ──
+  // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end → commit)
+  // lives in VoiceTurnAccumulator so both voice surfaces stay in lockstep.
+  const turnAccumulator = createVoiceTurnAccumulator({
+    onInterim: text => updateInterimMessage(text),
+    onCommit:  (text) => {
+      removeInterimMessage();
+      if (text) {
+        console.log('[VoiceSession] Sending transcript to chat:', text.substring(0, 80));
+        chatController.query.value = text;
+        chatController.send({ inputSource: 'voice' });
+        pipelineState.value = 'THINKING';
+      }
+    },
+    isTTSPlaying: () => isTTSPlaying.value,
+    fallbackMs:   UTTERANCE_FALLBACK_MS,
+  });
 
   const onTranscript = (_event: any, msg: any) => {
     if (!isRecording.value) return;
-
-    // End-of-turn: the main process detected the user finished speaking and the
-    // transcription pipeline drained → commit the whole accumulated turn as ONE
-    // message. This is the primary trigger; the fallback timer is just a safety net.
-    if (msg?.event_type === 'utterance_end') {
-      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-      sendAccumulatedTranscript();
-      return;
-    }
-
-    if (!msg?.text) return;
-
-    // Don't transcribe Sulla's own TTS back into the next user message. The mic stays
-    // open while she speaks; barge-in (below) stops TTS, after which transcripts flow.
-    if (isTTSPlaying.value) return;
-
-    const text = msg.text.trim();
-    if (!text) return;
-
-    const isPartial = msg.event_type === 'transcript_partial';
-
-    console.log('[VoiceSession] Transcript received:', { text: text.substring(0, 60), partial: isPartial });
-
-    if (isPartial) {
-      // Show partial in the interim message
-      updateInterimMessage(accumulatedTranscript + (accumulatedTranscript ? ' ' : '') + text);
-    } else {
-      // Final transcript chunk — accumulate; commit happens on `utterance_end`.
-      accumulatedTranscript += (accumulatedTranscript ? ' ' : '') + text;
-      updateInterimMessage(accumulatedTranscript);
-      lastTranscriptTime = Date.now();
-
-      // Arm the long fallback timer only (in case utterance_end never arrives).
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        silenceTimer = null;
-        sendAccumulatedTranscript();
-      }, UTTERANCE_FALLBACK_MS);
-    }
+    turnAccumulator.handleEvent(msg);
   };
 
   // ── VAD event handler (audio level meter + barge-in) ──
@@ -277,8 +238,7 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     console.log('[VoiceSession] startRecording — requesting mic + whisper');
     isRecording.value = true;
     pipelineState.value = 'LISTENING';
-    accumulatedTranscript = '';
-    lastTranscriptTime = 0;
+    turnAccumulator.reset();
     startDurationTimer();
 
     // Start mic with PCM format for whisper
@@ -313,16 +273,8 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
     ipcRenderer.removeListener('gateway-transcript', onTranscript);
     ipcRenderer.removeListener('audio-driver:mic-vad', onMicVad);
 
-    // Clear silence timer
-    if (silenceTimer) {
-      clearTimeout(silenceTimer);
-      silenceTimer = null;
-    }
-
-    // Send any remaining transcript
-    if (accumulatedTranscript.trim()) {
-      sendAccumulatedTranscript();
-    }
+    // Commit any remaining transcript as one final message (also tears down the interim).
+    turnAccumulator.commitNow();
 
     removeInterimMessage();
     stopDurationTimer();

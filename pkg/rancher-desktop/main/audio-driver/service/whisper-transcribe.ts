@@ -90,6 +90,13 @@ let transcribing = false;
 // gap since then is real silence. `utteranceOpen` guards a single utterance_end per turn.
 let lastMicFedAt = 0;
 let utteranceOpen = false;
+
+// Full-utterance PCM (conversation mode). Each 2s segment is transcribed live as a
+// partial for feedback, but its PCM is ALSO kept here so the complete utterance can be
+// re-transcribed once at end-of-turn — one authoritative pass with full context, free of
+// the mid-word cuts you get from transcribing fixed 2s slices independently.
+const utterancePcm: Buffer[] = [];
+let utterancePcmBytes = 0;
 const tmpDir = path.join(os.tmpdir(), 'sulla-whisper');
 
 // ─── Public API ─────────────────────────────────────────────
@@ -174,6 +181,8 @@ export function stop(): void {
   }
   lastMicFedAt = 0;
   utteranceOpen = false;
+  utterancePcm.length = 0;
+  utterancePcmBytes = 0;
 
   // Final flush
   flush();
@@ -257,7 +266,16 @@ function flush(): void {
 
     micBuffer.length = 0;
     micBytes = 0;
-    transcribeChunk(pcm, 0, mode === 'conversation' ? 'You' : 'Mic');
+
+    if (mode === 'conversation') {
+      // Keep the segment's PCM for the end-of-turn re-transcription, and show a live
+      // partial now for immediate feedback (not committed — the final pass is).
+      utterancePcm.push(pcm);
+      utterancePcmBytes += pcm.length;
+      transcribeChunk(pcm, 0, 'You', { partial: true });
+    } else {
+      transcribeChunk(pcm, 0, 'Mic');
+    }
   }
 
   // Grab and clear speaker buffer (secretary mode only)
@@ -289,14 +307,42 @@ function checkEndOfTurn(): void {
   }
 
   // Pipeline drained (no pending audio, no in-flight inference) and silence has
-  // held past the threshold → the utterance is over.
+  // held past the threshold → the utterance is over. Re-transcribe the whole thing
+  // once for an authoritative transcript, then signal end-of-turn.
   if (micBytes === 0 && !transcribing && silentFor >= END_OF_TURN_MS) {
     utteranceOpen = false;
     log.debug('WhisperTranscribe', 'utterance_end', { silentFor });
-    if (onTranscript) {
-      onTranscript({ event_type: 'utterance_end', text: '', speaker: 'You', channel: 0 });
-    }
+    finalizeUtterance();
   }
+}
+
+/**
+ * End-of-turn finalization (conversation mode). Re-transcribes the full buffered
+ * utterance once — one authoritative, boundary-clean transcript_turn — then emits
+ * `utterance_end` so the renderer commits. Falls back to a bare `utterance_end`
+ * when there's no buffered audio (e.g. only silence was captured).
+ */
+function finalizeUtterance(): void {
+  const emitEnd = () => {
+    if (onTranscript) onTranscript({ event_type: 'utterance_end', text: '', speaker: 'You', channel: 0 });
+  };
+
+  if (utterancePcmBytes === 0) {
+    emitEnd();
+    return;
+  }
+
+  const pcm = Buffer.concat(utterancePcm);
+  utterancePcm.length = 0;
+  utterancePcmBytes = 0;
+
+  // whisper runs ~real-time; give the full pass generous, length-scaled headroom so a
+  // long utterance isn't truncated by the default 10s per-chunk timeout.
+  const audioSec = pcm.length / (SAMPLE_RATE * BYTES_PER_SAMPLE);
+  const timeoutMs = Math.min(60_000, Math.max(10_000, Math.ceil(audioSec) * 1500 + 5_000));
+  log.debug('WhisperTranscribe', 'finalize re-transcribe', { audioSec: Math.round(audioSec), timeoutMs });
+
+  transcribeChunk(pcm, 0, 'You', { partial: false, timeoutMs, onDone: emitEnd });
 }
 
 /**
@@ -319,18 +365,32 @@ function isSilent(pcm: Buffer): boolean {
   return rms < SILENCE_THRESHOLD;
 }
 
+interface TranscribeOpts {
+  /** Emit as an interim `transcript_partial` rather than a committed `transcript_turn`. */
+  partial?:   boolean;
+  /** Override the inference timeout (ms) — used for the length-scaled full-utterance pass. */
+  timeoutMs?: number;
+  /** Always invoked once the attempt settles (success, blank, or failure) so callers can chain. */
+  onDone?:    () => void;
+}
+
 /**
- * Write PCM to a temp WAV file and run whisper-cpp on it.
+ * Write PCM to a temp WAV file and run whisper-cpp on it. `onDone` always fires on
+ * completion (any outcome) so end-of-turn finalization can chain reliably.
  */
-function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): void {
+function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string, opts: TranscribeOpts = {}): void {
+  const done = opts.onDone;
+  const eventType: TranscriptEvent['event_type'] = opts.partial ? 'transcript_partial' : 'transcript_turn';
+
   if (isSilent(pcm)) {
     log.debug('WhisperTranscribe', 'Skipping silent chunk', { channel, bytes: pcm.length });
+    done?.();
     return;
   }
 
   // Cloud engine: transcribe the segment via Grok STT instead of local whisper.
   if (provider === 'grok' && grokApiKey) {
-    transcribeChunkGrok(pcm, channel, speakerLabel);
+    transcribeChunkGrok(pcm, channel, speakerLabel, opts);
     return;
   }
 
@@ -343,6 +403,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
   if (!status?.binaryPath || !status?.modelsPath) {
     log.error('WhisperTranscribe', 'Missing binary or models path');
     cleanupFile(wavPath);
+    done?.();
     return;
   }
 
@@ -351,6 +412,7 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
   if (!fs.existsSync(modelPath)) {
     log.error('WhisperTranscribe', 'Model file not found', { modelPath });
     cleanupFile(wavPath);
+    done?.();
     return;
   }
 
@@ -370,21 +432,24 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
     '-t', String(threads),
   ];
 
-  log.debug('WhisperTranscribe', 'Running whisper', { channel, wavPath, model: modelName, threads });
+  const timeoutMs = opts.timeoutMs ?? 10000;
 
-  // 10-second timeout — if whisper hangs (CPU contention with LlamaCpp),
-  // release the mutex so the next flush can try again with fresh audio.
-  execFile(status.binaryPath, args, { timeout: 10000 }, (err, stdout, stderr) => {
+  log.debug('WhisperTranscribe', 'Running whisper', { channel, wavPath, model: modelName, threads, timeoutMs });
+
+  // Timeout — if whisper hangs (CPU contention with LlamaCpp), release the mutex so the
+  // next flush can try again with fresh audio.
+  execFile(status.binaryPath, args, { timeout: timeoutMs }, (err, stdout, stderr) => {
     transcribing = false;
     cleanupFile(wavPath);
 
     if (err) {
       const isTimeout = (err as any).killed || err.message?.includes('TIMEOUT');
       if (isTimeout) {
-        log.warn('WhisperTranscribe', 'whisper-cpp timed out (10s) — skipping chunk', { channel });
+        log.warn('WhisperTranscribe', 'whisper-cpp timed out — skipping chunk', { channel, timeoutMs });
       } else {
         log.error('WhisperTranscribe', 'whisper-cpp failed', { error: err.message, stderr });
       }
+      done?.();
       return;
     }
 
@@ -394,19 +459,22 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
 
     if (!text || text === '[BLANK_AUDIO]' || text.length < 2) {
       log.debug('WhisperTranscribe', 'Blank/empty transcript — skipping', { channel, text: text || '(empty)' });
+      done?.();
       return;
     }
 
-    log.info('WhisperTranscribe', 'Transcript', { channel, speaker: speakerLabel, text: text.substring(0, 80) });
+    log.info('WhisperTranscribe', 'Transcript', { channel, speaker: speakerLabel, text: text.substring(0, 80), partial: !!opts.partial });
 
     if (onTranscript) {
       onTranscript({
-        event_type: 'transcript_turn',
+        event_type: eventType,
         text,
         speaker:    speakerLabel,
         channel,
       });
     }
+
+    done?.();
   });
 }
 
@@ -452,7 +520,8 @@ function writeWav(filePath: string, pcm: Buffer): void {
  * field must come after the other fields per the xAI API). Emits the same
  * transcript_turn event whisper does, so all downstream UI is unchanged.
  */
-function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string): void {
+function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string, opts: TranscribeOpts = {}): void {
+  const eventType: TranscriptEvent['event_type'] = opts.partial ? 'transcript_partial' : 'transcript_turn';
   const wav = buildWav(pcm);
 
   transcribing = true;
@@ -464,7 +533,7 @@ function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string)
   form.append('file', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), `ch${ channel }.wav`);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? 10000);
 
   fetch(GROK_STT_URL, {
     method:  'POST',
@@ -491,7 +560,7 @@ function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string)
 
       if (onTranscript) {
         onTranscript({
-          event_type: 'transcript_turn',
+          event_type: eventType,
           text,
           speaker:    speakerLabel,
           channel,
@@ -504,6 +573,7 @@ function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string)
     .finally(() => {
       clearTimeout(timeout);
       transcribing = false;
+      opts.onDone?.();
     });
 }
 

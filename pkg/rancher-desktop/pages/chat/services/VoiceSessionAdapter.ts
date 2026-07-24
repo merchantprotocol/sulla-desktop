@@ -35,7 +35,7 @@
 
 import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
 
-import { TTSPlayerService } from '@pkg/composables/voice';
+import { TTSPlayerService, createVoiceTurnAccumulator } from '@pkg/composables/voice';
 
 import type { ChatController } from '../controller/ChatController';
 import type { InterimMessage, TtsMessage } from '../models/Message';
@@ -75,8 +75,15 @@ export class VoiceSessionAdapter {
   // Recording state — tracked locally, mirrored into controller.voice.
   private recording = false;
   private interimId: MessageId | null = null;
-  private accumulated = '';
-  private silenceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end →
+  // commit). Same module the classic chat uses, so both surfaces behave identically.
+  private readonly turn = createVoiceTurnAccumulator({
+    onInterim:    text => this.updateInterim(text),
+    onCommit:     text => this.commitTurn(text),
+    isTTSPlaying: () => this.tts.isPlaying,
+    fallbackMs:   UTTERANCE_FALLBACK_MS,
+  });
 
   // TTS transcript bubble — one active at a time.
   private activeTtsMessageId: MessageId | null = null;
@@ -134,25 +141,10 @@ export class VoiceSessionAdapter {
   async start(): Promise<void> {
     if (this.recording) return;
     this.recording = true;
-    this.accumulated = '';
+    this.turn.reset();
 
     // Drop in an interim message the transcript can render while we listen.
-    const interim: InterimMessage = {
-      id:        newMessageId(),
-      kind:      'interim',
-      createdAt: Date.now(),
-      text:      '',
-      startedAt: Date.now(),
-    };
-    this.interimId = interim.id;
-    this.controller.appendMessage(interim);
-    this.controller.setVoice({
-      phase:            'recording',
-      startedAt:        Date.now(),
-      interimMessageId: interim.id,
-      level:            0,
-      speaking:         false,
-    });
+    this.spawnInterim();
 
     try {
       await ipcRenderer.invoke('audio-driver:start-mic', 'voice-chat', ['pcm-s16le']);
@@ -187,26 +179,42 @@ export class VoiceSessionAdapter {
     ipcRenderer.removeListener('gateway-transcript',    this.onTranscript);
     ipcRenderer.removeListener('audio-driver:mic-vad',  this.onMicVad);
 
-    if (this.silenceTimer) {
-      clearTimeout(this.silenceTimer);
-      this.silenceTimer = null;
+    // recording is already false, so commitTurn() below won't re-spawn an interim.
+    if (commit) {
+      // Commit any accumulated turn as one message (also removes interim + stopVoice).
+      this.turn.commitNow();
+    } else {
+      this.turn.reset();
+      if (this.interimId) {
+        this.controller.removeMessage(this.interimId);
+        this.interimId = null;
+      }
+      this.controller.stopVoice(false);
     }
-
-    const text = this.accumulated.trim();
-    const interimId = this.interimId;
-    this.interimId = null;
-    this.accumulated = '';
-
-    if (interimId) this.controller.removeMessage(interimId);
-    this.controller.stopVoice(commit);
 
     // Release the mic / whisper — fire-and-forget.
     ipcRenderer.invoke('audio-driver:transcribe-stop').catch(() => { /* noop */ });
     ipcRenderer.invoke('audio-driver:stop-mic', 'voice-chat').catch(() => { /* noop */ });
+  }
 
-    if (commit && text) {
-      this.controller.send(text);
-    }
+  /** Create a fresh interim bubble and mark the voice UI as recording. */
+  private spawnInterim(): void {
+    const interim: InterimMessage = {
+      id:        newMessageId(),
+      kind:      'interim',
+      createdAt: Date.now(),
+      text:      '',
+      startedAt: Date.now(),
+    };
+    this.interimId = interim.id;
+    this.controller.appendMessage(interim);
+    this.controller.setVoice({
+      phase:            'recording',
+      startedAt:        Date.now(),
+      interimMessageId: interim.id,
+      level:            0,
+      speaking:         false,
+    });
   }
 
   dispose(): void {
@@ -227,39 +235,7 @@ export class VoiceSessionAdapter {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private handleTranscript(msg: any): void {
     if (!this.recording) return;
-
-    // End-of-turn from the main process (VAD silence + drained pipeline) → commit the
-    // whole accumulated turn as ONE message. Primary trigger; the timer is a fallback.
-    if (msg?.event_type === 'utterance_end') {
-      if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null; }
-      this.commitAccumulated();
-      return;
-    }
-
-    if (!msg?.text) return;
-
-    // Don't transcribe Sulla's own TTS back into the next user message.
-    if (this.tts.isPlaying) return;
-
-    const text = String(msg.text).trim();
-    if (!text) return;
-
-    const isPartial = msg.event_type === 'transcript_partial';
-
-    if (isPartial) {
-      // Show the partial tacked onto what we already have.
-      this.updateInterim(this.accumulated + (this.accumulated ? ' ' : '') + text);
-    } else {
-      this.accumulated = this.accumulated + (this.accumulated ? ' ' : '') + text;
-      this.updateInterim(this.accumulated);
-
-      // Arm the long fallback timer only; commit happens on `utterance_end`.
-      if (this.silenceTimer) clearTimeout(this.silenceTimer);
-      this.silenceTimer = setTimeout(() => {
-        this.silenceTimer = null;
-        this.commitAccumulated();
-      }, UTTERANCE_FALLBACK_MS);
-    }
+    this.turn.handleEvent(msg);
   }
 
   private updateInterim(text: string): void {
@@ -267,10 +243,8 @@ export class VoiceSessionAdapter {
     this.controller.updateMessage<InterimMessage>(this.interimId, { text });
   }
 
-  private commitAccumulated(): void {
-    const text = this.accumulated.trim();
-    this.accumulated = '';
-
+  /** Commit one finished turn (from utterance_end or stop). `text` may be empty. */
+  private commitTurn(text: string): void {
     // Remove the interim bubble; controller.send() will append the real user message.
     if (this.interimId) {
       this.controller.removeMessage(this.interimId);
@@ -283,24 +257,7 @@ export class VoiceSessionAdapter {
     if (text) this.controller.send(text);
 
     // Still holding the mic? Spin up a fresh interim bubble for the next utterance.
-    if (this.recording) {
-      const nextInterim: InterimMessage = {
-        id:        newMessageId(),
-        kind:      'interim',
-        createdAt: Date.now(),
-        text:      '',
-        startedAt: Date.now(),
-      };
-      this.interimId = nextInterim.id;
-      this.controller.appendMessage(nextInterim);
-      this.controller.setVoice({
-        phase:            'recording',
-        startedAt:        Date.now(),
-        interimMessageId: nextInterim.id,
-        level:            0,
-        speaking:         false,
-      });
-    }
+    if (this.recording) this.spawnInterim();
   }
 
   // ─── TTS ──────────────────────────────────────────────────────────
