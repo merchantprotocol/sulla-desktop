@@ -16,6 +16,13 @@
 import { TypedEventEmitter } from './TypedEventEmitter';
 import { logTTSEnqueue, logTTSPlayStart, logTTSPlayEnd, logTTSStop, logTTSDedup, logTTSFallback, timingFirstAudio } from './VoiceLogger';
 
+// Speaking-rate multipliers for the native OS voice, mirroring Sulla Mobile's TtsService.
+const RATE_MAP: Record<string, number> = {
+  slow:   0.85,
+  normal: 1.0,
+  fast:   1.2,
+};
+
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface TTSPlayerEvents {
@@ -55,6 +62,11 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
   private prefetchedAudio: { text: string; result: any } | null = null;
   private prefetchAbort:   AbortController | null = null;
   private prefetchingText: string | null = null;
+
+  // ── TTS provider config ──
+  // Cached provider selection. Loaded lazily from settings and cleared on stop() so a
+  // provider/voice change in Audio Settings takes effect on the next spoken turn.
+  private ttsConfig: { provider: string; voiceURI: string; rate: number } | null = null;
 
   constructor(config: TTSPlayerConfig) {
     super();
@@ -118,6 +130,9 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     this.prefetchedAudio = null;
     this.prefetchingText = null;
 
+    // Re-read provider/voice config next turn (may have changed in Audio Settings)
+    this.ttsConfig = null;
+
     // Cancel browser speechSynthesis fallback if active
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -157,6 +172,22 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
     this.emit('playbackStart', undefined as any);
 
     try {
+      const cfg = await this.getTtsConfig();
+
+      // Native OS voice: speak in-renderer via SpeechSynthesis — no IPC, no prefetch, no audio blob.
+      if (cfg.provider === 'system') {
+        if (seq !== this.sequence) {
+          this.playing = false;
+
+          return;
+        }
+        await this.speakNative(text, cfg.voiceURI, cfg.rate);
+        logTTSPlayEnd(text, Date.now() - playStartTime);
+        this.emit('playbackEnd', undefined as any);
+
+        return;
+      }
+
       let result: any;
       let source: string;
 
@@ -261,6 +292,8 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
    */
   private async prefetch(): Promise<void> {
     if (this.queue.length === 0 || this.prefetchedAudio) return;
+    // Native OS voice is synthesized locally on demand — nothing to prefetch over IPC.
+    if ((await this.getTtsConfig()).provider === 'system') return;
     const nextText = this.queue[0]; // peek, don't shift
     if (this.prefetchingText === nextText) return;
 
@@ -287,6 +320,71 @@ export class TTSPlayerService extends TypedEventEmitter<TTSPlayerEvents> {
       this.prefetchAbort = null;
       this.prefetchingText = null;
     }
+  }
+
+  // ─── Provider config ──────────────────────────────────────────
+
+  /**
+   * Reads the selected TTS provider, voice, and rate from settings (cached until
+   * stop() clears it). Defaults to the keyless native OS voice so speech works
+   * out of the box without an ElevenLabs key.
+   */
+  private async getTtsConfig(): Promise<{ provider: string; voiceURI: string; rate: number }> {
+    if (this.ttsConfig) return this.ttsConfig;
+    try {
+      const [provider, voiceURI, rateKey] = await Promise.all([
+        this.ipcInvoke('sulla-settings-get', 'audioTtsProvider', 'system'),
+        this.ipcInvoke('sulla-settings-get', 'audioTtsVoice', ''),
+        this.ipcInvoke('sulla-settings-get', 'audioTtsRate', 'normal'),
+      ]);
+      this.ttsConfig = {
+        provider: provider || 'system',
+        voiceURI: voiceURI || '',
+        rate:     RATE_MAP[rateKey as string] ?? 1.0,
+      };
+    } catch {
+      this.ttsConfig = { provider: 'system', voiceURI: '', rate: 1.0 };
+    }
+
+    return this.ttsConfig;
+  }
+
+  // ─── Native (OS) Voice ────────────────────────────────────────
+
+  /**
+   * Speaks text through the OS speech engine via SpeechSynthesis. In Electron on
+   * macOS these are the native system voices. Honors the selected voiceURI (or an
+   * auto pick of the default English voice) and speaking rate.
+   */
+  private speakNative(text: string, voiceURI: string, rate: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+      if (!synth) {
+        console.warn('[TTSPlayer:native] speechSynthesis not available');
+        resolve();
+
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      const allVoices = synth.getVoices();
+
+      if (voiceURI && voiceURI !== 'auto') {
+        const match = allVoices.find(v => v.voiceURI === voiceURI);
+        if (match) utterance.voice = match;
+      } else {
+        // Auto: prefer the OS default English voice, else the first English voice.
+        const english = allVoices.filter(v => v.lang?.toLowerCase().startsWith('en'));
+        const pick = english.find(v => v.default) || english[0];
+        if (pick) utterance.voice = pick;
+      }
+
+      utterance.rate = rate;
+      utterance.onstart = () => timingFirstAudio();
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+      synth.speak(utterance);
+    });
   }
 
   // ─── Browser Fallback ─────────────────────────────────────────

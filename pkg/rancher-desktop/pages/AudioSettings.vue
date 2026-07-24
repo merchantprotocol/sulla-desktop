@@ -1036,14 +1036,17 @@ interface TtsProviderInfo {
   id:        string;
   name:      string;
   connected: boolean;
-  vaultKey:  { integrationId: string; property: string };
+  /** Vault credential this provider needs. Absent for keyless providers (e.g. the native OS voice). */
+  vaultKey?: { integrationId: string; property: string };
 }
 
 const ttsProviders = ref<TtsProviderInfo[]>([
+  // Native macOS voices via the OS speech engine — always available, no API key. Mirrors Sulla Mobile's default.
+  { id: 'system', name: 'System Default (macOS)', connected: true },
   { id: 'elevenlabs', name: 'ElevenLabs', connected: false, vaultKey: { integrationId: 'elevenlabs', property: 'api_key' } },
 ]);
 
-const ttsProvider = ref('elevenlabs');
+const ttsProvider = ref('system');
 const ttsVoice = ref('');
 const ttsVoiceName = ref('');
 const voices = ref<{ value: string; label: string; description?: string }[]>([]);
@@ -1051,7 +1054,8 @@ const loadingVoices = ref(false);
 const previewPlaying = ref(false);
 
 const hasAnyTtsProvider = computed(() => ttsProviders.value.some(p => p.connected));
-const ttsFullyConfigured = computed(() => hasAnyTtsProvider.value && !!ttsVoice.value);
+// The system voice speaks with the OS default even when no specific voice is picked, so it counts as configured.
+const ttsFullyConfigured = computed(() => hasAnyTtsProvider.value && (ttsProvider.value === 'system' || !!ttsVoice.value));
 
 function selectTtsProvider(id: string) {
   ttsProvider.value = id;
@@ -1813,7 +1817,7 @@ function onMicDeviceChange() {
 
 async function loadSettings(): Promise<void> {
   try {
-    ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'elevenlabs');
+    ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'system');
     ttsVoice.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoice', '');
     ttsVoiceName.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoiceName', '');
     transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
@@ -1842,6 +1846,11 @@ async function saveSettings(): Promise<void> {
 
 async function checkProviders(): Promise<void> {
   for (const provider of ttsProviders.value) {
+    // Keyless providers (e.g. the native OS voice) are always available — no vault lookup.
+    if (!provider.vaultKey) {
+      provider.connected = true;
+      continue;
+    }
     try {
       const result = await ipcRenderer.invoke(
         'integration-get-value',
@@ -1874,12 +1883,46 @@ async function fetchVoices(): Promise<void> {
   loadingVoices.value = true;
 
   try {
-    if (ttsProvider.value === 'elevenlabs') {
+    if (ttsProvider.value === 'system') {
+      await fetchSystemVoices();
+    } else if (ttsProvider.value === 'elevenlabs') {
       await fetchElevenLabsVoices();
     }
   } finally {
     loadingVoices.value = false;
   }
+}
+
+// Enumerate the OS speech-engine voices exposed through the browser SpeechSynthesis API.
+// In Electron/Chromium on macOS these are the native system voices (Samantha, Alex, the Siri voices, …).
+async function fetchSystemVoices(): Promise<void> {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+  if (!synth) {
+    voices.value = [{ value: 'auto', label: 'Automatic (system default)' }];
+    return;
+  }
+
+  // Chromium loads voices lazily — the first getVoices() call can return []. Wait briefly for voiceschanged.
+  let list = synth.getVoices();
+  if (list.length === 0) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 1000);
+      synth.addEventListener('voiceschanged', () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
+    list = synth.getVoices();
+  }
+
+  const english = list.filter(v => v.lang?.toLowerCase().startsWith('en'));
+  const pool = english.length > 0 ? english : list;
+
+  voices.value = [
+    { value: 'auto', label: 'Automatic (system default)' },
+    ...pool.map(v => ({
+      value:       v.voiceURI,
+      label:       v.name,
+      description: v.lang,
+    })),
+  ];
 }
 
 async function fetchElevenLabsVoices(): Promise<void> {
@@ -1949,10 +1992,32 @@ async function fetchAudioDevices(): Promise<void> {
 
 // ─── Voice preview ──────────────────────────────────────────────
 
+// Speak a sample through the OS speech engine using the currently-selected system voice.
+function previewSystemVoice(text: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+    if (!synth) { resolve(); return; }
+    synth.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    if (ttsVoice.value && ttsVoice.value !== 'auto') {
+      const match = synth.getVoices().find(v => v.voiceURI === ttsVoice.value);
+      if (match) utterance.voice = match;
+    }
+    utterance.onend = () => resolve();
+    utterance.onerror = () => resolve();
+    synth.speak(utterance);
+  });
+}
+
 async function previewVoice(): Promise<void> {
   if (previewPlaying.value) return;
   previewPlaying.value = true;
   try {
+    // System provider speaks natively in the renderer — no ElevenLabs round-trip.
+    if (ttsProvider.value === 'system') {
+      await previewSystemVoice('Hello, this is how I sound.');
+      return;
+    }
     const result = await ipcRenderer.invoke('audio-speak', { text: 'Hello, this is how I sound.' });
     if (result?.audio) {
       const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
