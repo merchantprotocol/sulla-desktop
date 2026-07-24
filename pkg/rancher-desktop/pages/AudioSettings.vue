@@ -1044,6 +1044,8 @@ const ttsProviders = ref<TtsProviderInfo[]>([
   // Native macOS voices via the OS speech engine — always available, no API key. Mirrors Sulla Mobile's default.
   { id: 'system', name: 'System Default (macOS)', connected: true },
   { id: 'elevenlabs', name: 'ElevenLabs', connected: false, vaultKey: { integrationId: 'elevenlabs', property: 'api_key' } },
+  // xAI Grok Text-to-Speech. Uses the metered xAI API key (Grok integration → api_key).
+  { id: 'grok', name: 'Grok Voice', connected: false, vaultKey: { integrationId: 'grok', property: 'api_key' } },
 ]);
 
 const ttsProvider = ref('system');
@@ -1887,10 +1889,61 @@ async function fetchVoices(): Promise<void> {
       await fetchSystemVoices();
     } else if (ttsProvider.value === 'elevenlabs') {
       await fetchElevenLabsVoices();
+    } else if (ttsProvider.value === 'grok') {
+      await fetchGrokVoices();
     }
   } finally {
     loadingVoices.value = false;
   }
+}
+
+// Fetch Grok's built-in voices from GET /v1/tts/voices, falling back to the known
+// built-ins when no key is set or the endpoint is unreachable.
+async function fetchGrokVoices(): Promise<void> {
+  try {
+    const result = await ipcRenderer.invoke('integration-get-value', 'grok', 'api_key');
+    const apiKey = result?.value;
+
+    if (!apiKey) {
+      voices.value = getGrokStaticVoices();
+      return;
+    }
+
+    const response = await fetch('https://api.x.ai/v1/tts/voices', {
+      headers: { Authorization: `Bearer ${ apiKey }` },
+    });
+
+    if (!response.ok) {
+      voices.value = getGrokStaticVoices();
+      return;
+    }
+
+    // Response shape: either a bare array or { voices: [...] } of { voice_id, name }.
+    const body = await response.json() as { voices?: { voice_id: string; name?: string }[] } | { voice_id: string; name?: string }[];
+    const list = Array.isArray(body) ? body : (body.voices ?? []);
+
+    if (list.length > 0) {
+      voices.value = list.map(v => ({
+        value: v.voice_id,
+        label: v.name || v.voice_id,
+      }));
+    } else {
+      voices.value = getGrokStaticVoices();
+    }
+  } catch {
+    voices.value = getGrokStaticVoices();
+  }
+}
+
+// Grok's five built-in voices (docs.x.ai). `eve` is the API default.
+function getGrokStaticVoices(): { value: string; label: string; description?: string }[] {
+  return [
+    { value: 'eve', label: 'Eve', description: 'default' },
+    { value: 'ara', label: 'Ara' },
+    { value: 'leo', label: 'Leo' },
+    { value: 'rex', label: 'Rex' },
+    { value: 'sal', label: 'Sal' },
+  ];
 }
 
 // Enumerate the OS speech-engine voices exposed through the browser SpeechSynthesis API.
