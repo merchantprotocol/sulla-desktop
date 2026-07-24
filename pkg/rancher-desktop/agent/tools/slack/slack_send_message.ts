@@ -1,6 +1,7 @@
 import { registry } from '../../integrations';
 import { slackClient } from '../../integrations/slack/SlackClient';
 import { BaseTool, ToolResponse } from '../base';
+import { stripProtocolTags } from '../../utils/stripProtocolTags';
 
 import type { SlackClient } from '../../integrations/slack/SlackClient';
 
@@ -23,6 +24,11 @@ export class SlackSendMessageWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { channel, text } = input;
+    // Strip internal agent-protocol wrappers (AGENT_DONE / AGENT_BLOCKED /
+    // AGENT_CONTINUE, etc.) so they never leak into user-visible Slack messages
+    // (issue #96). stripProtocolTags is the single source of truth for these
+    // regexes.
+    const cleanText = stripProtocolTags(text);
     const invocationId = `send-${ Date.now() }-${ Math.random().toString(36).slice(2, 8) }`;
     const startedAt = Date.now();
 
@@ -57,12 +63,25 @@ export class SlackSendMessageWorker extends BaseTool {
         };
       }
 
+      // Guard: if the message was made up entirely of protocol wrappers,
+      // refuse rather than post an empty message (Slack rejects empty text).
+      if (typeof text === 'string' && text.trim().length > 0 && cleanText.length === 0) {
+        console.warn('[slack_send_message] Message was entirely internal protocol content — not sending', {
+          invocationId,
+          durationMs: Date.now() - startedAt,
+        });
+        return {
+          successBoolean: false,
+          responseString: `Not sending Slack message to channel ${ channel }: content was entirely internal protocol wrappers after stripping`,
+        };
+      }
+
       console.log('[slack_send_message] Calling slack.sendMessage', {
         invocationId,
         channel,
-        textPreview: typeof text === 'string' ? text.slice(0, 80) : null,
+        textPreview: cleanText.slice(0, 80),
       });
-      const res = await slack.sendMessage(channel, text);
+      const res = await slack.sendMessage(channel, cleanText);
       console.log('[slack_send_message] sendMessage response', {
         invocationId,
         ok:         !!res?.ok,
