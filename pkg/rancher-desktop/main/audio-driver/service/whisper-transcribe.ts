@@ -35,7 +35,10 @@ export type SttProvider = 'whisper' | 'grok';
 const GROK_STT_URL = 'https://api.x.ai/v1/stt';
 
 export interface TranscriptEvent {
-  event_type: 'transcript_turn' | 'transcript_partial';
+  // `utterance_end` is an additive end-of-turn signal (conversation mode only):
+  // the user has stopped speaking (VAD silent) AND the transcription pipeline has
+  // drained, so the renderer can commit the accumulated turn as ONE message.
+  event_type: 'transcript_turn' | 'transcript_partial' | 'utterance_end';
   text:       string;
   speaker?:   string;
   channel?:   number;
@@ -46,6 +49,14 @@ type TranscriptCallback = (event: TranscriptEvent) => void;
 // ─── Configuration ──────────────────────────────────────────
 
 const SEGMENT_MS = 2000;   // flush and transcribe every 2 seconds for responsive tracking
+// End-of-turn: how long the mic must be silent (no VAD-gated audio fed) before we
+// consider the utterance finished. Must be comfortably ABOVE nothing-in-flight, and
+// is only meaningful once the pipeline has drained (micBytes === 0 && !transcribing).
+const END_OF_TURN_MS = 1200;
+const END_OF_TURN_POLL_MS = 250;   // how often we check for end-of-turn
+// Once the mic goes quiet mid-buffer, flush the trailing partial early instead of
+// waiting for the next 2s tick — makes end-of-turn noticeably snappier.
+const EARLY_FLUSH_SILENCE_MS = 500;
 const SAMPLE_RATE = 16000;  // whisper expects 16kHz
 const BYTES_PER_SAMPLE = 2;      // 16-bit signed LE
 const CHANNELS = 1;      // mono
@@ -71,7 +82,14 @@ let micBytes = 0;
 let speakerBytes = 0;
 
 let flushTimer: ReturnType<typeof setInterval> | null = null;
+let endOfTurnTimer: ReturnType<typeof setInterval> | null = null;
 let transcribing = false;
+
+// End-of-turn tracking (conversation mode). `lastMicFedAt` is the wall-clock of the
+// most recent VAD-gated mic chunk — since PCM is only delivered while speaking, the
+// gap since then is real silence. `utteranceOpen` guards a single utterance_end per turn.
+let lastMicFedAt = 0;
+let utteranceOpen = false;
 const tmpDir = path.join(os.tmpdir(), 'sulla-whisper');
 
 // ─── Public API ─────────────────────────────────────────────
@@ -133,6 +151,14 @@ export function start(opts: {
   // Start periodic flush
   flushTimer = setInterval(() => flush(), SEGMENT_MS);
 
+  // End-of-turn detection runs only in conversation mode (drives voice-chat turn
+  // commit). Secretary mode keeps its own renderer-side turn accumulator.
+  lastMicFedAt = 0;
+  utteranceOpen = false;
+  if (mode === 'conversation') {
+    endOfTurnTimer = setInterval(() => checkEndOfTurn(), END_OF_TURN_POLL_MS);
+  }
+
   log.info('WhisperTranscribe', 'Started', { mode, language, model: modelName });
   return true;
 }
@@ -142,6 +168,12 @@ export function stop(): void {
     clearInterval(flushTimer);
     flushTimer = null;
   }
+  if (endOfTurnTimer) {
+    clearInterval(endOfTurnTimer);
+    endOfTurnTimer = null;
+  }
+  lastMicFedAt = 0;
+  utteranceOpen = false;
 
   // Final flush
   flush();
@@ -183,6 +215,13 @@ export function feedMic(chunk: Buffer): void {
   if (!mode) return;
   micBuffer.push(chunk);
   micBytes += chunk.length;
+
+  // PCM is VAD-gated upstream (only delivered while speaking), so any feed marks
+  // an in-progress utterance and refreshes the silence clock.
+  if (mode === 'conversation') {
+    utteranceOpen = true;
+    lastMicFedAt = Date.now();
+  }
 
   if (micBytes >= MAX_BUFFER_BYTES) flush();
 }
@@ -228,6 +267,35 @@ function flush(): void {
     speakerBuffer.length = 0;
     speakerBytes = 0;
     transcribeChunk(pcm, 1, 'Speaker');
+  }
+}
+
+/**
+ * End-of-turn detector (conversation mode). Runs on a fast poll. Because mic PCM is
+ * VAD-gated upstream, "no audio fed for a while" is genuine user silence. We flush any
+ * trailing partial early, then — once the pipeline has fully drained — emit a single
+ * `utterance_end` so the renderer can commit the whole turn as one message.
+ */
+function checkEndOfTurn(): void {
+  if (mode !== 'conversation' || !utteranceOpen) return;
+
+  const silentFor = Date.now() - lastMicFedAt;
+
+  // Speech paused mid-buffer — transcribe the trailing partial now rather than
+  // waiting up to SEGMENT_MS for the next tick.
+  if (micBytes > 0 && !transcribing && silentFor >= EARLY_FLUSH_SILENCE_MS) {
+    flush();
+    return;
+  }
+
+  // Pipeline drained (no pending audio, no in-flight inference) and silence has
+  // held past the threshold → the utterance is over.
+  if (micBytes === 0 && !transcribing && silentFor >= END_OF_TURN_MS) {
+    utteranceOpen = false;
+    log.debug('WhisperTranscribe', 'utterance_end', { silentFor });
+    if (onTranscript) {
+      onTranscript({ event_type: 'utterance_end', text: '', speaker: 'You', channel: 0 });
+    }
   }
 }
 

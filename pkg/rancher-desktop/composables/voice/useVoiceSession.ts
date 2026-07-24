@@ -66,8 +66,12 @@ function formatDuration(seconds: number): string {
   return `${ m }:${ s.toString().padStart(2, '0') }`;
 }
 
-// How long silence must persist before we finalize and send (ms)
-const SILENCE_SEND_DELAY = 2000;
+// Fallback commit delay (ms). The PRIMARY end-of-turn trigger is the main-process
+// `utterance_end` event (VAD silence + drained pipeline); this timer only fires if
+// that signal never arrives (e.g. VAD wedged open by background noise). It is
+// deliberately long so it never pre-empts a real utterance mid-thought — the old
+// 2000ms value collided with whisper's 2000ms chunk cadence and split utterances.
+const UTTERANCE_FALLBACK_MS = 8000;
 
 // How long the user must speak continuously before we treat it as a
 // barge-in and cut TTS off. Short sounds (coughs, "mm-hm", chair squeaks
@@ -200,7 +204,22 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
   // ── Whisper transcript handler ──
 
   const onTranscript = (_event: any, msg: any) => {
-    if (!isRecording.value || !msg?.text) return;
+    if (!isRecording.value) return;
+
+    // End-of-turn: the main process detected the user finished speaking and the
+    // transcription pipeline drained → commit the whole accumulated turn as ONE
+    // message. This is the primary trigger; the fallback timer is just a safety net.
+    if (msg?.event_type === 'utterance_end') {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+      sendAccumulatedTranscript();
+      return;
+    }
+
+    if (!msg?.text) return;
+
+    // Don't transcribe Sulla's own TTS back into the next user message. The mic stays
+    // open while she speaks; barge-in (below) stops TTS, after which transcripts flow.
+    if (isTTSPlaying.value) return;
 
     const text = msg.text.trim();
     if (!text) return;
@@ -213,17 +232,17 @@ export function useVoiceSession(options: UseVoiceSessionOptions): UseVoiceSessio
       // Show partial in the interim message
       updateInterimMessage(accumulatedTranscript + (accumulatedTranscript ? ' ' : '') + text);
     } else {
-      // Final transcript — accumulate
+      // Final transcript chunk — accumulate; commit happens on `utterance_end`.
       accumulatedTranscript += (accumulatedTranscript ? ' ' : '') + text;
       updateInterimMessage(accumulatedTranscript);
       lastTranscriptTime = Date.now();
 
-      // Reset silence timer — wait for more speech
+      // Arm the long fallback timer only (in case utterance_end never arrives).
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
         silenceTimer = null;
         sendAccumulatedTranscript();
-      }, SILENCE_SEND_DELAY);
+      }, UTTERANCE_FALLBACK_MS);
     }
   };
 

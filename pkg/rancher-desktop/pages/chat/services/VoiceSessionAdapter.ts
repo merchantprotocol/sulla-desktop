@@ -58,8 +58,11 @@ export interface VoiceSessionAdapterOptions {
   onError?: (message: string) => void;
 }
 
-// How long silence must persist before we finalize and send (ms).
-const SILENCE_SEND_DELAY = 2000;
+// Fallback commit delay (ms). PRIMARY end-of-turn trigger is the main-process
+// `utterance_end` event (VAD silence + drained pipeline); this is only a safety net
+// for when that signal never arrives. Long on purpose — the old 2000ms collided with
+// whisper's 2000ms chunk cadence and split utterances into separate agent turns.
+const UTTERANCE_FALLBACK_MS = 8000;
 
 export class VoiceSessionAdapter {
   private readonly controller: ChatController;
@@ -223,7 +226,21 @@ export class VoiceSessionAdapter {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private handleTranscript(msg: any): void {
-    if (!this.recording || !msg?.text) return;
+    if (!this.recording) return;
+
+    // End-of-turn from the main process (VAD silence + drained pipeline) → commit the
+    // whole accumulated turn as ONE message. Primary trigger; the timer is a fallback.
+    if (msg?.event_type === 'utterance_end') {
+      if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null; }
+      this.commitAccumulated();
+      return;
+    }
+
+    if (!msg?.text) return;
+
+    // Don't transcribe Sulla's own TTS back into the next user message.
+    if (this.tts.isPlaying) return;
+
     const text = String(msg.text).trim();
     if (!text) return;
 
@@ -236,11 +253,12 @@ export class VoiceSessionAdapter {
       this.accumulated = this.accumulated + (this.accumulated ? ' ' : '') + text;
       this.updateInterim(this.accumulated);
 
+      // Arm the long fallback timer only; commit happens on `utterance_end`.
       if (this.silenceTimer) clearTimeout(this.silenceTimer);
       this.silenceTimer = setTimeout(() => {
         this.silenceTimer = null;
         this.commitAccumulated();
-      }, SILENCE_SEND_DELAY);
+      }, UTTERANCE_FALLBACK_MS);
     }
   }
 
