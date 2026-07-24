@@ -13,7 +13,14 @@ export class LimaShellWorker extends BaseTool {
     const args = ['shell', instance];
 
     if (command) {
-      args.push('--', command);
+      // Pass the command through the guest shell so multi-word commands,
+      // arguments, pipes and redirects are parsed by `sh` rather than exec'd as
+      // a single literal token. Without this, `limactl shell <vm> -- "uname -a"`
+      // reaches the guest as one argv element and fails with
+      // `uname -a: command not found` (issue #78). Mirrors the canonical lima
+      // invocation used by CommandRunner's runInLimaShell path
+      // (`['shell', instance, '--', 'sh', '-lc', script]`).
+      args.push('--', 'sh', '-lc', command);
     }
 
     try {
