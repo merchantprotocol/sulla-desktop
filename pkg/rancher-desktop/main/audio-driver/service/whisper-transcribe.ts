@@ -1,10 +1,16 @@
 /**
- * Service — local whisper.cpp transcription.
+ * Service — speech-to-text transcription.
  *
  * Sits on top of the audio driver. Consumes PCM audio from the existing
  * capture pipeline and produces transcript events in the same format as
  * the gateway (transcript_turn / transcript_partial), so existing UI
  * code (SecretaryModeController, ChatInterface) works unchanged.
+ *
+ * The buffering / VAD-gated segmentation / 2s flush cadence is provider-
+ * agnostic; only the per-segment engine differs:
+ *   - `whisper` (default) — local whisper.cpp, fully offline.
+ *   - `grok`             — xAI Grok STT (`POST https://api.x.ai/v1/stt`).
+ * The provider (and Grok api key) are chosen per-session in start().
  *
  * Two modes:
  *   - conversation: mic channel only → transcript sent to Sulla chat
@@ -22,6 +28,11 @@ import * as whisperModel from '../model/whisper';
 // ─── Types ──────────────────────────────────────────────────
 
 export type TranscribeMode = 'conversation' | 'secretary';
+
+/** STT engine. `whisper` = local whisper.cpp; `grok` = xAI Grok STT. */
+export type SttProvider = 'whisper' | 'grok';
+
+const GROK_STT_URL = 'https://api.x.ai/v1/stt';
 
 export interface TranscriptEvent {
   event_type: 'transcript_turn' | 'transcript_partial';
@@ -48,6 +59,11 @@ let onTranscript: TranscriptCallback | null = null;
 let language = 'en';
 let modelName = 'base.en';
 
+// STT engine for this session. Defaults to local whisper; the transcribe-start
+// IPC handler passes `grok` + the api key when the user selects Grok STT.
+let provider: SttProvider = 'whisper';
+let grokApiKey: string | null = null;
+
 // Per-channel PCM accumulators (raw s16le, 16kHz, mono)
 const micBuffer: Buffer[] = [];
 const speakerBuffer: Buffer[] = [];
@@ -65,8 +81,18 @@ export function start(opts: {
   onTranscript: TranscriptCallback;
   language?:    string;
   model?:       string;
+  provider?:    SttProvider;
+  grokApiKey?:  string | null;
 }): boolean {
-  if (!whisperModel.isAvailable()) {
+  const useGrok = opts.provider === 'grok';
+
+  // Grok STT needs an api key; local whisper needs the binary + a model.
+  if (useGrok) {
+    if (!opts.grokApiKey) {
+      log.error('WhisperTranscribe', 'Cannot start — Grok STT selected but no xAI api key');
+      return false;
+    }
+  } else if (!whisperModel.isAvailable()) {
     log.error('WhisperTranscribe', 'Cannot start — whisper.cpp not installed');
     return false;
   }
@@ -75,7 +101,7 @@ export function start(opts: {
   const models = status?.models ?? [];
   const requestedModel = opts.model || modelName;
 
-  if (models.length === 0) {
+  if (!useGrok && models.length === 0) {
     log.error('WhisperTranscribe', 'Cannot start — no whisper models downloaded');
     return false;
   }
@@ -89,8 +115,11 @@ export function start(opts: {
     return true;
   }
 
-  // Use requested model if available, otherwise first available model
-  modelName = models.includes(requestedModel) ? requestedModel : models[0];
+  provider = opts.provider || 'whisper';
+  grokApiKey = opts.grokApiKey || null;
+
+  // Use requested model if available, otherwise first available model (whisper only)
+  modelName = models.includes(requestedModel) ? requestedModel : (models[0] || modelName);
   mode = opts.mode;
   onTranscript = opts.onTranscript;
   language = opts.language || 'en';
@@ -119,6 +148,8 @@ export function stop(): void {
 
   mode = null;
   onTranscript = null;
+  provider = 'whisper';
+  grokApiKey = null;
   resetBuffers();
   log.info('WhisperTranscribe', 'Stopped');
 }
@@ -229,6 +260,12 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
     return;
   }
 
+  // Cloud engine: transcribe the segment via Grok STT instead of local whisper.
+  if (provider === 'grok' && grokApiKey) {
+    transcribeChunkGrok(pcm, channel, speakerLabel);
+    return;
+  }
+
   const wavPath = path.join(tmpDir, `ch${ channel }-${ Date.now() }.wav`);
 
   writeWav(wavPath, pcm);
@@ -306,9 +343,9 @@ function transcribeChunk(pcm: Buffer, channel: number, speakerLabel: string): vo
 }
 
 /**
- * Write raw PCM data as a valid WAV file (RIFF header + data).
+ * Build a valid WAV (RIFF header + PCM data) in memory.
  */
-function writeWav(filePath: string, pcm: Buffer): void {
+function buildWav(pcm: Buffer): Buffer {
   const dataSize = pcm.length;
   const header = Buffer.alloc(44);
 
@@ -331,7 +368,75 @@ function writeWav(filePath: string, pcm: Buffer): void {
   header.write('data', 36);
   header.writeUInt32LE(dataSize, 40);
 
-  fs.writeFileSync(filePath, Buffer.concat([header, pcm]));
+  return Buffer.concat([header, pcm]);
+}
+
+/**
+ * Write raw PCM data as a valid WAV file (RIFF header + data).
+ */
+function writeWav(filePath: string, pcm: Buffer): void {
+  fs.writeFileSync(filePath, buildWav(pcm));
+}
+
+/**
+ * Grok STT engine — transcribe a PCM segment via `POST https://api.x.ai/v1/stt`.
+ * Wraps the segment as WAV and uploads it as multipart/form-data (the `file`
+ * field must come after the other fields per the xAI API). Emits the same
+ * transcript_turn event whisper does, so all downstream UI is unchanged.
+ */
+function transcribeChunkGrok(pcm: Buffer, channel: number, speakerLabel: string): void {
+  const wav = buildWav(pcm);
+
+  transcribing = true;
+
+  const form = new FormData();
+
+  form.append('language', language);
+  // `file` must be appended last (xAI multipart requirement).
+  form.append('file', new Blob([new Uint8Array(wav)], { type: 'audio/wav' }), `ch${ channel }.wav`);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  fetch(GROK_STT_URL, {
+    method:  'POST',
+    signal:  controller.signal,
+    headers: { Authorization: `Bearer ${ grokApiKey }` },
+    body:    form,
+  })
+    .then(async(response) => {
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        log.warn('WhisperTranscribe', 'Grok STT failed', { status: response.status, body: body.slice(0, 200) });
+        return;
+      }
+
+      const data = await response.json() as { text?: string };
+      const text = (data.text || '').trim();
+
+      if (!text || text.length < 2) {
+        log.debug('WhisperTranscribe', 'Grok STT blank/empty — skipping', { channel });
+        return;
+      }
+
+      log.info('WhisperTranscribe', 'Grok transcript', { channel, speaker: speakerLabel, text: text.substring(0, 80) });
+
+      if (onTranscript) {
+        onTranscript({
+          event_type: 'transcript_turn',
+          text,
+          speaker:    speakerLabel,
+          channel,
+        });
+      }
+    })
+    .catch((err) => {
+      log.warn('WhisperTranscribe', 'Grok STT request error', { error: err?.message });
+    })
+    .finally(() => {
+      clearTimeout(timeout);
+      transcribing = false;
+    });
 }
 
 function cleanupFile(filePath: string): void {

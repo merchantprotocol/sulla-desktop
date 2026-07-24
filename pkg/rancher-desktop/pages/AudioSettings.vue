@@ -667,9 +667,36 @@
         >
           <h2>Transcription</h2>
           <p class="description">
-            Local speech-to-text powered by whisper.cpp. Runs entirely on your
-            machine &mdash; no network, no API keys, no data sent anywhere.
+            Speech-to-text for voice chat and Secretary Mode. Use local
+            whisper.cpp (private, offline, no API key) or a cloud provider.
           </p>
+
+          <!-- ── STT Provider selection ── -->
+          <div class="setting-section">
+            <h3>Provider</h3>
+            <div class="voice-select-row">
+              <select
+                v-model="sttProvider"
+                class="setting-select"
+                @change="onSttProviderChange"
+              >
+                <option value="whisper">
+                  Whisper (Local &mdash; default)
+                </option>
+                <option value="grok">
+                  Grok (xAI)
+                </option>
+              </select>
+            </div>
+            <p
+              v-if="sttProvider === 'grok'"
+              class="description"
+              :class="grokSttConnected ? 'banner-success' : 'banner-info'"
+            >
+              <span v-if="grokSttConnected">Grok speech-to-text is connected. Audio is sent to xAI for transcription.</span>
+              <span v-else>Grok speech-to-text needs your xAI API key in Integrations &rarr; Grok. Until then, transcription falls back to local Whisper.</span>
+            </p>
+          </div>
 
           <!-- ── Progress / Activity Log ── -->
           <div
@@ -713,8 +740,11 @@
             </div>
           </div>
 
-          <!-- ── Engine Status ── -->
-          <div class="setting-section">
+          <!-- ── Engine Status (whisper only) ── -->
+          <div
+            v-if="sttProvider === 'whisper'"
+            class="setting-section"
+          >
             <h3>whisper.cpp Engine</h3>
             <div
               v-if="whisperVersion"
@@ -734,7 +764,7 @@
 
           <!-- ── Model Management (only when installed) ── -->
           <div
-            v-if="whisperInstalled"
+            v-if="sttProvider === 'whisper' && whisperInstalled"
             class="setting-section"
           >
             <h3>Models</h3>
@@ -827,7 +857,7 @@
 
           <!-- ── Test Transcription (only when installed + has models) ── -->
           <div
-            v-if="whisperInstalled && whisperModels.length > 0"
+            v-if="sttProvider === 'whisper' && whisperInstalled && whisperModels.length > 0"
             class="setting-section"
           >
             <h3>Test</h3>
@@ -1090,6 +1120,10 @@ const audioInputDeviceId = ref('');
 const audioInputDevices = ref<{ value: string; label: string }[]>([]);
 const loadingDevices = ref(false);
 const sttLanguage = ref('en-US');
+
+// STT provider — 'whisper' (local, default) or 'grok' (xAI cloud STT).
+const sttProvider = ref('whisper');
+const grokSttConnected = ref(false);
 
 // ─── Speaker tab ────────────────────────────────────────────────
 
@@ -1815,6 +1849,21 @@ function onMicDeviceChange() {
   saveSettings();
 }
 
+function onSttProviderChange() {
+  saveSettings();
+  checkGrokSttConnection();
+}
+
+// Grok STT uses the same metered xAI api_key as Grok TTS (OAuth tokens are rejected by api.x.ai).
+async function checkGrokSttConnection(): Promise<void> {
+  try {
+    const result = await ipcRenderer.invoke('integration-get-value', 'grok', 'api_key');
+    grokSttConnected.value = !!(result?.value);
+  } catch {
+    grokSttConnected.value = false;
+  }
+}
+
 // ─── Settings persistence ───────────────────────────────────────
 
 async function loadSettings(): Promise<void> {
@@ -1824,6 +1873,7 @@ async function loadSettings(): Promise<void> {
     ttsVoiceName.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoiceName', '');
     transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
     sttLanguage.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
+    sttProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttProvider', 'whisper');
     audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
     activeWhisperModel.value = await ipcRenderer.invoke('sulla-settings-get', 'audioWhisperModel', '');
   } catch (err) {
@@ -1838,6 +1888,7 @@ async function saveSettings(): Promise<void> {
     await ipcRenderer.invoke('sulla-settings-set', 'audioTtsVoiceName', ttsVoiceName.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionMode', transcriptionMode.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioSttLanguage', sttLanguage.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioSttProvider', sttProvider.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioInputDeviceId', audioInputDeviceId.value);
   } catch (err) {
     console.error('[AudioSettings] Failed to save settings:', err);
@@ -2095,6 +2146,7 @@ onMounted(async() => {
   await loadSettings();
   await checkProviders();
   await checkGateway();
+  await checkGrokSttConnection();
   await fetchVoices();
   await fetchAudioDevices();
 
