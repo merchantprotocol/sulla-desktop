@@ -13,6 +13,8 @@ import * as path from 'path';
 
 import type { OAuthTokenSet } from '../integrations/oauth/OAuthProvider';
 
+const CODEX_AUTH_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+
 export function codexHomeDir(): string {
   return path.join(os.homedir(), '.codex');
 }
@@ -35,6 +37,38 @@ function extractAccountId(idToken: string | undefined): string | null {
     return (auth && typeof auth.chatgpt_account_id === 'string') ? auth.chatgpt_account_id : null;
   } catch {
     return null;
+  }
+}
+
+function decodeJwtExpiry(token: unknown): number | null {
+  if (typeof token !== 'string') return null;
+  const payload = token.split('.')[1];
+  if (!payload) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+
+    return typeof claims.exp === 'number' ? claims.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function isAuthFileFresh(): boolean {
+  try {
+    const payload = JSON.parse(fs.readFileSync(codexAuthPath(), 'utf-8'));
+    const accessToken = payload?.tokens?.access_token;
+    if (!accessToken) return false;
+
+    const expiresAt = decodeJwtExpiry(accessToken);
+    if (!expiresAt) {
+      // Some future Codex token shapes may be opaque. If there is an access
+      // token but no JWT exp claim, keep the CLI as the authority.
+      return true;
+    }
+
+    return Date.now() < expiresAt - CODEX_AUTH_REFRESH_BUFFER_MS;
+  } catch {
+    return false;
   }
 }
 
@@ -80,7 +114,7 @@ export function removeCodexAuthFile(): void {
  * may hold fresher tokens than the DB row.
  */
 export async function ensureCodexAuthFile(): Promise<boolean> {
-  if (fs.existsSync(codexAuthPath())) return true;
+  if (fs.existsSync(codexAuthPath()) && isAuthFileFresh()) return true;
   try {
     const { getOAuthService } = await import('../services/OAuthService');
     const oauthService = getOAuthService();
@@ -96,12 +130,17 @@ export async function ensureCodexAuthFile(): Promise<boolean> {
     } catch { /* fall back to the known account ids */ }
 
     for (const accountId of accountIds) {
-      const stored = await oauthService.getStoredTokens('codex', accountId);
-      if (!stored?.raw_response) continue;
-      const tokens = (typeof stored.raw_response === 'string'
-        ? JSON.parse(stored.raw_response)
-        : stored.raw_response) as OAuthTokenSet;
-      if (writeCodexAuthFile(tokens)) return true;
+      try {
+        const tokens = await oauthService.ensureFreshTokens('codex', accountId);
+        if (writeCodexAuthFile(tokens)) return true;
+      } catch {
+        const stored = await oauthService.getStoredTokens('codex', accountId);
+        if (!stored?.raw_response) continue;
+        const tokens = (typeof stored.raw_response === 'string'
+          ? JSON.parse(stored.raw_response)
+          : stored.raw_response) as OAuthTokenSet;
+        if (writeCodexAuthFile(tokens) && isAuthFileFresh()) return true;
+      }
     }
     return false;
   } catch (err) {

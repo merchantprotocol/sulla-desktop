@@ -14,6 +14,9 @@ import { getOAuthProvider, type OAuthTokenSet } from '../integrations/oauth';
 import type { OAuthProviderConfig } from '../integrations/oauth/OAuthProvider';
 
 const LOG_PREFIX = '[OAuthService]';
+const DEFAULT_REFRESH_BUFFER_SECONDS = 300;
+const UNKNOWN_EXPIRY_REFRESH_AFTER_MS = 55 * 60 * 1000;
+const REFRESH_RETRY_DELAY_MS = 60 * 1000;
 
 // ─── DB row shape ─────────────────────────────────────────────────
 
@@ -38,6 +41,38 @@ const refreshTimers = new Map<string, NodeJS.Timeout>();
 
 function timerKey(integrationId: string, accountId: string): string {
   return `${ integrationId }::${ accountId }`;
+}
+
+function updatedAtMs(row: OAuthTokenRow): number {
+  const value = row.updated_at instanceof Date ? row.updated_at.getTime() : new Date(row.updated_at).getTime();
+
+  return Number.isFinite(value) ? value : 0;
+}
+
+function decodeAccessTokenExpiry(accessToken: unknown): number | null {
+  if (typeof accessToken !== 'string') return null;
+  const payload = accessToken.split('.')[1];
+  if (!payload) return null;
+
+  try {
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+
+    return typeof claims.exp === 'number' ? claims.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeTokenExpiry<T extends OAuthTokenSet>(tokens: T): T {
+  if (tokens.expires_in && !tokens.expires_at) {
+    tokens.expires_at = Date.now() + tokens.expires_in * 1000;
+  }
+  if (!tokens.expires_at) {
+    const jwtExpiry = decodeAccessTokenExpiry(tokens.access_token);
+    if (jwtExpiry) tokens.expires_at = jwtExpiry;
+  }
+
+  return tokens;
 }
 
 // ─── Singleton ────────────────────────────────────────────────────
@@ -136,7 +171,9 @@ export class OAuthService {
       console.log(`${ LOG_PREFIX } Received authorization code`);
 
       // Exchange code for tokens
-      const tokens = await this.exchangeCode(cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier);
+      const tokens = normalizeTokenExpiry(
+        await this.exchangeCode(cfg, effectiveClientId, effectiveClientSecret, code, redirectUri, codeVerifier),
+      );
       console.log(`${ LOG_PREFIX } Token exchange successful`);
 
       // Let the provider do post-processing
@@ -180,7 +217,9 @@ export class OAuthService {
         sandbox:          true,
       },
     });
-    void win.loadURL(url);
+    win.loadURL(url).catch((err) => {
+      console.warn(`${ LOG_PREFIX } Failed to load embedded auth window:`, err);
+    });
     return win;
   }
 
@@ -301,12 +340,7 @@ export class OAuthService {
 
     const json = await res.json() as OAuthTokenSet;
 
-    // Compute absolute expiry
-    if (json.expires_in && !json.expires_at) {
-      json.expires_at = Date.now() + json.expires_in * 1000;
-    }
-
-    return json;
+    return normalizeTokenExpiry(json);
   }
 
   // ── Refresh tokens ────────────────────────────────────────────
@@ -368,9 +402,7 @@ export class OAuthService {
       json.refresh_token = stored.refresh_token;
     }
 
-    if (json.expires_in && !json.expires_at) {
-      json.expires_at = Date.now() + json.expires_in * 1000;
-    }
+    normalizeTokenExpiry(json);
 
     await provider.onTokenReceived(json);
     await this.storeTokens(integrationId, accountId, providerId, json);
@@ -400,13 +432,13 @@ export class OAuthService {
       clearTimeout(existing);
     }
 
-    if (!tokens.expires_at || !tokens.refresh_token) {
-      return; // No expiry or no refresh_token — nothing to schedule
+    if (!tokens.refresh_token) {
+      return; // No refresh token — nothing to schedule
     }
 
     const provider = getOAuthProvider(providerId);
-    const bufferMs = ((provider?.config.refreshBufferSeconds ?? 300) * 1000);
-    const refreshAt = tokens.expires_at - bufferMs;
+    const bufferMs = ((provider?.config.refreshBufferSeconds ?? DEFAULT_REFRESH_BUFFER_SECONDS) * 1000);
+    const refreshAt = tokens.expires_at ? tokens.expires_at - bufferMs : Date.now() + UNKNOWN_EXPIRY_REFRESH_AFTER_MS;
     const delayMs = Math.max(refreshAt - Date.now(), 5000); // at least 5s from now
 
     console.log(`${ LOG_PREFIX } Scheduling refresh for ${ integrationId }/${ accountId } in ${ Math.round(delayMs / 1000) }s`);
@@ -416,6 +448,7 @@ export class OAuthService {
         await this.refreshAccessToken(integrationId, accountId, providerId, clientId, clientSecret);
       } catch (err) {
         console.error(`${ LOG_PREFIX } Auto-refresh failed for ${ integrationId }/${ accountId }:`, err);
+        this.scheduleRefreshRetry(integrationId, accountId, providerId, clientId, clientSecret);
       }
     }, delayMs);
 
@@ -425,6 +458,29 @@ export class OAuthService {
     }
 
     refreshTimers.set(key, timer);
+  }
+
+  private scheduleRefreshRetry(
+    integrationId: string,
+    accountId: string,
+    providerId: string,
+    clientId: string,
+    clientSecret: string,
+  ): void {
+    const key = timerKey(integrationId, accountId);
+    const retryTimer = setTimeout(async() => {
+      try {
+        await this.refreshAccessToken(integrationId, accountId, providerId, clientId, clientSecret);
+      } catch (err) {
+        console.error(`${ LOG_PREFIX } Auto-refresh retry failed for ${ integrationId }/${ accountId }:`, err);
+        this.scheduleRefreshRetry(integrationId, accountId, providerId, clientId, clientSecret);
+      }
+    }, REFRESH_RETRY_DELAY_MS);
+
+    if (retryTimer.unref) {
+      retryTimer.unref();
+    }
+    refreshTimers.set(key, retryTimer);
   }
 
   // ── Revoke tokens ─────────────────────────────────────────────
@@ -484,23 +540,35 @@ export class OAuthService {
     clientId?: string,
     clientSecret?: string,
   ): Promise<string> {
+    const tokens = await this.ensureFreshTokens(integrationId, accountId, clientId, clientSecret);
+
+    return tokens.access_token;
+  }
+
+  async ensureFreshTokens(
+    integrationId: string,
+    accountId = 'default',
+    clientId?: string,
+    clientSecret?: string,
+  ): Promise<OAuthTokenSet> {
     const stored = await this.getStoredTokens(integrationId, accountId);
     if (!stored) {
       throw new Error(`${ LOG_PREFIX } No OAuth tokens for ${ integrationId }/${ accountId }`);
     }
 
-    // If no expiry tracked, return as-is
-    if (!stored.expires_at) {
-      return stored.access_token;
-    }
-
     const provider = getOAuthProvider(stored.provider_id);
     const providerCfg = provider?.config;
-    const bufferMs = ((providerCfg?.refreshBufferSeconds ?? 300) * 1000);
+    const bufferMs = ((providerCfg?.refreshBufferSeconds ?? DEFAULT_REFRESH_BUFFER_SECONDS) * 1000);
+    const derivedExpiry = stored.expires_at ?? decodeAccessTokenExpiry(stored.access_token);
+    const hasKnownExpiry = !!derivedExpiry;
+    const unknownExpiryLooksStale = !hasKnownExpiry &&
+      !!stored.refresh_token &&
+      Date.now() - updatedAtMs(stored) > UNKNOWN_EXPIRY_REFRESH_AFTER_MS;
 
-    // Still valid?
-    if (Date.now() < stored.expires_at - bufferMs) {
-      return stored.access_token;
+    // Still valid, or no expiry is tracked and it was refreshed recently enough.
+    if ((hasKnownExpiry && Date.now() < derivedExpiry - bufferMs) ||
+        (!hasKnownExpiry && !unknownExpiryLooksStale)) {
+      return this.rowToTokenSet(stored);
     }
 
     // Need to refresh — resolve client credentials
@@ -531,7 +599,7 @@ export class OAuthService {
       integrationId, accountId, stored.provider_id, clientId, clientSecret ?? '',
     );
 
-    return refreshed.access_token;
+    return refreshed;
   }
 
   // ── DB: Store tokens ──────────────────────────────────────────
@@ -542,6 +610,8 @@ export class OAuthService {
     providerId: string,
     tokens: OAuthTokenSet,
   ): Promise<void> {
+    normalizeTokenExpiry(tokens);
+
     await postgresClient.query(
       `INSERT INTO oauth_tokens
          (integration_id, account_id, provider_id, access_token, refresh_token, token_type, scope, expires_at, raw_response, updated_at)
@@ -581,6 +651,25 @@ export class OAuthService {
     );
   }
 
+  private rowToTokenSet(row: OAuthTokenRow): OAuthTokenSet {
+    const raw = (row.raw_response && typeof row.raw_response === 'object' && !Array.isArray(row.raw_response))
+      ? row.raw_response
+      : {};
+    const expiresAt = row.expires_at ??
+      (typeof raw.expires_at === 'number' ? raw.expires_at : undefined) ??
+      decodeAccessTokenExpiry(row.access_token) ??
+      undefined;
+
+    return {
+      ...raw,
+      access_token:  row.access_token,
+      refresh_token: row.refresh_token ?? (typeof raw.refresh_token === 'string' ? raw.refresh_token : undefined),
+      token_type:    row.token_type,
+      expires_at:    expiresAt,
+      scope:         row.scope ?? (typeof raw.scope === 'string' ? raw.scope : undefined),
+    };
+  }
+
   // ── DB: Delete tokens ─────────────────────────────────────────
 
   private async deleteStoredTokens(integrationId: string, accountId: string): Promise<void> {
@@ -595,7 +684,7 @@ export class OAuthService {
   async resumeRefreshTimers(): Promise<void> {
     try {
       const rows = await postgresClient.query<OAuthTokenRow>(
-        `SELECT * FROM oauth_tokens WHERE refresh_token IS NOT NULL AND expires_at IS NOT NULL`,
+        `SELECT * FROM oauth_tokens WHERE refresh_token IS NOT NULL`,
       );
 
       const integrationService = getIntegrationService();
@@ -621,21 +710,13 @@ export class OAuthService {
           continue;
         }
 
-        const tokens: OAuthTokenSet = {
-          access_token:  row.access_token,
-          refresh_token: row.refresh_token ?? undefined,
-          token_type:    row.token_type,
-          expires_at:    row.expires_at ?? undefined,
-          scope:         row.scope ?? undefined,
-        };
-
         this.scheduleRefresh(
           row.integration_id,
           row.account_id,
           row.provider_id,
           cid,
           cs,
-          tokens,
+          this.rowToTokenSet(row),
         );
       }
 
