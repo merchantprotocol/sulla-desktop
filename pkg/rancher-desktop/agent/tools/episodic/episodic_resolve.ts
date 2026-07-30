@@ -7,7 +7,7 @@ export class EpisodicResolveWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const terms = Array.isArray(input.terms) ? input.terms.map(String) : [];
-    const cleanTerms = terms.map(t => t.trim()).filter(Boolean);
+    const cleanTerms = terms.map((t: string) => t.trim()).filter(Boolean);
 
     if (cleanTerms.length === 0) {
       return {
