@@ -321,14 +321,29 @@ export class ChatInterface {
     const nextMessage = this.messageQueue.shift();
     if (!nextMessage) return;
 
-    console.log(`[ChatInterface:processNextQueuedMessage] Sending queued message: ${ nextMessage.content.slice(0, 50) }...`);
+    let content = nextMessage.content;
+
+    // Voice backstop: fixed end-of-turn detection should already deliver a whole
+    // utterance as one message, but if any voice fragments still slip into the queue,
+    // coalesce leading consecutive voice-sourced (attachment-free) messages into a
+    // single turn instead of firing a separate agent run per fragment. No-op for
+    // typed messages (which aren't voice-tagged), so it can only help.
+    if (nextMessage.metadata?.inputSource === 'voice' && !nextMessage.attachments?.length) {
+      let peek = this.messageQueue.peek();
+      while (peek && peek.metadata?.inputSource === 'voice' && !peek.attachments?.length) {
+        content += ` ${ this.messageQueue.shift()!.content }`;
+        peek = this.messageQueue.peek();
+      }
+    }
+
+    console.log(`[ChatInterface:processNextQueuedMessage] Sending queued message: ${ content.slice(0, 50) }...`);
 
     const attachments = nextMessage.attachments?.map(a => ({
       mediaType: a.mediaType,
       base64:    a.base64,
     }));
 
-    await this.sendMessageInternal(nextMessage.content, nextMessage.metadata, attachments);
+    await this.sendMessageInternal(content, nextMessage.metadata, attachments);
   }
 
   // ─── Queue Management ───────────────────────────────────────────

@@ -239,10 +239,16 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 Read-only. Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`.
 
-## agents — sub-agent jobs (1 tool)
+## agents — sub-agent jobs, conversations, directory (7 tools)
 - `sulla agents/check_agent_jobs` — Poll for results of async spawn_agent calls
+- `sulla agents/stop_agent_job` — Kill switch: cancel a running async job (cooperative abort, cascades to its sub-agents)
+- `sulla agents/start_agent_conversation` — Open a persistent, multi-turn conversation with a sub-agent (keeps context between messages)
+- `sulla agents/send_agent_message` — Send a follow-up to an open conversation, get the reply
+- `sulla agents/read_agent_conversation` — Read a conversation transcript, or list all open conversations
+- `sulla agents/close_agent_conversation` — Close a conversation and free its graph + state
+- `sulla agents/list_agents` — Directory of live named agents (heartbeat, workbench, mobile-relay, …) you can `<channel:>`-message
 
-**`spawn_agent` is NOT under `agents/`** — it's canonically `sulla meta/spawn_agent`. See [`tools/agents.md`](agents.md).
+**`spawn_agent` is NOT under `agents/`** — it's canonically `sulla meta/spawn_agent`. `spawn_agent` = fire-and-forget; `start_agent_conversation` = interactive back-and-forth; `list_agents` + `<channel:NAME>` = reach already-running named agents. See [`tools/agents.md`](agents.md).
 
 ## bridge — human presence (2 tools)
 - `sulla bridge/get_human_presence` — Read presence state from Redis

@@ -844,8 +844,40 @@ export function initSullaEvents(): void {
 
   const { powerMonitor, BrowserWindow } = require('electron') as typeof import('electron');
 
+  powerMonitor.on('suspend', () => {
+    console.log('[Power] System suspending');
+
+    // Close the mobile-relay socket cleanly so the relay DO drops this peer
+    // now — mobile then sees the desktop offline immediately instead of
+    // after the server-side stale timeout.
+    try {
+      const { getDesktopRelayClient } = require('@pkg/main/desktopRelay');
+      getDesktopRelayClient().handleSuspend();
+    } catch (err) {
+      console.warn('[Power] Failed to suspend desktop relay:', err);
+    }
+  });
+
   powerMonitor.on('resume', () => {
     console.log('[Power] System resumed');
+
+    // Reconnect the mobile relay right away with fresh backoff — otherwise
+    // recovery waits on the stale-socket watchdog plus accumulated backoff.
+    try {
+      const { getDesktopRelayClient } = require('@pkg/main/desktopRelay');
+      getDesktopRelayClient().handleResume();
+    } catch (err) {
+      console.warn('[Power] Failed to resume desktop relay:', err);
+    }
+
+    // Refresh device presence immediately so mobile's device list shows this
+    // desktop online within seconds of wake instead of at the next 45s tick.
+    try {
+      const { DevicesCloudApi } = require('@pkg/main/devicesCloudApi');
+      void DevicesCloudApi.heartbeat();
+    } catch (err) {
+      console.warn('[Power] Failed to send wake device heartbeat:', err);
+    }
 
     // Re-initialize the backend graph executor so it re-subscribes its
     // message handlers after wake.

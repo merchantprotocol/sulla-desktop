@@ -86,6 +86,16 @@ export class ImportWorkflowWorker extends BaseTool {
       };
     }
 
+    // The scheduler only scans the DB at boot and on UI save/promote events —
+    // without this, CLI-imported routines stay unarmed until the next restart.
+    try {
+      const { getWorkflowSchedulerService } = await import('@pkg/agent/services/WorkflowSchedulerService');
+
+      await getWorkflowSchedulerService().refresh();
+    } catch (err) {
+      console.warn('[import_workflow] Failed to refresh workflow schedules:', err);
+    }
+
     return {
       successBoolean: true,
       responseString: [
