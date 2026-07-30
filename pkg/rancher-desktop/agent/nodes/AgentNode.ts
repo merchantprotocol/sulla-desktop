@@ -321,8 +321,12 @@ export class AgentNode extends BaseNode {
       }
 
       const reply = await this.normalizedChat(state, systemPrompt, {
-        temperature:   0.2,
-        nodeRunPolicy: policy,
+        temperature:      0.2,
+        nodeRunPolicy:    policy,
+        // Forward any per-agent tool allowlist (e.g. the heartbeat's native
+        // set, which omits the interactive tools). Undefined for the standard
+        // user chat, so its dynamic tool discovery is unchanged.
+        allowedToolNames: (state.metadata as any).allowedToolNames,
       });
 
       if (!reply) return null;

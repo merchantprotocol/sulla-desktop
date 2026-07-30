@@ -506,7 +506,29 @@ function registerIpcHandlers(): void {
   }) => {
     log.info('IPC', 'transcribe-start', opts);
 
-    if (!whisper.isAvailable()) {
+    // Resolve the selected STT provider. Defaults to local whisper; when the user
+    // picks Grok, fetch the metered xAI api key (OAuth tokens are rejected by api.x.ai).
+    let sttProvider: 'whisper' | 'grok' = 'whisper';
+    let grokApiKey: string | null = null;
+    try {
+      const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+      sttProvider = (await SullaSettingsModel.get('audioSttProvider', 'whisper')) === 'grok' ? 'grok' : 'whisper';
+    } catch { /* default to whisper */ }
+
+    if (sttProvider === 'grok') {
+      try {
+        const { getIntegrationService } = await import('@pkg/agent/services/IntegrationService');
+        grokApiKey = (await getIntegrationService().getIntegrationValue('grok', 'api_key'))?.value || null;
+      } catch { /* no key — fall back to whisper below */ }
+
+      if (!grokApiKey) {
+        log.warn('IPC', 'transcribe-start: Grok STT selected but no xAI api key — falling back to whisper');
+        sttProvider = 'whisper';
+      }
+    }
+
+    // Local whisper needs the binary present; Grok does not.
+    if (sttProvider === 'whisper' && !whisper.isAvailable()) {
       await whisper.detect();
     }
 
@@ -517,6 +539,8 @@ function registerIpcHandlers(): void {
       mode:         opts.mode,
       language:     opts.language,
       model:        opts.model,
+      provider:     sttProvider,
+      grokApiKey,
       onTranscript: (event) => {
         broadcast('gateway-transcript', event);
         // Feed the main-process teleprompter tracker (no-ops if not tracking)
@@ -524,7 +548,7 @@ function registerIpcHandlers(): void {
       },
     });
 
-    return { ok };
+    return { ok, provider: sttProvider };
   });
 
   ipcMain.handle('audio-driver:transcribe-stop', () => {

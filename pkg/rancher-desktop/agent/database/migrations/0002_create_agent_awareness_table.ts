@@ -1,5 +1,5 @@
 export const up = `
-  CREATE TABLE agent_awareness (
+  CREATE TABLE IF NOT EXISTS agent_awareness (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data JSONB NOT NULL DEFAULT '{}',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

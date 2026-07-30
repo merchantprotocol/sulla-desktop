@@ -34,7 +34,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - [`agent-patterns/validation.md`](agent-patterns/validation.md) — never-ship-unverified contract; always validate artifacts before reporting done
 - [`agent-patterns/mentions.md`](agent-patterns/mentions.md) — how to interpret `@routine:…`, `@function:…`, `@project:…` tokens in user messages
 - [`agent-patterns/citations.md`](agent-patterns/citations.md) — how to emit `<citations>` blocks that render as source cards
-- [`agent-patterns/user-consent.md`](agent-patterns/user-consent.md) — when to call `meta/request_user_input` to pause mid-turn and get explicit approve/deny from the user
+- [`agent-patterns/user-consent.md`](agent-patterns/user-consent.md) — when to call `meta/ask_user_question` to pause mid-turn and get an explicit answer or approve/deny from the user
 - [`agent-patterns/writing-voice.md`](agent-patterns/writing-voice.md) — how to write so output doesn't read like AI; the two non-negotiables (no end-summary, no bullet-burst) plus the full tell catalogue
 - [`verification-2026-04-23.md`](verification-2026-04-23.md) — what was verified live against the running system, what was wrong, what got fixed
 
@@ -65,7 +65,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `redis.md` — 12 Redis tools + how Sulla uses Redis (`sulla:bridge:human_presence`)
 - `pg.md` — 6 Postgres tools + all 16 tables + critical do-not-write list
 - `slack.md` — Slack tools, two-token auth, scopes, common patterns
-- `agents.md` — spawn_agent / check_agent_jobs; sub-agents vs channels vs workflows
+- `agents.md` — spawn_agent, check_agent_jobs, stop_agent_job (kill switch), conversations (start/send/read/close), list_agents; sub-agents vs channels vs workflows
 
 ## workflows/
 - `schema.md` — Top-level YAML structure, template syntax, edge handles
@@ -89,7 +89,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `validation.md` — ⚠️ READ THIS: never-ship-unverified contract; which validator runs for which artifact; validate-before-save pattern
 - `citations.md` — The `<citations><source …/></citations>` XML protocol; when to emit, exact shape, rules against hallucinated sources
 - `mentions.md` — `@kind:slug` tokens in user messages (routine / skill / function / recipe / integration / workflow / project); how to resolve each
-- `user-consent.md` — 🚦 When to call `meta/request_user_input` vs when to charge ahead vs when to end the turn blocked; how to phrase the approval card
+- `user-consent.md` — 🚦 When to call `meta/ask_user_question` vs when to charge ahead vs when to end the turn blocked; how to phrase the question / approval card
 - `writing-voice.md` — ✍️ Required reading before writing any prose for a human; bans end-summary wrap-ups and bullet-burst fact dumps; full AI-tell catalogue + positive rules
 
 ## marketplace/

@@ -1172,7 +1172,7 @@ export default defineComponent({
 
           <!-- Enable/Disable Toggle -->
           <div class="setting-group">
-            <label class="setting-label">Enable Heartbeat</label>
+            <label class="setting-label">Enable Autonomous Heartbeat (runs every 15 min)</label>
             <div class="toggle-switch">
               <label class="switch">
                 <input

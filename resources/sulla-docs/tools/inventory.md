@@ -18,7 +18,7 @@ sulla <category> --help
 - `sulla meta/browse_tools` — Discover tools by category or keyword (returns docs, not executions)
 - `sulla meta/file_search` — Full-text (BM25) keyword search across files
 - `sulla meta/read_file` — Read file with optional line range
-- `sulla meta/request_user_input` — Pause mid-turn and ask the user for an approve/deny decision (blocks until user clicks; 5 min default timeout)
+- `sulla meta/ask_user_question` — Pause mid-turn and ask the user one or more multiple-choice questions, incl. yes/no approvals via Approve/Deny options (blocks until user answers; 5 min default timeout)
 - `sulla meta/spawn_agent` — Launch sub-agents (canonical for spawn_agent; NOT under `agents/`)
 - `sulla meta/execute_workflow` — Run a named Sulla workflow by slug
 - `sulla meta/validate_sulla_workflow` — Validate workflow YAML
@@ -239,10 +239,16 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 Read-only. Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`.
 
-## agents — sub-agent jobs (1 tool)
+## agents — sub-agent jobs, conversations, directory (7 tools)
 - `sulla agents/check_agent_jobs` — Poll for results of async spawn_agent calls
+- `sulla agents/stop_agent_job` — Kill switch: cancel a running async job (cooperative abort, cascades to its sub-agents)
+- `sulla agents/start_agent_conversation` — Open a persistent, multi-turn conversation with a sub-agent (keeps context between messages)
+- `sulla agents/send_agent_message` — Send a follow-up to an open conversation, get the reply
+- `sulla agents/read_agent_conversation` — Read a conversation transcript, or list all open conversations
+- `sulla agents/close_agent_conversation` — Close a conversation and free its graph + state
+- `sulla agents/list_agents` — Directory of live named agents (heartbeat, workbench, mobile-relay, …) you can `<channel:>`-message
 
-**`spawn_agent` is NOT under `agents/`** — it's canonically `sulla meta/spawn_agent`. See [`tools/agents.md`](agents.md).
+**`spawn_agent` is NOT under `agents/`** — it's canonically `sulla meta/spawn_agent`. `spawn_agent` = fire-and-forget; `start_agent_conversation` = interactive back-and-forth; `list_agents` + `<channel:NAME>` = reach already-running named agents. See [`tools/agents.md`](agents.md).
 
 ## bridge — human presence (2 tools)
 - `sulla bridge/get_human_presence` — Read presence state from Redis

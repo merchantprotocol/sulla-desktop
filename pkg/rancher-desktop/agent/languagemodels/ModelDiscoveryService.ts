@@ -25,6 +25,7 @@ interface ProviderConfig {
   authHeader:     string;
   parseResponse:  (data: any) => ModelInfo[];
   staticModels?:  ModelInfo[]; // Use static list when /models endpoint isn't supported
+  preferLive?:    boolean;     // When true, fetch /models live and only use staticModels as a fallback
 }
 
 export class ModelDiscoveryService {
@@ -129,9 +130,14 @@ export class ModelDiscoveryService {
         name:     model.id,
         provider: 'alibaba',
       })) || [],
-      // Coding Plan endpoint doesn't support /models — use static list
+      // The Coding Plan /models endpoint DOES return a live catalog (verified 2026-07-20).
+      // Fetch it live so new models (e.g. qwen3.6-plus, qwen3.7-plus) appear automatically;
+      // fall back to the list below only if the endpoint is unreachable.
+      preferLive: true,
       staticModels: [
         { id: 'qwen3.5-plus', name: 'Qwen 3.5 Plus', provider: 'alibaba' },
+        { id: 'qwen3.6-plus', name: 'Qwen 3.6 Plus', provider: 'alibaba' },
+        { id: 'qwen3.7-plus', name: 'Qwen 3.7 Plus', provider: 'alibaba' },
         { id: 'MiniMax-M2.5', name: 'MiniMax M2.5', provider: 'alibaba' },
         { id: 'kimi-k2.5', name: 'Kimi K2.5', provider: 'alibaba' },
         { id: 'glm-5', name: 'GLM 5', provider: 'alibaba' },
@@ -345,8 +351,9 @@ export class ModelDiscoveryService {
       throw new Error(`Unsupported provider: ${ providerId }`);
     }
 
-    // If provider has a static model list (e.g. endpoint doesn't support /models), use it
-    if (provider.staticModels?.length) {
+    // If provider has a static model list (e.g. endpoint doesn't support /models), use it —
+    // unless it opts into live discovery, in which case the static list is only a fallback.
+    if (provider.staticModels?.length && !provider.preferLive) {
       this.cache.set(cacheKey, { models: provider.staticModels, timestamp: Date.now() });
       return provider.staticModels;
     }
@@ -399,6 +406,11 @@ export class ModelDiscoveryService {
       // Return cached results if available, even if expired
       if (cached) {
         return cached.models;
+      }
+
+      // Fall back to a static list when the live fetch fails (keeps the picker populated)
+      if (provider.staticModels?.length) {
+        return provider.staticModels;
       }
 
       // Return empty array on complete failure

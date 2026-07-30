@@ -6,12 +6,18 @@ Spawn parallel sub-agents to do work independently and check on their progress l
 
 | Tool | Canonical category | Purpose |
 |------|--------------------|---------|
-| `sulla meta/spawn_agent` | meta | Launch one or more sub-agents |
+| `sulla meta/spawn_agent` | meta | Launch one or more sub-agents (fire-and-forget or blocking) |
 | `sulla agents/check_agent_jobs` | agents | Poll for results of async sub-agent jobs |
+| `sulla agents/stop_agent_job` | agents | Kill switch — cancel a running async job |
+| `sulla agents/start_agent_conversation` | agents | Open a persistent, multi-turn conversation with a sub-agent |
+| `sulla agents/send_agent_message` | agents | Send a follow-up to an open conversation, get the reply |
+| `sulla agents/read_agent_conversation` | agents | Read a conversation transcript, or list open conversations |
+| `sulla agents/close_agent_conversation` | agents | Close a conversation and free its graph + state |
+| `sulla agents/list_agents` | agents | Directory of live named agents you can `<channel:>`-message |
 
 **Important:** the tool registry resolves tools by **name only** — `sulla agents/spawn_agent` and `sulla anything/spawn_agent` also work because the backend ignores the category segment in the URL. But the canonical surfacing in `sulla meta --help` lists `spawn_agent` under `meta`. Use that form for clarity.
 
-`check_agent_jobs` is the only tool actually registered under the `agents` category.
+**Two ways to talk to a sub-agent:** `spawn_agent` is fire-one-prompt-and-run (poll for the result). `start_agent_conversation` keeps the sub-agent alive so you can go back and forth — delegate, then clarify/correct/ask follow-ups with full context retained. To reach the already-running *named* agents (heartbeat, workbench, mobile-relay), use a `<channel:NAME>` tag — `list_agents` shows who's addressable.
 
 ## `spawn_agent`
 
@@ -75,6 +81,47 @@ sulla agents/check_agent_jobs '{"jobId":"job_..."}'
 ```
 
 **Important:** `status: "blocked"` means the sub-agent emitted `<AGENT_BLOCKED>` — read the `output` for the unblock_requirement. It didn't fail, it's waiting for input.
+
+## `stop_agent_job` — kill switch
+
+```bash
+sulla agents/stop_agent_job '{"jobId":"agent-job-..."}'
+```
+
+Cancels a running async job (misfired, duplicated, or no longer needed). Fires the job's abort signal, which cascades to every sub-agent it spawned — the same signal the user's stop button uses. **Cooperative, not preemptive:** jobs run in-process (not child processes), so a sub-agent mid-LLM/tool-call finishes that call, then unwinds on its next step. The job settles as `status: "stopped"`; poll `check_agent_jobs` to confirm. Returns `already-finished` if the job isn't running, `not-found` if it expired.
+
+## Conversations — talk back-and-forth with a sub-agent
+
+Unlike `spawn_agent` (one prompt, run to completion), a **conversation** keeps the sub-agent's thread alive so you can send follow-ups with full context retained.
+
+```bash
+# Open — runs the first turn, returns the reply + a conversationId
+sulla agents/start_agent_conversation '{"prompt":"Draft a migration plan for X","agentId":"code-researcher","label":"migration"}'
+# → { "conversationId":"conv-...", "status":"completed", "reply":"..." }
+
+# Continue — the sub-agent still has the whole prior context
+sulla agents/send_agent_message '{"conversationId":"conv-...","message":"Now account for the FK on table Y"}'
+# → { "status":"completed", "reply":"..." }
+
+# Catch up / list
+sulla agents/read_agent_conversation '{"conversationId":"conv-..."}'   # transcript + status
+sulla agents/read_agent_conversation '{}'                              # list all open conversations
+
+# Done — frees the sub-agent's graph + state
+sulla agents/close_agent_conversation '{"conversationId":"conv-..."}'
+```
+
+- `start`/`send` **block** for the sub-agent's turn and return its reply. A sub-agent that emits `<AGENT_BLOCKED>` returns `status: "blocked"` with the requirement in `reply`.
+- Soft cap **20 open conversations**; idle ones pruned after **1 hour**. `close_agent_conversation` frees one eagerly.
+- Depth-guarded (max 3) like `spawn_agent`. In-memory only — does not survive a restart.
+
+## `list_agents` — directory of live named agents
+
+```bash
+sulla agents/list_agents '{}'
+```
+
+Returns the live named agents (heartbeat, workbench, mobile-relay, frontends) with channel, status, and uptime — the same roster that appears in turn context, queryable on demand. To message one, emit a channel tag in your reply: `<channel:heartbeat>your message</channel:heartbeat>` (fire-and-forget; the reply arrives on a later turn). This is different from conversations: `list_agents` + channel tags reach the *already-running long-lived* agents; `start_agent_conversation` spins up a *fresh delegated* sub-agent for synchronous back-and-forth.
 
 ## Limits
 

@@ -69,6 +69,7 @@
     "@langchain/openai": "1.2.9",
     "@mantine/core": "8.3.16",
     "@mantine/hooks": "8.3.16",
+    "@modelcontextprotocol/sdk": "1.27.1",
     "@mozilla/readability": "0.6.0",
     "@napi-rs/xattr": "1.0.3",
     "@octokit/rest": "22.0.1",
@@ -99,6 +100,7 @@
     "better-sqlite3": "12.6.2",
     "cookie-universal": "2.2.2",
     "cors": "2.8.6",
+    "cron-parser": "^4.2.0",
     "cross-spawn": "7.0.6",
     "dayjs": "1.11.19",
     "ddgs": "1.0.4",
@@ -149,6 +151,7 @@
     "ws": "^8.20.0",
     "yaml": "2.8.2",
     "yazl": "^3.3.1",
+    "zod": "3.25.76",
     "zod-to-json-schema": "3.23.5"
   },
   "devDependencies": {
@@ -253,7 +256,8 @@
     "merge-deep": "npm:deepmerge@^4.3.1",
     "string-width": "^4",
     "sqlite-vec-win32-x64": "npm:sqlite-vec-windows-x64@0.1.7-alpha.2",
-    "better-sqlite3": "12.6.2"
+    "better-sqlite3": "12.6.2",
+    "zod": "3.25.76"
   },
   "optionalDependencies": {
     "dmg-license": "1.0.11",
@@ -289,6 +293,13 @@
     "color-string": "2.1.0",
     "supports-color": "10.2.0",
     "wrap-ansi": "9.0.0",
-    "has-ansi": "6.0.0"
+    "has-ansi": "6.0.0",
+    "string-length": {
+      "strip-ansi": "6.0.1",
+      "ansi-regex": "5.0.1"
+    },
+    "pretty-format": {
+      "ansi-styles": "5.2.0"
+    }
   }
 }

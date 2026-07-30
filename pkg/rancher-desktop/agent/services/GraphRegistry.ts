@@ -55,6 +55,22 @@ const OBSERVATION_RECALL_TOOLS: string[] = [
   'list_observations',    // Priority-sorted list of active observations
 ];
 
+/**
+ * Heartbeat native toolset — the slim primary set MINUS the interactive
+ * `ask_user_question` tool. The heartbeat runs autonomously on the `heartbeat`
+ * channel with no human watching, so a blocking question card would render
+ * nowhere and deadlock the loop. Pinning this as the heartbeat's
+ * `allowedToolNames` routes it through BaseNode's strict tool path (no dynamic
+ * injection of ask_user_question). Full capability is retained — every other
+ * tool is still reached via `browse_tools` + `exec`.
+ */
+const HEARTBEAT_TOOLS: string[] = [
+  'browse_tools',
+  'exec',
+  'read_file',
+  'write_file',
+];
+
 // ============================================================================
 // SUBCONSCIOUS MIDDLEWARE PROMPTS
 // ============================================================================
@@ -678,13 +694,15 @@ export const GraphRegistry = {
     graph: Graph<AgentGraphState>;
     state: AgentGraphState;
   }> {
-    if (registry.has(wsChannel)) {
-      return Promise.resolve(registry.get(wsChannel) as any);
-    }
-
+    // One conversation per heartbeat cycle: never resume a cached thread.
+    // A long-lived thread pins the system prompt to whatever was built when
+    // the conversation started (prompt updates never reach the model) and
+    // accumulates self-reinforcing history. Continuity lives in recall,
+    // observations, and the bookkeeping files — not chat scrollback.
     const graph = createHeartbeatGraph();
     const state = await buildHeartbeatState(wsChannel, prompt ?? '');
 
+    // Keep the latest entry for observability/recovery consumers.
     registry.set(wsChannel, { graph, state });
     return { graph, state };
   },
@@ -1086,9 +1104,9 @@ export const GraphRegistry = {
 
   /**
    * Best-effort lookup of the live sulla-desktop chat the user is looking
-   * at. Used by interactive tools (`ask_user_question`, `request_user_input`)
-   * when they are invoked outside a ToolExecutor context (CLI / HTTP) and
-   * need a channel + thread to render their card into.
+   * at. Used by the interactive `ask_user_question` tool when it is invoked
+   * outside a ToolExecutor context (CLI / HTTP) and needs a channel + thread
+   * to render its card into.
    *
    * Prefers graphs whose wsChannel is `sulla-desktop` and that still look
    * "alive" (not waitingForUser with a completed cycle). Falls back to the
@@ -1219,6 +1237,15 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
   // Load agent config for the heartbeat channel (dreaming-protocol)
   const agentConfig = await loadAgentConfig(wsChannel);
 
+  // Pre-resolve the heartbeat's native tool schemas. Setting both `llmTools`
+  // (top-level, read by normalizedChat) and `allowedToolNames` (metadata,
+  // forwarded by AgentNode) routes the heartbeat through BaseNode's strict
+  // tool path — it gets exactly HEARTBEAT_TOOLS and never the injected
+  // interactive tools that can only deadlock on the unwatched channel.
+  const llmTools = await Promise.all(
+    HEARTBEAT_TOOLS.map(name => toolRegistry.convertToolToLLM(name)),
+  );
+
   const state: AgentGraphState = {
     messages: [{
       role:     'user',
@@ -1260,6 +1287,12 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
       agentLoopCount: 0,
     },
   };
+
+  // llmTools rides on the top-level state (read by normalizedChat as
+  // `(state as any).llmTools`); allowedToolNames lives on metadata (forwarded
+  // by AgentNode). Both are `as any` fields, matching buildSubconsciousState.
+  (state as any).llmTools = llmTools;
+  (state.metadata as any).allowedToolNames = HEARTBEAT_TOOLS;
 
   return state;
 }

@@ -59,6 +59,20 @@ export class ClaudeCodeService extends BaseLanguageModel {
   private readonly SESSION_KEY_PREFIX = 'claude_code_session:';
   private readonly SESSION_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
+  /**
+   * Redis key holding the hash of the stable <sulla_context> tier last stamped
+   * into ANY conversation on this install. The stable tier (platform rules +
+   * top-priority memory) is install-global, and it is ALSO carried by the
+   * byte-stable system prompt (soul/tooling + the observational_memory
+   * section), which is sent on every session — fresh or resumed. So a
+   * brand-new session already has this content via the system prompt; we use
+   * this persisted hash to skip re-stamping the ~6k tier into the first
+   * message of every fresh session (e.g. the heartbeat's per-cycle
+   * conversations). It only needs to ride the message when its content
+   * actually changes — see buildUserMessageContextPrefix.
+   */
+  private readonly STABLE_CTX_KEY = 'claude_code_stable_ctx_hash';
+
   private async getSession(convId: string): Promise<string | undefined> {
     const cached = this.sessions.get(convId);
     if (cached) return cached;
@@ -375,14 +389,40 @@ Rules that apply on every turn:
 
     const parts: string[] = [];
 
-    // Only send the stable tier when it's new to this session or has changed
-    // since it was last sent.
+    // Decide whether to stamp the stable tier into this message.
+    //
+    // The stable tier is redundant with the byte-stable system prompt (which
+    // carries the same platform rules + top-priority memory and is sent on
+    // EVERY session, fresh or resumed). So it only needs to ride the message
+    // when its content has CHANGED since a conversation last saw it — repeating
+    // it verbatim otherwise just multiplies token cost in the permanent history.
+    //
+    //   - Resumed session: compare against the per-conversation hash we recorded
+    //     earlier this session. Unchanged → skip (existing dedup). Changed →
+    //     re-send, because a resumed session never re-receives the system prompt.
+    //   - Fresh session (new convId, empty per-conv hash): the system prompt has
+    //     ALREADY delivered the current stable content, so seed this
+    //     conversation's baseline from the install-global hash instead of
+    //     force-sending. Only send if the global hash is missing/stale (first
+    //     call, Redis down, or the content genuinely changed) — a safe fallback.
     const stableText = stableParts.join('\n\n');
     const stableHash = crypto.createHash('sha1').update(stableText).digest('hex');
-    if (opts.isNewSession || this.lastStableContextHash.get(opts.convId) !== stableHash) {
+
+    let lastHash = this.lastStableContextHash.get(opts.convId);
+    if (lastHash === undefined && opts.isNewSession) {
+      try {
+        lastHash = (await redisClient.get(this.STABLE_CTX_KEY)) ?? undefined;
+      } catch { /* Redis unavailable → lastHash stays undefined → we send (safe) */ }
+    }
+    if (lastHash !== stableHash) {
       parts.push(stableText);
     }
     this.lastStableContextHash.set(opts.convId, stableHash);
+    // Keep the install-global "current stable hash" fresh so subsequent new
+    // sessions can dedup against it.
+    try {
+      await redisClient.set(this.STABLE_CTX_KEY, stableHash, this.SESSION_TTL_SECONDS);
+    } catch { /* Redis unavailable — non-fatal, we simply re-send next new session */ }
 
     // Recall context from subconscious middleware (may be null on first turn)
     const recallContext = (state?.metadata as any)?.recallContext;

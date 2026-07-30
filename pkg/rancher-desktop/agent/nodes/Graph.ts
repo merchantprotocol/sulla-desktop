@@ -107,6 +107,9 @@ export interface BaseThreadState {
     /** Recursion depth counter for nested sub-agent spawning (0 = top-level) */
     subAgentDepth: number;
 
+    /** Parent's ws channel, so a sub-agent can message the parent back via <channel:...>. */
+    workflowParentChannel?: string;
+
     options: {
       abort?: AbortService;
     };
