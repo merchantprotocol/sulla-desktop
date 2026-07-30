@@ -19,7 +19,7 @@ export const episodicToolManifests: ToolManifest[] = [
   },
   {
     name:        'episodic_recall',
-    description: 'Recall associated episodic context from the knowledge graph. Declared for Phase 2.',
+    description: 'Recall associated episodic context from the knowledge graph using alias resolution and ≤2-hop spreading activation.',
     category:    'memory',
     schemaDef:   {
       terms:      { type: 'array', items: { type: 'string' }, description: 'Anchor terms for recall.' },
@@ -27,7 +27,7 @@ export const episodicToolManifests: ToolManifest[] = [
       limit:      { type: 'number', optional: true, description: 'Maximum recalled nodes to return.' },
     },
     operationTypes: ['read'],
-    loader:         notImplemented('#517'),
+    loader:         () => import('./episodic_recall'),
   },
   {
     name:        'episodic_write_episode',
