@@ -6,6 +6,7 @@ import './providers/GoogleOAuth';
 import './providers/GrokOAuth';
 import './providers/IntuitOAuth';
 import './providers/OpenAIOAuth';
+import './providers/RobinhoodOAuth';
 
 export { OAuthProvider, type OAuthProviderConfig, type OAuthTokenSet } from './OAuthProvider';
 export { registerOAuthProvider, getOAuthProvider, getAllOAuthProviders } from './registry';
