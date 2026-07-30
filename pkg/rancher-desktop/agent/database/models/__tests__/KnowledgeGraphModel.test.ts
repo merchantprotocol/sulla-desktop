@@ -191,4 +191,44 @@ describe('KnowledgeGraphModel', () => {
       ['a'],
     );
   });
+
+  it('spreadActivation short-circuits on empty/blank anchors without querying', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    const rows = await KnowledgeGraphModel.spreadActivation(['', '   ']);
+
+    expect(rows).toEqual([]);
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('spreadActivation dedupes anchors and forwards traversal params in order', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([
+      { id: 'a', activation: 1, hop: 0 },
+      { id: 'b', activation: 0.4, hop: 1 },
+    ]));
+
+    const rows = await KnowledgeGraphModel.spreadActivation(
+      ['a', 'a', ' b '],
+      { maxHops: 2, decay: 0.5, minEdge: 0.1, limit: 8 },
+    );
+
+    // Recursive spreading-activation CTE, not an agent loop.
+    expect(postgresClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('WITH RECURSIVE anchors AS'),
+      [['a', 'b'], 2, 0.5, 0.1, 8],
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ id: 'a', hop: 0, activation: 1 });
+  });
+
+  it('spreadActivation applies the ≤2-hop and limit defaults', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await KnowledgeGraphModel.spreadActivation(['a']);
+
+    expect(postgresClient.query).toHaveBeenCalledWith(
+      expect.any(String),
+      [['a'], 2, 0.5, 0, 12],
+    );
+  });
 });
