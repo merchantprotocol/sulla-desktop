@@ -106,32 +106,38 @@ sulla observation/write_file '{"path":"~/sulla/notes/scratch.md","content":"..."
 
 For edits to existing files, prefer the editor's `Edit` tool (smaller diffs) over rewriting via `write_file`.
 
-### `meta/request_user_input` — Pause mid-turn and ask the user
+### `meta/ask_user_question` — Pause mid-turn and ask the user
 ```bash
-sulla meta/request_user_input '{
-  "question": "Delete the draft routine `blog-publisher-v2`?",
-  "command":  "rm -rf ~/sulla/routines/blog-publisher-v2"
+sulla meta/ask_user_question '{
+  "questions": [{
+    "question": "Delete the draft routine `blog-publisher-v2`?",
+    "header":   "Confirm",
+    "options": [
+      { "label": "Approve", "description": "rm -rf ~/sulla/routines/blog-publisher-v2" },
+      { "label": "Deny" }
+    ]
+  }]
 }'
 ```
 
-Renders a yellow approval card in the chat transcript and **blocks the
-calling tool** until the user clicks Approve or Deny (or the timeout
-elapses).
+Renders an interactive card in the chat transcript and **blocks the calling
+tool** until the user picks an option (or types a free-form answer, or the
+timeout elapses). This is the single "pause and ask the human" tool — use it
+for both multiple-choice questions and yes/no go-aheads (offer `Approve` /
+`Deny` options for a consent gate). Under Claude Code, call the
+`mcp__sulla-native__ask_user_question` MCP tool instead.
 
 | Field | Default | Notes |
 |-------|---------|-------|
-| `question` | required | One-line summary of what needs approval. Shown as the card headline. Phrase as a neutral summary, not a loaded yes/no. |
-| `command` | `question` | The exact action / command / payload, rendered in mono-font under the question for transparency. Omit when the action is obvious from the question. |
-| `timeoutMs` | 300000 (5 min) | Min 5000, max 1800000. On timeout the tool returns `decision: "timed_out"` — treat as soft deny. |
+| `questions` | required | 1–4 questions. Each has `question` (headline), optional `header` (≤~12 char chip), optional `multiSelect`, and 2–4 `options` (each `{ label, description? }`). |
+| `timeoutMs` | 300000 (5 min) | Min 5000, max 1800000. On timeout no selection is made — treat as a soft deny / proceed with best judgment. |
 
-**Returns:**
-```json
-{ "decision": "approved" | "denied" | "timed_out", "note": "optional user note" }
-```
+**Returns:** a deterministic summary of the selected option(s) per question,
+or a "no selection / timed out" note.
 
 **Use it when:**
 - You're about to take a destructive action (delete a file/routine/credential,
-  rm -rf, drop a table, force-push).
+  rm -rf, drop a table, force-push) — offer `Approve` / `Deny`.
 - You're about to call an outbound write (post to Slack/Gmail/CRM, publish
   to the marketplace, push to a production status).
 - The user's intent is ambiguous and you want them to pick between options
@@ -140,21 +146,19 @@ elapses).
   sign off before you continue.
 
 **Don't use it for:**
-- Free-form questions — this is a binary gate. Ask via conversation if you
-  need a text answer, then save with memory if it matters.
 - Read-only work (the user didn't sign up to click through every file read).
 - Every tool call — that's noise. Save it for actions that are risky,
-  destructive, or irreversible.
+  destructive, or irreversible, or genuine forks in the plan.
 
 **Semantics vs. `<AGENT_BLOCKED>` wrapper:**
-- `request_user_input` is **mid-turn** — the tool waits, then you continue
-  in the same response with the user's decision in hand.
+- `ask_user_question` is **mid-turn** — the tool waits, then you continue
+  in the same response with the user's answer in hand.
 - `<AGENT_BLOCKED>` is **end-of-turn** — you stop and hand the turn back,
   waiting for the next user message to resume.
 
-Pick mid-turn when you need a go/no-go before proceeding in the current
-action. Pick end-of-turn when you genuinely can't proceed without more
-information or a larger decision.
+Pick mid-turn when you need a go/no-go or a pick before proceeding in the
+current action. Pick end-of-turn when you genuinely can't proceed without
+more information or a larger decision.
 
 See [`agent-patterns/user-consent.md`](../agent-patterns/user-consent.md) for
 when to gate and how to phrase the question.

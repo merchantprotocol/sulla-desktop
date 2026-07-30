@@ -1152,14 +1152,14 @@ export class ChatCompletionsServer {
         const body = req.body || {};
         const params = body.params && typeof body.params === 'object' ? body.params : body;
 
-        // Interactive tools (ask_user_question / request_user_input) need a
-        // live chat channel to render their card. ToolExecutor injects
-        // sendChatMessage for in-process agent turns, but the CLI path
+        // The interactive tool (ask_user_question) needs a live chat channel
+        // to render its card. ToolExecutor injects sendChatMessage for
+        // in-process agent turns, but the CLI path
         // (`sulla meta/ask_user_question`) hits this HTTP handler with a
         // bare tool instance — without injection emitMessage() returns
         // false and the card never appears in the UI. Wire a best-effort
         // emitter that targets the active sulla-desktop chat.
-        const interactiveNames = new Set(['ask_user_question', 'request_user_input']);
+        const interactiveNames = new Set(['ask_user_question']);
         const toolName = String((tool as any)?.name || endpoint || '').trim();
         if (interactiveNames.has(toolName) && typeof (tool as any).sendChatMessage !== 'function') {
           try {

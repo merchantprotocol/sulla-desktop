@@ -9,6 +9,7 @@ import {
 } from '../../services/ProjectService';
 import { resolveSullaProjectsDir } from '../../utils/sullaPaths';
 import { redisClient } from '../RedisClient';
+import { slugify } from './projectSlug';
 
 export interface ProjectRegistryInitOptions {
   filesystemProjectDirs?: string[];
@@ -234,10 +235,13 @@ export class ProjectRegistry {
     const name = String(projectName || '').trim();
     if (!name) return 'Project name is required.';
 
-    const baseDir = customDir ? String(customDir).trim() : path.join(this.getUserProjectsDir(), name);
+    // Directory + slug are kebab-case and path-safe; the human-friendly name
+    // is preserved as the frontmatter title (issue #43).
+    const slug = slugify(name);
+    const baseDir = customDir ? String(customDir).trim() : path.join(this.getUserProjectsDir(), slug);
     const projectDir = baseDir;
     const projectFile = path.join(projectDir, 'PROJECT.md');
-    const projectContent = this.normalizeCreateProjectContent(name, content);
+    const projectContent = this.normalizeCreateProjectContent(name, slug, content);
 
     try {
       await mkdir(projectDir, { recursive: true });
@@ -246,13 +250,13 @@ export class ProjectRegistry {
       // Scaffold README.md if it doesn't exist
       const readmeFile = path.join(projectDir, 'README.md');
       if (!fs.existsSync(readmeFile)) {
-        const service = ProjectService.fromRaw('filesystem', name, projectContent);
+        const service = ProjectService.fromRaw('filesystem', slug, projectContent);
         const readmeContent = this.scaffoldReadme(service);
         await writeFile(readmeFile, readmeContent, 'utf8');
       }
 
       // Reload from the new file so the registry picks it up immediately
-      const service = ProjectService.fromRaw('filesystem', name, projectContent);
+      const service = ProjectService.fromRaw('filesystem', slug, projectContent);
       if (service) {
         this.projectsBySlug.set(service.slug, service);
         this.cachedSummaries = this.buildSummariesFromCurrentMap();
@@ -521,20 +525,26 @@ ${ description }
 `;
   }
 
-  private normalizeCreateProjectContent(projectName: string, content?: string): string {
+  private normalizeCreateProjectContent(displayName: string, slug: string, content?: string): string {
     const provided = String(content || '').trim();
     if (provided) return provided;
 
-    const title = projectName
-      .split('-')
-      .filter(Boolean)
-      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ') || projectName;
+    // Preserve the human-readable name verbatim when it already carries
+    // spaces/capitalization; otherwise prettify the kebab slug (e.g. a
+    // `my-cool-project` input becomes the "My Cool Project" title).
+    const looksHuman = /[A-Z]/.test(displayName) || /\s/.test(displayName);
+    const title = looksHuman
+      ? displayName
+      : slug
+        .split('-')
+        .filter(Boolean)
+        .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ') || displayName;
     const now = new Date().toISOString();
 
     return `---
 schemaversion: 1
-slug: ${ projectName }
+slug: ${ slug }
 title: "${ title }"
 section: Projects
 status: active

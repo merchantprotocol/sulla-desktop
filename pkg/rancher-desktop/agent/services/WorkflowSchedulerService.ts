@@ -10,6 +10,8 @@
 
 import schedule from 'node-schedule';
 
+import { SCHEDULE_TRIGGER } from '@pkg/pages/editor/workflow/types';
+
 // ── Types ──
 
 interface ScheduleNode {
@@ -35,6 +37,7 @@ interface ProductionRow {
   attributes: {
     id:         string;
     name:       string;
+    enabled?:   boolean;
     definition: Record<string, unknown>;
   };
 }
@@ -48,8 +51,11 @@ interface ProductionRow {
  *   daily         → M H * * *
  *   weekly        → M H * * D
  *   monthly       → M H D * *
+ *
+ * Exported so tools that reason about schedules (e.g. catch_up_schedules)
+ * derive the exact same cron the scheduler arms — one source of truth.
  */
-function buildCronExpression(config: Record<string, unknown>): string | null {
+export function buildCronExpression(config: Record<string, unknown>): string | null {
   const freq = (config.frequency as string) || 'daily';
   const minute = Number(config.minute ?? 0);
   const hour = Number(config.hour ?? 9);
@@ -167,12 +173,16 @@ export class WorkflowSchedulerService {
 
     let count = 0;
     for (const row of rows) {
+      // listByStatus only filters on status — respect the enabled flag here
+      // so disabling a production workflow actually stops its cron.
+      if (row.attributes.enabled === false) continue;
+
       const { id, name } = row.attributes;
       const definition = row.attributes.definition || {};
       const nodes = Array.isArray((definition as any).nodes) ? (definition as any).nodes as ScheduleNode[] : [];
 
       for (const node of nodes) {
-        if (node?.data?.category !== 'trigger' || node?.data?.subtype !== 'schedule') continue;
+        if (node?.data?.category !== SCHEDULE_TRIGGER.category || node?.data?.subtype !== SCHEDULE_TRIGGER.subtype) continue;
         if (this.registerScheduleNode(id, name, node)) count++;
       }
     }

@@ -36,6 +36,38 @@ export const workflowToolManifests: ToolManifest[] = [
     loader:         () => import('./import_workflow'),
   },
   {
+    name:           'refresh_schedules',
+    description:    'Force WorkflowSchedulerService to re-scan production workflows and re-arm all schedule triggers, then report exactly what is armed (cron, timezone, next fire time). Use after any direct DB change to workflows, or to verify a routine is actually armed — no restart, no log-grepping.',
+    category:       'workflow',
+    schemaDef:      {},
+    operationTypes: ['execute'],
+    loader:         () => import('./refresh_schedules'),
+  },
+  {
+    name:        'catch_up_schedules',
+    description: 'Detect scheduled workflow fires that were missed (app off or scheduler dormant when the cron time passed) and dispatch them through the real executor. Compares each armed schedule\'s previous expected fire time against workflow_executions. Use after a restart or whenever a routine may have missed its window; dryRun reports without firing.',
+    category:    'workflow',
+    schemaDef:   {
+      dryRun:       { type: 'boolean', optional: true, description: 'Report missed fires without dispatching them. Default: false.' },
+      lookbackDays: { type: 'number', optional: true, description: 'Only treat fires missed within this many days as recoverable. Default 7, max 31.' },
+    },
+    operationTypes: ['execute'],
+    loader:         () => import('./catch_up_schedules'),
+  },
+  {
+    name:        'set_workflow_status',
+    description: 'Enable/disable a workflow or change its status (draft | production | archive) by id or exact name, then re-arm the scheduler so the change takes effect immediately without an app restart. Reports the workflow\'s armed cron state after the change.',
+    category:    'workflow',
+    schemaDef:   {
+      id:      { type: 'string', optional: true, description: 'Workflow id. Provide id or name.' },
+      name:    { type: 'string', optional: true, description: 'Exact workflow name (case-insensitive). Provide id or name.' },
+      status:  { type: 'string', optional: true, description: 'New status: draft | production | archive. Omit to leave unchanged.' },
+      enabled: { type: 'boolean', optional: true, description: 'Set the enabled flag. Omit to leave unchanged.' },
+    },
+    operationTypes: ['update', 'execute'],
+    loader:         () => import('./set_workflow_status'),
+  },
+  {
     name:        'display_workflow',
     description: 'Surface a saved routine as a workflow artifact in the chat sidebar. Reads ~/sulla/routines/<slug>/routine.yaml and publishes the full document so the frontend opens (or updates in place) a workflow artifact pane next to the conversation. Use this AFTER import_workflow whenever the user should see the routine being built, and re-run it after each material edit to keep the sidebar card in sync. Artifact is deduped by workflow name — repeat calls for the same slug update one card, not many.',
     category:    'workflow',

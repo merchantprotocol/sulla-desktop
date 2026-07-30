@@ -667,9 +667,36 @@
         >
           <h2>Transcription</h2>
           <p class="description">
-            Local speech-to-text powered by whisper.cpp. Runs entirely on your
-            machine &mdash; no network, no API keys, no data sent anywhere.
+            Speech-to-text for voice chat and Secretary Mode. Use local
+            whisper.cpp (private, offline, no API key) or a cloud provider.
           </p>
+
+          <!-- ── STT Provider selection ── -->
+          <div class="setting-section">
+            <h3>Provider</h3>
+            <div class="voice-select-row">
+              <select
+                v-model="sttProvider"
+                class="setting-select"
+                @change="onSttProviderChange"
+              >
+                <option value="whisper">
+                  Whisper (Local &mdash; default)
+                </option>
+                <option value="grok">
+                  Grok (xAI)
+                </option>
+              </select>
+            </div>
+            <p
+              v-if="sttProvider === 'grok'"
+              class="description"
+              :class="grokSttConnected ? 'banner-success' : 'banner-info'"
+            >
+              <span v-if="grokSttConnected">Grok speech-to-text is connected. Audio is sent to xAI for transcription.</span>
+              <span v-else>Grok speech-to-text needs your xAI API key in Integrations &rarr; Grok. Until then, transcription falls back to local Whisper.</span>
+            </p>
+          </div>
 
           <!-- ── Progress / Activity Log ── -->
           <div
@@ -713,8 +740,11 @@
             </div>
           </div>
 
-          <!-- ── Engine Status ── -->
-          <div class="setting-section">
+          <!-- ── Engine Status (whisper only) ── -->
+          <div
+            v-if="sttProvider === 'whisper'"
+            class="setting-section"
+          >
             <h3>whisper.cpp Engine</h3>
             <div
               v-if="whisperVersion"
@@ -734,7 +764,7 @@
 
           <!-- ── Model Management (only when installed) ── -->
           <div
-            v-if="whisperInstalled"
+            v-if="sttProvider === 'whisper' && whisperInstalled"
             class="setting-section"
           >
             <h3>Models</h3>
@@ -827,7 +857,7 @@
 
           <!-- ── Test Transcription (only when installed + has models) ── -->
           <div
-            v-if="whisperInstalled && whisperModels.length > 0"
+            v-if="sttProvider === 'whisper' && whisperInstalled && whisperModels.length > 0"
             class="setting-section"
           >
             <h3>Test</h3>
@@ -1036,14 +1066,19 @@ interface TtsProviderInfo {
   id:        string;
   name:      string;
   connected: boolean;
-  vaultKey:  { integrationId: string; property: string };
+  /** Vault credential this provider needs. Absent for keyless providers (e.g. the native OS voice). */
+  vaultKey?: { integrationId: string; property: string };
 }
 
 const ttsProviders = ref<TtsProviderInfo[]>([
+  // Native macOS voices via the OS speech engine — always available, no API key. Mirrors Sulla Mobile's default.
+  { id: 'system', name: 'System Default (macOS)', connected: true },
   { id: 'elevenlabs', name: 'ElevenLabs', connected: false, vaultKey: { integrationId: 'elevenlabs', property: 'api_key' } },
+  // xAI Grok Text-to-Speech. Uses the metered xAI API key (Grok integration → api_key).
+  { id: 'grok', name: 'Grok Voice', connected: false, vaultKey: { integrationId: 'grok', property: 'api_key' } },
 ]);
 
-const ttsProvider = ref('elevenlabs');
+const ttsProvider = ref('system');
 const ttsVoice = ref('');
 const ttsVoiceName = ref('');
 const voices = ref<{ value: string; label: string; description?: string }[]>([]);
@@ -1051,7 +1086,8 @@ const loadingVoices = ref(false);
 const previewPlaying = ref(false);
 
 const hasAnyTtsProvider = computed(() => ttsProviders.value.some(p => p.connected));
-const ttsFullyConfigured = computed(() => hasAnyTtsProvider.value && !!ttsVoice.value);
+// The system voice speaks with the OS default even when no specific voice is picked, so it counts as configured.
+const ttsFullyConfigured = computed(() => hasAnyTtsProvider.value && (ttsProvider.value === 'system' || !!ttsVoice.value));
 
 function selectTtsProvider(id: string) {
   ttsProvider.value = id;
@@ -1084,6 +1120,10 @@ const audioInputDeviceId = ref('');
 const audioInputDevices = ref<{ value: string; label: string }[]>([]);
 const loadingDevices = ref(false);
 const sttLanguage = ref('en-US');
+
+// STT provider — 'whisper' (local, default) or 'grok' (xAI cloud STT).
+const sttProvider = ref('whisper');
+const grokSttConnected = ref(false);
 
 // ─── Speaker tab ────────────────────────────────────────────────
 
@@ -1809,15 +1849,31 @@ function onMicDeviceChange() {
   saveSettings();
 }
 
+function onSttProviderChange() {
+  saveSettings();
+  checkGrokSttConnection();
+}
+
+// Grok STT uses the same metered xAI api_key as Grok TTS (OAuth tokens are rejected by api.x.ai).
+async function checkGrokSttConnection(): Promise<void> {
+  try {
+    const result = await ipcRenderer.invoke('integration-get-value', 'grok', 'api_key');
+    grokSttConnected.value = !!(result?.value);
+  } catch {
+    grokSttConnected.value = false;
+  }
+}
+
 // ─── Settings persistence ───────────────────────────────────────
 
 async function loadSettings(): Promise<void> {
   try {
-    ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'elevenlabs');
+    ttsProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsProvider', 'system');
     ttsVoice.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoice', '');
     ttsVoiceName.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTtsVoiceName', '');
     transcriptionMode.value = await ipcRenderer.invoke('sulla-settings-get', 'audioTranscriptionMode', 'browser');
     sttLanguage.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttLanguage', 'en-US');
+    sttProvider.value = await ipcRenderer.invoke('sulla-settings-get', 'audioSttProvider', 'whisper');
     audioInputDeviceId.value = await ipcRenderer.invoke('sulla-settings-get', 'audioInputDeviceId', '');
     activeWhisperModel.value = await ipcRenderer.invoke('sulla-settings-get', 'audioWhisperModel', '');
   } catch (err) {
@@ -1832,6 +1888,7 @@ async function saveSettings(): Promise<void> {
     await ipcRenderer.invoke('sulla-settings-set', 'audioTtsVoiceName', ttsVoiceName.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioTranscriptionMode', transcriptionMode.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioSttLanguage', sttLanguage.value);
+    await ipcRenderer.invoke('sulla-settings-set', 'audioSttProvider', sttProvider.value);
     await ipcRenderer.invoke('sulla-settings-set', 'audioInputDeviceId', audioInputDeviceId.value);
   } catch (err) {
     console.error('[AudioSettings] Failed to save settings:', err);
@@ -1842,6 +1899,11 @@ async function saveSettings(): Promise<void> {
 
 async function checkProviders(): Promise<void> {
   for (const provider of ttsProviders.value) {
+    // Keyless providers (e.g. the native OS voice) are always available — no vault lookup.
+    if (!provider.vaultKey) {
+      provider.connected = true;
+      continue;
+    }
     try {
       const result = await ipcRenderer.invoke(
         'integration-get-value',
@@ -1874,12 +1936,97 @@ async function fetchVoices(): Promise<void> {
   loadingVoices.value = true;
 
   try {
-    if (ttsProvider.value === 'elevenlabs') {
+    if (ttsProvider.value === 'system') {
+      await fetchSystemVoices();
+    } else if (ttsProvider.value === 'elevenlabs') {
       await fetchElevenLabsVoices();
+    } else if (ttsProvider.value === 'grok') {
+      await fetchGrokVoices();
     }
   } finally {
     loadingVoices.value = false;
   }
+}
+
+// Fetch Grok's built-in voices from GET /v1/tts/voices, falling back to the known
+// built-ins when no key is set or the endpoint is unreachable.
+async function fetchGrokVoices(): Promise<void> {
+  try {
+    const result = await ipcRenderer.invoke('integration-get-value', 'grok', 'api_key');
+    const apiKey = result?.value;
+
+    if (!apiKey) {
+      voices.value = getGrokStaticVoices();
+      return;
+    }
+
+    const response = await fetch('https://api.x.ai/v1/tts/voices', {
+      headers: { Authorization: `Bearer ${ apiKey }` },
+    });
+
+    if (!response.ok) {
+      voices.value = getGrokStaticVoices();
+      return;
+    }
+
+    // Response shape: either a bare array or { voices: [...] } of { voice_id, name }.
+    const body = await response.json() as { voices?: { voice_id: string; name?: string }[] } | { voice_id: string; name?: string }[];
+    const list = Array.isArray(body) ? body : (body.voices ?? []);
+
+    if (list.length > 0) {
+      voices.value = list.map(v => ({
+        value: v.voice_id,
+        label: v.name || v.voice_id,
+      }));
+    } else {
+      voices.value = getGrokStaticVoices();
+    }
+  } catch {
+    voices.value = getGrokStaticVoices();
+  }
+}
+
+// Grok's five built-in voices (docs.x.ai). `eve` is the API default.
+function getGrokStaticVoices(): { value: string; label: string; description?: string }[] {
+  return [
+    { value: 'eve', label: 'Eve', description: 'default' },
+    { value: 'ara', label: 'Ara' },
+    { value: 'leo', label: 'Leo' },
+    { value: 'rex', label: 'Rex' },
+    { value: 'sal', label: 'Sal' },
+  ];
+}
+
+// Enumerate the OS speech-engine voices exposed through the browser SpeechSynthesis API.
+// In Electron/Chromium on macOS these are the native system voices (Samantha, Alex, the Siri voices, …).
+async function fetchSystemVoices(): Promise<void> {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+  if (!synth) {
+    voices.value = [{ value: 'auto', label: 'Automatic (system default)' }];
+    return;
+  }
+
+  // Chromium loads voices lazily — the first getVoices() call can return []. Wait briefly for voiceschanged.
+  let list = synth.getVoices();
+  if (list.length === 0) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 1000);
+      synth.addEventListener('voiceschanged', () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
+    list = synth.getVoices();
+  }
+
+  const english = list.filter(v => v.lang?.toLowerCase().startsWith('en'));
+  const pool = english.length > 0 ? english : list;
+
+  voices.value = [
+    { value: 'auto', label: 'Automatic (system default)' },
+    ...pool.map(v => ({
+      value:       v.voiceURI,
+      label:       v.name,
+      description: v.lang,
+    })),
+  ];
 }
 
 async function fetchElevenLabsVoices(): Promise<void> {
@@ -1949,10 +2096,32 @@ async function fetchAudioDevices(): Promise<void> {
 
 // ─── Voice preview ──────────────────────────────────────────────
 
+// Speak a sample through the OS speech engine using the currently-selected system voice.
+function previewSystemVoice(text: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+    if (!synth) { resolve(); return; }
+    synth.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    if (ttsVoice.value && ttsVoice.value !== 'auto') {
+      const match = synth.getVoices().find(v => v.voiceURI === ttsVoice.value);
+      if (match) utterance.voice = match;
+    }
+    utterance.onend = () => resolve();
+    utterance.onerror = () => resolve();
+    synth.speak(utterance);
+  });
+}
+
 async function previewVoice(): Promise<void> {
   if (previewPlaying.value) return;
   previewPlaying.value = true;
   try {
+    // System provider speaks natively in the renderer — no ElevenLabs round-trip.
+    if (ttsProvider.value === 'system') {
+      await previewSystemVoice('Hello, this is how I sound.');
+      return;
+    }
     const result = await ipcRenderer.invoke('audio-speak', { text: 'Hello, this is how I sound.' });
     if (result?.audio) {
       const blob = new Blob([result.audio], { type: result.mimeType || 'audio/mpeg' });
@@ -1977,6 +2146,7 @@ onMounted(async() => {
   await loadSettings();
   await checkProviders();
   await checkGateway();
+  await checkGrokSttConnection();
   await fetchVoices();
   await fetchAudioDevices();
 

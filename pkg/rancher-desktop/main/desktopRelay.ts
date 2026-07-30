@@ -86,7 +86,8 @@ interface Status {
   lastError?:   string;
 }
 
-class DesktopRelayClient {
+// Exported for tests only — production code must go through getDesktopRelayClient().
+export class DesktopRelayClient {
   private ws: WebSocket | null = null;
   private currentRoom: string | null = null;
   private reconnectDelay = RECONNECT_BASE_MS;
@@ -132,6 +133,10 @@ class DesktopRelayClient {
   // with undeliverable frames during a mobile reconnect.
   private activeConversations = new Set<string>();
   private mobilePeerOnline = true;
+  // System-sleep gate. While the machine is suspended we close the socket on
+  // purpose and must not schedule reconnects that can't succeed. Set on
+  // powerMonitor 'suspend', cleared on 'resume' (see sullaEvents.ts).
+  private suspended = false;
 
   async start(): Promise<void> {
     const paired = (await SullaSettingsModel.get('pairedMobileUserId', '')) ?? '';
@@ -164,6 +169,41 @@ class DesktopRelayClient {
     return () => {
       this.statusListeners = this.statusListeners.filter(l => l !== listener);
     };
+  }
+
+  /**
+   * powerMonitor 'suspend': close the socket proactively so the relay DO
+   * drops this peer immediately — mobile sees the desktop go offline right
+   * away instead of after the server-side stale timeout. No reconnects are
+   * scheduled while suspended.
+   */
+  handleSuspend(): void {
+    if (this.suspended) return;
+    this.suspended = true;
+    if (!this.currentRoom) return;
+    console.log('[DesktopRelay] System suspending — closing relay socket');
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    this.teardownLiveness();
+    if (this.ws) {
+      try { this.ws.close(); } catch { /* ignore */ }
+      this.ws = null;
+    }
+    this.connected = false;
+    this.broadcastStatus();
+  }
+
+  /**
+   * powerMonitor 'resume': reconnect immediately with fresh backoff instead
+   * of waiting for the stale-socket watchdog to notice (which could take
+   * up to STALE_SOCKET_MS plus the accumulated backoff after wake).
+   */
+  handleResume(): void {
+    this.suspended = false;
+    if (!this.currentRoom || this.intentionallyClosed) return;
+    console.log('[DesktopRelay] System resumed — reconnecting relay socket');
+    this.reconnectDelay = RECONNECT_BASE_MS;
+    this.failedAttempts = 0;
+    this.forceReconnect('system resumed');
   }
 
   // ── Internal ────────────────────────────────────────────
@@ -230,10 +270,13 @@ class DesktopRelayClient {
   }
 
   private async openSocket() {
-    if (!this.currentRoom) return;
+    if (!this.currentRoom || this.suspended) return;
     const room = this.currentRoom;
 
     const token = await getCurrentAccessToken();
+    // The machine may have gone to sleep (or the user unpaired) while we
+    // were awaiting the token read — don't open a socket nobody wants.
+    if (this.suspended || this.intentionallyClosed) return;
     if (!token) {
       this.lastError = 'Not signed in — relay cannot authenticate';
       console.warn('[DesktopRelay] No access token — skipping connect. Sign in first.');
@@ -330,7 +373,7 @@ class DesktopRelayClient {
   }
 
   private scheduleReconnect() {
-    if (this.reconnectTimer || !this.currentRoom) return;
+    if (this.reconnectTimer || !this.currentRoom || this.suspended) return;
     const delay = this.reconnectDelay;
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
     // During a long outage the 30s-capped backoff retries ~120×/hour and each
@@ -344,6 +387,12 @@ class DesktopRelayClient {
       this.reconnectTimer = null;
       this.openSocket().catch((err) => {
         console.warn('[DesktopRelay] openSocket failed:', err);
+        // Without rescheduling here, a single throw (e.g. the VM's Postgres
+        // still waking when getCurrentAccessToken reads the session) killed
+        // the reconnect loop permanently — the relay then stayed dead until
+        // logout/login. Same fix connect() already has: hand the failure
+        // back to the backoff machinery.
+        this.scheduleReconnect();
       });
     }, delay);
   }

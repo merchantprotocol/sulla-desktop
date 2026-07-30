@@ -5,9 +5,16 @@ import yaml from 'yaml';
 
 import { BaseTool, ToolResponse } from '../base';
 
-// ── Valid subtypes and their required categories ──
+import type { WorkflowNodeCategory, WorkflowNodeSubtype } from '@pkg/pages/editor/workflow/types';
 
-const SUBTYPE_CATEGORY_MAP: Record<string, string> = {
+// ── Valid subtypes and their required categories ──
+// Keyed exhaustively on WorkflowNodeSubtype so a subtype added to (or
+// removed from) the editor type union is a compile error here until the
+// validator learns about it — the drift that caused #493.
+
+const SUBTYPE_CATEGORY_MAP: Record<WorkflowNodeSubtype, WorkflowNodeCategory> = {
+  manual:                'trigger',
+  schedule:              'trigger',
   calendar:              'trigger',
   'chat-app':            'trigger',
   heartbeat:             'trigger',
@@ -18,6 +25,7 @@ const SUBTYPE_CATEGORY_MAP: Record<string, string> = {
   'tool-call':           'agent',
   'integration-call':    'agent',
   'orchestrator-prompt': 'agent',
+  function:              'agent',
   router:                'routing',
   condition:             'routing',
   wait:                  'flow-control',
@@ -28,11 +36,14 @@ const SUBTYPE_CATEGORY_MAP: Record<string, string> = {
   'user-input':          'io',
   response:              'io',
   transfer:              'io',
+  'desktop-notification': 'io',
 };
 
 // ── Required config fields per subtype ──
 
-const REQUIRED_CONFIG_FIELDS: Record<string, string[]> = {
+const REQUIRED_CONFIG_FIELDS: Record<WorkflowNodeSubtype, string[]> = {
+  manual:                ['triggerType', 'triggerDescription'],
+  schedule:              ['triggerType', 'triggerDescription'],
   calendar:              ['triggerType', 'triggerDescription'],
   'chat-app':            ['triggerType', 'triggerDescription'],
   heartbeat:             ['triggerType', 'triggerDescription'],
@@ -43,6 +54,7 @@ const REQUIRED_CONFIG_FIELDS: Record<string, string[]> = {
   'tool-call':           ['toolName', 'defaults'],
   'integration-call':    ['integrationSlug', 'endpointName', 'accountId', 'defaults', 'preCallDescription'],
   'orchestrator-prompt': ['prompt'],
+  function:              ['functionRef'],
   router:                ['classificationPrompt', 'routes'],
   condition:             ['rules', 'combinator'],
   wait:                  ['delayAmount', 'delayUnit'],
@@ -53,11 +65,14 @@ const REQUIRED_CONFIG_FIELDS: Record<string, string[]> = {
   'user-input':          ['promptText'],
   response:              ['responseTemplate'],
   transfer:              ['targetWorkflowId'],
+  'desktop-notification': ['toolName', 'defaults'],
 };
 
 // ── Optional config fields per subtype (allowed but not required) ──
 
-const OPTIONAL_CONFIG_FIELDS: Record<string, string[]> = {
+const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
+  schedule:       ['frequency', 'intervalMinutes', 'hour', 'minute', 'dayOfWeek', 'dayOfMonth', 'timezone'],
+  function:       ['inputs', 'integrationAccounts', 'timeoutOverride'],
   'sub-workflow': ['agentId', 'orchestratorPrompt'],
   loop:           ['loopMode', 'orchestratorPrompt'],
 };
@@ -79,7 +94,7 @@ interface ValidationIssue {
   message:  string;
 }
 
-function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssue[] {
+export function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   if (!def || typeof def !== 'object') {
@@ -157,9 +172,10 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
       continue;
     }
 
-    const { subtype, category, label, config } = node.data;
+    const { category, label, config } = node.data;
 
-    // subtype
+    // subtype — unvalidated YAML input; the map lookup below IS the validation
+    const subtype = node.data.subtype as WorkflowNodeSubtype;
     if (!subtype || !SUBTYPE_CATEGORY_MAP[subtype]) {
       issues.push({ severity: 'error', path: `${ np }/data/subtype`, message: `Invalid subtype "${ subtype }". Valid: ${ Object.keys(SUBTYPE_CATEGORY_MAP).join(', ') }` });
       continue;
@@ -263,7 +279,7 @@ function validateWorkflowDefinition(def: any, filePath?: string): ValidationIssu
   const targetSet = new Set(edges.map((e: any) => e?.target).filter(Boolean));
   for (const node of def.nodes) {
     if (!node?.data || !node.id) continue;
-    const cat = SUBTYPE_CATEGORY_MAP[node.data.subtype];
+    const cat = SUBTYPE_CATEGORY_MAP[node.data.subtype as WorkflowNodeSubtype];
     if (cat === 'trigger') continue;
     if (!targetSet.has(node.id)) {
       issues.push({ severity: 'warning', path: `/nodes[id=${ node.id }]`, message: `Node "${ node.data.label || node.id }" is not the target of any edge (unreachable)` });

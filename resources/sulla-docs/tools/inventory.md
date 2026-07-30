@@ -18,7 +18,7 @@ sulla <category> --help
 - `sulla meta/browse_tools` — Discover tools by category or keyword (returns docs, not executions)
 - `sulla meta/file_search` — Full-text (BM25) keyword search across files
 - `sulla meta/read_file` — Read file with optional line range
-- `sulla meta/request_user_input` — Pause mid-turn and ask the user for an approve/deny decision (blocks until user clicks; 5 min default timeout)
+- `sulla meta/ask_user_question` — Pause mid-turn and ask the user one or more multiple-choice questions, incl. yes/no approvals via Approve/Deny options (blocks until user answers; 5 min default timeout)
 - `sulla meta/spawn_agent` — Launch sub-agents (canonical for spawn_agent; NOT under `agents/`)
 - `sulla meta/execute_workflow` — Run a named Sulla workflow by slug
 - `sulla meta/validate_sulla_workflow` — Validate workflow YAML
