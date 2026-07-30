@@ -1,6 +1,7 @@
 import { BaseTool, ToolResponse } from '../base';
 import { createJob, completeJob, failJob, getJobAbortSignal } from './jobRegistry';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
+import { findAgentDir } from '../../utils/sullaPaths';
 
 import type { AgentJobResult } from './jobRegistry';
 
@@ -8,9 +9,19 @@ const MAX_DEPTH = 3;
 const MAX_TASKS = 10;
 
 interface SpawnTask {
-  agentId?: string;
-  prompt:   string;
-  label?:   string;
+  agentId?:   string;
+  /** Alias for agentId — the agent config folder name under ~/sulla/agents/.
+   *  Accepted because callers routinely reach for "agentName"; resolved to the
+   *  same selector so a natural-but-wrong key no longer silently no-ops. */
+  agentName?: string;
+  prompt:     string;
+  label?:     string;
+}
+
+/** The agent-config selector for a task: agentId, or its agentName alias. */
+function taskAgentSelector(task: SpawnTask): string | undefined {
+  const sel = task.agentId || task.agentName;
+  return typeof sel === 'string' && sel.trim() ? sel.trim() : undefined;
 }
 
 export class SpawnAgentWorker extends BaseTool {
@@ -42,6 +53,19 @@ export class SpawnAgentWorker extends BaseTool {
           responseString: `Task at index ${ i } is missing a "prompt" string.`,
         };
       }
+
+      // Fail fast on an unresolvable agent selector. Without this the task
+      // silently fell back to the PARENT persona on the subconscious model
+      // (e.g. a caller passing the wrong key ran a generic sub-agent on the
+      // fallback provider instead of the intended worker) — a costly no-op
+      // with no signal. A missing selector is still fine (documented default).
+      const selector = taskAgentSelector(tasks[i]);
+      if (selector && !findAgentDir(selector)) {
+        return {
+          successBoolean: false,
+          responseString: `Task at index ${ i } references agent "${ selector }" but no config folder exists under ~/sulla/agents/. Use a valid agentId (or omit it to use the default agent).`,
+        };
+      }
     }
 
     // ── Options ───────────────────────────────────────────────────
@@ -69,8 +93,9 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Single task executor ────────────────────────────────────
     const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
-      const label = task.label || task.agentId || `task-${ index }`;
-      const agentConfigChannel = task.agentId || parentChannel;
+      const selector = taskAgentSelector(task);
+      const label = task.label || selector || `task-${ index }`;
+      const agentConfigChannel = selector || parentChannel;
       const threadId = `spawn-agent-${ label.replace(/\s+/g, '-').toLowerCase() }-${ Date.now() }-${ index }`;
 
       try {
@@ -182,7 +207,7 @@ export class SpawnAgentWorker extends BaseTool {
         }
 
         return {
-          label:    tasks[i].label || tasks[i].agentId || `task-${ i }`,
+          label:    tasks[i].label || taskAgentSelector(tasks[i]) || `task-${ i }`,
           status:   'error' as const,
           output:   `Unexpected error: ${ s.reason }`,
           threadId: '',
