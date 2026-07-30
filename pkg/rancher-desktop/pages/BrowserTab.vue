@@ -225,6 +225,13 @@
       </div>
     </template>
 
+    <!-- Agents mode: live view of every running loop (subagents, heartbeat, routines, jobs) -->
+    <template v-else-if="tabMode === 'agents'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <AgentsTab />
+      </div>
+    </template>
+
     <!-- Secretary mode: continuous transcription with wake word -->
     <template v-else-if="tabMode === 'secretary'">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -301,6 +308,7 @@ import AgentRoutines from './AgentRoutines.vue';
 // Swapped to the new componentized chat at ./chat/ChatPage.vue.
 // Old implementation at ./BrowserTabChat.vue is kept for rollback.
 import BrowserTabChat from './chat/ChatPage.vue';
+import AgentsTab from './AgentsTab.vue';
 import HistoryTab from './HistoryTab.vue';
 import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
