@@ -1,5 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
-import { createJob, completeJob, failJob } from './jobRegistry';
+import { createJob, completeJob, failJob, getJobAbortSignal } from './jobRegistry';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 
 import type { AgentJobResult } from './jobRegistry';
@@ -63,6 +63,10 @@ export class SpawnAgentWorker extends BaseTool {
 
     const parentChannel = (this.state)?.metadata?.wsChannel || 'sulla-desktop';
 
+    // Abort signal for THIS async job (set once the job is created below).
+    // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
+    let jobAbortSignal: AbortSignal | undefined;
+
     // ── Single task executor ────────────────────────────────────
     const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const label = task.label || task.agentId || `task-${ index }`;
@@ -83,11 +87,17 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
 
-        // Propagate parent's abort signal so stop button reaches subagents
-        const parentAbort = (this.state as any)?.metadata?.options?.abort;
-        if (parentAbort) {
+        // Propagate abort signals so both the user's stop button (parent abort)
+        // AND stop_agent_job(jobId) (this job's signal) reach the sub-agents.
+        const parentAbort: AbortSignal | undefined = (this.state as any)?.metadata?.options?.abort;
+        const signals = [parentAbort, jobAbortSignal].filter(Boolean) as AbortSignal[];
+        if (signals.length) {
           subState.metadata.options ??= {};
-          subState.metadata.options.abort = parentAbort;
+          // AbortSignal.any (Node 20+) fires when EITHER source aborts; fall back
+          // to the single signal if only one is present.
+          subState.metadata.options.abort = signals.length === 1
+            ? signals[0]
+            : (AbortSignal as any).any(signals);
         }
 
         // Register this threadId on the parent so user-abort fans out to it
@@ -183,6 +193,9 @@ export class SpawnAgentWorker extends BaseTool {
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
       const job = createJob(tasks.length);
+      // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
+      // call fans out to every sub-agent this job spawns.
+      jobAbortSignal = getJobAbortSignal(job.jobId);
 
       // Launch in background — do not await
       executeAll()
