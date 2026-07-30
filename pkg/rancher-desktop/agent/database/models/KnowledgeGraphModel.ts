@@ -71,6 +71,11 @@ export interface SpreadActivationOptions {
   limit?:     number;
 }
 
+export interface EpisodicRecallOptions extends SpreadActivationOptions {
+  /** Query-level safety bound only. This must not be used as an agent wall-clock timeout. */
+  statementTimeoutMs?: number;
+}
+
 export class KnowledgeGraphModel {
   static readonly NODES_TABLE = 'knowledge_nodes';
   static readonly ALIASES_TABLE = 'node_aliases';
@@ -227,6 +232,118 @@ export class KnowledgeGraphModel {
        LIMIT $5`,
       [ids, maxHops, decay, minEdge, limit],
     );
+  }
+
+  /**
+   * Resolve aliases, spread activation, fetch ranked nodes, and bump recall
+   * counters in one transaction-local SQL statement. Recall must never write
+   * `node_links`; edge reinforcement belongs to write/learning paths only.
+   */
+  static async recallByTerms(
+    terms: string[],
+    opts: EpisodicRecallOptions = {},
+  ): Promise<SpreadActivationRecord[]> {
+    const cleanTerms = Array.from(new Set(terms.map(term => term.trim()).filter(Boolean)));
+    if (cleanTerms.length === 0) return [];
+
+    const maxHops = Math.max(1, Math.floor(opts.maxHops ?? 2));
+    const decay   = opts.decay   ?? 0.5;
+    const minEdge = opts.minEdge ?? 0;
+    const limit   = Math.max(1, Math.min(50, Math.floor(opts.limit ?? 12)));
+    const timeout = Math.max(250, Math.min(10_000, Math.floor(opts.statementTimeoutMs ?? 3_000)));
+
+    return postgresClient.transaction(async(client) => {
+      await client.query(`SET LOCAL statement_timeout = ${ timeout }`);
+
+      const { rows } = await client.query<SpreadActivationRecord>(
+        `WITH RECURSIVE input_terms AS (
+           SELECT unnest($1::text[]) AS term
+         ),
+         normalized_terms AS (
+           SELECT term, norm_alias(term) AS term_norm
+           FROM input_terms
+           WHERE norm_alias(term) <> ''
+         ),
+         exact_matches AS (
+           SELECT DISTINCT ON (a.node_id)
+             a.node_id, 1::real AS sim, 0 AS match_rank
+           FROM normalized_terms t
+           JOIN ${ KnowledgeGraphModel.ALIASES_TABLE } a ON a.alias_norm = t.term_norm
+           JOIN ${ KnowledgeGraphModel.NODES_TABLE } n ON n.id = a.node_id
+           WHERE n.archived = false AND n.merged_into IS NULL
+           ORDER BY a.node_id, a.alias
+         ),
+         fuzzy_matches AS (
+           SELECT DISTINCT ON (a.node_id)
+             a.node_id, similarity(a.alias_norm, t.term_norm)::real AS sim, 1 AS match_rank
+           FROM normalized_terms t
+           JOIN ${ KnowledgeGraphModel.ALIASES_TABLE } a ON a.alias_norm % t.term_norm
+           JOIN ${ KnowledgeGraphModel.NODES_TABLE } n ON n.id = a.node_id
+           WHERE n.archived = false
+             AND n.merged_into IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM exact_matches e WHERE e.node_id = a.node_id
+             )
+           ORDER BY a.node_id, similarity(a.alias_norm, t.term_norm) DESC, a.alias
+         ),
+         anchors AS (
+           SELECT DISTINCT node_id
+           FROM (
+             SELECT node_id, sim, match_rank FROM exact_matches
+             UNION ALL
+             SELECT node_id, sim, match_rank FROM fuzzy_matches
+           ) matches
+           ORDER BY node_id
+         ),
+         spread AS (
+           SELECT n.id AS node_id, 1.0::real AS activation, 0 AS hop, ARRAY[n.id] AS path
+           FROM ${ KnowledgeGraphModel.NODES_TABLE } n
+           JOIN anchors a ON a.node_id = n.id
+           WHERE n.archived = false AND n.merged_into IS NULL
+           UNION ALL
+           SELECT
+             next.id AS node_id,
+             (s.activation * l.strength * $3::real)::real AS activation,
+             s.hop + 1 AS hop,
+             s.path || next.id AS path
+           FROM spread s
+           JOIN ${ KnowledgeGraphModel.LINKS_TABLE } l
+             ON (l.src_id = s.node_id OR l.dst_id = s.node_id)
+           JOIN ${ KnowledgeGraphModel.NODES_TABLE } next
+             ON next.id = CASE WHEN l.src_id = s.node_id THEN l.dst_id ELSE l.src_id END
+           WHERE s.hop < $2
+             AND l.strength >= $4::real
+             AND next.archived = false AND next.merged_into IS NULL
+             AND NOT (next.id = ANY(s.path))
+         ),
+         ranked AS (
+           SELECT node_id, MAX(activation) AS activation, MIN(hop) AS hop
+           FROM spread
+           GROUP BY node_id
+         ),
+         limited AS (
+           SELECT n.*, r.activation, r.hop
+           FROM ranked r
+           JOIN ${ KnowledgeGraphModel.NODES_TABLE } n ON n.id = r.node_id
+           ORDER BY r.activation DESC, n.link_count DESC, n.id ASC
+           LIMIT $5
+         ),
+         recalled AS (
+           UPDATE ${ KnowledgeGraphModel.NODES_TABLE } n
+           SET recall_count = n.recall_count + 1,
+               last_recalled_at = now(),
+               updated_at = now()
+           FROM limited l
+           WHERE n.id = l.id
+           RETURNING n.id
+         )
+         SELECT * FROM limited
+         ORDER BY activation DESC, link_count DESC, id ASC`,
+        [cleanTerms, maxHops, decay, minEdge, limit],
+      );
+
+      return rows;
+    });
   }
 
   static async getNode(id: string): Promise<KnowledgeNodeRecord | null> {

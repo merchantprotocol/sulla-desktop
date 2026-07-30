@@ -794,7 +794,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /**
    * Remove previously injected subconscious context blocks
-   * (<recall_context>, <observation_context>, <unstuck_context>) from all
+   * (<episodic_context>, <recall_context>, <observation_context>, <unstuck_context>) from all
    * assistant messages, so the per-turn merge below replaces rather than
    * accumulates. Two accumulation paths existed without this:
    * - the merge runs on every graph iteration of a tool-call loop, re-
@@ -804,8 +804,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(recall_context|observation_context|unstuck_context|routine_digest)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:recall_context|observation_context|unstuck_context|routine_digest)>/;
+    const BLOCK_RE = /\n*<(episodic_context|recall_context|observation_context|unstuck_context|routine_digest)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:episodic_context|recall_context|observation_context|unstuck_context|routine_digest)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;

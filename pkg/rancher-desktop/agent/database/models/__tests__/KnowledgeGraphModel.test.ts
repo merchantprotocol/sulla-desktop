@@ -231,4 +231,52 @@ describe('KnowledgeGraphModel', () => {
       [['a'], 2, 0.5, 0, 12],
     );
   });
+
+  it('recallByTerms resolves, spreads, fetches, and bumps nodes without touching node_links', async() => {
+    const client: any = {
+      query: jest.fn((sql: string, params?: any[]) => {
+        if (sql.startsWith('SET LOCAL statement_timeout')) {
+          expect(sql).toBe('SET LOCAL statement_timeout = 3000');
+          return Promise.resolve({ rows: [] });
+        }
+
+        expect(sql).toContain('WITH RECURSIVE input_terms AS');
+        expect(sql).toContain('JOIN node_aliases a');
+        expect(sql).toContain('WITH RECURSIVE input_terms AS');
+        expect(sql).toContain('UPDATE knowledge_nodes n');
+        expect(sql).toContain('recall_count = n.recall_count + 1');
+        expect(sql).not.toMatch(/UPDATE\s+node_links/i);
+        expect(sql).not.toMatch(/INSERT\s+INTO\s+node_links/i);
+        expect(params).toEqual([['Issue #517', 'voice recall'], 2, 0.5, 0, 12]);
+
+        return Promise.resolve({
+          rows: [{
+            id:                 'issue-517',
+            node_type:          'issue',
+            title:              'GitHub issue #517',
+            summary:            'Recall agent graph retrieval',
+            detail:             null,
+            link_count:         8,
+            recall_count:       4,
+            last_recalled_at:   null,
+            archived:           false,
+            merged_into:        null,
+            source:             'test',
+            created_at:         '2026-07-30T00:00:00.000Z',
+            updated_at:         '2026-07-30T00:00:00.000Z',
+            activation:         1,
+            hop:                0,
+          }],
+        });
+      }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => Promise.resolve(callback(client)));
+
+    const rows = await KnowledgeGraphModel.recallByTerms(['Issue #517', 'voice recall', 'Issue #517']);
+
+    expect(postgresClient.transaction).toHaveBeenCalledTimes(1);
+    expect(client.query).toHaveBeenCalledTimes(2);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'issue-517', activation: 1, hop: 0 });
+  });
 });
