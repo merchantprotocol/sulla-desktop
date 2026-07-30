@@ -24,6 +24,7 @@ import { up as up_0028, down as down_0028 } from './0028_create_observations_tab
 // NOTE: numbered 0037+ (not 0029-0032) to sit AFTER the CRM dynamic-schema
 // migrations 0029-0036 that production has already executed. See commit message /
 // docs/MIGRATION_NOTES.md §7 for the collision-resolution rationale.
+import { up as up_0029, down as down_0029 } from './0029_create_knowledge_graph';
 import { up as up_0037, down as down_0037 } from './0037_create_routine_stewardship_views';
 import { up as up_0038, down as down_0038 } from './0038_create_routine_digest_views';
 import { up as up_0039, down as down_0039 } from './0039_create_routine_promotion_candidates_view';
@@ -52,8 +53,9 @@ export const migrationsRegistry = [
   { name: '0026_create_workflow_executions_table', up: up_0026, down: down_0026 },
   { name: '0027_create_audit_history_tables', up: up_0027, down: down_0027 },
   { name: '0028_create_observations_table',   up: up_0028, down: down_0028 },
-  { name: '0037_create_routine_stewardship_views', up: up_0037, down: down_0037 },
-  { name: '0038_create_routine_digest_views', up: up_0038, down: down_0038 },
-  { name: '0039_create_routine_promotion_candidates_view', up: up_0039, down: down_0039 },
-  { name: '0040_create_heartbeat_seen_issues_table', up: up_0040, down: down_0040 },
+  { name: '0029_create_knowledge_graph',               up: up_0029, down: down_0029 },
+  { name: '0037_create_routine_stewardship_views',          up: up_0037, down: down_0037 },
+  { name: '0038_create_routine_digest_views',               up: up_0038, down: down_0038 },
+  { name: '0039_create_routine_promotion_candidates_view',  up: up_0039, down: down_0039 },
+  { name: '0040_create_heartbeat_seen_issues_table',        up: up_0040, down: down_0040 },
 ] as const;
