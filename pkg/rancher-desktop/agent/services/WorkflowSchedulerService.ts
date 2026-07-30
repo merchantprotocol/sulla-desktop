@@ -108,6 +108,37 @@ export class WorkflowSchedulerService {
 
     this.initialized = true;
     await this.scanAndSchedule();
+    await this.catchUpMissedFires();
+  }
+
+  /**
+   * Recover fires that were missed while the app was off or the scheduler
+   * dormant. node-schedule only fires crons that trip while the process is
+   * running, so a cron time that passed during downtime is silently skipped
+   * until its next occurrence — a whole week of drift for a weekly routine.
+   *
+   * This runs the exact same scan the `catch_up_schedules` tool exposes,
+   * right after schedules are armed on boot, so recovery is automatic and
+   * doesn't depend on an agent remembering to invoke the tool. It relies on
+   * the FIRE_GRACE_MS tolerance in runCatchUpScan so an on-time-but-early
+   * fire is never misread as missed and re-dispatched. Dispatch is otherwise
+   * fire-and-forget and idempotent (a fire already present in
+   * workflow_executions since the last expected occurrence is skipped), so
+   * re-running on every boot is safe. Never throws into the boot path.
+   */
+  private async catchUpMissedFires(): Promise<void> {
+    try {
+      const { runCatchUpScan } = await import('@pkg/agent/tools/workflow/catch_up_schedules');
+      const { missedCount, dispatchedCount } = await runCatchUpScan({});
+
+      if (missedCount === 0) {
+        console.log('[WorkflowSchedulerService] Catch-up scan: no missed fires');
+      } else {
+        console.log(`[WorkflowSchedulerService] Catch-up scan: ${ missedCount } missed fire(s), ${ dispatchedCount } dispatched`);
+      }
+    } catch (err) {
+      console.warn('[WorkflowSchedulerService] Catch-up scan failed (schedules still armed):', err);
+    }
   }
 
   /**
