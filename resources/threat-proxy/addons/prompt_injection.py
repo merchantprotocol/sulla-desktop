@@ -100,7 +100,36 @@ class PromptInjectionScanner:
             hits.append((severity, label, excerpt))
         return hits
 
+    def responseheaders(self, flow: http.HTTPFlow) -> None:
+        """Stream (don't buffer) token-by-token SSE responses.
+
+        mitmproxy buffers the ENTIRE response body in memory before invoking the
+        `response` hook — unless streaming is enabled here, in the responseheaders
+        phase. For Anthropic's `text/event-stream` responses (Claude Code runs
+        with --output-format stream-json) this buffering turns streaming into
+        blocking: Claude Code receives nothing until the model has finished
+        generating the whole answer, inflating time-to-first-token to full
+        generation time (observed 40–108s in perf.log, ttftMs ~= totalMs).
+
+        `stream_large_bodies` doesn't help here — SSE token streams are small in
+        total, well under that threshold, so they get fully buffered. Streaming
+        only the event-stream content type keeps the scanner's full-body
+        inspection intact for scrapeable web content (html/json/markdown), which
+        is all it ever targeted; the model's own token stream was never scanned
+        (event-stream isn't in the scan content types).
+        """
+        if not flow.response:
+            return
+        ctype = (flow.response.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
+        if ctype == "text/event-stream":
+            flow.response.stream = True
+
     def response(self, flow: http.HTTPFlow) -> None:
+        # Streamed flows (see responseheaders) have no buffered .content; guard so
+        # accessing it can never raise. _should_scan already returns False for
+        # event-stream, but this is belt-and-suspenders if stream is set elsewhere.
+        if getattr(flow.response, "stream", False):
+            return
         if not self._should_scan(flow):
             return
 
