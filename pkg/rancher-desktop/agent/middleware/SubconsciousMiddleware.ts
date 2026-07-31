@@ -515,34 +515,94 @@ async function runObservationAgent(state: BaseThreadState): Promise<void> {
 }
 
 // ============================================================================
-// OBSERVATION RECALL AGENT
+// OBSERVATION RECALL — DETERMINISTIC SQL FAST-PATH
 // ============================================================================
 
+/**
+ * Max observation rows surfaced into <observation_context> per turn.
+ * Observations are short, so a tight cap keeps the injection cheap while
+ * still covering the handful the primary agent could plausibly need.
+ */
+const OBSERVATION_RECALL_MAX_ROWS = 8;
+
+/**
+ * Pull the text of the most recent REAL user message — the thing recall
+ * exists to search against. Walks from the tail, skipping subconscious-
+ * injected turns, and returns the joined text of the first user message
+ * that carries any (string or text-block) content.
+ */
+function extractLatestUserText(state: BaseThreadState): string {
+  const messages = state.messages as any[];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== 'user') continue;
+    if ((m?.metadata as any)?.source === 'subconscious') continue;
+
+    const c = m?.content;
+    if (typeof c === 'string') {
+      if (c.trim()) return c.trim();
+      continue;
+    }
+    if (Array.isArray(c)) {
+      const text = c
+        .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
+        .map((b: any) => b.text)
+        .join('\n')
+        .trim();
+      if (text) return text;
+    }
+  }
+  return '';
+}
+
+/**
+ * Observation recall used to spin up a full subconscious agent loop (up to
+ * 10 LLM iterations) whose entire job was to keyword-search the observations
+ * table and filter the hits. That cost 17-120s of BLOCKING prelude while the
+ * underlying query runs in 3-17ms. The LLM added relevance filtering, but
+ * observations are short and the primary agent is perfectly capable of
+ * ignoring an off-topic line — so we trade a little precision for a ~1000x
+ * latency win by querying the table directly.
+ *
+ * We tokenize the latest user message and run ObservationsModel.search
+ * (word-level ILIKE, ranked phrase-hit → word-match count → recency),
+ * formatting the top rows exactly as the old agent did:
+ * `[id] priority date — content`. Returns null when nothing matches so no
+ * <observation_context> block is injected.
+ *
+ * NOTE: this is not time-limited or fenced (per design) — a direct DB query
+ * has no loop to cut short; it simply returns as fast as Postgres answers.
+ * The old agent graph (GraphRegistry.createObservationRecall) and the
+ * search_observations / list_observations tools remain in place for the
+ * observation WRITER's dedup path; only the recall dispatch changed.
+ */
 async function runObservationRecall(state: BaseThreadState): Promise<string | null> {
   const startTime = Date.now();
+  const threadId = (state.metadata as any).threadId;
 
   try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createObservationRecall(state);
-    console.log(`[SubconsciousMiddleware:ObservationRecall] Started | threadId: ${ threadId }`);
-
-    await graph.execute(subState, 'subconscious', { maxIterations: 10 });
-
-    const agentMeta = (subState.metadata as any).agent || {};
-    const iterations = (subState.metadata as any).iterations || 0;
-    const toolCalls = subState.messages.filter((m: any) =>
-      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
-    ).length;
-
-    // Extract the structured response from AGENT_DONE (same pattern as memory-recall).
-    const response = agentMeta.response;
-
-    if (response && typeof response === 'string' && response.trim()) {
-      console.log(`[SubconsciousMiddleware:ObservationRecall] Returning ${ response.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-      return response.trim();
+    const query = extractLatestUserText(state);
+    if (!query) {
+      console.log('[SubconsciousMiddleware:ObservationRecall] No user text to search — skipped');
+      return null;
     }
 
-    console.log(`[SubconsciousMiddleware:ObservationRecall] No relevant observations in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-    return null;
+    const rows = await ObservationsModel.search(query, OBSERVATION_RECALL_MAX_ROWS, false);
+    const elapsed = Date.now() - startTime;
+
+    if (!rows || rows.length === 0) {
+      perf.log(`[ObservationRecall] threadId=${ threadId } matched=0 ms=${ elapsed } path=sql-fast-path`);
+      console.log(`[SubconsciousMiddleware:ObservationRecall] No matching observations in ${ elapsed }ms (sql-fast-path)`);
+      return null;
+    }
+
+    const response = rows
+      .map((r) => `[${ r.id }] ${ r.priority } ${ (r.created_at || '').slice(0, 10) } — ${ r.content }`)
+      .join('\n');
+
+    perf.log(`[ObservationRecall] threadId=${ threadId } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
+    console.log(`[SubconsciousMiddleware:ObservationRecall] Returning ${ rows.length } observations (${ response.length } chars) in ${ elapsed }ms (sql-fast-path)`);
+    return response;
   } catch (error) {
     console.error(`[SubconsciousMiddleware:ObservationRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
     return null;
