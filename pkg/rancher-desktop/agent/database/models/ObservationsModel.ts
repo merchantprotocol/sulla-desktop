@@ -82,6 +82,20 @@ export class ObservationsModel {
         CREATE INDEX IF NOT EXISTS idx_observations_archived_created
           ON ${ ObservationsModel.TABLE } (archived, created_at DESC)
       `);
+      // Trigram GIN index — keeps the `content ILIKE '%word%'` search path
+      // (recall + writer dedup) index-assisted instead of a seq scan as the
+      // table grows. Mirrors migration 0041. Best-effort: pg_trgm may be
+      // unavailable on a locked-down cluster, so it's isolated in its own try
+      // and never blocks table creation.
+      try {
+        await postgresClient.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+        await postgresClient.query(`
+          CREATE INDEX IF NOT EXISTS idx_observations_content_trgm
+            ON ${ ObservationsModel.TABLE } USING gin (content gin_trgm_ops)
+        `);
+      } catch (trgmErr) {
+        console.warn('[ObservationsModel] pg_trgm index unavailable (non-fatal):', trgmErr);
+      }
     } catch (err) {
       console.error('[ObservationsModel] Failed to ensure table:', err);
     }

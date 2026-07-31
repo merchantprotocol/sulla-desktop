@@ -18,6 +18,12 @@ import { isTierName, resolveTierToModelId, type ModelTier } from './ModelTierRes
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getIntegrationService } from '../services/IntegrationService';
 
+// Dedupe key for the one-line subconscious-model resolution log (verify the
+// 'fast' tier actually resolves, and catch a SILENT fallback to primary). We
+// log only when the resolved provider/tier/model/fallback signature changes,
+// so the truth surfaces in background.log without spamming every dispatch.
+let lastSubconsciousResolutionSig = '';
+
 // Provider factory map — lazy-loaded to avoid circular imports
 const PROVIDER_FACTORIES: Record<string, () => Promise<BaseLanguageModel>> = {
   'claude-code': async() => { const { getClaudeCodeService } = await import('./ClaudeCodeService'); return getClaudeCodeService() },
@@ -229,10 +235,31 @@ class LLMRegistryImpl {
       try { return !!(svc?.getModel?.() || '').trim() } catch { return false }
     };
 
-    const svc = await this.getServiceByProvider(effectiveProvider, modelOverride);
-    if (hasUsableModel(svc)) return svc;
+    // One-line resolution trace (deduped). `modelOverride` is the tier already
+    // resolved to a concrete model id (when subconsciousModelId is a tier
+    // name); `resolved` is what the service will actually call. When the
+    // subconscious service has no usable model we fall back to PRIMARY — that
+    // is the silent-degradation case worth flagging loudly.
+    const logResolution = (resolved: string, fellBackToPrimary: boolean) => {
+      const sig = `${ effectiveProvider }|${ subconsciousModelId }|${ modelOverride ?? '' }|${ resolved }|${ fellBackToPrimary }`;
+      if (sig === lastSubconsciousResolutionSig) return;
+      lastSubconsciousResolutionSig = sig;
+      console.log(
+        `[SubconsciousLLM] provider=${ effectiveProvider } tier/id=${ subconsciousModelId } ` +
+        `resolvedTierModel=${ modelOverride ?? '(none)' } effectiveModel=${ resolved || '(empty)' } ` +
+        `fellBackToPrimary=${ fellBackToPrimary }`,
+      );
+    };
 
-    return this.getPrimaryService();
+    const svc = await this.getServiceByProvider(effectiveProvider, modelOverride);
+    if (hasUsableModel(svc)) {
+      logResolution((() => { try { return svc?.getModel?.() || '' } catch { return '' } })(), false);
+      return svc;
+    }
+
+    const primary = await this.getPrimaryService();
+    logResolution((() => { try { return primary?.getModel?.() || '' } catch { return '' } })(), true);
+    return primary;
   }
 
   /**
