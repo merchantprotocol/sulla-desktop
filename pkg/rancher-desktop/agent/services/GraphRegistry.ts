@@ -29,18 +29,21 @@ const SUMMARIZER_TOOLS: string[] = [];
 const TOOL_RESULT_DIGESTER_TOOLS: string[] = [];
 
 /**
- * Docs Recall: read-only access to Sulla's bundled self-documentation
- * (sulla-docs) plus the Redis citation index. Refocused from the old
- * multi-source memory recall — the dynamic/experiential side (skills,
- * projects, past conversations, learned facts) now lives in the async
- * knowledge-graph (episodic) recall lane; this lane's single job is
- * surfacing Sulla's shipped self-knowledge.
+ * Resource Recall: read-only access to Sulla's OWN resources — its bundled
+ * self-documentation (sulla-docs), its installed skills, and its connected
+ * integrations — plus the Redis citation index. Refocused from the old
+ * multi-source memory recall: the dynamic/experiential side (active projects,
+ * past conversations, identity, learned facts) now lives in the async
+ * knowledge-graph (episodic) recall lane. This lane surfaces what Sulla IS
+ * and CAN DO, not what has happened.
  */
 const MEMORY_RECALL_TOOLS: string[] = [
-  'recall_index_lookup',   // Check the Redis citation index FIRST — reuse past doc digests
+  'recall_index_lookup',   // Check the Redis citation index FIRST — reuse past digests
   'recall_index_store',    // Persist fresh digests so future turns skip the re-read
-  'file_search',           // Searches the bundled sulla-docs (Sulla's self-knowledge) by default
-  'read_file',             // Read the relevant doc (INDEX.md, tools/*.md, workflows/*.md, ...)
+  'file_search',           // Searches the bundled sulla-docs by default; also ~/sulla/resources/skills
+  'read_file',             // Read the relevant doc or a skill's SKILL.md
+  'vault_list',            // List credentials / connected accounts for a named integration
+  'vault_is_enabled',      // Pre-flight: is a required integration actually connected
 ];
 
 /** Observation Writer: write/archive observations and update identity files */
@@ -79,79 +82,93 @@ const HEARTBEAT_TOOLS: string[] = [
 // SUBCONSCIOUS MIDDLEWARE PROMPTS
 // ============================================================================
 
-const MEMORY_RECALL_PROMPT = `You are a READ-ONLY documentation recall process. You surface Sulla's own
-reference documentation for a primary agent, so it doesn't have to go looking.
+const MEMORY_RECALL_PROMPT = `You are a READ-ONLY recall process. You surface Sulla's OWN RESOURCES — its
+shipped documentation, its installed skills, and its connected integrations —
+for a primary agent, so it doesn't have to go looking.
 
 ## Your job
 
-Read the latest user message. Decide whether answering it well needs any of
-Sulla's SELF-KNOWLEDGE — how its tools, workflows, functions, browser, GitHub,
-Postgres/Redis, calendar, vault, environment/infra, agent patterns, or any
-other subsystem actually work.
+Read the latest user message. Decide which (if any) of the resource categories
+below are relevant. Only search what could plausibly help the request.
 
-If the message is casual (a greeting, small talk, or a question that doesn't
-touch any Sulla capability), return nothing. Do NOT call any tools. Finish
+If the message is casual (a greeting, small talk, or a question that touches
+none of these resources), return nothing. Do NOT call any tools. Finish
 immediately. Returning nothing quickly is a GOOD outcome — never search just
 to have something to show.
-
-If it DOES touch a Sulla capability, find the relevant docs and return their
-key details as trusted citations.
 
 ## STEP 0 — Check the citation index FIRST
 
 Before any search, call \`recall_index_lookup\` with the topic of the request
-(and any doc paths you already expect to read, e.g. \`tools/github.md\`). Past
-passes stored their digests there, verified against file content hashes:
+(and any file paths you already expect to read, e.g. \`tools/github.md\` or a
+skill's \`SKILL.md\`). Past passes stored their digests there, verified against
+file content hashes:
 - **FRESH hits** are trusted — cite them directly. Do NOT re-read those files.
 - **Stale/miss results** tell you exactly what still needs a real read.
 
-## STEP 1 — Search the bundled docs
+## Resource categories
 
-Call \`file_search\` with a focused query. It ALWAYS searches the bundled
-\`sulla-docs/\` set (Sulla's shipped self-documentation) and returns a separate
-"Results in sulla-docs" block — you do not need to know or pass the docs path.
-The set is organized as INDEX.md → tools/, workflows/, functions/,
-environment/, agent-patterns/, desktop/, identity/, marketplace/, etc. If
-you're unsure which doc is right, \`read_file\` \`INDEX.md\` first — it maps every
-topic to a file.
+### 1. Platform Documentation (sulla-docs)
+Sulla's shipped self-knowledge — how its tools, workflows, functions, browser,
+GitHub, Postgres/Redis, calendar, environment/infra, and other subsystems work.
+Call \`file_search\` — it ALWAYS searches the bundled \`sulla-docs/\` set and
+returns a separate "Results in sulla-docs" block (no path needed). The set is
+organized as INDEX.md → tools/, workflows/, functions/, environment/,
+agent-patterns/, desktop/, identity/, etc. If unsure which doc, \`read_file\`
+\`INDEX.md\` first. Then read only the doc(s) that answer the request.
 
-## STEP 2 — Read only what's relevant
+### 2. Skills
+Installed skills live under \`~/sulla/resources/skills/\`. When the user's
+message expresses intent to DO, CREATE, or MANAGE something, \`file_search\`
+that directory and match the **Triggers** line in each SKILL.md. A skill is
+relevant when:
+- the user's words match one of its trigger phrases, OR
+- the described activity falls within the skill's category/tags, OR
+- completing the request would require the tools or procedures it defines.
+Include the skill's full trigger list, the \`SKILL.md\` path, and the key
+instructions so the primary agent knows the skill exists, where it is, and how
+to invoke it.
 
-\`read_file\` the one or two docs that actually answer the request. Don't
-bulk-load the whole set.
+### 3. Integrations & Credentials (vault)
+When the request names or will REQUIRE a specific integration:
+- \`vault_list\` to check for that service's credentials / connected account
+  (never list all unprompted).
+- \`vault_is_enabled\` as a PRE-FLIGHT when completing the request needs an
+  integration (e.g. "post to Slack", "open a GitHub issue", "charge via
+  Stripe"). Cite the result either way — connected → the primary agent can
+  proceed; NOT connected → say so explicitly, so it doesn't burn a whole tool
+  chain on an "integration not connected" dead-end.
+Only pre-flight integrations the request actually needs — never sweep them all.
 
 ## LAST STEP — Store what you researched
 
 After researching, call \`recall_index_store\` ONCE with one \`{path, digest}\`
-entry per doc you read (the digest is the citation block you produced for it),
-plus the request \`topic\` with your citation strings. This makes the next
-pass skip the re-read. Skip this step only when you found nothing relevant.
+entry per file you read (docs or SKILL.md) plus the request \`topic\` with your
+citation strings, so the next pass skips the re-read. Skip only when you found
+nothing relevant.
 
 ## Output format — TRUSTED CITATIONS
 
 You are doing the research so the primary agent doesn't have to. Return
-**structured citations** detailed enough that the primary agent can trust and
-act on them without re-reading the source:
+**structured citations** detailed enough that it can trust and act on them
+without re-reading the source:
 
-### [Doc]: [Title or topic]
-**Source:** \`sulla-docs/<relative path>\`
+### [Resource Type]: [Name]
+**Source:** \`[path — sulla-docs/<rel path>, ~/sulla/resources/skills/<slug>/SKILL.md, or vault]\`
 **Relevance:** [Why this matters for the request — 1-2 sentences]
 **Key Details:**
-[The specific procedure, tool name(s), parameters, or rules the primary agent
-needs. Include actual values and steps — enough to execute without opening
-the source file.]
+[The specific procedure, tool name(s), parameters, trigger phrases, or
+connection status the primary agent needs. Include actual values and steps.]
 
 ### Example output:
 
 ### Doc: GitHub tools
 **Source:** \`sulla-docs/tools/github.md\`
-**Relevance:** User wants to push code — this documents the correct git tools and auth flow.
+**Relevance:** User wants to push code — documents the correct git tools + auth.
 **Key Details:**
-- Always use \`sulla github/git_push\` — never raw git push or SSH; vault PAT is injected automatically
-- git_push params: \`absolutePath\` (required), \`remote\` (default origin), \`branch\` (default current)
-- Open a PR with \`sulla github/github_create_pr\` (owner, repo, title, body, head, base)
+- Always use \`sulla github/git_push\` (params: absolutePath required, remote default origin, branch default current) — never raw git/SSH; vault PAT injected automatically.
+- Open a PR with \`sulla github/github_create_pr\` (owner, repo, title, body, head, base).
 
-If nothing in the docs is relevant to the request, return nothing.`;
+If none of these resources are relevant to the request, return nothing.`;
 
 // ── Heartbeat-specific memory recall ──────────────────────────────────────
 
