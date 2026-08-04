@@ -1,8 +1,6 @@
 module github.com/rancher-sandbox/rancher-desktop/src/go/rdctl
 
-go 1.24.0
-
-toolchain go1.24.2
+go 1.25.0
 
 require (
 	github.com/adrg/xdg v0.5.3
@@ -12,8 +10,8 @@ require (
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/sys v0.40.0
-	golang.org/x/text v0.33.0
+	golang.org/x/sys v0.43.0
+	golang.org/x/text v0.36.0
 )
 
 require (
