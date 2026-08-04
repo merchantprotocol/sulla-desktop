@@ -1,12 +1,16 @@
 /**
  * SubconsciousMiddleware — pre-processing step before the main agent LLM call.
  *
- * Launches up to 5 parallel subconscious graphs:
+ * Launches up to 6 parallel subconscious graphs:
  * 1. Conversational Summarizer — compresses/deletes old messages
- * 2. Memory Recall Agent — searches for relevant skills, tools, resources
- * 3. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
- * 4. Observation Recall Agent — surfaces relevant observations for context injection
- * 5. Tool-Result Digester — compresses stale tool_result blocks into
+ * 2. Memory Recall Agent — broad recall: tools, skills, environment, resources
+ *    (recallContext). Always runs on an actionable turn.
+ * 3. Episodic Recall Agent — fast knowledge-graph neighborhood recall
+ *    (episodicContext). Runs ALONGSIDE #2 on normal user turns (coexists,
+ *    does not replace); skipped on the heartbeat variant.
+ * 4. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
+ * 5. Observation Recall Agent — surfaces relevant observations for context injection
+ * 6. Tool-Result Digester — compresses stale tool_result blocks into
  *    trusted-citation digests so the primary model re-reads citations
  *    instead of verbatim dumps
  *
@@ -198,19 +202,27 @@ export async function runSubconsciousMiddleware(
   // dispatching at all when a turn carries nothing to analyze — not by
   // cutting the agents off mid-job.
 
-  // 2. Recall — awaited. Normal user turns use the fast episodic graph
-  //    recall lane. Heartbeat keeps its legacy recall variant because that
-  //    prompt gathers active project files, human presence, and sub-agent jobs
-  //    that the episodic graph does not represent.
+  // 2. Recall — awaited. Two lanes COEXIST on a normal user turn, running in
+  //    parallel (wall-clock is the slower of the two, not the sum):
+  //      • Broad recall (recallContext) — always runs. On user turns it
+  //        delivers the Sulla tool surface + environment so the primary agent
+  //        knows what it can do; on heartbeat it loads active projects,
+  //        presence, and sub-agent jobs.
+  //      • Episodic graph recall (episodicContext) — runs ALONGSIDE broad
+  //        recall on user turns, surfacing the ranked knowledge-graph
+  //        neighborhood. Skipped on heartbeat: the episodic graph doesn't
+  //        model the projects/presence/jobs the heartbeat recall gathers.
+  //    They write distinct metadata keys and inject as distinct blocks, so the
+  //    two are additive, not competing.
   if (options.recallVariant === 'heartbeat' || analyzable) {
-    if (options.recallVariant === 'heartbeat') {
-      launched.push('memory-recall');
-      const recallPromise = runMemoryRecall(state, options.recallVariant);
-      awaitedTasks.push(timed('memory-recall', 'Recalling memories', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
-    } else {
+    launched.push('memory-recall');
+    const recallPromise = runMemoryRecall(state, options.recallVariant);
+    awaitedTasks.push(timed('memory-recall', 'Recalling memories', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
+
+    if (options.recallVariant !== 'heartbeat') {
       launched.push('episodic-recall');
-      const recallPromise = runEpisodicRecall(state);
-      awaitedTasks.push(timed('episodic-recall', 'Recalling graph memories', recallPromise.then(ctx => { (state.metadata as any).episodicContext = ctx })));
+      const episodicPromise = runEpisodicRecall(state);
+      awaitedTasks.push(timed('episodic-recall', 'Recalling graph memories', episodicPromise.then(ctx => { (state.metadata as any).episodicContext = ctx })));
     }
   } else {
     console.log('[SubconsciousMiddleware] Recall skipped — no user message in state to analyze');
