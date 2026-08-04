@@ -6,8 +6,8 @@
  * 2. Memory Recall Agent — broad recall: tools, skills, environment, resources
  *    (recallContext). Always runs on an actionable turn.
  * 3. Episodic Recall Agent — fast knowledge-graph neighborhood recall
- *    (episodicContext). Runs ALONGSIDE #2 on normal user turns (coexists,
- *    does not replace); skipped on the heartbeat variant.
+ *    (episodicContext). Runs ALONGSIDE #2 (coexists, does not replace) on
+ *    both user turns and the heartbeat.
  * 4. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
  * 5. Observation Recall Agent — surfaces relevant observations for context injection
  * 6. Tool-Result Digester — compresses stale tool_result blocks into
@@ -202,16 +202,14 @@ export async function runSubconsciousMiddleware(
   // dispatching at all when a turn carries nothing to analyze — not by
   // cutting the agents off mid-job.
 
-  // 2. Recall — awaited. Two lanes COEXIST on a normal user turn, running in
-  //    parallel (wall-clock is the slower of the two, not the sum):
-  //      • Broad recall (recallContext) — always runs. On user turns it
-  //        delivers the Sulla tool surface + environment so the primary agent
-  //        knows what it can do; on heartbeat it loads active projects,
-  //        presence, and sub-agent jobs.
-  //      • Episodic graph recall (episodicContext) — runs ALONGSIDE broad
-  //        recall on user turns, surfacing the ranked knowledge-graph
-  //        neighborhood. Skipped on heartbeat: the episodic graph doesn't
-  //        model the projects/presence/jobs the heartbeat recall gathers.
+  // 2. Recall — awaited. Two lanes COEXIST, running in parallel (wall-clock is
+  //    the slower of the two, not the sum), on BOTH user turns AND heartbeat:
+  //      • Broad recall (recallContext) — on user turns it delivers the Sulla
+  //        tool surface + environment so the agent knows what it can do; on
+  //        heartbeat it loads active projects, presence, and sub-agent jobs.
+  //      • Episodic graph recall (episodicContext) — surfaces the ranked
+  //        knowledge-graph neighborhood. The heartbeat gets the same memory
+  //        picture as a user turn (recallContext + episodicContext).
   //    They write distinct metadata keys and inject as distinct blocks, so the
   //    two are additive, not competing.
   if (options.recallVariant === 'heartbeat' || analyzable) {
@@ -219,11 +217,9 @@ export async function runSubconsciousMiddleware(
     const recallPromise = runMemoryRecall(state, options.recallVariant);
     awaitedTasks.push(timed('memory-recall', 'Recalling memories', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
 
-    if (options.recallVariant !== 'heartbeat') {
-      launched.push('episodic-recall');
-      const episodicPromise = runEpisodicRecall(state);
-      awaitedTasks.push(timed('episodic-recall', 'Recalling graph memories', episodicPromise.then(ctx => { (state.metadata as any).episodicContext = ctx })));
-    }
+    launched.push('episodic-recall');
+    const episodicPromise = runEpisodicRecall(state);
+    awaitedTasks.push(timed('episodic-recall', 'Recalling graph memories', episodicPromise.then(ctx => { (state.metadata as any).episodicContext = ctx })));
   } else {
     console.log('[SubconsciousMiddleware] Recall skipped — no user message in state to analyze');
   }
