@@ -3,13 +3,18 @@
  *
  * Launches up to 6 parallel subconscious graphs:
  * 1. Conversational Summarizer — compresses/deletes old messages
- * 2. Environment Brief Agent — tells the primary agent which tools, capabilities,
- *    and environment systems apply to the task (formerly "memory recall")
- * 3. Security Conscience Agent — the read-only "angel on the shoulder" that
- *    reminds the primary agent of the rules and protections to honor before acting
- * 4. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
- * 5. Observation Recall Agent — surfaces relevant observations for context injection
- * 6. Tool-Result Digester — compresses stale tool_result blocks into
+ * 2. Environment Brief Agent — broad recall: tells the primary agent which
+ *    tools, capabilities, and environment systems apply (recallContext;
+ *    formerly "memory recall"). Always runs on an actionable turn.
+ * 3. Episodic Recall Agent — fast knowledge-graph neighborhood recall
+ *    (episodicContext). Runs ALONGSIDE #2 (coexists, does not replace) on
+ *    both user turns and the heartbeat.
+ * 4. Security Conscience Agent — the read-only "angel on the shoulder" that
+ *    reminds the primary agent of the rules and protections to honor before
+ *    acting (securityContext). User turns only.
+ * 5. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
+ * 6. Observation Recall Agent — surfaces relevant observations for context injection
+ * 7. Tool-Result Digester — compresses stale tool_result blocks into
  *    trusted-citation digests so the primary model re-reads citations
  *    instead of verbatim dumps
  *
@@ -201,19 +206,32 @@ export async function runSubconsciousMiddleware(
   // dispatching at all when a turn carries nothing to analyze — not by
   // cutting the agents off mid-job.
 
-  // 2. Environment Brief — awaited: writes to state.metadata.recallContext
+  // 2. Recall — three lanes, awaited, run in parallel (wall-clock is the
+  //    slowest, not the sum):
+  //      • Environment Brief (recallContext) — broad recall. On user turns it
+  //        delivers the Sulla tool surface + environment so the agent knows
+  //        what it can do; on heartbeat it loads active projects, presence, and
+  //        sub-agent jobs. Always runs on an actionable turn.
+  //      • Episodic graph recall (episodicContext) — ranked knowledge-graph
+  //        neighborhood. Runs alongside the brief on BOTH user turns and
+  //        heartbeat, so the heartbeat gets the same memory picture.
+  //    Distinct metadata keys + distinct injected blocks → additive, not competing.
   if (options.recallVariant === 'heartbeat' || analyzable) {
     launched.push('environment-brief');
     const briefPromise = runEnvironmentBrief(state, options.recallVariant);
     awaitedTasks.push(timed('environment-brief', 'Briefing environment & tools', briefPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
+
+    launched.push('episodic-recall');
+    const episodicPromise = runEpisodicRecall(state);
+    awaitedTasks.push(timed('episodic-recall', 'Recalling graph memories', episodicPromise.then(ctx => { (state.metadata as any).episodicContext = ctx })));
   } else {
-    console.log('[SubconsciousMiddleware] Environment Brief skipped — no user message in state to analyze');
+    console.log('[SubconsciousMiddleware] Recall skipped — no user message in state to analyze');
   }
 
-  // 2b. Security Conscience — awaited: writes to state.metadata.securityContext.
-  //     The "angel on the shoulder" must land BEFORE the primary agent acts, so
-  //     it blocks the turn just like the brief. Runs only on real user turns
-  //     (analyzable) — the heartbeat variant carries no user message to judge.
+  // 2b. Security Conscience — awaited: writes state.metadata.securityContext.
+  //     The read-only "angel on the shoulder" must land BEFORE the primary
+  //     agent acts, so it blocks the turn like the brief. User turns only —
+  //     the heartbeat variant carries no user message to judge.
   if (analyzable) {
     launched.push('security-conscience');
     const securityPromise = runSecurityConscience(state);
@@ -257,13 +275,14 @@ export async function runSubconsciousMiddleware(
   }
 
   const recallLen = ((state.metadata as any).recallContext || '').length;
+  const episodicLen = ((state.metadata as any).episodicContext || '').length;
   const obsRecallLen = ((state.metadata as any).observationContext || '').length;
   const securityLen = ((state.metadata as any).securityContext || '').length;
-  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | observationContext: ${ obsRecallLen } chars | securityContext: ${ securityLen } chars`);
+  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | episodicContext: ${ episodicLen } chars | observationContext: ${ obsRecallLen } chars | securityContext: ${ securityLen } chars`);
 
   // Perf: total blocking prelude + per-sub-agent breakdown (which one dominates).
   const breakdown = Object.entries(timings).map(([n, ms]) => `${ n }=${ ms }ms`).join(', ');
-  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] recallChars=${ recallLen } obsChars=${ obsRecallLen }`);
+  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] recallChars=${ recallLen } episodicChars=${ episodicLen } obsChars=${ obsRecallLen }`);
 }
 
 // ============================================================================
@@ -524,6 +543,47 @@ async function runSecurityConscience(state: BaseThreadState): Promise<string | n
     console.error(`[SubconsciousMiddleware:SecurityConscience] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
     return null;
   }
+}
+
+async function runEpisodicRecall(state: BaseThreadState): Promise<string | null> {
+  const startTime = Date.now();
+
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createEpisodicRecall(state);
+    console.log(`[SubconsciousMiddleware:EpisodicRecall] Started | threadId: ${ threadId }`);
+
+    await graph.execute(subState, 'subconscious');
+
+    const agentMeta = (subState.metadata as any).agent || {};
+    const iterations = (subState.metadata as any).iterations || 0;
+    const toolCalls = subState.messages.filter((m: any) =>
+      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
+    ).length;
+    const response = agentMeta.response;
+
+    if (response && typeof response === 'string' && response.trim()) {
+      const normalized = stripEpisodicContextEnvelope(response);
+      if (!normalized) {
+        console.log(`[SubconsciousMiddleware:EpisodicRecall] Empty graph context in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+        return null;
+      }
+      console.log(`[SubconsciousMiddleware:EpisodicRecall] Returning ${ normalized.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+      return normalized;
+    }
+
+    console.log(`[SubconsciousMiddleware:EpisodicRecall] No relevant graph context found in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+    return null;
+  } catch (error) {
+    console.error(`[SubconsciousMiddleware:EpisodicRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+function stripEpisodicContextEnvelope(response: string): string {
+  const trimmed = response.trim();
+  if (trimmed === '<episodic_context />') return '';
+  const match = /<episodic_context>\s*([\s\S]*?)\s*<\/episodic_context>/i.exec(trimmed);
+  return (match ? match[1] : trimmed).trim();
 }
 
 // ============================================================================

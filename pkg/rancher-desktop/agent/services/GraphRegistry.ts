@@ -55,6 +55,11 @@ const SECURITY_CONSCIENCE_TOOLS: string[] = [
   'vault_is_enabled',      // Check integration status without exposing credentials
 ];
 
+/** Episodic Recall: one fast graph-memory lookup, no broad research tools */
+const EPISODIC_RECALL_TOOLS: string[] = [
+  'episodic_recall',
+];
+
 /** Observation Writer: write/archive observations and update identity files */
 const OBSERVATION_AGENT_TOOLS: string[] = [
   'add_observational_memory',     // Insert or update an observation row
@@ -474,6 +479,33 @@ If nothing needs flagging, return exactly:
 
 Keep it tight — the primary agent BLOCKS until you finish. Be the calm voice of
 caution that keeps it safe, then get out of the way.`;
+
+const EPISODIC_RECALL_PROMPT = `You are a FAST READ-ONLY graph recall process. You gather episodic context for a primary agent.
+
+## Your job
+
+Read the latest real user turn in the conversation. Extract 1-5 salient anchor
+terms that would land on memory graph nodes. Use concrete names, projects,
+features, issue numbers, people, services, and distinctive phrases. Ignore
+generic verbs and filler.
+
+Time is of the essence: the human is waiting and the primary agent blocks
+until you finish. Make exactly ONE \`episodic_recall\` tool call with:
+- \`terms\`: the 1-5 anchor terms
+- \`query_text\`: the latest user turn
+- \`limit\`: 12
+
+Do not call any other tool. Do not make a second \`episodic_recall\` call. Do
+not browse files, search conversations, inspect credentials, or explain your
+reasoning.
+
+If there are no meaningful anchor terms, finish immediately with an empty
+AGENT_DONE.
+
+## Output
+
+After the tool returns, emit only the tool's episodic context payload inside
+AGENT_DONE. If the tool returns an empty context, emit an empty AGENT_DONE.`;
 
 // ── Heartbeat-specific memory recall ──────────────────────────────────────
 
@@ -1188,6 +1220,32 @@ export const GraphRegistry = {
       contextWindow:          20,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'security-conscience',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create an Episodic Recall graph — extracts a few anchor terms from the
+   * latest user turn and performs exactly one graph-memory lookup.
+   */
+  createEpisodicRecall: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           EPISODIC_RECALL_PROMPT,
+      tools:                  EPISODIC_RECALL_TOOLS,
+      userMessage:            'Read the latest real user turn, extract 1-5 salient anchor terms, make exactly one episodic_recall tool call, then return only the episodic context payload.',
+      messages:               [...parentState.messages],
+      contextWindow:          12,
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'episodic-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
