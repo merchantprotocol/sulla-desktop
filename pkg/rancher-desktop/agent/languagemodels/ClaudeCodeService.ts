@@ -661,6 +661,12 @@ Rules that apply on every turn:
       parts.push(`<observation_context>\n${ observationContext.trim() }\n</observation_context>`);
     }
 
+    // Security briefing from the security-conscience agent (the "angel on the shoulder")
+    const securityContext = (state?.metadata as any)?.securityContext;
+    if (securityContext && typeof securityContext === 'string' && securityContext.trim()) {
+      parts.push(`<security_context>\n${ securityContext.trim() }\n</security_context>`);
+    }
+
     if (parts.length === 0) return '';
     return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;
   }

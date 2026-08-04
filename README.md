@@ -35,7 +35,7 @@ Designed for automation enthusiasts, vibe coders, business owners, agency owners
 
 Traditional AI assistants dump everything into one massive system prompt and hope for the best. Sulla works differently — it thinks the way you do.
 
-While the primary agent handles your conversation, a parallel layer of **subconscious agents** runs quietly in the background, each handling a specific cognitive task. The most important is **memory recall**: like human memory, it scans the current context each turn and pulls in relevant facts, skills, and documents from long-term storage — just in time, not all at once.
+While the primary agent handles your conversation, a parallel layer of **subconscious agents** runs quietly in the background, each handling a specific cognitive task. The most important is the **environment brief**: like human memory, it scans the current context each turn and tells the agent exactly which tools, capabilities, and environment systems apply — plus relevant facts, skills, and documents from long-term storage — just in time, not all at once. Running alongside it is the **security conscience**, an angel-on-the-shoulder that reminds the agent of the rules and protections to honor before it acts.
 
 This means the agent starts lean. Instead of a bloated prompt trying to explain everything upfront, Sulla teaches the agent to be **resourceful** — to locate the information it needs, when it needs it.
 
@@ -54,9 +54,13 @@ This means the agent starts lean. Instead of a bloated prompt trying to explain 
 │ ── ── ──│── ── ── ── ── ── ── ── ── ── ── ── ──│
 │  SUBCONSCIOUS LAYER (parallel, every turn)      │
 │         │                                       │
-│         ├──► Memory Recall                      │
-│         │    Loads: deploy runbook, Slack        │
+│         ├──► Environment Brief                  │
+│         │    Loads: deploy + Slack tools,        │
 │         │    channel IDs, team preferences      │
+│         │                                       │
+│         ├──► Security Conscience                 │
+│         │    Reminds: confirm the deploy,        │
+│         │    don't leak the Slack token          │
 │         │                                       │
 │         ├──► Short-Term Memory Distillation      │
 │         │    Summarizes old messages, prunes     │

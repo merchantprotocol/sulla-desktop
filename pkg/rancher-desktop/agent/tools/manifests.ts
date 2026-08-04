@@ -24,6 +24,7 @@ import { pgToolManifests } from './pg/manifests';
 import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { toolRegistry } from './registry';
+import { rulesToolManifests } from './rules/manifests';
 import { secretaryToolManifests } from './secretary/manifests';
 import { slackToolManifests } from './slack/manifests';
 import { uiToolManifests } from './ui/manifests';
@@ -51,6 +52,7 @@ toolRegistry.registerManifests([
   ...pgToolManifests,
   ...rdctlToolManifests,
   ...redisToolManifests,
+  ...rulesToolManifests,
   ...secretaryToolManifests,
   ...slackToolManifests,
   ...uiToolManifests,

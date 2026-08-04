@@ -572,7 +572,7 @@ export class HeartbeatNode extends BaseNode {
 
     await graph.execute(subState, 'subconscious', { maxIterations: 20 });
 
-    // Extract response — same pattern as runMemoryRecall
+    // Extract response — same pattern as runEnvironmentBrief
     const agentMeta = (subState.metadata as any).agent || {};
     let response = agentMeta.response;
     if (!response || !String(response).trim()) {

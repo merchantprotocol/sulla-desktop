@@ -30,6 +30,7 @@ import { up as up_0038, down as down_0038 } from './0038_create_routine_digest_v
 import { up as up_0039, down as down_0039 } from './0039_create_routine_promotion_candidates_view';
 import { up as up_0040, down as down_0040 } from './0040_create_heartbeat_seen_issues_table';
 import { up as up_0041, down as down_0041 } from './0041_add_trigram_index_to_observations';
+import { up as up_0042, down as down_0042 } from './0042_create_rules_table';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -60,4 +61,5 @@ export const migrationsRegistry = [
   { name: '0039_create_routine_promotion_candidates_view',  up: up_0039, down: down_0039 },
   { name: '0040_create_heartbeat_seen_issues_table',        up: up_0040, down: down_0040 },
   { name: '0041_add_trigram_index_to_observations',         up: up_0041, down: down_0041 },
+  { name: '0042_create_rules_table',                        up: up_0042, down: down_0042 },
 ] as const;

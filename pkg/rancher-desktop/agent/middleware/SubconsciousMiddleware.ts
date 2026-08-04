@@ -1,12 +1,15 @@
 /**
  * SubconsciousMiddleware — pre-processing step before the main agent LLM call.
  *
- * Launches up to 5 parallel subconscious graphs:
+ * Launches up to 6 parallel subconscious graphs:
  * 1. Conversational Summarizer — compresses/deletes old messages
- * 2. Memory Recall Agent — searches for relevant skills, tools, resources
- * 3. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
- * 4. Observation Recall Agent — surfaces relevant observations for context injection
- * 5. Tool-Result Digester — compresses stale tool_result blocks into
+ * 2. Environment Brief Agent — tells the primary agent which tools, capabilities,
+ *    and environment systems apply to the task (formerly "memory recall")
+ * 3. Security Conscience Agent — the read-only "angel on the shoulder" that
+ *    reminds the primary agent of the rules and protections to honor before acting
+ * 4. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
+ * 5. Observation Recall Agent — surfaces relevant observations for context injection
+ * 6. Tool-Result Digester — compresses stale tool_result blocks into
  *    trusted-citation digests so the primary model re-reads citations
  *    instead of verbatim dumps
  *
@@ -198,13 +201,25 @@ export async function runSubconsciousMiddleware(
   // dispatching at all when a turn carries nothing to analyze — not by
   // cutting the agents off mid-job.
 
-  // 2. Memory Recall — awaited: writes to state.metadata.recallContext
+  // 2. Environment Brief — awaited: writes to state.metadata.recallContext
   if (options.recallVariant === 'heartbeat' || analyzable) {
-    launched.push('memory-recall');
-    const recallPromise = runMemoryRecall(state, options.recallVariant);
-    awaitedTasks.push(timed('memory-recall', 'Recalling memories', recallPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
+    launched.push('environment-brief');
+    const briefPromise = runEnvironmentBrief(state, options.recallVariant);
+    awaitedTasks.push(timed('environment-brief', 'Briefing environment & tools', briefPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
   } else {
-    console.log('[SubconsciousMiddleware] Memory Recall skipped — no user message in state to analyze');
+    console.log('[SubconsciousMiddleware] Environment Brief skipped — no user message in state to analyze');
+  }
+
+  // 2b. Security Conscience — awaited: writes to state.metadata.securityContext.
+  //     The "angel on the shoulder" must land BEFORE the primary agent acts, so
+  //     it blocks the turn just like the brief. Runs only on real user turns
+  //     (analyzable) — the heartbeat variant carries no user message to judge.
+  if (analyzable) {
+    launched.push('security-conscience');
+    const securityPromise = runSecurityConscience(state);
+    awaitedTasks.push(timed('security-conscience', 'Checking security', securityPromise.then(ctx => { (state.metadata as any).securityContext = ctx })));
+  } else {
+    console.log('[SubconsciousMiddleware] Security Conscience skipped — no user message in state to analyze');
   }
 
   // 3a. Observation Writer — fire-and-forget: writes/archives observation rows
@@ -243,7 +258,8 @@ export async function runSubconsciousMiddleware(
 
   const recallLen = ((state.metadata as any).recallContext || '').length;
   const obsRecallLen = ((state.metadata as any).observationContext || '').length;
-  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | observationContext: ${ obsRecallLen } chars`);
+  const securityLen = ((state.metadata as any).securityContext || '').length;
+  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | observationContext: ${ obsRecallLen } chars | securityContext: ${ securityLen } chars`);
 
   // Perf: total blocking prelude + per-sub-agent breakdown (which one dominates).
   const breakdown = Object.entries(timings).map(([n, ms]) => `${ n }=${ ms }ms`).join(', ');
@@ -439,15 +455,15 @@ async function runToolResultDigester(state: BaseThreadState, eligible: Digestibl
 }
 
 // ============================================================================
-// MEMORY RECALL
+// ENVIRONMENT BRIEF (formerly "memory recall")
 // ============================================================================
 
-async function runMemoryRecall(state: BaseThreadState, variant?: 'default' | 'heartbeat'): Promise<string | null> {
+async function runEnvironmentBrief(state: BaseThreadState, variant?: 'default' | 'heartbeat'): Promise<string | null> {
   const startTime = Date.now();
 
   try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createMemoryRecall(state, variant);
-    console.log(`[SubconsciousMiddleware:MemoryRecall] Started | threadId: ${ threadId }`);
+    const { graph, state: subState, threadId } = await GraphRegistry.createEnvironmentBrief(state, variant);
+    console.log(`[SubconsciousMiddleware:EnvironmentBrief] Started | threadId: ${ threadId }`);
 
     await graph.execute(subState, 'subconscious', { maxIterations: 20 });
 
@@ -463,14 +479,49 @@ async function runMemoryRecall(state: BaseThreadState, variant?: 'default' | 'he
     const response = agentMeta.response;
 
     if (response && typeof response === 'string' && response.trim()) {
-      console.log(`[SubconsciousMiddleware:MemoryRecall] Returning ${ response.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+      console.log(`[SubconsciousMiddleware:EnvironmentBrief] Returning ${ response.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
       return response.trim();
     }
 
-    console.log(`[SubconsciousMiddleware:MemoryRecall] No relevant context found in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+    console.log(`[SubconsciousMiddleware:EnvironmentBrief] No relevant context found in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
     return null;
   } catch (error) {
-    console.error(`[SubconsciousMiddleware:MemoryRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+    console.error(`[SubconsciousMiddleware:EnvironmentBrief] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+// ============================================================================
+// SECURITY CONSCIENCE — the "angel on the shoulder"
+// ============================================================================
+
+async function runSecurityConscience(state: BaseThreadState): Promise<string | null> {
+  const startTime = Date.now();
+
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createSecurityConscience(state);
+    console.log(`[SubconsciousMiddleware:SecurityConscience] Started | threadId: ${ threadId }`);
+
+    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
+
+    const agentMeta = (subState.metadata as any).agent || {};
+    const iterations = (subState.metadata as any).iterations || 0;
+    const toolCalls = subState.messages.filter((m: any) =>
+      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
+    ).length;
+
+    // Only the structured AGENT_DONE contract — never raw narration.
+    const response = agentMeta.response;
+
+    if (response && typeof response === 'string' && response.trim()) {
+      console.log(`[SubconsciousMiddleware:SecurityConscience] Returning ${ response.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+      return response.trim();
+    }
+
+    console.log(`[SubconsciousMiddleware:SecurityConscience] No briefing produced in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+    return null;
+  } catch (error) {
+    console.error(`[SubconsciousMiddleware:SecurityConscience] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
     return null;
   }
 }
