@@ -216,6 +216,18 @@ export async function runSubconsciousMiddleware(
     console.log('[SubconsciousMiddleware] Recall skipped — no user message in state to analyze');
   }
 
+  // 2c. Conversation Recall — awaited: searches PAST conversations (titles,
+  //     summaries, transcripts) and writes state.metadata.conversationRecallContext.
+  //     Runs in PARALLEL with the recall lane above (all awaitedTasks are
+  //     Promise.allSettled'd together), so it only adds wall-clock if it is
+  //     slower than the slowest existing lane. Gated on an analyzable user turn
+  //     for the same reason as the others — nothing to recall against otherwise.
+  if (analyzable) {
+    launched.push('conversation-recall');
+    const convRecallPromise = runConversationRecall(state);
+    awaitedTasks.push(timed('conversation-recall', 'Recalling past conversations', convRecallPromise.then(ctx => { (state.metadata as any).conversationRecallContext = ctx })));
+  }
+
   // 3a. Observation Writer — fire-and-forget: writes/archives observation rows
   //     via DB tools. Never touches state.messages. No need to await.
   if (options.includeObservations && analyzable) {
@@ -253,11 +265,12 @@ export async function runSubconsciousMiddleware(
   const recallLen = ((state.metadata as any).recallContext || '').length;
   const episodicLen = ((state.metadata as any).episodicContext || '').length;
   const obsRecallLen = ((state.metadata as any).observationContext || '').length;
-  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | episodicContext: ${ episodicLen } chars | observationContext: ${ obsRecallLen } chars`);
+  const convRecallLen = ((state.metadata as any).conversationRecallContext || '').length;
+  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | episodicContext: ${ episodicLen } chars | observationContext: ${ obsRecallLen } chars | conversationRecallContext: ${ convRecallLen } chars`);
 
   // Perf: total blocking prelude + per-sub-agent breakdown (which one dominates).
   const breakdown = Object.entries(timings).map(([n, ms]) => `${ n }=${ ms }ms`).join(', ');
-  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] recallChars=${ recallLen } episodicChars=${ episodicLen } obsChars=${ obsRecallLen }`);
+  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] recallChars=${ recallLen } episodicChars=${ episodicLen } obsChars=${ obsRecallLen } convChars=${ convRecallLen }`);
 }
 
 // ============================================================================
@@ -523,6 +536,51 @@ function stripEpisodicContextEnvelope(response: string): string {
   const trimmed = response.trim();
   if (trimmed === '<episodic_context />') return '';
   const match = /<episodic_context>\s*([\s\S]*?)\s*<\/episodic_context>/i.exec(trimmed);
+  return (match ? match[1] : trimmed).trim();
+}
+
+// ============================================================================
+// CONVERSATION RECALL
+// ============================================================================
+
+async function runConversationRecall(state: BaseThreadState): Promise<string | null> {
+  const startTime = Date.now();
+
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createConversationRecall(state);
+    console.log(`[SubconsciousMiddleware:ConversationRecall] Started | threadId: ${ threadId }`);
+
+    await graph.execute(subState, 'subconscious', { maxIterations: 10 });
+
+    const agentMeta = (subState.metadata as any).agent || {};
+    const iterations = (subState.metadata as any).iterations || 0;
+    const toolCalls = subState.messages.filter((m: any) =>
+      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
+    ).length;
+    const response = agentMeta.response;
+
+    if (response && typeof response === 'string' && response.trim()) {
+      const normalized = stripConversationContextEnvelope(response);
+      if (!normalized) {
+        console.log(`[SubconsciousMiddleware:ConversationRecall] Empty conversation context in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+        return null;
+      }
+      console.log(`[SubconsciousMiddleware:ConversationRecall] Returning ${ normalized.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+      return normalized;
+    }
+
+    console.log(`[SubconsciousMiddleware:ConversationRecall] No relevant conversation context found in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
+    return null;
+  } catch (error) {
+    console.error(`[SubconsciousMiddleware:ConversationRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+function stripConversationContextEnvelope(response: string): string {
+  const trimmed = response.trim();
+  if (/^<conversation_recall_context\s*\/>$/i.test(trimmed)) return '';
+  const match = /<conversation_recall_context>\s*([\s\S]*?)\s*<\/conversation_recall_context>/i.exec(trimmed);
   return (match ? match[1] : trimmed).trim();
 }
 
