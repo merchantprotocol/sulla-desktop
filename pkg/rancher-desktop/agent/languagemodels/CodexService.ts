@@ -351,6 +351,12 @@ Rules that apply on every turn:
       parts.push(`<observation_context>\n${ observationContext.trim() }\n</observation_context>`);
     }
 
+    // Conversation recall context from conversation-recall agent (past dialogue history)
+    const conversationRecallContext = (state?.metadata as any)?.conversationRecallContext;
+    if (conversationRecallContext && typeof conversationRecallContext === 'string' && conversationRecallContext.trim()) {
+      parts.push(`<conversation_recall_context>\n${ conversationRecallContext.trim() }\n</conversation_recall_context>`);
+    }
+
     if (parts.length === 0) return { prefix: '', stableHash };
     return { prefix: `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`, stableHash };
   }
