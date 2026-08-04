@@ -325,6 +325,12 @@
             <span v-else-if="!hasAnyTtsProvider">No TTS provider connected. Add an API key for a provider below to enable Sulla's voice.</span>
             <span v-else-if="!ttsVoice">Select a voice below to enable two-way voice.</span>
           </div>
+          <div
+            v-if="ttsPreviewError"
+            class="status-banner banner-error"
+          >
+            <span class="banner-text">{{ ttsPreviewError }}</span>
+          </div>
 
           <!-- Provider selection -->
           <div class="setting-section">
@@ -421,13 +427,13 @@
         </div>
 
         <!-- ═══════════════════════════════════════════════════════════
-             Speaker Tab
+             System Audio Tab
              ═══════════════════════════════════════════════════════════ -->
         <div
           v-if="currentNav === 'speaker'"
           class="tab-content"
         >
-          <h2>Speaker</h2>
+          <h2>System Audio Capture</h2>
 
           <!-- ── Install gate: hide settings until loopback driver is installed ── -->
           <div
@@ -481,8 +487,9 @@
           <!-- ── Speaker settings (only shown when loopback is installed) ── -->
           <template v-else>
             <p class="description">
-              Configure your system speaker output. The speaker driver captures
-              system audio via a virtual loopback device for meeting transcription.
+              Configure system-audio capture for meeting transcription. This is
+              separate from Sulla's spoken replies, which are tested in
+              Text-to-Speech.
             </p>
 
             <!-- Output Device Selector -->
@@ -614,7 +621,7 @@
 
             <!-- Test Speaker -->
             <div class="setting-section">
-              <h3>Test</h3>
+              <h3>Capture Test</h3>
               <div class="mic-test-controls">
                 <button
                   class="action-btn"
@@ -622,7 +629,7 @@
                   :disabled="speakerTransitioning"
                   @click="toggleSpeakerDriver"
                 >
-                  {{ speakerTransitioning ? (speakerRunning ? 'Disabling...' : 'Enabling...') : speakerRunning ? 'Stop Speaker' : 'Test Speaker' }}
+                  {{ speakerTransitioning ? (speakerRunning ? 'Disabling...' : 'Enabling...') : speakerRunning ? 'Stop Capture' : 'Test System Audio Capture' }}
                 </button>
               </div>
               <div
@@ -651,8 +658,9 @@
                 v-if="!speakerRunning"
                 class="description"
               >
-                Starts the loopback capture driver to verify speaker audio is
-                being captured correctly. Play some audio to see the level meter.
+                Starts the loopback capture driver and verifies that system
+                audio is being captured. Play audio from another app to see the
+                level meter. This does not play Sulla's voice.
               </p>
             </div>
           </template>
@@ -1054,7 +1062,7 @@ const navItems = [
   { id: 'microphone', name: 'Microphone' },
   { id: 'transcription', name: 'Transcription' },
   { id: 'tts', name: 'Text-to-Speech' },
-  { id: 'speaker', name: 'Speaker' },
+  { id: 'speaker', name: 'System Audio' },
   { id: 'secretary', name: 'Secretary Mode' },
 ];
 
@@ -1084,6 +1092,7 @@ const ttsVoiceName = ref('');
 const voices = ref<{ value: string; label: string; description?: string }[]>([]);
 const loadingVoices = ref(false);
 const previewPlaying = ref(false);
+const ttsPreviewError = ref<string | null>(null);
 
 const hasAnyTtsProvider = computed(() => ttsProviders.value.some(p => p.connected));
 // The system voice speaks with the OS default even when no specific voice is picked, so it counts as configured.
@@ -1194,8 +1203,13 @@ async function fetchSpeakerDevices() {
   if (loadingSpeakerDevices.value) return;
   loadingSpeakerDevices.value = true;
   try {
-    // Need a temp mic stream to get labels from enumerateDevices
-    await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+    // Do not request microphone permission from the System Audio tab. Output
+    // labels may be generic until macOS has granted media access, but this
+    // screen should never send the user into the Microphone approval flow.
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      speakerOutputDevices.value = [];
+      return;
+    }
     const devices = await navigator.mediaDevices.enumerateDevices();
     const hiddenDevices = ['blackhole', 'sulla audio mirror', 'audio driver mirror'];
     speakerOutputDevices.value = devices
@@ -1791,13 +1805,13 @@ function onWhisperTestTranscript(_event: any, msg: any) {
   const last = whisperTestEntries.value[whisperTestEntries.value.length - 1];
 
   if (isPartial) {
-    if (last && last.partial) {
+    if (last?.partial) {
       last.text = msg.text;
     } else {
       whisperTestEntries.value.push({ speaker, text: msg.text, partial: true });
     }
   } else {
-    if (last && last.partial) {
+    if (last?.partial) {
       last.text = msg.text;
       last.partial = false;
     } else {
@@ -2011,7 +2025,7 @@ async function fetchSystemVoices(): Promise<void> {
   if (list.length === 0) {
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 1000);
-      synth.addEventListener('voiceschanged', () => { clearTimeout(timer); resolve(); }, { once: true });
+      synth.addEventListener('voiceschanged', () => { clearTimeout(timer); resolve() }, { once: true });
     });
     list = synth.getVoices();
   }
@@ -2098,9 +2112,12 @@ async function fetchAudioDevices(): Promise<void> {
 
 // Speak a sample through the OS speech engine using the currently-selected system voice.
 function previewSystemVoice(text: string): Promise<void> {
-  return new Promise<void>((resolve) => {
+  return new Promise<void>((resolve, reject) => {
     const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
-    if (!synth) { resolve(); return; }
+    if (!synth) {
+      reject(new Error('System speech is not available in this window.'));
+      return;
+    }
     synth.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     if (ttsVoice.value && ttsVoice.value !== 'auto') {
@@ -2108,7 +2125,7 @@ function previewSystemVoice(text: string): Promise<void> {
       if (match) utterance.voice = match;
     }
     utterance.onend = () => resolve();
-    utterance.onerror = () => resolve();
+    utterance.onerror = (event) => reject(new Error(`System speech failed: ${ event.error || 'unknown error' }`));
     synth.speak(utterance);
   });
 }
@@ -2116,6 +2133,7 @@ function previewSystemVoice(text: string): Promise<void> {
 async function previewVoice(): Promise<void> {
   if (previewPlaying.value) return;
   previewPlaying.value = true;
+  ttsPreviewError.value = null;
   try {
     // System provider speaks natively in the renderer — no ElevenLabs round-trip.
     if (ttsProvider.value === 'system') {
@@ -2135,6 +2153,7 @@ async function previewVoice(): Promise<void> {
     }
   } catch (err) {
     console.warn('[AudioSettings] Voice preview failed:', err);
+    ttsPreviewError.value = err instanceof Error ? err.message : 'Voice preview failed.';
   } finally {
     previewPlaying.value = false;
   }

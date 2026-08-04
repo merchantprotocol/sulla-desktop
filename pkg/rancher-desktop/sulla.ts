@@ -644,11 +644,11 @@ export async function onMainProxyLoad(ipcMainProxy: any) {
   });
 
   // Single authoritative visibility channel. Renderer emits one event
-  // whenever its computed "which tab should be visible right now" changes,
-  // with `null` meaning "no browser tab should be visible" (chat mode,
-  // login overlay, etc.). The manager reconciles attach/detach + bounds.
-  ipcMainProxy.handle('browser-tab-view:focus', async(_event: Electron.IpcMainInvokeEvent, tabId: string | null) => {
-    tabViewManager.setFocusedTab(tabId);
+  // whenever its computed "which tab should be visible right now" changes.
+  // A hidden-tab clear includes the originating tab id so stale watcher
+  // events from the previously visible tab cannot hide the newly active tab.
+  ipcMainProxy.handle('browser-tab-view:focus', async(_event: Electron.IpcMainInvokeEvent, tabId: string | null, clearOnlyIfFocusedTabId?: string) => {
+    tabViewManager.setFocusedTab(tabId, clearOnlyIfFocusedTabId);
   });
 
   ipcMainProxy.handle('browser-tab-view:exec-js', async(_event: Electron.IpcMainInvokeEvent, tabId: string, code: string) => {
