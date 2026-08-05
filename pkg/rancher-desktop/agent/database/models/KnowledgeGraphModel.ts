@@ -44,6 +44,42 @@ export interface UpsertKnowledgeNodeInput {
   merged_into?: string | null;
 }
 
+/** One encoded node the Scribe (#518) asks to persist. */
+export interface EpisodeNodeInput {
+  title:      string;
+  summary?:   string;
+  detail?:    string | null;
+  aliases?:   string[];
+  node_type?: string;
+}
+
+/** A fully-encoded completed episode, written atomically by writeEpisode. */
+export interface WriteEpisodeInput {
+  /** Origin: 'chat' | 'heartbeat' | 'sub-agent' | ... — stored as node source. */
+  source?:   string;
+  /** Project/epic anchor the episode belongs_to (resolved+reused, else created). */
+  project?:  EpisodeNodeInput | null;
+  /** The event node — "what happened". Always created new. Required. */
+  event:     EpisodeNodeInput;
+  /** Lesson nodes — "what we learned" — linked learned_from the episode. */
+  lessons?:  EpisodeNodeInput[];
+  /** Blocker nodes — linked blocked_by the episode. */
+  blockers?: EpisodeNodeInput[];
+  /** Entities/concepts seen — resolved+reused, else created — linked mentioned_in. */
+  entities?: EpisodeNodeInput[];
+  /** Co-occurring surface-form pairs to Hebbian-reinforce (related_to). */
+  reinforcePairs?: [string, string][];
+}
+
+export interface WriteEpisodeResult {
+  episodeId:    string;
+  createdNodes: number;
+  reusedNodes:  number;
+  linksCreated: number;
+  reinforced:   number;
+  nodeIds:      string[];
+}
+
 export interface AliasResolutionRecord {
   node_id:   string;
   title:     string;
@@ -463,5 +499,201 @@ export class KnowledgeGraphModel {
       [id],
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  /** Normalize a surface form to a stable slug (mirrors the SQL norm_alias). */
+  private static normSlug(s: string): string {
+    return (s || '')
+      .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/[^a-z0-9#]+/g, '');
+  }
+
+  /**
+   * Scribe encoder (#518) — persist one completed episode atomically.
+   *
+   * Contract (matches the issue):
+   *  1. Resolve project + entities via the same alias resolution recall uses;
+   *     reuse any match with sim ≥ 0.85 instead of creating a duplicate.
+   *  2. Create the event node ("what happened"), plus lesson/blocker nodes and
+   *     any unmatched entities.
+   *  3. Alias every observed surface form.
+   *  4. Link: event `belongs_to` the project anchor; lessons `learned_from` the
+   *     event; blockers `blocked_by` the event; entities `mentioned_in` the
+   *     event. Every NEW node gets ≥1 edge (orphans are a write-side bug).
+   *  5. Hebbian: for each co-occurring resolved pair, ensure a `related_to`
+   *     edge then reinforce it (strength += 0.2×(1−strength), bump fire_count).
+   *
+   * Resolution (reads) runs first; all writes run in ONE transaction with
+   * link_count bumps. Never hard-deletes.
+   */
+  static async writeEpisode(input: WriteEpisodeInput): Promise<WriteEpisodeResult> {
+    const REUSE_SIM = 0.85;
+    const rand = (n: number) => Math.random().toString(36).slice(2, 2 + n);
+    const slugId = (prefix: string, title: string) => {
+      const s = KnowledgeGraphModel.normSlug(title);
+      return `${ prefix }_${ s || rand(8) }`;
+    };
+
+    if (!input?.event?.title?.trim()) {
+      throw new Error('writeEpisode: event.title is required');
+    }
+
+    // ── Phase 1: resolution (reads, pre-transaction) ─────────────────────
+    // Reuse an existing node when the strongest alias match clears the bar.
+    const resolveReuse = async(node: EpisodeNodeInput): Promise<string | null> => {
+      const terms = [node.title, ...(node.aliases ?? [])].map(t => (t || '').trim()).filter(Boolean);
+      if (terms.length === 0) return null;
+      const rows = await KnowledgeGraphModel.resolveAliases(terms);
+      return rows[0] && rows[0].sim >= REUSE_SIM ? rows[0].node_id : null;
+    };
+
+    interface PlannedNode { id: string; node: EpisodeNodeInput; type: string; isNew: boolean }
+    const planned: PlannedNode[] = [];
+    const reuseByTermNorm = new Map<string, string>(); // surface-form -> node id (for reinforce)
+
+    const registerTerms = (node: EpisodeNodeInput, id: string) => {
+      for (const t of [node.title, ...(node.aliases ?? [])]) {
+        const n = KnowledgeGraphModel.normSlug(t);
+        if (n) reuseByTermNorm.set(n, id);
+      }
+    };
+
+    let projectId: string | null = null;
+    if (input.project?.title?.trim()) {
+      const reused = await resolveReuse(input.project);
+      projectId = reused ?? slugId('kn', input.project.title);
+      planned.push({ id: projectId, node: input.project, type: input.project.node_type || 'project', isNew: !reused });
+      registerTerms(input.project, projectId);
+    }
+
+    // Event is always a fresh fact.
+    const eventId = `evt_${ Date.now() }_${ rand(6) }`;
+    planned.push({ id: eventId, node: input.event, type: 'event', isNew: true });
+    registerTerms(input.event, eventId);
+
+    const usedIds = new Set<string>([eventId, ...(projectId ? [projectId] : [])]);
+    const freshFactId = (prefix: string, title: string) => {
+      let id = slugId(prefix, title);
+      while (usedIds.has(id)) id = `${ id }_${ rand(3) }`;
+      usedIds.add(id);
+      return id;
+    };
+
+    const lessonIds: string[] = [];
+    for (const l of input.lessons ?? []) {
+      if (!l?.title?.trim()) continue;
+      const id = freshFactId('les', l.title);
+      lessonIds.push(id);
+      planned.push({ id, node: l, type: l.node_type || 'lesson', isNew: true });
+      registerTerms(l, id);
+    }
+
+    const blockerIds: string[] = [];
+    for (const b of input.blockers ?? []) {
+      if (!b?.title?.trim()) continue;
+      const id = freshFactId('blk', b.title);
+      blockerIds.push(id);
+      planned.push({ id, node: b, type: b.node_type || 'blocker', isNew: true });
+      registerTerms(b, id);
+    }
+
+    const entityIds: string[] = [];
+    for (const e of input.entities ?? []) {
+      if (!e?.title?.trim()) continue;
+      const reused = await resolveReuse(e);
+      const id = reused ?? slugId('kn', e.title);
+      if (usedIds.has(id)) { entityIds.push(id); continue; } // de-dupe within episode
+      usedIds.add(id);
+      entityIds.push(id);
+      planned.push({ id, node: e, type: e.node_type || 'entity', isNew: !reused });
+      registerTerms(e, id);
+    }
+
+    // Resolve reinforce pairs to node ids (this-episode nodes or committed ones).
+    const pairPlan: [string, string][] = [];
+    for (const [a, b] of input.reinforcePairs ?? []) {
+      const ida = reuseByTermNorm.get(KnowledgeGraphModel.normSlug(a)) ?? (await resolveReuse({ title: a }));
+      const idb = reuseByTermNorm.get(KnowledgeGraphModel.normSlug(b)) ?? (await resolveReuse({ title: b }));
+      if (ida && idb && ida !== idb) pairPlan.push([ida, idb]);
+    }
+
+    // ── Phase 2: writes (single transaction) ─────────────────────────────
+    return postgresClient.transaction(async(client) => {
+      let createdNodes = 0;
+      let reusedNodes = 0;
+      let linksCreated = 0;
+      let reinforced = 0;
+
+      for (const p of planned) {
+        await client.query(
+          `INSERT INTO ${ KnowledgeGraphModel.NODES_TABLE }
+             (id, node_type, title, summary, detail, source)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (id) DO UPDATE SET
+             summary = CASE WHEN EXCLUDED.summary <> '' THEN EXCLUDED.summary ELSE ${ KnowledgeGraphModel.NODES_TABLE }.summary END,
+             detail  = COALESCE(EXCLUDED.detail, ${ KnowledgeGraphModel.NODES_TABLE }.detail),
+             updated_at = now()`,
+          [p.id, p.type, p.node.title, p.node.summary ?? '', p.node.detail ?? null, input.source ?? null],
+        );
+        if (p.isNew) createdNodes++; else reusedNodes++;
+
+        // Alias every observed surface form.
+        for (const alias of [p.node.title, ...(p.node.aliases ?? [])]) {
+          if (!alias?.trim()) continue;
+          await client.query(
+            `INSERT INTO ${ KnowledgeGraphModel.ALIASES_TABLE } (alias, alias_norm, node_id)
+             VALUES ($1, norm_alias($1), $2)
+             ON CONFLICT (alias_norm, node_id) DO UPDATE SET alias = EXCLUDED.alias`,
+            [alias, p.id],
+          );
+        }
+      }
+
+      // linkOnce: insert (or keep) an edge; bump link_count only on true insert.
+      const linkOnce = async(src: string, dst: string, rel: string, strength = 0.5) => {
+        if (src === dst) return;
+        const { rows } = await client.query<{ was_inserted: boolean }>(
+          `INSERT INTO ${ KnowledgeGraphModel.LINKS_TABLE } (src_id, dst_id, relation_type, strength)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (src_id, dst_id, relation_type) DO UPDATE SET strength = ${ KnowledgeGraphModel.LINKS_TABLE }.strength
+           RETURNING (xmax = 0) AS was_inserted`,
+          [src, dst, rel, strength],
+        );
+        if (rows[0]?.was_inserted) {
+          linksCreated++;
+          await client.query(
+            `UPDATE ${ KnowledgeGraphModel.NODES_TABLE } SET link_count = link_count + 1, updated_at = now() WHERE id IN ($1, $2)`,
+            [src, dst],
+          );
+        }
+      };
+
+      if (projectId) await linkOnce(eventId, projectId, 'belongs_to', 0.6);
+      for (const id of lessonIds) await linkOnce(id, eventId, 'learned_from', 0.6);
+      for (const id of blockerIds) await linkOnce(eventId, id, 'blocked_by', 0.6);
+      for (const id of entityIds) await linkOnce(id, eventId, 'mentioned_in', 0.5);
+
+      // Hebbian reinforcement of co-occurring resolved pairs.
+      for (const [a, b] of pairPlan) {
+        await linkOnce(a, b, 'related_to', 0.3);
+        const { rows } = await client.query<{ ok: boolean }>(
+          `UPDATE ${ KnowledgeGraphModel.LINKS_TABLE }
+           SET strength = strength + 0.2 * (1 - strength), fire_count = fire_count + 1, last_fired_at = now()
+           WHERE src_id = $1 AND dst_id = $2 AND relation_type = 'related_to'
+           RETURNING true AS ok`,
+          [a, b],
+        );
+        if (rows[0]?.ok) reinforced++;
+      }
+
+      return {
+        episodeId: eventId,
+        createdNodes,
+        reusedNodes,
+        linksCreated,
+        reinforced,
+        nodeIds: planned.map(p => p.id),
+      };
+    });
   }
 }
