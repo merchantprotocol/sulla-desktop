@@ -33,6 +33,17 @@ function getIpcRenderer(): any {
   return _ipcRenderer;
 }
 
+/**
+ * SINGLE AUTHORITATIVE SETTINGS PATH.
+ *
+ * Reads: Redis `sulla_settings` hash as cache → Postgres on miss → backfill
+ * Redis. Writes: through Postgres AND Redis. File-JSON fallback pre-DB.
+ *
+ * Do NOT read or write the `sulla_settings` Redis hash directly anywhere
+ * else (code or agent redis tools) — a raw hget can serve a stale cache and
+ * a raw hset desyncs the stores. Verified 2026-08-13: no product code
+ * bypasses this model.
+ */
 export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   protected readonly tableName = 'sulla_settings';
   protected get tableRef(): string {

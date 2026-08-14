@@ -21,6 +21,13 @@
 └── world/
     ├── identity.md          # External market, competitive landscape
     └── goals.md             # Market-level targets
+
+~/sulla/ledger/              # ONE work-state store (operator agenda)
+├── LEDGER.md                # Priority stack + WORKING table
+├── OUTCOMES.md              # What shipped and what it changed
+├── AUDIT.md                 # One line per gate-free unilateral action
+├── BACKLOG.md               # WANT / MIGHT
+└── goals/                   # Goal files with epics + tasks
 ```
 
 ---
@@ -108,3 +115,9 @@ exec({ command: "sulla meta/remove_observational_memory '{\"id\":\"abc123\"}'" }
 ```
 
 Observations appear in every agent's context automatically. Use for facts that affect ongoing behavior — not for temporary task state.
+
+---
+
+## Outcome Ledger (the one work-state store)
+
+Work in motion lives in `~/sulla/ledger/`, not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` (those two are transition leftovers and freeze after the operator rebuild). Every autonomous cycle starts at `LEDGER.md` WORKING, moves one item, and writes back — either an outcome in `OUTCOMES.md` or a next-action change. Measure with `sulla ledger/ledger_scoreboard`.

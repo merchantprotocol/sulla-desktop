@@ -17,7 +17,7 @@ When you wake up on a non-trivial task, read these in order:
 6. `~/sulla/identity/human/identity.md` — who you work for, operating model
 7. `~/sulla/identity/business/identity.md` — business model, active deadlines
 8. `~/sulla/identity/human/goals.md` — current goals, financial targets, operating rules
-9. `~/sulla/projects/ACTIVE_PROJECTS.md` — active projects and blockers
+9. `~/sulla/ledger/LEDGER.md` — the ONE work-state store (WORKING / SHOULD / WANT / DONE). `projects/ACTIVE_PROJECTS.md` is a legacy index in transition.
 
 For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the relevant doc.
 
@@ -56,6 +56,8 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `function.md` — function_list, function_run, invocation examples
 - `vault.md` — Password vault: encryption, LLM access levels, autofill, proxy injection
 - `notify.md` — notify_user, presence detection, when (and when not) to notify
+- `settings.md` — SullaSettingsModel is the one settings path; settings_get / settings_set; Redis hash is cache-only
+- `ledger.md` — outcome ledger scoreboard (zero-LLM measurement of WORKING / OUTCOMES / AUDIT)
 - `calendar.md` — calendar_create/list/update/cancel, scheduler triggers, no GCal sync
 - `applescript.md` — Drive macOS apps via AppleScript; per-app allowlist + macOS Automation perms
 - `computer-use.md` — What's shipped (AppleScript + browser pixel control) vs what's planned (full OS pixel-level)
@@ -111,5 +113,5 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - Actual template: `<app-resources>/design-system/template.html` → also at `~/sulla/designs/template.html`
 
 ## identity/
-- `structure.md` — ~/sulla/identity/ layout, file formats, observational memory
+- `structure.md` — ~/sulla/identity/ layout, file formats, observational memory, and the outcome ledger at ~/sulla/ledger/
 - `icp.md` — Ideal customer profile, content framing arc, post angles, cache pattern
