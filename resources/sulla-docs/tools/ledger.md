@@ -24,3 +24,15 @@ The ledger files themselves are maintained by the observation writer (post-turn)
 ```
 
 Scaffolded at boot if missing (template-only, never overwrites user content, no user data in shipped code).
+
+## Structured store (migration 0044)
+
+`LEDGER.md` is still the pick-path. The structured ending of "what exists,
+what stage, what priority, when it last moved" lives in Postgres:
+
+`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`
+
+See [`tools/work.md`](work.md). A runtime seeder imports this install's
+`~/sulla/ledger/goals/*.md` on first boot. After that, prefer the work
+tools over inventing a second markdown task list.
+

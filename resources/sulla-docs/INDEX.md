@@ -58,6 +58,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `notify.md` — notify_user, presence detection, when (and when not) to notify
 - `settings.md` — SullaSettingsModel is the one settings path; settings_get / settings_set; Redis hash is cache-only
 - `ledger.md` — outcome ledger scoreboard (zero-LLM measurement of WORKING / OUTCOMES / AUDIT)
+- `work.md` — structured work items (projects → epics → tasks → comments) in desktop Postgres; not CRM
 - `calendar.md` — calendar_create/list/update/cancel, scheduler triggers, no GCal sync
 - `applescript.md` — Drive macOS apps via AppleScript; per-app allowlist + macOS Automation perms
 - `computer-use.md` — What's shipped (AppleScript + browser pixel control) vs what's planned (full OS pixel-level)
