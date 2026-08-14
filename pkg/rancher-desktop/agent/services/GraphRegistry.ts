@@ -262,9 +262,9 @@ follows the precedent instead of re-deriving it.
 Search \`~/sulla/identity/\` when the request involves business strategy, outreach,
 content, personal preferences, goals, or anything where knowing WHO the human is
 would shape the answer.
-- \`~/sulla/identity/human/identity.md\` — who Jonathon is, background, role
+- \`~/sulla/identity/human/identity.md\` — who the Human is, background, role
 - \`~/sulla/identity/human/goals.md\` — current goals, financial targets, priorities
-- \`~/sulla/identity/business/identity.md\` — Merchant Protocol business identity
+- \`~/sulla/identity/business/identity.md\` — the Human's business identity
 - \`~/sulla/identity/business/goals.md\` — business goals and active initiatives
 - \`~/sulla/identity/agent/identity.md\` — agent operating rules and decision framework
 Read only the files relevant to the request — don't load all of them by default.
