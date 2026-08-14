@@ -320,7 +320,6 @@ import SecretaryMode from './SecretaryMode.vue';
 import TerminalTab from './TerminalTab.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
-import BrowserTabChat from './chat/ChatPage.vue';
 
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
