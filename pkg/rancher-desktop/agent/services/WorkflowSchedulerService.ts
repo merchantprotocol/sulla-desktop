@@ -150,6 +150,25 @@ export class WorkflowSchedulerService {
   }
 
   /**
+   * Re-arm schedules AND recover any fires missed while the process was
+   * suspended. Call this from the power `resume` handler.
+   *
+   * Boot catch-up (`initialize`) only helps when the app was fully OFF across
+   * a cron: on wake from macOS sleep the same process resumes, `initialize`
+   * is already `initialized`-guarded, and node-schedule silently recomputes
+   * its frozen in-process timers forward — so a weekly cron that tripped while
+   * asleep is lost to next week with nothing queued. Re-arming here guarantees
+   * forward crons are correctly scheduled post-wake, and the catch-up scan
+   * recovers the missed slot. Idempotent via the same FIRE_GRACE_MS +
+   * since-last-fire guard as boot catch-up, so an on-time fire is never
+   * double-dispatched. Never throws into the resume path.
+   */
+  async resumeCatchUp(): Promise<void> {
+    await this.scanAndSchedule();
+    await this.catchUpMissedFires();
+  }
+
+  /**
    * Cancel all scheduled workflow jobs and tear the service down.
    */
   shutdown(): void {
