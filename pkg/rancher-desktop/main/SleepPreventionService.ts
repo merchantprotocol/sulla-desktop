@@ -75,10 +75,12 @@ export function getActiveHolders(): ReadonlySet<string> {
 
 /**
  * Schedule a macOS wake event.
- * `pmset schedule wake` requires root privileges which we don't have.
- * caffeinate -i -s already prevents sleep while active, which is sufficient
- * for keeping the agent running. If the machine sleeps between heartbeats,
- * it will wake on its own schedule (user activity, Power Nap, etc.).
+ * `pmset schedule wake` requires root privileges which we don't have, so this
+ * stays a no-op. The actual "keep the operator standing" guarantee comes from
+ * HeartbeatService holding a CONTINUOUS caffeinate -i -s for the whole enabled
+ * lifetime (label 'heartbeat-standing'), which prevents the inter-cycle idle
+ * sleep that this wake was meant to recover from. Remaining gap (needs root):
+ * caffeinate -s only asserts on AC power and does not defeat clamshell sleep.
  *
  * This is a no-op — kept for API compatibility with callers.
  */
