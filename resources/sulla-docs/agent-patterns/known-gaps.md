@@ -4,7 +4,8 @@ When a user asks for one of these, **don't pretend it works**. Either say "no to
 
 Severity: 🔴 high (likely to come up often) · 🟡 medium · 🟢 occasional
 
-Last verified against the codebase: 2026-04-23.
+Last full verification against the codebase: 2026-04-23.
+Partial re-verification 2026-08-14 (heartbeat cycle): the delegation stack shipped since the last pass — `spawn_agent` (async background sub-agents with parent-graph wake), `check_agent_jobs`, `stop_agent_job`, and the legacy `start_agent_conversation`/`send_agent_message` pair are all live and registered (see [`tools/agents.md`](../tools/agents.md)); "delegate work in the background" is no longer a gap. The Heartbeat environment row below was corrected against the live dual-store behavior. Rows not touched on 2026-08-14 still carry their 2026-04-23 status — treat those as needing re-verification, not gospel.
 
 ---
 
@@ -110,7 +111,7 @@ The `marketplace/*` (10 tools, generic across 6 kinds: skill / function / workfl
 |---------|--------|-------|
 | ✅ Only run between 9am–5pm weekdays | Set `heartbeatWindow` setting: `{days:[1,2,3,4,5],startHour:9,endHour:17,tz:"America/Los_Angeles"}` | HeartbeatService respects days + hour range; wraps midnight if start > end |
 | 🟡 Disable just one heartbeat behavior | — | Still all-or-nothing; no per-behavior toggle |
-| 🟢 Standing goal that survives restart | — | Only via observational memory |
+| 🟢 Standing goal that survives restart | Partial | Observational memory, plus the Outcome Ledger convention (`~/sulla/ledger/LEDGER.md` + `goals/`) the heartbeat reads each cycle. Still a file/memory convention, not a first-class per-goal scheduler primitive. |
 
 ---
 
@@ -252,7 +253,7 @@ Secretary Mode itself is **shipped and works** — but it's user-controlled, not
 |-------|--------|----------------------------|
 | **Twenty CRM server** | 🟡 Broken | Container `twenty-crm-server` is in restart loop. Postgres for it (`twenty-crm-postgres`) is healthy on port 30208. |
 | **`workflows` table** | 🟡 Empty (of production) | Only 2 draft workflows exist. `status='production'` returns nothing. Don't assume workflows are already set up. |
-| **Heartbeat** | 🟡 Disabled by default | `heartbeatEnabled=false` in `sulla_settings`. Tell the user how to enable if they want autonomous runs. |
+| **Heartbeat** | 🟡 Off by default; dual-store read hazard | Ships `heartbeatEnabled=false`. **Gotcha (verified 2026-08-14):** the flag lives in BOTH Postgres (`sulla_settings` via `SullaSettingsModel`) and Redis, and they can drift — a UI save or a transient boot throw has flipped Redis to `false` while PG held `true`, silently killing autonomous runs. Always toggle through `SullaSettingsModel` (never raw Redis `hset`), and treat the model read as authoritative. Fix #1 (bootstrap fail-loud on settings-DB init) is staged as PR #560, not yet merged. |
 | **Observational memory cap** | 🟡 | 50 entries. When full, the oldest is auto-pruned. |
 | **`rdctl_shell` arg handling** | 🟡 Limited | No pipes, redirects, `&&`, `\|`. Single command + args only. Use multi-step if needed. |
 
