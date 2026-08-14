@@ -10,7 +10,7 @@ export class CheckAgentJobsWorker extends BaseTool {
 
     // ── Specific job lookup ──────────────────────────────────────
     if (jobId) {
-      const job = getJob(jobId);
+      const job = await getJob(jobId);
 
       if (!job) {
         return {
@@ -85,7 +85,7 @@ export class CheckAgentJobsWorker extends BaseTool {
     }
 
     // ── List all jobs ────────────────────────────────────────────
-    const allJobs = getAllJobs();
+    const allJobs = await getAllJobs();
 
     if (allJobs.length === 0) {
       return {
