@@ -9,6 +9,8 @@ Partial re-verification 2026-08-14 (heartbeat cycle): the delegation stack shipp
 
 A second 2026-08-14 pass swept the live tool registry (`meta/browse_tools`) row-by-row and corrected these against what's actually registered: **Secretary Mode** start/stop/status now have `secretary/*` tools (was "UI-only"); **Capture** gained a recorder + camera/screen scene lifecycle (`recorder_start/stop/status`, `screen_set`, `camera_*`) so multi-source recording is agent-driven (was 🔴 "not built"); **Workflows** gained `workflow/display_workflow` (CLI render) and `routine_report`/schedule tools; and the **GitHub** rows had wrong tool names — the live names are `github/merge_pr`, `github/check_runs`, `github/trigger_workflow_run` (no redundant `github_` prefix). Rows not stamped *(verified 2026-08-14)* still carry their 2026-04-23 status — treat those as needing re-verification, not gospel.
 
+A third 2026-08-14 pass swept the remaining *absence*-claim rows against the tool source (`pkg/rancher-desktop/agent/tools/*/manifests.ts`) — the harder-to-falsify "no tool for that" entries. Confirmed **still absent**: Docker `stats`/`inspect`/`system_prune` (only `docker_exec`/`docker_logs`/`docker_ps` registered); Calendar GCal-sync and native RRULE recurrence (the 7 `calendar_*` tools are single-event only); Mobile QR-pairing and desktop→phone file transfer. **New capability found + documented:** `mobile/list_devices` (shipped, was undocumented) answers "is my phone paired/reachable right now" — every registered device with online/offline status. `ui/open_tab` modes confirmed: `marketplace`, `integrations`, `vault`, `routines`, `history`, `secretary`, plus `settings` (special-cased Preferences window) — no `capture-studio` mode. Every row touched this pass carries a *(… verified 2026-08-14)* stamp.
+
 ---
 
 ## UI Navigation (cross-cutting)
@@ -86,8 +88,8 @@ The `marketplace/*` (10 tools, generic across 6 kinds: skill / function / workfl
 
 | Request | Severity | Status |
 |---------|----------|--------|
-| Sync with Google Calendar / iCal | 🔴 | No GCal integration |
-| Make this meeting recurring (every Tuesday) | 🔴 | No native RRULE. Workaround: create N events |
+| Sync with Google Calendar / iCal | 🔴 | No GCal integration. *(still absent, verified 2026-08-14)* |
+| Make this meeting recurring (every Tuesday) | 🔴 | No native RRULE. *(still absent, verified 2026-08-14 — the 7 `calendar_*` tools create/get/list/list_upcoming/update/cancel/delete; none are recurrence-aware)* Workaround: create N events |
 | Email the attendees | 🔴 | `people` is metadata only; nothing sent |
 | Add a Zoom / Meet link | 🟡 | No conferencing integration |
 | Snooze this reminder | 🟡 | No snooze; agent must update event |
@@ -123,9 +125,9 @@ The `marketplace/*` (10 tools, generic across 6 kinds: skill / function / workfl
 |---------|----------|--------|
 | Open an interactive shell into a container | 🔴 | `docker_exec` runs commands; no PTY |
 | Restart Postgres / Redis / a runtime safely | 🔴 | Owned by ServiceLifecycleManager; only path is restart Desktop |
-| Show CPU / memory / disk usage | 🟡 | No `docker_stats` |
-| Inspect a container's config / env | 🟡 | No `docker_inspect` |
-| Clean up unused images | 🟡 | No `docker_system_prune` |
+| Show CPU / memory / disk usage | 🟡 | No `docker_stats`. *(still absent, verified 2026-08-14 — only `docker_exec`/`docker_logs`/`docker_ps` are registered)* |
+| Inspect a container's config / env | 🟡 | No `docker_inspect`. *(still absent, verified 2026-08-14)* |
+| Clean up unused images | 🟡 | No `docker_system_prune`. *(still absent, verified 2026-08-14)* |
 | Get pod logs (`kubectl logs`) | 🟡 | No dedicated tool — workaround via `rdctl_shell 'kubectl logs ...'` |
 | Stream pod logs | 🟢 | No streaming |
 | Manage compose stacks directly | 🟢 | Only via extensions API |
@@ -207,9 +209,10 @@ Secretary Mode is **shipped and works**, and as of 2026-08-14 its start/stop/sta
 | ✅ Show me my last call from mobile | `sulla mobile/list_calls` + `sulla mobile/get_call '{"id":"..."}'` | Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token` |
 | ✅ Show me my leads | `sulla mobile/list_leads` | Inbox contents with urgency/qualified filters |
 | ✅ Show me my messages | `sulla mobile/list_messages` | SMS + voicemail transcripts |
+| ✅ Is my phone paired / reachable right now? | `sulla mobile/list_devices '{}'` (filters: `online_only`, `device_type:"mobile"`) | *(shipped, verified 2026-08-14 — was undocumented)* Lists every registered desktop+mobile device with online/offline status (online = hit the worker within the last 2 min). Doesn't create a pairing, but answers "can I route to the phone right now" — check this before routing to `targets:["mobile"]`. |
 | ✅ Send a notification to my phone | `sulla notify/notify_user '{"targets":["mobile"]}'` | sulla-workers `/push/{user_id}` leg needed |
-| 🔴 Pair my phone via QR code | — | Phase 2 of pairing; manual (same account sign-in) today |
-| 🔴 Send a file from desktop to phone | — | No transfer mechanism |
+| 🔴 Pair my phone via QR code | — | Phase 2 of pairing; manual (same account sign-in) today. *(still absent, verified 2026-08-14 — `mobile/list_devices` shows pairing STATUS but can't initiate a QR pair)* |
+| 🔴 Send a file from desktop to phone | — | No transfer mechanism. *(still absent, verified 2026-08-14)* |
 | 🔴 Sync calendar to mobile | — | Mobile has its own server-side data; no shared calendar today |
 | 🟡 Take over a live call from desktop | — | Only the phone can |
 
