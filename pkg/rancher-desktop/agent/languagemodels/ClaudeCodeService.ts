@@ -43,9 +43,36 @@ const perf = Logging.perf;
  * OAuth token refresh is the CLI's job. We only pass CLAUDE_CODE_OAUTH_TOKEN
  * (or ANTHROPIC_API_KEY) and stay out of its auth lifecycle.
  */
+
+/** Idle timeout for a speculatively-booted process that is never claimed. */
+const PREWARM_IDLE_REAP_MS = 60_000;
+
+/** Idle timeout for a warm-pool process between turns before it's reaped. */
+const WARM_IDLE_REAP_MS = 5 * 60_000;
+
+/**
+ * A `claude` process speculatively booted during the pre-turn (accumulator)
+ * phase, waiting to be adopted by the next runClaude for its conversation.
+ * See ClaudeCodeService.prewarm().
+ */
+interface PrewarmRecord {
+  proc:          childProcess.ChildProcessWithoutNullStreams;
+  mcpSession:    RegisteredSession | null;
+  mcpConfigPath: string | null;
+  model:         string;
+  createdAt:     number;
+  closed:        boolean;
+  busy:          boolean;
+  reapTimer:     ReturnType<typeof setTimeout> | null;
+}
+
 export class ClaudeCodeService extends BaseLanguageModel {
   // conversationId → Claude session_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
+
+  // conversationId → a speculatively-booted process warming up during the
+  // pre-turn phase, claimed by the next runClaude. See prewarm().
+  private prewarmed = new Map<string, PrewarmRecord>();
 
   /**
    * Tracks the hash of the stable <sulla_context> payload (platform rules +
@@ -98,6 +125,204 @@ export class ClaudeCodeService extends BaseLanguageModel {
     try {
       await redisClient.del(`${ this.SESSION_KEY_PREFIX }${ convId }`);
     } catch { /* Redis unavailable — non-fatal */ }
+  }
+
+  /**
+   * Resolve Claude credentials: integration vault first, SullaSettingsModel
+   * fallback. Shared by runClaude and prewarm so both resolve identically.
+   */
+  private async resolveClaudeCreds(): Promise<{ oauthToken: string; apiKey: string }> {
+    let oauthToken = '';
+    let apiKey = '';
+    try {
+      const { getIntegrationService } = await import('../services/IntegrationService');
+      const values = await getIntegrationService().getFormValues('claude-code');
+      for (const v of values) {
+        if (v.property === 'oauth_token' && v.value) oauthToken = v.value;
+        if (v.property === 'api_key' && v.value) apiKey = v.value;
+      }
+    } catch (err) {
+      console.warn('[ClaudeCodeService] Vault lookup failed, falling back to SullaSettingsModel:', err);
+    }
+    if (!oauthToken && !apiKey) {
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      oauthToken = (await SullaSettingsModel.get('claudeOAuthToken', '')) ?? '';
+      apiKey = (await SullaSettingsModel.get('claudeApiKey', '')) ?? '';
+    }
+    return { oauthToken, apiKey };
+  }
+
+  /** Whether speculative boot (prewarm) is enabled. Default OFF. */
+  private async speculativeBootEnabled(): Promise<boolean> {
+    try {
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      return (await SullaSettingsModel.get('claudeCodeSpeculativeBoot', 'false')) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Whether the warm pool (keep the process alive across turns) is enabled.
+   * Default OFF. Implies speculative boot — a warm process is just a
+   * pre-warmed one that is re-parked instead of closed after each turn.
+   */
+  private async warmPoolEnabled(): Promise<boolean> {
+    try {
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      return (await SullaSettingsModel.get('claudeCodeWarmPool', 'false')) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  /** Remove a specific pool record (if still current) and tear it down. */
+  private disposePrewarmRecord(rec: PrewarmRecord, convId: string): void {
+    if (this.prewarmed.get(convId) === rec) this.prewarmed.delete(convId);
+    this.killPrewarmRecord(rec);
+  }
+
+  /**
+   * Build the `limactl shell` argv that launches `claude -p` in the VM. Shared
+   * by runClaude (fresh spawn) and prewarm (speculative boot) so both stay
+   * identical. `streamJsonInput` adds --input-format stream-json so the process
+   * can boot before the prompt is written to stdin.
+   */
+  private buildSpawnArgs(p: {
+    oauthToken:      string;
+    apiKey:          string;
+    existingSession?: string;
+    mcpConfigPath:   string | null;
+    streamJsonInput: boolean;
+  }): string[] {
+    // POSIX single-quote escape. Single-quoted strings are literal in sh, so
+    // no backtick/$VAR/! expansion can fire against untrusted text.
+    const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
+
+    const envAssignments: string[] = [];
+    if (p.oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(p.oauthToken) }`);
+    if (p.apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(p.apiKey) }`);
+
+    const claudeArgs = [
+      'claude',
+      '-p',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--include-partial-messages',
+      '--dangerously-skip-permissions',
+      // Disable Claude's built-in AskUserQuestion — see runClaude for why it
+      // routes through the sulla-native MCP tool instead.
+      '--disallowedTools', 'AskUserQuestion',
+    ];
+    // stream-json input lets the process boot before the prompt exists (the
+    // prompt is fed as a JSON user message on stdin by the caller).
+    if (p.streamJsonInput) claudeArgs.push('--input-format', 'stream-json');
+    if (this.model && this.model !== 'claude-code') claudeArgs.push('--model', shq(this.model));
+    if (p.existingSession) claudeArgs.push('--resume', shq(p.existingSession));
+    if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
+
+    const innerCmd = `${ envAssignments.join(' ') } exec ${ claudeArgs.join(' ') }`;
+    return ['shell', '0', '--', 'sh', '-c', innerCmd];
+  }
+
+  /**
+   * Speculatively boot a `claude` process for this conversation while the
+   * caller does pre-turn work (recall / observations). The process reaches
+   * system/init and idles on stdin; the next runClaude adopts it and just
+   * writes the prompt — hiding the ~1.5-2s cold start. Fire-and-forget: every
+   * failure mode falls back to a normal cold spawn. No-op unless the
+   * claudeCodeSpeculativeBoot setting is on.
+   */
+  async prewarm(state: BaseThreadState): Promise<void> {
+    try {
+      if (process.platform === 'win32') return;         // no Lima on Windows
+      if (!await this.speculativeBootEnabled()) return;
+
+      const convId = typeof (state.metadata as any)?.threadId === 'string'
+        ? (state.metadata as any).threadId
+        : '__default__';
+
+      const existing = this.prewarmed.get(convId);
+      if (existing && !existing.closed) return;          // already warming
+      if (existing) this.disposePrewarm(convId);         // stale/dead — replace
+
+      const { oauthToken, apiKey } = await this.resolveClaudeCreds();
+      if (!oauthToken && !apiKey) return;                // no creds → nothing to warm
+
+      const existingSession = await this.getSession(convId);
+
+      // Mint an MCP session bound to the live graph state — the SAME object the
+      // turn will use (the pre-turn phase mutates it in place before any tool
+      // fires), so no rebinding is needed for this single-turn adoption.
+      let mcpSession: RegisteredSession | null = null;
+      let mcpConfigPath: string | null = null;
+      try {
+        const host = getMCPServerHost();
+        if (host.running) {
+          mcpSession = host.registerSession(state);
+          mcpConfigPath = this.writeMcpConfig(mcpSession);
+        }
+      } catch { /* continue without sulla-native tools */ }
+
+      const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: true });
+      const proc = childProcess.spawn(paths.limactl, args, {
+        env: { ...process.env, LIMA_HOME: paths.lima, TERM: 'dumb' },
+      });
+
+      const record: PrewarmRecord = {
+        proc,
+        mcpSession,
+        mcpConfigPath,
+        model:     this.model || 'claude-code',
+        createdAt: Date.now(),
+        closed:    false,
+        busy:      false,
+        reapTimer: null,
+      };
+      // Deliberately attach NO stdout 'data' listener: leaving stdout paused
+      // lets Node buffer the early system/init line so the adopting runClaude
+      // receives it intact when it switches the stream to flowing mode.
+      proc.stdin.on('error', () => { /* EPIPE before adoption — non-fatal */ });
+      proc.once('exit', () => { record.closed = true; });
+      proc.once('error', () => { record.closed = true; });
+      record.reapTimer = setTimeout(() => {
+        if (this.prewarmed.get(convId) === record) this.disposePrewarm(convId);
+      }, PREWARM_IDLE_REAP_MS);
+      record.reapTimer.unref?.();
+
+      this.prewarmed.set(convId, record);
+      log.log(`[ClaudeCodeService] prewarm: speculative boot for convId=${ convId } session=${ existingSession ?? '(new)' }`);
+    } catch (err) {
+      log.log(`[ClaudeCodeService] prewarm skipped: ${ (err as Error)?.message ?? err }`);
+    }
+  }
+
+  /** Claim a live pre-warmed process for this conversation, or null. */
+  private claimPrewarm(convId: string, model: string): PrewarmRecord | null {
+    const rec = this.prewarmed.get(convId);
+    if (!rec) return null;
+    this.prewarmed.delete(convId);
+    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
+    if (rec.closed || rec.model !== model) {
+      this.killPrewarmRecord(rec);                       // dead or model mismatch
+      return null;
+    }
+    return rec;
+  }
+
+  /** Tear down and forget the pre-warmed process for a conversation. */
+  private disposePrewarm(convId: string): void {
+    const rec = this.prewarmed.get(convId);
+    if (!rec) return;
+    this.prewarmed.delete(convId);
+    this.killPrewarmRecord(rec);
+  }
+
+  private killPrewarmRecord(rec: PrewarmRecord): void {
+    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
+    try { rec.proc.kill('SIGTERM'); } catch { /* already dead */ }
+    if (rec.mcpSession) { try { rec.mcpSession.revoke(); } catch { /* ignore */ } }
+    if (rec.mcpConfigPath) { try { fs.unlinkSync(rec.mcpConfigPath); } catch { /* ignore */ } }
   }
 
   override getContextWindow(): number {
@@ -442,6 +667,12 @@ Rules that apply on every turn:
       parts.push(`<conversation_recall_context>\n${ conversationRecallContext.trim() }\n</conversation_recall_context>`);
     }
 
+    // Security briefing from the security-conscience agent (the "angel on the shoulder")
+    const securityContext = (state?.metadata as any)?.securityContext;
+    if (securityContext && typeof securityContext === 'string' && securityContext.trim()) {
+      parts.push(`<security_context>\n${ securityContext.trim() }\n</security_context>`);
+    }
+
     if (parts.length === 0) return '';
     return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;
   }
@@ -459,27 +690,8 @@ Rules that apply on every turn:
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
   ): Promise<{ text: string }> {
-    // Prefer the integration vault (new path). Fall back to SullaSettingsModel
-    // so users configured via Language Model Settings keep working during the
-    // transition.
-    let oauthToken = '';
-    let apiKey = '';
-    try {
-      const { getIntegrationService } = await import('../services/IntegrationService');
-      const values = await getIntegrationService().getFormValues('claude-code');
-      for (const v of values) {
-        if (v.property === 'oauth_token' && v.value) oauthToken = v.value;
-        if (v.property === 'api_key' && v.value) apiKey = v.value;
-      }
-    } catch (err) {
-      console.warn('[ClaudeCodeService] Vault lookup failed, falling back to SullaSettingsModel:', err);
-    }
-
-    if (!oauthToken && !apiKey) {
-      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      oauthToken = (await SullaSettingsModel.get('claudeOAuthToken', '')) ?? '';
-      apiKey = (await SullaSettingsModel.get('claudeApiKey', '')) ?? '';
-    }
+    // Credentials: integration vault first, settings fallback (shared with prewarm()).
+    const { oauthToken, apiKey } = await this.resolveClaudeCreds();
 
     if (!oauthToken && !apiKey) {
       throw new Error('No Claude credentials configured. Sign in via Integrations → Claude Code.');
@@ -522,21 +734,28 @@ Rules that apply on every turn:
     const limactlPath = paths.limactl;
     const limaHome = paths.lima;
 
-    // POSIX single-quote escape. Single-quoted strings are literal in sh, so
-    // no backtick/$VAR/! expansion can fire against untrusted text.
-    const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
+    // Speculative boot: adopt a process pre-warmed for this conversation during
+    // the accumulator phase; otherwise spawn fresh below. Flag off → adopted is
+    // always null and the legacy text path runs byte-for-byte as before.
+    const warm = await this.warmPoolEnabled();
+    const speculative = warm || await this.speculativeBootEnabled();
+    const adopted = speculative ? this.claimPrewarm(convId, this.model || 'claude-code') : null;
 
-    const envAssignments: string[] = [];
-    if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(oauthToken) }`);
-    if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(apiKey) }`);
-
-    // Mint an MCP session bound to the calling graph state, if we have one
-    // AND the in-process MCP server is listening. Claude can then call
-    // native tools (execute_workflow etc.) back into this exact graph.
+    // Mint an MCP session bound to the calling graph state, if we have one AND
+    // the in-process MCP server is listening. An adopted process already
+    // carries its own (minted at prewarm against the same live state object).
     // Lifetime: revoke + delete config when the spawn promise settles.
     let mcpSession: RegisteredSession | null = null;
     let mcpConfigPath: string | null = null;
-    if (options.state) {
+    if (adopted) {
+      mcpSession = adopted.mcpSession;
+      mcpConfigPath = adopted.mcpConfigPath;
+      // Re-point the stable MCP token at THIS turn's live state — required when
+      // the process is reused across turns; a no-op on first adoption.
+      if (mcpSession && options.state) {
+        try { getMCPServerHost().rebindSession(mcpSession.id, options.state as BaseThreadState); } catch { /* ignore */ }
+      }
+    } else if (options.state) {
       try {
         const host = getMCPServerHost();
         if (host.running) {
@@ -560,38 +779,11 @@ Rules that apply on every turn:
     // transcript embedded in the command line overflows limactl's SSH
     // multiplexing channel and the spawn dies with "mux_client_request_session:
     // write packet: Broken pipe", bricking any sufficiently long conversation.
-    const claudeArgs = [
-      'claude',
-      '-p',
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--include-partial-messages',
-      '--dangerously-skip-permissions',
-      // Disable Claude's built-in AskUserQuestion. In headless `-p` mode it
-      // can't render an interactive prompt or pause for a real answer, so it
-      // would silently no-op. Disallowing it forces Claude to reciprocate
-      // through the sulla-native `ask_user_question` MCP tool, which DOES
-      // round-trip to the chat UI. See processLine for slip-through detection.
-      '--disallowedTools', 'AskUserQuestion',
-    ];
-    // Pass --model only when explicitly overridden (e.g. Sonnet for sub-agents).
-    // Omitting the flag lets Claude Code use its own auto-selection (Opus for orchestration).
-    if (this.model && this.model !== 'claude-code') {
-      claudeArgs.push('--model', shq(this.model));
-    }
-    if (existingSession) {
-      claudeArgs.push('--resume', shq(existingSession));
-    }
-    if (mcpConfigPath) {
-      claudeArgs.push('--mcp-config', shq(mcpConfigPath));
-    }
-
-    // `exec` replaces the inner sh with claude so there's no shell layer
-    // between the SSH session and the CLI — gives the best chance of signal
-    // propagation when we kill limactl on the host side. No `< /dev/null`: the
-    // prompt is forwarded over SSH stdin and consumed by `claude -p`.
-    const innerCmd = `${ envAssignments.join(' ') } exec ${ claudeArgs.join(' ') }`;
-    const args = ['shell', '0', '--', 'sh', '-c', innerCmd];
+    // Build the launch argv. `exec` replaces the inner sh with claude so there's
+    // no shell layer between the SSH session and the CLI. When speculative,
+    // buildSpawnArgs adds --input-format stream-json and the prompt is delivered
+    // as a JSON line on stdin (see below) instead of raw text.
+    const args = this.buildSpawnArgs({ oauthToken, apiKey, existingSession, mcpConfigPath, streamJsonInput: speculative });
 
     const cleanupMcp = () => {
       if (mcpSession) {
@@ -604,20 +796,62 @@ Rules that apply on every turn:
       }
     };
 
+    // Adopt the pre-warmed process if we claimed one; otherwise spawn fresh.
+    let proc: childProcess.ChildProcessWithoutNullStreams;
+    let adoptedSpawned = false;
+    let poolEntry: PrewarmRecord | null = adopted;
+    if (adopted) {
+      proc = adopted.proc;
+      adoptedSpawned = true;
+      // Drop the prewarm holding listeners; this run attaches its own below.
+      proc.removeAllListeners('exit');
+      proc.removeAllListeners('error');
+      proc.stdin.removeAllListeners('error');
+    } else {
+      proc = childProcess.spawn(limactlPath, args, {
+        env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
+      });
+      // Warm mode with no prewarm available: still track this fresh process so
+      // it can be parked for reuse after the turn.
+      if (warm) {
+        poolEntry = {
+          proc,
+          mcpSession,
+          mcpConfigPath,
+          model:     this.model || 'claude-code',
+          createdAt: Date.now(),
+          closed:    false,
+          busy:      false,
+          reapTimer: null,
+        };
+      }
+    }
+    if (poolEntry) poolEntry.busy = true;
+
+    // Declared at method scope so the `finally` block below can read it: set
+    // true when a warm turn parks its process, which tells finally to skip MCP
+    // cleanup (the parked proc keeps its session for the next turn).
+    let parked = false;
+
     try {
       return await new Promise((resolve, reject) => {
-        const proc = childProcess.spawn(limactlPath, args, {
-          env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
-        });
 
         // Feed the prompt through stdin instead of the command line. limactl's
         // SSH mux caps how large a session-request (command line) can be; a long
         // transcript blows past it. stdin is a plain data channel with no such
         // limit. Guard against EPIPE in case claude exits before we finish.
-        proc.stdin.on('error', () => { /* EPIPE — claude already gone, non-fatal */ });
+        const onStdinError = () => { /* EPIPE — claude already gone, non-fatal */ };
+        proc.stdin.on('error', onStdinError);
         try {
-          proc.stdin.write(prompt);
-          proc.stdin.end();
+          if (speculative) {
+            // stream-json input: deliver the prompt as one user message.
+            proc.stdin.write(`${ JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } }) }\n`);
+          } else {
+            proc.stdin.write(prompt);
+          }
+          // Warm mode keeps stdin open so the process survives for the next turn;
+          // otherwise close it so claude exits when this turn completes.
+          if (!warm) proc.stdin.end();
         } catch { /* stdin already closed */ }
 
       // Heartbeat ticker — keeps the renderer (and routine canvas) informed
@@ -637,8 +871,8 @@ Rules that apply on every turn:
         }
       };
 
-      proc.once('spawn', () => {
-        directActivity('Booting isolated environment…');
+      const onSpawned = () => {
+        directActivity(adoptedSpawned ? 'Isolated environment ready…' : 'Booting isolated environment…');
         let tick = 0;
         heartbeatTimer = setInterval(() => {
           tick += 1;
@@ -656,7 +890,7 @@ Rules that apply on every turn:
           log.warn(`[ClaudeCodeService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing claude (convId=${ convId })`);
           killSpawn();
         }, STALL_CHECK_MS);
-      });
+      };
 
       let stdoutBuffer = '';
       let stderrBuffer = '';
@@ -665,6 +899,7 @@ Rules that apply on every turn:
       let errored = false;
       let errorMessage = '';
       let sessionInUse = false;
+      let settled = false;   // guards resolve/reject across the result-vs-close paths
 
       // ── Perf: per-tool execution timing inside the claude CLI ──────────
       // The tool-use loop (Grep/Glob/Read/Bash/etc.) runs INSIDE the spawned
@@ -765,6 +1000,12 @@ Rules that apply on every turn:
         if (options.signal.aborted) onAbort();
         else options.signal.addEventListener('abort', onAbort);
       }
+
+      // Start the heartbeat + stall watchdog. A fresh spawn fires 'spawn'; an
+      // adopted (pre-warmed) process already spawned during prewarm, so start
+      // immediately — every timer/handler onSpawned references is now declared.
+      if (adoptedSpawned) onSpawned();
+      else proc.once('spawn', onSpawned);
 
       /**
        * Summarise a tool_use block into a short activity message like
@@ -1055,18 +1296,23 @@ Rules that apply on every turn:
             // Usage capture is best-effort — never block on failure.
             recordUsage(parsed).catch(() => { /* ignore */ });
           }
+          // Warm mode: the turn completes at `result`. Settle now and keep the
+          // process alive for the next turn. finishWarmTurn is defined below and
+          // only invoked here (at runtime, after all handlers exist).
+          if (warm) finishWarmTurn();
         }
       };
 
-      proc.stdout.on('data', (chunk) => {
+      const onStdoutData = (chunk: Buffer) => {
         lastStreamActivityAt = Date.now();
         stdoutBuffer += chunk.toString('utf-8');
         const lines = stdoutBuffer.split('\n');
         stdoutBuffer = lines.pop() ?? '';
         for (const line of lines) processLine(line);
-      });
+      };
+      proc.stdout.on('data', onStdoutData);
 
-      proc.stderr.on('data', (chunk) => {
+      const onStderrData = (chunk: Buffer) => {
         lastStreamActivityAt = Date.now();
         const text = chunk.toString('utf-8');
         stderrBuffer += text;
@@ -1078,20 +1324,73 @@ Rules that apply on every turn:
         if (trimmed && !trimmed.includes('no stdin data received')) {
           console.log(`[ClaudeCodeService][stderr] ${ trimmed.slice(0, 200) }`);
         }
-      });
+      };
+      proc.stderr.on('data', onStderrData);
 
-      proc.on('error', (err) => {
+      const onProcError = (err: Error) => {
         stopHeartbeat();
         stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
-        reject(err);
-      });
+        if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);
+        if (!settled) { settled = true; reject(err); }
+      };
+      proc.on('error', onProcError);
 
-      proc.on('close', (code) => {
+      // Warm mode: settle the turn on the `result` message and RETURN the
+      // process to the pool without closing it. Detaches this turn's stream
+      // listeners so the next turn's don't double-process; errors / no-output
+      // evict the process (a broken session must not be reused).
+      const finishWarmTurn = () => {
+        if (settled) return;
+        settled = true;
         stopHeartbeat();
         stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
+        proc.stdout.removeListener('data', onStdoutData);
+        proc.stderr.removeListener('data', onStderrData);
+        proc.removeListener('error', onProcError);
+        proc.removeListener('close', onProcClose);
+        proc.stdout.pause();
+        proc.stderr.pause();
+        if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
+
+        if (errored || !textCollected.trim()) {
+          if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);
+          const msg = errorMessage || textCollected || 'claude produced no output';
+          log.warn(`[ClaudeCodeService] warm turn failed, evicting proc: ${ msg.slice(0, 200) }`);
+          reject(new Error(`Claude Code: ${ msg }`));
+          return;
+        }
+
+        // Park the process for the next turn. Keep a lightweight exit/error
+        // marker so a proc that dies while idle is flagged closed (claimPrewarm
+        // then declines to hand it back). Both are cleared on the next adopt.
+        if (poolEntry) {
+          const entry = poolEntry;
+          entry.busy = false;
+          proc.once('exit', () => { entry.closed = true; });
+          proc.once('error', () => { entry.closed = true; });
+          if (entry.reapTimer) clearTimeout(entry.reapTimer);
+          entry.reapTimer = setTimeout(() => {
+            if (this.prewarmed.get(convId) === entry) this.disposePrewarm(convId);
+          }, WARM_IDLE_REAP_MS);
+          entry.reapTimer.unref?.();
+          this.prewarmed.set(convId, entry);
+          parked = true;
+        }
+        log.log(`[ClaudeCodeService] warm turn ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' } (proc parked)`);
+        resolve({ text: textCollected });
+      };
+
+      const onProcClose = (code: number | null) => {
+        stopHeartbeat();
+        stopStallWatchdog();
+        options.signal?.removeEventListener('abort', onAbort);
+        if (poolEntry) this.disposePrewarmRecord(poolEntry, convId);   // proc gone → drop from pool
+        if (settled) return;                                           // already resolved (e.g. warm result)
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+        if (settled) return;                                           // a buffered `result` may have settled it
+        settled = true;
 
         // Stall-watchdog kill — surface a clear, retryable error instead of
         // falling through to the generic no-output message.
@@ -1133,10 +1432,13 @@ Rules that apply on every turn:
 
         log.log(`[ClaudeCodeService] runClaude ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
         resolve({ text: textCollected });
-      });
+      };
+      proc.on('close', onProcClose);
     });
     } finally {
-      cleanupMcp();
+      // A parked warm process keeps its MCP session for the next turn; only
+      // clean up when we are not reusing it.
+      if (!parked) cleanupMcp();
     }
   }
 

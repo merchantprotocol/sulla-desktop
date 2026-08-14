@@ -126,6 +126,38 @@ export class HeartbeatNode extends BaseNode {
       }
     }
 
+    // Merge episodic graph context so the heartbeat gets the SAME memory
+    // picture as a user turn (recall_context + episodic_context). Same
+    // merge-into-last-assistant pattern as recall above; stripInjectedContextBlocks
+    // already covers <episodic_context> so this replaces rather than accumulates.
+    const episodicContext = (state.metadata as any).episodicContext;
+    if (episodicContext) {
+      const episodicBlock = `\n\n<episodic_context>\n${ episodicContext }\n</episodic_context>`;
+      let merged = false;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        if (state.messages[i].role === 'assistant') {
+          const msg = state.messages[i];
+          if (typeof msg.content === 'string') {
+            msg.content += episodicBlock;
+          } else if (Array.isArray(msg.content)) {
+            msg.content.push({ type: 'text', text: episodicBlock });
+          } else {
+            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + episodicBlock;
+          }
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) {
+        const insertIdx = Math.max(0, state.messages.length - 1);
+        state.messages.splice(insertIdx, 0, {
+          role:     'assistant',
+          content:  episodicBlock.trim(),
+          metadata: { source: 'episodic', _synthetic: true },
+        });
+      }
+    }
+
     // Merge unstuck context from a previous cycle's analysis (if any)
     const unstuckContext = (state.metadata as any).unstuckContext;
     if (unstuckContext) {
@@ -572,7 +604,7 @@ export class HeartbeatNode extends BaseNode {
 
     await graph.execute(subState, 'subconscious', { maxIterations: 20 });
 
-    // Extract response — same pattern as runMemoryRecall
+    // Extract response — same pattern as runEnvironmentBrief
     const agentMeta = (subState.metadata as any).agent || {};
     let response = agentMeta.response;
     if (!response || !String(response).trim()) {

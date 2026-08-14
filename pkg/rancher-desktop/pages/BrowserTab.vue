@@ -225,6 +225,13 @@
       </div>
     </template>
 
+    <!-- Agents mode: live view of every running loop (subagents, heartbeat, routines, jobs) -->
+    <template v-else-if="tabMode === 'agents'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <AgentsTab />
+      </div>
+    </template>
+
     <!-- Secretary mode: continuous transcription with wake word -->
     <template v-else-if="tabMode === 'secretary'">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -300,18 +307,20 @@ import AgentIntegrations from './AgentIntegrations.vue';
 import AgentRoutines from './AgentRoutines.vue';
 // Swapped to the new componentized chat at ./chat/ChatPage.vue.
 // Old implementation at ./BrowserTabChat.vue is kept for rollback.
+import FileEditorTab from './FileEditorTab.vue';
 import BrowserTabChat from './chat/ChatPage.vue';
+import AgentsTab from './AgentsTab.vue';
 import HistoryTab from './HistoryTab.vue';
+import LabsPage from './LabsPage.vue';
 import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
 import PasswordGenerator from './PasswordGenerator.vue';
-import FileEditorTab from './FileEditorTab.vue';
-import LabsPage from './LabsPage.vue';
-import TerminalTab from './TerminalTab.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
+import TerminalTab from './TerminalTab.vue';
 import AgentHeader from './agent/AgentHeader.vue';
 import { useStartupProgress } from './agent/useStartupProgress';
+import BrowserTabChat from './chat/ChatPage.vue';
 
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
@@ -320,21 +329,21 @@ import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const MODE_TITLES: Record<BrowserTabMode, string> = {
-  welcome:      'New Tab',
-  browser:      'New Tab',
-  chat:         'Chat',
-  calendar:     'Calendar',
-  integrations: 'Integrations',
-  document:     'Document',
-  secretary:    'Secretary',
-  vault:        'Password Manager',
-  account:      'My Account',
-  history:      'History',
-  routines:     'Routines',
-  marketplace:  'Sulla Studio',
-  labs:         'Labs',
+  welcome:       'New Tab',
+  browser:       'New Tab',
+  chat:          'Chat',
+  calendar:      'Calendar',
+  integrations:  'Integrations',
+  document:      'Document',
+  secretary:     'Secretary',
+  vault:         'Password Manager',
+  account:       'My Account',
+  history:       'History',
+  routines:      'Routines',
+  marketplace:   'Sulla Studio',
+  labs:          'Labs',
   'file-editor': 'Editor',
-  terminal:     'Terminal',
+  terminal:      'Terminal',
 };
 
 const props = defineProps<{
@@ -838,11 +847,11 @@ let resizeObserver: ResizeObserver | null = null;
 // main-process BrowserTabViewManager is the authoritative reconciler.
 const { loggedIn } = useVaultUnlock();
 const shouldShowView = computed(() =>
-  props.isVisible
-  && !showOverlay.value
-  && loggedIn.value
-  && viewCreated.value
-  && tabMode.value === 'browser',
+  props.isVisible &&
+  !showOverlay.value &&
+  loggedIn.value &&
+  viewCreated.value &&
+  tabMode.value === 'browser',
 );
 
 watch(shouldShowView, (visible) => {
@@ -854,16 +863,10 @@ watch(shouldShowView, (visible) => {
     ipcRenderer.invoke('chrome-api:sidePanel:switchTab' as any, props.tabId);
   } else {
     window.removeEventListener('keydown', onKeydown);
-    // Tell main process this tab is no longer the focused one. It won't
-    // clobber focus that belongs to a sibling tab — setFocusedTab only
-    // acts on transitions where focusedTabId currently equals props.tabId.
-    // But to be safe (two tabs racing), we pass the tabId rather than null
-    // below — no, that's wrong. We genuinely want "nothing from this
-    // component is focused right now." If another BrowserTab.vue instance
-    // is visible, ITS watcher will have fired with `visible=true` and
-    // claimed focus. Race-safe because main process dedupes via
-    // `if (focusedTabId === tabId) return;` at the top of setFocusedTab.
-    ipcRenderer.invoke('browser-tab-view:focus', null);
+    // Tell main process this tab is no longer visible, but only let it clear
+    // focus if this tab still owns focus. During tab switches, the newly
+    // visible sibling can claim focus before this hidden-tab watcher runs.
+    ipcRenderer.invoke('browser-tab-view:focus', null, props.tabId);
   }
 }, { immediate: true });
 
@@ -916,7 +919,7 @@ onUnmounted(() => {
     resizeObserver = null;
   }
 
-  if (viewCreated) {
+  if (viewCreated.value) {
     ipcRenderer.invoke('browser-tab-view:destroy', props.tabId);
   }
 });

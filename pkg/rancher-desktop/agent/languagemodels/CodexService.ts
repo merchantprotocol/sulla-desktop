@@ -357,6 +357,12 @@ Rules that apply on every turn:
       parts.push(`<conversation_recall_context>\n${ conversationRecallContext.trim() }\n</conversation_recall_context>`);
     }
 
+    // Security briefing from the security-conscience agent (the "angel on the shoulder")
+    const securityContext = (state?.metadata as any)?.securityContext;
+    if (securityContext && typeof securityContext === 'string' && securityContext.trim()) {
+      parts.push(`<security_context>\n${ securityContext.trim() }\n</security_context>`);
+    }
+
     if (parts.length === 0) return { prefix: '', stableHash };
     return { prefix: `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`, stableHash };
   }

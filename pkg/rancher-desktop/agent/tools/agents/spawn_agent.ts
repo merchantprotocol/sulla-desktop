@@ -1,6 +1,7 @@
 import { BaseTool, ToolResponse } from '../base';
 import { createJob, completeJob, failJob, getJobAbortSignal } from './jobRegistry';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
+import { findAgentDir } from '../../utils/sullaPaths';
 
 import type { AgentJobResult } from './jobRegistry';
 
@@ -8,9 +9,19 @@ const MAX_DEPTH = 3;
 const MAX_TASKS = 10;
 
 interface SpawnTask {
-  agentId?: string;
-  prompt:   string;
-  label?:   string;
+  agentId?:   string;
+  /** Alias for agentId — the agent config folder name under ~/sulla/agents/.
+   *  Accepted because callers routinely reach for "agentName"; resolved to the
+   *  same selector so a natural-but-wrong key no longer silently no-ops. */
+  agentName?: string;
+  prompt:     string;
+  label?:     string;
+}
+
+/** The agent-config selector for a task: agentId, or its agentName alias. */
+function taskAgentSelector(task: SpawnTask): string | undefined {
+  const sel = task.agentId || task.agentName;
+  return typeof sel === 'string' && sel.trim() ? sel.trim() : undefined;
 }
 
 export class SpawnAgentWorker extends BaseTool {
@@ -42,6 +53,19 @@ export class SpawnAgentWorker extends BaseTool {
           responseString: `Task at index ${ i } is missing a "prompt" string.`,
         };
       }
+
+      // Fail fast on an unresolvable agent selector. Without this the task
+      // silently fell back to the PARENT persona on the subconscious model
+      // (e.g. a caller passing the wrong key ran a generic sub-agent on the
+      // fallback provider instead of the intended worker) — a costly no-op
+      // with no signal. A missing selector is still fine (documented default).
+      const selector = taskAgentSelector(tasks[i]);
+      if (selector && !findAgentDir(selector)) {
+        return {
+          successBoolean: false,
+          responseString: `Task at index ${ i } references agent "${ selector }" but no config folder exists under ~/sulla/agents/. Use a valid agentId (or omit it to use the default agent).`,
+        };
+      }
     }
 
     // ── Options ───────────────────────────────────────────────────
@@ -62,6 +86,10 @@ export class SpawnAgentWorker extends BaseTool {
     const { GraphRegistry } = await import('../../services/GraphRegistry');
 
     const parentChannel = (this.state)?.metadata?.wsChannel || 'sulla-desktop';
+    // The orchestrator's own conversation thread. Async jobs use this to wake
+    // the parent graph with their results when they finish, so an orchestrator
+    // that fired-and-forgot doesn't sit thinking its sub-agents "died".
+    const parentThreadId: string | undefined = (this.state as any)?.metadata?.threadId;
 
     // Abort signal for THIS async job (set once the job is created below).
     // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
@@ -69,8 +97,9 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Single task executor ────────────────────────────────────
     const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
-      const label = task.label || task.agentId || `task-${ index }`;
-      const agentConfigChannel = task.agentId || parentChannel;
+      const selector = taskAgentSelector(task);
+      const label = task.label || selector || `task-${ index }`;
+      const agentConfigChannel = selector || parentChannel;
       const threadId = `spawn-agent-${ label.replace(/\s+/g, '-').toLowerCase() }-${ Date.now() }-${ index }`;
 
       try {
@@ -182,7 +211,7 @@ export class SpawnAgentWorker extends BaseTool {
         }
 
         return {
-          label:    tasks[i].label || tasks[i].agentId || `task-${ i }`,
+          label:    tasks[i].label || taskAgentSelector(tasks[i]) || `task-${ i }`,
           status:   'error' as const,
           output:   `Unexpected error: ${ s.reason }`,
           threadId: '',
@@ -203,11 +232,17 @@ export class SpawnAgentWorker extends BaseTool {
           completeJob(job.jobId, results);
           console.log(`[spawn_agent] Async job ${ job.jobId } completed — ${ results.length } result(s)`);
           await emitProactiveCompletion(parentChannel, job.jobId, results);
+          // Feed the results back INTO the orchestrator's loop, not just onto a
+          // UI card. Without this the parent's turn already ended and nothing
+          // re-invokes it — the results would strand and the orchestrator would
+          // report that the sub-agents "died".
+          wakeParentGraph(parentChannel, parentThreadId, job.jobId, results);
         })
         .catch(async(err) => {
           failJob(job.jobId, (err as Error).message);
           console.error(`[spawn_agent] Async job ${ job.jobId } failed:`, err);
           await emitProactiveCompletion(parentChannel, job.jobId, [], (err as Error).message);
+          wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], (err as Error).message);
         });
 
       return {
@@ -238,6 +273,76 @@ export class SpawnAgentWorker extends BaseTool {
         : `${ results.length } sub-agent(s) completed.\n\n${ formatted }`,
     };
   }
+}
+
+// ─── Parent-graph wake ───────────────────────────────────────────
+// Re-enters the orchestrator's own graph loop with the finished sub-agent
+// results as input. The proactive card (below) is display-only — the
+// MessageDispatcher 'proactive' handler pushes it to the message list WITHOUT
+// calling graph.execute(), so on its own it never wakes the orchestrator.
+//
+// This sends a `user_message` on the parent channel + thread, which loops back
+// through getWebSocketClientService() into BackendGraphWebSocketService and
+// runs a fresh turn on the SAME thread (the exact primitive the inter-agent
+// `<channel:x wake>` tag uses). Because the orchestrator's turn has already
+// ended by the time an async job settles, that thread is idle and the wake
+// runs cleanly, injecting the results straight into its reasoning loop.
+//
+// No-op when there is no parent thread to resume (falls back to card-only,
+// the legacy behaviour).
+function wakeParentGraph(
+  parentChannel: string,
+  parentThreadId: string | undefined,
+  jobId: string,
+  results: AgentJobResult[],
+  failureReason?: string,
+): void {
+  if (!parentThreadId) return;
+
+  try {
+    const ws = getWebSocketClientService();
+    const content = buildWakeContent(jobId, results, failureReason);
+
+    ws.send(parentChannel, {
+      type: 'user_message',
+      data: {
+        content,
+        threadId: parentThreadId,
+        metadata: {
+          // Marks this as a background-completion wake rather than human input,
+          // so downstream nodes/telemetry can tell it apart from typed messages.
+          source:      'sub_agent_completion',
+          origin:      'spawn_agent',
+          inputSource: 'system',
+          jobId,
+        },
+      },
+    });
+    console.log(`[spawn_agent] Woke parent graph — channel="${ parentChannel }" thread="${ parentThreadId.slice(-8) }" job=${ jobId }`);
+  } catch (e) {
+    console.warn('[spawn_agent] wakeParentGraph failed:', e);
+  }
+}
+
+/** Format the finished job as an orchestrator-facing input message. */
+function buildWakeContent(
+  jobId: string,
+  results: AgentJobResult[],
+  failureReason?: string,
+): string {
+  if (failureReason) {
+    return `[sub-agent job ${ jobId } FAILED] ${ failureReason }\n\n` +
+      'Your background sub-agent(s) errored before returning results. Decide how to proceed (retry, adjust, or report back).';
+  }
+
+  const formatted = results.map(r =>
+    `### ${ r.label } [${ r.status.toUpperCase() }]\n${ r.output }`,
+  ).join('\n\n---\n\n');
+
+  return `[sub-agent job ${ jobId } complete — ${ results.length } result(s)]\n\n` +
+    'These are the results returned by the background sub-agent(s) you launched. ' +
+    'Continue your orchestration using them (do NOT call check_agent_jobs for this job — the results are below):\n\n' +
+    formatted;
 }
 
 // ─── Proactive completion emitter ────────────────────────────────
