@@ -217,7 +217,7 @@ primary agent can act immediately without a \`browse_tools\` round-trip.
 
 ### 2. Active Projects
 Search \`~/sulla/projects/\` for project directories matching the topic.
-Read the relevant PROJECT.md and \`~/sulla/projects/ACTIVE_PROJECTS.md\`.
+Read the relevant PROJECT.md and \`~/sulla/ledger/LEDGER.md\` (fall back to legacy \`~/sulla/projects/ACTIVE_PROJECTS.md\` on installs that still have one).
 Include project names, statuses, blockers, and next actions.
 
 ### 3. Skills
