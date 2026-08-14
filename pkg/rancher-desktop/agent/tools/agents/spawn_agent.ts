@@ -252,7 +252,7 @@ export class SpawnAgentWorker extends BaseTool {
           jobId:     job.jobId,
           taskCount: tasks.length,
           parallel,
-          message:   `${ tasks.length } sub-agent(s) launched in the background. Use check_agent_jobs(jobId: "${ job.jobId }") to poll for results.`,
+          message:   `${ tasks.length } sub-agent(s) launched in the background. Results will wake this graph when they finish (check_agent_jobs is the fallback/history read).`,
         }, null, 2),
       };
     }
@@ -347,9 +347,9 @@ function buildWakeContent(
 
 // ─── Proactive completion emitter ────────────────────────────────
 // Surfaces a ProactiveCard in the parent channel's chat when an async
-// spawn_agent job finishes. The parent agent will still poll via
-// check_agent_jobs to read the full results — this card is a user-
-// facing heads-up that the background work settled.
+// spawn_agent job finishes. The parent graph is woken automatically
+// with the full results; this card is a user-facing heads-up that
+// the background work settled.
 async function emitProactiveCompletion(
   parentChannel: string,
   jobId: string,

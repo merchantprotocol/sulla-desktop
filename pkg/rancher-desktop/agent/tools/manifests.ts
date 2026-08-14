@@ -27,6 +27,7 @@ import { toolRegistry } from './registry';
 import { rulesToolManifests } from './rules/manifests';
 import { ledgerToolManifests } from './ledger/manifests';
 import { secretaryToolManifests } from './secretary/manifests';
+import { settingsToolManifests } from './settings/manifests';
 import { slackToolManifests } from './slack/manifests';
 import { uiToolManifests } from './ui/manifests';
 import { workflowToolManifests } from './workflow/manifests';
@@ -56,6 +57,7 @@ toolRegistry.registerManifests([
   ...rulesToolManifests,
   ...ledgerToolManifests,
   ...secretaryToolManifests,
+  ...settingsToolManifests,
   ...slackToolManifests,
   ...uiToolManifests,
   ...workflowToolManifests,

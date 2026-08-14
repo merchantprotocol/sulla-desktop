@@ -208,7 +208,20 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 - `sulla redis/redis_hget` / `redis_hset` / `redis_hgetall` — Hash fields
 - `sulla redis/redis_lpop` / `redis_rpush` — List ops
 
+**Do not use these on `sulla_settings`.** That hash is owned by `SullaSettingsModel`; the redis tools refuse it. Use `sulla settings/settings_get` / `settings_set` instead.
+
 → See [`tools/redis.md`](redis.md)
+
+## settings — authoritative settings path (2 tools)
+- `sulla settings/settings_get` — Read a setting through `SullaSettingsModel` (Redis cache → Postgres → file fallback)
+- `sulla settings/settings_set` — Write a setting through `SullaSettingsModel` (Postgres + Redis write-through)
+
+→ See [`tools/redis.md`](redis.md) (settings guardrail) and `pkg/rancher-desktop/agent/database/models/SullaSettingsModel.ts`
+
+## ledger — outcome measurement (1 tool)
+- `sulla ledger/ledger_scoreboard` — Zero-LLM scoreboard of `~/sulla/ledger/` (outcomes shipped, WORKING/staged counts, audit lines, 7-day staleness)
+
+→ The ledger itself is files under `~/sulla/ledger/` (LEDGER.md / OUTCOMES.md / AUDIT.md / goals/).
 
 ## pg — PostgreSQL queries (6 tools)
 - `sulla pg/pg_query` — SELECT, all rows
@@ -240,15 +253,15 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 Read-only. Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`.
 
 ## agents — sub-agent jobs, conversations, directory (7 tools)
-- `sulla agents/check_agent_jobs` — Poll for results of async spawn_agent calls
+- `sulla agents/check_agent_jobs` — Fallback/history read of async spawn_agent jobs (results normally arrive via parent-graph wake)
 - `sulla agents/stop_agent_job` — Kill switch: cancel a running async job (cooperative abort, cascades to its sub-agents)
-- `sulla agents/start_agent_conversation` — Open a persistent, multi-turn conversation with a sub-agent (keeps context between messages)
+- `sulla agents/start_agent_conversation` — LEGACY: open a persistent multi-turn conversation with a sub-agent. Prefer `spawn_agent`.
 - `sulla agents/send_agent_message` — Send a follow-up to an open conversation, get the reply
 - `sulla agents/read_agent_conversation` — Read a conversation transcript, or list all open conversations
 - `sulla agents/close_agent_conversation` — Close a conversation and free its graph + state
 - `sulla agents/list_agents` — Directory of live named agents (heartbeat, workbench, mobile-relay, …) you can `<channel:>`-message
 
-**`spawn_agent` is NOT under `agents/`** — it's canonically `sulla meta/spawn_agent`. `spawn_agent` = fire-and-forget; `start_agent_conversation` = interactive back-and-forth; `list_agents` + `<channel:NAME>` = reach already-running named agents. See [`tools/agents.md`](agents.md).
+**ONE delegation pattern:** `sulla meta/spawn_agent` (async results wake the parent graph). `start_agent_conversation` is a legacy multi-turn wrapper. `list_agents` + `<channel:NAME>` is messaging to already-running named agents, not delegation. See [`tools/agents.md`](agents.md).
 
 ## bridge — human presence (2 tools)
 - `sulla bridge/get_human_presence` — Read presence state from Redis

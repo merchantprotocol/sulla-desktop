@@ -1,5 +1,6 @@
 import { redisClient } from '../../database/RedisClient';
 import { BaseTool, ToolResponse } from '../base';
+import { rejectSettingsBypass } from './settingsGuard';
 
 /**
  * Redis Expire Tool - Worker class for execution
@@ -9,6 +10,10 @@ export class RedisExpireWorker extends BaseTool {
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { key, seconds } = input;
+
+    const blocked = rejectSettingsBypass(key, undefined, 'expire');
+
+    if (blocked) return blocked;
 
     try {
       const result = await redisClient.expire(key, seconds);

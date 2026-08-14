@@ -27,7 +27,7 @@ export const agentToolManifests: ToolManifest[] = [
       async: {
         type:        'boolean',
         optional:    true,
-        description: 'When true (default), launches agents in the background and returns immediately with a jobId. Use check_agent_jobs to poll for results. Set to false to block until all agents complete.',
+        description: 'When true (default), launches agents in the background and returns immediately with a jobId. Results wake the parent graph on completion; check_agent_jobs is the fallback/history read. Set to false to block until all agents complete.',
       },
     },
     operationTypes: ['execute'],
@@ -35,7 +35,7 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'check_agent_jobs',
-    description: 'Check the status and results of async sub-agent jobs launched with spawn_agent(async: true). Pass a jobId to check a specific job, or omit to list all pending/completed jobs.',
+    description: 'Fallback/history read of async sub-agent jobs launched with spawn_agent(async: true). Results normally arrive via parent-graph wake — use this after a restart or to inspect a specific jobId. Omit jobId to list all pending/completed jobs.',
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', optional: true, description: 'The job ID returned by an async spawn_agent call. Omit to list all jobs.' },
@@ -45,7 +45,7 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'stop_agent_job',
-    description: 'Kill switch for a running async sub-agent job (from spawn_agent(async: true)). Fires the job\'s abort signal, which cascades to every sub-agent it spawned, unwinding them cooperatively (an in-flight LLM/tool call finishes first, then the loop stops). Use when a job was misfired, duplicated, or is no longer needed. Poll check_agent_jobs afterwards to confirm it settled as \'stopped\'.',
+    description: 'Kill switch for a running async sub-agent job (from spawn_agent(async: true)). Fires the job\'s abort signal, which cascades to every sub-agent it spawned, unwinding them cooperatively (an in-flight LLM/tool call finishes first, then the loop stops). Use when a job was misfired, duplicated, or is no longer needed. Results wake the parent graph; check_agent_jobs afterwards is the fallback/history read to confirm it settled as \'stopped\'.',
     category:    'agents',
     schemaDef:   {
       jobId: { type: 'string', description: 'The job ID to cancel (returned by the async spawn_agent call).' },
@@ -55,7 +55,7 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'start_agent_conversation',
-    description: 'Open a persistent, multi-turn conversation with a sub-agent (vs. spawn_agent\'s fire-and-forget). Runs the first turn and returns the sub-agent\'s reply plus a conversationId. The sub-agent stays alive between messages, keeping full context, so you can delegate then clarify, correct, or ask follow-ups. Continue with send_agent_message; end with close_agent_conversation.',
+    description: 'LEGACY multi-turn wrapper. Prefer spawn_agent for delegation. Use only when you genuinely need iterative back-and-forth with the same worker. Runs the first turn and returns a conversationId. Continue with send_agent_message; end with close_agent_conversation.',
     category:    'agents',
     schemaDef:   {
       prompt:  { type: 'string', description: 'The opening message/instruction to the sub-agent.' },
