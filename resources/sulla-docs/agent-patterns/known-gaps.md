@@ -5,7 +5,9 @@ When a user asks for one of these, **don't pretend it works**. Either say "no to
 Severity: 🔴 high (likely to come up often) · 🟡 medium · 🟢 occasional
 
 Last full verification against the codebase: 2026-04-23.
-Partial re-verification 2026-08-14 (heartbeat cycle): the delegation stack shipped since the last pass — `spawn_agent` (async background sub-agents with parent-graph wake), `check_agent_jobs`, `stop_agent_job`, and the legacy `start_agent_conversation`/`send_agent_message` pair are all live and registered (see [`tools/agents.md`](../tools/agents.md)); "delegate work in the background" is no longer a gap. The Heartbeat environment row below was corrected against the live dual-store behavior. Rows not touched on 2026-08-14 still carry their 2026-04-23 status — treat those as needing re-verification, not gospel.
+Partial re-verification 2026-08-14 (heartbeat cycle): the delegation stack shipped since the last pass — `spawn_agent` (async background sub-agents with parent-graph wake), `check_agent_jobs`, `stop_agent_job`, and the legacy `start_agent_conversation`/`send_agent_message` pair are all live and registered (see [`tools/agents.md`](../tools/agents.md)); "delegate work in the background" is no longer a gap. The Heartbeat environment row below was corrected against the live dual-store behavior.
+
+A second 2026-08-14 pass swept the live tool registry (`meta/browse_tools`) row-by-row and corrected these against what's actually registered: **Secretary Mode** start/stop/status now have `secretary/*` tools (was "UI-only"); **Capture** gained a recorder + camera/screen scene lifecycle (`recorder_start/stop/status`, `screen_set`, `camera_*`) so multi-source recording is agent-driven (was 🔴 "not built"); **Workflows** gained `workflow/display_workflow` (CLI render) and `routine_report`/schedule tools; and the **GitHub** rows had wrong tool names — the live names are `github/merge_pr`, `github/check_runs`, `github/trigger_workflow_run` (no redundant `github_` prefix). Rows not stamped *(verified 2026-08-14)* still carry their 2026-04-23 status — treat those as needing re-verification, not gospel.
 
 ---
 
@@ -32,8 +34,8 @@ Partial re-verification 2026-08-14 (heartbeat cycle): the delegation stack shipp
 | ✅ Pause this workflow, I'll resume later | `sulla meta/pause_workflow` + `sulla meta/resume_workflow` | Cooperative; in-flight work not cancelled |
 | ✅ Test a workflow without running it for real | `sulla meta/dry_run_workflow '{"slug":"..."}'` | Static walk; reports execution order, orphans, ambiguous router branches |
 | 🔴 Show what my workflow is doing right now | — | Still only post-hoc checkpoint trail; no live per-node state stream |
-| 🟡 Show me the workflow visually | — | Open the canvas via `ui/open_tab '{"mode":"routines"}'`; no CLI rendering |
-| 🟢 List my workflows / what's scheduled | — | Works but requires direct model/service calls; no CLI tool |
+| 🟡 Show me the workflow visually | `sulla workflow/display_workflow '{"slug":"..."}'` renders a CLI text view (nodes + edges); `ui/open_tab '{"mode":"routines"}'` opens the canvas | *(verified 2026-08-14)* No inline graphic, but the structure is now inspectable from chat |
+| 🟢 List my workflows / what's scheduled | `sulla workflow/routine_report '{}'`, `workflow/refresh_schedules`, `workflow/catch_up_schedules`, `workflow/set_workflow_status` | *(verified 2026-08-14)* Schedule/status tooling now exists; a flat "list all workflows" CLI is still not a dedicated tool |
 
 ---
 
@@ -165,7 +167,7 @@ The `marketplace/*` (10 tools, generic across 6 kinds: skill / function / workfl
 
 ## Capture Studio
 
-The `capture/*` category (13 tools) shipped 2026-04-23 and closes most of the headless control gaps. Multi-source recording is still renderer-side and not agent-controllable.
+The `capture/*` category (19 tools as of 2026-08-14) shipped 2026-04-23 and grew a recorder + camera/screen scene lifecycle since. Multi-source recording is now agent-controllable (see rows below).
 
 | Request | Severity | Status |
 |---------|----------|--------|
@@ -175,9 +177,9 @@ The `capture/*` category (13 tools) shipped 2026-04-23 and closes most of the he
 | ✅ Start / stop desktop-audio loopback | `sulla capture/speaker_start` / `speaker_stop` | shipped |
 | ✅ Drive the teleprompter | `sulla capture/teleprompter_*` (open/close/script/style/status) | shipped |
 | ✅ Check audio capture state | `sulla capture/audio_state` | shipped |
-| 🔴 Start / stop a multi-source recording session | Renderer-side MediaRecorder; needs renderer command bus that isn't built |
-| 🔴 Open the Capture Studio window | UI navigation gap — `ui/open_tab` doesn't have a `capture-studio` mode yet |
-| 🟡 Add screen + camera to current scene mid-session | Same renderer-side limitation |
+| ✅ Start / stop a multi-source recording session | `sulla capture/recorder_start` / `recorder_stop` / `recorder_status` (auto-acquires configured sources) | *(verified 2026-08-14 — registered)* Renderer command bus now exists; drive the session from chat |
+| 🔴 Open the Capture Studio window | UI navigation gap — `ui/open_tab` doesn't have a `capture-studio` mode yet | *(not re-verified 2026-08-14)* |
+| ✅ Add screen + camera to current scene mid-session | `sulla capture/screen_set '{"sourceId":"..."}'` + `camera_list` / `camera_set` / `camera_release` | *(verified 2026-08-14 — registered)* Enumerate then set the active screen/camera source |
 | 🟡 Get the path of my last recording session | No dedicated tool — `meta/exec` + `ls ~/sulla/captures/` works |
 | 🟡 Transcribe a saved recording | Whisper is wired for live, not retroactive batch — write a custom function |
 
@@ -189,12 +191,12 @@ The `capture/*` category (13 tools) shipped 2026-04-23 and closes most of the he
 
 | Request | Severity | Status |
 |---------|----------|--------|
-| Start secretary mode | 🟡 | No agent tool — user presses `Cmd+Shift+S` or tray menu |
-| Stop secretary mode | 🟡 | Same — UI-driven |
+| ✅ Start secretary mode | — | `sulla secretary/start '{}'` *(verified 2026-08-14 — registered)*. No longer UI-only; `Cmd+Shift+S`/tray still work too |
+| ✅ Stop secretary mode | — | `sulla secretary/stop '{}'`; `sulla secretary/status '{}'` reports whether it's running *(verified 2026-08-14)* |
 | Get my last meeting notes | 🟡 | No dedicated retrieval tool — meeting transcripts are in chat history but no clean query |
 | "Hey Sulla, what was the action item from earlier?" | 🟢 | Wake word works but the agent has no structured query into the analysis output |
 
-Secretary Mode itself is **shipped and works** — but it's user-controlled, not agent-controlled.
+Secretary Mode is **shipped and works**, and as of 2026-08-14 its start/stop/status lifecycle is **agent-controllable** via the `secretary/*` tools. Retrieval of past meeting notes is still the open gap.
 
 ---
 
@@ -228,10 +230,10 @@ Secretary Mode itself is **shipped and works** — but it's user-controlled, not
 
 | Request | Status | Notes |
 |---------|--------|-------|
-| ✅ Merge this PR | `sulla github/github_merge_pr '{"owner":"...","repo":"...","pull_number":N,"confirm":true}'` | merge / squash / rebase methods |
-| ✅ Show CI status for this branch | `sulla github/github_check_runs '{"owner":"...","repo":"...","ref":"..."}'` | Lists runs with status + conclusion + timing |
-| ✅ Trigger a GitHub Action | `sulla github/github_trigger_workflow_run '{"owner":"...","repo":"...","workflow_id":"ci.yml","inputs":{...}}'` | Requires workflow_dispatch trigger in the target workflow |
-| 🟢 AI-review this PR | — | No review tool; spawn an agent against the diff manually |
+| ✅ Merge this PR | `sulla github/merge_pr '{"owner":"...","repo":"...","pull_number":N,"confirm":true}'` | merge / squash / rebase methods. *(name corrected 2026-08-14 — it's `github/merge_pr`, NOT `github/github_merge_pr`)* |
+| ✅ Show CI status for this branch | `sulla github/check_runs '{"owner":"...","repo":"...","ref":"..."}'` | Lists runs with status + conclusion + timing. *(name corrected 2026-08-14 — `github/check_runs`)* |
+| ✅ Trigger a GitHub Action | `sulla github/trigger_workflow_run '{"owner":"...","repo":"...","workflow_id":"ci.yml","inputs":{...}}'` | Requires workflow_dispatch trigger in the target workflow. *(name corrected 2026-08-14 — `github/trigger_workflow_run`)* |
+| 🟡 AI-review this PR | Partial | No one-shot AI-review tool: pull the diff with `github/get_pr_files`, generate the review, then post it with `github/add_pr_review` (`list_pr_reviews` reads existing reviews). *(verified 2026-08-14)* |
 
 ---
 
