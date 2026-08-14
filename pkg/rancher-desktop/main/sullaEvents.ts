@@ -849,6 +849,15 @@ export function initSullaEvents(): void {
   powerMonitor.on('suspend', () => {
     console.log('[Power] System suspending');
 
+    // Stamp HeartbeatService so resume can measure sleep and abort a
+    // mid-tick run whose LLM sockets died while the Mac was down.
+    try {
+      const { getHeartbeatService } = require('@pkg/agent/services/HeartbeatService');
+      getHeartbeatService().handleSuspend();
+    } catch (err) {
+      console.warn('[Power] Failed to suspend heartbeat scheduler:', err);
+    }
+
     // Close the mobile-relay socket cleanly so the relay DO drops this peer
     // now — mobile then sees the desktop offline immediately instead of
     // after the server-side stale timeout.
@@ -888,6 +897,16 @@ export function initSullaEvents(): void {
       getBackendGraphWebSocketService().reinitialize();
     } catch (err) {
       console.warn('[Power] Failed to reinitialize backend graph service:', err);
+    }
+
+    // Kick the standing shift. Sleep freezes the 60s interval and can leave
+    // a mid-tick run latch stuck; without this the heartbeat stays silent
+    // until the next minute-aligned check — or forever if isExecuting leaked.
+    try {
+      const { getHeartbeatService } = require('@pkg/agent/services/HeartbeatService');
+      void getHeartbeatService().handleResume();
+    } catch (err) {
+      console.warn('[Power] Failed to resume heartbeat scheduler:', err);
     }
 
     // Notify all renderer windows so frontend services can react

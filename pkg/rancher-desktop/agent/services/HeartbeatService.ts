@@ -69,12 +69,19 @@ export class HeartbeatService {
   // ── Abort controller for in-flight heartbeat ──
   private activeAbort: AbortController | null = null;
 
+  private executionStartedMs = 0;
+  private suspendStartedMs = 0;
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
     console.log('[HeartbeatService] Initializing scheduler...');
     this.initialized = true;
     this.startedAtMs = Date.now();
-    this.recordEvent('scheduler_started', 'Heartbeat scheduler initialized');
+    const persisted = Number(await SullaSettingsModel.get('heartbeatLastTriggerMs', 0)) || 0;
+    if (persisted > 0) this.lastTriggerMs = persisted;
+    this.recordEvent('scheduler_started', persisted
+      ? `Heartbeat scheduler initialized (last run ${ new Date(persisted).toISOString() })`
+      : 'Heartbeat scheduler initialized');
     this.startScheduler();
   }
 
@@ -171,6 +178,7 @@ export class HeartbeatService {
         this.recordEvent('scheduler_check', `Heartbeat due (${ delayMin }min interval) — triggering`);
         await this.triggerHeartbeat();
         this.lastTriggerMs = Date.now();
+        void SullaSettingsModel.set('heartbeatLastTriggerMs', this.lastTriggerMs, 'number');
 
         // Schedule a macOS wake event for the next heartbeat (only if >5 min away)
         if (delayMin > 5) {
@@ -201,6 +209,7 @@ export class HeartbeatService {
     this.isExecuting = true;
     this.totalTriggers++;
     const triggerStart = Date.now();
+    this.executionStartedMs = triggerStart;
     this.recordEvent('heartbeat_triggered', 'Heartbeat execution started');
 
     // Create abort controller for this execution
@@ -270,6 +279,7 @@ export class HeartbeatService {
       this.recordEvent('sleep_prevention_stopped', 'caffeinate released after heartbeat execution');
       this.activeAbort = null;
       this.isExecuting = false;
+      this.executionStartedMs = 0;
     }
   }
 
@@ -300,6 +310,52 @@ Your active projects and goals have been loaded into your recall context. Review
   /** Call from UI after settings change to force immediate check */
   async forceCheck(): Promise<void> {
     if (this.initialized) await this.checkAndMaybeTrigger();
+  }
+
+  /** powerMonitor suspend — remember when the machine went down. */
+  handleSuspend(): void {
+    if (!this.initialized) return;
+    this.suspendStartedMs = Date.now();
+    this.recordEvent('scheduler_check', 'System suspending');
+  }
+
+  /**
+   * powerMonitor resume — the 60s setInterval freezes across sleep and is
+   * unreliable after thaw. Relay already reconnects here; the standing shift
+   * must too. A long sleep kills in-flight LLM sockets, so abort those and
+   * let the delayed check start a fresh cycle.
+   */
+  async handleResume(): Promise<void> {
+    if (!this.initialized) return;
+
+    // Prefer the suspend stamp. macOS sometimes delivers resume without
+    // suspend (clamshell, some lid events); fall back to how long the
+    // current run has been latched so isExecuting cannot stay stuck.
+    const now = Date.now();
+    const stampedMs = this.suspendStartedMs > 0 ? now - this.suspendStartedMs : 0;
+    const inferredMs = (this.isExecuting && this.executionStartedMs > 0)
+      ? now - this.executionStartedMs
+      : 0;
+    const sleptMs = Math.max(stampedMs, inferredMs);
+    const inferred = stampedMs === 0 && inferredMs > 0;
+    this.suspendStartedMs = 0;
+    const sleptMin = Math.round(sleptMs / 60000);
+    this.recordEvent('scheduler_check', sleptMs > 0
+      ? `System resumed after ${ sleptMin }min ${ inferred ? 'inferred ' : '' }sleep — forcing heartbeat check`
+      : 'System resumed — forcing heartbeat check');
+
+    const LONG_SLEEP_MS = 120_000;
+    if (this.isExecuting && sleptMs > LONG_SLEEP_MS && this.activeAbort) {
+      console.log(`[HeartbeatService] Aborting in-flight heartbeat after ${ sleptMin }min sleep`);
+      this.activeAbort.abort();
+      this.recordEvent('heartbeat_aborted', `In-flight heartbeat aborted after ${ sleptMin }min sleep`);
+      setTimeout(() => {
+        void this.checkAndMaybeTrigger();
+      }, 2000);
+      return;
+    }
+
+    await this.checkAndMaybeTrigger();
   }
 
   destroy(): void {
