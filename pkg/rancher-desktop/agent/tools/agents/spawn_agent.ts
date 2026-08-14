@@ -1,6 +1,7 @@
 import { BaseTool, ToolResponse } from '../base';
 import { createJob, completeJob, failJob, getJobAbortSignal } from './jobRegistry';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
+import { combineAborts } from '../../services/AbortService';
 import { findAgentDir } from '../../utils/sullaPaths';
 
 import type { AgentJobResult } from './jobRegistry';
@@ -116,17 +117,19 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
 
-        // Propagate abort signals so both the user's stop button (parent abort)
+        // Propagate abort so both the user's stop button (parent AbortService)
         // AND stop_agent_job(jobId) (this job's signal) reach the sub-agents.
-        const parentAbort: AbortSignal | undefined = (this.state as any)?.metadata?.options?.abort;
-        const signals = [parentAbort, jobAbortSignal].filter(Boolean) as AbortSignal[];
-        if (signals.length) {
+        // options.abort is typed AbortService everywhere else (Graph / BaseNode /
+        // throwIfAborted). The 2026-07-15 wiring treated it as AbortSignal and
+        // called AbortSignal.any([AbortService, jobSignal]) — TypeError:
+        // "signals[0] must be AbortSignal". Keep the contract: always write
+        // an AbortService that fans out from whichever sources exist.
+        const parentAbort = (this.state as any)?.metadata?.options?.abort;
+        const combined = combineAborts(parentAbort, jobAbortSignal);
+
+        if (combined) {
           subState.metadata.options ??= {};
-          // AbortSignal.any (Node 20+) fires when EITHER source aborts; fall back
-          // to the single signal if only one is present.
-          subState.metadata.options.abort = signals.length === 1
-            ? signals[0]
-            : (AbortSignal as any).any(signals);
+          subState.metadata.options.abort = combined;
         }
 
         // Register this threadId on the parent so user-abort fans out to it
