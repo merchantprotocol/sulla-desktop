@@ -143,11 +143,13 @@ export class AgentNode extends BaseNode {
     const episodicContext    = (state.metadata as any).episodicContext;
     const recallContext       = (state.metadata as any).recallContext;
     const observationContext  = (state.metadata as any).observationContext;
+    const conversationRecallContext = (state.metadata as any).conversationRecallContext;
     const securityContext     = (state.metadata as any).securityContext;
     const combinedContextParts: string[] = [];
     if (episodicContext)   combinedContextParts.push(`<episodic_context>\n${ episodicContext }\n</episodic_context>`);
     if (recallContext)      combinedContextParts.push(`<recall_context>\n${ recallContext }\n</recall_context>`);
     if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
+    if (conversationRecallContext) combinedContextParts.push(`<conversation_recall_context>\n${ conversationRecallContext }\n</conversation_recall_context>`);
     if (securityContext)    combinedContextParts.push(`<security_context>\n${ securityContext }\n</security_context>`);
 
     if (combinedContextParts.length > 0) {

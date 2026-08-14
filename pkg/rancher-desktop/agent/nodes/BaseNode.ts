@@ -805,8 +805,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(episodic_context|recall_context|observation_context|security_context|unstuck_context|routine_digest)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:episodic_context|recall_context|observation_context|security_context|unstuck_context|routine_digest)>/;
+    const BLOCK_RE = /\n*<(episodic_context|recall_context|observation_context|conversation_recall_context|security_context|unstuck_context|routine_digest)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:episodic_context|recall_context|observation_context|conversation_recall_context|security_context|unstuck_context|routine_digest)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;

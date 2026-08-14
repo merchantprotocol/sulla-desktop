@@ -661,6 +661,12 @@ Rules that apply on every turn:
       parts.push(`<observation_context>\n${ observationContext.trim() }\n</observation_context>`);
     }
 
+    // Conversation recall context from conversation-recall agent (past dialogue history)
+    const conversationRecallContext = (state?.metadata as any)?.conversationRecallContext;
+    if (conversationRecallContext && typeof conversationRecallContext === 'string' && conversationRecallContext.trim()) {
+      parts.push(`<conversation_recall_context>\n${ conversationRecallContext.trim() }\n</conversation_recall_context>`);
+    }
+
     // Security briefing from the security-conscience agent (the "angel on the shoulder")
     const securityContext = (state?.metadata as any)?.securityContext;
     if (securityContext && typeof securityContext === 'string' && securityContext.trim()) {
