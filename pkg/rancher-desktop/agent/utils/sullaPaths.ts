@@ -411,6 +411,87 @@ These are product defaults — extend per-install via rules/user/ or add_rule.
  * Seed the default global rule files if they are missing. Idempotent:
  * existing files (including user edits) are never overwritten.
  */
+export function resolveSullaLedgerDir(): string {
+  return path.join(resolveSullaHomeDir(), 'ledger');
+}
+
+/**
+ * Seed the outcome-ledger scaffold (generic templates only — per the
+ * no-user-data-in-shipped-code rule, nothing install-specific is written).
+ * The ledger is the operator's single work-state store: the soul defines the
+ * contract, the observation writer maintains it each turn, the heartbeat
+ * reads it each cycle, and ledger/scoreboard measures it. Idempotent: only
+ * missing files are created; user content is never overwritten.
+ */
+function seedLedgerDefaults(): void {
+  const dir = resolveSullaLedgerDir();
+  fs.mkdirSync(path.join(dir, 'goals'), { recursive: true });
+
+  const templates: Array<{ filename: string; content: string }> = [
+    {
+      filename: 'LEDGER.md',
+      content:  `# Outcome Ledger — Governing Document
+
+This is the operator's agenda and record — the ONE work-state store. Every autonomous cycle starts here: pick the top WORKING item, move it, write the outcome back.
+
+## Buckets
+| Bucket | Meaning | Lives in |
+|---|---|---|
+| WORKING | In motion now, or staged at a gate | this file + its goal file |
+| SHOULD | Committed — has an owner and a definition of done | goals/ |
+| WANT / MIGHT | Valuable-not-committed / speculative | this file, Backlog section |
+| DONE | Shipped, outcome recorded | OUTCOMES.md |
+
+## Aging rules
+- WORKING untouched 7 days -> flag in weekly review: unblock, demote, or kill.
+- WANT untouched 30 days -> MIGHT. MIGHT untouched 90 days -> archive with one line of why.
+- Every cycle writes back: an outcome in OUTCOMES.md or a changed next-action line here. A cycle that changes nothing was an observer cycle.
+
+## WORKING
+
+| Item | Goal | State | Next action | Gate? |
+|---|---|---|---|---|
+
+## Backlog (WANT / MIGHT)
+
+`,
+    },
+    {
+      filename: 'OUTCOMES.md',
+      content:  `# Outcomes — What Shipped and What It Changed
+
+Newest first. One line per outcome: date — what shipped — what it changed.
+
+`,
+    },
+    {
+      filename: 'AUDIT.md',
+      content:  `# Audit — Unilateral Actions
+
+One line per gate-free autonomous action: date — action — why — undo path. This record is what earns a wider authority envelope.
+
+`,
+    },
+    {
+      filename: path.join('goals', 'README.md'),
+      content:  `One file per goal: outcome metric, definition of done, epics with tasks, and a dated log. Referenced from LEDGER.md WORKING rows.
+`,
+    },
+  ];
+
+  for (const { filename, content } of templates) {
+    const target = path.join(dir, filename);
+    try {
+      if (!fs.existsSync(target)) {
+        fs.writeFileSync(target, content, 'utf8');
+        console.log(`[Sulla] Seeded ledger file: ${ target }`);
+      }
+    } catch (err) {
+      console.error(`[Sulla] Failed to seed ledger file ${ target }:`, err);
+    }
+  }
+}
+
 function seedGlobalRuleDefaults(): void {
   const dir = resolveSullaGlobalRulesDir();
   for (const { filename, content } of DEFAULT_GLOBAL_RULES) {
@@ -477,4 +558,8 @@ export async function bootstrapSullaHome(): Promise<void> {
   fs.mkdirSync(resolveSullaGlobalRulesDir(), { recursive: true });
   fs.mkdirSync(resolveSullaUserRulesDir(), { recursive: true });
   seedGlobalRuleDefaults();
+
+  // Outcome ledger — the operator's single work-state store (generic
+  // templates only; user content is never overwritten).
+  seedLedgerDefaults();
 }
