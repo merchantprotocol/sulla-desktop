@@ -109,7 +109,9 @@ async function fetchJobs(): Promise<AgentsListResponse['jobs']> {
     const { getAllJobs } = await import(
       '@pkg/agent/tools/agents/jobRegistry'
     );
-    return getAllJobs().map(j => ({
+    const allJobs = await getAllJobs();
+
+    return allJobs.map(j => ({
       jobId:      j.jobId,
       status:     j.status,
       createdAt:  j.createdAt,
