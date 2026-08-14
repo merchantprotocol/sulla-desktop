@@ -3,8 +3,8 @@ import path from 'path';
 import Electron, { WebContentsView, session } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
-import Logging from '@pkg/utils/logging';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
+import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { safeSend } from '@pkg/utils/safeSend';
 import { getWindow, openUrlInApp } from '@pkg/window';
@@ -39,7 +39,7 @@ export class BrowserTabViewManager {
    * `setFocusedTab`. ChromeApiService does the same for programmatic
    * tab activation.
    */
-  private focusedTabId: string | null = null;
+  private focusedTabId:    string | null = null;
   /**
    * Latest bounds the renderer has reported for each tab. Always current —
    * the renderer's ResizeObserver updates this continuously regardless of
@@ -151,8 +151,6 @@ export class BrowserTabViewManager {
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
-
-
 
   createView(tabId: string, url: string, bounds: Electron.Rectangle): void {
     // Idempotent: if the view already exists, just navigate (if URL changed)
@@ -266,11 +264,11 @@ export class BrowserTabViewManager {
   }
 
   goBack(tabId: string): void {
-    this.getWebContents(tabId)?.goBack();
+    this.getWebContents(tabId)?.navigationHistory.goBack();
   }
 
   goForward(tabId: string): void {
-    this.getWebContents(tabId)?.goForward();
+    this.getWebContents(tabId)?.navigationHistory.goForward();
   }
 
   reload(tabId: string): void {
@@ -308,7 +306,11 @@ export class BrowserTabViewManager {
    * comes up). Every caller — renderer, chrome-api, login overlay —
    * funnels through here. `reconcileVisibility` does the mechanical work.
    */
-  setFocusedTab(tabId: string | null): void {
+  setFocusedTab(tabId: string | null, clearOnlyIfFocusedTabId?: string): void {
+    if (tabId === null && clearOnlyIfFocusedTabId && this.focusedTabId !== clearOnlyIfFocusedTabId) {
+      console.log(`[BrowserTabView] ignored stale focus clear from ${ clearOnlyIfFocusedTabId }; focused=${ this.focusedTabId ?? '(none)' }`);
+      return;
+    }
     if (this.focusedTabId === tabId) return;
     console.log(`[BrowserTabView] setFocusedTab ${ this.focusedTabId ?? '(none)' } → ${ tabId ?? '(none)' }`);
     this.focusedTabId = tabId;
@@ -910,8 +912,8 @@ export class BrowserTabViewManager {
         case 'select-all': wc.selectAll(); break;
         case 'undo': wc.undo(); break;
         case 'redo': wc.redo(); break;
-        case 'go-back': wc.goBack(); break;
-        case 'go-forward': wc.goForward(); break;
+        case 'go-back': wc.navigationHistory.goBack(); break;
+        case 'go-forward': wc.navigationHistory.goForward(); break;
         case 'reload': wc.reload(); break;
         case 'copy-image': wc.copyImageAt(data.x ?? 0, data.y ?? 0); break;
         case 'inspect': wc.inspectElement(data.x ?? 0, data.y ?? 0); break;

@@ -67,13 +67,28 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
   'search_observations',          // Check for existing similar observations before adding
   'list_observations',            // Browse active observations
   'file_search',                  // Search identity/observation files
-  'write_file',                   // Write updates to identity/observation files
+  'read_file',                    // Read ledger/identity files before updating them
+  'write_file',                   // Write updates to identity/observation/ledger files
 ];
 
 /** Observation Recall: read-only — search and list observations for context injection */
 const OBSERVATION_RECALL_TOOLS: string[] = [
   'search_observations',  // ILIKE search on observation content
   'list_observations',    // Priority-sorted list of active observations
+];
+
+/**
+ * Conversation Recall: read-only — searches PAST conversations (their titles,
+ * summaries, and message transcripts) to re-surface context about earlier work,
+ * decisions, and projects. This is distinct from episodic recall (which walks the
+ * curated knowledge graph) and observation recall (which reads the observations
+ * table) — this lane reads the raw dialogue history the other two never touch.
+ */
+const CONVERSATION_RECALL_TOOLS: string[] = [
+  'recall_index_lookup',   // Check the Redis citation index FIRST — reuse past digests
+  'recall_index_store',    // Persist fresh conversation digests so future turns skip the re-read
+  'recall_conversations',  // PRIMARY: content-search + read the on-disk training transcripts (~/sulla/logs)
+  'search_conversations',  // Secondary: find conversations by DB title/summary (e.g. mobile-relay chats not on disk)
 ];
 
 /**
@@ -203,7 +218,7 @@ primary agent can act immediately without a \`browse_tools\` round-trip.
 
 ### 2. Active Projects
 Search \`~/sulla/projects/\` for project directories matching the topic.
-Read the relevant PROJECT.md and \`~/sulla/projects/ACTIVE_PROJECTS.md\`.
+Read the relevant PROJECT.md and \`~/sulla/ledger/LEDGER.md\` (fall back to legacy \`~/sulla/projects/ACTIVE_PROJECTS.md\` on installs that still have one).
 Include project names, statuses, blockers, and next actions.
 
 ### 3. Skills
@@ -262,9 +277,9 @@ follows the precedent instead of re-deriving it.
 Search \`~/sulla/identity/\` when the request involves business strategy, outreach,
 content, personal preferences, goals, or anything where knowing WHO the human is
 would shape the answer.
-- \`~/sulla/identity/human/identity.md\` — who Jonathon is, background, role
+- \`~/sulla/identity/human/identity.md\` — who the Human is, background, role
 - \`~/sulla/identity/human/goals.md\` — current goals, financial targets, priorities
-- \`~/sulla/identity/business/identity.md\` — Merchant Protocol business identity
+- \`~/sulla/identity/business/identity.md\` — the Human's business identity
 - \`~/sulla/identity/business/goals.md\` — business goals and active initiatives
 - \`~/sulla/identity/agent/identity.md\` — agent operating rules and decision framework
 Read only the files relevant to the request — don't load all of them by default.
@@ -731,7 +746,22 @@ Your ONLY jobs:
    that are no longer accurate or have been superseded by a newer one.
 
 3. If something important should update an identity file at ~/sulla/identity/,
-   read and update that specific file with write_file. Nothing else.
+   read and update that specific file with write_file.
+
+4. Maintain the OUTCOME LEDGER at ~/sulla/ledger/ (the agent's single
+   work-state store). From THIS conversation only, extract:
+   - Commitments made ("I'll build X", "next step is Y") -> ensure a matching
+     WORKING/next-action line exists in ~/sulla/ledger/LEDGER.md (read_file
+     first; update the existing row instead of duplicating).
+   - Outcomes shipped (something merged, pushed, filed, fixed, verified,
+     decided) -> append ONE dated line to ~/sulla/ledger/OUTCOMES.md
+     (newest first, under the header): date — what shipped — what it changed.
+   - A gate opening or closing (approval given, PR merged, decision made) ->
+     update that row's state in LEDGER.md.
+   Never rewrite ledger history — append outcomes, edit only the live rows
+   you are updating. If ~/sulla/ledger/ does not exist, skip (the app
+   scaffolds it at boot). Skip entirely when the conversation contains no
+   commitment, outcome, or gate change — most turns need NO ledger write.
 
 When saving new observations, include why certain decisions were made (not just what). Like:
 
@@ -776,6 +806,71 @@ plus list_observations) as ONE batch in your first response, then answer.
 Do not search one term at a time across multiple rounds.
 
 Be selective: a 5-entry relevant subset is better than 30 entries dumped verbatim.`;
+
+const CONVERSATION_RECALL_PROMPT = `You are the CONVERSATION RECALL process for a primary agent. You are READ-ONLY.
+
+## What you are for
+
+The primary agent has amnesia between conversations. You give it back the
+relevant slice of its own past. You search PRIOR conversations — their titles,
+summaries, and actual message transcripts — and surface what matters to the
+current request: past decisions, project status, prior solutions, promises made,
+and where work left off.
+
+You are NOT the episodic (knowledge-graph) recall and NOT the observations
+recall — those run separately. Your unique job is the raw dialogue history:
+"have we talked about this before, and what did we decide?"
+
+## Your corpus
+
+The real history lives in the on-disk training logs (\`~/sulla/logs/conv_*.jsonl\`)
+— the actual turn-by-turn transcripts of every past conversation. \`recall_conversations\`
+searches and reads them. That is your primary source.
+
+## How to work (be fast — the primary agent BLOCKS until you finish)
+
+1. Read the latest real user turn. If it is casual/greeting/small-talk with no
+   reference to past work, return an empty <conversation_recall_context /> and stop.
+
+2. First response — issue these IN PARALLEL (tool calls in one response run
+   concurrently):
+   - \`recall_index_lookup\` with a \`topic\` naming the subject, in case this was
+     already researched this session (if FRESH, reuse the cached digest).
+   - \`recall_conversations\` with \`action: "search"\` and a \`query\` of the 1-4
+     strongest anchor terms (project names, features, people, services). You may
+     issue 2-3 searches with different phrasings at once. (Optionally also
+     \`search_conversations action:"search"\` to catch conversations by title.)
+
+3. For the 1-3 most relevant hits, call \`recall_conversations\` with
+   \`action: "read"\` and the \`id\` from the search result to read the transcript.
+   Do NOT read more than 3 transcripts — pick the best candidates by snippet/date.
+
+4. Optionally \`recall_index_store\` a compact digest under the same \`topic\` so
+   later turns skip the re-read. Never store secrets.
+
+Hard limits: at most ~2 rounds of tool calls. Never read more than 3 transcripts.
+Prefer breadth in round one over depth across many rounds.
+
+## Output — inside AGENT_DONE
+
+Return ONLY relevant recalled context wrapped exactly like this:
+
+<conversation_recall_context>
+### [Conversation title] — [date]
+**Source:** [conversation id]
+**What happened:** [1-3 sentences: the decision, the outcome, where it left off]
+**Relevant now because:** [why this matters to the current request]
+</conversation_recall_context>
+
+Rules:
+- Include only conversations that genuinely bear on the current turn. Two solid
+  entries beat ten weak ones.
+- Quote concrete facts (names, statuses, file paths, decisions) so the primary
+  agent can act without re-reading the source.
+- Never fabricate. If a transcript does not actually contain the detail, say so
+  or omit it. Only surface what the tools returned.
+- If nothing is relevant, return exactly \`<conversation_recall_context />\` and nothing else.
+- Do NOT narrate your process or list your searches. Output only the block.`;
 
 // ── Observation Recall: cache constants ──────────────────────────────────
 
@@ -1269,7 +1364,7 @@ export const GraphRegistry = {
     const state = await buildSubconsciousState({
       systemPrompt:           OBSERVATION_AGENT_PROMPT,
       tools:                  OBSERVATION_AGENT_TOOLS,
-      userMessage:            'Review this conversation. Search for existing observations before adding any new ones (update instead of duplicate). Soft-archive stale or superseded entries. Update identity files if warranted. If nothing needs to change, finish immediately.',
+      userMessage:            'Review this conversation. Search for existing observations before adding any new ones (update instead of duplicate). Soft-archive stale or superseded entries. Update identity files if warranted. Write any commitments/outcomes/gate-changes from this conversation to the outcome ledger (~/sulla/ledger/). If nothing needs to change, finish immediately.',
       messages:               [...parentState.messages],
       // Wider than recall — the writer mines the conversation for facts —
       // but still bounded; the summarizer compacts anything older anyway.
@@ -1305,6 +1400,37 @@ export const GraphRegistry = {
       contextWindow:          20,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation-recall',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create a Conversation Recall graph — read-only search of PAST conversations
+   * (titles, summaries, and message transcripts) to re-surface context about
+   * earlier work, decisions, and projects. Complements episodic recall (knowledge
+   * graph) and observation recall (observations table) by reading the raw dialogue
+   * history neither of those touches. Returns a `<conversation_recall_context>`
+   * block, or the empty self-closing form when nothing is relevant.
+   */
+  createConversationRecall: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           CONVERSATION_RECALL_PROMPT,
+      tools:                  CONVERSATION_RECALL_TOOLS,
+      userMessage:            'Read the latest real user turn, search past conversations for anything that bears on it, read the best 1-3 transcripts, and return only the relevant recalled context inside a <conversation_recall_context> block (empty if nothing is relevant).',
+      messages:               [...parentState.messages],
+      // Recent tail only: conv-recall reads the latest exchange, then searches history.
+      contextWindow:          15,
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'conversation-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,

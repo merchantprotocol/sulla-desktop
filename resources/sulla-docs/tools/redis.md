@@ -9,6 +9,7 @@ The codebase has been audited — Redis is sparsely used today. Primary namespac
 | Key / namespace | Type | Purpose | Owner |
 |----------------|------|---------|-------|
 | `sulla:bridge:human_presence` | hash | Human presence state (availability, idle minutes, view, channel) | `HumanHeartbeatBridge` |
+| `sulla_settings` | hash | **Cache only** for SullaSettingsModel. Do not read/write with redis_* tools (blocked). | `SullaSettingsModel` |
 | Other namespaces (anticipated) | — | Queues, sessions, locks not actively used yet | — |
 
 Pub/sub channels: **none active**. Sulla uses WebSocket channels (BackendGraphWebSocketService) for inter-agent comms, not Redis pub/sub. The wire is there (`RedisClient.publish()`) but no active subscribers.
@@ -44,6 +45,14 @@ sulla bridge/get_human_presence '{}'
 ```
 The bridge tool is preferred — it parses and returns a typed object.
 
+### "Read or write a Sulla Desktop setting"
+**Do not use these Redis tools.** `sulla_settings` is owned by `SullaSettingsModel` (Redis cache → Postgres → file fallback; writes go through both). The agent `redis_*` tools **block** that key at runtime.
+
+```bash
+sulla settings/settings_get '{"property":"heartbeatEnabled"}'
+sulla settings/settings_set '{"property":"heartbeatEnabled","value":"true","cast":"boolean"}'
+```
+
 ### "Cache this small value with a 1-hour TTL"
 ```bash
 sulla redis/redis_set '{"key":"my-cache:topic-X","value":"...","ttl":3600}'
@@ -71,6 +80,7 @@ sulla meta/exec '{"command":"docker exec sulla_redis redis-cli KEYS \"*\""}'
 ## Hard rules
 
 - **Don't write to `sulla:bridge:human_presence` directly.** Let the `HumanPresenceTracker` (frontend) and `HumanHeartbeatBridge` (service) own it. If you corrupt it, the heartbeat will make wrong decisions about whether to act autonomously.
+- **Don't touch `sulla_settings` with redis_*.** That hash is SullaSettingsModel's cache. Raw reads can be stale; raw writes desync Postgres. Use `sulla settings/settings_get` / `settings_set`. The redis_* tools refuse the key.
 - **Don't use Redis as the source of truth for anything durable.** Sulla's Redis runs without persistence — restarting the container loses all keys.
 - **Namespace your keys.** Use prefixes like `agent:<your-purpose>:<key>` so you don't collide with future Sulla internals.
 - **Strings only.** Don't try to store binary data — base64-encode it first.

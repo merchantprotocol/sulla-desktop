@@ -25,7 +25,9 @@ import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { toolRegistry } from './registry';
 import { rulesToolManifests } from './rules/manifests';
+import { ledgerToolManifests } from './ledger/manifests';
 import { secretaryToolManifests } from './secretary/manifests';
+import { settingsToolManifests } from './settings/manifests';
 import { slackToolManifests } from './slack/manifests';
 import { uiToolManifests } from './ui/manifests';
 import { workflowToolManifests } from './workflow/manifests';
@@ -53,7 +55,9 @@ toolRegistry.registerManifests([
   ...rdctlToolManifests,
   ...redisToolManifests,
   ...rulesToolManifests,
+  ...ledgerToolManifests,
   ...secretaryToolManifests,
+  ...settingsToolManifests,
   ...slackToolManifests,
   ...uiToolManifests,
   ...workflowToolManifests,

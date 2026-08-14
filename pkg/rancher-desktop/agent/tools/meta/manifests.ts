@@ -181,6 +181,19 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./recall_index_store'),
   },
   {
+    name:        'recall_conversations',
+    description: 'Search and read the on-disk conversation logs (~/sulla/logs/conv_*.jsonl) — the training-formatted JSONL transcripts of every past user-facing conversation (subconscious agents are never logged here). Unlike search_conversations (which matches DB titles/summaries), this searches the actual message CONTENT and returns transcripts. action:"search" finds past conversations by keyword and returns each hit\'s id, date, title, and a matching snippet; action:"read" renders one conversation\'s full transcript by id. Use this to recall what was actually said/decided in earlier conversations.',
+    category:    'memory',
+    schemaDef:   {
+      action: { type: 'enum', enum: ['search', 'read'], description: 'search: keyword content-search across all conversation logs. read: render one conversation transcript by id.' },
+      query:  { type: 'string', optional: true, description: 'Keywords to match against message content. Required for search.' },
+      id:     { type: 'string', optional: true, description: 'Conversation id (from a search result). Required for read.' },
+      limit:  { type: 'number', optional: true, description: 'Max search results to return (default 8, max 20).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./recall_conversations'),
+  },
+  {
     name:        'browse_tools',
     description: 'Discover available sulla CLI tools by category or keyword. Returns ready-to-run `sulla <category>/<tool>` commands with descriptions and parameter JSON. IMPORTANT: the commands it returns are NOT directly callable tools — you invoke each one by passing the full command string to the `exec` tool (e.g. exec({command: "sulla docker/ps \'{}\'"})). NEVER call execute_workflow for any command listed here — execute_workflow is only for named n8n/Sulla workflows. Call this before attempting any sulla CLI invocation you are unsure about.',
     category:    'meta',

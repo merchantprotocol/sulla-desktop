@@ -5,11 +5,11 @@ import { runConversationTurn } from './conversationRunner';
 const MAX_DEPTH = 3;
 
 /**
- * Open a persistent, multi-turn conversation with a sub-agent. Runs the first
- * turn synchronously and returns the sub-agent's reply plus a conversationId to
- * continue with send_agent_message / read_agent_conversation. Unlike
- * spawn_agent, the sub-agent stays alive between messages so you can have a real
- * back-and-forth (delegate, then clarify, correct, or ask follow-ups).
+ * LEGACY multi-turn wrapper. Prefer spawn_agent for delegation.
+ * Open a persistent conversation with a sub-agent. Runs the first turn
+ * synchronously and returns the sub-agent's reply plus a conversationId to
+ * continue with send_agent_message / read_agent_conversation. Use only when
+ * you genuinely need iterative back-and-forth with the same worker.
  */
 export class StartAgentConversationWorker extends BaseTool {
   name = '';

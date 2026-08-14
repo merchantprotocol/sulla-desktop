@@ -38,3 +38,10 @@ logs/
 # resources/darwin/. No reason to track the binaries themselves.
 /pkg/rancher-desktop/main/audio-driver/platform/darwin/capture-loopback
 /pkg/rancher-desktop/main/audio-driver/platform/darwin/create-mirror
+
+# Local build/tooling logs — never commit
+.build-*.log
+.tsc-*.log
+.eslint-*.log
+.install-*.log
+.package-*.log

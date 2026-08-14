@@ -1,5 +1,6 @@
 import { redisClient } from '../../database/RedisClient';
 import { BaseTool, ToolResponse } from '../base';
+import { rejectSettingsBypass } from './settingsGuard';
 
 /**
  * Redis Hget Tool - Worker class for execution
@@ -9,6 +10,10 @@ export class RedisHgetWorker extends BaseTool {
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { key, field } = input;
+
+    const blocked = rejectSettingsBypass(key, field, 'hget');
+
+    if (blocked) return blocked;
 
     try {
       const value = await redisClient.hget(key, field);

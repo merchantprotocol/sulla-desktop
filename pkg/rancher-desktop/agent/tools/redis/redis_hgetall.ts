@@ -1,5 +1,6 @@
 import { redisClient } from '../../database/RedisClient';
 import { BaseTool, ToolResponse } from '../base';
+import { rejectSettingsBypass } from './settingsGuard';
 
 /**
  * Redis Hgetall Tool - Worker class for execution
@@ -9,6 +10,10 @@ export class RedisHgetallWorker extends BaseTool {
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { key } = input;
+
+    const blocked = rejectSettingsBypass(key, undefined, 'hgetall');
+
+    if (blocked) return blocked;
 
     try {
       const obj = await redisClient.hgetall(key);

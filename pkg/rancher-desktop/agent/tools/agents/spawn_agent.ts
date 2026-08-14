@@ -86,6 +86,10 @@ export class SpawnAgentWorker extends BaseTool {
     const { GraphRegistry } = await import('../../services/GraphRegistry');
 
     const parentChannel = (this.state)?.metadata?.wsChannel || 'sulla-desktop';
+    // The orchestrator's own conversation thread. Async jobs use this to wake
+    // the parent graph with their results when they finish, so an orchestrator
+    // that fired-and-forgot doesn't sit thinking its sub-agents "died".
+    const parentThreadId: string | undefined = (this.state as any)?.metadata?.threadId;
 
     // Abort signal for THIS async job (set once the job is created below).
     // Threaded into each sub-agent so stop_agent_job(jobId) can cancel them.
@@ -217,7 +221,7 @@ export class SpawnAgentWorker extends BaseTool {
 
     // ── Async mode: fire and forget ─────────────────────────────
     if (async_) {
-      const job = createJob(tasks.length);
+      const job = await createJob(tasks.length);
       // Wire this job's abort signal in BEFORE launching, so a stop_agent_job
       // call fans out to every sub-agent this job spawns.
       jobAbortSignal = getJobAbortSignal(job.jobId);
@@ -228,11 +232,17 @@ export class SpawnAgentWorker extends BaseTool {
           completeJob(job.jobId, results);
           console.log(`[spawn_agent] Async job ${ job.jobId } completed — ${ results.length } result(s)`);
           await emitProactiveCompletion(parentChannel, job.jobId, results);
+          // Feed the results back INTO the orchestrator's loop, not just onto a
+          // UI card. Without this the parent's turn already ended and nothing
+          // re-invokes it — the results would strand and the orchestrator would
+          // report that the sub-agents "died".
+          wakeParentGraph(parentChannel, parentThreadId, job.jobId, results);
         })
         .catch(async(err) => {
           failJob(job.jobId, (err as Error).message);
           console.error(`[spawn_agent] Async job ${ job.jobId } failed:`, err);
           await emitProactiveCompletion(parentChannel, job.jobId, [], (err as Error).message);
+          wakeParentGraph(parentChannel, parentThreadId, job.jobId, [], (err as Error).message);
         });
 
       return {
@@ -242,7 +252,7 @@ export class SpawnAgentWorker extends BaseTool {
           jobId:     job.jobId,
           taskCount: tasks.length,
           parallel,
-          message:   `${ tasks.length } sub-agent(s) launched in the background. Use check_agent_jobs(jobId: "${ job.jobId }") to poll for results.`,
+          message:   `${ tasks.length } sub-agent(s) launched in the background. Results will wake this graph when they finish (check_agent_jobs is the fallback/history read).`,
         }, null, 2),
       };
     }
@@ -265,11 +275,81 @@ export class SpawnAgentWorker extends BaseTool {
   }
 }
 
+// ─── Parent-graph wake ───────────────────────────────────────────
+// Re-enters the orchestrator's own graph loop with the finished sub-agent
+// results as input. The proactive card (below) is display-only — the
+// MessageDispatcher 'proactive' handler pushes it to the message list WITHOUT
+// calling graph.execute(), so on its own it never wakes the orchestrator.
+//
+// This sends a `user_message` on the parent channel + thread, which loops back
+// through getWebSocketClientService() into BackendGraphWebSocketService and
+// runs a fresh turn on the SAME thread (the exact primitive the inter-agent
+// `<channel:x wake>` tag uses). Because the orchestrator's turn has already
+// ended by the time an async job settles, that thread is idle and the wake
+// runs cleanly, injecting the results straight into its reasoning loop.
+//
+// No-op when there is no parent thread to resume (falls back to card-only,
+// the legacy behaviour).
+function wakeParentGraph(
+  parentChannel: string,
+  parentThreadId: string | undefined,
+  jobId: string,
+  results: AgentJobResult[],
+  failureReason?: string,
+): void {
+  if (!parentThreadId) return;
+
+  try {
+    const ws = getWebSocketClientService();
+    const content = buildWakeContent(jobId, results, failureReason);
+
+    ws.send(parentChannel, {
+      type: 'user_message',
+      data: {
+        content,
+        threadId: parentThreadId,
+        metadata: {
+          // Marks this as a background-completion wake rather than human input,
+          // so downstream nodes/telemetry can tell it apart from typed messages.
+          source:      'sub_agent_completion',
+          origin:      'spawn_agent',
+          inputSource: 'system',
+          jobId,
+        },
+      },
+    });
+    console.log(`[spawn_agent] Woke parent graph — channel="${ parentChannel }" thread="${ parentThreadId.slice(-8) }" job=${ jobId }`);
+  } catch (e) {
+    console.warn('[spawn_agent] wakeParentGraph failed:', e);
+  }
+}
+
+/** Format the finished job as an orchestrator-facing input message. */
+function buildWakeContent(
+  jobId: string,
+  results: AgentJobResult[],
+  failureReason?: string,
+): string {
+  if (failureReason) {
+    return `[sub-agent job ${ jobId } FAILED] ${ failureReason }\n\n` +
+      'Your background sub-agent(s) errored before returning results. Decide how to proceed (retry, adjust, or report back).';
+  }
+
+  const formatted = results.map(r =>
+    `### ${ r.label } [${ r.status.toUpperCase() }]\n${ r.output }`,
+  ).join('\n\n---\n\n');
+
+  return `[sub-agent job ${ jobId } complete — ${ results.length } result(s)]\n\n` +
+    'These are the results returned by the background sub-agent(s) you launched. ' +
+    'Continue your orchestration using them (do NOT call check_agent_jobs for this job — the results are below):\n\n' +
+    formatted;
+}
+
 // ─── Proactive completion emitter ────────────────────────────────
 // Surfaces a ProactiveCard in the parent channel's chat when an async
-// spawn_agent job finishes. The parent agent will still poll via
-// check_agent_jobs to read the full results — this card is a user-
-// facing heads-up that the background work settled.
+// spawn_agent job finishes. The parent graph is woken automatically
+// with the full results; this card is a user-facing heads-up that
+// the background work settled.
 async function emitProactiveCompletion(
   parentChannel: string,
   jobId: string,

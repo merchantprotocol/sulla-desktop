@@ -1,5 +1,6 @@
 import { redisClient } from '../../database/RedisClient';
 import { BaseTool, ToolResponse } from '../base';
+import { rejectSettingsBypass } from './settingsGuard';
 
 /**
  * Redis Del Tool - Worker class for execution
@@ -9,6 +10,10 @@ export class RedisDelWorker extends BaseTool {
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { keys } = input;
+
+    const blocked = rejectSettingsBypass(keys, undefined, 'del');
+
+    if (blocked) return blocked;
 
     try {
       const count = await redisClient.del(keys);

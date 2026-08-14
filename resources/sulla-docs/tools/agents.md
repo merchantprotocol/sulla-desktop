@@ -1,13 +1,15 @@
 # Sub-Agents
 
-Spawn parallel sub-agents to do work independently and check on their progress later. Useful for: gathering data from multiple sources, batch operations, anything you want fanned out.
+Spawn parallel sub-agents to do work independently. **The ONE delegation pattern is `spawn_agent`**: async jobs (the default) now **wake the parent graph with their results when they finish** — the orchestrator continues automatically with the results injected into its loop. No polling loop is required; `check_agent_jobs` remains as a fallback/history read (e.g. after an app restart, when jobs are reported honestly as "app restarted mid-job").
+
+Useful for: gathering data from multiple sources, batch operations, anything you want fanned out.
 
 ## Tools
 
 | Tool | Canonical category | Purpose |
 |------|--------------------|---------|
 | `sulla meta/spawn_agent` | meta | Launch one or more sub-agents (fire-and-forget or blocking) |
-| `sulla agents/check_agent_jobs` | agents | Poll for results of async sub-agent jobs |
+| `sulla agents/check_agent_jobs` | agents | Fallback/history read of async jobs (results normally arrive via parent-graph wake) |
 | `sulla agents/stop_agent_job` | agents | Kill switch — cancel a running async job |
 | `sulla agents/start_agent_conversation` | agents | Open a persistent, multi-turn conversation with a sub-agent |
 | `sulla agents/send_agent_message` | agents | Send a follow-up to an open conversation, get the reply |
@@ -17,7 +19,10 @@ Spawn parallel sub-agents to do work independently and check on their progress l
 
 **Important:** the tool registry resolves tools by **name only** — `sulla agents/spawn_agent` and `sulla anything/spawn_agent` also work because the backend ignores the category segment in the URL. But the canonical surfacing in `sulla meta --help` lists `spawn_agent` under `meta`. Use that form for clarity.
 
-**Two ways to talk to a sub-agent:** `spawn_agent` is fire-one-prompt-and-run (poll for the result). `start_agent_conversation` keeps the sub-agent alive so you can go back and forth — delegate, then clarify/correct/ask follow-ups with full context retained. To reach the already-running *named* agents (heartbeat, workbench, mobile-relay), use a `<channel:NAME>` tag — `list_agents` shows who's addressable.
+**Pattern hierarchy (use the first that fits):**
+1. **`spawn_agent`** — THE delegation primitive. Fire one or many tasks; async results wake your graph automatically with the output injected. Prefer this for everything delegable.
+2. **`start_agent_conversation`** — legacy multi-turn wrapper: keeps a sub-agent alive for back-and-forth clarification. Use only when you genuinely need iterative dialogue with the same worker; for everything else prefer `spawn_agent`.
+3. **`<channel:NAME>` tags** — inter-agent MESSAGING (not delegation) to already-running named agents (heartbeat, workbench, mobile-relay); `list_agents` shows who's addressable. Add `wake` to trigger a turn.
 
 ## `spawn_agent`
 
@@ -41,7 +46,7 @@ sulla meta/spawn_agent '{
 | `async` | `true` | Fire-and-forget; return jobId immediately. `false` = block until done. |
 
 **Returns:**
-- `async: true` → `{ jobId, taskCount, status: "running" }` — poll with `check_agent_jobs`
+- `async: true` → `{ jobId, taskCount, status: "running" }` — on completion the results WAKE your graph as a new turn (no polling needed); `check_agent_jobs` is the fallback read
 - `async: false` → array of completed task results (blocks until all done)
 
 ## `check_agent_jobs`
@@ -88,11 +93,11 @@ sulla agents/check_agent_jobs '{"jobId":"job_..."}'
 sulla agents/stop_agent_job '{"jobId":"agent-job-..."}'
 ```
 
-Cancels a running async job (misfired, duplicated, or no longer needed). Fires the job's abort signal, which cascades to every sub-agent it spawned — the same signal the user's stop button uses. **Cooperative, not preemptive:** jobs run in-process (not child processes), so a sub-agent mid-LLM/tool-call finishes that call, then unwinds on its next step. The job settles as `status: "stopped"`; poll `check_agent_jobs` to confirm. Returns `already-finished` if the job isn't running, `not-found` if it expired.
+Cancels a running async job (misfired, duplicated, or no longer needed). Fires the job's abort signal, which cascades to every sub-agent it spawned — the same signal the user's stop button uses. **Cooperative, not preemptive:** jobs run in-process (not child processes), so a sub-agent mid-LLM/tool-call finishes that call, then unwinds on its next step. The job settles as `status: "stopped"`; `check_agent_jobs` is the fallback/history read to confirm. Returns `already-finished` if the job isn't running, `not-found` if it expired.
 
 ## Conversations — talk back-and-forth with a sub-agent
 
-Unlike `spawn_agent` (one prompt, run to completion), a **conversation** keeps the sub-agent's thread alive so you can send follow-ups with full context retained.
+**Legacy wrapper.** Prefer `spawn_agent` unless you genuinely need iterative back-and-forth with the same worker. A conversation keeps the sub-agent's thread alive so you can send follow-ups with full context retained. Conversations do **not** wake the parent graph — they block and return the reply.
 
 ```bash
 # Open — runs the first turn, returns the reply + a conversationId
@@ -128,19 +133,20 @@ Returns the live named agents (heartbeat, workbench, mobile-relay, frontends) wi
 - **Max 10 tasks per `spawn_agent` call** — prevents accidental fan-out explosions.
 - **Depth max 3** — a sub-agent that spawns sub-agents that spawn sub-agents will hit the depth guard at level 3.
 - **Job TTL: 1 hour** — auto-expire whether they finished or not. Cleaned up on retrieval.
-- **In-memory only** — job IDs and pending work do not survive a Sulla Desktop restart.
+- **Jobs persist across restarts** — `agent_jobs` (Postgres, migration 0043) is the write-through store. A restart marks leftover `running` rows `failed` with `"app restarted mid-job"` so `check_agent_jobs` answers honestly. AbortControllers stay in-memory (a signal cannot survive a restart).
+- **Conversations are still in-memory only** — they do not survive a restart. Close them when done.
 
 ## When to use what — sub-agent vs channel vs workflow
 
 | Pattern | Latency | Interaction model | Best for |
 |---------|---------|------------------|----------|
-| `spawn_agent(async:true)` | Returns ~100ms; results later via poll | Independent | Multi-task delegation, parallel work that doesn't need back-and-forth |
+| `spawn_agent(async:true)` | Returns ~100ms; results wake your graph on completion | Independent | Multi-task delegation, parallel work (the default choice) |
 | `<channel:workbench>...</channel:workbench>` | Fire-and-forget; reply may come back | Coordinated | Real-time agent-to-agent messaging when the other agent is already running |
 | `sulla meta/execute_workflow` | Async, returns executionId | Fixed pipeline | Deterministic multi-step automation that doesn't need agent reasoning at each step |
 | `spawn_agent(async:false)` | Blocks until done | Synchronous | When you need the result before you can proceed |
 
 **Quick guide:**
-- Need 5 things researched in parallel and you'll synthesize → `spawn_agent` async, then `check_agent_jobs`
+- Need 5 things researched in parallel and you'll synthesize → `spawn_agent` async; the results arrive as your next turn
 - Need the workbench agent to verify something while you keep going → channel tag
 - Need a known repeatable pipeline → workflow
 - Need one focused task done before continuing → `spawn_agent` sync (or just do it yourself)

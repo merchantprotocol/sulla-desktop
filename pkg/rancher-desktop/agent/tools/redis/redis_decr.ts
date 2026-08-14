@@ -1,5 +1,6 @@
 import { redisClient } from '../../database/RedisClient';
 import { BaseTool, ToolResponse } from '../base';
+import { rejectSettingsBypass } from './settingsGuard';
 
 /**
  * Redis Decr Tool - Worker class for execution
@@ -9,6 +10,10 @@ export class RedisDecrWorker extends BaseTool {
   description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { key } = input;
+
+    const blocked = rejectSettingsBypass(key, undefined, 'decr');
+
+    if (blocked) return blocked;
 
     try {
       const newValue = await redisClient.decr(key);
