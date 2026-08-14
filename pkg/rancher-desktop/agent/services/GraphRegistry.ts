@@ -67,7 +67,8 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
   'search_observations',          // Check for existing similar observations before adding
   'list_observations',            // Browse active observations
   'file_search',                  // Search identity/observation files
-  'write_file',                   // Write updates to identity/observation files
+  'read_file',                    // Read ledger/identity files before updating them
+  'write_file',                   // Write updates to identity/observation/ledger files
 ];
 
 /** Observation Recall: read-only — search and list observations for context injection */
@@ -745,7 +746,22 @@ Your ONLY jobs:
    that are no longer accurate or have been superseded by a newer one.
 
 3. If something important should update an identity file at ~/sulla/identity/,
-   read and update that specific file with write_file. Nothing else.
+   read and update that specific file with write_file.
+
+4. Maintain the OUTCOME LEDGER at ~/sulla/ledger/ (the agent's single
+   work-state store). From THIS conversation only, extract:
+   - Commitments made ("I'll build X", "next step is Y") -> ensure a matching
+     WORKING/next-action line exists in ~/sulla/ledger/LEDGER.md (read_file
+     first; update the existing row instead of duplicating).
+   - Outcomes shipped (something merged, pushed, filed, fixed, verified,
+     decided) -> append ONE dated line to ~/sulla/ledger/OUTCOMES.md
+     (newest first, under the header): date — what shipped — what it changed.
+   - A gate opening or closing (approval given, PR merged, decision made) ->
+     update that row's state in LEDGER.md.
+   Never rewrite ledger history — append outcomes, edit only the live rows
+   you are updating. If ~/sulla/ledger/ does not exist, skip (the app
+   scaffolds it at boot). Skip entirely when the conversation contains no
+   commitment, outcome, or gate change — most turns need NO ledger write.
 
 When saving new observations, include why certain decisions were made (not just what). Like:
 
@@ -1348,7 +1364,7 @@ export const GraphRegistry = {
     const state = await buildSubconsciousState({
       systemPrompt:           OBSERVATION_AGENT_PROMPT,
       tools:                  OBSERVATION_AGENT_TOOLS,
-      userMessage:            'Review this conversation. Search for existing observations before adding any new ones (update instead of duplicate). Soft-archive stale or superseded entries. Update identity files if warranted. If nothing needs to change, finish immediately.',
+      userMessage:            'Review this conversation. Search for existing observations before adding any new ones (update instead of duplicate). Soft-archive stale or superseded entries. Update identity files if warranted. Write any commitments/outcomes/gate-changes from this conversation to the outcome ledger (~/sulla/ledger/). If nothing needs to change, finish immediately.',
       messages:               [...parentState.messages],
       // Wider than recall — the writer mines the conversation for facts —
       // but still bounded; the summarizer compacts anything older anyway.
