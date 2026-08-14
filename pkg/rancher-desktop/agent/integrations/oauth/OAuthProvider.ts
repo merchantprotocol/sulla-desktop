@@ -15,60 +15,70 @@ export interface OAuthTokenSet {
 
 export interface OAuthProviderConfig {
   /** Unique ID matching Integration.oauthProviderId */
-  id:                    string;
+  id:                          string;
   /** Human-readable name shown in UI */
-  name:                  string;
+  name:                        string;
   /** OAuth 2.0 authorization endpoint (browser redirect) */
-  authorizeUrl:          string;
+  authorizeUrl:                string;
   /** OAuth 2.0 token endpoint (server-to-server) */
-  tokenUrl:              string;
+  tokenUrl:                    string;
   /** OAuth 2.0 revocation endpoint (optional) */
-  revokeUrl?:            string;
+  revokeUrl?:                  string;
   /** Default scopes requested during authorization */
-  scopes:                string[];
+  scopes:                      string[];
   /** Scope separator — defaults to ' ' (space) */
-  scopeSeparator?:       string;
+  scopeSeparator?:             string;
   /**
    * How client credentials are sent to the token endpoint:
    * - 'body' (default): client_id + client_secret in POST body
    * - 'header': HTTP Basic auth header
    * - 'none': public client (no client_secret sent)
    */
-  clientAuthMethod?:     'body' | 'header' | 'none';
+  clientAuthMethod?:           'body' | 'header' | 'none';
   /**
    * Additional query parameters appended to the authorize URL.
    * Useful for provider-specific params like `access_type=offline` (Google).
    */
-  extraAuthorizeParams?: Record<string, string>;
+  extraAuthorizeParams?:       Record<string, string>;
   /**
    * Additional body parameters sent with the token exchange request.
    */
-  extraTokenParams?:     Record<string, string>;
+  extraTokenParams?:           Record<string, string>;
   /**
    * Number of seconds before actual expiry to proactively refresh the token.
    * Defaults to 300 (5 minutes).
    */
-  refreshBufferSeconds?: number;
+  refreshBufferSeconds?:       number;
   /**
    * If true, use PKCE (S256 code_challenge) in the authorization flow.
    * Required for public clients that don't use a client_secret.
    */
-  usePKCE?:              boolean;
+  usePKCE?:                    boolean;
   /**
    * Built-in client_id for public OAuth apps (e.g. OpenAI Codex CLI).
    * When set, the user does NOT need to supply their own client_id/secret.
    */
-  builtInClientId?:      string;
+  builtInClientId?:            string;
+  /**
+   * Dynamic Client Registration endpoint (RFC 7591). Used by public-client
+   * providers that issue a client_id for the flow's concrete redirect_uri.
+   */
+  registrationEndpoint?:       string;
+  /**
+   * Static client metadata sent to registrationEndpoint. OAuthService always
+   * injects the current redirect_uris value for the active callback server.
+   */
+  registrationClientMetadata?: Record<string, unknown>;
   /**
    * Fixed port the callback server must listen on.
    * Required when the provider's OAuth app has a hardcoded redirect_uri.
    */
-  fixedCallbackPort?:    number;
+  fixedCallbackPort?:          number;
   /**
    * Fixed path for the callback URL (e.g. '/auth/callback').
    * Defaults to '/oauth/callback' if not specified.
    */
-  fixedCallbackPath?:    string;
+  fixedCallbackPath?:          string;
   /**
    * Hostname used in the redirect_uri. Defaults to 'localhost' when a fixed
    * callback port is set (OpenAI registers localhost), '127.0.0.1' otherwise.
@@ -76,7 +86,7 @@ export interface OAuthProviderConfig {
    * http://127.0.0.1:56121/callback) must set 'localhost' to false here or the
    * redirect_uri check fails server-side.
    */
-  useLocalhostHostname?: boolean;
+  useLocalhostHostname?:       boolean;
   /**
    * If true, present the authorization page inside an embedded Electron
    * BrowserWindow owned by Sulla Desktop instead of handing off to the user's
@@ -85,7 +95,14 @@ export interface OAuthProviderConfig {
    * CLI reading ~/.codex/auth.json): an external browser would complete the
    * handshake outside Sulla and the in-VM tool would never receive the result.
    */
-  openInEmbeddedWindow?: boolean;
+  openInEmbeddedWindow?:       boolean;
+}
+
+export interface OAuthProviderHookContext {
+  integrationId: string;
+  accountId:     string;
+  providerId:    string;
+  clientId?:     string;
 }
 
 /**
@@ -97,11 +114,11 @@ export abstract class OAuthProvider {
   abstract readonly config: OAuthProviderConfig;
 
   /** Override to post-process token responses (e.g. extract user info) */
-  async onTokenReceived(_tokens: OAuthTokenSet): Promise<void> {}
+  async onTokenReceived(_tokens: OAuthTokenSet, _context?: OAuthProviderHookContext): Promise<void> {}
 
   /** Override to clean up provider-side credential state on disconnect
    *  (e.g. credential files written by onTokenReceived). */
-  async onTokensRevoked(): Promise<void> {}
+  async onTokensRevoked(_context?: OAuthProviderHookContext): Promise<void> {}
 
   /** Override to add per-request headers when calling the provider's API */
   buildAuthHeader(accessToken: string): Record<string, string> {

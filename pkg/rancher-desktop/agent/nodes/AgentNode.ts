@@ -1,4 +1,5 @@
 import { BaseNode } from './BaseNode';
+import { getAgentOverrideService, getPrimaryService } from '../languagemodels';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 import { throwIfAborted } from '../services/AbortService';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
@@ -96,6 +97,15 @@ export class AgentNode extends BaseNode {
     // runSubconsciousMiddleware) so routines aren't slowed by recall/
     // observation sub-agents on every orchestrator turn.
     const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
+
+    // Speculative boot (Phase 1): while the subconscious/accumulator phase below
+    // runs, warm the primary Claude Code process so its cold start is hidden
+    // behind work we're already doing. Fire-and-forget; no-op unless the primary
+    // provider is Claude Code and claudeCodeSpeculativeBoot is on.
+    if (!isToolCallLoop && !(state.metadata as any).isSubAgent) {
+      void this.maybePrewarmPrimary(state);
+    }
+
     let subconsciousMs = 0;
     if (!isToolCallLoop) {
       const subStart = Date.now();
@@ -124,17 +134,21 @@ export class AgentNode extends BaseNode {
       await this.injectTurnContext(state, { chatMode });
     }
 
-    // Merge recall context + observation context into the last assistant message
+    // Merge episodic recall + legacy/heartbeat recall + observation context into the last assistant message
     // (or create one) so the primary agent sees it as information it already has.
     // Strip any blocks injected on previous turns / earlier loop iterations
     // first — this merge must replace, never accumulate (the mutated message
     // is persisted with the thread state).
     this.stripInjectedContextBlocks(state);
+    const episodicContext    = (state.metadata as any).episodicContext;
     const recallContext       = (state.metadata as any).recallContext;
     const observationContext  = (state.metadata as any).observationContext;
+    const securityContext     = (state.metadata as any).securityContext;
     const combinedContextParts: string[] = [];
+    if (episodicContext)   combinedContextParts.push(`<episodic_context>\n${ episodicContext }\n</episodic_context>`);
     if (recallContext)      combinedContextParts.push(`<recall_context>\n${ recallContext }\n</recall_context>`);
     if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
+    if (securityContext)    combinedContextParts.push(`<security_context>\n${ securityContext }\n</security_context>`);
 
     if (combinedContextParts.length > 0) {
       const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;
@@ -385,6 +399,21 @@ export class AgentNode extends BaseNode {
 
       return userMessage;
     }
+  }
+
+  /**
+   * Best-effort speculative boot of the primary Claude Code process. Resolves
+   * the same service normalizedChat() will use for this (non-sub) turn and, if
+   * it supports prewarming, kicks it off. Never blocks or throws into the turn.
+   */
+  private async maybePrewarmPrimary(state: BaseThreadState): Promise<void> {
+    try {
+      const override = await getAgentOverrideService((state.metadata as any).agent);
+      const llm: any = override ?? await getPrimaryService();
+      if (llm && typeof llm.prewarm === 'function') {
+        await llm.prewarm(state);
+      }
+    } catch { /* prewarm is best-effort — the turn cold-spawns as usual */ }
   }
 
   // ======================================================================

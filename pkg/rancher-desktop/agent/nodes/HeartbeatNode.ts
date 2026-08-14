@@ -8,6 +8,7 @@ import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware'
 import { throwIfAborted } from '../services/AbortService';
 import { GraphRegistry } from '../services/GraphRegistry';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
+import { buildRoutinesDigest } from '../tools/workflow/routines_digest';
 
 import type { NodeRunPolicy } from './BaseNode';
 import type { BaseThreadState, NodeResult } from './Graph';
@@ -125,6 +126,38 @@ export class HeartbeatNode extends BaseNode {
       }
     }
 
+    // Merge episodic graph context so the heartbeat gets the SAME memory
+    // picture as a user turn (recall_context + episodic_context). Same
+    // merge-into-last-assistant pattern as recall above; stripInjectedContextBlocks
+    // already covers <episodic_context> so this replaces rather than accumulates.
+    const episodicContext = (state.metadata as any).episodicContext;
+    if (episodicContext) {
+      const episodicBlock = `\n\n<episodic_context>\n${ episodicContext }\n</episodic_context>`;
+      let merged = false;
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        if (state.messages[i].role === 'assistant') {
+          const msg = state.messages[i];
+          if (typeof msg.content === 'string') {
+            msg.content += episodicBlock;
+          } else if (Array.isArray(msg.content)) {
+            msg.content.push({ type: 'text', text: episodicBlock });
+          } else {
+            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + episodicBlock;
+          }
+          merged = true;
+          break;
+        }
+      }
+      if (!merged) {
+        const insertIdx = Math.max(0, state.messages.length - 1);
+        state.messages.splice(insertIdx, 0, {
+          role:     'assistant',
+          content:  episodicBlock.trim(),
+          metadata: { source: 'episodic', _synthetic: true },
+        });
+      }
+    }
+
     // Merge unstuck context from a previous cycle's analysis (if any)
     const unstuckContext = (state.metadata as any).unstuckContext;
     if (unstuckContext) {
@@ -154,6 +187,48 @@ export class HeartbeatNode extends BaseNode {
       }
       // Clear after injection — consumed once
       delete (state.metadata as any).unstuckContext;
+    }
+
+    // Inject the deterministic, zero-LLM routine-stewardship digest (issue
+    // #499). The heartbeat prompt tells the agent "a routine digest is in your
+    // context — read it, do NOT re-query routine state"; this is what actually
+    // puts it there. Delta + exceptions only, so an all-green cycle collapses to
+    // a single line and costs almost nothing. Fresh cycles only (never inside a
+    // tool-call loop), and failure here (e.g. views not yet migrated) must never
+    // break the cycle — skip silently.
+    if (!isToolCallLoop) {
+      let routineDigest = '';
+      try {
+        routineDigest = await buildRoutinesDigest();
+      } catch (err) {
+        console.warn(`[HeartbeatNode] Routine digest skipped: ${ (err as Error).message }`);
+      }
+      if (routineDigest) {
+        const digestBlock = `\n\n<routine_digest>\n${ routineDigest }\n</routine_digest>`;
+        let digestMerged = false;
+        for (let i = state.messages.length - 1; i >= 0; i--) {
+          if (state.messages[i].role === 'assistant') {
+            const msg = state.messages[i];
+            if (typeof msg.content === 'string') {
+              msg.content += digestBlock;
+            } else if (Array.isArray(msg.content)) {
+              msg.content.push({ type: 'text', text: digestBlock });
+            } else {
+              msg.content = (msg.content ? JSON.stringify(msg.content) : '') + digestBlock;
+            }
+            digestMerged = true;
+            break;
+          }
+        }
+        if (!digestMerged) {
+          const insertIdx = Math.max(0, state.messages.length - 1);
+          state.messages.splice(insertIdx, 0, {
+            role:     'assistant',
+            content:  digestBlock.trim(),
+            metadata: { source: 'routine_digest', _synthetic: true },
+          });
+        }
+      }
     }
 
     // ----------------------------------------------------------------
@@ -529,7 +604,7 @@ export class HeartbeatNode extends BaseNode {
 
     await graph.execute(subState, 'subconscious', { maxIterations: 20 });
 
-    // Extract response — same pattern as runMemoryRecall
+    // Extract response — same pattern as runEnvironmentBrief
     const agentMeta = (subState.metadata as any).agent || {};
     let response = agentMeta.response;
     if (!response || !String(response).trim()) {

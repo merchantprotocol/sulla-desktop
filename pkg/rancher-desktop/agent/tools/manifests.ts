@@ -9,10 +9,10 @@ import { browserToolManifests } from './browser/manifests';
 import { calendarToolManifests } from './calendar/manifests';
 import { captureToolManifests } from './capture/manifests';
 import { dockerToolManifests } from './docker/manifests';
+import { episodicToolManifests } from './episodic/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
 import { functionToolManifests } from './function/manifests';
 import { githubToolManifests } from './github/manifests';
-
 import { integrationsToolManifests } from './integrations/manifests';
 import { kubectlToolManifests } from './kubectl/manifests';
 import { limaToolManifests } from './lima/manifests';
@@ -24,6 +24,7 @@ import { pgToolManifests } from './pg/manifests';
 import { rdctlToolManifests } from './rdctl/manifests';
 import { redisToolManifests } from './redis/manifests';
 import { toolRegistry } from './registry';
+import { rulesToolManifests } from './rules/manifests';
 import { secretaryToolManifests } from './secretary/manifests';
 import { slackToolManifests } from './slack/manifests';
 import { uiToolManifests } from './ui/manifests';
@@ -37,6 +38,7 @@ toolRegistry.registerManifests([
   ...calendarToolManifests,
   ...captureToolManifests,
   ...dockerToolManifests,
+  ...episodicToolManifests,
   ...extensionsToolManifests,
   ...functionToolManifests,
   ...githubToolManifests,
@@ -50,6 +52,7 @@ toolRegistry.registerManifests([
   ...pgToolManifests,
   ...rdctlToolManifests,
   ...redisToolManifests,
+  ...rulesToolManifests,
   ...secretaryToolManifests,
   ...slackToolManifests,
   ...uiToolManifests,

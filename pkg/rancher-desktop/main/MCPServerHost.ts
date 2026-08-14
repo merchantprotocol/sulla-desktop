@@ -156,6 +156,23 @@ export class MCPServerHost {
     this.sessions.delete(id);
   }
 
+  /**
+   * Re-point an existing session token at a new graph state and refresh its
+   * TTL. Used by the warm Claude Code pool: one long-lived process keeps a
+   * stable token, and each turn re-binds it to that turn's live state so
+   * sulla-native tools mutate the correct (current) graph. Returns false if the
+   * token is unknown (e.g. already reaped) so the caller can mint a fresh one.
+   */
+  rebindSession(id: string, state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS): boolean {
+    const session = this.sessions.get(id);
+    if (!session) return false;
+    const now = Date.now();
+    session.state = state;
+    session.lastUsedAt = now;
+    session.expiresAt = now + ttlMs;
+    return true;
+  }
+
   private resolveSession(req: Request): Session | null {
     const auth = req.get('authorization') ?? req.get('Authorization');
     if (!auth) return null;

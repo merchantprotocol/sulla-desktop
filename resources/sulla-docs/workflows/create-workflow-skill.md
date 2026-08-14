@@ -1,7 +1,7 @@
 # Create-Workflow Skill — Mirror for sulla-docs
 
 The live skill lives at `~/sulla/resources/skills/create-workflow/SKILL.md` and is what
-the subconscious memory-recall agent surfaces when the human says "build me a workflow",
+the subconscious environment-brief agent surfaces when the human says "build me a workflow",
 "create a routine", "make an automation", etc.
 
 This file mirrors it inside sulla-docs so agents grepping the docs bundle can find the
