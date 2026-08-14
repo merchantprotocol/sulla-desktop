@@ -29,6 +29,7 @@ import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
+
 import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '../nodes/Graph';
@@ -112,7 +113,7 @@ export interface SubconsciousMiddlewareOptions {
 function hasAnalyzableUserMessage(state: BaseThreadState): boolean {
   return state.messages.some((m: any) => {
     if (m?.role !== 'user') return false;
-    if ((m?.metadata as any)?.source === 'subconscious') return false;
+    if (m?.metadata?.source === 'subconscious') return false;
     const c = m?.content;
 
     if (typeof c === 'string') return c.trim().length > 0;

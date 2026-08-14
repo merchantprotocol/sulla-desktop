@@ -55,9 +55,9 @@ export interface IpcMainEvents {
   'update-network-status': (status: boolean) => void;
 
   // #region main/update
-  'update-state': () => void;
+  'update-state':    () => void;
   // Quit and apply the update.
-  'update-apply': () => void;
+  'update-apply':    () => void;
   // New centralized UpdateManager IPC. Fire-and-forget variants.
   'updater:check':   (trigger?: 'manual' | 'auto' | 'startup') => void;
   'updater:install': () => void;
@@ -267,7 +267,7 @@ export interface IpcMainInvokeEvents {
   'browser-tab-view:reload':        (tabId: string) => void;
   'browser-tab-view:stop':          (tabId: string) => void;
   'browser-tab-view:set-bounds':    (tabId: string, bounds: Electron.Rectangle) => void;
-  'browser-tab-view:focus':         (tabId: string | null) => void;
+  'browser-tab-view:focus':         (tabId: string | null, clearOnlyIfFocusedTabId?: string) => void;
   'browser-tab-view:exec-js':       (tabId: string, code: string) => unknown;
   'browser-tab:exec-in-frame':      (code: string, targetUrl?: string) => unknown;
   'browser-tab:send-input-event':   (inputEvent: { key: string; type: 'keyDown' | 'keyUp' | 'char' }) => boolean;
@@ -814,9 +814,9 @@ export interface IpcMainInvokeEvents {
   // #endregion
 
   // #region Chat Messages (persistent storage with DB fallback)
-  'chat-messages:save': (id: string, state: any) => { success: boolean; error?: string };
-  'chat-messages:load': (id: string) => { success: boolean; data?: any; error?: string };
-  'chat-messages:delete': (id: string) => { success: boolean; error?: string };
+  'chat-messages:save':          (id: string, state: any) => { success: boolean; error?: string };
+  'chat-messages:load':          (id: string) => { success: boolean; data?: any; error?: string };
+  'chat-messages:delete':        (id: string) => { success: boolean; error?: string };
   'chat-messages:message-count': (id: string) => { success: boolean; count: number; error?: string };
   // #endregion
 
