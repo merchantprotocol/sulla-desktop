@@ -613,28 +613,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     templateVars['{{agent_id}}'] = agentId;
     templateVars['{{agent_dir}}'] = findAgentDir(agentId) || path.join(resolveSullaAgentsDir(), agentId);
 
-    // Filter tool categories if agent has a restricted tool list
-    if (agentMeta?.tools?.length) {
-      const allowSet = new Set(agentMeta.tools);
-      const filteredCategories = toolRegistry.getCategoriesWithDescriptions()
-        .filter(({ category }: { category: string }) => {
-          const toolsInCat = toolRegistry.getToolNamesForCategory(category);
-          return category === 'meta' || toolsInCat.some((name: string) => allowSet.has(name));
-        });
-      templateVars['{{tool_categories}}'] = filteredCategories
-        .map(({ category, description }: { category: string; description: string }) => `- ${ category }: ${ description }`)
-        .join('\n');
-    }
-
-    // Build integrations index
-    templateVars['{{integrations_index}}'] = await buildIntegrationsIndex(agentMeta?.integrations);
-    const intIndex = templateVars['{{integrations_index}}'];
-    if (intIndex.includes('No integrations configured') || intIndex.includes('No matching integrations')) {
-      templateVars['{{integrations_instructions}}'] = '';
-    } else {
-      templateVars['{{integrations_instructions}}'] = INTEGRATIONS_INSTRUCTIONS_BLOCK;
-    }
-
     // Load agent-specific .md files and split into section overrides vs generic prompt
     let agentSectionOverrides = new Map<string, string>();
     let excludeSections = new Set<string>();
@@ -654,8 +632,31 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
     }
 
+    // Refresh template variables from the effective loaded config. The graph
+    // usually preloads metadata.agent, but agent files can also be discovered
+    // here; prompt/tool guidance must reflect the final config either way.
+    templateVars['{{agent_name}}'] = agentConfig?.name || agentId || templateVars['{{botName}}'];
+    if (agentConfig?.tools?.length) {
+      const allowSet = new Set(agentConfig.tools);
+      const filteredCategories = toolRegistry.getCategoriesWithDescriptions()
+        .filter(({ category }: { category: string }) => {
+          const toolsInCat = toolRegistry.getToolNamesForCategory(category);
+          return category === 'meta' || toolsInCat.some((name: string) => allowSet.has(name));
+        });
+      templateVars['{{tool_categories}}'] = filteredCategories
+        .map(({ category, description }: { category: string; description: string }) => `- ${ category }: ${ description }`)
+        .join('\n');
+    }
+    templateVars['{{integrations_index}}'] = await buildIntegrationsIndex(agentConfig?.integrations);
+    const intIndex = templateVars['{{integrations_index}}'];
+    if (intIndex.includes('No integrations configured') || intIndex.includes('No matching integrations')) {
+      templateVars['{{integrations_instructions}}'] = '';
+    } else {
+      templateVars['{{integrations_instructions}}'] = INTEGRATIONS_INSTRUCTIONS_BLOCK;
+    }
+
     // Handle legacy excludeSoul → exclude_sections mapping
-    if (agentMeta?.excludeSoul === true) {
+    if (agentConfig?.excludeSoul === true) {
       excludeSections.add('soul');
     }
 
@@ -683,7 +684,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // normalizedChat(): slim (default) unless the agent config explicitly
     // allowlists tools (explicit config > default) or the setting is 'full'.
     const toolModeSetting = await SullaSettingsModel.get('toolMode', 'slim');
-    const toolMode: 'slim' | 'full' = (toolModeSetting === 'slim' && !agentMeta?.tools?.length)
+    const toolMode: 'slim' | 'full' = (toolModeSetting === 'slim' && !agentConfig?.tools?.length)
       ? 'slim'
       : 'full';
 
@@ -1042,6 +1043,20 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         const toolMode = await SullaSettingsModel.get('toolMode', 'slim');
 
         llmTools = (state as any).llmTools;
+        if (!llmTools && hasAgentToolAllowlist) {
+          const allowSet = new Set<string>(agentToolAllowlist);
+          const metaNames = toolRegistry.getToolNamesForCategory('meta');
+          metaNames.forEach(n => allowSet.add(n));
+
+          const registered = new Set(toolRegistry.getToolNames());
+          const names = [...allowSet].filter(name => registered.has(name));
+          const missing = [...allowSet].filter(name => !registered.has(name));
+          if (missing.length) {
+            console.warn(`[BaseNode] Agent tool allowlist includes unregistered tools: ${ missing.join(', ') }`);
+          }
+
+          llmTools = await Promise.all(names.map(name => toolRegistry.convertToolToLLM(name)));
+        }
         if (!llmTools && toolMode === 'slim' && !hasAgentToolAllowlist) {
           llmTools = await toolRegistry.getSlimPrimaryLLMTools();
         }
