@@ -4,6 +4,7 @@
 
 import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteCredentialsSeeder';
 import { initialize as observationsImportSeeder } from './ObservationsImportSeeder';
+import { initialize as workItemsImportSeeder } from './WorkItemsImportSeeder';
 
 // n8n user and settings seeders have been replaced by the recipe's
 // post-server-migration.sql which handles user creation, bcrypt password
@@ -20,6 +21,10 @@ export const seedersRegistry = [
   {
     name: 'observations-import-seeder',
     run:  observationsImportSeeder,
+  },
+  {
+    name: 'work-items-import-seeder',
+    run:  workItemsImportSeeder,
   },
   // {
   //   name: 'core-data-seed',

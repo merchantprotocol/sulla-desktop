@@ -223,6 +223,19 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → The ledger itself is files under `~/sulla/ledger/` (LEDGER.md / OUTCOMES.md / AUDIT.md / goals/).
 
+## work — structured projects / epics / tasks (8 tools)
+- `sulla work/list_work_items` — Board: filter by kind / status / priority / bucket / project / epic
+- `sulla work/get_work_item` — One project, epic, or task + children + comments
+- `sulla work/search_work_items` — Title + description search
+- `sulla work/upsert_project` — Create or update a project (outcome + metric + bucket)
+- `sulla work/upsert_epic` — Create or update an epic under a project
+- `sulla work/upsert_task` — Create or update a task (set parent_task_id for a subtask; optional github_issue)
+- `sulla work/add_task_comment` — Append a note on a task
+- `sulla work/archive_work_item` — Soft-delete a project, epic, or task
+
+→ See [`tools/work.md`](work.md). Files under `~/sulla/ledger/` stay the human-readable agenda; these tables are the structured store. Not CRM.
+
+
 ## pg — PostgreSQL queries (6 tools)
 - `sulla pg/pg_query` — SELECT, all rows
 - `sulla pg/pg_queryall` — SELECT, all rows (explicit)

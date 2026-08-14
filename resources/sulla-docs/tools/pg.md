@@ -1,6 +1,6 @@
 # PostgreSQL
 
-Sulla's primary data store. Container `sulla_postgres` on port **30116** (host) inside Lima. 16 tables across workflow execution, calendar, chat, settings, and credentials. **Critical safety section below — some tables will corrupt Sulla if you write to them directly.**
+Sulla's primary data store. Container `sulla_postgres` on port **30116** (host) inside Lima. Workflow, calendar, chat, settings, credentials, observations, rules, and work items. **Critical safety section below — some tables will corrupt Sulla if you write to them directly.**
 
 ## Connection
 
@@ -34,7 +34,7 @@ sulla pg/pg_queryall '{
 ```
 Params are typed `string[]` in manifests but `pg.Pool` coerces to the column type at bind.
 
-## Tables (verified live — 18 tables)
+## Tables (verified live — plus work items from migration 0044)
 
 | Table | Purpose | Safe to read? | Safe to write? |
 |-------|---------|---------------|----------------|
@@ -56,6 +56,10 @@ Params are typed `string[]` in manifests but `pg.Pool` coerces to the column typ
 | `knowledgebase_categories` | KB category taxonomy | ✅ | ⚠️ via KB UI |
 | `sulla_migrations` | Migration tracking (infrastructure) | ✅ debug | ❌ App-owned |
 | `sulla_seeders` | Seed data tracking (infrastructure) | ✅ debug | ❌ App-owned |
+| `work_projects` | Operator projects (outcome + metric + bucket) | ✅ | ⚠️ Use work tools, not raw SQL |
+| `work_epics` | Epics under a project | ✅ | ⚠️ Use work tools |
+| `work_tasks` | Tasks / subtasks (parent_task_id) under an epic | ✅ | ⚠️ Use work tools |
+| `work_task_comments` | Notes on a task (GitHub-issue style) | ✅ | ⚠️ Use `add_task_comment` |
 
 ## Schemas of the tables you'll query most
 
@@ -180,3 +184,34 @@ If you've genuinely thought it through and the dedicated tool can't do what you 
 - Pool config: `pkg/rancher-desktop/agent/database/PostgresClient.ts:23-28`
 - Migrations: `pkg/rancher-desktop/agent/database/migrations/`
 - Models (preferred over raw SQL): `pkg/rancher-desktop/agent/database/models/`
+
+### `work_projects` / `work_epics` / `work_tasks` / `work_task_comments` (migration 0044)
+
+Schema-only. Soft-archive, never hard-delete. `last_moved_at` updates on
+status/priority/bucket/assignee/due-date changes.
+
+```
+work_projects
+  id TEXT PK · slug UNIQUE · title · description · outcome_metric
+  status · priority · bucket · source · source_ref
+  created_at · updated_at · last_moved_at · archived
+
+work_epics
+  id TEXT PK · project_id FK work_projects(id) ON DELETE RESTRICT
+  title · description · status · priority · position · source_ref
+  created_at · updated_at · last_moved_at · archived
+
+work_tasks
+  id TEXT PK · epic_id FK work_epics(id) ON DELETE RESTRICT
+  parent_task_id FK work_tasks(id) ON DELETE RESTRICT  -- NULL = task
+  title · description · status · priority · position
+  due_at · assignee · github_owner · github_repo · github_issue
+  source_ref · created_at · updated_at · last_moved_at · archived
+
+work_task_comments
+  id TEXT PK · task_id FK work_tasks(id) ON DELETE CASCADE
+  author · body · created_at · updated_at · archived
+```
+
+Not CRM. Do not write these with raw `pg_execute` — use the `work/*` tools.
+
