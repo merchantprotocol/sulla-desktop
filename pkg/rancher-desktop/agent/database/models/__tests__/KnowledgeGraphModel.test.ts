@@ -279,4 +279,116 @@ describe('KnowledgeGraphModel', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 'issue-517', activation: 1, hop: 0 });
   });
+
+  it('writeEpisode rejects a missing event.title without opening a transaction', async() => {
+    (postgresClient as any).transaction = jest.fn();
+    (postgresClient as any).query = jest.fn();
+
+    await expect(KnowledgeGraphModel.writeEpisode({ event: { title: '   ' } } as any))
+      .rejects.toThrow('writeEpisode: event.title is required');
+    expect(postgresClient.transaction).not.toHaveBeenCalled();
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('writeEpisode creates event/project/lesson/blocker/entity and Hebbian-reinforces a pair in one transaction', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([])); // resolveAliases → no reuse
+
+    const client: any = {
+      query: jest.fn((sql: string) => {
+        if (sql.includes('INSERT INTO knowledge_nodes')) return Promise.resolve({ rows: [] });
+        if (sql.includes('INSERT INTO node_aliases')) return Promise.resolve({ rows: [] });
+        if (sql.includes('INSERT INTO node_links')) return Promise.resolve({ rows: [{ was_inserted: true }] });
+        if (sql.includes('UPDATE knowledge_nodes')) return Promise.resolve({ rows: [] });
+        if (sql.includes("relation_type = 'related_to'")) return Promise.resolve({ rows: [{ ok: true }] });
+        return Promise.resolve({ rows: [] });
+      }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => Promise.resolve(callback(client)));
+
+    const result = await KnowledgeGraphModel.writeEpisode({
+      source:  'heartbeat',
+      project: { title: 'Sulla Desktop', aliases: ['sulla-desktop'] },
+      event:   { title: 'Rebased episodic scribe onto main', summary: 'Writer half now sits on d6eed29ea.' },
+      lessons: [{ title: 'Rebase isolated worktrees, never the dirty primary checkout' }],
+      blockers: [{ title: 'Primary checkout is dirty on feat/projects-workboard' }],
+      entities: [{ title: 'EpisodicScribe' }],
+      reinforcePairs: [['Sulla Desktop', 'EpisodicScribe']],
+    });
+
+    expect(postgresClient.transaction).toHaveBeenCalledTimes(1);
+    expect(result.createdNodes).toBe(5); // project + event + lesson + blocker + entity
+    expect(result.reusedNodes).toBe(0);
+    expect(result.linksCreated).toBe(5); // belongs_to, learned_from, blocked_by, mentioned_in, related_to
+    expect(result.reinforced).toBe(1);
+    expect(result.episodeId).toMatch(/^evt_/);
+    expect(result.nodeIds).toHaveLength(5);
+
+    const inserts = client.query.mock.calls.filter((c: any[]) => String(c[0]).includes('INSERT INTO knowledge_nodes'));
+    expect(inserts).toHaveLength(5);
+    const types = inserts.map((c: any[]) => c[1][1]).sort();
+    expect(types).toEqual(['blocker', 'entity', 'event', 'lesson', 'project']);
+    expect(inserts.some((c: any[]) => c[1][5] === 'heartbeat')).toBe(true);
+
+    const rels = client.query.mock.calls
+      .filter((c: any[]) => String(c[0]).includes('INSERT INTO node_links'))
+      .map((c: any[]) => c[1][2])
+      .sort();
+    expect(rels).toEqual(['belongs_to', 'blocked_by', 'learned_from', 'mentioned_in', 'related_to']);
+  });
+
+  it('writeEpisode reuses a project whose alias sim is ≥ 0.85 and still creates a fresh event', async() => {
+    (postgresClient as any).query = jest.fn((_sql: string, params: any[]) => {
+      const terms: string[] = params?.[0] ?? [];
+      if (terms.some((t: string) => /sulla desktop/i.test(t))) {
+        return Promise.resolve([{
+          node_id: 'kn_sulladesktop', title: 'Sulla Desktop', node_type: 'project',
+          alias: 'Sulla Desktop', match: 'exact', sim: 0.97,
+        }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const client: any = {
+      query: jest.fn((sql: string) => {
+        if (sql.includes('INSERT INTO node_links')) return Promise.resolve({ rows: [{ was_inserted: true }] });
+        return Promise.resolve({ rows: [] });
+      }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => Promise.resolve(callback(client)));
+
+    const result = await KnowledgeGraphModel.writeEpisode({
+      project: { title: 'Sulla Desktop' },
+      event:   { title: 'Cycle shipped the scribe rebase' },
+    });
+
+    expect(result.createdNodes).toBe(1); // event only
+    expect(result.reusedNodes).toBe(1);  // project
+    expect(result.nodeIds).toContain('kn_sulladesktop');
+    expect(result.episodeId).not.toBe('kn_sulladesktop');
+    expect(result.linksCreated).toBe(1); // event belongs_to reused project
+  });
+
+  it('writeEpisode does not reuse a fuzzy match below the 0.85 bar', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([{
+      node_id: 'kn_other', title: 'Sulla Mobile', node_type: 'project',
+      alias: 'Sulla', match: 'fuzzy', sim: 0.62,
+    }]));
+
+    const client: any = {
+      query: jest.fn((sql: string) => {
+        if (sql.includes('INSERT INTO node_links')) return Promise.resolve({ rows: [{ was_inserted: true }] });
+        return Promise.resolve({ rows: [] });
+      }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => Promise.resolve(callback(client)));
+
+    const result = await KnowledgeGraphModel.writeEpisode({
+      project: { title: 'Sulla Desktop' },
+      event:   { title: 'Did not collide with Sulla Mobile' },
+    });
+
+    expect(result.createdNodes).toBe(2);
+    expect(result.reusedNodes).toBe(0);
+    expect(result.nodeIds).not.toContain('kn_other');
+  });
 });
