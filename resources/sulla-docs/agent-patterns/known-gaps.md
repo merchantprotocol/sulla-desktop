@@ -252,7 +252,7 @@ Secretary Mode is **shipped and works**, and as of 2026-08-14 its start/stop/sta
 
 ---
 
-## Environment gaps (env-state rows re-verified live 2026-08-14; capability rows 2026-04-23)
+## Environment gaps (all rows re-verified live 2026-08-14)
 
 | Thing | Status | What it means for the agent |
 |-------|--------|----------------------------|
@@ -260,7 +260,7 @@ Secretary Mode is **shipped and works**, and as of 2026-08-14 its start/stop/sta
 | **`workflows` table** | 🟢 Populated | **Re-verified 2026-08-14:** 5 `production` + 7 `draft` + 1 `archive`. The old "0 production, only 2 drafts" state is gone — the operator/EA machinery (daily briefing, weekly review, planning routes, etc.) is registered. Run `SELECT status, count(*) FROM workflows GROUP BY status` for the live picture; don't assume the table is empty. |
 | **Heartbeat** | 🟡 Off by default; dual-store read hazard | Ships `heartbeatEnabled=false`. **Gotcha (verified 2026-08-14):** the flag lives in BOTH Postgres (`sulla_settings` via `SullaSettingsModel`) and Redis, and they can drift — a UI save or a transient boot throw has flipped Redis to `false` while PG held `true`, silently killing autonomous runs. Always toggle through `SullaSettingsModel` (never raw Redis `hset`), and treat the model read as authoritative. Fix #1 (bootstrap fail-loud on settings-DB init) is staged as PR #560, not yet merged. |
 | **Observational memory** | 🟢 No cap | **Re-verified 2026-08-14:** the old "50 entries, oldest auto-pruned" fact is dead. Since migration 0028, observations live in a relational `observations` table with **no storage cap and no auto-prune** — `add_observational_memory` states "No 50-cap pruning — observations are never automatically removed", and removal (`remove_observational_memory`) only soft-archives (`archived=true`), never hard-deletes, so history is always recoverable. The system prompt injects only the **top-10 active** rows (`TOP_N=10`, by priority+recency) — a *display* cap, not a storage limit. Add freely; dedup updates a substantially-similar active row instead of inserting a duplicate. |
-| **`rdctl_shell` arg handling** | 🟡 Limited | No pipes, redirects, `&&`, `\|`. Single command + args only. Use multi-step if needed. |
+| **`rdctl_shell` arg handling** | 🟡 Limited | **Re-verified 2026-08-14 against source:** still no pipes, redirects, `&&`, `\|`. The tool passes `command` as a single argv element (`['shell', '--', command]`) to `spawn('rdctl', …, { shell: false })` (`rdctl_shell.ts`, `CommandRunner.ts:61`) — no shell interprets it, so metacharacters are literal, not operators. Single command + args only; use multi-step if you need a pipe. |
 
 ---
 
