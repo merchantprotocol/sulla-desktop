@@ -19,7 +19,9 @@ export class AddTaskCommentWorker extends BaseTool {
       const comment = await WorkItemsModel.addComment({
         task_id: taskId,
         body,
-        author:  input.author || 'agent',
+        // Sulla (the agent) is the default author for tool-driven comments;
+        // the desktop UI stamps "human" when Jonathon comments.
+        author:  input.author || 'sulla',
       });
       return {
         successBoolean: true,

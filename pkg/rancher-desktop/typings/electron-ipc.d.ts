@@ -412,6 +412,26 @@ export interface IpcMainInvokeEvents {
   'workflow-db-get':      (workflowId: string) => any;
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
 
+  // Work-items workboard (Postgres): projects → epics → tasks (+ comments).
+  // Full CRUD bridge backing the Projects view (ProjectsHome.vue).
+  'work-items:board':    () => {
+    projects: import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord[];
+    epics:    import('@pkg/agent/database/models/WorkItemsModel').WorkEpicRecord[];
+    tasks:    import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord[];
+  };
+  'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
+  'work-items:project-create':  (input: import('@pkg/agent/database/models/WorkItemsModel').UpsertProjectInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord;
+  'work-items:project-update':  (id: string, changes: import('@pkg/agent/database/models/WorkItemsModel').UpdateProjectInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord | null;
+  'work-items:project-archive': (id: string) => boolean;
+  'work-items:epic-create':     (input: import('@pkg/agent/database/models/WorkItemsModel').UpsertEpicInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkEpicRecord;
+  'work-items:epic-update':     (id: string, changes: import('@pkg/agent/database/models/WorkItemsModel').UpdateEpicInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkEpicRecord | null;
+  'work-items:epic-archive':    (id: string) => boolean;
+  'work-items:task-create':     (input: import('@pkg/agent/database/models/WorkItemsModel').UpsertTaskInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord;
+  'work-items:task-update':     (id: string, changes: import('@pkg/agent/database/models/WorkItemsModel').UpdateTaskInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord | null;
+  'work-items:task-archive':    (id: string) => boolean;
+  'work-items:comment-add':     (input: import('@pkg/agent/database/models/WorkItemsModel').AddCommentInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord;
+  'work-items:reorder':         (updates: { kind: 'epic' | 'task'; id: string; position?: number; status?: string; epic_id?: string }[]) => boolean;
+
   // User-defined project catalog (scanned from ~/sulla/projects/ + DB)
   'projects-list': () => {
     slug:        string;
