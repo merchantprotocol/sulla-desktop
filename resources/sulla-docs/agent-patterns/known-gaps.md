@@ -252,12 +252,12 @@ Secretary Mode is **shipped and works**, and as of 2026-08-14 its start/stop/sta
 
 ---
 
-## Environment gaps (verified live 2026-04-23)
+## Environment gaps (env-state rows re-verified live 2026-08-14; capability rows 2026-04-23)
 
 | Thing | Status | What it means for the agent |
 |-------|--------|----------------------------|
-| **Twenty CRM server** | 🟡 Broken | Container `twenty-crm-server` is in restart loop. Postgres for it (`twenty-crm-postgres`) is healthy on port 30208. |
-| **`workflows` table** | 🟡 Empty (of production) | Only 2 draft workflows exist. `status='production'` returns nothing. Don't assume workflows are already set up. |
+| **Twenty CRM server** | 🟢 Not deployed | **Re-verified 2026-08-14:** the Twenty CRM stack has been REMOVED — no `twenty-crm-server` / `twenty-crm-postgres` containers exist (13 containers up, none Twenty) and no Twenty extension is installed. The old "restart-loop" fact is dead. Don't assume a CRM is running; if a user wants Twenty, install it fresh via the marketplace. |
+| **`workflows` table** | 🟢 Populated | **Re-verified 2026-08-14:** 5 `production` + 7 `draft` + 1 `archive`. The old "0 production, only 2 drafts" state is gone — the operator/EA machinery (daily briefing, weekly review, planning routes, etc.) is registered. Run `SELECT status, count(*) FROM workflows GROUP BY status` for the live picture; don't assume the table is empty. |
 | **Heartbeat** | 🟡 Off by default; dual-store read hazard | Ships `heartbeatEnabled=false`. **Gotcha (verified 2026-08-14):** the flag lives in BOTH Postgres (`sulla_settings` via `SullaSettingsModel`) and Redis, and they can drift — a UI save or a transient boot throw has flipped Redis to `false` while PG held `true`, silently killing autonomous runs. Always toggle through `SullaSettingsModel` (never raw Redis `hset`), and treat the model read as authoritative. Fix #1 (bootstrap fail-loud on settings-DB init) is staged as PR #560, not yet merged. |
 | **Observational memory cap** | 🟡 | 50 entries. When full, the oldest is auto-pruned. |
 | **`rdctl_shell` arg handling** | 🟡 Limited | No pipes, redirects, `&&`, `\|`. Single command + args only. Use multi-step if needed. |
