@@ -35,10 +35,17 @@ export interface HeartbeatStatus {
   totalTriggers:    number;
   totalErrors:      number;
   totalSkips:       number;
+  consecutiveFailures: number;
   uptimeMs:         number;
 }
 
 const MAX_EVENT_HISTORY = 200;
+
+// Consecutive-failure escalation. Threshold uses === as a latch: one
+// notification per outage, re-armed only by a successful cycle; while the
+// outage persists we re-ping every RENOTIFY_EVERY-th failure.
+const CONSECUTIVE_FAILURE_THRESHOLD = 3;
+const CONSECUTIVE_FAILURE_RENOTIFY_EVERY = 25;
 
 let heartbeatServiceInstance: HeartbeatService | null = null;
 
@@ -64,6 +71,11 @@ export class HeartbeatService {
   private totalTriggers = 0;
   private totalErrors = 0;
   private totalSkips = 0;
+  // Failed cycles in a row (aborts and already-running skips don't count).
+  // In-memory only: an outage is a run of failures within one process, and
+  // the notification fires at cycle 3 — persistence across restarts would
+  // only matter for outages shorter than the threshold.
+  private consecutiveFailures = 0;
   private startedAtMs = 0;
 
   // ── Abort controller for in-flight heartbeat ──
@@ -108,6 +120,7 @@ export class HeartbeatService {
       totalTriggers:    this.totalTriggers,
       totalErrors:      this.totalErrors,
       totalSkips:       this.totalSkips,
+      consecutiveFailures: this.consecutiveFailures,
       uptimeMs:         this.startedAtMs > 0 ? Date.now() - this.startedAtMs : 0,
     };
   }
@@ -294,6 +307,7 @@ export class HeartbeatService {
       }
 
       await graph.execute(state, 'input_handler');
+      this.consecutiveFailures = 0;
       const durationMs = Date.now() - triggerStart;
       const agentMeta = (state.metadata as any).agent || {};
       const status = agentMeta.status || 'unknown';
@@ -310,10 +324,12 @@ export class HeartbeatService {
         console.log('[HeartbeatService] Heartbeat execution aborted');
       } else {
         this.totalErrors++;
+        this.consecutiveFailures++;
         const durationMs = Date.now() - triggerStart;
         const msg = err instanceof Error ? err.message : String(err);
         this.recordEvent('heartbeat_error', `Execution failed after ${ Math.round(durationMs / 1000) }s: ${ msg }`, { durationMs, error: msg });
         console.error('[HeartbeatService] Heartbeat execution failed:', err);
+        await this.escalateIfFailuresPersist(msg);
       }
     } finally {
       stopCaffeinate('heartbeat');
@@ -321,6 +337,33 @@ export class HeartbeatService {
       this.activeAbort = null;
       this.isExecuting = false;
       this.executionStartedMs = 0;
+    }
+  }
+
+  /**
+   * Escalate a run of dead cycles to the human. The 2026-08-14 provider
+   * outage produced ~151 consecutive sub-second cycle failures over 43 hours
+   * with zero notification — the routine digest watches workflow routines,
+   * not this service, so nothing surfaced it. Delivery is the same
+   * Electron-native path notify_user uses (no LLM provider in the loop),
+   * because this must work precisely when every provider is down.
+   */
+  private async escalateIfFailuresPersist(lastError: string): Promise<void> {
+    const n = this.consecutiveFailures;
+    const firstFire = n === CONSECUTIVE_FAILURE_THRESHOLD;
+    const rePing = n > CONSECUTIVE_FAILURE_THRESHOLD && n % CONSECUTIVE_FAILURE_RENOTIFY_EVERY === 0;
+    if (!firstFire && !rePing) return;
+
+    const title = 'Heartbeat operator is down';
+    const message = `${ n } consecutive heartbeat cycle failures — last error: ${ lastError }`;
+    try {
+      const { getChromeApi } = await import('@pkg/main/chromeApi');
+      await getChromeApi().notifications.create('heartbeat-consecutive-failures', { title, message });
+      this.recordEvent('heartbeat_error', `${ n } consecutive cycle failures — user notified`, { error: lastError, meta: { consecutiveFailures: n } });
+    } catch (notifyErr) {
+      // A broken notification path must not mask the original cycle error.
+      console.error('[HeartbeatService] Failure-streak notification failed:', notifyErr);
+      this.recordEvent('heartbeat_error', `${ n } consecutive cycle failures — notification delivery failed`, { error: String(notifyErr), meta: { consecutiveFailures: n } });
     }
   }
 
