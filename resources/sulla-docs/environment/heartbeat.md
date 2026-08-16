@@ -18,8 +18,8 @@ The heartbeat is an **autonomous background agent** that wakes up on a schedule 
 3. Acquire abort signal, start caffeinate.
 4. Build a system prompt that includes:
    - Current time, timezone
-   - Active projects + goals (pulled via `subconscious` middleware: environment brief, observations)
-   - Directive to work autonomously
+   - Workboard standup + goals (injected `<work_report>` from Postgres work tables; environment brief, observations)
+   - Directive to work autonomously from the workboard — not from `~/sulla/ledger/`
 5. Dispatch to the **HeartbeatGraph** via `GraphRegistry.getOrCreateOverlordGraph('heartbeat', fullPrompt)`
 6. The HeartbeatNode loops: LLM → tool calls → check completion wrapper → loop or exit
 7. On exit, show a desktop notification in the top-right frameless window with the run summary

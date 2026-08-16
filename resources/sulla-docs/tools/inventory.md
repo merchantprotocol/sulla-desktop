@@ -218,22 +218,27 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`tools/redis.md`](redis.md) (settings guardrail) and `pkg/rancher-desktop/agent/database/models/SullaSettingsModel.ts`
 
-## ledger — outcome measurement (1 tool)
-- `sulla ledger/ledger_scoreboard` — Zero-LLM scoreboard of `~/sulla/ledger/` (outcomes shipped, WORKING/staged counts, audit lines, 7-day staleness)
-
-→ The ledger itself is files under `~/sulla/ledger/` (LEDGER.md / OUTCOMES.md / AUDIT.md / goals/).
-
-## work — structured projects / epics / tasks (8 tools)
-- `sulla work/list_work_items` — Board: filter by kind / status / priority / bucket / project / epic
+## work — operator workboard (15 tools)
+- `sulla work/list_work_items` — Board: filter by kind / status / priority / project / epic / parent / assignee
 - `sulla work/get_work_item` — One project, epic, or task + children + comments
-- `sulla work/search_work_items` — Title + description search
-- `sulla work/upsert_project` — Create or update a project (outcome + metric + bucket)
-- `sulla work/upsert_epic` — Create or update an epic under a project
-- `sulla work/upsert_task` — Create or update a task (set parent_task_id for a subtask; optional github_issue)
-- `sulla work/add_task_comment` — Append a note on a task
-- `sulla work/archive_work_item` — Soft-delete a project, epic, or task
+- `sulla work/search_work_items` — Title + description search (dedupe before create)
+- `sulla work/work_report` — Standup: completed last N hours + next open tasks
+- `sulla work/create_project` — Insert a new project (slug auto-derived)
+- `sulla work/update_project` — Patch an existing project by id
+- `sulla work/create_epic` — Insert a new epic under a project
+- `sulla work/update_epic` — Patch an existing epic by id
+- `sulla work/create_task` — Insert a new task (`parent_id` for a subtask)
+- `sulla work/update_task` — Patch an existing task by id
+- `sulla work/add_task_comment` — Append a note (`author` defaults to `sulla`; UI stamps `human`)
+- `sulla work/list_task_comments` — Comment thread, oldest first
+- `sulla work/archive_work_item` — Soft-archive a project, epic, or task (cascades)
 
-→ See [`tools/work.md`](work.md). Files under `~/sulla/ledger/` stay the human-readable agenda; these tables are the structured store. Not CRM.
+→ See [`tools/work.md`](work.md). This is the ONE work-state store. Not CRM. Distinct from filesystem `~/sulla/projects/<slug>/PROJECT.md` PRDs.
+
+## ledger — leftover measurement (1 tool, do not pick from)
+- `sulla ledger/ledger_scoreboard` — Zero-LLM scoreboard of leftover `~/sulla/ledger/` markdown. Do **not** pick work from those files.
+
+→ Agenda + record live in the work tables. See [`tools/work.md`](work.md).
 
 
 ## pg — PostgreSQL queries (6 tools)

@@ -72,7 +72,8 @@ Default to regular `exec` (Lima VM) for search, edit, install, build, test, and 
 | `extensions` | list_extension_catalog, list_installed_extensions, install_extension, uninstall_extension, start_extension, stop_extension, get_extension_status | Recipe lifecycle |
 | `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update | Generic artifact lifecycle (6 kinds: skill / function / workflow / agent / recipe / integration) |
 | `bridge` | update_human_presence, get_human_presence | Agent presence/state |
-| `ui` | open_tab | Open Sulla Desktop views from chat |
+| `work` | list/get/search, create/update project+epic+task, add_task_comment, list_task_comments, archive_work_item, work_report | Operator workboard (Postgres) — the ONE work-state store |
+| `ui` | open_tab | Open Sulla Desktop views from chat (incl. `projects`) |
 | `capture` | teleprompter_*, mic_start/stop, speaker_start/stop, audio_state, list_screens, screenshot | Capture Studio control (headless) |
 | `observation` | add_observational_memory, remove_observational_memory, write_file | Long-term memory + file writes |
 

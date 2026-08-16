@@ -14,7 +14,7 @@ sulla ui/open_tab '{"url":"https://github.com/merchantprotocol"}'   # raw URL �
 
 | Field | Notes |
 |-------|-------|
-| `mode` | One of: `marketplace`, `vault`, `integrations`, `routines`, `history`, `secretary`, `chat`, `document`, `browser`, `welcome` |
+| `mode` | One of: `marketplace`, `vault`, `integrations`, `routines`, `history`, `secretary`, `chat`, `document`, `browser`, `welcome`, `agents`, `projects` |
 | `url` | Alternative to `mode` — opens a raw browser tab inside Sulla Desktop on the given URL |
 
 Behavior:
@@ -37,6 +37,9 @@ Behavior:
 | `document` | Rendered HTML/markdown document viewer |
 | `browser` | Standard web browser tab (use `url` for the address) |
 | `welcome` | Onboarding / welcome screen |
+| `agents` | Agent network / jobs |
+| `projects` | Workboard (Postgres work_projects / epics / tasks) |
+| `settings` | Preferences window (not a tab — handled separately) |
 
 ## Common requests
 
@@ -60,6 +63,11 @@ sulla ui/open_tab '{"mode":"vault"}'
 sulla ui/open_tab '{"mode":"secretary"}'
 ```
 
+### "Open the Projects board" / "Show me the workboard"
+```bash
+sulla ui/open_tab '{"mode":"projects"}'
+```
+
 ### "Open Twenty CRM"
 This is an extension web UI, not a built-in mode — use `browser/tab` with the URL from `extensions/list_installed_extensions`:
 ```bash
@@ -69,7 +77,7 @@ sulla browser/tab '{"action":"upsert","url":"http://localhost:30207"}'
 ## What this still doesn't do
 
 - **No deep-linking inside a view yet.** Opening `routines` lands you on the index, not on a specific routine. The deep-link IPC supports a `details` payload (e.g. `marketplace:open-detail`), but the agent tool doesn't expose per-mode targeting yet — call browser tools or rely on the user to click into the specific item.
-- **Settings is a separate window**, not a tab mode. No agent tool to open it today.
+- **Settings is a separate window**, not a tab mode. `ui/open_tab '{"mode":"settings"}'` opens the Preferences window via `openPreferences()`.
 - **Computer Use Settings UI** has no agent path — direct user to it.
 
 ## Reference

@@ -748,20 +748,19 @@ Your ONLY jobs:
 3. If something important should update an identity file at ~/sulla/identity/,
    read and update that specific file with write_file.
 
-4. Maintain the OUTCOME LEDGER at ~/sulla/ledger/ (the agent's single
-   work-state store). From THIS conversation only, extract:
-   - Commitments made ("I'll build X", "next step is Y") -> ensure a matching
-     WORKING/next-action line exists in ~/sulla/ledger/LEDGER.md (read_file
-     first; update the existing row instead of duplicating).
+4. Maintain the WORKBOARD (Postgres work_projects / work_epics / work_tasks —
+   the agent's single work-state store). From THIS conversation only, extract:
+   - Commitments made ("I'll build X", "next step is Y") -> search_work_items
+     first; update_task the existing row or create_task if none matches.
+     Never invent a parallel markdown task list.
    - Outcomes shipped (something merged, pushed, filed, fixed, verified,
-     decided) -> append ONE dated line to ~/sulla/ledger/OUTCOMES.md
-     (newest first, under the header): date — what shipped — what it changed.
+     decided) -> update_task status=done (or in_progress if partial) and
+     add_task_comment: date — what shipped — what it changed.
    - A gate opening or closing (approval given, PR merged, decision made) ->
-     update that row's state in LEDGER.md.
-   Never rewrite ledger history — append outcomes, edit only the live rows
-   you are updating. If ~/sulla/ledger/ does not exist, skip (the app
-   scaffolds it at boot). Skip entirely when the conversation contains no
-   commitment, outcome, or gate change — most turns need NO ledger write.
+     update_task the matching row (blocked -> in_progress / done) and comment.
+   ~/sulla/ledger/ is a historical archive — do not write LEDGER.md / OUTCOMES.md.
+   Skip entirely when the conversation contains no commitment, outcome, or
+   gate change — most turns need NO workboard write.
 
 When saving new observations, include why certain decisions were made (not just what). Like:
 

@@ -56,9 +56,9 @@ Params are typed `string[]` in manifests but `pg.Pool` coerces to the column typ
 | `knowledgebase_categories` | KB category taxonomy | ✅ | ⚠️ via KB UI |
 | `sulla_migrations` | Migration tracking (infrastructure) | ✅ debug | ❌ App-owned |
 | `sulla_seeders` | Seed data tracking (infrastructure) | ✅ debug | ❌ App-owned |
-| `work_projects` | Operator projects (outcome + metric + bucket) | ✅ | ⚠️ Use work tools, not raw SQL |
-| `work_epics` | Epics under a project | ✅ | ⚠️ Use work tools |
-| `work_tasks` | Tasks / subtasks (parent_task_id) under an epic | ✅ | ⚠️ Use work tools |
+| `work_projects` | Operator projects (outcome + metric; status default `working`) | ✅ | ⚠️ Use work tools, not raw SQL |
+| `work_epics` | Epics under a project (status default `working`) | ✅ | ⚠️ Use work tools |
+| `work_tasks` | Tasks / subtasks (`parent_id`; status default `todo`) | ✅ | ⚠️ Use work tools |
 | `work_task_comments` | Notes on a task (GitHub-issue style) | ✅ | ⚠️ Use `add_task_comment` |
 
 ## Schemas of the tables you'll query most
@@ -187,31 +187,34 @@ If you've genuinely thought it through and the dedicated tool can't do what you 
 
 ### `work_projects` / `work_epics` / `work_tasks` / `work_task_comments` (migration 0044)
 
-Schema-only. Soft-archive, never hard-delete. `last_moved_at` updates on
-status/priority/bucket/assignee/due-date changes.
+Schema-only. Soft-archive, never hard-delete. No `bucket` column. `last_moved_at`
+updates on status / priority / assignee / due-date / parent changes.
 
 ```
 work_projects
   id TEXT PK · slug UNIQUE · title · description · outcome_metric
-  status · priority · bucket · source · source_ref
-  created_at · updated_at · last_moved_at · archived
+  status DEFAULT working · priority DEFAULT p2 · owner · github_repo · due_at
+  source · source_path · source_ref · created_at · updated_at · last_moved_at · archived
 
 work_epics
-  id TEXT PK · project_id FK work_projects(id) ON DELETE RESTRICT
-  title · description · status · priority · position · source_ref
-  created_at · updated_at · last_moved_at · archived
+  id TEXT PK · project_id FK work_projects(id)
+  slug · title · description · status DEFAULT working · priority DEFAULT p2
+  position · due_at · source · source_ref · created_at · updated_at · last_moved_at · archived
 
 work_tasks
-  id TEXT PK · epic_id FK work_epics(id) ON DELETE RESTRICT
-  parent_task_id FK work_tasks(id) ON DELETE RESTRICT  -- NULL = task
-  title · description · status · priority · position
-  due_at · assignee · github_owner · github_repo · github_issue
-  source_ref · created_at · updated_at · last_moved_at · archived
+  id TEXT PK · project_id FK work_projects(id)  -- required
+  epic_id FK work_epics(id)                    -- optional
+  parent_id FK work_tasks(id)                  -- NULL = task, set = subtask
+  slug · title · description · status DEFAULT todo · priority DEFAULT p2
+  due_at · github_issue · assignee · labels · position
+  source · source_ref · created_at · updated_at · last_moved_at · completed_at · archived
 
 work_task_comments
   id TEXT PK · task_id FK work_tasks(id) ON DELETE CASCADE
-  author · body · created_at · updated_at · archived
+  author (default sulla; UI stamps human) · body · created_at · updated_at · archived
 ```
 
-Not CRM. Do not write these with raw `pg_execute` — use the `work/*` tools.
+Closed statuses: `done` / `cancelled` / `parked`. Priority ranks p0–p4 plus
+critical/high/medium/low. Not CRM. Do not write these with raw `pg_execute` —
+use the `work/*` tools.
 
