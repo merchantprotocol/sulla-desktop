@@ -72,6 +72,18 @@ export class HeartbeatService {
   private executionStartedMs = 0;
   private suspendStartedMs = 0;
 
+  // ── Standing sleep-prevention (continuous, not per-cycle) ──
+  // The per-execution caffeinate (startCaffeinate('heartbeat') in
+  // triggerHeartbeat) only spans a single cycle. Between cycles nothing held
+  // the Mac awake, so an idle-sleep in the inter-cycle gap froze the 60s
+  // scheduler timer — and scheduleWake() is a root-gated no-op, so nothing
+  // woke it. The operator silently stopped standing until a manual wake.
+  // Fix: hold caffeinate -i -s for the WHOLE enabled lifetime, transition-
+  // guarded so we call start/stop once per toggle (not every minute).
+  // Limits (documented, need root/pmset to fully solve): caffeinate -s only
+  // asserts on AC power and does not defeat clamshell/lid-close sleep.
+  private standingCaffeineHeld = false;
+
   async initialize(): Promise<void> {
     if (this.initialized) return;
     console.log('[HeartbeatService] Initializing scheduler...');
@@ -123,6 +135,26 @@ export class HeartbeatService {
     this.eventCount++;
   }
 
+  /**
+   * Acquire the continuous standing-shift caffeinate hold. Idempotent: the
+   * transition guard means we only spawn/log on the disabled→enabled edge, so
+   * calling this every minute from the scheduler is safe.
+   */
+  private acquireStandingCaffeine(): void {
+    if (this.standingCaffeineHeld) return;
+    startCaffeinate('heartbeat-standing');
+    this.standingCaffeineHeld = true;
+    this.recordEvent('sleep_prevention_started', 'Standing caffeinate held — prevents inter-cycle idle sleep while heartbeat is enabled');
+  }
+
+  /** Release the standing-shift hold (heartbeat disabled or service destroyed). */
+  private releaseStandingCaffeine(): void {
+    if (!this.standingCaffeineHeld) return;
+    stopCaffeinate('heartbeat-standing');
+    this.standingCaffeineHeld = false;
+    this.recordEvent('sleep_prevention_stopped', 'Standing caffeinate released — heartbeat disabled or service stopped');
+  }
+
   private startScheduler(): void {
     if (this.schedulerId) return;
 
@@ -145,6 +177,9 @@ export class HeartbeatService {
         this.totalSkips++;
         this.recordEvent('heartbeat_skipped', 'Heartbeat disabled in settings');
 
+        // Let the Mac sleep again once the operator is off-shift.
+        this.releaseStandingCaffeine();
+
         // Abort any in-flight heartbeat when disabled
         if (this.isExecuting && this.activeAbort) {
           console.log('[HeartbeatService] Heartbeat disabled while executing — aborting');
@@ -153,6 +188,12 @@ export class HeartbeatService {
         }
         return;
       }
+
+      // Enabled → keep the operator standing. Held continuously (through the
+      // window gate below too) so that if the Mac would otherwise idle-sleep
+      // during an out-of-window stretch, the scheduler timer survives and the
+      // next in-window minute still fires. scheduleWake() can't do this (root).
+      this.acquireStandingCaffeine();
 
       // ── Time-window gate ──
       // Users who only want autonomous runs during certain hours (e.g.
@@ -360,6 +401,9 @@ Your active projects and goals have been loaded into your recall context. Review
 
   destroy(): void {
     this.initialized = false;
+    // Drop the standing sleep-prevention hold so we don't leak a caffeinate
+    // process across a service teardown/reinit.
+    this.releaseStandingCaffeine();
     // Abort any in-flight execution
     if (this.activeAbort) {
       this.activeAbort.abort();
