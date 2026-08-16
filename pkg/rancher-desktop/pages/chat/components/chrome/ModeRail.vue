@@ -105,12 +105,25 @@ const items: readonly ModeItem[] = Object.freeze([
     </svg>`,
   },
   {
-    mode:    'routines',
-    subTab:  'mywork',
-    label:   'My Work',
+    // Projects — the issue-ledger workboard (Postgres work_projects/epics/tasks).
+    // Briefcase = a book of work. (Formerly the "My Work" icon, which really
+    // pointed at Routines — see the cycle icon below.)
+    mode:  'projects',
+    label: 'Projects',
     icon: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
       <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+    </svg>`,
+  },
+  {
+    // Routines — the recurring things that should be running. Cycle/refresh
+    // icon (not the briefcase, which now means Projects).
+    mode:    'routines',
+    subTab:  'mywork',
+    label:   'Routines',
+    icon: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 12a9 9 0 1 1-3.2-6.8"/>
+      <polyline points="21 3.5 21 9 15.5 9"/>
     </svg>`,
   },
   {

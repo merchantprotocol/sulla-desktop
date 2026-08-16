@@ -134,6 +134,31 @@ export class AgentNode extends BaseNode {
       await this.injectTurnContext(state, { chatMode });
     }
 
+    // One-time operator work standup — injected into the orchestrating agent's
+    // FIRST run of this thread so it opens already knowing what shipped in the
+    // last 24h and what's next, without having to call a tool. After this the
+    // agent uses the `work_report` tool on demand. Skipped for sub-agents and
+    // tool-call loops; guarded so it fires once per thread. As a plain
+    // (non-synthetic) assistant note it persists in history and is never
+    // re-injected (stripInjectedContextBlocks doesn't touch <work_report>).
+    if (!isToolCallLoop && !(state.metadata as any).isSubAgent && !(state.metadata as any).workReportInjected) {
+      (state.metadata as any).workReportInjected = true;
+      try {
+        const { buildWorkReport } = await import('../prompts/workReport');
+        const report = await buildWorkReport({ nextLimit: 10 });
+        if (report) {
+          const insertIdx = Math.max(0, state.messages.length - 1);
+          state.messages.splice(insertIdx, 0, {
+            role:     'assistant',
+            content:  `<work_report>\n${ report }\n</work_report>`,
+            metadata: { source: 'work_report' },
+          });
+        }
+      } catch (err) {
+        console.warn('[AgentNode] work report injection failed:', err);
+      }
+    }
+
     // Merge episodic recall + legacy/heartbeat recall + observation context into the last assistant message
     // (or create one) so the primary agent sees it as information it already has.
     // Strip any blocks injected on previous turns / earlier loop iterations
