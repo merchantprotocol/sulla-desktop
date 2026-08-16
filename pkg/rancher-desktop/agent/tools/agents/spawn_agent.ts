@@ -1,4 +1,5 @@
 import { BaseTool, ToolResponse } from '../base';
+import { extractAgentTurnOutcome } from './agentTurnOutcome';
 import { createJob, completeJob, failJob, getJobAbortSignal } from './jobRegistry';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { combineAborts } from '../../services/AbortService';
@@ -142,31 +143,13 @@ export class SpawnAgentWorker extends BaseTool {
         // Execute the sub-agent graph
         const finalState = await graph.execute(subState);
 
-        // Check if blocked
-        const agentMeta = finalState.metadata?.agent || {};
-        const agentStatus = String(agentMeta.status || '').toLowerCase();
-
-        if (agentStatus === 'blocked') {
-          const blockerReason = agentMeta.blocker_reason || 'Unknown blocker';
-          const unblockReqs = agentMeta.unblock_requirements || '';
-
-          return {
-            label,
-            status:   'blocked',
-            output:   `[BLOCKED] ${ blockerReason }${ unblockReqs ? ` | Requirements: ${ unblockReqs }` : '' }`,
-            threadId,
-          };
-        }
-
-        // Extract result
-        const output = finalState.metadata?.finalSummary ||
-          finalState.messages?.[finalState.messages.length - 1]?.content ||
-          '(no output)';
+        // Same blocked-branch + output-fallback chain conversationRunner uses.
+        const { status, text } = extractAgentTurnOutcome(finalState);
 
         return {
           label,
-          status: 'completed',
-          output: typeof output === 'string' ? output : JSON.stringify(output),
+          status,
+          output: text,
           threadId,
         };
       } catch (err) {
