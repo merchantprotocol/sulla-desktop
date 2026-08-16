@@ -139,13 +139,28 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
   private static isReady = false;
 
+  // Retry policy for bootstrap (overridable in tests).
+  // Delay before retry N (1-indexed) = min(baseDelayMs * 2^(N-1), maxDelayMs).
+  public static bootstrapMaxAttempts = 5;
+  public static bootstrapBaseDelayMs = 500;
+  public static bootstrapMaxDelayMs = 8000;
+
   // ──────────────────────────────────────────────
   // Bootstrap: sync fallback → real backends
   // Call once after PG + Redis are confirmed ready
   // ──────────────────────────────────────────────
 
   /**
-   * Full bootstrap: call when DBs are ready
+   * Full bootstrap: call when DBs are ready.
+   *
+   * Fails LOUD, not silent. A transient PG/Redis unavailability during the
+   * restart window used to leave `isReady=false` forever with the error
+   * swallowed, so every later read (e.g. `heartbeatEnabled`) silently fell
+   * back to the caller default (`false`) while PG/Redis still held `true` —
+   * the operator quietly turned itself off. We now retry with backoff and, if
+   * every attempt fails, THROW so the `database-manager` lifecycle gate fails
+   * visibly instead of the heartbeat reading defaults. See
+   * `~/sulla/projects/dual-store-heartbeat-trace.md`.
    *
    * @returns
    */
@@ -155,35 +170,64 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
       throw new Error('Installation lock file not set for bootstrap');
     }
 
-    try {
-      console.log('SullaSettingsModel: full bootstrap starting');
+    const maxAttempts = Math.max(1, this.bootstrapMaxAttempts);
+    let lastErr: unknown = null;
 
-      // PG → Redis
-      // now that the system is ready we can write to persistent storage
-      await this.initialize();
-      this.isReady = true;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        console.log(`SullaSettingsModel: full bootstrap starting (attempt ${ attempt }/${ maxAttempts })`);
 
-      if (!(await this.getSetting('sullaInstalled', false))) {
-        // Read from installation lock file and sync to persistent storage
-        try {
-          const content = await fs.readFile(this.getFallbackFilePath(), 'utf8');
-          const data = JSON.parse(content) as Record<string, any>;
-          for (const [property, value] of Object.entries(data)) {
-            await this.setSetting(property, value);
+        // PG → Redis
+        // now that the system is ready we can write to persistent storage
+        await this.initialize();
+        this.isReady = true;
+
+        if (!(await this.getSetting('sullaInstalled', false))) {
+          // Read from installation lock file and sync to persistent storage
+          try {
+            const content = await fs.readFile(this.getFallbackFilePath(), 'utf8');
+            const data = JSON.parse(content) as Record<string, any>;
+            for (const [property, value] of Object.entries(data)) {
+              await this.setSetting(property, value);
+            }
+            console.log(`SullaSettingsModel: synced ${ Object.keys(data).length } settings from lock file`);
+          } catch (err) {
+            console.log('SullaSettingsModel: no lock file to sync or error reading:', err);
           }
-          console.log(`SullaSettingsModel: synced ${ Object.keys(data).length } settings from lock file`);
-        } catch (err) {
-          console.log('SullaSettingsModel: no lock file to sync or error reading:', err);
+
+          await this.setSetting('sullaInstalled', true, 'boolean');
+
+          // do not delete the fallback file. it acts as our installation lock file
+          console.log('SullaSettingsModel: full bootstrap complete');
         }
 
-        await this.setSetting('sullaInstalled', true, 'boolean');
+        return; // success
+      } catch (err) {
+        lastErr = err;
+        // A failure mid-bootstrap must NOT leave a half-ready process reading
+        // stale/default values — force a clean retry from the top.
+        this.isReady = false;
 
-        // do not delete the fallback file. it acts as our installation lock file
-        console.log('SullaSettingsModel: full bootstrap complete');
+        const delayMs = Math.min(this.bootstrapBaseDelayMs * 2 ** (attempt - 1), this.bootstrapMaxDelayMs);
+        console.error(
+          `SullaSettingsModel: bootstrap attempt ${ attempt }/${ maxAttempts } failed` +
+          (attempt < maxAttempts ? `; retrying in ${ delayMs }ms` : ''),
+          err,
+        );
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
       }
-    } catch (err) {
-      console.error('SullaSettingsModel: bootstrap is not ready yet. Try again later');
     }
+
+    // All attempts exhausted — fail LOUD so the lifecycle gate fails visibly
+    // instead of the heartbeat silently reading default-`false` forever.
+    throw new Error(
+      `SullaSettingsModel: bootstrap failed after ${ maxAttempts } attempts — settings backends ` +
+      '(PostgreSQL/Redis) did not become ready. Refusing to run with silent file-fallback ' +
+      'defaults for critical flags (e.g. heartbeatEnabled). Last error: ' +
+      `${ lastErr instanceof Error ? lastErr.message : String(lastErr) }`,
+    );
   }
 
   // ──────────────────────────────────────────────
