@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'rules', 'skills', 'slack', 'ui', 'vault', 'work', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'work', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -88,6 +88,8 @@ export class ToolRegistry {
     capture:            'Capture Studio control — teleprompter (open/close/script/style), microphone + speaker loopback lifecycle, screen/camera enumeration, screenshots, recorder start/stop/status with auto-acquire.',
     marketplace:        'Marketplace for community artifacts (skills, functions, workflows, agents, recipes) — search, info, download, scaffold, validate, publish, update, unpublish.',
     ui:                 'Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat so the user can inspect them directly.',
+    settings:           'Read and write Sulla Desktop settings through SullaSettingsModel (the single authoritative read-path — never raw Redis sulla_settings).',
+    secretary:          'Secretary Mode control — start, stop, and check live meeting transcription without pressing Cmd+Shift+S.',
     // Integration catalog categories (tools executed via ActivePieces)
     communication:      'Email, messaging, SMS, and video conferencing tools — Gmail, Slack, Teams, Zoom, Discord, Telegram, Twilio, WhatsApp, and more.',
     developer_tools:    'DevOps, CI/CD, monitoring, hosting, CMS, and web scraping tools — GitHub, GitLab, Vercel, Sentry, Datadog, Jenkins, Webflow, and more.',
