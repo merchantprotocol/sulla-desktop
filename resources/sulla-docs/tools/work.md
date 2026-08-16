@@ -1,64 +1,87 @@
-# Work items — projects, epics, tasks, comments
+# Work items — the one work-state store
 
-The desktop Postgres database is the structured work store. Files under
-`~/sulla/ledger/` stay the human-readable agenda (LEDGER.md pick-path,
-OUTCOMES.md, AUDIT.md). The tables answer: what exists, what stage, what
-priority, when it last moved, what's due, what's blocked.
-
-This is **not CRM**. CRM lives in Sulla Cloud. These four tables are
-operator work only.
-
-Filesystem PRDs (`~/sulla/projects/<slug>/PROJECT.md`, `create_project`)
-are a different thing — product specs. Do not confuse them with work
-projects.
-
-## Hierarchy
+Desktop Postgres is the operator agenda. The Projects view and the `work/*`
+tools are how you read and write it.
 
 ```
 work_projects          one outcome with a metric
   └── work_epics       major chunk of a project
-        └── work_tasks parent_task_id NULL = task, set = subtask
+        └── work_tasks parent_id NULL = task, set = subtask
               └── work_task_comments  notes (GitHub-issue style)
 ```
 
-## Status / priority / bucket
+This is **not CRM** (CRM lives in Sulla Cloud). This is **not** a filesystem
+PRD (`~/sulla/projects/<slug>/PROJECT.md` / `ProjectRegistry.createProject`) —
+those are product specs. Do not invent a parallel markdown task list.
+
+`~/sulla/ledger/` is a historical archive. Do not open `LEDGER.md` to pick
+work. Do not write `OUTCOMES.md` / `AUDIT.md` as bookkeeping.
+
+## Status / priority
+
+Free-text columns. Use these consistently:
 
 | Field | Allowed values |
 |---|---|
-| `status` | `backlog` · `todo` · `in_progress` · `blocked` · `done` · `cancelled` |
-| `priority` | `critical` · `high` · `medium` · `low` |
-| `bucket` (projects only) | `WORKING` · `SHOULD` · `WANT` · `MIGHT` · `DONE` |
+| `status` (projects + epics) | `working` (default) · `backlog` · `blocked` · `done` · `cancelled` · `parked` |
+| `status` (tasks) | `todo` (default) · `backlog` · `in_progress` · `blocked` · `done` · `cancelled` · `parked` |
+| `priority` | `p0`/`critical` · `p1`/`high` · `p2`/`medium` (default) · `p3`/`low` · `p4` |
 
-Rows are **never hard-deleted**. `archive_*` sets `archived=true`.
-`last_moved_at` updates on every status/priority/bucket/assignee/due-date
-change so staleness is queryable (7-day WORKING rule).
+There is **no `bucket` column**. Closed = `done` / `cancelled` / `parked`.
+Rows are never hard-deleted — `archive_work_item` sets `archived=true` and
+cascades down. `last_moved_at` updates on status / priority / assignee /
+due-date / parent changes.
+
+Defaults from `WorkItemsModel`: projects + epics `status='working'`
+`priority='p2'`; tasks `status='todo'` `priority='p2'`.
 
 ## Tools (bare names — slash paths misroute)
 
+Reads:
+
 | Tool | Use |
 |---|---|
-| `sulla list_work_items '{}'` | Board: filter by `kind` / `status` / `priority` / `bucket` / `project_id` / `epic_id` / `parent_task_id`. |
-| `sulla get_work_item '{"id":"…"}'` | One row + children + comments. |
-| `sulla search_work_items '{"query":"wake"}'` | Title + description search. |
-| `sulla upsert_project '{"title":"…","description":"…"}'` | Create / update a project. Pass `id` to update. |
-| `sulla upsert_epic '{"project_id":"…","title":"…"}'` | Create / update an epic. |
-| `sulla upsert_task '{"epic_id":"…","title":"…"}'` | Create / update a task. Set `parent_task_id` for a subtask. Optional `github_issue`. |
-| `sulla add_task_comment '{"task_id":"…","body":"…"}'` | Append a note. |
-| `sulla archive_work_item '{"id":"…"}'` | Soft-delete. |
+| `sulla work/list_work_items` | Board. Filter by `kind` / `status` / `priority` / `project_id` / `epic_id` / `parent_id` / `assignee`. Default kind=task, open only. |
+| `sulla work/get_work_item` | One row + children + comments. |
+| `sulla work/search_work_items` | Title + description search. Use before creating. |
+| `sulla work/list_task_comments` | Comment thread on a task, oldest first. |
+| `sulla work/work_report` | Standup: completed in last N hours + top open next. Injected on first chat turn. |
 
-Schema-only migration `0044_create_work_items_tables`. No user data in
-the migration. A runtime seeder (`WorkItemsImportSeeder`, registered as
-`work-items-import-seeder`) reads THIS install's
-`~/sulla/ledger/goals/*.md` on first boot and upserts by stable slug
-(`goal-<file>` / `epic-<file>-<n>` / `task-<file>-<n>-<m>`). Safe to re-run.
+Writes — explicit create / update, **no upsert**:
 
-Optional GitHub mapping on tasks: `github_owner` / `github_repo` /
-`github_issue`. Not a live sync in this pass.
+| Tool | Use |
+|---|---|
+| `sulla work/create_project` | Always inserts. Unique slug auto-resolved. |
+| `sulla work/update_project` | In-place by id. Status/priority/due stamp `last_moved_at`. |
+| `sulla work/create_epic` | Always inserts under a project. |
+| `sulla work/update_epic` | In-place by id. |
+| `sulla work/create_task` | Always inserts. `project_id` required; `epic_id` and `parent_id` optional. |
+| `sulla work/update_task` | In-place by id. |
+| `sulla work/add_task_comment` | Append a note. Default author `sulla`; desktop UI stamps `human`. |
+| `sulla work/archive_work_item` | Soft-archive. Cascades to children. |
+
+Schema-only migration `0044_create_work_items_tables`. No user data in the
+migration. A runtime seeder (`WorkItemsImportSeeder`) may import this
+install's leftover `~/sulla/ledger/goals/*.md` on first boot by stable
+slug. Safe to re-run. After that, **only** the work tools.
+
+Optional GitHub mapping on tasks: `github_issue`. Not a live sync.
+
+## Cycle contract
+
+1. First chat turn already has a `<work_report>` standup. Read it. Do not
+   re-query unless you need a filter the report doesn't have.
+2. Pick the top open task you can move (`list_work_items` / the report).
+3. Move it. `update_task` status / comment / complete.
+4. Bookkeep on the same row: comment what shipped, mark done, or park
+   with the decision + recommendation + staged artifact.
 
 ## Do not
 
-- Do not invent a parallel markdown task list once the tables exist.
+- Do not invent a parallel markdown task list (`LEDGER.md`,
+  `ACTIVE_PROJECTS.md`, `OUTCOMES.md`, `PARKED_DECISIONS.md`).
 - Do not write these tables with raw `pg_execute` — use the tools.
 - Do not put CRM records, contacts, or deals here.
-- Do not drop the leftover `crm_*` tables without Jonathon — they are
-  a wrong-build remnant, not this schema.
+- Do not drop leftover `crm_*` tables without Jonathon.
+- Do not confuse `work/create_project` with filesystem
+  `ProjectRegistry.createProject()` (writes `PROJECT.md`).
