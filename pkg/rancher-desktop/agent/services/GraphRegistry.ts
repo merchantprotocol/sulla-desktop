@@ -60,6 +60,12 @@ const EPISODIC_RECALL_TOOLS: string[] = [
   'episodic_recall',
 ];
 
+/** Episodic Scribe (#518): resolve entities for dedup, then write the episode. */
+const EPISODIC_SCRIBE_TOOLS: string[] = [
+  'episodic_resolve',        // Read-side dedup: check what already exists before encoding
+  'episodic_write_episode',  // Persist the encoded episode atomically (call once)
+];
+
 /** Observation Writer: write/archive observations and update identity files */
 const OBSERVATION_AGENT_TOOLS: string[] = [
   'add_observational_memory',     // Insert or update an observation row
@@ -521,6 +527,44 @@ AGENT_DONE.
 
 After the tool returns, emit only the tool's episodic context payload inside
 AGENT_DONE. If the tool returns an empty context, emit an empty AGENT_DONE.`;
+
+const EPISODIC_SCRIBE_PROMPT = `You are the SCRIBE — the write side of episodic memory. A conversation just
+completed. Your job is to distill it into durable knowledge-graph facts so the
+Recall agent can land on them later. You run fire-and-forget; nobody is waiting.
+
+## What to encode
+
+Read the WHOLE completed conversation and produce ONE episode:
+
+- **event** (required): "what happened" — the outcome of this conversation in a
+  few sentences. Write the summary to be read COLD months from now, with no
+  other context: name the concrete result, decisions, and where things landed.
+- **project**: the project/epic this belongs to (e.g. "Sulla Desktop",
+  "Reborn Exteriors"), with any aliases. Omit only if genuinely none applies.
+- **lessons**: durable things learned ("what we learned") — 0 to a few.
+- **blockers**: anything that blocked progress — 0 to a few.
+- **entities**: the concrete nouns that appeared — projects, features, people,
+  services, files, issue numbers. Give each its surface forms as aliases.
+- **reinforcePairs**: pairs of entities/terms that co-occurred meaningfully,
+  so their association strengthens over time.
+
+## How to work (fast, ≤2 rounds)
+
+1. Extract the salient surface forms (entities, project, key nouns).
+2. Call \`episodic_resolve\` ONCE with all of them so you know what already
+   exists (write-side dedup mirrors read-side recall). Reuse those names.
+3. Call \`episodic_write_episode\` EXACTLY ONCE with the full encoding. It
+   handles dedup, aliasing, linking, and reinforcement atomically — you just
+   supply good content. Every entity you name should also appear in a
+   reinforcePair or be a project/lesson so nothing is orphaned.
+
+## Rules
+
+- Encode only what actually happened in THIS conversation. Never invent facts,
+  outcomes, or entities that weren't discussed.
+- Summaries are the product — specific and self-contained beats vague.
+- Do not store secrets, credentials, or tokens.
+- One \`episodic_write_episode\` call, then finish. Output nothing else.`;
 
 // ── Heartbeat-specific memory recall ──────────────────────────────────────
 
@@ -1341,6 +1385,36 @@ export const GraphRegistry = {
       contextWindow:          12,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'episodic-recall',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create an Episodic Scribe graph (#518) — the WRITE side of episodic memory.
+   * Fires fire-and-forget when a conversation completes; reads the whole episode
+   * and encodes it into knowledge-graph nodes/aliases/links via
+   * episodic_write_episode. Populates the graph the Recall agent reads from.
+   */
+  createEpisodicScribe: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           EPISODIC_SCRIBE_PROMPT,
+      tools:                  EPISODIC_SCRIBE_TOOLS,
+      userMessage:            'The conversation above just completed. Encode it into ONE episode: resolve the entities, then make exactly one episodic_write_episode call with the event, project, lessons, blockers, entities, and reinforce pairs. Encode only what actually happened.',
+      messages:               [...parentState.messages],
+      // Wide window — the Scribe mines the whole episode for facts, like the
+      // observation writer. The summarizer has already compacted anything older.
+      contextWindow:          40,
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'episodic-scribe',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
