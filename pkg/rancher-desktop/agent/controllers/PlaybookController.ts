@@ -49,6 +49,7 @@ import {
   createPlaybookState,
   type PlaybookStepResult,
 } from '../workflow/WorkflowPlaybook';
+import { detectAgentNodeError } from '../workflow/agentNodeError';
 
 import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
 
@@ -744,6 +745,28 @@ export class PlaybookController<TState = any> {
             });
           }
 
+          // An agent-error surface (provider 402/401, timeout, …) is the node's
+          // failure report, not its output — fail the node and the run so
+          // routine_run_history and the digest don't record green (#570 lane).
+          const opFinalText = Array.isArray(opResult)
+            ? opResult.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
+            : String(opResult).trim();
+          const opAgentError = detectAgentNodeError(opLastAssistant, opFinalText);
+
+          if (opAgentError) {
+            playbookLog('orchestrator_prompt_agent_error', {
+              nodeId:       opNodeId,
+              label:        opLabel,
+              errorPreview: opAgentError.slice(0, 300),
+            });
+            console.error(`[PlaybookController] Agent error in orchestrator prompt "${ opLabel }" — failing workflow: ${ opAgentError.slice(0, 200) }`);
+            this.emitPlaybookEvent(state, 'node_failed', { nodeId: opNodeId, nodeLabel: opLabel, error: opAgentError });
+            const opFailedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: opAgentError };
+            this.emitPlaybookEvent(state, 'workflow_failed', { error: opAgentError });
+            state = await this.releaseWorkflow(state, opFailedPlaybook, 'failed', opAgentError);
+            return state;
+          }
+
           playbookLog('orchestrator_prompt_complete', {
             nodeId:        opNodeId,
             label:         opLabel,
@@ -792,6 +815,27 @@ export class PlaybookController<TState = any> {
             if (lastAssistant?.content) {
               const abortAgentState = await this.handleAbortIfSignalled(state, String(lastAssistant.content));
               if (abortAgentState) return abortAgentState;
+
+              // Don't let an agent-error surface resolve a decision branch —
+              // fail the node and the run instead.
+              const decisionAgentError = detectAgentNodeError(lastAssistant, String(lastAssistant.content).trim());
+
+              if (decisionAgentError) {
+                const failNodeId = pendingPlaybook.pendingDecision?.nodeId;
+                const failNodeLabel = failNodeId ? this.getPlaybookNodeLabel(pendingPlaybook, failNodeId) : 'decision';
+
+                playbookLog('prompt_agent_agent_error', {
+                  nodeId:       failNodeId,
+                  label:        failNodeLabel,
+                  errorPreview: decisionAgentError.slice(0, 300),
+                });
+                console.error(`[PlaybookController] Agent error in decision node "${ failNodeLabel }" — failing workflow: ${ decisionAgentError.slice(0, 200) }`);
+                this.emitPlaybookEvent(state, 'node_failed', { nodeId: failNodeId, nodeLabel: failNodeLabel, error: decisionAgentError });
+                const decisionFailedPlaybook = { ...meta.activeWorkflow, status: 'failed', error: decisionAgentError };
+                this.emitPlaybookEvent(state, 'workflow_failed', { error: decisionAgentError });
+                state = await this.releaseWorkflow(state, decisionFailedPlaybook, 'failed', decisionAgentError);
+                return state;
+              }
 
               const resolvedNodeId = pendingPlaybook.pendingDecision?.nodeId;
               const resolved = resolveDecision(pendingPlaybook, String(lastAssistant.content));
