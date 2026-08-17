@@ -420,6 +420,7 @@ export interface IpcMainInvokeEvents {
     tasks:    import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord[];
   };
   'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
+  'work-items:activity':        (opts?: { projectId?: string; author?: string; limit?: number }) => import('@pkg/agent/database/models/WorkItemsModel').WorkActivityRecord[];
   'work-items:project-create':  (input: import('@pkg/agent/database/models/WorkItemsModel').UpsertProjectInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord;
   'work-items:project-update':  (id: string, changes: import('@pkg/agent/database/models/WorkItemsModel').UpdateProjectInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord | null;
   'work-items:project-archive': (id: string) => boolean;

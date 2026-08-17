@@ -46,6 +46,7 @@
           <div class="ph-tabs">
             <button type="button" class="ph-tab" :class="{ on: tab === 'today' }" @click="tab = 'today'">Today</button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'board' }" @click="tab = 'board'">Board</button>
+            <button type="button" class="ph-tab" :class="{ on: tab === 'activity' }" @click="tab = 'activity'">Activity</button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'projects' }" @click="tab = 'projects'">Projects</button>
           </div>
           <div class="ph-sp" />
@@ -168,6 +169,44 @@
                     <div v-if="showPriority(t.priority)" class="ph-cm">{{ t.priority }}</div>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <!-- ACTIVITY -->
+            <div v-show="tab === 'activity'" v-if="sel">
+              <div class="ph-lead ph-activity-lead">
+                <div class="ph-lead-row">
+                  <h2>Recent activity</h2>
+                  <div class="ph-actions">
+                    <button type="button" class="ph-btn ghost sm" @click="refreshActivity" :disabled="activityLoading">
+                      {{ activityLoading ? 'Loading…' : '↻ Refresh' }}
+                    </button>
+                  </div>
+                </div>
+                <p>{{ shortName(sel) }} · latest comments and cycle notes from the workboard.</p>
+              </div>
+              <div v-if="activityLoading && !activity.length" class="ph-state">Loading recent activity…</div>
+              <div v-else-if="!activity.length" class="ph-state">No activity has been recorded for this project yet.</div>
+              <div v-else class="ph-timeline">
+                <button
+                  v-for="item in activity"
+                  :key="item.id"
+                  type="button"
+                  class="ph-activity"
+                  @click="openActivityTask(item)"
+                >
+                  <span class="ph-activity-dot" :class="{ hb: isHeartbeatAuthor(item.author), human: item.author === 'human' }" />
+                  <span class="ph-activity-body">
+                    <span class="ph-activity-meta">
+                      <b>{{ item.author || 'agent' }}</b>
+                      <span>{{ shortDate(item.created_at) }}</span>
+                      <span v-if="item.epic_title">{{ item.epic_title }}</span>
+                    </span>
+                    <span class="ph-activity-task" v-html="cleanTitle(item.task_title)" />
+                    <span class="ph-activity-text">{{ item.body }}</span>
+                  </span>
+                  <span class="ph-tag" :class="{ wait: item.task_status === 'blocked' }">{{ statusLabel(item.task_status) }}</span>
+                </button>
               </div>
             </div>
 
@@ -345,33 +384,59 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import {
   useProjects,
-  type ProjectView, type EpicWithTasks, type WorkTaskRecord, type WorkCommentRecord,
+  type ProjectView, type EpicWithTasks, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
   type UpsertProjectInput, type UpsertEpicInput, type UpsertTaskInput, type ReorderUpdate,
 } from '@pkg/composables/useProjects';
 
 const {
   projects, selected: sel, selectedId, isLoading, error, loaded, load, select,
-  loadComments, createProject, updateProject, archiveProject,
+  loadComments, loadActivity, createProject, updateProject, archiveProject,
   createEpic, updateEpic, archiveEpic,
   createTask, updateTask, archiveTask, addComment, reorder,
 } = useProjects();
 
-const tab = ref<'today' | 'board' | 'projects'>('today');
+const tab = ref<'today' | 'board' | 'activity' | 'projects'>('today');
 const saving = ref(false);
+const activity = ref<WorkActivityRecord[]>([]);
+const activityLoading = ref(false);
 
 const STATUSES = ['backlog', 'todo', 'in_progress', 'blocked', 'done', 'cancelled'];
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
 
 onMounted(() => {
-  void load();
+  load().catch((err) => {
+    console.error('[ProjectsHome] initial load failed:', err);
+  });
 });
 
-function refresh(): void {
-  void load();
+watch([tab, selectedId], () => {
+  if (tab.value === 'activity') {
+    refreshActivity().catch((err) => {
+      console.error('[ProjectsHome] activity refresh failed:', err);
+    });
+  }
+});
+
+async function refresh(): Promise<void> {
+  await load();
+  if (tab.value === 'activity') await refreshActivity();
+}
+
+async function refreshActivity(): Promise<void> {
+  if (!selectedId.value) {
+    activity.value = [];
+    return;
+  }
+  activityLoading.value = true;
+  try {
+    activity.value = await loadActivity(selectedId.value, 80);
+  } finally {
+    activityLoading.value = false;
+  }
 }
 
 // ── grouping for the sidebar ──────────────────────────────────────────
@@ -433,6 +498,9 @@ const STATUS_LABEL: Record<string, string> = {
 };
 function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
+}
+function isHeartbeatAuthor(author: string | null): boolean {
+  return /heartbeat/i.test(author ?? '');
 }
 function showPriority(pr: string): boolean {
   return pr === 'high' || pr === 'critical' || pr === 'p0' || pr === 'p1';
@@ -604,6 +672,13 @@ async function openTaskDrawer(t: WorkTaskRecord): Promise<void> {
   taskComments.value = await loadComments(t.id);
 }
 
+async function openActivityTask(item: WorkActivityRecord): Promise<void> {
+  const task = sel.value?.epics
+    .flatMap(epic => epic.tasks)
+    .find(t => t.id === item.task_id);
+  if (task) await openTaskDrawer(task);
+}
+
 function openNewTask(epicId: string): void {
   taskMode.value = 'create';
   openTask.value = { id: '' } as WorkTaskRecord;
@@ -668,6 +743,7 @@ async function postComment(): Promise<void> {
   try {
     await addComment(taskDraft.id, body, 'human');
     taskComments.value = await loadComments(taskDraft.id);
+    if (tab.value === 'activity') await refreshActivity();
     newComment.value = '';
   } finally {
     saving.value = false;
@@ -910,6 +986,21 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-ct { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--ptext); }
 .ph-card.ghost .ph-ct { color: var(--ptext3); font-weight: 400; font-size: 12.5px; }
 .ph-cm { font-family: var(--pmono); font-size: 10.5px; color: var(--ptext3); margin-top: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* activity */
+.ph-activity-lead { margin-bottom: 18px; }
+.ph-timeline { display: flex; flex-direction: column; position: relative; }
+.ph-timeline::before { content: ''; position: absolute; top: 7px; bottom: 7px; left: 6px; width: 1px; background: var(--pborder); }
+.ph-activity { display: grid; grid-template-columns: 13px minmax(0, 1fr) auto; gap: 14px; width: 100%; text-align: left; background: transparent; border: none; color: inherit; padding: 0 0 18px; cursor: pointer; }
+.ph-activity:hover .ph-activity-task { color: var(--pacc); }
+.ph-activity-dot { width: 13px; height: 13px; border-radius: 50%; margin-top: 5px; background: var(--ptext3); border: 3px solid var(--pbg); position: relative; z-index: 1; }
+.ph-activity-dot.hb { background: var(--pacc); box-shadow: 0 0 0 3px var(--pacc-soft); }
+.ph-activity-dot.human { background: var(--pgreen); }
+.ph-activity-body { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding-bottom: 2px; }
+.ph-activity-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: var(--pmono); font-size: 10.5px; color: var(--ptext3); text-transform: uppercase; letter-spacing: 0.06em; }
+.ph-activity-meta b { color: var(--pacc); font-weight: 600; }
+.ph-activity-task { display: block; color: var(--ptext); font-size: 14px; font-weight: 600; line-height: 1.4; transition: color 0.12s ease; }
+.ph-activity-text { display: -webkit-box; max-width: 780px; overflow: hidden; color: var(--ptext2); font-size: 13px; line-height: 1.55; white-space: pre-wrap; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 
 /* projects overview */
 .ph-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }

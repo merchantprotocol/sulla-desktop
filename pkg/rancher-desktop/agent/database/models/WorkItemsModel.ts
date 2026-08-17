@@ -90,6 +90,17 @@ export interface WorkCommentRecord {
   archived:   boolean;
 }
 
+export interface WorkActivityRecord extends WorkCommentRecord {
+  task_title:    string;
+  task_status:   string;
+  task_priority: string;
+  project_id:    string;
+  project_title: string;
+  project_slug:  string;
+  epic_id:       string | null;
+  epic_title:    string | null;
+}
+
 export interface SearchHit {
   kind:     WorkItemKind;
   id:       string;
@@ -204,6 +215,12 @@ export interface ListOpts {
   priority?:    string;
   includeDone?: boolean;
   limit?:       number;
+}
+
+export interface ListActivityOpts {
+  projectId?: string;
+  author?:    string;
+  limit?:     number;
 }
 
 export interface ListEpicsOpts extends ListOpts {
@@ -881,6 +898,47 @@ export class WorkItemsModel {
         WHERE task_id = $1 AND archived = false
         ORDER BY created_at ASC`,
       [taskId],
+    );
+  }
+
+  static async listRecentActivity(opts: ListActivityOpts = {}): Promise<WorkActivityRecord[]> {
+    const conds = [
+      'c.archived = false',
+      't.archived = false',
+      'p.archived = false',
+    ];
+    const values: any[] = [];
+    let idx = 1;
+    if (opts.projectId) {
+      conds.push(`t.project_id = $${ idx++ }`);
+      values.push(opts.projectId);
+    }
+    if (opts.author) {
+      conds.push(`LOWER(COALESCE(c.author, '')) = LOWER($${ idx++ })`);
+      values.push(opts.author);
+    }
+    const limit = Math.min(Math.max(1, opts.limit ?? 80), 200);
+    values.push(limit);
+
+    return postgresClient.query<WorkActivityRecord>(
+      `SELECT
+          c.*,
+          t.title AS task_title,
+          t.status AS task_status,
+          t.priority AS task_priority,
+          p.id AS project_id,
+          p.title AS project_title,
+          p.slug AS project_slug,
+          e.id AS epic_id,
+          e.title AS epic_title
+        FROM ${ WorkItemsModel.COMMENTS } c
+        JOIN ${ WorkItemsModel.TASKS } t ON t.id = c.task_id
+        JOIN ${ WorkItemsModel.PROJECTS } p ON p.id = t.project_id
+        LEFT JOIN ${ WorkItemsModel.EPICS } e ON e.id = t.epic_id AND e.archived = false
+        WHERE ${ conds.join(' AND ') }
+        ORDER BY c.created_at DESC
+        LIMIT $${ idx }`,
+      values,
     );
   }
 

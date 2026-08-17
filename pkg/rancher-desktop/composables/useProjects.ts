@@ -15,6 +15,7 @@ import type {
   WorkEpicRecord,
   WorkTaskRecord,
   WorkCommentRecord,
+  WorkActivityRecord,
   UpsertProjectInput,
   UpdateProjectInput,
   UpsertEpicInput,
@@ -26,6 +27,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export type {
   WorkProjectRecord, WorkEpicRecord, WorkTaskRecord, WorkCommentRecord,
+  WorkActivityRecord,
   UpsertProjectInput, UpdateProjectInput, UpsertEpicInput, UpdateEpicInput,
   UpsertTaskInput, UpdateTaskInput,
 };
@@ -126,7 +128,6 @@ export function useProjects() {
       loaded.value = true;
     } catch (err: any) {
       error.value = err?.message ?? String(err);
-      // eslint-disable-next-line no-console
       console.error('[useProjects] board load failed:', err);
     } finally {
       isLoading.value = false;
@@ -140,6 +141,14 @@ export function useProjects() {
   async function loadComments(taskId: string): Promise<WorkCommentRecord[]> {
     try {
       return await ipcRenderer.invoke('work-items:comments', taskId);
+    } catch {
+      return [];
+    }
+  }
+
+  async function loadActivity(projectId?: string, limit = 80): Promise<WorkActivityRecord[]> {
+    try {
+      return await ipcRenderer.invoke('work-items:activity', { projectId, limit });
     } catch {
       return [];
     }
@@ -219,6 +228,7 @@ export function useProjects() {
     load,
     select,
     loadComments,
+    loadActivity,
     createProject,
     updateProject,
     archiveProject,
