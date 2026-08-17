@@ -17,7 +17,7 @@ export class OpenAIService extends OpenAICompatibleService {
 
     return new OpenAIService({
       id:      'openai',
-      model:   valMap.model || 'gpt-4o',
+      model:   valMap.model || '',
       baseUrl: 'https://api.openai.com/v1',
       apiKey:  valMap.api_key || '',
     });

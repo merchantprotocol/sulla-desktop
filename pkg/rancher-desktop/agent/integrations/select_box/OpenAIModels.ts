@@ -7,7 +7,7 @@ export class OpenAIModels extends SelectBoxProvider {
     const apiKey = context.formValues.api_key;
 
     if (!apiKey) {
-      return this.getStaticModels();
+      return [];
     }
 
     try {
@@ -17,7 +17,7 @@ export class OpenAIModels extends SelectBoxProvider {
 
       if (!response.ok) {
         console.warn(`[OpenAIModels] API call failed: ${ response.status } ${ response.statusText }`);
-        return this.getStaticModels();
+        return [];
       }
 
       const body = await response.json() as { data?: { id: string }[] };
@@ -34,21 +34,6 @@ export class OpenAIModels extends SelectBoxProvider {
       console.error('[OpenAIModels] API call failed:', err);
     }
 
-    console.log('[OpenAIModels] Falling back to static model list');
-    return this.getStaticModels();
-  }
-
-  private getStaticModels(): SelectOption[] {
-    return [
-      { value: 'o3', label: 'o3', description: 'Latest reasoning model' },
-      { value: 'o3-mini', label: 'o3-mini', description: 'Lightweight reasoning model' },
-      { value: 'o1', label: 'o1', description: 'Advanced reasoning model' },
-      { value: 'o1-mini', label: 'o1-mini', description: 'Fast reasoning model' },
-      { value: 'gpt-4o', label: 'GPT-4o', description: 'Most capable multimodal model' },
-      { value: 'gpt-4o-mini', label: 'GPT-4o Mini', description: 'Fast multimodal model' },
-      { value: 'gpt-4-turbo', label: 'GPT-4 Turbo', description: 'High capability model' },
-      { value: 'gpt-4', label: 'GPT-4', description: 'Original GPT-4 model' },
-      { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', description: 'Fast and affordable model' },
-    ];
+    return [];
   }
 }
