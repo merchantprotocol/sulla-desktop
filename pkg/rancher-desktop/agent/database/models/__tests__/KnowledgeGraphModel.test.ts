@@ -336,6 +336,57 @@ describe('KnowledgeGraphModel', () => {
     expect(rels).toEqual(['belongs_to', 'blocked_by', 'learned_from', 'mentioned_in', 'related_to']);
   });
 
+  it('writeEpisode stores provenance metadata and mirrors recall anchors', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([])); // resolveAliases → no reuse
+
+    const client: any = {
+      query: jest.fn((sql: string) => {
+        if (sql.includes('INSERT INTO node_links')) return Promise.resolve({ rows: [{ was_inserted: true }] });
+        if (sql.includes("relation_type = 'related_to'")) return Promise.resolve({ rows: [{ ok: true }] });
+        return Promise.resolve({ rows: [] });
+      }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => Promise.resolve(callback(client)));
+
+    const result = await KnowledgeGraphModel.writeEpisode({
+      source:   'heartbeat',
+      metadata: {
+        projectId:            'trXJ',
+        epicId:               'iK4o',
+        taskId:               'Yrn7',
+        repo:                 '/Users/jonathonbyrdziak/Sites/sulla/sulla-desktop',
+        artifact:             'pkg/rancher-desktop/agent/database/models/KnowledgeGraphModel.ts',
+        timestamp:            '2026-08-17T13:25:00.000Z',
+        sourceConversationId: 'conv_heartbeat_1786973100000',
+        commitSha:            'abc1234',
+        githubIssue:          '#518',
+      },
+      project: { title: 'Sulla Desktop' },
+      event:   { title: 'Verified episodic memory write and recall', summary: 'Metadata anchors were made durable.' },
+    });
+
+    expect(result.createdNodes).toBe(10); // project + event + 8 metadata anchors
+
+    const nodeInserts = client.query.mock.calls.filter((c: any[]) => String(c[0]).includes('INSERT INTO knowledge_nodes'));
+    const eventInsert = nodeInserts.find((c: any[]) => c[1][1] === 'event');
+    expect(eventInsert?.[1][4]).toContain('"taskId":"Yrn7"');
+    expect(eventInsert?.[1][4]).toContain('"sourceConversationId":"conv_heartbeat_1786973100000"');
+
+    const insertedTitles = nodeInserts.map((c: any[]) => c[1][2]);
+    expect(insertedTitles).toEqual(expect.arrayContaining([
+      'Yrn7',
+      '/Users/jonathonbyrdziak/Sites/sulla/sulla-desktop',
+      'pkg/rancher-desktop/agent/database/models/KnowledgeGraphModel.ts',
+      'conv_heartbeat_1786973100000',
+      '#518',
+    ]));
+
+    const aliases = client.query.mock.calls
+      .filter((c: any[]) => String(c[0]).includes('INSERT INTO node_aliases'))
+      .map((c: any[]) => c[1][0]);
+    expect(aliases).toEqual(expect.arrayContaining(['task Yrn7', 'work task Yrn7', 'epic iK4o', 'project trXJ']));
+  });
+
   it('writeEpisode reuses a project whose alias sim is ≥ 0.85 and still creates a fresh event', async() => {
     (postgresClient as any).query = jest.fn((_sql: string, params: any[]) => {
       const terms: string[] = params?.[0] ?? [];

@@ -5,7 +5,12 @@ const DEFAULT_LIMIT = 12;
 
 function cleanTerms(terms: unknown): string[] {
   if (!Array.isArray(terms)) return [];
-  return Array.from(new Set(terms.map(String).map(t => t.trim()).filter(Boolean))).slice(0, 8);
+  return Array.from(new Set(
+    terms
+      .filter((term): term is string => typeof term === 'string')
+      .map(t => t.trim())
+      .filter(Boolean),
+  )).slice(0, 8);
 }
 
 function cleanLimit(value: unknown): number {
@@ -23,7 +28,9 @@ export function formatEpisodicContext(rows: SpreadActivationRecord[]): string {
     const summary = (row.summary || '').trim();
     const activation = Number(row.activation ?? 0).toFixed(3);
     const hop = Number(row.hop ?? 0);
-    const body = summary ? `${ title } — ${ summary }` : title;
+    const detail = (row.detail || '').replace(/\s+/g, ' ').trim();
+    const detailSuffix = detail ? ` | ${ detail.slice(0, 360) }${ detail.length > 360 ? '…' : '' }` : '';
+    const body = summary ? `${ title } — ${ summary }${ detailSuffix }` : `${ title }${ detailSuffix }`;
 
     return `[${ type }] ${ body } (id: ${ row.id }, activation: ${ activation }, hop: ${ hop })`;
   }).join('\n');

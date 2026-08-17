@@ -547,13 +547,19 @@ Read the WHOLE completed conversation and produce ONE episode:
   services, files, issue numbers. Give each its surface forms as aliases.
 - **reinforcePairs**: pairs of entities/terms that co-occurred meaningfully,
   so their association strengthens over time.
+- **metadata**: when available, include durable provenance such as taskId,
+  projectId, epicId, repo, decision, artifact(s), timestamp, sourceConversationId,
+  commitSha, and githubIssue. These fields are how future Heartbeat/operator
+  loops land back on a specific task, repo, artifact, or decision.
 
 ## How to work (fast, ≤2 rounds)
 
 1. Extract the salient surface forms (entities, project, key nouns).
 2. Call \`episodic_resolve\` ONCE with all of them so you know what already
    exists (write-side dedup mirrors read-side recall). Reuse those names.
-3. Call \`episodic_write_episode\` EXACTLY ONCE with the full encoding. It
+3. Call \`episodic_write_episode\` EXACTLY ONCE with the full encoding. Include
+   the \`metadata\` object from the episode metadata block when values are present.
+   It
    handles dedup, aliasing, linking, and reinforcement atomically — you just
    supply good content. Every entity you name should also appear in a
    reinforcePair or be a project/lesson so nothing is orphaned.
@@ -563,8 +569,39 @@ Read the WHOLE completed conversation and produce ONE episode:
 - Encode only what actually happened in THIS conversation. Never invent facts,
   outcomes, or entities that weren't discussed.
 - Summaries are the product — specific and self-contained beats vague.
+- Preserve source ids and artifact paths in metadata instead of burying them
+  only in prose.
 - Do not store secrets, credentials, or tokens.
 - One \`episodic_write_episode\` call, then finish. Output nothing else.`;
+
+function buildEpisodeMetadataInstruction(parentState: BaseThreadState): string {
+  const metadata = (parentState.metadata || {}) as Record<string, any>;
+  const values: Record<string, string> = {};
+  const set = (key: string, value: unknown) => {
+    if (value == null) return;
+    const trimmed = String(value).trim();
+    if (trimmed) values[key] = trimmed;
+  };
+
+  set('sourceConversationId', metadata.threadId || metadata.conversationId);
+  set('taskId', metadata.heartbeatSelectedTaskId);
+  set('workflowNodeId', metadata.workflowNodeId);
+  set('workflowParentChannel', metadata.workflowParentChannel);
+  set('parentWsChannel', metadata.wsChannel);
+  set('timestamp', new Date().toISOString());
+
+  if (Object.keys(values).length === 0) {
+    return 'The conversation above just completed. Encode it into ONE episode: resolve the entities, then make exactly one episodic_write_episode call with the event, project, lessons, blockers, entities, and reinforce pairs. Encode only what actually happened.';
+  }
+
+  return [
+    'The conversation above just completed. Encode it into ONE episode: resolve the entities, then make exactly one episodic_write_episode call with the event, project, lessons, blockers, entities, reinforce pairs, and metadata. Encode only what actually happened.',
+    '',
+    '<episode_metadata>',
+    JSON.stringify(values, null, 2),
+    '</episode_metadata>',
+  ].join('\n');
+}
 
 // ── Heartbeat-specific memory recall ──────────────────────────────────────
 
@@ -1407,7 +1444,7 @@ export const GraphRegistry = {
     const state = await buildSubconsciousState({
       systemPrompt:           EPISODIC_SCRIBE_PROMPT,
       tools:                  EPISODIC_SCRIBE_TOOLS,
-      userMessage:            'The conversation above just completed. Encode it into ONE episode: resolve the entities, then make exactly one episodic_write_episode call with the event, project, lessons, blockers, entities, and reinforce pairs. Encode only what actually happened.',
+      userMessage:            buildEpisodeMetadataInstruction(parentState),
       messages:               [...parentState.messages],
       // Wide window — the Scribe mines the whole episode for facts, like the
       // observation writer. The summarizer has already compacted anything older.

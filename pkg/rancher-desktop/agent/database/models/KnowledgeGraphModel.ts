@@ -53,10 +53,27 @@ export interface EpisodeNodeInput {
   node_type?: string;
 }
 
+export interface EpisodeMetadataInput {
+  projectId?:           string | null;
+  epicId?:              string | null;
+  taskId?:              string | null;
+  repo?:                string | null;
+  decision?:            string | null;
+  artifact?:            string | null;
+  artifacts?:           string[];
+  timestamp?:           string | null;
+  sourceConversation?:  string | null;
+  sourceConversationId?: string | null;
+  commitSha?:           string | null;
+  githubIssue?:         string | null;
+}
+
 /** A fully-encoded completed episode, written atomically by writeEpisode. */
 export interface WriteEpisodeInput {
   /** Origin: 'chat' | 'heartbeat' | 'sub-agent' | ... — stored as node source. */
   source?:   string;
+  /** Durable provenance/trace metadata for later operator recall. */
+  metadata?: EpisodeMetadataInput;
   /** Project/epic anchor the episode belongs_to (resolved+reused, else created). */
   project?:  EpisodeNodeInput | null;
   /** The event node — "what happened". Always created new. Required. */
@@ -548,6 +565,11 @@ export class KnowledgeGraphModel {
     };
 
     interface PlannedNode { id: string; node: EpisodeNodeInput; type: string; isNew: boolean }
+    const normalizedMetadata = KnowledgeGraphModel.normalizeEpisodeMetadata(input.metadata);
+    const metadataEntities = KnowledgeGraphModel.metadataEntities(normalizedMetadata);
+    const metadataPairs = KnowledgeGraphModel.metadataReinforcePairs(normalizedMetadata);
+    const eventNode = KnowledgeGraphModel.eventWithMetadata(input.event, normalizedMetadata);
+
     const planned: PlannedNode[] = [];
     const reuseByTermNorm = new Map<string, string>(); // surface-form -> node id (for reinforce)
 
@@ -568,8 +590,8 @@ export class KnowledgeGraphModel {
 
     // Event is always a fresh fact.
     const eventId = `evt_${ Date.now() }_${ rand(6) }`;
-    planned.push({ id: eventId, node: input.event, type: 'event', isNew: true });
-    registerTerms(input.event, eventId);
+    planned.push({ id: eventId, node: eventNode, type: 'event', isNew: true });
+    registerTerms(eventNode, eventId);
 
     const usedIds = new Set<string>([eventId, ...(projectId ? [projectId] : [])]);
     const freshFactId = (prefix: string, title: string) => {
@@ -598,7 +620,7 @@ export class KnowledgeGraphModel {
     }
 
     const entityIds: string[] = [];
-    for (const e of input.entities ?? []) {
+    for (const e of [...(input.entities ?? []), ...metadataEntities]) {
       if (!e?.title?.trim()) continue;
       const reused = await resolveReuse(e);
       const id = reused ?? slugId('kn', e.title);
@@ -611,7 +633,7 @@ export class KnowledgeGraphModel {
 
     // Resolve reinforce pairs to node ids (this-episode nodes or committed ones).
     const pairPlan: [string, string][] = [];
-    for (const [a, b] of input.reinforcePairs ?? []) {
+    for (const [a, b] of [...(input.reinforcePairs ?? []), ...metadataPairs]) {
       const ida = reuseByTermNorm.get(KnowledgeGraphModel.normSlug(a)) ?? (await resolveReuse({ title: a }));
       const idb = reuseByTermNorm.get(KnowledgeGraphModel.normSlug(b)) ?? (await resolveReuse({ title: b }));
       if (ida && idb && ida !== idb) pairPlan.push([ida, idb]);
@@ -695,5 +717,85 @@ export class KnowledgeGraphModel {
         nodeIds: planned.map(p => p.id),
       };
     });
+  }
+
+  private static normalizeEpisodeMetadata(metadata: EpisodeMetadataInput | undefined): EpisodeMetadataInput | undefined {
+    if (!metadata || typeof metadata !== 'object') return undefined;
+    const cleanString = (value: unknown): string | null => {
+      if (value == null) return null;
+      const trimmed = String(value).trim();
+      return trimmed || null;
+    };
+    const cleanStringList = (value: unknown): string[] => {
+      if (!Array.isArray(value)) return [];
+      return Array.from(new Set(value.map(cleanString).filter((v): v is string => Boolean(v))));
+    };
+
+    const normalized: EpisodeMetadataInput = {
+      projectId:            cleanString(metadata.projectId),
+      epicId:               cleanString(metadata.epicId),
+      taskId:               cleanString(metadata.taskId),
+      repo:                 cleanString(metadata.repo),
+      decision:             cleanString(metadata.decision),
+      artifact:             cleanString(metadata.artifact),
+      artifacts:            cleanStringList(metadata.artifacts),
+      timestamp:            cleanString(metadata.timestamp),
+      sourceConversation:   cleanString(metadata.sourceConversation),
+      sourceConversationId: cleanString(metadata.sourceConversationId),
+      commitSha:            cleanString(metadata.commitSha),
+      githubIssue:          cleanString(metadata.githubIssue),
+    };
+
+    return Object.values(normalized).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
+      ? normalized
+      : undefined;
+  }
+
+  private static eventWithMetadata(event: EpisodeNodeInput, metadata: EpisodeMetadataInput | undefined): EpisodeNodeInput {
+    if (!metadata) return event;
+    const compactMetadata = Object.fromEntries(
+      Object.entries(metadata).filter(([, value]) => Array.isArray(value) ? value.length > 0 : Boolean(value)),
+    );
+    const metadataLine = `Episode metadata: ${ JSON.stringify(compactMetadata) }`;
+    const detail = [event.detail?.trim(), metadataLine].filter(Boolean).join('\n\n');
+
+    return { ...event, detail };
+  }
+
+  private static metadataEntities(metadata: EpisodeMetadataInput | undefined): EpisodeNodeInput[] {
+    if (!metadata) return [];
+    const entities: EpisodeNodeInput[] = [];
+
+    const push = (title: string | null | undefined, nodeType: string, summary: string, aliases: string[] = []) => {
+      const cleanTitle = title?.trim();
+      if (!cleanTitle) return;
+      entities.push({
+        title:     cleanTitle,
+        summary,
+        aliases:   Array.from(new Set([cleanTitle, ...aliases].map(a => a.trim()).filter(Boolean))),
+        node_type: nodeType,
+      });
+    };
+
+    push(metadata.taskId, 'task', 'Workboard task associated with this episode.', metadata.taskId ? [`task ${ metadata.taskId }`, `work task ${ metadata.taskId }`] : []);
+    push(metadata.epicId, 'epic', 'Workboard epic associated with this episode.', metadata.epicId ? [`epic ${ metadata.epicId }`] : []);
+    push(metadata.projectId, 'project', 'Workboard project associated with this episode.', metadata.projectId ? [`project ${ metadata.projectId }`] : []);
+    push(metadata.repo, 'repo', 'Repository touched or inspected during this episode.');
+    push(metadata.githubIssue, 'issue', 'GitHub issue or PR associated with this episode.');
+    push(metadata.commitSha, 'commit', 'Commit associated with this episode.');
+    push(metadata.sourceConversationId ?? metadata.sourceConversation, 'conversation', 'Source conversation for this episode.');
+    for (const artifact of [metadata.artifact, ...(metadata.artifacts ?? [])]) {
+      push(artifact, 'artifact', 'Artifact produced, inspected, or updated during this episode.');
+    }
+
+    return entities;
+  }
+
+  private static metadataReinforcePairs(metadata: EpisodeMetadataInput | undefined): [string, string][] {
+    if (!metadata?.taskId) return [];
+    return [metadata.repo, metadata.githubIssue, metadata.commitSha, metadata.sourceConversationId, metadata.artifact, ...(metadata.artifacts ?? [])]
+      .map(value => value?.trim())
+      .filter((value): value is string => Boolean(value))
+      .map(value => [metadata.taskId as string, value] as [string, string]);
   }
 }
