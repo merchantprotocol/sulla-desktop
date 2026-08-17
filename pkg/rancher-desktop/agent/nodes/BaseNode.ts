@@ -6,19 +6,18 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getAgentOverrideService, getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
+import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../languagemodels/providerRecovery';
+import { SystemPromptBuilder, type PromptBuildContext, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
+import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { throwIfAborted } from '../services/AbortService';
 import { parseJson } from '../services/JsonParseService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
-import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { StreamContext } from '../controllers/Extractor';
-
-import { SystemPromptBuilder, type PromptBuildContext, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
-
 import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
 import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
@@ -557,9 +556,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         bumpStateVersion:      (state) => this.bumpStateVersion(state),
       });
       // Wire live currentNodeRunContext via property descriptor
-      const self = this;
       Object.defineProperty(this._toolExecutor['ctx'], 'currentNodeRunContext', {
-        get() { return self.currentNodeRunContext },
+        get:          () => this.currentNodeRunContext,
         configurable: true,
       });
     }
@@ -1220,63 +1218,138 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       return reply;
     } catch (err) {
-      if ((err as any)?.name === 'AbortError') throw err;
+      const initialRecovery = classifyLLMFailure(err);
+      if (initialRecovery.kind === 'interrupted') throw err;
 
       const primaryName = this.llm.getProviderName?.() || 'primary';
       const primaryId = this.llm.getModel?.() || '';
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.warn(`[${ this.name }:BaseNode] Primary LLM failed (${ primaryName }):`, errMsg);
+      let lastErr = err;
+      let lastErrMsg = redactLLMFailureMessage(err);
+      let recovery = initialRecovery;
+      console.warn(
+        `[${ this.name }:BaseNode] Primary LLM failed ` +
+        `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind }): ${ lastErrMsg }`,
+      );
 
-      // Never silently swap models out from under the user — when they pick a
-      // specific provider they want to know it failed, not get an answer from
-      // a different model pretending to be the same assistant. Fallback only
-      // runs when the primary is a generic/unselected provider.
-      const explicitPrimary = primaryId === 'claude-code' || primaryName === 'Claude Code' ||
-        primaryId === 'codex' || primaryName === 'OpenAI Codex';
-      if (explicitPrimary) {
-        throw new Error(`${ primaryName } failed: ${ errMsg }`);
-      }
-
-      // Fallback to secondary provider — only if it's healthy
-      try {
-        const secondary = await getSecondaryService();
-        await secondary.initialize();
-        if (secondary.isAvailable()) {
-          const secondaryName = secondary.getProviderName?.() || secondary.getModel();
-          console.warn(`[${ this.name }:BaseNode] Falling back to secondary provider (${ secondaryName }) — primary ${ primaryName } failed`);
-          const chatMessages = messages.filter(msg =>
-            ['system', 'user', 'assistant'].includes(msg.role),
+      if (recovery.retryPrimary) {
+        try {
+          console.warn(
+            `[${ this.name }:BaseNode] Retrying primary provider once ` +
+            `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind })`,
           );
-          const reply = await secondary.chat(chatMessages, {
-            signal:      state.metadata?.options?.abort?.signal,
-            temperature: options.temperature,
+          const retryMessages = this.buildReducedRetryMessages(messages);
+          const retryReply = await this.llm.chat(retryMessages, {
             maxTokens:   options.maxTokens,
             format:      options.format,
+            temperature: options.temperature,
+            signal:      state.metadata?.options?.abort?.signal,
+            tools:       llmTools,
             conversationId,
             nodeName,
           });
-          if (reply) {
-            // Annotate the reply so downstream UI can badge it as a fallback.
-            (reply.metadata as any).fallback_used = true;
-            (reply.metadata as any).fallback_from = primaryName;
-            (reply.metadata as any).fallback_to = secondaryName;
-            this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
-            return reply;
+          if (retryReply && (retryReply.content?.trim() || retryReply.metadata.tool_calls?.length)) {
+            (retryReply.metadata as any).retry_used = true;
+            (retryReply.metadata as any).retry_provider = primaryName;
+            (retryReply.metadata as any).retry_model = primaryId;
+            (retryReply.metadata as any).retry_reason = recovery.kind;
+            this.appendResponse(state, retryReply.content, retryReply.metadata.rawProviderContent);
+            return retryReply;
           }
-        } else {
-          console.warn(`[${ this.name }:BaseNode] Secondary provider not available — skipping fallback`);
+          throw new Error(`LLM returned empty response on provider retry (model=${ primaryId || this.llm.getModel() }, provider=${ primaryName })`);
+        } catch (retryErr) {
+          const retryRecovery = classifyLLMFailure(retryErr);
+          if (retryRecovery.kind === 'interrupted') throw retryErr;
+          lastErr = retryErr;
+          lastErrMsg = redactLLMFailureMessage(retryErr);
+          recovery = retryRecovery;
+          console.warn(
+            `[${ this.name }:BaseNode] Primary retry failed ` +
+            `(provider=${ primaryName }, model=${ primaryId || '(default)' }, kind=${ recovery.kind }): ${ lastErrMsg }`,
+          );
         }
-      } catch (fallbackErr) {
-        if ((fallbackErr as any)?.name === 'AbortError') throw fallbackErr;
-        console.error(`[${ this.name }:BaseNode] Secondary provider fallback failed:`, fallbackErr);
+      }
+
+      // Fallback to secondary provider. Health check failures are logged, but
+      // the call is still attempted because provider health probes often test
+      // a different endpoint than chat completion.
+      if (recovery.fallbackAllowed) {
+        try {
+          const secondary = await getSecondaryService();
+          const secondaryName = secondary.getProviderName?.() || secondary.getModel();
+          const secondaryModel = secondary.getModel?.() || '';
+          const sameRoute = sameLLMRoute(
+            { provider: primaryName, model: primaryId },
+            { provider: secondaryName, model: secondaryModel },
+          );
+
+          if (sameRoute) {
+            console.warn(
+              `[${ this.name }:BaseNode] Secondary provider matches failed primary ` +
+              `(provider=${ secondaryName }, model=${ secondaryModel || '(default)' }) — skipping fallback`,
+            );
+          } else {
+            const initialized = await secondary.initialize();
+            if (!initialized || !secondary.isAvailable()) {
+              console.warn(
+                `[${ this.name }:BaseNode] Secondary provider did not pass health check ` +
+                `(provider=${ secondaryName }, model=${ secondaryModel || '(default)' }) — attempting fallback call anyway`,
+              );
+            }
+            console.warn(
+              `[${ this.name }:BaseNode] Falling back to secondary provider ` +
+              `(from=${ primaryName }/${ primaryId || '(default)' }, to=${ secondaryName }/${ secondaryModel || '(default)' }, reason=${ recovery.kind })`,
+            );
+            const chatMessages = messages.filter(msg =>
+              ['system', 'user', 'assistant'].includes(msg.role),
+            );
+            const reply = await secondary.chat(chatMessages, {
+              signal:      state.metadata?.options?.abort?.signal,
+              temperature: options.temperature,
+              maxTokens:   options.maxTokens,
+              format:      options.format,
+              tools:       llmTools,
+              conversationId,
+              nodeName,
+            });
+            if (reply && (reply.content?.trim() || reply.metadata.tool_calls?.length)) {
+            // Annotate the reply so downstream UI can badge it as a fallback.
+              (reply.metadata as any).fallback_used = true;
+              (reply.metadata as any).fallback_from = primaryName;
+              (reply.metadata as any).fallback_to = secondaryName;
+              (reply.metadata as any).fallback_reason = recovery.kind;
+              (reply.metadata as any).failed_model = primaryId;
+              (reply.metadata as any).fallback_model = secondaryModel;
+              this.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
+              return reply;
+            }
+            throw new Error(`Secondary provider returned empty response (provider=${ secondaryName }, model=${ secondaryModel || '(default)' })`);
+          }
+        } catch (fallbackErr) {
+          const fallbackRecovery = classifyLLMFailure(fallbackErr);
+          if (fallbackRecovery.kind === 'interrupted') throw fallbackErr;
+          lastErr = fallbackErr;
+          lastErrMsg = redactLLMFailureMessage(fallbackErr);
+          console.error(`[${ this.name }:BaseNode] Secondary provider fallback failed (${ fallbackRecovery.kind }):`, lastErrMsg);
+        }
       }
 
       // Propagate the error so the chat UI can display it to the user
-      throw new Error(`[${ this.name }] LLM provider failed: ${ errMsg }`);
+      throw new Error(
+        `[${ this.name }] LLM provider recovery failed: ${ recovery.userMessage } ` +
+        `Tried ${ primaryName }/${ primaryId || '(default)' }` +
+        `${ recovery.fallbackAllowed ? ' and the configured fallback provider' : '' }. ` +
+        `Last error: ${ redactLLMFailureMessage(lastErr) || lastErrMsg }`,
+      );
     } finally {
       this.currentNodeRunContext = previousRunContext;
       (state.metadata as any).__toolAccessPolicy = previousToolAccessPolicy;
     }
+  }
+
+  private buildReducedRetryMessages(messages: ChatMessage[]): ChatMessage[] {
+    const systemMsgs = messages.filter(m => m.role === 'system');
+    const recentMsgs = messages.filter(m => m.role !== 'system').slice(-3);
+    return [...systemMsgs, ...recentMsgs];
   }
 
   private buildToolAccessPolicyForCall(options: LLMCallOptions) {
@@ -1358,7 +1431,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   /**
      * Helper method to respond gracefully when abort is detected
      */
-  protected async handleAbort(state: BaseThreadState, message?: string): Promise<void> {
+  protected handleAbort(state: BaseThreadState, message?: string): void {
     const abortMessage = message || "OK, I'm stopping everything. What do you need me to do?";
     this.wsChatMessage(state, abortMessage, 'assistant', 'progress');
   }
@@ -1369,7 +1442,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
      * When present and containing tool_use blocks, the native content array is stored directly
      * so buildRequestBody can pass it through as-is on subsequent turns.
      */
-  protected async appendResponse(state: BaseThreadState, content: string, rawProviderContent?: any): Promise<void> {
+  protected appendResponse(state: BaseThreadState, content: string, rawProviderContent?: any): void {
     const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
     const normalizedContent = stripProtocolTags(contentStr);
 
@@ -1708,7 +1781,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     state:    BaseThreadState,
     content:  string,
     role:     'assistant' | 'system' = 'assistant',
-    kind    = 'progress',
+    kind = 'progress',
     extras?: Record<string, unknown>,
     // Wire type. Defaults to 'assistant_message' (the primary orchestration
     // path — flips graphRunning on the frontend). Subconscious agents
