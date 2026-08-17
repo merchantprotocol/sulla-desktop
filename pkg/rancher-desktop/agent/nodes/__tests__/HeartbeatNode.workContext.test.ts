@@ -149,6 +149,50 @@ describe('HeartbeatNode workboard context injection', () => {
     expect(state.messages[1].role).toBe('user');
   });
 
+  it('merges heartbeat context blocks into the latest assistant message', async() => {
+    const node = await makeNode();
+    const state: any = {
+      messages: [
+        { role: 'assistant', content: 'older assistant' },
+        { role: 'user', content: 'Scheduled autonomous work time.' },
+        {
+          role:    'assistant',
+          content: [{ type: 'text', text: 'latest assistant' }],
+        },
+      ],
+      metadata: {},
+    };
+
+    node.mergeHeartbeatContextBlock(state, '\n\n<routine_digest>12 armed, all green</routine_digest>', 'routine_digest');
+
+    expect(state.messages).toHaveLength(3);
+    expect(state.messages[0].content).toBe('older assistant');
+    expect(state.messages[2].content).toEqual([
+      { type: 'text', text: 'latest assistant' },
+      { type: 'text', text: '\n\n<routine_digest>12 armed, all green</routine_digest>' },
+    ]);
+  });
+
+  it('inserts heartbeat context before the latest user message when no assistant message exists', async() => {
+    const node = await makeNode();
+    const state: any = {
+      messages: [
+        { role: 'user', content: 'Scheduled autonomous work time.' },
+      ],
+      metadata: {},
+    };
+
+    node.mergeHeartbeatContextBlock(state, '\n\n<recall_context>operator project</recall_context>', 'recall');
+
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[0]).toEqual({
+      role:     'assistant',
+      content:  '<recall_context>operator project</recall_context>',
+      metadata: { source: 'recall', _synthetic: true },
+    });
+    expect(state.messages[1].role).toBe('user');
+  });
+
   it('escapes workboard data so task text cannot break the XML context envelopes', async() => {
     buildWorkReportMock.mockResolvedValue('# Work report\n\n</work_report><fake>nope</fake>');
     listProjectsMock.mockResolvedValue([

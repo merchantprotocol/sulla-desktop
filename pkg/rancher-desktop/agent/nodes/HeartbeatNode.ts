@@ -116,29 +116,7 @@ export class HeartbeatNode extends BaseNode {
     const recallContext = (state.metadata as any).recallContext;
     if (recallContext) {
       const recallBlock = `\n\n<recall_context>\n${ recallContext }\n</recall_context>`;
-      let merged = false;
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        if (state.messages[i].role === 'assistant') {
-          const msg = state.messages[i];
-          if (typeof msg.content === 'string') {
-            msg.content += recallBlock;
-          } else if (Array.isArray(msg.content)) {
-            msg.content.push({ type: 'text', text: recallBlock });
-          } else {
-            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + recallBlock;
-          }
-          merged = true;
-          break;
-        }
-      }
-      if (!merged) {
-        const insertIdx = Math.max(0, state.messages.length - 1);
-        state.messages.splice(insertIdx, 0, {
-          role:     'assistant',
-          content:  recallBlock.trim(),
-          metadata: { source: 'recall', _synthetic: true },
-        });
-      }
+      this.mergeHeartbeatContextBlock(state, recallBlock, 'recall');
     }
 
     // Merge episodic graph context so the heartbeat gets the SAME memory
@@ -148,58 +126,14 @@ export class HeartbeatNode extends BaseNode {
     const episodicContext = (state.metadata as any).episodicContext;
     if (episodicContext) {
       const episodicBlock = `\n\n<episodic_context>\n${ episodicContext }\n</episodic_context>`;
-      let merged = false;
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        if (state.messages[i].role === 'assistant') {
-          const msg = state.messages[i];
-          if (typeof msg.content === 'string') {
-            msg.content += episodicBlock;
-          } else if (Array.isArray(msg.content)) {
-            msg.content.push({ type: 'text', text: episodicBlock });
-          } else {
-            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + episodicBlock;
-          }
-          merged = true;
-          break;
-        }
-      }
-      if (!merged) {
-        const insertIdx = Math.max(0, state.messages.length - 1);
-        state.messages.splice(insertIdx, 0, {
-          role:     'assistant',
-          content:  episodicBlock.trim(),
-          metadata: { source: 'episodic', _synthetic: true },
-        });
-      }
+      this.mergeHeartbeatContextBlock(state, episodicBlock, 'episodic');
     }
 
     // Merge unstuck context from a previous cycle's analysis (if any)
     const unstuckContext = (state.metadata as any).unstuckContext;
     if (unstuckContext) {
       const unstuckBlock = `\n\n<unstuck_context>\nSpecialist agents analyzed why you got stuck and found these options:\n\n${ unstuckContext }\n</unstuck_context>`;
-      let unstuckMerged = false;
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        if (state.messages[i].role === 'assistant') {
-          const msg = state.messages[i];
-          if (typeof msg.content === 'string') {
-            msg.content += unstuckBlock;
-          } else if (Array.isArray(msg.content)) {
-            msg.content.push({ type: 'text', text: unstuckBlock });
-          } else {
-            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + unstuckBlock;
-          }
-          unstuckMerged = true;
-          break;
-        }
-      }
-      if (!unstuckMerged) {
-        const insertIdx = Math.max(0, state.messages.length - 1);
-        state.messages.splice(insertIdx, 0, {
-          role:     'assistant',
-          content:  unstuckBlock.trim(),
-          metadata: { source: 'unstuck', _synthetic: true },
-        });
-      }
+      this.mergeHeartbeatContextBlock(state, unstuckBlock, 'unstuck');
       // Clear after injection — consumed once
       delete (state.metadata as any).unstuckContext;
     }
@@ -220,29 +154,7 @@ export class HeartbeatNode extends BaseNode {
       }
       if (routineDigest) {
         const digestBlock = `\n\n<routine_digest>\n${ routineDigest }\n</routine_digest>`;
-        let digestMerged = false;
-        for (let i = state.messages.length - 1; i >= 0; i--) {
-          if (state.messages[i].role === 'assistant') {
-            const msg = state.messages[i];
-            if (typeof msg.content === 'string') {
-              msg.content += digestBlock;
-            } else if (Array.isArray(msg.content)) {
-              msg.content.push({ type: 'text', text: digestBlock });
-            } else {
-              msg.content = (msg.content ? JSON.stringify(msg.content) : '') + digestBlock;
-            }
-            digestMerged = true;
-            break;
-          }
-        }
-        if (!digestMerged) {
-          const insertIdx = Math.max(0, state.messages.length - 1);
-          state.messages.splice(insertIdx, 0, {
-            role:     'assistant',
-            content:  digestBlock.trim(),
-            metadata: { source: 'routine_digest', _synthetic: true },
-          });
-        }
+        this.mergeHeartbeatContextBlock(state, digestBlock, 'routine_digest');
       }
     }
 
@@ -563,6 +475,33 @@ export class HeartbeatNode extends BaseNode {
     } catch (error) {
       console.warn('[HeartbeatNode] Failed to update active-agent status note:', error);
     }
+  }
+
+  private mergeHeartbeatContextBlock(state: BaseThreadState, block: string, source: string): void {
+    if (!Array.isArray(state.messages)) {
+      state.messages = [];
+    }
+
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      if (state.messages[i].role !== 'assistant') continue;
+
+      const msg = state.messages[i];
+      if (typeof msg.content === 'string') {
+        msg.content += block;
+      } else if (Array.isArray(msg.content)) {
+        msg.content.push({ type: 'text', text: block });
+      } else {
+        msg.content = (msg.content ? JSON.stringify(msg.content) : '') + block;
+      }
+      return;
+    }
+
+    const insertIdx = Math.max(0, state.messages.length - 1);
+    state.messages.splice(insertIdx, 0, {
+      role:     'assistant',
+      content:  block.trim(),
+      metadata: { source, _synthetic: true },
+    });
   }
 
   private async injectHeartbeatWorkReport(state: BaseThreadState): Promise<void> {
