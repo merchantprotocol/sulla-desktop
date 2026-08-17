@@ -516,6 +516,20 @@ export class Graph<TState = BaseThreadState> {
       });
       // Clear stopReason after sending
       (state as any).metadata.stopReason = null;
+
+      // ── Episodic Scribe (#518) — write side of episodic memory ──
+      // Fire-and-forget when a real episode completes (any source). Skipped
+      // when the agent is only pausing for the user (episode isn't done) and
+      // on subconscious threads (no recursion — the Scribe must never fire on
+      // Scribe/Recall/summarizer runs). Dynamic import breaks the
+      // Graph → GraphRegistry → EpisodicScribe require cycle. Never throws
+      // into the graph path; the runner enforces its own work-floor gate.
+      const episodeThreadId = (state as any).metadata.threadId;
+      if (!waitingForUser && typeof episodeThreadId === 'string' && !episodeThreadId.startsWith('subconscious_')) {
+        void import('../middleware/EpisodicScribe')
+          .then(m => m.runEpisodicScribe(state as unknown as BaseThreadState))
+          .catch(err => console.error('[EpisodicScribe] launch failed:', err instanceof Error ? err.message : err));
+      }
     }
 
     // Restore previous reentry flag so nested reentries unwind correctly
