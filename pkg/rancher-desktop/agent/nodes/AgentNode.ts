@@ -2,6 +2,7 @@ import { BaseNode } from './BaseNode';
 import { getAgentOverrideService, getPrimaryService } from '../languagemodels';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 import { throwIfAborted } from '../services/AbortService';
+import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 import Logging from '@pkg/utils/logging';
 
@@ -399,7 +400,7 @@ export class AgentNode extends BaseNode {
       console.error('[AgentNode] Execution failed:', errorMsg);
 
       // Surface the error to the user instead of silently dying
-      const userMessage = `⚠️ I encountered an error and couldn't complete the request: ${ errorMsg }. Please try again or switch to a different model.`;
+      const userMessage = `${ AGENT_ERROR_MESSAGE_PREFIX }: ${ errorMsg }. Please try again or switch to a different model.`;
 
       // Push error as assistant message so user sees it in the chat
       state.messages.push({
