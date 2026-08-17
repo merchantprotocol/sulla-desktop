@@ -20,15 +20,11 @@ export const REMOTE_PROVIDERS = [
   {
     id:          'openai',
     name:        'OpenAI',
-    description: 'GPT-4, GPT-3.5, and other OpenAI models',
+    description: 'OpenAI models loaded live from the OpenAI Models API',
     baseUrl:     'https://api.openai.com/v1',
     signupUrl:   'https://platform.openai.com/signup',
     signupText:  'Get API key from OpenAI',
-    models:      [
-      { id: 'gpt-4o', name: 'GPT-4o', description: 'Most capable multimodal model' },
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Fast and affordable' },
-      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', description: 'High capability with vision' },
-    ],
+    models:      [],
   },
   {
     id:          'anthropic',
