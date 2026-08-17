@@ -361,16 +361,16 @@ describe('InputHandlerNode Simple Test', () => {
     // The assistant message contains the same phrase repeated multiple times
   });
 
-  test('should trigger background summarization for large conversations', async() => {
+  test('should trigger background summarization once conversations cross the wake threshold', async() => {
     const inputHandler = new InputHandlerNode();
 
-    // Realistic production scenario: Long technical discussion that exceeds MAX_WINDOW_SIZE (80)
+    // Realistic production scenario: Long technical discussion that crosses the wake threshold (40)
     const largeConversation = [
       { role: 'system', content: 'You are a helpful AI assistant specialized in software development.' },
     ];
 
-    // Create realistic back-and-forth technical conversation (85 messages total)
-    for (let i = 0; i < 42; i++) {
+    // Create realistic back-and-forth technical conversation (41 messages total)
+    for (let i = 0; i < 20; i++) {
       largeConversation.push({
         role:    'user',
         content: `Technical question ${ i + 1 }: Can you help me understand React component lifecycle methods and how they relate to hooks?`,
@@ -382,7 +382,7 @@ describe('InputHandlerNode Simple Test', () => {
     }
 
     const state: any = {
-      messages: largeConversation, // 85 messages (1 system + 84 user/assistant)
+      messages: largeConversation, // 41 messages (1 system + 40 user/assistant)
       metadata: {
         action:               'direct_answer',
         threadId:             'test_large_conversation',
@@ -416,9 +416,9 @@ describe('InputHandlerNode Simple Test', () => {
     // Execute the node
     const result = await inputHandler.execute(state);
 
-    // Should trigger background summarization due to message count > 80
+    // Should trigger background summarization due to message count > 40
     expect(result.decision.type).toBe('next');
-    expect(result.state.messages.length).toBe(85); // All messages preserved initially
+    expect(result.state.messages.length).toBe(41); // All messages preserved initially
 
     // Check that summarization was triggered in metadata
     const metadata = result.state.metadata as any;
@@ -428,6 +428,57 @@ describe('InputHandlerNode Simple Test', () => {
     // Should have token counts recorded
     expect(metadata.inputHandler.tokensBefore).toBeGreaterThan(0);
     expect(metadata.inputHandler.tokensAfter).toBeGreaterThan(0);
+  });
+
+  test('should not trigger background summarization at the wake threshold', async() => {
+    const inputHandler = new InputHandlerNode();
+
+    const messages: ChatMessage[] = [];
+    for (let i = 0; i < 40; i++) {
+      messages.push({
+        role:    i % 2 === 0 ? 'user' : 'assistant',
+        content: `Message ${ i + 1 } with enough text to look like a normal conversation turn.`,
+      });
+    }
+
+    const state: any = {
+      messages,
+      metadata: {
+        action:               'direct_answer',
+        threadId:             'test_summary_threshold_boundary',
+        wsChannel:            'test',
+        llmModel:             'claude-3-haiku',
+        llmLocal:             false,
+        cycleComplete:        false,
+        waitingForUser:       false,
+        options:              {},
+        currentNodeId:        'input_handler',
+        consecutiveSameNode:  0,
+        iterations:           0,
+        revisionCount:        0,
+        maxIterationsReached: false,
+        memory:               {
+          knowledgeBaseContext: '',
+          chatSummariesContext: '',
+        },
+        subGraph: {
+          state:    'completed',
+          name:     'hierarchical',
+          prompt:   '',
+          response: '',
+        },
+        finalSummary: '',
+        finalState:   'running',
+        returnTo:     null,
+      },
+    };
+
+    const result = await inputHandler.execute(state);
+    const metadata = result.state.metadata as any;
+
+    expect(result.decision.type).toBe('next');
+    expect(result.state.messages.length).toBe(40);
+    expect(metadata.inputHandler.summaryServiceTriggered).toBeUndefined();
   });
 
   test('should enforce token budget when user pastes massive content', async() => {
@@ -492,4 +543,4 @@ describe('InputHandlerNode Simple Test', () => {
   });
 });
 
-console.log('✅ SIMPLE INPUT HANDLER TEST - 8 scenarios');
+console.log('✅ SIMPLE INPUT HANDLER TEST - 9 scenarios');

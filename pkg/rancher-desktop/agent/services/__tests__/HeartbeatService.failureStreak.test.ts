@@ -16,6 +16,7 @@ const stopCaffeinateMock: any = jest.fn();
 const getSettingMock: any = jest.fn(() => Promise.resolve(null));
 const executeMock: any = jest.fn();
 const notifyCreateMock: any = jest.fn(() => Promise.resolve('notified'));
+const recordRunAuditMock: any = jest.fn(() => Promise.resolve());
 
 // ESM: jest.unstable_mockModule + dynamic import (see the standingCaffeine tests).
 jest.unstable_mockModule('../../../main/SleepPreventionService', () => ({
@@ -27,6 +28,11 @@ jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: {
     get: getSettingMock,
     set: jest.fn(),
+  },
+}));
+jest.unstable_mockModule('../../database/models/HeartbeatRunAuditModel', () => ({
+  HeartbeatRunAuditModel: {
+    record: recordRunAuditMock,
   },
 }));
 jest.unstable_mockModule('../GraphRegistry', () => ({
@@ -52,7 +58,9 @@ describe('HeartbeatService consecutive-failure escalation', () => {
   beforeEach(() => {
     executeMock.mockReset();
     notifyCreateMock.mockReset();
+    recordRunAuditMock.mockReset();
     notifyCreateMock.mockImplementation(() => Promise.resolve('notified'));
+    recordRunAuditMock.mockImplementation(() => Promise.resolve());
   });
 
   it('notifies exactly once when the streak reaches the threshold, not on every later failure', async() => {
@@ -130,5 +138,62 @@ describe('HeartbeatService consecutive-failure escalation', () => {
     await svc.triggerHeartbeat();
     await expect(svc.triggerHeartbeat()).resolves.toBeUndefined();
     expect(svc.consecutiveFailures).toBe(3);
+  });
+
+  it('records selected workboard task audit metadata on completed heartbeat runs', async() => {
+    executeMock.mockImplementation((state: any) => {
+      state.metadata.agent = {
+        status:      'done',
+        status_note: 'Patched the run-to-task audit trail.',
+      };
+      state.metadata.agentLoopCount = 2;
+      state.metadata.heartbeatSelectedTaskId = 'WtS3';
+      state.metadata.heartbeatWorkboardSnapshot = {
+        taskId:       'WtS3',
+        projectId:    'proj1',
+        epicId:       'epic1',
+        status:       'in_progress',
+        assignee:     'heartbeat',
+        lastMovedAt:  '2026-08-17T16:30:00.000Z',
+        commentCount: 5,
+        capturedAtMs: 1786984200000,
+      };
+      return Promise.resolve();
+    });
+    const svc = await makeService();
+
+    await svc.triggerHeartbeat();
+
+    const completed = svc.getHistory(10).find((event: any) => event.type === 'heartbeat_completed');
+    expect(completed?.meta).toMatchObject({
+      cycleCount: 2,
+      status:     'done',
+      focus:      'Patched the run-to-task audit trail.',
+      workboard:  {
+        selectedTaskId:           'WtS3',
+        selectedTaskStatus:       'in_progress',
+        selectedTaskAssignee:     'heartbeat',
+        selectedTaskLastMovedAt:  '2026-08-17T16:30:00.000Z',
+        selectedTaskCommentCount: 5,
+      },
+    });
+    expect(recordRunAuditMock).toHaveBeenCalledTimes(2);
+    expect(recordRunAuditMock.mock.calls[0][0]).toMatchObject({
+      eventType: 'started',
+      runId:     expect.stringMatching(/^heartbeat_\d+$/),
+    });
+    expect(recordRunAuditMock.mock.calls[1][0]).toMatchObject({
+      eventType:                    'completed',
+      status:                       'done',
+      statusNote:                   'Patched the run-to-task audit trail.',
+      cycleCount:                   2,
+      selectedProjectId:            'proj1',
+      selectedEpicId:               'epic1',
+      selectedTaskId:               'WtS3',
+      selectedTaskStatus:           'in_progress',
+      selectedTaskAssignee:         'heartbeat',
+      selectedTaskLastMovedAt:      '2026-08-17T16:30:00.000Z',
+      selectedTaskCommentCount:     5,
+    });
   });
 });

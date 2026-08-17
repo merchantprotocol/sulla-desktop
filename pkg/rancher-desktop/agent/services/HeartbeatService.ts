@@ -1,6 +1,7 @@
 // HeartbeatService.ts
 
 import { startCaffeinate, stopCaffeinate, scheduleWake } from '../../main/SleepPreventionService';
+import { HeartbeatRunAuditModel } from '../database/models/HeartbeatRunAuditModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 
 // ── Event History Types ──
@@ -37,6 +38,16 @@ export interface HeartbeatStatus {
   totalSkips:       number;
   consecutiveFailures: number;
   uptimeMs:         number;
+}
+
+interface HeartbeatWorkboardAudit {
+  selectedTaskId?: string;
+  selectedProjectId?: string;
+  selectedEpicId?: string | null;
+  selectedTaskStatus?: string;
+  selectedTaskAssignee?: string | null;
+  selectedTaskLastMovedAt?: string;
+  selectedTaskCommentCount?: number;
 }
 
 const MAX_EVENT_HISTORY = 200;
@@ -263,8 +274,15 @@ export class HeartbeatService {
     this.isExecuting = true;
     this.totalTriggers++;
     const triggerStart = Date.now();
+    const runId = `heartbeat_${ triggerStart }`;
+    const startedAt = new Date(triggerStart);
     this.executionStartedMs = triggerStart;
     this.recordEvent('heartbeat_triggered', 'Heartbeat execution started');
+    void this.recordRunAudit({
+      runId,
+      startedAt,
+      eventType: 'started',
+    });
 
     // Create abort controller for this execution
     this.activeAbort = new AbortController();
@@ -312,14 +330,40 @@ export class HeartbeatService {
       const agentMeta = (state.metadata as any).agent || {};
       const status = agentMeta.status || 'unknown';
       const loopCount = (state.metadata as any).agentLoopCount || 0;
+      const workboardAudit = this.buildWorkboardAudit(state);
+      void this.recordRunAudit({
+        runId,
+        startedAt,
+        completedAt:   new Date(),
+        durationMs,
+        eventType:     'completed',
+        status,
+        statusNote:    agentMeta.status_note || null,
+        blockerReason: agentMeta.blocker_reason || null,
+        cycleCount:    loopCount,
+        ...workboardAudit,
+      });
       this.recordEvent('heartbeat_completed', `Completed in ${ Math.round(durationMs / 1000) }s — ${ loopCount } cycles, status: ${ status }`, {
         durationMs,
-        meta: { cycleCount: loopCount, status, focus: agentMeta.status_note || '' },
+        meta: {
+          cycleCount: loopCount,
+          status,
+          focus:     agentMeta.status_note || '',
+          ...(workboardAudit ? { workboard: workboardAudit } : {}),
+        },
       });
       console.log('[HeartbeatService] Heartbeat graph execution completed');
     } catch (err) {
       if (signal.aborted) {
         const durationMs = Date.now() - triggerStart;
+        void this.recordRunAudit({
+          runId,
+          startedAt,
+          completedAt: new Date(),
+          durationMs,
+          eventType:   'aborted',
+          status:      'aborted',
+        });
         this.recordEvent('heartbeat_aborted', `Heartbeat aborted after ${ Math.round(durationMs / 1000) }s`, { durationMs });
         console.log('[HeartbeatService] Heartbeat execution aborted');
       } else {
@@ -327,6 +371,15 @@ export class HeartbeatService {
         this.consecutiveFailures++;
         const durationMs = Date.now() - triggerStart;
         const msg = err instanceof Error ? err.message : String(err);
+        void this.recordRunAudit({
+          runId,
+          startedAt,
+          completedAt: new Date(),
+          durationMs,
+          eventType:   'error',
+          status:      'error',
+          error:       msg,
+        });
         this.recordEvent('heartbeat_error', `Execution failed after ${ Math.round(durationMs / 1000) }s: ${ msg }`, { durationMs, error: msg });
         console.error('[HeartbeatService] Heartbeat execution failed:', err);
         await this.escalateIfFailuresPersist(msg);
@@ -338,6 +391,38 @@ export class HeartbeatService {
       this.isExecuting = false;
       this.executionStartedMs = 0;
     }
+  }
+
+  private buildWorkboardAudit(state: { metadata?: Record<string, any> }): HeartbeatWorkboardAudit | null {
+    const metadata = state.metadata || {};
+    const snapshot = metadata.heartbeatWorkboardSnapshot || {};
+    const selectedTaskId = String(metadata.heartbeatSelectedTaskId || snapshot.taskId || '').trim();
+    if (!selectedTaskId) return null;
+
+    return {
+      selectedTaskId,
+      ...(snapshot.projectId ? { selectedProjectId: String(snapshot.projectId) } : {}),
+      ...(snapshot.epicId ? { selectedEpicId: String(snapshot.epicId) } : {}),
+      selectedTaskAssignee: snapshot.assignee ?? null,
+      ...(snapshot.status ? { selectedTaskStatus: String(snapshot.status) } : {}),
+      ...(snapshot.lastMovedAt ? { selectedTaskLastMovedAt: String(snapshot.lastMovedAt) } : {}),
+      ...(typeof snapshot.commentCount === 'number' ? { selectedTaskCommentCount: snapshot.commentCount } : {}),
+    };
+  }
+
+  private async recordRunAudit(input: {
+    runId: string;
+    startedAt: Date;
+    completedAt?: Date | null;
+    durationMs?: number | null;
+    eventType: 'started' | 'completed' | 'error' | 'aborted';
+    status?: string | null;
+    statusNote?: string | null;
+    blockerReason?: string | null;
+    error?: string | null;
+    cycleCount?: number | null;
+  } & HeartbeatWorkboardAudit): Promise<void> {
+    await HeartbeatRunAuditModel.record(input);
   }
 
   /**

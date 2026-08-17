@@ -7,7 +7,7 @@
  * process reads/writes through WorkItemsModel.
  *
  * Full CRUD:
- *   read    → work-items:board, work-items:comments
+ *   read    → work-items:board, work-items:comments, work-items:activity
  *   create  → work-items:{project,epic,task}-create, work-items:comment-add
  *   update  → work-items:{project,epic,task}-update
  *   delete  → work-items:{project,epic,task}-archive  (soft, cascades down)
@@ -23,15 +23,14 @@
  * DUAL-STORE NOTE: reads/writes ONLY Postgres via WorkItemsModel — never Redis.
  */
 
-import { getIpcMainProxy } from '@pkg/main/ipcMain';
-import Logging from '@pkg/utils/logging';
-
 import type {
   UpsertProjectInput, UpdateProjectInput,
   UpsertEpicInput, UpdateEpicInput,
   UpsertTaskInput, UpdateTaskInput,
   AddCommentInput,
 } from '@pkg/agent/database/models/WorkItemsModel';
+import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -73,6 +72,12 @@ export function initWorkItemsEvents(): void {
     const WorkItemsModel = await importWorkItemsModel();
 
     return WorkItemsModel.listComments(taskId);
+  });
+
+  ipcMainProxy.handle('work-items:activity', async(_event: unknown, opts: { projectId?: string; author?: string; limit?: number } = {}) => {
+    const WorkItemsModel = await importWorkItemsModel();
+
+    return WorkItemsModel.listRecentActivity(opts);
   });
 
   // ── projects ─────────────────────────────────────────────────────────

@@ -77,9 +77,9 @@ describe('episodic_recall tool', () => {
       limit:      { type: 'number', optional: true },
     };
     const result = await worker.invoke({
-      terms: [' issue 517 ', 'voice recall', 'issue 517'],
+      terms:      [' issue 517 ', 'voice recall', 'issue 517'],
       query_text: 'Please finish issue #517 for voice recall',
-      limit: 99,
+      limit:      99,
     });
 
     expect(KnowledgeGraphModel.recallByTerms).toHaveBeenCalledTimes(1);
@@ -90,5 +90,25 @@ describe('episodic_recall tool', () => {
     expect(result.success).toBe(true);
     expect(result.result).toContain('<episodic_context>');
     expect(result.result).toContain('[issue] GitHub issue #517');
+  });
+
+  it('ignores non-string terms instead of coercing them into bogus anchors', async() => {
+    jest.spyOn(KnowledgeGraphModel, 'recallByTerms').mockResolvedValue([]);
+
+    const worker = new EpisodicRecallWorker();
+    worker.schemaDef = {
+      terms: { type: 'array', items: { type: 'string' } },
+    };
+    const result = await worker.invoke({
+      terms: [' issue 517 ', null, false, { title: 'voice recall' }, 'issue 517', '  '],
+    });
+
+    expect(KnowledgeGraphModel.recallByTerms).toHaveBeenCalledTimes(1);
+    expect(KnowledgeGraphModel.recallByTerms).toHaveBeenCalledWith(
+      ['issue 517'],
+      { maxHops: 2, decay: 0.5, limit: 12, statementTimeoutMs: 3000 },
+    );
+    expect(result.success).toBe(true);
+    expect(result.result).toBe('<episodic_context />');
   });
 });

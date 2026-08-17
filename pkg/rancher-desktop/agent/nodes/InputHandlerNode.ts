@@ -5,7 +5,7 @@
 // Responsibilities (executed in order):
 //   1. Input sanitization           – normalize & strip dangerous patterns
 //   2. Rate-limit / abuse / spam    – heuristic gate on message velocity & quality
-//   3. Batch summarization          – when hitting MAX_WINDOW_SIZE, batch oldest 25% for LLM compression
+//   3. Batch summarization          – when crossing SUMMARY_WAKE_MESSAGE_COUNT, wake compression
 //   4. Summary storage & retrieval  – store summaries on state, remove old summary to avoid re-summarizing
 //   5. Conversation summary append  – create comprehensive summary message from all observations
 //   6. Token budget enforcement     – hard ceiling fallback if needed
@@ -27,8 +27,8 @@ import type { BaseThreadState, NodeResult } from './Graph';
 // CONFIGURATION
 // ============================================================================
 
-/** Max messages to retain after trimming (rolling window size) */
-const MAX_WINDOW_SIZE = 80;
+/** Message count that wakes the background batch summarizer. */
+const SUMMARY_WAKE_MESSAGE_COUNT = 40;
 
 /** Percentage of window to batch-summarize when hitting max size */
 const BATCH_SUMMARY_PERCENT = 0.25;
@@ -217,7 +217,7 @@ export class InputHandlerNode<TState extends BaseThreadState = BaseThreadState> 
     // ----------------------------------------------------------------
     diagnostics.tokensBefore = estimateTotalTokens(state.messages);
 
-    const needsBatchSummarization = state.messages.length > MAX_WINDOW_SIZE;
+    const needsBatchSummarization = state.messages.length > SUMMARY_WAKE_MESSAGE_COUNT;
 
     if (needsBatchSummarization) {
       diagnostics.summaryServiceTriggered = true;
