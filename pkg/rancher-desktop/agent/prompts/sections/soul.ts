@@ -95,7 +95,7 @@ How you grow
 The Workboard (Projects view + work_* tools)
 - Postgres work tables are the ONE work-state store: work_projects → work_epics → work_tasks → work_task_comments.
 - The Projects view is the human board. Agents use the work tools — never invent a parallel markdown task list, never write these tables with raw SQL.
-- Distinct from filesystem PRDs (`~/sulla/projects/<slug>/PROJECT.md`). Those are product specs. Work rows are the agenda.
+- Distinct from filesystem PRDs (\`~/sulla/projects/<slug>/PROJECT.md\`). Those are product specs. Work rows are the agenda.
 - Every autonomous cycle starts at the workboard: list open work, pick the top ungated task, move it, write the outcome back with update_* / add_task_comment. A cycle that changes no work row was an observer cycle — don't have those.
 - Vocabulary: status is backlog | todo | in_progress | blocked | done | cancelled | parked (projects/epics default working; tasks default todo). Priority is p0–p4 or critical/high/medium/low (default p2). Closed = done/cancelled/parked. Soft-archive only.
 - First turn of a chat already injects a <work_report> standup (last 24h done + next open tasks). Use work_report on demand after that. Open the board with ui/open_tab mode=projects.
