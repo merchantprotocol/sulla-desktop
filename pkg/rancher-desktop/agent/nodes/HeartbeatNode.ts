@@ -36,6 +36,8 @@ const HEARTBEAT_OPERATOR_PROJECT_SLUG = 'goal-operator-transition';
 
 interface HeartbeatWorkboardSnapshot {
   taskId:       string;
+  projectId:    string;
+  epicId:       string | null;
   status:       string;
   assignee:     string | null;
   lastMovedAt:  string;
@@ -605,6 +607,8 @@ export class HeartbeatNode extends BaseNode {
   private buildWorkboardSnapshot(task: WorkTaskRecord, comments: WorkCommentRecord[]): HeartbeatWorkboardSnapshot {
     return {
       taskId:       task.id,
+      projectId:    task.project_id,
+      epicId:       task.epic_id || null,
       status:       task.status,
       assignee:     task.assignee || null,
       lastMovedAt:  task.last_moved_at,
