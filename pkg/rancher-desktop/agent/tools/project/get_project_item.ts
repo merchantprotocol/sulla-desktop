@@ -21,7 +21,7 @@ function block(label: string, rec: Record<string, any>, extra: string[] = []): s
 }
 
 /**
- * Fetch one work item + its children / comments.
+ * Fetch one project item + its children / comments.
  */
 export class GetWorkItemWorker extends BaseTool {
   name = '';
@@ -81,9 +81,9 @@ export class GetWorkItemWorker extends BaseTool {
         }
       }
 
-      return { successBoolean: false, responseString: `No work item found with id: ${ id }` };
+      return { successBoolean: false, responseString: `No project item found with id: ${ id }` };
     } catch (err: any) {
-      return { successBoolean: false, responseString: `Get work item failed: ${ err?.message }` };
+      return { successBoolean: false, responseString: `Get project item failed: ${ err?.message }` };
     }
   }
 }

@@ -1,7 +1,7 @@
 <!--
-  ProjectsHome — the Projects workboard (issue ledger).
+  ProjectsHome — the Projects board (issue ledger).
 
-  Reads AND writes the Postgres work tables (work_projects → work_epics →
+  Reads AND writes the Postgres Projects tables (work_projects → work_epics →
   work_tasks → work_task_comments) through the useProjects composable /
   work-items:* IPC bridge. Full CRUD: create/edit/archive projects, epics and
   tasks, edit every value, and comment on issues.
@@ -58,7 +58,7 @@
         <div class="ph-canvas">
           <!-- states -->
           <div v-if="error" class="ph-state ph-err">
-            <b>Couldn't load the workboard.</b>
+            <b>Couldn't load Projects.</b>
             <p>{{ error }}</p>
             <button type="button" class="ph-btn" @click="refresh">Try again</button>
           </div>
@@ -414,7 +414,7 @@ const activityLoading = ref(false);
 
 const STATUSES = ['backlog', 'todo', 'in_progress', 'blocked', 'done', 'cancelled'];
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
-// Canonical assignees. Values are the exact lowercase tokens the workboard and
+// Canonical assignees. Values are the exact lowercase tokens the Projects board and
 // the Heartbeat lane filter match on — 'heartbeat' is what routes work into the
 // autonomous agent's queue, so it must stay lowercase and spelled this way.
 const ASSIGNEES = [
@@ -732,7 +732,7 @@ function activityText(item: WorkActivityRecord): string {
   if (item.kind === 'comment') return item.body ?? '';
   const status = statusLabel(item.task_status);
   switch (item.kind) {
-  case 'task_created': return 'Task added to the workboard.';
+  case 'task_created': return 'Task added to Projects.';
   case 'task_moved': return `Moved to ${ status }.`;
   case 'task_updated': return 'Task details updated.';
   case 'epic_created': return 'Epic created.';

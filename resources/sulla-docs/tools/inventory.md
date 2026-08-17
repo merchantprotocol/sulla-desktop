@@ -218,27 +218,27 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`tools/redis.md`](redis.md) (settings guardrail) and `pkg/rancher-desktop/agent/database/models/SullaSettingsModel.ts`
 
-## work — Projects work-state (15 tools)
-- `sulla work/list_work_items` — Projects work-state list: filter by kind / status / priority / project / epic / parent / assignee
-- `sulla work/get_work_item` — One project, epic, or task + children + comments
-- `sulla work/search_work_items` — Title + description search (dedupe before create)
-- `sulla work/report` — Standup: completed last N hours + next open tasks
-- `sulla work/create_project` — Insert a new project (slug auto-derived)
-- `sulla work/update_project` — Patch an existing project by id
-- `sulla work/create_epic` — Insert a new epic under a project
-- `sulla work/update_epic` — Patch an existing epic by id
-- `sulla work/create_task` — Insert a new task (`parent_id` for a subtask)
-- `sulla work/update_task` — Patch an existing task by id
-- `sulla work/add_task_comment` — Append a note (`author` defaults to `sulla`; UI stamps `human`)
-- `sulla work/list_task_comments` — Comment thread, oldest first
-- `sulla work/archive_work_item` — Soft-archive a project, epic, or task (cascades)
+## project — Projects work-state (13 tools)
+- `sulla project/list_project_items` — Projects work-state list: filter by kind / status / priority / project / epic / parent / assignee
+- `sulla project/get_project_item` — One project, epic, or task + children + comments
+- `sulla project/search_project_items` — Title + description search (dedupe before create)
+- `sulla project/report` — Standup: completed last N hours + next open tasks
+- `sulla project/create_project` — Insert a new project (slug auto-derived)
+- `sulla project/update_project` — Patch an existing project by id
+- `sulla project/create_epic` — Insert a new epic under a project
+- `sulla project/update_epic` — Patch an existing epic by id
+- `sulla project/create_task` — Insert a new task (`parent_id` for a subtask)
+- `sulla project/update_task` — Patch an existing task by id
+- `sulla project/add_task_comment` — Append a note (`author` defaults to `sulla`; UI stamps `human`)
+- `sulla project/list_task_comments` — Comment thread, oldest first
+- `sulla project/archive_project_item` — Soft-archive a project, epic, or task (cascades)
 
-→ See [`tools/work.md`](work.md). This is the ONE work-state store. Not CRM. Distinct from filesystem `~/sulla/projects/<slug>/PROJECT.md` PRDs.
+→ See [`tools/project.md`](project.md). This is the ONE work-state store. Not CRM. Distinct from filesystem `~/sulla/projects/<slug>/PROJECT.md` PRDs.
 
 ## ledger — leftover measurement (1 tool, do not pick from)
 - `sulla ledger/ledger_scoreboard` — Zero-LLM scoreboard of leftover `~/sulla/ledger/` markdown. Do **not** pick work from those files.
 
-→ Agenda + record live in the work tables. See [`tools/work.md`](work.md).
+→ Agenda + record live in the Projects tables. See [`tools/project.md`](project.md).
 
 
 ## pg — PostgreSQL queries (6 tools)

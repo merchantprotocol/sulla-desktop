@@ -138,7 +138,7 @@ export class AgentNode extends BaseNode {
     // One-time operator work standup — injected into the orchestrating agent's
     // FIRST run of this thread so it opens already knowing what shipped in the
     // last 24h and what's next, without having to call a tool. After this the
-    // agent uses the `work_report` tool on demand. Skipped for sub-agents and
+    // agent uses the `project_report` tool on demand. Skipped for sub-agents and
     // tool-call loops; guarded so it fires once per thread. As a plain
     // (non-synthetic) assistant note it persists in history and is never
     // re-injected (stripInjectedContextBlocks doesn't touch <work_report>).

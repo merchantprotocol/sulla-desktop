@@ -82,12 +82,12 @@ sulla meta/restart_from_checkpoint '{"executionId":"<id>"}'
 
 ### `@project:<slug>`
 ```bash
-sulla work/search_work_items '{"query":"<slug>","kind":"project"}'
-sulla work/get_work_item '{"id":"<id-from-search>"}'
+sulla project/search_project_items '{"query":"<slug>","kind":"project"}'
+sulla project/get_project_item '{"id":"<id-from-search>"}'
 # PRD (if one exists — specs, not the agenda):
 cat ~/sulla/projects/<slug>/PROJECT.md
 ```
-A `@project` mention is a **Projects work-state project** first (Postgres `work_projects`). Use `sulla work/*` tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
+A `@project` mention is a **Projects work-state project** first (Postgres `work_projects`). Use `sulla project/*` tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
 
 ## Intent inference
 
@@ -97,7 +97,7 @@ A mention in a user message is a noun reference — the verb is in the surroundi
 |--------------|--------|
 | "run @function:csv-to-json on last week's export" | Invoke the function with that input |
 | "what does @routine:daily-planning do?" | Read the YAML, summarize |
-| "@project:first-client-acquisition — where are we?" | `search_work_items` + `get_work_item`; PRD only if you need the spec |
+| "@project:first-client-acquisition — where are we?" | `search_project_items` + `get_project_item`; PRD only if you need the spec |
 | "pair @function:pdf-extract with @routine:blog-publisher" | Plan a workflow/routine that chains them |
 | "update @workflow:wf-123 to run at 9am instead of 7am" | Edit the schedule trigger config |
 

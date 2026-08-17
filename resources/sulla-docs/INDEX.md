@@ -17,7 +17,7 @@ When you wake up on a non-trivial task, read these in order:
 6. `~/sulla/identity/human/identity.md` — who you work for, operating model
 7. `~/sulla/identity/business/identity.md` — business model, active deadlines
 8. `~/sulla/identity/human/goals.md` — current goals, financial targets, operating rules
-9. The **work tables** (`work_projects` → `work_epics` → `work_tasks`) — the ONE work-state store. Open the Projects view or call `sulla work/list_work_items`. Filesystem `~/sulla/projects/<slug>/PROJECT.md` are PRDs, not the agenda. `~/sulla/ledger/` is a historical archive.
+9. The **Projects tables** (`work_projects` → `work_epics` → `work_tasks`) — the ONE work-state store. Open the Projects view or call `sulla project/list_project_items`. Filesystem `~/sulla/projects/<slug>/PROJECT.md` are PRDs, not the agenda. `~/sulla/ledger/` is a historical archive.
 
 For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the relevant doc.
 
@@ -57,7 +57,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `vault.md` — Password vault: encryption, LLM access levels, autofill, proxy injection
 - `notify.md` — notify_user, presence detection, when (and when not) to notify
 - `settings.md` — SullaSettingsModel is the one settings path; settings_get / settings_set; Redis hash is cache-only
-- `work.md` — **the work-state store**: projects → epics → tasks → comments in desktop Postgres; Projects view + work tools
+- `project.md` — **the work-state store**: projects → epics → tasks → comments in desktop Postgres; Projects view + project tools
 - `ledger.md` — historical: `~/sulla/ledger/` markdown archive + leftover `ledger_scoreboard` tool. Not the pick-path.
 - `calendar.md` — calendar_create/list/update/cancel, scheduler triggers, no GCal sync
 - `applescript.md` — Drive macOS apps via AppleScript; per-app allowlist + macOS Automation perms

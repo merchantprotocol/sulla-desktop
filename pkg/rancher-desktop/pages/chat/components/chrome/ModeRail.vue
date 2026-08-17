@@ -105,7 +105,7 @@ const items: readonly ModeItem[] = Object.freeze([
     </svg>`,
   },
   {
-    // Projects — the issue-ledger workboard (Postgres work_projects/epics/tasks).
+    // Projects — the issue-ledger Projects board (Postgres work_projects/epics/tasks).
     // Briefcase = a book of work. (Formerly the "My Work" icon, which really
     // pointed at Routines — see the cycle icon below.)
     mode:  'projects',

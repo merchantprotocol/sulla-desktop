@@ -107,7 +107,7 @@ describe('HeartbeatNode workboard context injection', () => {
       {
         id:         'comment1',
         task_id:    'task1',
-        body:       'Prior cycle discovered work_report is too thin without get_work_item hydration.',
+        body:       'Prior cycle discovered work_report is too thin without get_project_item hydration.',
         author:     'sulla',
         created_at: '2026-08-17T11:14:57.000Z',
       },

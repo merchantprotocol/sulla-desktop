@@ -2,7 +2,7 @@
 
 Desktop Postgres is the operator agenda. The Projects view is the human UI, and
 the Sulla CLI catalog `work/*` tools are how agents read and write it. There is
-no separate native `workboard` tool namespace and no direct/native project
+no separate native project-management tool namespace and no direct/native project
 management tool surface.
 
 ```
@@ -30,7 +30,7 @@ Free-text columns. Use these consistently:
 | `priority` | `p0`/`critical` · `p1`/`high` · `p2`/`medium` (default) · `p3`/`low` · `p4` |
 
 There is **no `bucket` column**. Closed = `done` / `cancelled` / `parked`.
-Rows are never hard-deleted — `archive_work_item` sets `archived=true` and
+Rows are never hard-deleted — `archive_project_item` sets `archived=true` and
 cascades down. `last_moved_at` updates on status / priority / assignee /
 due-date / parent changes.
 
@@ -43,29 +43,29 @@ Reads:
 
 | Tool | Use |
 |---|---|
-| `sulla work/list_work_items` | Projects work-state list. Filter by `kind` / `status` / `priority` / `project_id` / `epic_id` / `parent_id` / `assignee`. Default kind=task, open only. |
-| `sulla work/get_work_item` | One row + children + comments. |
-| `sulla work/search_work_items` | Title + description search. Use before creating. |
-| `sulla work/list_task_comments` | Comment thread on a task, oldest first. |
-| `sulla work/report` | Standup: completed in last N hours + top open next. Injected as `<work_report>` on first chat turn. |
+| `sulla project/list_project_items` | Projects work-state list. Filter by `kind` / `status` / `priority` / `project_id` / `epic_id` / `parent_id` / `assignee`. Default kind=task, open only. |
+| `sulla project/get_project_item` | One row + children + comments. |
+| `sulla project/search_project_items` | Title + description search. Use before creating. |
+| `sulla project/list_task_comments` | Comment thread on a task, oldest first. |
+| `sulla project/report` | Standup: completed in last N hours + top open next. Injected as `<work_report>` on first chat turn. |
 
 Writes — explicit create / update, **no upsert**:
 
 | Tool | Use |
 |---|---|
-| `sulla work/create_project` | Always inserts. Unique slug auto-resolved. |
-| `sulla work/update_project` | In-place by id. Status/priority/due stamp `last_moved_at`. |
-| `sulla work/create_epic` | Always inserts under a project. |
-| `sulla work/update_epic` | In-place by id. |
-| `sulla work/create_task` | Always inserts. `project_id` required; `epic_id` and `parent_id` optional. |
-| `sulla work/update_task` | In-place by id. |
-| `sulla work/add_task_comment` | Append a note. Default author `sulla`; desktop UI stamps `human`. |
-| `sulla work/archive_work_item` | Soft-archive. Cascades to children. |
+| `sulla project/create_project` | Always inserts. Unique slug auto-resolved. |
+| `sulla project/update_project` | In-place by id. Status/priority/due stamp `last_moved_at`. |
+| `sulla project/create_epic` | Always inserts under a project. |
+| `sulla project/update_epic` | In-place by id. |
+| `sulla project/create_task` | Always inserts. `project_id` required; `epic_id` and `parent_id` optional. |
+| `sulla project/update_task` | In-place by id. |
+| `sulla project/add_task_comment` | Append a note. Default author `sulla`; desktop UI stamps `human`. |
+| `sulla project/archive_project_item` | Soft-archive. Cascades to children. |
 
 Schema-only migration `0044_create_work_items_tables`. No user data in the
 migration. A runtime seeder (`WorkItemsImportSeeder`) may import this
 install's leftover `~/sulla/ledger/goals/*.md` on first boot by stable
-slug. Safe to re-run. After that, **only** the work tools.
+slug. Safe to re-run. After that, **only** the project tools.
 
 Optional GitHub mapping on tasks: `github_issue`. Not a live sync.
 
@@ -73,7 +73,7 @@ Optional GitHub mapping on tasks: `github_issue`. Not a live sync.
 
 1. First chat turn already has a `<work_report>` standup. Read it. Do not
    re-query unless you need a filter the report doesn't have.
-2. Pick the top open task you can move (`list_work_items` / the report).
+2. Pick the top open task you can move (`list_project_items` / the report).
 3. Move it. `update_task` status / comment / complete.
 4. Bookkeep on the same row: comment what shipped, mark done, or park
    with the decision + recommendation + staged artifact.

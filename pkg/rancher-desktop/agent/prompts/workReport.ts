@@ -68,7 +68,7 @@ export async function buildWorkReport(opts: WorkReportOpts = {}): Promise<string
   const lines: string[] = [];
   const scope = [projectId ? `project ${ projectId }` : null, assignee ? `assignee ${ assignee }` : null]
     .filter(Boolean).join(', ');
-  lines.push(`# Work report — last ${ hours }h${ scope ? ` (${ scope })` : '' }`);
+  lines.push(`# Project report — last ${ hours }h${ scope ? ` (${ scope })` : '' }`);
 
   lines.push('');
   lines.push(`## ✅ Completed (${ completed.length })`);

@@ -1,7 +1,7 @@
 # Outcome Ledger — historical archive
 
 `~/sulla/ledger/` is **not** the work-state store. The pick-path is the
-Postgres work tables — see [`tools/work.md`](work.md) and the Projects view.
+Postgres Projects tables — see [`tools/project.md`](project.md) and the Projects view.
 
 These markdown files may still exist on an install that was seeded from
 them. Treat them as a historical archive. Do not open `LEDGER.md` to pick
@@ -16,8 +16,8 @@ sulla ledger/ledger_scoreboard '{"days":7}'
 
 Deterministic, zero LLM. Counts leftover markdown outcomes / WORKING rows /
 AUDIT lines. Useful only while an install still has those files. New
-installs should ignore this tool and use `sulla work/report` +
-`sulla work/list_work_items`.
+installs should ignore this tool and use `sulla project/report` +
+`sulla project/list_project_items`.
 
 ## Layout (archive)
 

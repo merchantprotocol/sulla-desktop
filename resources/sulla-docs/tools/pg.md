@@ -1,6 +1,6 @@
 # PostgreSQL
 
-Sulla's primary data store. Container `sulla_postgres` on port **30116** (host) inside Lima. Workflow, calendar, chat, settings, credentials, observations, rules, and work items. **Critical safety section below — some tables will corrupt Sulla if you write to them directly.**
+Sulla's primary data store. Container `sulla_postgres` on port **30116** (host) inside Lima. Workflow, calendar, chat, settings, credentials, observations, rules, and project items. **Critical safety section below — some tables will corrupt Sulla if you write to them directly.**
 
 ## Connection
 
@@ -34,7 +34,7 @@ sulla pg/pg_queryall '{
 ```
 Params are typed `string[]` in manifests but `pg.Pool` coerces to the column type at bind.
 
-## Tables (verified live — plus work items from migration 0044)
+## Tables (verified live — plus project items from migration 0044)
 
 | Table | Purpose | Safe to read? | Safe to write? |
 |-------|---------|---------------|----------------|
@@ -56,9 +56,9 @@ Params are typed `string[]` in manifests but `pg.Pool` coerces to the column typ
 | `knowledgebase_categories` | KB category taxonomy | ✅ | ⚠️ via KB UI |
 | `sulla_migrations` | Migration tracking (infrastructure) | ✅ debug | ❌ App-owned |
 | `sulla_seeders` | Seed data tracking (infrastructure) | ✅ debug | ❌ App-owned |
-| `work_projects` | Operator projects (outcome + metric; status default `working`) | ✅ | ⚠️ Use work tools, not raw SQL |
-| `work_epics` | Epics under a project (status default `working`) | ✅ | ⚠️ Use work tools |
-| `work_tasks` | Tasks / subtasks (`parent_id`; status default `todo`) | ✅ | ⚠️ Use work tools |
+| `work_projects` | Operator projects (outcome + metric; status default `working`) | ✅ | ⚠️ Use project tools, not raw SQL |
+| `work_epics` | Epics under a project (status default `working`) | ✅ | ⚠️ Use project tools |
+| `work_tasks` | Tasks / subtasks (`parent_id`; status default `todo`) | ✅ | ⚠️ Use project tools |
 | `work_task_comments` | Notes on a task (GitHub-issue style) | ✅ | ⚠️ Use `add_task_comment` |
 
 ## Schemas of the tables you'll query most

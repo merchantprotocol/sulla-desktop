@@ -27,9 +27,9 @@ export class ArchiveWorkItemWorker extends BaseTool {
           };
         }
       }
-      return { successBoolean: false, responseString: `No work item found with id: ${ id }` };
+      return { successBoolean: false, responseString: `No project item found with id: ${ id }` };
     } catch (err: any) {
-      return { successBoolean: false, responseString: `Failed to archive work item: ${ err?.message }` };
+      return { successBoolean: false, responseString: `Failed to archive project item: ${ err?.message }` };
     }
   }
 }

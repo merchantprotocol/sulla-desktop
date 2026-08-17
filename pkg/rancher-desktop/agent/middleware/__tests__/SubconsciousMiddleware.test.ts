@@ -62,7 +62,7 @@ describe('runSubconsciousMiddleware', () => {
       graph: { execute: jest.fn(() => Promise.resolve()) },
       state: {
         messages:  [],
-        metadata: { agent: { response: 'Sulla Desktop tools: work/list_work_items, work/get_work_item.' } },
+        metadata: { agent: { response: 'Sulla Desktop tools: project/list_project_items, project/get_project_item.' } },
       },
       threadId: 'environment-brief-test-thread',
     });
@@ -162,7 +162,7 @@ describe('runSubconsciousMiddleware', () => {
     expect(createEpisodicRecallMock).toHaveBeenCalledWith(state);
     expect(createSecurityConscienceMock).not.toHaveBeenCalled();
     expect(createConversationRecallMock).not.toHaveBeenCalled();
-    expect(state.metadata.recallContext).toBe('Sulla Desktop tools: work/list_work_items, work/get_work_item.');
+    expect(state.metadata.recallContext).toBe('Sulla Desktop tools: project/list_project_items, project/get_project_item.');
     expect(state.metadata.episodicContext).toBe('prior heartbeat workboard proof');
   });
 });

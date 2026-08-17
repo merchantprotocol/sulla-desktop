@@ -49,7 +49,7 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'work', 'workspace', 'workflow',
+    'agents', 'applescript', 'bridge', 'browser', 'calendar', 'capture', 'docker', 'extensions', 'fs', 'function', 'github', 'integrations', 'kubectl', 'ledger', 'lima', 'marketplace', 'memory', 'meta', 'mobile', 'notify', 'observation', 'pg', 'projects', 'rdctl', 'redis', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'project', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
@@ -81,7 +81,7 @@ export class ToolRegistry {
     function:           'Custom function runner — list installed functions and invoke them by slug across python, shell, and node runtimes. Returns full execution trace in one call.',
     ledger:             'Outcome-ledger measurement — historical scoreboard of WORKING / OUTCOMES / AUDIT at ~/sulla/ledger/. Files are archive/readout only; Projects work-state is the structured agenda.',
     rules:              'User-created rules the Security Conscience enforces. Distinct from global markdown under ~/sulla/rules/global/.',
-    work:               'Local Projects work-state — projects, epics, tasks, sub-tasks, and comments in Postgres. Accessed through the Sulla CLI catalog; distinct from filesystem PROJECT.md PRDs (projects category) and from Cloud CRM.',
+    project:               'Local Projects work-state — projects, epics, tasks, sub-tasks, and comments in Postgres. Accessed through the Sulla CLI catalog; distinct from filesystem PROJECT.md PRDs (projects category) and from Cloud CRM.',
     workflow:           'Workflow management — execute, validate, import, and manage Sulla workflow definitions.',
     skills:             'Tools for searching, loading, and creating reusable skill files that teach the agent how to perform repeatable tasks.',
     projects:           'Tools for searching, loading, creating, updating, patching, and deleting project PRDs (PROJECT.md) and their workspace folders.',

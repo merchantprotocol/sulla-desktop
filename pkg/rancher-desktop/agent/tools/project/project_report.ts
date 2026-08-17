@@ -21,7 +21,7 @@ export class WorkReportWorker extends BaseTool {
 
       return { successBoolean: true, responseString: report };
     } catch (err: any) {
-      return { successBoolean: false, responseString: `Failed to build work report: ${ err?.message }` };
+      return { successBoolean: false, responseString: `Failed to build project report: ${ err?.message }` };
     }
   }
 }

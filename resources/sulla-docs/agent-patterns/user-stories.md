@@ -758,8 +758,8 @@ Vocabulary: status `backlog | todo | in_progress | blocked | done | cancelled | 
 ### "What's on the board?" / "What should we work on?"
 The first turn of a chat already injects a `<work_report>` standup (last 24h done + next open tasks). Lead with that. To refresh:
 ```bash
-sulla work/report '{}'
-sulla work/list_work_items '{"kind":"task","limit":20}'
+sulla project/report '{}'
+sulla project/list_project_items '{"kind":"task","limit":20}'
 ```
 Open the board:
 ```bash
@@ -768,39 +768,39 @@ sulla ui/open_tab '{"mode":"projects"}'
 
 ### "Show me project X" / "Where are we on X?"
 ```bash
-sulla work/search_work_items '{"query":"X","kind":"project"}'
-sulla work/get_work_item '{"id":"<id>"}'
+sulla project/search_project_items '{"query":"X","kind":"project"}'
+sulla project/get_project_item '{"id":"<id>"}'
 ```
 Then list its epics/tasks. Read `~/sulla/projects/<slug>/PROJECT.md` only if you need the spec.
 
 ### "Add a task / epic / project"
 Search first to avoid dupes, then create explicitly (no upsert):
 ```bash
-sulla work/search_work_items '{"query":"the title"}'
-sulla work/create_project '{"title":"…","description":"…","outcome_metric":"…"}'
-sulla work/create_epic '{"project_id":"…","title":"…"}'
-sulla work/create_task '{"project_id":"…","epic_id":"…","title":"…","priority":"p1"}'
+sulla project/search_project_items '{"query":"the title"}'
+sulla project/create_project '{"title":"…","description":"…","outcome_metric":"…"}'
+sulla project/create_epic '{"project_id":"…","title":"…"}'
+sulla project/create_task '{"project_id":"…","epic_id":"…","title":"…","priority":"p1"}'
 ```
 For a subtask, pass `parent_id` on `create_task`.
 
 ### "Mark this done" / "Block this" / "Reprioritize"
 ```bash
-sulla work/update_task '{"id":"…","status":"done"}'
-sulla work/update_task '{"id":"…","status":"blocked"}'
-sulla work/add_task_comment '{"task_id":"…","body":"[date] blocked: <why> | rec: <default> | staged: <what> | check: <unblock>"}'
-sulla work/update_task '{"id":"…","priority":"p0"}'
+sulla project/update_task '{"id":"…","status":"done"}'
+sulla project/update_task '{"id":"…","status":"blocked"}'
+sulla project/add_task_comment '{"task_id":"…","body":"[date] blocked: <why> | rec: <default> | staged: <what> | check: <unblock>"}'
+sulla project/update_task '{"id":"…","priority":"p0"}'
 ```
 Status / priority / assignee / due_at changes stamp `last_moved_at`.
 
 ### "What moved overnight?" / "Standup"
 ```bash
-sulla work/report '{"hours":24}'
+sulla project/report '{"hours":24}'
 ```
 Optional: `project_id`, `assignee` (`heartbeat`, `sulla`, `human`), `next_limit`.
 
 ### "Archive this"
 ```bash
-sulla work/archive_work_item '{"id":"…"}'
+sulla project/archive_project_item '{"id":"…"}'
 ```
 Soft-archive only; cascades down. Never hard-delete. Never write these tables with raw `pg_execute`.
 

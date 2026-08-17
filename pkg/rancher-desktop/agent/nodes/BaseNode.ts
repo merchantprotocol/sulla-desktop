@@ -278,7 +278,7 @@ export async function getTemplateVariables(): Promise<Record<string, string>> {
     '{{projects_dir}}':         projectsDir,
     '{{skills_dir}}':           skillsDir,
     '{{agents_dir}}':           agentsDir,
-    '{{active_projects_file}}': path.join(projectsDir, 'ACTIVE_PROJECTS.md'), // leftover path; agenda is the work tables, not this file
+    '{{active_projects_file}}': path.join(projectsDir, 'ACTIVE_PROJECTS.md'), // leftover path; agenda is the Projects tables, not this file
     '{{skills_index}}':         skillsIndex,
     '{{tool_categories}}':      categoriesText,
     '{{installed_extensions}}':  installedExtensions,

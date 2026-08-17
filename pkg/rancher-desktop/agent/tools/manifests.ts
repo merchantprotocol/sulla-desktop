@@ -31,7 +31,7 @@ import { settingsToolManifests } from './settings/manifests';
 import { slackToolManifests } from './slack/manifests';
 import { uiToolManifests } from './ui/manifests';
 import { workflowToolManifests } from './workflow/manifests';
-import { workItemsToolManifests } from './work/manifests';
+import { projectToolManifests } from './project/manifests';
 
 toolRegistry.registerManifests([
   ...agentToolManifests,
@@ -62,5 +62,5 @@ toolRegistry.registerManifests([
   ...slackToolManifests,
   ...uiToolManifests,
   ...workflowToolManifests,
-  ...workItemsToolManifests,
+  ...projectToolManifests,
 ]);
