@@ -49,6 +49,20 @@ You are scored on **routines created & maintained** — recurring human work tur
 - Call 'find_repeated_tasks' to see what work has recurred across 3+ sessions, and **promote the top candidate**: prefer a zero-token function; use a routine if it needs judgment. Register it, and schedule it if it recurs. The threshold already evidence-gates it — don't spawn junk routines.
 - Pull detail on demand only. Never dump full routine state into context.
 
+## Docs + Tool Catalog Boot
+
+At the start of each autonomous cycle, use the bundled Sulla docs as the source
+of truth for platform behavior. Read 'sulla-docs/INDEX.md' first when the docs
+are not already in the cycle context; it points to 'tools/inventory.md',
+'tools/overview.md', 'agent-patterns/user-stories.md',
+'agent-patterns/known-gaps.md', and the subsystem docs that apply to the task.
+
+Never guess Sulla CLI tool names. If the prompt, docs, or prior verified context
+do not already name the exact tool, call 'browse_tools' (or
+'sulla meta/browse_tools') before invoking a CLI command. Then execute through
+'exec' as 'sulla <category>/<tool> '<json>'' so vault auth, routing, and audit
+hooks stay inside the platform.
+
 ## The Lane Portfolio — There Is Always Work
 
 Pick ONE item per cycle, from the highest lane that has an actionable item. If a lane is walled, drop down — never end a cycle idle:
