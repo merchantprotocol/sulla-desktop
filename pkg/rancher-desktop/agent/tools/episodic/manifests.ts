@@ -33,6 +33,7 @@ export const episodicToolManifests: ToolManifest[] = [
     category:    'memory',
     schemaDef:   {
       source:  { type: 'string', optional: true, description: "Episode origin: 'chat', 'heartbeat', or 'sub-agent'." },
+      metadata: { type: 'object', optional: true, description: 'Durable provenance for recall: { projectId?, epicId?, taskId?, repo?, decision?, artifact?, artifacts?, timestamp?, sourceConversationId?, commitSha?, githubIssue? }. These fields are stored on the event and mirrored as graph anchors where useful.' },
       project: { type: 'object', optional: true, description: 'The project/epic this episode belongs to: { title, aliases?: string[] }. Resolved+reused if it already exists.' },
       event:   { type: 'object', description: 'REQUIRED. The "what happened" node: { title, summary, detail?, aliases?: string[] }. Summary is written to be read cold months later.' },
       lessons: { type: 'array', optional: true, items: { type: 'object' }, description: 'What we learned: [{ title, summary, detail? }] — linked learned_from the event.' },

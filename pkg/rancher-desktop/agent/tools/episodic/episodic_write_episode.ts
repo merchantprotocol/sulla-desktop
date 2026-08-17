@@ -1,4 +1,4 @@
-import { KnowledgeGraphModel, type EpisodeNodeInput, type WriteEpisodeInput } from '../../database/models/KnowledgeGraphModel';
+import { KnowledgeGraphModel, type EpisodeMetadataInput, type EpisodeNodeInput, type WriteEpisodeInput } from '../../database/models/KnowledgeGraphModel';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -35,6 +35,50 @@ export class EpisodicWriteEpisodeWorker extends BaseTool {
     return raw.map(r => this.normNode(r)).filter((n): n is EpisodeNodeInput => n != null);
   }
 
+  private normMetadata(raw: any): EpisodeMetadataInput | undefined {
+    if (!raw || typeof raw !== 'object') return undefined;
+    const str = (...keys: string[]) => {
+      for (const key of keys) {
+        const value = raw[key];
+        if (value == null) continue;
+        const trimmed = String(value).trim();
+        if (trimmed) return trimmed;
+      }
+      return undefined;
+    };
+    const list = (...keys: string[]) => {
+      const values: string[] = [];
+      for (const key of keys) {
+        const rawValue = raw[key];
+        const parts = Array.isArray(rawValue) ? rawValue : rawValue ? [rawValue] : [];
+        for (const part of parts) {
+          const trimmed = String(part).trim();
+          if (trimmed) values.push(trimmed);
+        }
+      }
+      return Array.from(new Set(values));
+    };
+
+    const metadata: EpisodeMetadataInput = {
+      projectId:            str('projectId', 'project_id'),
+      epicId:               str('epicId', 'epic_id'),
+      taskId:               str('taskId', 'task_id'),
+      repo:                 str('repo', 'repository'),
+      decision:             str('decision'),
+      artifact:             str('artifact'),
+      artifacts:            list('artifacts'),
+      timestamp:            str('timestamp', 'time'),
+      sourceConversation:   str('sourceConversation', 'source_conversation'),
+      sourceConversationId: str('sourceConversationId', 'source_conversation_id', 'conversationId', 'conversation_id'),
+      commitSha:            str('commitSha', 'commit_sha'),
+      githubIssue:          str('githubIssue', 'github_issue'),
+    };
+
+    return Object.values(metadata).some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
+      ? metadata
+      : undefined;
+  }
+
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const event = this.normNode(input.event);
     if (!event) {
@@ -56,6 +100,7 @@ export class EpisodicWriteEpisodeWorker extends BaseTool {
 
     const payload: WriteEpisodeInput = {
       source:         input.source != null ? String(input.source) : undefined,
+      metadata:       this.normMetadata(input.metadata),
       project:        this.normNode(input.project),
       event,
       lessons:        this.normList(input.lessons),
