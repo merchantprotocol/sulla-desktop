@@ -13,4 +13,14 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('exec');
     expect(heartbeatPrompt).toContain('sulla <category>/<tool>');
   });
+
+  it('boots from the heartbeat lane and retires the markdown state file', () => {
+    // The workboard is the only work-state store; HEARTBEAT_STATE.md is dead.
+    expect(heartbeatPrompt).toContain('HEARTBEAT_STATE.md');
+    expect(heartbeatPrompt).toContain('RETIRED');
+    // First action pulls the heartbeat-assigned lane, not a file read.
+    expect(heartbeatPrompt).toContain('"assignee":"heartbeat"');
+    // Unassigned work is claimed by self-assigning into the lane.
+    expect(heartbeatPrompt).toContain('self-assign');
+  });
 });

@@ -183,7 +183,7 @@
                     </button>
                   </div>
                 </div>
-                <p>{{ shortName(sel) }} · latest comments and cycle notes from the workboard.</p>
+                <p>{{ shortName(sel) }} · newest first — comments, new tasks &amp; epics, status and metadata changes.</p>
               </div>
               <div v-if="activityLoading && !activity.length" class="ph-state">Loading recent activity…</div>
               <div v-else-if="!activity.length" class="ph-state">No activity has been recorded for this project yet.</div>
@@ -193,17 +193,19 @@
                   :key="item.id"
                   type="button"
                   class="ph-activity"
+                  :class="{ 'is-event': item.kind !== 'comment' }"
                   @click="openActivityTask(item)"
                 >
-                  <span class="ph-activity-dot" :class="{ hb: isHeartbeatAuthor(item.author), human: item.author === 'human' }" />
+                  <span class="ph-activity-dot" :class="{ hb: isHeartbeatAuthor(item.author), human: item.author === 'human', event: item.kind !== 'comment' }" />
                   <span class="ph-activity-body">
                     <span class="ph-activity-meta">
-                      <b>{{ item.author || 'agent' }}</b>
-                      <span>{{ shortDate(item.created_at) }}</span>
+                      <span class="ph-activity-kind" :class="'k-' + item.kind">{{ activityKindLabel(item.kind) }}</span>
+                      <b>{{ activityActor(item) }}</b>
+                      <span>{{ shortDate(item.activity_at) }}</span>
                       <span v-if="item.epic_title">{{ item.epic_title }}</span>
                     </span>
-                    <span class="ph-activity-task" v-html="cleanTitle(item.task_title)" />
-                    <span class="ph-activity-text">{{ item.body }}</span>
+                    <span class="ph-activity-task" v-html="cleanTitle(activityTitle(item))" />
+                    <span class="ph-activity-text">{{ activityText(item) }}</span>
                   </span>
                   <span class="ph-tag" :class="{ wait: item.task_status === 'blocked' }">{{ statusLabel(item.task_status) }}</span>
                 </button>
@@ -266,7 +268,13 @@
           </div>
           <div>
             <label class="ph-fl">Assignee</label>
-            <input v-model="taskDraft.assignee" class="ph-in" placeholder="unassigned">
+            <select v-model="taskDraft.assignee" class="ph-in">
+              <option value="">unassigned</option>
+              <option v-for="a in ASSIGNEES" :key="a.value" :value="a.value">{{ a.label }}</option>
+              <option v-if="taskDraft.assignee && !isKnownAssignee(taskDraft.assignee)" :value="taskDraft.assignee">
+                {{ taskDraft.assignee }}
+              </option>
+            </select>
           </div>
         </div>
 
@@ -406,6 +414,17 @@ const activityLoading = ref(false);
 
 const STATUSES = ['backlog', 'todo', 'in_progress', 'blocked', 'done', 'cancelled'];
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
+// Canonical assignees. Values are the exact lowercase tokens the workboard and
+// the Heartbeat lane filter match on — 'heartbeat' is what routes work into the
+// autonomous agent's queue, so it must stay lowercase and spelled this way.
+const ASSIGNEES = [
+  { value: 'heartbeat', label: 'Heartbeat (autonomous)' },
+  { value: 'sulla', label: 'Sulla' },
+  { value: 'human', label: 'Human' },
+];
+function isKnownAssignee(a: string): boolean {
+  return ASSIGNEES.some(x => x.value === a);
+}
 
 onMounted(() => {
   load().catch((err) => {
@@ -673,10 +692,55 @@ async function openTaskDrawer(t: WorkTaskRecord): Promise<void> {
 }
 
 async function openActivityTask(item: WorkActivityRecord): Promise<void> {
+  if (!item.task_id) return;
   const task = sel.value?.epics
     .flatMap(epic => epic.tasks)
     .find(t => t.id === item.task_id);
   if (task) await openTaskDrawer(task);
+}
+
+const ACTIVITY_KIND_LABELS: Record<WorkActivityRecord['kind'], string> = {
+  comment:          'Comment',
+  task_created:     'New task',
+  task_updated:     'Task edited',
+  task_moved:       'Status',
+  epic_created:     'New epic',
+  epic_updated:     'Epic edited',
+  project_created:  'New project',
+  project_updated:  'Project edited',
+};
+
+function activityKindLabel(kind: WorkActivityRecord['kind']): string {
+  return ACTIVITY_KIND_LABELS[kind] ?? 'Activity';
+}
+
+/** Who did it: comments carry an author; lifecycle events have no recorded actor. */
+function activityActor(item: WorkActivityRecord): string {
+  if (item.author) return item.author;
+  return item.kind === 'comment' ? 'agent' : 'workboard';
+}
+
+/** The headline for a row — the subject item's title, whatever level it lives at. */
+function activityTitle(item: WorkActivityRecord): string {
+  if (item.task_title) return item.task_title;
+  if (item.epic_title) return item.epic_title;
+  return item.project_title;
+}
+
+/** Body text: real comment bodies, or a short synthesized description for lifecycle events. */
+function activityText(item: WorkActivityRecord): string {
+  if (item.kind === 'comment') return item.body ?? '';
+  const status = statusLabel(item.task_status);
+  switch (item.kind) {
+  case 'task_created': return 'Task added to the workboard.';
+  case 'task_moved': return `Moved to ${ status }.`;
+  case 'task_updated': return 'Task details updated.';
+  case 'epic_created': return 'Epic created.';
+  case 'epic_updated': return `Epic updated · ${ status }.`;
+  case 'project_created': return 'Project created.';
+  case 'project_updated': return `Project updated · ${ status }.`;
+  default: return '';
+  }
 }
 
 function openNewTask(epicId: string): void {
@@ -996,6 +1060,11 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-activity-dot { width: 13px; height: 13px; border-radius: 50%; margin-top: 5px; background: var(--ptext3); border: 3px solid var(--pbg); position: relative; z-index: 1; }
 .ph-activity-dot.hb { background: var(--pacc); box-shadow: 0 0 0 3px var(--pacc-soft); }
 .ph-activity-dot.human { background: var(--pgreen); }
+.ph-activity-dot.event { background: var(--pbg); border-color: var(--ptext3); }
+.ph-activity-kind { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--psurf2); color: var(--ptext2); border: 1px solid var(--pborder); font-weight: 600; letter-spacing: 0.05em; }
+.ph-activity-kind.k-comment { background: var(--pacc-soft); color: var(--pacc); border-color: transparent; }
+.ph-activity-kind.k-task_created, .ph-activity-kind.k-epic_created, .ph-activity-kind.k-project_created { color: var(--pgreen); }
+.ph-activity.is-event .ph-activity-text { color: var(--ptext3); font-style: italic; }
 .ph-activity-body { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding-bottom: 2px; }
 .ph-activity-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: var(--pmono); font-size: 10.5px; color: var(--ptext3); text-transform: uppercase; letter-spacing: 0.06em; }
 .ph-activity-meta b { color: var(--pacc); font-weight: 600; }
