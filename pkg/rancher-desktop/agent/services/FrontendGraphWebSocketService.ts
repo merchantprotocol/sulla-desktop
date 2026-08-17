@@ -175,9 +175,17 @@ export class FrontendGraphWebSocketService {
 
     // Create a fresh AbortService for this run and wire it into state.
     // Set state first so stop_run can't race between activeAbort and state.
+    if (this.activeAbort) {
+      try {
+        this.activeAbort.abort();
+      } catch {
+        // already aborted
+      }
+    }
     const abort = new AbortService();
     state.metadata.options.abort = abort;
     this.activeAbort = abort;
+    const isCurrentRun = () => this.activeAbort === abort;
 
     // Always refresh model context from current settings so existing threads
     // follow the currently selected frontend model/provider.
@@ -246,9 +254,11 @@ export class FrontendGraphWebSocketService {
       await graph.execute(state, startNode);
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        state.metadata.cycleComplete = true;
-        state.metadata.waitingForUser = true;
-        this.emitSystemMessage('Execution stopped.', threadId);
+        if (isCurrentRun()) {
+          state.metadata.cycleComplete = true;
+          state.metadata.waitingForUser = true;
+          this.emitSystemMessage('Execution stopped.', threadId);
+        }
       } else {
         console.error('[FrontendGraphWS] Error:', err?.message);
         this.emitSystemMessage(`Error: ${ err.message || String(err) }`, threadId);
@@ -258,7 +268,9 @@ export class FrontendGraphWebSocketService {
       state.metadata.consecutiveSameNode = 0;
       state.metadata.iterations = 0;
       (state.metadata as any).agentLoopCount = 0;
-      this.activeAbort = null;
+      if (isCurrentRun()) {
+        this.activeAbort = null;
+      }
 
       // Persist thread state so it survives page reloads
       saveThreadState(state).catch(err => console.warn('[FrontendGraphWS] Failed to save thread state:', err));
@@ -282,9 +294,17 @@ export class FrontendGraphWebSocketService {
 
     // Create a fresh AbortService for this run.
     // Set state first so stop_run can't race between activeAbort and state.
+    if (this.activeAbort) {
+      try {
+        this.activeAbort.abort();
+      } catch {
+        // already aborted
+      }
+    }
     const abort = new AbortService();
     state.metadata.options.abort = abort;
     this.activeAbort = abort;
+    const isCurrentRun = () => this.activeAbort === abort;
 
     try {
       // Reset loop counters so the graph can run another full set of cycles
@@ -298,9 +318,11 @@ export class FrontendGraphWebSocketService {
       await graph.execute(state, 'agent');
     } catch (err: any) {
       if (err.name === 'AbortError') {
-        state.metadata.cycleComplete = true;
-        state.metadata.waitingForUser = true;
-        this.emitSystemMessage('Execution stopped.', threadId ?? undefined);
+        if (isCurrentRun()) {
+          state.metadata.cycleComplete = true;
+          state.metadata.waitingForUser = true;
+          this.emitSystemMessage('Execution stopped.', threadId ?? undefined);
+        }
       } else {
         console.error('[FrontendGraphWS] Continue error:', err?.message);
         this.emitSystemMessage(`Error: ${ err.message || String(err) }`, threadId ?? undefined);
@@ -309,7 +331,9 @@ export class FrontendGraphWebSocketService {
       state.metadata.consecutiveSameNode = 0;
       state.metadata.iterations = 0;
       (state.metadata as any).agentLoopCount = 0;
-      this.activeAbort = null;
+      if (isCurrentRun()) {
+        this.activeAbort = null;
+      }
 
       // Persist thread state so it survives page reloads
       saveThreadState(state).catch(err => console.warn('[FrontendGraphWS] Failed to save thread state:', err));

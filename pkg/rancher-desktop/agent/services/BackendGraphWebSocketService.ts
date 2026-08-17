@@ -286,6 +286,10 @@ export class BackendGraphWebSocketService {
     const threadId = threadIdFromMsg || nextThreadId();
 
     let state: AgentGraphState | undefined;
+    const abortKey = this.abortKey(channelId, threadId);
+    let runAbort: AbortService | undefined;
+
+    const isCurrentRun = () => this.activeAborts.get(abortKey) === runAbort;
 
     try {
       const result = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
@@ -306,16 +310,20 @@ export class BackendGraphWebSocketService {
       // tabs sharing the same WebSocket channel can run in parallel.
       // Rapid double-sends from the same tab still get coalesced because
       // they share a thread id.
-      const abortKey = this.abortKey(channelId, threadId);
       const prior = this.activeAborts.get(abortKey);
       if (prior) {
-        try { prior.abort(); } catch { /* already aborted */ }
+        try {
+          prior.abort();
+        } catch {
+          // already aborted
+        }
         this.activeAborts.delete(abortKey);
       }
 
       // Create abort service for this run.
       // Set state first so stop_run can't race between activeAborts and state.
       const abort = new AbortService();
+      runAbort = abort;
       state.metadata.options.abort = abort;
       this.activeAborts.set(abortKey, abort);
 
@@ -374,9 +382,12 @@ export class BackendGraphWebSocketService {
       await graph.execute(state, startNode);
     } catch (err: any) {
       if (err?.name === 'AbortError' && state) {
-        // Cleanly aborted by user — mark cycle complete so graph won't restart
-        state.metadata.cycleComplete = true;
-        state.metadata.waitingForUser = true;
+        // Cleanly aborted by user. If a newer run superseded this one, leave
+        // the shared thread state alone so the new run is not poisoned.
+        if (isCurrentRun()) {
+          state.metadata.cycleComplete = true;
+          state.metadata.waitingForUser = true;
+        }
       } else if (err?.name !== 'AbortError') {
         console.error(`[BackendGraphWS] Agent execution FAILED on ${ channelId }:`, err);
         this.emitMessage(channelId, 'assistant_message', {
@@ -386,7 +397,9 @@ export class BackendGraphWebSocketService {
         });
       }
     } finally {
-      this.activeAborts.delete(this.abortKey(channelId, threadId));
+      if (isCurrentRun()) {
+        this.activeAborts.delete(abortKey);
+      }
     }
   }
 
@@ -418,7 +431,7 @@ export class BackendGraphWebSocketService {
   // Calendar handling (unchanged)
   // ------------------------------------------------------------------
 
-  private async handleCalendarMessage(msg: WebSocketMessage): Promise<void> {
+  private handleCalendarMessage(msg: WebSocketMessage): void {
     const calendarMsg = msg as CalendarWebSocketMessage;
 
     if (!calendarMsg || typeof calendarMsg.type !== 'string') {
