@@ -33,6 +33,10 @@ const AGENT_CONTINUE_XML_REGEX = /<AGENT_CONTINUE>([\s\S]*?)<\/AGENT_CONTINUE>/i
 const STATUS_REPORT_XML_REGEX = /<STATUS_REPORT>([\s\S]*?)<\/STATUS_REPORT>/i;
 const NEEDS_USER_INPUT_REGEX = /Needs user input:\s*(yes|no)/i;
 const HEARTBEAT_OPERATOR_PROJECT_SLUG = 'goal-operator-transition';
+// An in_progress task untouched for this many hours is treated as stale and
+// surfaced by the lane-health digest (task Sw8c) so Heartbeat resumes or parks
+// it instead of silently leaving it hanging.
+const STALE_IN_PROGRESS_HOURS = 6;
 
 interface HeartbeatWorkboardSnapshot {
   taskId:       string;
@@ -157,6 +161,26 @@ export class HeartbeatNode extends BaseNode {
       if (routineDigest) {
         const digestBlock = `\n\n<routine_digest>\n${ routineDigest }\n</routine_digest>`;
         this.mergeHeartbeatContextBlock(state, digestBlock, 'routine_digest');
+      }
+    }
+
+    // Inject the deterministic, zero-LLM lane-health advisory (task Sw8c):
+    // stale in_progress, duplicate active tasks, and lane drift into
+    // non-Operator projects. Only emits when something needs attention, so a
+    // healthy lane collapses to nothing. Fresh cycles only, and any failure
+    // (e.g. tables not migrated) must never break the cycle — skip silently.
+    if (!isToolCallLoop) {
+      let laneHealth = '';
+      try {
+        const reportOpts = (state.metadata as any).heartbeatReportOpts
+          ?? await this.resolveHeartbeatWorkReportOpts();
+        laneHealth = await this.buildLaneHealthDigest(reportOpts);
+      } catch (err) {
+        console.warn(`[HeartbeatNode] Lane-health digest skipped: ${ (err as Error).message }`);
+      }
+      if (laneHealth) {
+        const laneBlock = `\n\n<lane_health>\n${ laneHealth }\n</lane_health>`;
+        this.mergeHeartbeatContextBlock(state, laneBlock, 'lane_health');
       }
     }
 
@@ -514,6 +538,7 @@ export class HeartbeatNode extends BaseNode {
     try {
       const { buildWorkReport } = await import('../prompts/workReport');
       const reportOpts = await this.resolveHeartbeatWorkReportOpts();
+      (state.metadata as any).heartbeatReportOpts = reportOpts;
       const report = await buildWorkReport({ ...reportOpts, nextLimit: 12 });
       if (!report) return;
 
@@ -684,6 +709,64 @@ export class HeartbeatNode extends BaseNode {
     return this.escapeXmlText(value)
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&apos;');
+  }
+
+  /**
+   * Deterministic, zero-LLM lane-health advisory (task Sw8c). Detects three
+   * failure modes each cycle and returns a compact corrective note — or ''
+   * when the lane is healthy so nothing is injected:
+   *   1. Duplicate active — more than one in_progress task fractures focus.
+   *   2. Stale in_progress — a task untouched for STALE_IN_PROGRESS_HOURS
+   *      should be resumed or parked with a status change.
+   *   3. Lane drift — heartbeat-assigned in_progress work outside the Operator
+   *      Platform project, which Heartbeat must hand back, not advance.
+   * Also lists in-lane blocked tasks so blockers get re-verified before new
+   * work starts. Never throws — the caller guards, but callers elsewhere may
+   * rely on the empty-string contract.
+   */
+  private async buildLaneHealthDigest(reportOpts: { projectId?: string; assignee?: string }): Promise<string> {
+    const nowMs = Date.now();
+    const [laneInProgress, laneBlocked] = await Promise.all([
+      WorkItemsModel.listTasks({ ...reportOpts, status: 'in_progress', limit: 50 }),
+      WorkItemsModel.listTasks({ ...reportOpts, status: 'blocked', limit: 50 }),
+    ]);
+
+    const lines: string[] = [];
+
+    // 1. Duplicate active — advance one, park the rest.
+    if (laneInProgress.length > 1) {
+      const ids = laneInProgress.map(task => this.escapeXmlText(task.id)).join(', ');
+      lines.push(`- DUPLICATE ACTIVE: ${ laneInProgress.length } tasks are in_progress at once (${ ids }). Advance ONE; for the others add a comment and move them back to todo or blocked so the lane keeps a single active thread.`);
+    }
+
+    // 2. Stale in_progress — resume or park with a status change + comment.
+    for (const task of laneInProgress) {
+      const movedMs = Date.parse(task.last_moved_at);
+      if (!Number.isFinite(movedMs)) continue;
+      const ageHours = Math.floor((nowMs - movedMs) / 3_600_000);
+      if (ageHours >= STALE_IN_PROGRESS_HOURS) {
+        lines.push(`- STALE: task ${ this.escapeXmlText(task.id) } "${ this.escapeXmlText(task.title) }" has sat in_progress ~${ ageHours }h with no movement. Resume it now, or add a comment and set status (blocked/todo) explaining the pause.`);
+      }
+    }
+
+    // 3. Blocked backlog — re-verify blockers before starting new work.
+    if (laneBlocked.length) {
+      const ids = laneBlocked.map(task => this.escapeXmlText(task.id)).join(', ');
+      lines.push(`- BLOCKED (${ laneBlocked.length }): ${ ids }. Re-check each blocker is still real before picking up anything new; resume if it cleared, otherwise leave a fresh blocker note.`);
+    }
+
+    // 4. Lane drift — heartbeat in_progress work outside the Operator lane.
+    if (reportOpts.projectId) {
+      const heartbeatInProgress = await WorkItemsModel.listTasks({ assignee: 'heartbeat', status: 'in_progress', limit: 50 });
+      const offLane = heartbeatInProgress.filter(task => task.project_id !== reportOpts.projectId);
+      if (offLane.length) {
+        const refs = offLane.map(task => `${ this.escapeXmlText(task.id) } (project ${ this.escapeXmlText(task.project_id) })`).join(', ');
+        lines.push(`- LANE DRIFT: ${ offLane.length } heartbeat task(s) in_progress OUTSIDE the Operator Platform lane — ${ refs }. Operator Platform is your only lane; do NOT advance Farm/ERP/other-project work unless it was explicitly assigned to you. Add a corrective comment and hand it back.`);
+      }
+    }
+
+    if (lines.length === 0) return '';
+    return ['Operator lane health — resolve these before picking up new work:', ...lines].join('\n');
   }
 
   private async resolveHeartbeatWorkReportOpts(): Promise<{ projectId?: string; assignee?: string }> {
