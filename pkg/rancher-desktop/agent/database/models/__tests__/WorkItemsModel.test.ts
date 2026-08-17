@@ -18,12 +18,12 @@ describe('WorkItemsModel', () => {
   it('lists recent activity with project and author filters in stable parameter order', async() => {
     (postgresClient as any).query = jest.fn(() => Promise.resolve([{
       id:             'comment-1',
+      kind:           'comment',
+      activity_at:    '2026-08-17T16:00:00.000Z',
+      created_at:     '2026-08-17T16:00:00.000Z',
       task_id:        'task-1',
       body:           'Moved the operator task forward.',
       author:         'Heartbeat',
-      created_at:     '2026-08-17T16:00:00.000Z',
-      updated_at:     null,
-      archived:       false,
       task_title:     'Improve workboard continuity',
       task_status:    'in_progress',
       task_priority:  'high',
@@ -40,8 +40,9 @@ describe('WorkItemsModel', () => {
       limit:     12,
     });
 
+    // Unified feed: params are always bound in [projectId, author, limit] order.
     expect(postgresClient.query).toHaveBeenCalledWith(
-      expect.stringContaining('JOIN work_tasks t ON t.id = c.task_id'),
+      expect.stringContaining('UNION ALL'),
       ['project-1', 'heartbeat', 12],
     );
     expect(postgresClient.query).toHaveBeenCalledWith(
@@ -49,6 +50,7 @@ describe('WorkItemsModel', () => {
       ['project-1', 'heartbeat', 12],
     );
     expect(rows[0]).toMatchObject({
+      kind:          'comment',
       task_title:    'Improve workboard continuity',
       project_title: 'Sulla Desktop',
     });
@@ -60,15 +62,16 @@ describe('WorkItemsModel', () => {
     await WorkItemsModel.listRecentActivity({ limit: 500 });
     await WorkItemsModel.listRecentActivity({ limit: 0 });
 
+    // projectId/author default to null; limit is clamped to [1, 200].
     expect(postgresClient.query).toHaveBeenNthCalledWith(
       1,
       expect.any(String),
-      [200],
+      [null, null, 200],
     );
     expect(postgresClient.query).toHaveBeenNthCalledWith(
       2,
       expect.any(String),
-      [1],
+      [null, null, 1],
     );
   });
 });

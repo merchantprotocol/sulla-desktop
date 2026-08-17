@@ -90,9 +90,32 @@ export interface WorkCommentRecord {
   archived:   boolean;
 }
 
-export interface WorkActivityRecord extends WorkCommentRecord {
-  task_title:    string;
-  task_status:   string;
+export type WorkActivityKind =
+  | 'comment'
+  | 'task_created'
+  | 'task_updated'
+  | 'task_moved'
+  | 'epic_created'
+  | 'epic_updated'
+  | 'project_created'
+  | 'project_updated';
+
+/**
+ * A single row in the unified Projects activity feed. Rows are synthesized from
+ * comments plus the created_at / last_moved_at / updated_at timestamps on
+ * projects, epics and tasks — there is no separate audit table, so each item
+ * contributes at most one row per event kind (its most recent create/move/edit).
+ */
+export interface WorkActivityRecord {
+  id:            string;               // unique per feed row (kind-prefixed for non-comments)
+  kind:          WorkActivityKind;
+  activity_at:   string;               // the moment this event happened (sort key)
+  created_at:    string;               // alias of activity_at, kept for renderers that format it
+  body:          string | null;        // comment text; null for lifecycle events
+  author:        string | null;        // comment author; null for lifecycle events
+  task_id:       string | null;        // null for epic/project-level events
+  task_title:    string | null;
+  task_status:   string;               // status of the subject item (task, or epic/project)
   task_priority: string;
   project_id:    string;
   project_title: string;
@@ -901,44 +924,131 @@ export class WorkItemsModel {
     );
   }
 
+  /**
+   * Unified reverse-chronological activity feed for the Projects area: comments,
+   * newly created tasks/epics/projects, status/board moves, and metadata edits —
+   * newest first. Synthesized via UNION over the work tables' timestamp columns
+   * (no audit table), so each item yields at most one row per event kind.
+   *
+   * Bind params: $1 = projectId (or null = all), $2 = author filter (or null),
+   * $3 = row limit. The author filter only applies to comments; when set, the
+   * lifecycle events (which have no recorded actor) are excluded.
+   */
   static async listRecentActivity(opts: ListActivityOpts = {}): Promise<WorkActivityRecord[]> {
-    const conds = [
-      'c.archived = false',
-      't.archived = false',
-      'p.archived = false',
-    ];
-    const values: any[] = [];
-    let idx = 1;
-    if (opts.projectId) {
-      conds.push(`t.project_id = $${ idx++ }`);
-      values.push(opts.projectId);
-    }
-    if (opts.author) {
-      conds.push(`LOWER(COALESCE(c.author, '')) = LOWER($${ idx++ })`);
-      values.push(opts.author);
-    }
+    const { PROJECTS, EPICS, TASKS, COMMENTS } = WorkItemsModel;
+    const projectId = opts.projectId ?? null;
+    const author = opts.author ?? null;
     const limit = Math.min(Math.max(1, opts.limit ?? 80), 200);
-    values.push(limit);
 
     return postgresClient.query<WorkActivityRecord>(
-      `SELECT
-          c.*,
-          t.title AS task_title,
-          t.status AS task_status,
-          t.priority AS task_priority,
-          p.id AS project_id,
-          p.title AS project_title,
-          p.slug AS project_slug,
-          e.id AS epic_id,
-          e.title AS epic_title
-        FROM ${ WorkItemsModel.COMMENTS } c
-        JOIN ${ WorkItemsModel.TASKS } t ON t.id = c.task_id
-        JOIN ${ WorkItemsModel.PROJECTS } p ON p.id = t.project_id
-        LEFT JOIN ${ WorkItemsModel.EPICS } e ON e.id = t.epic_id AND e.archived = false
-        WHERE ${ conds.join(' AND ') }
-        ORDER BY c.created_at DESC
-        LIMIT $${ idx }`,
-      values,
+      `WITH activity AS (
+        -- comments (and Heartbeat cycle notes)
+        SELECT
+          c.id          AS id,
+          'comment'     AS kind,
+          c.created_at  AS activity_at,
+          c.body        AS body,
+          c.author      AS author,
+          t.id          AS task_id,
+          t.title       AS task_title,
+          t.status      AS task_status,
+          t.priority    AS task_priority,
+          p.id          AS project_id,
+          p.title       AS project_title,
+          p.slug        AS project_slug,
+          e.id          AS epic_id,
+          e.title       AS epic_title
+        FROM ${ COMMENTS } c
+        JOIN ${ TASKS } t    ON t.id = c.task_id
+        JOIN ${ PROJECTS } p ON p.id = t.project_id
+        LEFT JOIN ${ EPICS } e ON e.id = t.epic_id AND e.archived = false
+        WHERE c.archived = false AND t.archived = false AND p.archived = false
+          AND ($1::text IS NULL OR t.project_id = $1)
+          AND ($2::text IS NULL OR LOWER(COALESCE(c.author, '')) = LOWER($2))
+
+        UNION ALL
+        -- task created
+        SELECT 'tc:' || t.id, 'task_created', t.created_at, NULL, NULL,
+               t.id, t.title, t.status, t.priority,
+               p.id, p.title, p.slug, e.id, e.title
+        FROM ${ TASKS } t
+        JOIN ${ PROJECTS } p ON p.id = t.project_id
+        LEFT JOIN ${ EPICS } e ON e.id = t.epic_id AND e.archived = false
+        WHERE t.archived = false AND p.archived = false AND $2::text IS NULL
+          AND ($1::text IS NULL OR t.project_id = $1)
+
+        UNION ALL
+        -- task status / board move
+        SELECT 'tm:' || t.id, 'task_moved', t.last_moved_at, NULL, NULL,
+               t.id, t.title, t.status, t.priority,
+               p.id, p.title, p.slug, e.id, e.title
+        FROM ${ TASKS } t
+        JOIN ${ PROJECTS } p ON p.id = t.project_id
+        LEFT JOIN ${ EPICS } e ON e.id = t.epic_id AND e.archived = false
+        WHERE t.archived = false AND p.archived = false AND $2::text IS NULL
+          AND t.last_moved_at IS DISTINCT FROM t.created_at
+          AND ($1::text IS NULL OR t.project_id = $1)
+
+        UNION ALL
+        -- task metadata edit (distinct from its create and move)
+        SELECT 'tu:' || t.id, 'task_updated', t.updated_at, NULL, NULL,
+               t.id, t.title, t.status, t.priority,
+               p.id, p.title, p.slug, e.id, e.title
+        FROM ${ TASKS } t
+        JOIN ${ PROJECTS } p ON p.id = t.project_id
+        LEFT JOIN ${ EPICS } e ON e.id = t.epic_id AND e.archived = false
+        WHERE t.archived = false AND p.archived = false AND $2::text IS NULL
+          AND t.updated_at IS NOT NULL
+          AND t.updated_at IS DISTINCT FROM t.created_at
+          AND t.updated_at IS DISTINCT FROM t.last_moved_at
+          AND ($1::text IS NULL OR t.project_id = $1)
+
+        UNION ALL
+        -- epic created
+        SELECT 'ec:' || e.id, 'epic_created', e.created_at, NULL, NULL,
+               NULL, NULL, e.status, e.priority,
+               p.id, p.title, p.slug, e.id, e.title
+        FROM ${ EPICS } e
+        JOIN ${ PROJECTS } p ON p.id = e.project_id
+        WHERE e.archived = false AND p.archived = false AND $2::text IS NULL
+          AND ($1::text IS NULL OR e.project_id = $1)
+
+        UNION ALL
+        -- epic updated / moved
+        SELECT 'eu:' || e.id, 'epic_updated', GREATEST(e.updated_at, e.last_moved_at), NULL, NULL,
+               NULL, NULL, e.status, e.priority,
+               p.id, p.title, p.slug, e.id, e.title
+        FROM ${ EPICS } e
+        JOIN ${ PROJECTS } p ON p.id = e.project_id
+        WHERE e.archived = false AND p.archived = false AND $2::text IS NULL
+          AND GREATEST(e.updated_at, e.last_moved_at) IS DISTINCT FROM e.created_at
+          AND ($1::text IS NULL OR e.project_id = $1)
+
+        UNION ALL
+        -- project created
+        SELECT 'pc:' || p.id, 'project_created', p.created_at, NULL, NULL,
+               NULL, NULL, p.status, p.priority,
+               p.id, p.title, p.slug, NULL, NULL
+        FROM ${ PROJECTS } p
+        WHERE p.archived = false AND $2::text IS NULL
+          AND ($1::text IS NULL OR p.id = $1)
+
+        UNION ALL
+        -- project updated / moved
+        SELECT 'pu:' || p.id, 'project_updated', GREATEST(p.updated_at, p.last_moved_at), NULL, NULL,
+               NULL, NULL, p.status, p.priority,
+               p.id, p.title, p.slug, NULL, NULL
+        FROM ${ PROJECTS } p
+        WHERE p.archived = false AND $2::text IS NULL
+          AND GREATEST(p.updated_at, p.last_moved_at) IS DISTINCT FROM p.created_at
+          AND ($1::text IS NULL OR p.id = $1)
+      )
+      SELECT *, activity_at AS created_at
+      FROM activity
+      WHERE activity_at IS NOT NULL
+      ORDER BY activity_at DESC
+      LIMIT $3`,
+      [projectId, author, limit],
     );
   }
 
