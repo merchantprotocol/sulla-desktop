@@ -14,7 +14,7 @@ function fmtTask(t: any): string {
 }
 
 /**
- * List the operator workboard from Postgres.
+ * List Projects work-state from Postgres.
  */
 export class ListWorkItemsWorker extends BaseTool {
   name = '';

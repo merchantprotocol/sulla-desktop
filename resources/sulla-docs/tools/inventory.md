@@ -218,11 +218,11 @@ For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
 
 → See [`tools/redis.md`](redis.md) (settings guardrail) and `pkg/rancher-desktop/agent/database/models/SullaSettingsModel.ts`
 
-## work — operator workboard (15 tools)
-- `sulla work/list_work_items` — Board: filter by kind / status / priority / project / epic / parent / assignee
+## work — Projects work-state (15 tools)
+- `sulla work/list_work_items` — Projects work-state list: filter by kind / status / priority / project / epic / parent / assignee
 - `sulla work/get_work_item` — One project, epic, or task + children + comments
 - `sulla work/search_work_items` — Title + description search (dedupe before create)
-- `sulla work/work_report` — Standup: completed last N hours + next open tasks
+- `sulla work/report` — Standup: completed last N hours + next open tasks
 - `sulla work/create_project` — Insert a new project (slug auto-derived)
 - `sulla work/update_project` — Patch an existing project by id
 - `sulla work/create_epic` — Insert a new epic under a project

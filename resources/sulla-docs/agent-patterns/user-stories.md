@@ -749,7 +749,7 @@ Never touch `kube-system`, `kube-public`, `kube-node-lease`, or Sulla-managed na
 
 ---
 
-## Workboard / Projects
+## Projects / Work-State
 
 The operator agenda lives in Postgres (`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`). The Projects view is the human board. Filesystem `~/sulla/projects/<slug>/PROJECT.md` is a PRD, not the agenda. `~/sulla/ledger/` is a historical archive — do not pick from it.
 
@@ -758,7 +758,7 @@ Vocabulary: status `backlog | todo | in_progress | blocked | done | cancelled | 
 ### "What's on the board?" / "What should we work on?"
 The first turn of a chat already injects a `<work_report>` standup (last 24h done + next open tasks). Lead with that. To refresh:
 ```bash
-sulla work/work_report '{}'
+sulla work/report '{}'
 sulla work/list_work_items '{"kind":"task","limit":20}'
 ```
 Open the board:
@@ -794,7 +794,7 @@ Status / priority / assignee / due_at changes stamp `last_moved_at`.
 
 ### "What moved overnight?" / "Standup"
 ```bash
-sulla work/work_report '{"hours":24}'
+sulla work/report '{"hours":24}'
 ```
 Optional: `project_id`, `assignee` (`heartbeat`, `sulla`, `human`), `next_limit`.
 

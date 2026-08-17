@@ -138,7 +138,7 @@ describe('HeartbeatNode workboard context injection', () => {
     expect(injected.content).toContain('Acceptance requires selected task comments in model input.');
     expect(injected.content).toContain('Prior cycle discovered work_report is too thin');
     expect(injected.content).toContain('Child proof (id child1)');
-    expect(injected.content).toContain('End the cycle by adding a workboard comment');
+    expect(injected.content).toContain('End the cycle by adding a Projects task comment');
     expect(state.metadata.heartbeatSelectedTaskId).toBe('task1');
     expect(state.metadata.heartbeatWorkboardSnapshot).toMatchObject({
       taskId:       'task1',
@@ -294,7 +294,7 @@ describe('HeartbeatNode workboard context injection', () => {
     await node.enforceHeartbeatWorkboardWrite(state, outcome);
 
     expect(outcome.status).toBe('continue');
-    expect(outcome.statusReport).toContain('Workboard bookkeeping missing for selected task task1');
+    expect(outcome.statusReport).toContain('Projects bookkeeping missing for selected task task1');
     expect(state.metadata.cycleComplete).toBe(false);
     expect(state.messages).toHaveLength(1);
     expect(state.messages[0].metadata.source).toBe('heartbeat_workboard_guard');

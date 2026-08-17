@@ -118,6 +118,6 @@ Observations appear in every agent's context automatically. Use for facts that a
 
 ---
 
-## Workboard (the one work-state store)
+## Projects Work-State (the one work-state store)
 
-Work in motion lives in the Postgres work tables (`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`), not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` / `~/sulla/ledger/` (those are transition leftovers and freeze). Every autonomous cycle starts with the injected `<work_report>` (or `sulla work/list_work_items` / `sulla work/work_report`), picks the top open task, moves it, and writes back with `update_task` + `add_task_comment`. Measure by task status and `last_moved_at`, not markdown.
+Work in motion lives in the Postgres work tables (`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`), not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` / `~/sulla/ledger/` (those are transition leftovers and freeze). Every autonomous cycle starts with the injected `<work_report>` (or `sulla work/list_work_items` / `sulla work/report`), picks the top open task, moves it, and writes back with `sulla work/update_task` + `sulla work/add_task_comment`. Measure by task status and `last_moved_at`, not markdown. Do not look for native project-management or `workboard` tools outside the Sulla CLI catalog.

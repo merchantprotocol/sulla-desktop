@@ -617,7 +617,7 @@ export class HeartbeatNode extends BaseNode {
     lines.push(
       '',
       '## Cycle Contract',
-      `Act on task ${ this.escapeXmlText(task.id) } unless you deliberately pick a different task from the report. If you pick a different task, call 'sulla work/get_work_item' for that task before acting. End the cycle by adding a workboard comment and updating status when appropriate.`,
+      `Act on task ${ this.escapeXmlText(task.id) } unless you deliberately pick a different task from the report. If you pick a different task, call 'sulla work/get_work_item' for that task before acting. End the cycle by adding a Projects task comment with 'sulla work/add_task_comment' and updating status with 'sulla work/update_task' when appropriate.`,
       '</selected_work_item>',
     );
 
@@ -736,7 +736,7 @@ export class HeartbeatNode extends BaseNode {
 
       if (taskMoved || commentAdded) return;
 
-      const warning = `Workboard bookkeeping missing for selected task ${ snapshot.taskId }: add_task_comment or update_task must run before DONE/BLOCKED. Continuing one more cycle to record progress.`;
+      const warning = `Projects bookkeeping missing for selected task ${ snapshot.taskId }: sulla work/add_task_comment or sulla work/update_task must run before DONE/BLOCKED. Continuing one more cycle to record progress.`;
       outcome.status = 'continue';
       outcome.summary = warning;
       outcome.statusReport = warning;
