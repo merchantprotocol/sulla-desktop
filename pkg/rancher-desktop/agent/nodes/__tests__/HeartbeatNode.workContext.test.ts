@@ -464,3 +464,113 @@ describe('HeartbeatNode workboard context injection', () => {
     });
   });
 });
+
+describe('HeartbeatNode lane-health digest (Sw8c)', () => {
+  const nowIso = new Date().toISOString();
+  const staleIso = '2020-01-01T00:00:00.000Z';
+
+  beforeEach(() => {
+    listTasksMock.mockReset();
+  });
+
+  it('returns empty when the lane is healthy (single fresh in_progress, nothing off-lane)', async() => {
+    listTasksMock
+      .mockResolvedValueOnce([ // in_progress in-lane
+        { id: 'task1', project_id: 'proj1', title: 'Active', last_moved_at: nowIso },
+      ])
+      .mockResolvedValueOnce([]) // blocked in-lane
+      .mockResolvedValueOnce([ // heartbeat in_progress (lane-drift probe)
+        { id: 'task1', project_id: 'proj1', title: 'Active', last_moved_at: nowIso },
+      ]);
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
+
+    expect(digest).toBe('');
+  });
+
+  it('flags duplicate active, stale in_progress, blocked backlog, and lane drift', async() => {
+    listTasksMock
+      .mockResolvedValueOnce([ // in_progress in-lane — two at once, one stale
+        { id: 'taskA', project_id: 'proj1', title: 'Fresh work', last_moved_at: nowIso },
+        { id: 'taskB', project_id: 'proj1', title: 'Forgotten work', last_moved_at: staleIso },
+      ])
+      .mockResolvedValueOnce([ // blocked in-lane
+        { id: 'blk1', project_id: 'proj1', title: 'Waiting', last_moved_at: nowIso },
+      ])
+      .mockResolvedValueOnce([ // heartbeat in_progress across all projects
+        { id: 'taskA', project_id: 'proj1', title: 'Fresh work', last_moved_at: nowIso },
+        { id: 'off1', project_id: 'farm', title: 'Farm drift', last_moved_at: nowIso },
+      ]);
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
+
+    expect(digest).toContain('DUPLICATE ACTIVE: 2 tasks');
+    expect(digest).toContain('taskA');
+    expect(digest).toContain('STALE: task taskB');
+    expect(digest).toContain('BLOCKED (1): blk1');
+    expect(digest).toContain('LANE DRIFT: 1 heartbeat task');
+    expect(digest).toContain('off1 (project farm)');
+    // The in-lane fresh task must NOT be reported as drift.
+    expect(digest).not.toContain('taskA (project proj1)');
+  });
+
+  it('skips the lane-drift probe when scoped by assignee only (no projectId)', async() => {
+    listTasksMock
+      .mockResolvedValueOnce([ // in_progress
+        { id: 'task1', project_id: 'proj1', title: 'Stale one', last_moved_at: staleIso },
+      ])
+      .mockResolvedValueOnce([]); // blocked
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ assignee: 'heartbeat' });
+
+    expect(digest).toContain('STALE: task task1');
+    expect(digest).not.toContain('LANE DRIFT');
+    // Only two queries — no third heartbeat-assignee probe.
+    expect(listTasksMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('excludes a parent task from DUPLICATE ACTIVE and STALE (parent + one subtask is healthy)', async() => {
+    listTasksMock
+      .mockResolvedValueOnce([ // in_progress — a long-lived parent plus its single active, fresh subtask
+        { id: 'parent1', project_id: 'proj1', title: 'Parent epic-ish task', parent_id: null, last_moved_at: staleIso },
+        { id: 'child1', project_id: 'proj1', title: 'Active subtask', parent_id: 'parent1', last_moved_at: nowIso },
+      ])
+      .mockResolvedValueOnce([]) // blocked
+      .mockResolvedValueOnce([ // heartbeat in_progress (lane-drift probe) — nothing off-lane
+        { id: 'parent1', project_id: 'proj1', title: 'Parent epic-ish task', parent_id: null, last_moved_at: staleIso },
+        { id: 'child1', project_id: 'proj1', title: 'Active subtask', parent_id: 'parent1', last_moved_at: nowIso },
+      ]);
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
+
+    // Parent + one fresh child is the normal case: no duplicate, and the
+    // comment-only-progressed parent must NOT be reported stale.
+    expect(digest).not.toContain('DUPLICATE ACTIVE');
+    expect(digest).not.toContain('STALE');
+    expect(digest).toBe('');
+  });
+
+  it('still flags two leaf subtasks in_progress as DUPLICATE ACTIVE (parent excluded from the count)', async() => {
+    listTasksMock
+      .mockResolvedValueOnce([ // in_progress — parent plus TWO active leaf subtasks
+        { id: 'parent1', project_id: 'proj1', title: 'Parent', parent_id: null, last_moved_at: staleIso },
+        { id: 'child1', project_id: 'proj1', title: 'Leaf one', parent_id: 'parent1', last_moved_at: nowIso },
+        { id: 'child2', project_id: 'proj1', title: 'Leaf two', parent_id: 'parent1', last_moved_at: nowIso },
+      ])
+      .mockResolvedValueOnce([]) // blocked
+      .mockResolvedValueOnce([]); // heartbeat in_progress (lane-drift probe)
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
+
+    // Two real active threads → duplicate, but counted as 2 (leaves), not 3.
+    expect(digest).toContain('DUPLICATE ACTIVE: 2 tasks');
+    expect(digest).toContain('child1');
+    expect(digest).toContain('child2');
+    expect(digest).not.toContain('parent1');
+  });
+});
