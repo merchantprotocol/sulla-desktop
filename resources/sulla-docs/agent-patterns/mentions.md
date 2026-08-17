@@ -14,7 +14,7 @@ Every mention is `@<kind>:<identifier>`:
 | `@recipe:<slug>` | slug | `~/sulla/recipes/<slug>/manifest.yaml` |
 | `@integration:<slug>` | slug | `~/sulla/integrations/<slug>/` or `resources/integrations/…` |
 | `@workflow:<id>` | DB id | `workflows` table row (status: draft / production / archive) |
-| `@project:<slug>` | slug | Workboard project (Postgres) first; filesystem `~/sulla/projects/<slug>/PROJECT.md` is the PRD if one exists |
+| `@project:<slug>` | slug | Projects work-state project (Postgres) first; filesystem `~/sulla/projects/<slug>/PROJECT.md` is the PRD if one exists |
 
 The composer only offers tokens for artifacts that **already exist locally**. If a mention is in the user's message, the referenced item was real at composer time. It may have been deleted since — always verify before acting on it.
 
@@ -87,7 +87,7 @@ sulla work/get_work_item '{"id":"<id-from-search>"}'
 # PRD (if one exists — specs, not the agenda):
 cat ~/sulla/projects/<slug>/PROJECT.md
 ```
-A `@project` mention is a **workboard project** first (Postgres `work_projects`). Use the work tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
+A `@project` mention is a **Projects work-state project** first (Postgres `work_projects`). Use `sulla work/*` tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
 
 ## Intent inference
 

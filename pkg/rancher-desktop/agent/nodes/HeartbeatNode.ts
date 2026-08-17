@@ -38,6 +38,23 @@ const HEARTBEAT_OPERATOR_PROJECT_SLUG = 'goal-operator-transition';
 // it instead of silently leaving it hanging.
 const STALE_IN_PROGRESS_HOURS = 6;
 
+// Next-action extraction (task S75N). The raw comment tail is rendered as-is,
+// but once a thread grows long the "where did the last loop stop / what next"
+// signal gets buried in prose. These bounds gate a deterministic distillation
+// that surfaces that signal above the raw comments so the next Heartbeat loop
+// resumes without re-reading the whole history.
+const NEXT_ACTION_MIN_COMMENTS = 4;    // don't distill short threads — the tail already suffices
+const NEXT_ACTION_MIN_CHARS = 1800;    // ...unless a few comments are individually very long
+const NEXT_ACTION_SCAN_COMMENTS = 3;   // only the most recent notes carry the resume signal
+const NEXT_ACTION_MAX_LINES = 6;       // cap the distilled block so it stays compact
+// Phrases that mark a forward-looking / left-off statement in a progress note.
+const NEXT_ACTION_SIGNAL_REGEX = /\b(remaining|next up|next step|next cycle|still open|still blocked|blocked on|blocked only|unblocked|left off|resume|pick up|to[- ]?do|follow[- ]?up|pending|awaiting|deferred|not yet|remains?|do next|carry[- ]?over)\b/i;
+
+/** Escape a string for safe embedding inside a dynamically-built RegExp. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 interface HeartbeatWorkboardSnapshot {
   taskId:       string;
   projectId:    string;
@@ -609,6 +626,9 @@ export class HeartbeatNode extends BaseNode {
       }
     }
 
+    const nextActionDigest = this.buildNextActionDigest(comments, children.map(child => child.id));
+    if (nextActionDigest) lines.push('', nextActionDigest.trimEnd());
+
     lines.push('', `## Comments (${ comments.length })`);
     if (comments.length === 0) {
       lines.push('_No comments._');
@@ -622,10 +642,78 @@ export class HeartbeatNode extends BaseNode {
     lines.push(
       '',
       '## Cycle Contract',
-      `Act on task ${ this.escapeXmlText(task.id) } unless you deliberately pick a different task from the report. If you pick a different task, call 'sulla work/get_work_item' for that task before acting. End the cycle by adding a workboard comment and updating status when appropriate.`,
+      `Act on task ${ this.escapeXmlText(task.id) } unless you deliberately pick a different task from the report. If you pick a different task, call 'sulla work/get_work_item' for that task before acting. End the cycle by adding a Projects task comment with 'sulla work/add_task_comment' and updating status with 'sulla work/update_task' when appropriate.`,
       '</selected_work_item>',
     );
 
+    return lines.join('\n');
+  }
+
+  /**
+   * Next-action extraction for long comment threads (task S75N).
+   *
+   * A task that has accumulated many (or a few very long) progress notes buries
+   * the one thing the next Heartbeat loop needs: where the prior loop stopped
+   * and what it said to do next. Rendering only the raw last-N comments makes
+   * that resume signal compete with a wall of prose. This deterministic,
+   * zero-LLM digest lifts the forward-looking lines from the most recent notes
+   * — plus any open subtasks and PRs those notes name — into a compact
+   * "Where you left off" block placed above the raw comments.
+   *
+   * Returns '' for short/empty threads (the raw tail already suffices) and when
+   * no actionable signal is present, so short-thread output is unchanged.
+   */
+  private buildNextActionDigest(comments: WorkCommentRecord[], childIds: string[] = []): string {
+    if (!comments || comments.length === 0) return '';
+    const totalChars = comments.reduce((sum, comment) => sum + String(comment.body || '').length, 0);
+    if (comments.length < NEXT_ACTION_MIN_COMMENTS && totalChars < NEXT_ACTION_MIN_CHARS) return '';
+
+    // Newest-first: the latest progress note is the strongest resume signal.
+    const recent = comments.slice(-NEXT_ACTION_SCAN_COMMENTS).reverse();
+
+    const seen = new Set<string>();
+    const actionLines: string[] = [];
+    for (const comment of recent) {
+      const segments = String(comment.body || '')
+        .split(/\n|(?<=[.!?])\s+/)
+        .map(segment => segment.trim())
+        .filter(Boolean);
+      for (const segment of segments) {
+        if (!NEXT_ACTION_SIGNAL_REGEX.test(segment)) continue;
+        const normalized = segment.toLowerCase().replace(/\s+/g, ' ');
+        if (seen.has(normalized)) continue;
+        seen.add(normalized);
+        actionLines.push(this.truncateWorkContext(segment, 320));
+        if (actionLines.length >= NEXT_ACTION_MAX_LINES) break;
+      }
+      if (actionLines.length >= NEXT_ACTION_MAX_LINES) break;
+    }
+
+    // Cross-reference which open subtasks and PRs the recent notes name so the
+    // next loop can jump straight to them.
+    const recentText = recent.map(comment => String(comment.body || '')).join('\n');
+    const referencedChildren = childIds.filter(id => id && new RegExp(`\\b${ escapeRegExp(id) }\\b`).test(recentText));
+    const prRefs = Array.from(new Set(recentText.match(/#\d{2,6}\b/g) || [])).slice(0, 8);
+
+    if (actionLines.length === 0 && referencedChildren.length === 0 && prRefs.length === 0) return '';
+
+    const latest = recent[0];
+    const lines: string[] = [
+      '## Where You Left Off (auto-extracted)',
+      `_Deterministic digest of the ${ recent.length } most recent note(s) — read the full Comments below for detail._`,
+    ];
+    if (latest) {
+      lines.push(`- Latest note: ${ this.escapeXmlText(latest.created_at) } by ${ this.escapeXmlText(latest.author || 'unknown') }`);
+    }
+    for (const line of actionLines) {
+      lines.push(`- ${ this.escapeXmlText(line) }`);
+    }
+    if (referencedChildren.length) {
+      lines.push(`- Subtasks named recently: ${ referencedChildren.map(id => this.escapeXmlText(id)).join(', ') }`);
+    }
+    if (prRefs.length) {
+      lines.push(`- PRs/issues named recently: ${ prRefs.map(ref => this.escapeXmlText(ref)).join(', ') }`);
+    }
     return lines.join('\n');
   }
 
@@ -673,7 +761,7 @@ export class HeartbeatNode extends BaseNode {
 
       if (taskMoved || commentAdded) return;
 
-      const warning = `Workboard bookkeeping missing for selected task ${ snapshot.taskId }: add_task_comment or update_task must run before DONE/BLOCKED. Continuing one more cycle to record progress.`;
+      const warning = `Projects bookkeeping missing for selected task ${ snapshot.taskId }: sulla work/add_task_comment or sulla work/update_task must run before DONE/BLOCKED. Continuing one more cycle to record progress.`;
       outcome.status = 'continue';
       outcome.summary = warning;
       outcome.statusReport = warning;

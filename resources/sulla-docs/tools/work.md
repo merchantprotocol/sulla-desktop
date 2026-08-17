@@ -1,7 +1,9 @@
-# Work items — the one work-state store
+# Projects Work-State — the one work-state store
 
-Desktop Postgres is the operator agenda. The Projects view and the `work/*`
-tools are how you read and write it.
+Desktop Postgres is the operator agenda. The Projects view is the human UI, and
+the Sulla CLI catalog `work/*` tools are how agents read and write it. There is
+no separate native `workboard` tool namespace and no direct/native project
+management tool surface.
 
 ```
 work_projects          one outcome with a metric
@@ -41,11 +43,11 @@ Reads:
 
 | Tool | Use |
 |---|---|
-| `sulla work/list_work_items` | Board. Filter by `kind` / `status` / `priority` / `project_id` / `epic_id` / `parent_id` / `assignee`. Default kind=task, open only. |
+| `sulla work/list_work_items` | Projects work-state list. Filter by `kind` / `status` / `priority` / `project_id` / `epic_id` / `parent_id` / `assignee`. Default kind=task, open only. |
 | `sulla work/get_work_item` | One row + children + comments. |
 | `sulla work/search_work_items` | Title + description search. Use before creating. |
 | `sulla work/list_task_comments` | Comment thread on a task, oldest first. |
-| `sulla work/work_report` | Standup: completed in last N hours + top open next. Injected on first chat turn. |
+| `sulla work/report` | Standup: completed in last N hours + top open next. Injected as `<work_report>` on first chat turn. |
 
 Writes — explicit create / update, **no upsert**:
 
