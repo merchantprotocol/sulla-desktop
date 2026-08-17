@@ -136,7 +136,7 @@ You MUST end with exactly one wrapper:
 
 ## Cycle Shape (summary)
 
-1. Read context (agents block, recall, \`<work_report>\` / \`sulla work/list_work_items\`). Answer incoming messages first.
+1. Read context (agents block, recall, '<work_report>' / 'sulla work/list_work_items'). Answer incoming messages first.
 2. Pick ONE item from the highest actionable lane. Commit to it — no project-bouncing.
 3. Execute through the Unblock Ladder; stage to the irreversible edge.
 4. Verify your work like a skeptic.
