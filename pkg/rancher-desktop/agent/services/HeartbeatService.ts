@@ -39,6 +39,14 @@ export interface HeartbeatStatus {
   uptimeMs:         number;
 }
 
+interface HeartbeatWorkboardAudit {
+  selectedTaskId?: string;
+  selectedTaskStatus?: string;
+  selectedTaskAssignee?: string | null;
+  selectedTaskLastMovedAt?: string;
+  selectedTaskCommentCount?: number;
+}
+
 const MAX_EVENT_HISTORY = 200;
 
 // Consecutive-failure escalation. Threshold uses === as a latch: one
@@ -312,9 +320,15 @@ export class HeartbeatService {
       const agentMeta = (state.metadata as any).agent || {};
       const status = agentMeta.status || 'unknown';
       const loopCount = (state.metadata as any).agentLoopCount || 0;
+      const workboardAudit = this.buildWorkboardAudit(state);
       this.recordEvent('heartbeat_completed', `Completed in ${ Math.round(durationMs / 1000) }s — ${ loopCount } cycles, status: ${ status }`, {
         durationMs,
-        meta: { cycleCount: loopCount, status, focus: agentMeta.status_note || '' },
+        meta: {
+          cycleCount: loopCount,
+          status,
+          focus:     agentMeta.status_note || '',
+          ...(workboardAudit ? { workboard: workboardAudit } : {}),
+        },
       });
       console.log('[HeartbeatService] Heartbeat graph execution completed');
     } catch (err) {
@@ -338,6 +352,21 @@ export class HeartbeatService {
       this.isExecuting = false;
       this.executionStartedMs = 0;
     }
+  }
+
+  private buildWorkboardAudit(state: { metadata?: Record<string, any> }): HeartbeatWorkboardAudit | null {
+    const metadata = state.metadata || {};
+    const snapshot = metadata.heartbeatWorkboardSnapshot || {};
+    const selectedTaskId = String(metadata.heartbeatSelectedTaskId || snapshot.taskId || '').trim();
+    if (!selectedTaskId) return null;
+
+    return {
+      selectedTaskId,
+      selectedTaskAssignee: snapshot.assignee ?? null,
+      ...(snapshot.status ? { selectedTaskStatus: String(snapshot.status) } : {}),
+      ...(snapshot.lastMovedAt ? { selectedTaskLastMovedAt: String(snapshot.lastMovedAt) } : {}),
+      ...(typeof snapshot.commentCount === 'number' ? { selectedTaskCommentCount: snapshot.commentCount } : {}),
+    };
   }
 
   /**

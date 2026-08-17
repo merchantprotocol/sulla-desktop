@@ -131,4 +131,41 @@ describe('HeartbeatService consecutive-failure escalation', () => {
     await expect(svc.triggerHeartbeat()).resolves.toBeUndefined();
     expect(svc.consecutiveFailures).toBe(3);
   });
+
+  it('records selected workboard task audit metadata on completed heartbeat runs', async() => {
+    executeMock.mockImplementation((state: any) => {
+      state.metadata.agent = {
+        status:      'done',
+        status_note: 'Patched the run-to-task audit trail.',
+      };
+      state.metadata.agentLoopCount = 2;
+      state.metadata.heartbeatSelectedTaskId = 'WtS3';
+      state.metadata.heartbeatWorkboardSnapshot = {
+        taskId:       'WtS3',
+        status:       'in_progress',
+        assignee:     'heartbeat',
+        lastMovedAt:  '2026-08-17T16:30:00.000Z',
+        commentCount: 5,
+        capturedAtMs: 1786984200000,
+      };
+      return Promise.resolve();
+    });
+    const svc = await makeService();
+
+    await svc.triggerHeartbeat();
+
+    const completed = svc.getHistory(10).find((event: any) => event.type === 'heartbeat_completed');
+    expect(completed?.meta).toMatchObject({
+      cycleCount: 2,
+      status:     'done',
+      focus:      'Patched the run-to-task audit trail.',
+      workboard:  {
+        selectedTaskId:           'WtS3',
+        selectedTaskStatus:       'in_progress',
+        selectedTaskAssignee:     'heartbeat',
+        selectedTaskLastMovedAt:  '2026-08-17T16:30:00.000Z',
+        selectedTaskCommentCount: 5,
+      },
+    });
+  });
 });
