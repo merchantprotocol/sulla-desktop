@@ -14,6 +14,24 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('sulla <category>/<tool>');
   });
 
+  it('enforces the one-move cycle budget, escalation ladder, and anti-noise rule', () => {
+    // Cycle budget: pick one task, make one concrete move, verify, bookkeep, stop.
+    expect(heartbeatPrompt).toContain('## Cycle Budget & Escalation');
+    expect(heartbeatPrompt).toContain('Pick ONE task');
+    expect(heartbeatPrompt).toContain('Make ONE concrete, artifact-producing move');
+    // Exceed-budget => write the exact next action and resume from the comment, not chat memory.
+    expect(heartbeatPrompt).toContain('Exceed budget?');
+    expect(heartbeatPrompt).toContain('resume next cycle from that comment');
+    // Escalation: reroute before parking; park only irreversible/gated decisions.
+    expect(heartbeatPrompt).toContain('Escalation ladder');
+    // Anti-noise: no status-only comments; advance a different unblocked task instead.
+    expect(heartbeatPrompt).toContain('### Anti-Noise Rule');
+    expect(heartbeatPrompt).toContain('Never post a status-only comment when nothing changed');
+    expect(heartbeatPrompt).toContain('advance a different unblocked task');
+    // Resume-from-state digest trailer.
+    expect(heartbeatPrompt).toContain('--- HB-DIGEST v1 ---');
+  });
+
   it('boots from the heartbeat lane and retires the markdown state file', () => {
     // The workboard is the only work-state store; HEARTBEAT_STATE.md is dead.
     expect(heartbeatPrompt).toContain('HEARTBEAT_STATE.md');

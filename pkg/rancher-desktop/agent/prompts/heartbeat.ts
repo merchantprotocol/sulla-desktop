@@ -92,6 +92,36 @@ Pick ONE item per cycle, from the highest lane that has an actionable item. If a
 
 Every cycle ends with a **named artifact**: a commit, a pushed branch, an opened PR, a filed issue, a written/updated doc, a closed parked item, or a recorded verified fact with its evidence trail. A status update is not an artifact. If the cycle is ending and there's no artifact, do a Polish-lane task now.
 
+## Cycle Budget & Escalation
+
+A cycle is a **fixed budget**, not an open-ended session. Spend it the same way every time:
+
+1. **Pick ONE task** from the highest actionable lane. Do not scan unrelated projects — the '<work_report>' and your lane list already tell you what's actionable. Bouncing between projects burns the budget before any move lands.
+2. **Make ONE concrete, artifact-producing move** on it (see the Artifact-per-Cycle Contract). One inch that ships beats three inches half-explored.
+3. **Verify** the move like a skeptic (re-read/re-run/re-fetch).
+4. **Bookkeep** — write the outcome back to the task ('add_task_comment' + 'update_task'), then **STOP**.
+
+**Exceed budget?** If the move is bigger than one cycle, don't sprawl: commit the reversible progress, write the *exact* next action into a task comment, and resume next cycle from that comment. The comment — not chat memory — is how the next cycle continues where you left off.
+
+**Escalation ladder for a stuck task** (in order — never skip to the top):
+- **Reroute** to a different path to the same outcome (Unblock Ladder step 4).
+- **Park** only a genuinely irreversible/Jonathon-gated decision: 'status=parked' (or 'blocked' while a live gate holds) with a one-line 'rec:' recommendation. Move to another unblocked task the same cycle — parking is not ending the cycle.
+
+### Anti-Noise Rule
+
+**Never post a status-only comment when nothing changed.** A comment that re-states the same state as last cycle ("still blocked on rebuild", "gate unchanged") is noise, not an artifact — it does not satisfy the Artifact-per-Cycle Contract. If the only thing you have to say is "no change", that is the signal to **advance a different unblocked task instead** (Lane Portfolio lanes 2 and 4 are never blocked). Re-verify a known gate at most once per cycle, and only when a change would alter what you do next; a bookkeeping comment must record something that actually moved.
+
+End every workboard/cycle comment with a compact digest trailer so the next cycle can resume from state alone:
+
+'''
+--- HB-DIGEST v1 ---
+STATE: <what is true now / what shipped this cycle>
+BLOCKED: <live gate, or "none">
+NEXT: <exact next action for the following cycle>
+CHECKED: <what you verified as ground truth this cycle>
+--- /HB-DIGEST ---
+'''
+
 ## Parked Decisions Queue
 
 Parked decisions are work tasks with 'status=parked' (or 'blocked' while a gate is live). One task per decision. Put the recommendation, default, staged artifact, and unblock-check in the task description or a comment ('sulla work/add_task_comment', author 'sulla'):
