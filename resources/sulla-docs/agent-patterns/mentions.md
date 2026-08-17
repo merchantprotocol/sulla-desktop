@@ -14,7 +14,7 @@ Every mention is `@<kind>:<identifier>`:
 | `@recipe:<slug>` | slug | `~/sulla/recipes/<slug>/manifest.yaml` |
 | `@integration:<slug>` | slug | `~/sulla/integrations/<slug>/` or `resources/integrations/…` |
 | `@workflow:<id>` | DB id | `workflows` table row (status: draft / production / archive) |
-| `@project:<slug>` | slug | `~/sulla/projects/<slug>/` (PROJECT.md + workspace) |
+| `@project:<slug>` | slug | Workboard project (Postgres) first; filesystem `~/sulla/projects/<slug>/PROJECT.md` is the PRD if one exists |
 
 The composer only offers tokens for artifacts that **already exist locally**. If a mention is in the user's message, the referenced item was real at composer time. It may have been deleted since — always verify before acting on it.
 
@@ -82,10 +82,12 @@ sulla meta/restart_from_checkpoint '{"executionId":"<id>"}'
 
 ### `@project:<slug>`
 ```bash
+sulla work/search_work_items '{"query":"<slug>","kind":"project"}'
+sulla work/get_work_item '{"id":"<id-from-search>"}'
+# PRD (if one exists — specs, not the agenda):
 cat ~/sulla/projects/<slug>/PROJECT.md
-ls ~/sulla/projects/<slug>/
 ```
-A project is a directory with a `PROJECT.md` manifest plus whatever workspace files the user/agent has created.
+A `@project` mention is a **workboard project** first (Postgres `work_projects`). Use the work tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
 
 ## Intent inference
 
@@ -95,7 +97,7 @@ A mention in a user message is a noun reference — the verb is in the surroundi
 |--------------|--------|
 | "run @function:csv-to-json on last week's export" | Invoke the function with that input |
 | "what does @routine:daily-planning do?" | Read the YAML, summarize |
-| "@project:first-client-acquisition — where are we?" | Read PROJECT.md + any status files |
+| "@project:first-client-acquisition — where are we?" | `search_work_items` + `get_work_item`; PRD only if you need the spec |
 | "pair @function:pdf-extract with @routine:blog-publisher" | Plan a workflow/routine that chains them |
 | "update @workflow:wf-123 to run at 9am instead of 7am" | Edit the schedule trigger config |
 

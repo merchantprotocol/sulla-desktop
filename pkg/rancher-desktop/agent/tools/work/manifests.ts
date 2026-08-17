@@ -1,25 +1,37 @@
 import type { ToolManifest } from '../registry';
 
 /**
- * Work-item tools — the operator agenda in Postgres.
+ * Work-item tools — the operator workboard in Postgres (the issue ledger
+ * behind the Projects view). Full CRUD across the hierarchy:
  *
- * Hierarchy: work_projects → work_epics → work_tasks (optional parent_id
- * for subtasks) + work_task_comments. Distinct from the filesystem
- * `projects` category (PROJECT.md PRDs). Soft-archive only.
+ *   work_projects → work_epics → work_tasks (optional parent_id subtasks)
+ *                                 + work_task_comments
+ *
+ * Explicit create_* / update_* / archive per record type — no combined
+ * "upsert". Distinct from the filesystem `projects` category (PROJECT.md
+ * PRDs). Soft-archive only; archiving cascades down.
+ *
+ * Vocabulary (free-text columns, but use these consistently):
+ *   status   → backlog | todo | in_progress | blocked | done | cancelled
+ *   priority → critical | high | medium | low
  */
+const STATUS_DESC = 'backlog | todo | in_progress | blocked | done | cancelled.';
+const PRIORITY_DESC = 'critical | high | medium | low.';
+
 export const workItemsToolManifests: ToolManifest[] = [
+  // ── reads ────────────────────────────────────────────────────────────
   {
     name:        'list_work_items',
-    description: 'List the operator workboard from Postgres: projects, epics, and/or tasks. Filter by kind, status, priority, project, epic, parent task, or assignee. Default kind=task shows open work ordered by priority then due date then last_moved_at. This is the structured agenda — not the filesystem PROJECT.md PRDs.',
+    description: 'List the operator workboard from Postgres: projects, epics, and/or tasks. Filter by kind, status, priority, project, epic, parent task, or assignee. Default kind=task shows open work. This is the structured agenda — not the filesystem PROJECT.md PRDs.',
     category:    'work',
     schemaDef:   {
       kind:         { type: 'string', optional: true, description: 'What to list: "project", "epic", "task", or "all" (default "task").' },
-      status:       { type: 'string', optional: true, description: 'Filter by status (e.g. working, should, want, gated, done, cancelled). Omit for all non-archived.' },
-      priority:     { type: 'string', optional: true, description: 'Filter by priority: p0, p1, p2, p3, p4.' },
+      status:       { type: 'string', optional: true, description: `Filter by status: ${ STATUS_DESC } Omit for all non-archived.` },
+      priority:     { type: 'string', optional: true, description: `Filter by priority: ${ PRIORITY_DESC }` },
       project_id:   { type: 'string', optional: true, description: 'Limit to one project id (applies to epics + tasks).' },
       epic_id:      { type: 'string', optional: true, description: 'Limit to one epic id (tasks only).' },
       parent_id:    { type: 'string', optional: true, description: 'Limit to subtasks of this task id.' },
-      assignee:     { type: 'string', optional: true, description: 'Filter tasks by assignee (e.g. heartbeat, sulla-ea, jonathon).' },
+      assignee:     { type: 'string', optional: true, description: 'Filter tasks by assignee (e.g. heartbeat, sulla, human).' },
       include_done: { type: 'boolean', optional: true, description: 'When true, include done/cancelled rows. Default false.' },
       limit:        { type: 'number', optional: true, description: 'Max rows per kind (default 50).' },
     },
@@ -28,10 +40,10 @@ export const workItemsToolManifests: ToolManifest[] = [
   },
   {
     name:        'get_work_item',
-    description: 'Fetch one work item by id. Auto-detects project / epic / task. For a project, also returns its epics. For an epic, also returns its tasks. For a task, also returns comments (GitHub-issue style notes) and any subtasks.',
+    description: 'Fetch one work item by id. Auto-detects project / epic / task. For a project, also returns its epics. For an epic, also returns its tasks. For a task, also returns comments and any subtasks.',
     category:    'work',
     schemaDef:   {
-      id:   { type: 'string', description: 'Work-item id (tiny id from list_work_items / upsert_*).' },
+      id:   { type: 'string', description: 'Work-item id (tiny id from list_work_items / create_*).' },
       kind: { type: 'string', optional: true, description: 'Optional hint: "project", "epic", or "task". Omit to search all three.' },
     },
     operationTypes: ['read'],
@@ -39,7 +51,7 @@ export const workItemsToolManifests: ToolManifest[] = [
   },
   {
     name:        'search_work_items',
-    description: 'Keyword search across project / epic / task titles and descriptions. Split into words; any-word ILIKE match, ranked by phrase hit then word-count then recency. Use before creating a new item to avoid duplicates, or to find work related to the current turn.',
+    description: 'Keyword search across project / epic / task titles and descriptions. Use before creating a new item to avoid duplicates, or to find work related to the current turn.',
     category:    'work',
     schemaDef:   {
       query:            { type: 'string', description: 'Search keyword or phrase.' },
@@ -51,79 +63,166 @@ export const workItemsToolManifests: ToolManifest[] = [
     loader:         () => import('./search_work_items'),
   },
   {
-    name:        'upsert_project',
-    description: 'Create or update a work project (the top of the operator agenda: description, status, priority, due date). Pass id to update in place; otherwise a matching slug is updated instead of creating a duplicate. Distinct from create_project, which writes a filesystem PROJECT.md PRD.',
+    name:        'list_task_comments',
+    description: 'List the comment thread on a task, oldest first. Comments are append-only history (progress notes, blockers, decisions).',
     category:    'work',
     schemaDef:   {
-      id:          { type: 'string', optional: true, description: 'Existing project id to update in place.' },
-      slug:        { type: 'string', optional: true, description: 'Stable slug (e.g. operator-transition). Auto-derived from title when omitted.' },
-      title:       { type: 'string', optional: true, description: 'Short project name. Required when creating.' },
-      description: { type: 'string', optional: true, description: 'What this project is and what done looks like.' },
-      status:      { type: 'string', optional: true, description: 'working | should | want | might | gated | done | cancelled. Default working.' },
-      priority:    { type: 'string', optional: true, description: 'p0 | p1 | p2 | p3 | p4. Default p2.' },
-      owner:       { type: 'string', optional: true, description: 'Who owns the project (e.g. heartbeat, sulla-ea, jonathon).' },
-      due_at:      { type: 'string', optional: true, description: 'ISO due date, or empty string to clear.' },
-      source:      { type: 'string', optional: true, description: 'Optional source label (defaults to "agent").' },
+      task_id: { type: 'string', description: 'Task id whose comments to list.' },
     },
-    operationTypes: ['create', 'update'],
-    loader:         () => import('./upsert_project'),
+    operationTypes: ['read'],
+    loader:         () => import('./list_task_comments'),
   },
   {
-    name:        'upsert_epic',
-    description: 'Create or update an epic under a work project. Epics are the major chunks of a project (their own description, status, priority, due date). Pass id to update; otherwise a matching (project_id, slug) is updated.',
+    name:        'work_report',
+    description: 'Standup report: what got completed in the last N hours (default 24) and the top open tasks to do next, with project/epic context. Optionally scope to one project or assignee. Use this for a quick "what moved and what\'s next" pulse.',
     category:    'work',
     schemaDef:   {
-      id:          { type: 'string', optional: true, description: 'Existing epic id to update in place.' },
-      project_id:  { type: 'string', optional: true, description: 'Parent project id. Required when creating.' },
-      slug:        { type: 'string', optional: true, description: 'Stable slug inside the project. Auto-derived from title when omitted.' },
-      title:       { type: 'string', optional: true, description: 'Short epic name. Required when creating.' },
+      hours:      { type: 'number', optional: true, description: 'Look-back window in hours for completed work (default 24).' },
+      next_limit: { type: 'number', optional: true, description: 'How many upcoming tasks to list (default 15).' },
+      project_id: { type: 'string', optional: true, description: 'Limit the report to one project id.' },
+      assignee:   { type: 'string', optional: true, description: 'Limit to one assignee (e.g. heartbeat, sulla, human).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./work_report'),
+  },
+
+  // ── projects ─────────────────────────────────────────────────────────
+  {
+    name:        'create_project',
+    description: 'Create a NEW work project (top of the operator agenda). Always inserts a new row (a unique slug is resolved automatically). Use update_project to change an existing one. Distinct from the filesystem PROJECT.md PRD tooling.',
+    category:    'work',
+    schemaDef:   {
+      title:          { type: 'string', description: 'Short project name.' },
+      slug:           { type: 'string', optional: true, description: 'Stable slug (e.g. operator-transition). Auto-derived from title when omitted; suffixed if taken.' },
+      description:    { type: 'string', optional: true, description: 'What this project is and what done looks like.' },
+      outcome_metric: { type: 'string', optional: true, description: 'How you will know it is done.' },
+      status:         { type: 'string', optional: true, description: `Status: ${ STATUS_DESC } Default backlog.` },
+      priority:       { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC } Default medium.` },
+      owner:          { type: 'string', optional: true, description: 'Who owns the project (e.g. heartbeat, sulla, human).' },
+      github_repo:    { type: 'string', optional: true, description: 'Optional owner/repo this project maps to.' },
+      due_at:         { type: 'string', optional: true, description: 'ISO due date.' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./create_project'),
+  },
+  {
+    name:        'update_project',
+    description: 'Update an existing work project in place (by id). Only the fields you pass change. Status / priority / due_at changes stamp last_moved_at.',
+    category:    'work',
+    schemaDef:   {
+      id:             { type: 'string', description: 'Project id to update.' },
+      title:          { type: 'string', optional: true, description: 'New project name.' },
+      slug:           { type: 'string', optional: true, description: 'New stable slug.' },
+      description:    { type: 'string', optional: true, description: 'Updated description.' },
+      outcome_metric: { type: 'string', optional: true, description: 'Updated outcome metric.' },
+      status:         { type: 'string', optional: true, description: `Status: ${ STATUS_DESC }` },
+      priority:       { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC }` },
+      owner:          { type: 'string', optional: true, description: 'New owner, or empty string to unassign.' },
+      github_repo:    { type: 'string', optional: true, description: 'owner/repo mapping.' },
+      due_at:         { type: 'string', optional: true, description: 'ISO due date, or empty string to clear.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./update_project'),
+  },
+
+  // ── epics ────────────────────────────────────────────────────────────
+  {
+    name:        'create_epic',
+    description: 'Create a NEW epic under a project (the major chunks of a project). Always inserts a new row (unique slug within the project). Use update_epic to change an existing one.',
+    category:    'work',
+    schemaDef:   {
+      project_id:  { type: 'string', description: 'Parent project id.' },
+      title:       { type: 'string', description: 'Short epic name.' },
+      slug:        { type: 'string', optional: true, description: 'Stable slug inside the project. Auto-derived from title when omitted; suffixed if taken.' },
       description: { type: 'string', optional: true, description: 'What this epic delivers.' },
-      status:      { type: 'string', optional: true, description: 'working | should | want | might | gated | done | cancelled. Default working.' },
-      priority:    { type: 'string', optional: true, description: 'p0 | p1 | p2 | p3 | p4. Default p2.' },
+      status:      { type: 'string', optional: true, description: `Status: ${ STATUS_DESC } Default todo.` },
+      priority:    { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC } Default medium.` },
       position:    { type: 'number', optional: true, description: 'Manual sort order inside the project (default 0).' },
-      due_at:      { type: 'string', optional: true, description: 'ISO due date, or empty string to clear.' },
-      source:      { type: 'string', optional: true, description: 'Optional source label (defaults to "agent").' },
+      due_at:      { type: 'string', optional: true, description: 'ISO due date.' },
     },
-    operationTypes: ['create', 'update'],
-    loader:         () => import('./upsert_epic'),
+    operationTypes: ['create'],
+    loader:         () => import('./create_epic'),
   },
   {
-    name:        'upsert_task',
-    description: 'Create or update a task (GitHub-issue shaped: title, description, status, priority, due date, assignee, labels, optional github_issue). Pass parent_id to nest a subtask under another task. Pass id to update in place. Moving status/priority/assignee/due_at/parent_id/epic_id stamps last_moved_at so the board can show what actually moved.',
+    name:        'update_epic',
+    description: 'Update an existing epic in place (by id). Only the fields you pass change. Pass project_id to move it to another project; pass position to reorder it inside the project. Status / priority / due_at / project moves stamp last_moved_at.',
     category:    'work',
     schemaDef:   {
-      id:            { type: 'string', optional: true, description: 'Existing task id to update in place.' },
-      epic_id:       { type: 'string', optional: true, description: 'Parent epic id. Required when creating a top-level task.' },
-      parent_id:     { type: 'string', optional: true, description: 'Parent task id when this is a subtask. Empty string clears it.' },
-      title:         { type: 'string', optional: true, description: 'Task title. Required when creating.' },
-      description:   { type: 'string', optional: true, description: 'Issue-style body — what done looks like.' },
-      status:        { type: 'string', optional: true, description: 'working | should | want | might | gated | done | cancelled. Default working.' },
-      priority:      { type: 'string', optional: true, description: 'p0 | p1 | p2 | p3 | p4. Default p2.' },
-      assignee:      { type: 'string', optional: true, description: 'Who is carrying it (heartbeat, sulla-ea, jonathon, or empty to unassign).' },
-      due_at:        { type: 'string', optional: true, description: 'ISO due date, or empty string to clear.' },
-      labels:        { type: 'array', optional: true, description: 'String labels (e.g. ["gate","operator"]). Replaces the full set when provided.' },
-      github_issue:  { type: 'string', optional: true, description: 'Optional owner/repo#n or URL mapping to a GitHub issue.' },
-      position:      { type: 'number', optional: true, description: 'Manual sort order inside the epic (default 0).' },
-      source:        { type: 'string', optional: true, description: 'Optional source label (defaults to "agent").' },
+      id:          { type: 'string', description: 'Epic id to update.' },
+      project_id:  { type: 'string', optional: true, description: 'Move to another project id.' },
+      title:       { type: 'string', optional: true, description: 'New epic name.' },
+      slug:        { type: 'string', optional: true, description: 'New stable slug.' },
+      description: { type: 'string', optional: true, description: 'Updated description.' },
+      status:      { type: 'string', optional: true, description: `Status: ${ STATUS_DESC }` },
+      priority:    { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC }` },
+      position:    { type: 'number', optional: true, description: 'Manual sort order inside the project.' },
+      due_at:      { type: 'string', optional: true, description: 'ISO due date, or empty string to clear.' },
     },
-    operationTypes: ['create', 'update'],
-    loader:         () => import('./upsert_task'),
+    operationTypes: ['update'],
+    loader:         () => import('./update_epic'),
   },
+
+  // ── tasks ────────────────────────────────────────────────────────────
+  {
+    name:        'create_task',
+    description: 'Create a NEW task (issue) under an epic. Always inserts a new row. Pass parent_id to nest a subtask under another task. Use update_task to change an existing one.',
+    category:    'work',
+    schemaDef:   {
+      epic_id:      { type: 'string', description: 'Parent epic id.' },
+      title:        { type: 'string', description: 'Task title.' },
+      parent_id:    { type: 'string', optional: true, description: 'Parent task id when this is a subtask.' },
+      description:  { type: 'string', optional: true, description: 'Issue-style body — what done looks like.' },
+      status:       { type: 'string', optional: true, description: `Status: ${ STATUS_DESC } Default todo.` },
+      priority:     { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC } Default medium.` },
+      assignee:     { type: 'string', optional: true, description: 'Who is carrying it (heartbeat, sulla, human).' },
+      due_at:       { type: 'string', optional: true, description: 'ISO due date.' },
+      labels:       { type: 'array', optional: true, description: 'String labels (e.g. ["gate","operator"]).' },
+      github_issue: { type: 'string', optional: true, description: 'Optional owner/repo#n or URL mapping to a GitHub issue.' },
+      position:     { type: 'number', optional: true, description: 'Manual sort order inside the epic (default 0).' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./create_task'),
+  },
+  {
+    name:        'update_task',
+    description: 'Update an existing task in place (by id). Only the fields you pass change. This is also the MOVE op: pass epic_id to move it to another epic, status to change its board column, or position to reorder inside its epic. Moving status/priority/assignee/due_at/parent_id/epic_id stamps last_moved_at; done/cancelled also stamps completed_at.',
+    category:    'work',
+    schemaDef:   {
+      id:           { type: 'string', description: 'Task id to update.' },
+      epic_id:      { type: 'string', optional: true, description: 'Move to another epic id.' },
+      parent_id:    { type: 'string', optional: true, description: 'Parent task id when nesting; empty string clears it.' },
+      title:        { type: 'string', optional: true, description: 'New task title.' },
+      description:  { type: 'string', optional: true, description: 'Updated body.' },
+      status:       { type: 'string', optional: true, description: `Status: ${ STATUS_DESC }` },
+      priority:     { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC }` },
+      assignee:     { type: 'string', optional: true, description: 'New assignee, or empty string to unassign.' },
+      due_at:       { type: 'string', optional: true, description: 'ISO due date, or empty string to clear.' },
+      labels:       { type: 'array', optional: true, description: 'String labels. Replaces the full set when provided.' },
+      github_issue: { type: 'string', optional: true, description: 'owner/repo#n or URL, or empty string to clear.' },
+      position:     { type: 'number', optional: true, description: 'Manual sort order inside the epic.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./update_task'),
+  },
+
+  // ── comments ─────────────────────────────────────────────────────────
   {
     name:        'add_task_comment',
-    description: 'Add a note/comment on a task (GitHub-issue style). Comments are append-only history — they are never edited or hard-deleted. Use this for progress notes, blockers, and decisions; use upsert_task to change status/priority/due date.',
+    description: 'Add a note/comment on a task (GitHub-issue style). Append-only history — never edited or hard-deleted. Use for progress notes, blockers, and decisions; use update_task to change status/priority/due date. Author defaults to "sulla"; pass author="human" for the operator.',
     category:    'work',
     schemaDef:   {
       task_id: { type: 'string', description: 'Task id to comment on.' },
       body:    { type: 'string', description: 'Comment markdown/text.' },
-      author:  { type: 'string', optional: true, description: 'Who wrote it (defaults to "agent").' },
+      author:  { type: 'string', optional: true, description: 'Who wrote it: "sulla" (default) or "human".' },
     },
     operationTypes: ['create'],
     loader:         () => import('./add_task_comment'),
   },
+
+  // ── archive (soft-delete, cascades down) ─────────────────────────────
   {
     name:        'archive_work_item',
-    description: 'Soft-archive a project, epic, or task by id. Never hard-deleted. Archiving a project also archives its epics + tasks; archiving an epic also archives its tasks. History stays recoverable via get_work_item / search with include_archived.',
+    description: 'Soft-archive a project, epic, or task by id. Never hard-deleted. Archiving a project also archives its epics + tasks; archiving an epic also archives its tasks. Recoverable via get_work_item / search with include_archived.',
     category:    'work',
     schemaDef:   {
       id:   { type: 'string', description: 'Work-item id to archive.' },

@@ -242,6 +242,13 @@
       </div>
     </template>
 
+    <!-- Projects: the issue-ledger workboard (Postgres work_projects/epics/tasks) -->
+    <template v-else-if="tabMode === 'projects'">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <ProjectsHome />
+      </div>
+    </template>
+
     <!-- Routines: playbill landing page, switches to canvas when a routine is opened -->
     <template v-else-if="tabMode === 'routines' || tabMode === 'marketplace'">
       <div class="flex-1 min-h-0 overflow-hidden relative">
@@ -315,6 +322,7 @@ import LabsPage from './LabsPage.vue';
 import MyAccount from './MyAccount.vue';
 import NewTabWelcome from './NewTabWelcome.vue';
 import PasswordGenerator from './PasswordGenerator.vue';
+import ProjectsHome from './ProjectsHome.vue';
 import RoutinesHome from './RoutinesHome.vue';
 import SecretaryMode from './SecretaryMode.vue';
 import TerminalTab from './TerminalTab.vue';
@@ -343,6 +351,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   labs:          'Labs',
   'file-editor': 'Editor',
   terminal:      'Terminal',
+  projects:      'Projects',
 };
 
 const props = defineProps<{

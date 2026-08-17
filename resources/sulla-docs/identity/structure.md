@@ -22,12 +22,12 @@
     ├── identity.md          # External market, competitive landscape
     └── goals.md             # Market-level targets
 
-~/sulla/ledger/              # ONE work-state store (operator agenda)
-├── LEDGER.md                # Priority stack + WORKING table
-├── OUTCOMES.md              # What shipped and what it changed
-├── AUDIT.md                 # One line per gate-free unilateral action
-├── BACKLOG.md               # WANT / MIGHT
-└── goals/                   # Goal files with epics + tasks
+Postgres work tables         # ONE work-state store (operator agenda)
+  work_projects → work_epics → work_tasks → work_task_comments
+  Tools: sulla work/*   UI: Projects view (open_tab mode=projects)
+
+~/sulla/projects/<slug>/     # PRDs + workspaces (specs, not the agenda)
+~/sulla/ledger/              # Legacy markdown. Frozen. Do not pick from it.
 ```
 
 ---
@@ -118,6 +118,6 @@ Observations appear in every agent's context automatically. Use for facts that a
 
 ---
 
-## Outcome Ledger (the one work-state store)
+## Workboard (the one work-state store)
 
-Work in motion lives in `~/sulla/ledger/`, not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` (those two are transition leftovers and freeze after the operator rebuild). Every autonomous cycle starts at `LEDGER.md` WORKING, moves one item, and writes back — either an outcome in `OUTCOMES.md` or a next-action change. Measure with `sulla ledger/ledger_scoreboard`.
+Work in motion lives in the Postgres work tables (`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`), not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` / `~/sulla/ledger/` (those are transition leftovers and freeze). Every autonomous cycle starts with the injected `<work_report>` (or `sulla work/list_work_items` / `sulla work/work_report`), picks the top open task, moves it, and writes back with `update_task` + `add_task_comment`. Measure by task status and `last_moved_at`, not markdown.
