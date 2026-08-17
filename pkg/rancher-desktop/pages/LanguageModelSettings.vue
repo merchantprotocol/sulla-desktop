@@ -263,7 +263,10 @@ export default defineComponent({
     },
 
     // Watch secondary model override
-    async secondaryModelId(newId: string) {
+    async secondaryModelId(newId: string, oldId: string) {
+      // Skip no-op re-syncs: handleProviderStateChanged re-assigns this from the
+      // service's broadcast state, which would otherwise fire a redundant persist.
+      if (newId === oldId) return;
       try {
         await ipcRenderer.invoke('model-provider:set-secondary-model', newId);
       } catch (err) {
@@ -286,7 +289,11 @@ export default defineComponent({
     },
 
     // Watch subconscious model override
-    async subconsciousModelId(newId: string) {
+    async subconsciousModelId(newId: string, oldId: string) {
+      // Skip no-op re-syncs: handleProviderStateChanged re-assigns this from the
+      // service's broadcast state, which would otherwise fire a redundant persist
+      // and could re-pin a stale model id (source of the subconscious model drift).
+      if (newId === oldId) return;
       try {
         await ipcRenderer.invoke('model-provider:set-subconscious-model', newId);
       } catch (err) {

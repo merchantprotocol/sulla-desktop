@@ -285,9 +285,30 @@ class ModelProviderService {
   }
 
   async setSubconsciousProvider(providerId: string): Promise<void> {
+    const changed = providerId !== this.state.subconsciousProvider;
     this.state.subconsciousProvider = providerId;
     await SullaSettingsModel.set('subconsciousProvider', providerId, 'string');
+
+    // When the provider changes, a concrete model-id override left over from the
+    // previous provider is now stranded — e.g. subconsciousProvider moves grok→codex
+    // while subconsciousModelId is still 'grok-4.6'. That inconsistent pair is the
+    // source of the recurring subconscious model drift: every full-state broadcast
+    // re-pushes the stale id into the settings UI, which re-persists it and clobbers
+    // any manual repair. Reset the override to '' (use the new provider's default) so
+    // the model always stays consistent with its provider. Tier names
+    // (fast/balanced/powerful) and '' are provider-agnostic, so leave those intact.
+    if (changed && !this.isProviderAgnosticModelId(this.state.subconsciousModelId)) {
+      this.state.subconsciousModelId = '';
+      await SullaSettingsModel.set('subconsciousModelId', '', 'string');
+    }
+
     await this.broadcastChange();
+  }
+
+  /** True when the model id carries no provider affinity: empty (use provider default)
+   *  or a dynamic tier name that resolves against whatever provider is active. */
+  private isProviderAgnosticModelId(modelId: string): boolean {
+    return !modelId || modelId === 'fast' || modelId === 'balanced' || modelId === 'powerful';
   }
 
   async setHeartbeatModelId(modelId: string): Promise<void> {
