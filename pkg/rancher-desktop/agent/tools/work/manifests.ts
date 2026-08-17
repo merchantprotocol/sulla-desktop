@@ -1,7 +1,7 @@
 import type { ToolManifest } from '../registry';
 
 /**
- * Work-item tools — the operator workboard in Postgres (the issue ledger
+ * Work-item tools — Projects work-state in Postgres (the issue ledger
  * behind the Projects view). Full CRUD across the hierarchy:
  *
  *   work_projects → work_epics → work_tasks (optional parent_id subtasks)
@@ -22,7 +22,7 @@ export const workItemsToolManifests: ToolManifest[] = [
   // ── reads ────────────────────────────────────────────────────────────
   {
     name:        'list_work_items',
-    description: 'List the operator workboard from Postgres: projects, epics, and/or tasks. Filter by kind, status, priority, project, epic, parent task, or assignee. Default kind=task shows open work. This is the structured agenda — not the filesystem PROJECT.md PRDs.',
+    description: 'List Projects work-state from Postgres: projects, epics, and/or tasks. Filter by kind, status, priority, project, epic, parent task, or assignee. Default kind=task shows open work. This is the structured agenda — not the filesystem PROJECT.md PRDs.',
     category:    'work',
     schemaDef:   {
       kind:         { type: 'string', optional: true, description: 'What to list: "project", "epic", "task", or "all" (default "task").' },
