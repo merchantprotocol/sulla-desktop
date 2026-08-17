@@ -351,6 +351,7 @@ const MODE_TITLES: Record<BrowserTabMode, string> = {
   labs:          'Labs',
   'file-editor': 'Editor',
   terminal:      'Terminal',
+  agents:        'Agents',
   projects:      'Projects',
 };
 

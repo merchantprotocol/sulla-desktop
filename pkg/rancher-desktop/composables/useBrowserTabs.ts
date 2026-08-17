@@ -346,6 +346,8 @@ export function useBrowserTabs() {
     labs:         'Labs',
     'file-editor': 'Editor',
     terminal:     'Terminal',
+    agents:       'Agents',
+    projects:     'Projects',
   };
 
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode }): BrowserTab {
