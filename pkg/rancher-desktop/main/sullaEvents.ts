@@ -909,6 +909,19 @@ export function initSullaEvents(): void {
       console.warn('[Power] Failed to resume heartbeat scheduler:', err);
     }
 
+    // Re-arm scheduled routines and recover any weekly fire skipped while the
+    // machine slept. node-schedule freezes its in-process timers during
+    // suspend, so a cron that trips while asleep is lost to next week — and
+    // boot catch-up can't help because the app never restarted. Idempotent
+    // (FIRE_GRACE_MS + since-last-fire guard) so it can't double-fire an
+    // on-time run.
+    try {
+      const { getWorkflowSchedulerService } = require('@pkg/agent/services/WorkflowSchedulerService');
+      void getWorkflowSchedulerService().resumeCatchUp();
+    } catch (err) {
+      console.warn('[Power] Failed to catch up missed schedules on resume:', err);
+    }
+
     // Notify all renderer windows so frontend services can react
     for (const win of BrowserWindow.getAllWindows()) {
       try {
