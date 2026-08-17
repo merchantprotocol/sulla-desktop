@@ -733,14 +733,26 @@ export class HeartbeatNode extends BaseNode {
 
     const lines: string[] = [];
 
-    // 1. Duplicate active — advance one, park the rest.
-    if (laneInProgress.length > 1) {
-      const ids = laneInProgress.map(task => this.escapeXmlText(task.id)).join(', ');
-      lines.push(`- DUPLICATE ACTIVE: ${ laneInProgress.length } tasks are in_progress at once (${ ids }). Advance ONE; for the others add a comment and move them back to todo or blocked so the lane keeps a single active thread.`);
+    // A parent task legitimately stays in_progress while its subtasks are
+    // worked, and add_task_comment does not bump last_moved_at — so parents
+    // otherwise false-flag both DUPLICATE ACTIVE (inflated count) and STALE
+    // (comment-only progress reads as "no movement") every cycle. Exclude any
+    // in-lane task that is the parent of another in-lane in_progress task from
+    // those two checks; drift + blocked backlog still consider every task.
+    const inProgressParentIds = new Set(
+      laneInProgress.map(task => task.parent_id).filter(Boolean),
+    );
+    const leafInProgress = laneInProgress.filter(task => !inProgressParentIds.has(task.id));
+
+    // 1. Duplicate active — advance one, park the rest. Count leaf threads only;
+    //    a parent + its single active subtask is the healthy case, not a dupe.
+    if (leafInProgress.length > 1) {
+      const ids = leafInProgress.map(task => this.escapeXmlText(task.id)).join(', ');
+      lines.push(`- DUPLICATE ACTIVE: ${ leafInProgress.length } tasks are in_progress at once (${ ids }). Advance ONE; for the others add a comment and move them back to todo or blocked so the lane keeps a single active thread.`);
     }
 
     // 2. Stale in_progress — resume or park with a status change + comment.
-    for (const task of laneInProgress) {
+    for (const task of leafInProgress) {
       const movedMs = Date.parse(task.last_moved_at);
       if (!Number.isFinite(movedMs)) continue;
       const ageHours = Math.floor((nowMs - movedMs) / 3_600_000);
