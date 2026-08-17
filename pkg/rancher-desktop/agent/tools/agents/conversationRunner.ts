@@ -8,6 +8,7 @@
  */
 
 import { appendTranscript, setStatus } from './agentConversations';
+import { extractAgentTurnOutcome } from './agentTurnOutcome';
 
 import type { AgentConversation } from './agentConversations';
 import type { AbortService } from '../../services/AbortService';
@@ -62,23 +63,10 @@ export async function runConversationTurn(
   try {
     const finalState = await graph.execute(subState);
 
-    const agentMeta = finalState.metadata?.agent || {};
-    const agentStatus = String(agentMeta.status || '').toLowerCase();
-
-    if (agentStatus === 'blocked') {
-      const reply = `[BLOCKED] ${ agentMeta.blocker_reason || 'Unknown blocker' }${ agentMeta.unblock_requirements ? ` | Requirements: ${ agentMeta.unblock_requirements }` : '' }`;
-      appendTranscript(conv.conversationId, 'agent', reply);
-
-      return { status: 'blocked', reply };
-    }
-
-    const out = finalState.metadata?.finalSummary ||
-      finalState.messages?.[finalState.messages.length - 1]?.content ||
-      '(no output)';
-    const reply = typeof out === 'string' ? out : JSON.stringify(out);
+    const { status, text: reply } = extractAgentTurnOutcome(finalState);
     appendTranscript(conv.conversationId, 'agent', reply);
 
-    return { status: 'completed', reply };
+    return { status, reply };
   } catch (err) {
     const reply = `Error: ${ (err as Error).message }`;
     appendTranscript(conv.conversationId, 'agent', reply);
