@@ -138,21 +138,21 @@ export class AgentNode extends BaseNode {
     // One-time operator work standup — injected into the orchestrating agent's
     // FIRST run of this thread so it opens already knowing what shipped in the
     // last 24h and what's next, without having to call a tool. After this the
-    // agent uses the `work_report` tool on demand. Skipped for sub-agents and
+    // agent uses the `project_report` tool on demand. Skipped for sub-agents and
     // tool-call loops; guarded so it fires once per thread. As a plain
     // (non-synthetic) assistant note it persists in history and is never
-    // re-injected (stripInjectedContextBlocks doesn't touch <work_report>).
+    // re-injected (stripInjectedContextBlocks doesn't touch <project_report>).
     if (!isToolCallLoop && !(state.metadata as any).isSubAgent && !(state.metadata as any).workReportInjected) {
       (state.metadata as any).workReportInjected = true;
       try {
-        const { buildWorkReport } = await import('../prompts/workReport');
-        const report = await buildWorkReport({ nextLimit: 10 });
+        const { buildProjectReport } = await import('../prompts/projectReport');
+        const report = await buildProjectReport({ nextLimit: 10 });
         if (report) {
           const insertIdx = Math.max(0, state.messages.length - 1);
           state.messages.splice(insertIdx, 0, {
             role:     'assistant',
-            content:  `<work_report>\n${ report }\n</work_report>`,
-            metadata: { source: 'work_report' },
+            content:  `<project_report>\n${ report }\n</project_report>`,
+            metadata: { source: 'project_report' },
           });
         }
       } catch (err) {

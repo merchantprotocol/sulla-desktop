@@ -1,5 +1,5 @@
 /**
- * useProjects — reactive access to the Postgres workboard for the Projects
+ * useProjects — reactive access to the Postgres Projects for the Projects
  * view. The renderer never touches the DB directly; all access is through
  * the `work-items:*` ipcRenderer bridge (see main/workItemsEvents.ts).
  *

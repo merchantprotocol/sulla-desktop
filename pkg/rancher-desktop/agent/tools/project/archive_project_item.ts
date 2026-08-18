@@ -4,7 +4,7 @@ import { BaseTool, ToolResponse } from '../base';
 /**
  * Soft-archive a project, epic, or task. Cascades down. Never hard-deletes.
  */
-export class ArchiveWorkItemWorker extends BaseTool {
+export class ArchiveProjectItemWorker extends BaseTool {
   name = '';
   description = '';
 
@@ -27,9 +27,9 @@ export class ArchiveWorkItemWorker extends BaseTool {
           };
         }
       }
-      return { successBoolean: false, responseString: `No work item found with id: ${ id }` };
+      return { successBoolean: false, responseString: `No project item found with id: ${ id }` };
     } catch (err: any) {
-      return { successBoolean: false, responseString: `Failed to archive work item: ${ err?.message }` };
+      return { successBoolean: false, responseString: `Failed to archive project item: ${ err?.message }` };
     }
   }
 }

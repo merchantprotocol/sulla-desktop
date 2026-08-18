@@ -14,9 +14,9 @@ function fmtTask(t: any): string {
 }
 
 /**
- * List Projects work-state from Postgres.
+ * List Projects project-state from Postgres.
  */
-export class ListWorkItemsWorker extends BaseTool {
+export class ListProjectItemsWorker extends BaseTool {
   name = '';
   description = '';
 
@@ -60,7 +60,7 @@ export class ListWorkItemsWorker extends BaseTool {
 
       return { successBoolean: true, responseString: lines.join('\n') };
     } catch (err: any) {
-      return { successBoolean: false, responseString: `List work items failed: ${ err?.message }` };
+      return { successBoolean: false, responseString: `List project items failed: ${ err?.message }` };
     }
   }
 }

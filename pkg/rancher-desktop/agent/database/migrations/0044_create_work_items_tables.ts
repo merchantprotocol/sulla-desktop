@@ -1,7 +1,7 @@
 /**
  * Migration 0044 — Create work-item tables (projects → epics → tasks → comments).
  *
- * Structured operator workboard in the desktop Postgres. This is NOT CRM
+ * Structured operator Projects in the desktop Postgres. This is NOT CRM
  * (CRM belongs in Sulla Cloud) and it is NOT the filesystem PRD registry
  * (`~/sulla/projects/** /PROJECT.md` via ProjectRegistry).
  *

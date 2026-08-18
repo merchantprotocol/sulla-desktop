@@ -15,7 +15,7 @@ describe('heartbeatPrompt', () => {
   });
 
   it('boots from the heartbeat lane and retires the markdown state file', () => {
-    // The workboard is the only work-state store; HEARTBEAT_STATE.md is dead.
+    // Projects is the only project-state store; HEARTBEAT_STATE.md is dead.
     expect(heartbeatPrompt).toContain('HEARTBEAT_STATE.md');
     expect(heartbeatPrompt).toContain('RETIRED');
     // First action pulls the heartbeat-assigned lane, not a file read.

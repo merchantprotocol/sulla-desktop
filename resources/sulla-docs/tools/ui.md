@@ -38,7 +38,7 @@ Behavior:
 | `browser` | Standard web browser tab (use `url` for the address) |
 | `welcome` | Onboarding / welcome screen |
 | `agents` | Agent network / jobs |
-| `projects` | Projects work-state (Postgres work_projects / epics / tasks) |
+| `projects` | Projects project-state (Postgres work_projects / epics / tasks) |
 | `settings` | Preferences window (not a tab — handled separately) |
 
 ## Common requests
@@ -63,7 +63,7 @@ sulla ui/open_tab '{"mode":"vault"}'
 sulla ui/open_tab '{"mode":"secretary"}'
 ```
 
-### "Open Projects" / "Show me project management"
+### "Open Projects" / "Show me projects"
 ```bash
 sulla ui/open_tab '{"mode":"projects"}'
 ```

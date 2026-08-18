@@ -1,5 +1,5 @@
 /**
- * Work standup report — shared builder used by both the `work_report` CLI tool
+ * Project standup report — shared builder used by both the `project_report` CLI tool
  * and the one-time context injection into the orchestrating agent's first run
  * (see AgentNode). Read-only; builds from WorkItemsModel.
  *
@@ -9,7 +9,7 @@
 
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
 
-export interface WorkReportOpts {
+export interface ProjectReportOpts {
   hours?:     number;
   nextLimit?: number;
   projectId?: string;
@@ -30,7 +30,7 @@ function fmt(iso: string | null): string {
   return `${ d.getMonth() + 1 }/${ d.getDate() } ${ String(d.getHours()).padStart(2, '0') }:${ String(d.getMinutes()).padStart(2, '0') }`;
 }
 
-export async function buildWorkReport(opts: WorkReportOpts = {}): Promise<string> {
+export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<string> {
   const hours = typeof opts.hours === 'number' && opts.hours > 0 ? opts.hours : 24;
   const nextLimit = typeof opts.nextLimit === 'number' && opts.nextLimit > 0 ? opts.nextLimit : 15;
   const projectId = opts.projectId?.trim() || undefined;
@@ -68,7 +68,7 @@ export async function buildWorkReport(opts: WorkReportOpts = {}): Promise<string
   const lines: string[] = [];
   const scope = [projectId ? `project ${ projectId }` : null, assignee ? `assignee ${ assignee }` : null]
     .filter(Boolean).join(', ');
-  lines.push(`# Work report — last ${ hours }h${ scope ? ` (${ scope })` : '' }`);
+  lines.push(`# Project report — last ${ hours }h${ scope ? ` (${ scope })` : '' }`);
 
   lines.push('');
   lines.push(`## ✅ Completed (${ completed.length })`);
