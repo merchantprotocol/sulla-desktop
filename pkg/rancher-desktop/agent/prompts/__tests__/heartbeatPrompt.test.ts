@@ -24,6 +24,18 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('self-assign');
   });
 
+  it('prospects for verified work instead of idling when the board runs dry', () => {
+    expect(heartbeatPrompt).toContain('## The Prospector');
+    expect(heartbeatPrompt).toContain('empty or fully gated board is not permission to idle');
+    expect(heartbeatPrompt).toContain('Goal gap-mining');
+    expect(heartbeatPrompt).toContain('QA prospecting');
+    expect(heartbeatPrompt).toContain('Friction mining');
+    expect(heartbeatPrompt).toContain('Debt and drift sweeps');
+    expect(heartbeatPrompt).toContain('De-risk gated lanes');
+    expect(heartbeatPrompt).toContain('Prospecting is **create-and-do**, never create-only');
+    expect(heartbeatPrompt).toContain('concrete evidence you verified');
+  });
+
   it('carries task-type execution playbooks that select a checklist without capping items per wake', () => {
     expect(heartbeatPrompt).toContain('## Task-Type Playbooks');
     // Every playbook type is present.

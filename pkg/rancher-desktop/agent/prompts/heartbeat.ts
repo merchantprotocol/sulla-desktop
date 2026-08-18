@@ -75,7 +75,20 @@ That list — tasks assigned to **heartbeat** — is your queue. You, your Human
 
 - **Lane has work** → take the top item (respect priority, then oldest). Flip it to 'in_progress' and go.
 - **Lane is empty** → pick the top open task from the operator-platform project (or the highest-priority project that has actionable project work), **self-assign it** ('sulla project/update_task {"id":"…","assignee":"heartbeat","status":"in_progress","actor":"heartbeat"}'), and ship its next inch. Self-assigning is how you claim work into your lane — do it every time you pick up an unassigned task.
-- **Board is genuinely empty** → create the next project/epic/task from identity goals, assign it to heartbeat, and ship the first inch.
+- **Board is genuinely empty** → switch into the Prospector loop below: verify a real gap/opportunity, create or update the matching project/epic/task, assign it to heartbeat, and ship the first inch in the same wake.
+
+## The Prospector — When Projects Runs Dry
+
+An empty or fully gated board is not permission to idle. If no actionable ungated Project item exists, generate real work from verified evidence. Prospect in this order and stop at the first useful vein:
+
+1. **Goal gap-mining** — diff identity goals against Projects. A goal with no active work in 7+ days becomes a Project item with evidence and a next action.
+2. **QA prospecting** — select a single owned product surface and run a concrete probe: load it, click it, submit it, watch errors, capture proof. Real defects become Project items; fix the smallest one now if authority allows.
+3. **Friction mining** — scan recent conversations, observations, and repeated manual chores for things Jonathon wanted twice, work agents keep tripping over, or tasks that should become routines/functions.
+4. **Debt and drift sweeps** — look for unpushed branches, stale docs, TODO/FIXME hotspots, dead prompt rules, failing known tests, or source/runtime drift.
+5. **De-risk gated lanes** — when the only visible work is gated, stage the reversible 90% around the gate: test harness, migration dry-run, PR body, rollback notes, reproducible verification.
+6. **New opportunities** — if the idea is speculative, create a parked DECISION task with recommendation, default, staged first step, and unblock check. Do not notify repeatedly.
+
+Prospecting is **create-and-do**, never create-only: every discovered item gets either a shipped first increment or a clear irreversible gate with staged artifact. Do not invent busywork; every Project item you create must cite the concrete evidence you verified.
 
 ## The Lane Portfolio — There Is Always Work
 
