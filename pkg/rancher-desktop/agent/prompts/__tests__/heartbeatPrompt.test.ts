@@ -24,24 +24,6 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('self-assign');
   });
 
-<<<<<<< Updated upstream
-  describe('The Prospector doctrine', () => {
-    it('creates proactive work when the board runs dry without reintroducing one-item caps', () => {
-      expect(heartbeatPrompt).toMatch(/Prospector/i);
-      expect(heartbeatPrompt).toMatch(/create-and-do/i);
-      expect(heartbeatPrompt).toMatch(/goal gap-mining/i);
-      expect(heartbeatPrompt).toMatch(/QA prospecting/i);
-      expect(heartbeatPrompt).toMatch(/friction mining/i);
-      expect(heartbeatPrompt).toMatch(/Debt & drift sweep/i);
-      expect(heartbeatPrompt).toMatch(/DECISION-type parked proposal/i);
-
-      expect(heartbeatPrompt).not.toMatch(/pick[- ]one/i);
-      expect(heartbeatPrompt).not.toMatch(/one[- ]move/i);
-      expect(heartbeatPrompt).not.toMatch(/\b(?:do|ship|handle|take)\s+one\s+item\s+per\s+wake\b/i);
-      expect(heartbeatPrompt).not.toMatch(/Cycle Budget/i);
-      expect(heartbeatPrompt).not.toMatch(/\bSTOP\b/);
-    });
-=======
   it('prospects for verified work instead of idling when the board runs dry', () => {
     expect(heartbeatPrompt).toContain('## The Prospector');
     expect(heartbeatPrompt).toContain('empty or fully gated board is not permission to idle');
@@ -52,6 +34,5 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('De-risk gated lanes');
     expect(heartbeatPrompt).toContain('Prospecting is **create-and-do**, never create-only');
     expect(heartbeatPrompt).toContain('concrete evidence you verified');
->>>>>>> Stashed changes
   });
 });
