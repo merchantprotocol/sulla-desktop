@@ -937,6 +937,29 @@ export class WorkItemsModel {
   }
 
   /**
+   * Latest (non-archived) comment timestamp per task, for the given task ids, in
+   * a single grouped query. Used by lane-health staleness: add_task_comment does
+   * NOT bump the task's last_moved_at, so a task actively progressed via comments
+   * would otherwise read as "no movement" and false-flag as stale every cycle.
+   * Returns a Map keyed by task id; tasks with no comments are simply absent.
+   */
+  static async latestCommentAtByTask(taskIds: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    if (!taskIds.length) return out;
+    const rows = await postgresClient.query<{ task_id: string; latest_comment_at: string }>(
+      `SELECT task_id, MAX(created_at) AS latest_comment_at
+         FROM ${ WorkItemsModel.COMMENTS }
+        WHERE archived = false AND task_id = ANY($1)
+        GROUP BY task_id`,
+      [taskIds],
+    );
+    for (const row of rows) {
+      if (row.latest_comment_at) out.set(row.task_id, row.latest_comment_at);
+    }
+    return out;
+  }
+
+  /**
    * Unified reverse-chronological activity feed for the Projects area: comments,
    * newly created tasks/epics/projects, status/board moves, and metadata edits —
    * newest first. Synthesized via UNION over the project tables' timestamp columns
