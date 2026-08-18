@@ -53,6 +53,7 @@ export interface ReorderUpdate {
   position?: number;
   status?:   string;
   epic_id?:  string;
+  actor?:    string;
 }
 
 export function useProjects() {

@@ -431,7 +431,7 @@ export interface IpcMainInvokeEvents {
   'work-items:task-update':     (id: string, changes: import('@pkg/agent/database/models/WorkItemsModel').UpdateTaskInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord | null;
   'work-items:task-archive':    (id: string) => boolean;
   'work-items:comment-add':     (input: import('@pkg/agent/database/models/WorkItemsModel').AddCommentInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord;
-  'work-items:reorder':         (updates: { kind: 'epic' | 'task'; id: string; position?: number; status?: string; epic_id?: string }[]) => boolean;
+  'work-items:reorder':         (updates: { kind: 'epic' | 'task'; id: string; position?: number; status?: string; epic_id?: string; actor?: string }[]) => boolean;
 
   // User-defined project catalog (scanned from ~/sulla/projects/ + DB)
   'projects-list': () => {

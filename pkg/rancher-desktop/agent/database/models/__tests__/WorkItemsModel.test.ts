@@ -56,6 +56,25 @@ describe('WorkItemsModel', () => {
     });
   });
 
+  it('projects task lifecycle actors through the unified activity author field', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await WorkItemsModel.listRecentActivity({
+      projectId: 'project-1',
+      author:    'heartbeat',
+      limit:     20,
+    });
+
+    const sql = (postgresClient.query as any).mock.calls[0][0] as string;
+
+    expect(sql).toContain("COALESCE(t.created_by, 'sulla')");
+    expect(sql).toContain("COALESCE(t.last_moved_by, 'sulla')");
+    expect(sql).toContain("LOWER(COALESCE(t.created_by, 'sulla')) = LOWER($2)");
+    expect(sql).toContain("LOWER(COALESCE(t.last_moved_by, 'sulla')) = LOWER($2)");
+    expect(sql).toContain("SELECT 'tc:' || t.id, 'task_created', t.created_at, NULL, COALESCE(t.created_by, 'sulla')");
+    expect(sql).toContain("SELECT 'tm:' || t.id, 'task_moved', t.last_moved_at, NULL, COALESCE(t.last_moved_by, 'sulla')");
+  });
+
   it('bounds recent activity limits passed over IPC', async() => {
     (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
 
