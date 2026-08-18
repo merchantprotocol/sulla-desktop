@@ -840,12 +840,25 @@ export class HeartbeatNode extends BaseNode {
     }
 
     // 2. Stale in_progress — resume or park with a status change + comment.
+    //    add_task_comment does NOT bump last_moved_at, so a leaf task actively
+    //    progressed via comments (a status held steady while work continues)
+    //    would false-flag as stale every cycle. Measure staleness from the LATEST
+    //    of last_moved_at and the most recent comment, so comment-only progress
+    //    counts as movement.
+    const latestCommentAt = await WorkItemsModel.latestCommentAtByTask(
+      leafInProgress.map(task => task.id),
+    );
     for (const task of leafInProgress) {
-      const movedMs = Date.parse(task.last_moved_at);
-      if (!Number.isFinite(movedMs)) continue;
-      const ageHours = Math.floor((nowMs - movedMs) / 3_600_000);
+      const movedMs   = Date.parse(task.last_moved_at);
+      const commentMs = Date.parse(latestCommentAt.get(task.id) ?? '');
+      const lastActivityMs = Math.max(
+        Number.isFinite(movedMs)   ? movedMs   : -Infinity,
+        Number.isFinite(commentMs) ? commentMs : -Infinity,
+      );
+      if (!Number.isFinite(lastActivityMs)) continue;
+      const ageHours = Math.floor((nowMs - lastActivityMs) / 3_600_000);
       if (ageHours >= STALE_IN_PROGRESS_HOURS) {
-        lines.push(`- STALE: task ${ this.escapeXmlText(task.id) } "${ this.escapeXmlText(task.title) }" has sat in_progress ~${ ageHours }h with no movement. Resume it now, or add a comment and set status (blocked/todo) explaining the pause.`);
+        lines.push(`- STALE: task ${ this.escapeXmlText(task.id) } "${ this.escapeXmlText(task.title) }" has sat in_progress ~${ ageHours }h with no movement or comment. Resume it now, or add a comment and set status (blocked/todo) explaining the pause.`);
       }
     }
 

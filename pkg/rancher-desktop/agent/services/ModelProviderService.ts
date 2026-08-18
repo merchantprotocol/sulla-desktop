@@ -311,6 +311,56 @@ class ModelProviderService {
     return !modelId || modelId === 'fast' || modelId === 'balanced' || modelId === 'powerful';
   }
 
+  /**
+   * Decide whether a concrete subconscious model id is stranded — i.e. it names a
+   * model its provider does not offer, the inconsistent pair (e.g. provider=codex /
+   * id=grok-4.6) that drives the recurring subconscious drift.
+   *
+   * Fail-safe by construction — only returns true when we can POSITIVELY prove the
+   * mismatch. It never resets when:
+   *  - the id is provider-agnostic ('', or a fast/balanced/powerful tier), or
+   *  - the provider's model list is unknown/empty (a dynamic provider whose catalog
+   *    could not be loaded — resetting there would wipe a legitimately-chosen model).
+   * This is the landmine guard: a blanket "reset if not in list" would clobber a valid
+   * concrete selection whenever the catalog fetch transiently fails.
+   */
+  private modelIsStrandedForProvider(modelId: string, providerModelIds: string[]): boolean {
+    if (this.isProviderAgnosticModelId(modelId)) return false; // no provider affinity — never stranded
+    if (providerModelIds.length === 0) return false; // catalog unknown — cannot prove mismatch, keep
+    return !providerModelIds.includes(modelId); // concrete id the provider does not offer → stranded
+  }
+
+  /**
+   * Restart self-heal for the subconscious slot. setSubconsciousProvider() only clears a
+   * stranded override when the PROVIDER changes; the reported drift keeps the provider
+   * unchanged (stays codex) while a stale concrete id (grok-4.6) survives in the DB and is
+   * reloaded verbatim on every boot. This reconciles the loaded pair once at init: if the
+   * concrete id is provably not offered by the current provider, reset it to '' (provider
+   * default) so the pair is consistent and stops being re-broadcast into the settings UI.
+   * Runs after the DB load; no-ops on any error so a bad reconcile never blocks startup.
+   */
+  private async reconcileSubconsciousModel(): Promise<void> {
+    const modelId = this.state.subconsciousModelId;
+    if (this.isProviderAgnosticModelId(modelId)) return; // fast path — nothing concrete to reconcile
+
+    let providerModelIds: string[] = [];
+    try {
+      const models = await this.getModelsForProvider(this.state.subconsciousProvider);
+      providerModelIds = models.map(m => m.id);
+    } catch {
+      return; // could not load the provider catalog — fail safe, leave the id untouched
+    }
+
+    if (this.modelIsStrandedForProvider(modelId, providerModelIds)) {
+      console.warn(
+        `[ModelProviderService] Stranded subconscious model '${ modelId }' is not offered by ` +
+        `provider '${ this.state.subconsciousProvider }' — resetting to provider default`,
+      );
+      this.state.subconsciousModelId = '';
+      await SullaSettingsModel.set('subconsciousModelId', '', 'string');
+    }
+  }
+
   async setHeartbeatModelId(modelId: string): Promise<void> {
     this.state.heartbeatModelId = modelId;
     await SullaSettingsModel.set('heartbeatModelId', modelId, 'string');
@@ -357,6 +407,12 @@ class ModelProviderService {
     this.state.heartbeatModelId = await SullaSettingsModel.get('heartbeatModelId', 'fast');
     this.state.subconsciousModelId = await SullaSettingsModel.get('subconsciousModelId', 'fast');
     this.state.modelMode = 'remote';
+
+    // Self-heal a stranded subconscious model/provider pair loaded from the DB (e.g.
+    // provider=codex left with a concrete grok-4.6 id). setSubconsciousProvider only
+    // clears this on a provider change; reconcile here so it also heals on restart when
+    // the provider is unchanged — the acceptance criterion for this slot.
+    await this.reconcileSubconsciousModel();
 
     // Load active model from the provider's integration form values
     try {

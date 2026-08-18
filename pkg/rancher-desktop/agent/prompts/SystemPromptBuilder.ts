@@ -12,6 +12,7 @@
  */
 
 import type { ChatMode } from '../controllers/ChatController';
+import { checkHeartbeatPromptInvariants, type HeartbeatInvariantResult } from './heartbeatInvariants';
 
 // ============================================================================
 // Types
@@ -84,6 +85,12 @@ export interface BuiltPrompt {
   anthropicSystem?: AnthropicSystemBlock[];
   /** Which sections were included in the build */
   includedSections: string[];
+  /**
+   * Heartbeat-only: runtime invariant check of the composed prompt — confirms
+   * the deployed continuous-operator wording is present and the #581 STOP-ceiling
+   * framing is absent. Undefined for non-heartbeat builds. See heartbeatInvariants.
+   */
+  heartbeatInvariants?: HeartbeatInvariantResult;
 }
 
 export interface AnthropicSystemBlock {
@@ -268,7 +275,25 @@ class SystemPromptBuilderImpl {
       }
     }
 
-    return { text, anthropicSystem, includedSections };
+    // Heartbeat self-verification: on the autonomous wake path, confirm the
+    // DEPLOYED prompt still carries the continuous-operator invariants. A stale
+    // binary running reverted prompt code (e.g. PR #581's pick-one/STOP ceiling)
+    // passes the source-level tests on main but fails here at runtime — turning
+    // the manual "rebuild + eyeball the live prompt" gate into an automatic
+    // signal. Non-throwing: we only surface the failure.
+    let heartbeatInvariants: HeartbeatInvariantResult | undefined;
+    if (ctx.isHeartbeat) {
+      heartbeatInvariants = checkHeartbeatPromptInvariants(text);
+      if (!heartbeatInvariants.ok) {
+        console.error(
+          '[SystemPromptBuilder] Heartbeat prompt invariant FAILURE — deployed prompt is stale or reverted. '
+          + 'Rebuild/restart Sulla Desktop to load the continuous-operator prompt.',
+          { missing: heartbeatInvariants.missing, forbidden: heartbeatInvariants.forbidden },
+        );
+      }
+    }
+
+    return { text, anthropicSystem, includedSections, heartbeatInvariants };
   }
 }
 
