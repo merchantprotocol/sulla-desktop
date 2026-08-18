@@ -177,12 +177,14 @@ sulla observation/add_observational_memory '{
 
 | Field | Notes |
 |-------|-------|
+| `id` | Optional existing observation ID to update in place. Omit only after searching active + archived observations and confirming no existing row should be updated. |
 | `priority` | "high", "medium", "low" — or use the user's symbols 🔴 🟡 🟢. Default 🟡. |
 | `content` | One sentence, dense. Verbose entries get truncated by dedup. |
+| `source` | Optional provenance label. |
 
-Stored as JSON in `sulla_settings`. **Cap: 50 most recent memories — older ones are pruned.** Returns a 4-char ID (e.g., `a3K2`) you'll see in the system prompt's memory list.
+Stored in the Postgres `observations` table. There is **no storage cap and no auto-prune**; only a small top-N active subset is injected into prompts. Returns a 4-char ID (e.g., `a3K2`) you'll see in the system prompt's memory list.
 
-Dedup is substring-based: re-adding the same fact updates priority/timestamp instead of creating a duplicate.
+Search before writing. If an existing active or archived row covers the same durable fact, update that row by `id` or leave it archived instead of creating a duplicate. New observations should be durable, surprising, or operationally important, not cycle logs.
 
 ### `observation/remove_observational_memory`
 ```bash
@@ -190,6 +192,25 @@ sulla observation/remove_observational_memory '{"id":"a3K2"}'
 ```
 
 The id comes from the system prompt's memory list (each entry shows `[id:XXXX]`).
+This is a soft archive: it sets `archived=true`; the row remains recoverable and can still be found with `include_archived:true`.
+
+### `observation/search_observations`
+```bash
+sulla observation/search_observations '{
+  "query": "provider outage heartbeat",
+  "limit": 20,
+  "include_archived": true
+}'
+```
+
+Use this before every observation write. The search splits the query into meaningful words and matches rows containing any of them; phrase hits rank first, then word-match count, then recency.
+
+### `observation/list_observations`
+```bash
+sulla observation/list_observations '{"limit":50,"include_archived":false}'
+```
+
+Lists active observations by priority and recency. Pass `include_archived:true` only for curation, stale-state checks, or duplicate prevention.
 
 ## Patterns
 
@@ -226,7 +247,7 @@ sulla observation/add_observational_memory '{"priority":"high","content":"Twenty
 - **`exechost` is LAST RESORT.** Use only when the parent host MUST be used (host-only binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or explicit user request). Never for routine search/edit/build/test.
 - **Prefer VM → host network (`192.168.5.2`) over host shell** when you only need to reach a host-side service.
 - **`write_file` is home-dir only.** Don't attempt to write into `/tmp/`, `/etc/`, or anywhere outside `~`. Tested and confirmed: returns "Write operations are restricted to the home directory" otherwise.
-- **Observational memory is finite.** Don't fill it with verbose status updates — save only durable, surprising, or non-obvious facts.
+- **Observational memory is durable but prompt space is finite.** Don't fill it with verbose status updates — save only durable, surprising, or non-obvious facts.
 - **`browse_tools` is the source of truth for tool existence.** When in doubt, check it before calling. Don't hallucinate tool names.
 - **Backend ignores category in URL.** Tools resolve by NAME alone. So `sulla anything/spawn_agent` works as `sulla meta/spawn_agent`. But the canonical name (what `sulla <cat> --help` lists) is what you should use.
 
