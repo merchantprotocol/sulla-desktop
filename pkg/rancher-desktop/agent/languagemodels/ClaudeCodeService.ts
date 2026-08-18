@@ -212,7 +212,15 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--dangerously-skip-permissions',
       // Disable Claude's built-in AskUserQuestion — see runClaude for why it
       // routes through the sulla-native MCP tool instead.
-      '--disallowedTools', 'AskUserQuestion',
+      //
+      // Also disable Claude Code's built-in task/todo list (TaskCreate /
+      // TaskUpdate / TaskList / TaskGet, and legacy TodoWrite / TodoRead). It
+      // is a parallel, ephemeral project-management surface that competes with
+      // Sulla Projects. Agents track all work in Projects via `sulla project/*`
+      // (Postgres) — there must be exactly one task system, not a second
+      // in-memory to-do list. NOTE: TaskOutput / TaskStop are background-process
+      // controls (not the to-do list) and stay enabled.
+      '--disallowedTools', 'AskUserQuestion TaskCreate TaskUpdate TaskList TaskGet TodoWrite TodoRead',
     ];
     // stream-json input lets the process boot before the prompt exists (the
     // prompt is fed as a JSON user message on stdin by the caller).
