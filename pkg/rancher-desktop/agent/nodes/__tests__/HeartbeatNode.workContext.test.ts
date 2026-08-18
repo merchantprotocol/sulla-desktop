@@ -573,6 +573,42 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     expect(digest).toContain('child2');
     expect(digest).not.toContain('parent1');
   });
+
+  it('does NOT flag a leaf task as STALE when a recent comment progressed it (last_moved_at stale)', async() => {
+    const recentIso = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 1h ago
+    listTasksMock
+      .mockResolvedValueOnce([ // single in_progress leaf: old last_moved_at but freshly commented
+        { id: 'task1', project_id: 'proj1', title: 'Comment-progressed', parent_id: null,
+          last_moved_at: staleIso, latest_comment_at: recentIso },
+      ])
+      .mockResolvedValueOnce([]) // blocked
+      .mockResolvedValueOnce([ // lane-drift probe — nothing off-lane
+        { id: 'task1', project_id: 'proj1', title: 'Comment-progressed', parent_id: null,
+          last_moved_at: staleIso, latest_comment_at: recentIso },
+      ]);
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
+
+    // last_moved_at is ancient, but the fresh comment counts as activity.
+    expect(digest).not.toContain('STALE');
+    expect(digest).toBe('');
+  });
+
+  it('still flags a leaf STALE when BOTH last_moved_at and latest_comment_at are old', async() => {
+    listTasksMock
+      .mockResolvedValueOnce([
+        { id: 'task1', project_id: 'proj1', title: 'Truly forgotten', parent_id: null,
+          last_moved_at: staleIso, latest_comment_at: staleIso },
+      ])
+      .mockResolvedValueOnce([]) // blocked
+      .mockResolvedValueOnce([]); // lane-drift probe
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
+
+    expect(digest).toContain('STALE: task task1');
+  });
 });
 
 describe('HeartbeatNode next-action digest (S75N)', () => {

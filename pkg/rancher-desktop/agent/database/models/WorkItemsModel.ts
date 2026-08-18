@@ -80,6 +80,14 @@ export interface WorkTaskRecord {
   last_moved_by: string | null;
   completed_at:  string | null;
   archived:      boolean;
+  /**
+   * Computed by listTasks() only — MAX(created_at) of the task's live comments,
+   * or null when it has none. Not a stored column, so plain SELECT * paths omit
+   * it (hence optional). Lets lane-health treat comment-only progress as
+   * activity: a task actively commented but held at a stable in_progress status
+   * stops false-flagging STALE, since add_task_comment does not bump last_moved_at.
+   */
+  latest_comment_at?: string | null;
 }
 
 export interface WorkCommentRecord {
@@ -902,7 +910,16 @@ export class WorkItemsModel {
     const limit = opts.limit ?? 50;
     values.push(limit);
     return postgresClient.query<WorkTaskRecord>(
-      `SELECT * FROM ${ WorkItemsModel.TASKS }
+      // latest_comment_at: newest live comment per task, so lane-health can treat
+      // comment-only progress as activity (add_task_comment does not bump
+      // last_moved_at). Correlated subquery keyed on the task id — no table alias
+      // needed, so the WHERE/ORDER BY on bare columns are untouched; backed by
+      // idx_work_task_comments_task, one indexed lookup per returned row.
+      `SELECT *, (
+          SELECT MAX(c.created_at) FROM ${ WorkItemsModel.COMMENTS } c
+           WHERE c.task_id = ${ WorkItemsModel.TASKS }.id AND c.archived = false
+        ) AS latest_comment_at
+        FROM ${ WorkItemsModel.TASKS }
         WHERE ${ conds.join(' AND ') }
         ORDER BY ${ PRIORITY_RANK }, due_at ASC NULLS LAST, last_moved_at ASC, position ASC
         LIMIT $${ idx }`,

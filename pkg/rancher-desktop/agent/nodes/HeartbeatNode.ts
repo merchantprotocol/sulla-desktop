@@ -840,10 +840,19 @@ export class HeartbeatNode extends BaseNode {
     }
 
     // 2. Stale in_progress — resume or park with a status change + comment.
+    //    Staleness is measured from the LATEST activity, not just last_moved_at:
+    //    add_task_comment does not bump last_moved_at, so a leaf task actively
+    //    progressed by comments at a stable in_progress status would otherwise
+    //    false-flag every cycle. latest_comment_at (from listTasks) captures that.
     for (const task of leafInProgress) {
-      const movedMs = Date.parse(task.last_moved_at);
-      if (!Number.isFinite(movedMs)) continue;
-      const ageHours = Math.floor((nowMs - movedMs) / 3_600_000);
+      const movedMs   = Date.parse(task.last_moved_at);
+      const commentMs = task.latest_comment_at ? Date.parse(task.latest_comment_at) : NaN;
+      const activityMs = Math.max(
+        Number.isFinite(movedMs) ? movedMs : -Infinity,
+        Number.isFinite(commentMs) ? commentMs : -Infinity,
+      );
+      if (!Number.isFinite(activityMs)) continue;
+      const ageHours = Math.floor((nowMs - activityMs) / 3_600_000);
       if (ageHours >= STALE_IN_PROGRESS_HOURS) {
         lines.push(`- STALE: task ${ this.escapeXmlText(task.id) } "${ this.escapeXmlText(task.title) }" has sat in_progress ~${ ageHours }h with no movement. Resume it now, or add a comment and set status (blocked/todo) explaining the pause.`);
       }
