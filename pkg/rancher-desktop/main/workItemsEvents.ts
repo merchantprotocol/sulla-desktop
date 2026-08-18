@@ -136,13 +136,13 @@ export function initWorkItemsEvents(): void {
     const WorkItemsModel = await importWorkItemsModel();
 
     // insertTask always creates a new row and requires an epic_id.
-    return WorkItemsModel.insertTask(input);
+    return WorkItemsModel.insertTask({ ...input, actor: input.actor ?? 'human' });
   });
 
   ipcMainProxy.handle('work-items:task-update', async(_event: unknown, id: string, changes: UpdateTaskInput) => {
     const WorkItemsModel = await importWorkItemsModel();
 
-    return WorkItemsModel.updateTask(id, changes);
+    return WorkItemsModel.updateTask(id, { ...changes, actor: changes.actor ?? 'human' });
   });
 
   ipcMainProxy.handle('work-items:task-archive', async(_event: unknown, id: string) => {
@@ -177,7 +177,7 @@ export function initWorkItemsEvents(): void {
         if (u.position !== undefined) changes.position = u.position;
         if (u.status !== undefined) changes.status = u.status;
         if (u.epic_id !== undefined) changes.epic_id = u.epic_id;
-        await WorkItemsModel.updateTask(u.id, changes);
+        await WorkItemsModel.updateTask(u.id, { ...changes, actor: changes.actor ?? 'human' });
       }
     }
 
@@ -191,4 +191,5 @@ interface ReorderUpdate {
   position?: number;
   status?:  string;
   epic_id?: string;
+  actor?:   string;
 }

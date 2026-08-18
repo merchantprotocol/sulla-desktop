@@ -196,11 +196,11 @@
                   :class="{ 'is-event': item.kind !== 'comment' }"
                   @click="openActivityTask(item)"
                 >
-                  <span class="ph-activity-dot" :class="{ hb: isHeartbeatAuthor(item.author), human: item.author === 'human', event: item.kind !== 'comment' }" />
+                  <span class="ph-activity-dot" :class="[activityActorClass(item), { event: item.kind !== 'comment' }]" />
                   <span class="ph-activity-body">
                     <span class="ph-activity-meta">
                       <span class="ph-activity-kind" :class="'k-' + item.kind">{{ activityKindLabel(item.kind) }}</span>
-                      <b>{{ activityActor(item) }}</b>
+                      <span class="ph-activity-actor" :class="activityActorClass(item)">{{ activityActorLabel(item) }}</span>
                       <span>{{ shortDate(item.activity_at) }}</span>
                       <span v-if="item.epic_title">{{ item.epic_title }}</span>
                     </span>
@@ -518,9 +518,6 @@ const STATUS_LABEL: Record<string, string> = {
 function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
 }
-function isHeartbeatAuthor(author: string | null): boolean {
-  return /heartbeat/i.test(author ?? '');
-}
 function showPriority(pr: string): boolean {
   return pr === 'high' || pr === 'critical' || pr === 'p0' || pr === 'p1';
 }
@@ -714,10 +711,28 @@ function activityKindLabel(kind: WorkActivityRecord['kind']): string {
   return ACTIVITY_KIND_LABELS[kind] ?? 'Activity';
 }
 
-/** Who did it: comments carry an author; lifecycle events have no recorded actor. */
-function activityActor(item: WorkActivityRecord): string {
-  if (item.author) return item.author;
-  return item.kind === 'comment' ? 'agent' : 'Projects';
+function normalizeActivityActor(author: string | null): string {
+  const actor = (author || 'sulla').trim().toLowerCase();
+  if (!actor || actor === 'agent') return 'sulla';
+  return actor;
+}
+
+function activityActorLabel(item: WorkActivityRecord): string {
+  const actor = normalizeActivityActor(item.author);
+  if (actor === 'heartbeat') return 'Heartbeat';
+  if (actor === 'human') return 'You';
+  if (actor === 'sulla') return 'Sulla';
+  if (actor === 'workbench') return 'Workbench';
+  return actor.charAt(0).toUpperCase() + actor.slice(1);
+}
+
+function activityActorClass(item: WorkActivityRecord): string {
+  const actor = normalizeActivityActor(item.author);
+  if (actor === 'heartbeat') return 'heartbeat';
+  if (actor === 'human') return 'human';
+  if (actor === 'workbench') return 'workbench';
+  if (actor === 'sulla') return 'sulla';
+  return 'other';
 }
 
 /** The headline for a row — the subject item's title, whatever level it lives at. */
@@ -1058,8 +1073,10 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-activity { display: grid; grid-template-columns: 13px minmax(0, 1fr) auto; gap: 14px; width: 100%; text-align: left; background: transparent; border: none; color: inherit; padding: 0 0 18px; cursor: pointer; }
 .ph-activity:hover .ph-activity-task { color: var(--pacc); }
 .ph-activity-dot { width: 13px; height: 13px; border-radius: 50%; margin-top: 5px; background: var(--ptext3); border: 3px solid var(--pbg); position: relative; z-index: 1; }
-.ph-activity-dot.hb { background: var(--pacc); box-shadow: 0 0 0 3px var(--pacc-soft); }
+.ph-activity-dot.heartbeat { background: var(--pacc); box-shadow: 0 0 0 3px var(--pacc-soft); }
+.ph-activity-dot.sulla { background: var(--ptext2); }
 .ph-activity-dot.human { background: var(--pgreen); }
+.ph-activity-dot.workbench { background: var(--pamber); }
 .ph-activity-dot.event { background: var(--pbg); border-color: var(--ptext3); }
 .ph-activity-kind { display: inline-block; padding: 1px 6px; border-radius: 4px; background: var(--psurf2); color: var(--ptext2); border: 1px solid var(--pborder); font-weight: 600; letter-spacing: 0.05em; }
 .ph-activity-kind.k-comment { background: var(--pacc-soft); color: var(--pacc); border-color: transparent; }
@@ -1067,7 +1084,11 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-activity.is-event .ph-activity-text { color: var(--ptext3); font-style: italic; }
 .ph-activity-body { min-width: 0; display: flex; flex-direction: column; gap: 5px; padding-bottom: 2px; }
 .ph-activity-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: var(--pmono); font-size: 10.5px; color: var(--ptext3); text-transform: uppercase; letter-spacing: 0.06em; }
-.ph-activity-meta b { color: var(--pacc); font-weight: 600; }
+.ph-activity-actor { display: inline-flex; align-items: center; min-height: 18px; padding: 1px 7px; border-radius: 4px; border: 1px solid var(--pborder); background: var(--psurf2); color: var(--ptext2); font-weight: 700; }
+.ph-activity-actor.heartbeat { color: var(--pacc); background: var(--pacc-soft); border-color: var(--pacc-line); }
+.ph-activity-actor.sulla { color: var(--ptext); }
+.ph-activity-actor.human { color: var(--pgreen); border-color: color-mix(in srgb, var(--pgreen) 45%, transparent); }
+.ph-activity-actor.workbench { color: var(--pamber); border-color: color-mix(in srgb, var(--pamber) 45%, transparent); }
 .ph-activity-task { display: block; color: var(--ptext); font-size: 14px; font-weight: 600; line-height: 1.4; transition: color 0.12s ease; }
 .ph-activity-text { display: -webkit-box; max-width: 780px; overflow: hidden; color: var(--ptext2); font-size: 13px; line-height: 1.55; white-space: pre-wrap; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 
