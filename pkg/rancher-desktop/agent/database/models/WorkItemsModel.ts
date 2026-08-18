@@ -76,6 +76,8 @@ export interface WorkTaskRecord {
   created_at:    string;
   updated_at:    string | null;
   last_moved_at: string;
+  created_by:    string | null;
+  last_moved_by: string | null;
   completed_at:  string | null;
   archived:      boolean;
 }
@@ -112,7 +114,7 @@ export interface WorkActivityRecord {
   activity_at:   string;               // the moment this event happened (sort key)
   created_at:    string;               // alias of activity_at, kept for renderers that format it
   body:          string | null;        // comment text; null for lifecycle events
-  author:        string | null;        // comment author; null for lifecycle events
+  author:        string | null;        // comment author or lifecycle actor
   task_id:       string | null;        // null for epic/project-level events
   task_title:    string | null;
   task_status:   string;               // status of the subject item (task, or epic/project)
@@ -207,6 +209,7 @@ export interface UpsertTaskInput {
   position?:      number;
   source?:        string | null;
   source_ref?:    string | null;
+  actor?:         string;
 }
 
 export interface UpdateTaskInput {
@@ -224,6 +227,7 @@ export interface UpdateTaskInput {
   position?:      number;
   source?:        string | null;
   source_ref?:    string | null;
+  actor?:         string;
 }
 
 export interface AddCommentInput {
@@ -231,6 +235,7 @@ export interface AddCommentInput {
   task_id:  string;
   body:     string;
   author?:  string;
+  actor?:   string;
 }
 
 export interface ListOpts {
@@ -403,6 +408,8 @@ export class WorkItemsModel {
           created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at      TIMESTAMPTZ,
           last_moved_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+          created_by      TEXT,
+          last_moved_by   TEXT,
           completed_at    TIMESTAMPTZ,
           archived        BOOLEAN     NOT NULL DEFAULT false
         )
@@ -768,8 +775,8 @@ export class WorkItemsModel {
       `INSERT INTO ${ WorkItemsModel.TASKS }
          (id, project_id, epic_id, parent_id, slug, title, description, status,
           priority, due_at, github_issue, assignee, labels, position, source,
-          source_ref, completed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          source_ref, created_by, completed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
        RETURNING *`,
       [
         id,
@@ -788,6 +795,7 @@ export class WorkItemsModel {
         input.position ?? 0,
         input.source ?? null,
         input.source_ref ?? null,
+        input.actor ?? 'sulla',
         isClosedStatus(status) ? new Date().toISOString() : null,
       ],
     );
@@ -818,6 +826,7 @@ export class WorkItemsModel {
           position:     input.position,
           source:       input.source,
           source_ref:   input.source_ref,
+          actor:        input.actor,
         })) ?? existing[0];
       }
     }
@@ -864,7 +873,10 @@ export class WorkItemsModel {
       assign('completed_at', isClosedStatus(changes.status) ? new Date().toISOString() : null);
     }
 
-    if (moved) setClauses.push('last_moved_at = now()');
+    if (moved) {
+      setClauses.push('last_moved_at = now()');
+      assign('last_moved_by', changes.actor ?? 'sulla');
+    }
     if (setClauses.length === 1) return existing;
 
     values.push(id);
@@ -910,7 +922,7 @@ export class WorkItemsModel {
       `INSERT INTO ${ WorkItemsModel.COMMENTS } (id, task_id, body, author)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [id, input.task_id, input.body, input.author ?? 'agent'],
+      [id, input.task_id, input.body, input.author ?? input.actor ?? 'sulla'],
     );
     return rows[0];
   }
@@ -930,9 +942,8 @@ export class WorkItemsModel {
    * newest first. Synthesized via UNION over the project tables' timestamp columns
    * (no audit table), so each item yields at most one row per event kind.
    *
-   * Bind params: $1 = projectId (or null = all), $2 = author filter (or null),
-   * $3 = row limit. The author filter only applies to comments; when set, the
-   * lifecycle events (which have no recorded actor) are excluded.
+   * Bind params: $1 = projectId (or null = all), $2 = author/actor filter (or null),
+   * $3 = row limit. The author filter applies to the unified author/actor field.
    */
   static async listRecentActivity(opts: ListActivityOpts = {}): Promise<WorkActivityRecord[]> {
     const { PROJECTS, EPICS, TASKS, COMMENTS } = WorkItemsModel;
@@ -948,7 +959,7 @@ export class WorkItemsModel {
           'comment'     AS kind,
           c.created_at  AS activity_at,
           c.body        AS body,
-          c.author      AS author,
+          COALESCE(c.author, 'sulla') AS author,
           t.id          AS task_id,
           t.title       AS task_title,
           t.status      AS task_status,
@@ -968,24 +979,26 @@ export class WorkItemsModel {
 
         UNION ALL
         -- task created
-        SELECT 'tc:' || t.id, 'task_created', t.created_at, NULL, NULL,
+        SELECT 'tc:' || t.id, 'task_created', t.created_at, NULL, COALESCE(t.created_by, 'sulla'),
                t.id, t.title, t.status, t.priority,
                p.id, p.title, p.slug, e.id, e.title
         FROM ${ TASKS } t
         JOIN ${ PROJECTS } p ON p.id = t.project_id
         LEFT JOIN ${ EPICS } e ON e.id = t.epic_id AND e.archived = false
-        WHERE t.archived = false AND p.archived = false AND $2::text IS NULL
+        WHERE t.archived = false AND p.archived = false
+          AND ($2::text IS NULL OR LOWER(COALESCE(t.created_by, 'sulla')) = LOWER($2))
           AND ($1::text IS NULL OR t.project_id = $1)
 
         UNION ALL
         -- task status / board move
-        SELECT 'tm:' || t.id, 'task_moved', t.last_moved_at, NULL, NULL,
+        SELECT 'tm:' || t.id, 'task_moved', t.last_moved_at, NULL, COALESCE(t.last_moved_by, 'sulla'),
                t.id, t.title, t.status, t.priority,
                p.id, p.title, p.slug, e.id, e.title
         FROM ${ TASKS } t
         JOIN ${ PROJECTS } p ON p.id = t.project_id
         LEFT JOIN ${ EPICS } e ON e.id = t.epic_id AND e.archived = false
-        WHERE t.archived = false AND p.archived = false AND $2::text IS NULL
+        WHERE t.archived = false AND p.archived = false
+          AND ($2::text IS NULL OR LOWER(COALESCE(t.last_moved_by, 'sulla')) = LOWER($2))
           AND t.last_moved_at IS DISTINCT FROM t.created_at
           AND ($1::text IS NULL OR t.project_id = $1)
 

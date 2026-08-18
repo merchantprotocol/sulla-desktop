@@ -36,6 +36,7 @@ export class CreateTaskWorker extends BaseTool {
         github_issue: input.github_issue,
         position:     typeof input.position === 'number' ? input.position : undefined,
         source:       input.source || 'agent',
+        actor:        input.actor || 'sulla',
       });
 
       return {

@@ -38,6 +38,7 @@ export class UpdateTaskWorker extends BaseTool {
         github_issue: input.github_issue === '' ? null : input.github_issue,
         position:     typeof input.position === 'number' ? input.position : undefined,
         source:       input.source,
+        actor:        input.actor || 'sulla',
       });
       if (!updated) return { successBoolean: false, responseString: `No task found with id: ${ id }` };
 

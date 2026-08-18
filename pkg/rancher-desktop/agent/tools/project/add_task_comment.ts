@@ -21,7 +21,7 @@ export class AddTaskCommentWorker extends BaseTool {
         body,
         // Direct Sulla chat is the default author for tool-driven comments;
         // Heartbeat should pass author="heartbeat"; the desktop UI stamps "human".
-        author:  input.author || 'sulla',
+        author:  input.author || input.actor || 'sulla',
       });
       return {
         successBoolean: true,
