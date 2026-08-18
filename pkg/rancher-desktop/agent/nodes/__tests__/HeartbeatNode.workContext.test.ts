@@ -8,6 +8,7 @@ const getProjectMock: any = jest.fn();
 const getEpicMock: any = jest.fn();
 const getTaskMock: any = jest.fn();
 const listCommentsMock: any = jest.fn();
+const latestCommentAtByTaskMock: any = jest.fn();
 
 jest.unstable_mockModule('../BaseNode', () => ({
   BaseNode: class MockBaseNode {
@@ -27,6 +28,7 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
     getEpic:      getEpicMock,
     getTask:      getTaskMock,
     listComments: listCommentsMock,
+    latestCommentAtByTask: latestCommentAtByTaskMock,
   },
 }));
 
@@ -69,6 +71,8 @@ describe('HeartbeatNode Projects context injection', () => {
     getEpicMock.mockReset();
     getTaskMock.mockReset();
     listCommentsMock.mockReset();
+    latestCommentAtByTaskMock.mockReset();
+    latestCommentAtByTaskMock.mockResolvedValue(new Map());
 
     ensureTablesMock.mockResolvedValue(undefined);
     buildProjectReportMock.mockResolvedValue('# Project report\n\n## Next up\n- [critical] Hydrate me (id task1)');
@@ -471,6 +475,8 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
 
   beforeEach(() => {
     listTasksMock.mockReset();
+    latestCommentAtByTaskMock.mockReset();
+    latestCommentAtByTaskMock.mockResolvedValue(new Map());
   });
 
   it('returns empty when the lane is healthy (single fresh in_progress, nothing off-lane)', async() => {
@@ -572,6 +578,40 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     expect(digest).toContain('child1');
     expect(digest).toContain('child2');
     expect(digest).not.toContain('parent1');
+  });
+
+  it('does not flag a leaf task as STALE when a recent comment postdates last_moved_at (xoV6)', async() => {
+    listTasksMock
+      .mockResolvedValueOnce([ // in_progress — one leaf, stale by last_moved_at alone
+        { id: 'task1', project_id: 'proj1', title: 'Progressed via comments', parent_id: null, last_moved_at: staleIso },
+      ])
+      .mockResolvedValueOnce([]) // blocked
+      .mockResolvedValueOnce([ // heartbeat in_progress (lane-drift probe)
+        { id: 'task1', project_id: 'proj1', title: 'Progressed via comments', parent_id: null, last_moved_at: staleIso },
+      ]);
+    // A fresh comment counts as movement — staleness uses GREATEST(last_moved_at, latest comment).
+    latestCommentAtByTaskMock.mockResolvedValue(new Map([['task1', nowIso]]));
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
+
+    expect(digest).not.toContain('STALE');
+    expect(digest).toBe('');
+  });
+
+  it('still flags a leaf task as STALE when its latest comment is also old (xoV6)', async() => {
+    listTasksMock
+      .mockResolvedValueOnce([
+        { id: 'task1', project_id: 'proj1', title: 'Truly abandoned', parent_id: null, last_moved_at: staleIso },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    latestCommentAtByTaskMock.mockResolvedValue(new Map([['task1', staleIso]]));
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ projectId: 'proj1' });
+
+    expect(digest).toContain('STALE: task task1');
   });
 });
 
