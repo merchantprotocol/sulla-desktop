@@ -23,4 +23,22 @@ describe('heartbeatPrompt', () => {
     // Unassigned work is claimed by self-assigning into the lane.
     expect(heartbeatPrompt).toContain('self-assign');
   });
+
+  describe('The Prospector doctrine', () => {
+    it('creates proactive work when the board runs dry without reintroducing one-item caps', () => {
+      expect(heartbeatPrompt).toMatch(/Prospector/i);
+      expect(heartbeatPrompt).toMatch(/create-and-do/i);
+      expect(heartbeatPrompt).toMatch(/goal gap-mining/i);
+      expect(heartbeatPrompt).toMatch(/QA prospecting/i);
+      expect(heartbeatPrompt).toMatch(/friction mining/i);
+      expect(heartbeatPrompt).toMatch(/Debt & drift sweep/i);
+      expect(heartbeatPrompt).toMatch(/DECISION-type parked proposal/i);
+
+      expect(heartbeatPrompt).not.toMatch(/pick[- ]one/i);
+      expect(heartbeatPrompt).not.toMatch(/one[- ]move/i);
+      expect(heartbeatPrompt).not.toMatch(/\b(?:do|ship|handle|take)\s+one\s+item\s+per\s+wake\b/i);
+      expect(heartbeatPrompt).not.toMatch(/Cycle Budget/i);
+      expect(heartbeatPrompt).not.toMatch(/\bSTOP\b/);
+    });
+  });
 });
