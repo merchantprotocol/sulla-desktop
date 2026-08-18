@@ -24,7 +24,7 @@ describe('WorkItemsModel', () => {
       task_id:        'task-1',
       body:           'Moved the operator task forward.',
       author:         'Heartbeat',
-      task_title:     'Improve workboard continuity',
+      task_title:     'Improve Projects continuity',
       task_status:    'in_progress',
       task_priority:  'high',
       project_id:     'project-1',
@@ -51,7 +51,7 @@ describe('WorkItemsModel', () => {
     );
     expect(rows[0]).toMatchObject({
       kind:          'comment',
-      task_title:    'Improve workboard continuity',
+      task_title:    'Improve Projects continuity',
       project_title: 'Sulla Desktop',
     });
   });

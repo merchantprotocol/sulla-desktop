@@ -1,6 +1,6 @@
 # PostgreSQL
 
-Sulla's primary data store. Container `sulla_postgres` on port **30116** (host) inside Lima. Workflow, calendar, chat, settings, credentials, observations, rules, and work items. **Critical safety section below — some tables will corrupt Sulla if you write to them directly.**
+Sulla's primary data store. Container `sulla_postgres` on port **30116** (host) inside Lima. Workflow, calendar, chat, settings, credentials, observations, rules, and project items. **Critical safety section below — some tables will corrupt Sulla if you write to them directly.**
 
 ## Connection
 
@@ -34,7 +34,7 @@ sulla pg/pg_queryall '{
 ```
 Params are typed `string[]` in manifests but `pg.Pool` coerces to the column type at bind.
 
-## Tables (verified live — plus work items from migration 0044)
+## Tables (verified live — plus project items from migration 0044)
 
 | Table | Purpose | Safe to read? | Safe to write? |
 |-------|---------|---------------|----------------|

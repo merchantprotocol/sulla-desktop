@@ -777,9 +777,9 @@ export class KnowledgeGraphModel {
       });
     };
 
-    push(metadata.taskId, 'task', 'Workboard task associated with this episode.', metadata.taskId ? [`task ${ metadata.taskId }`, `work task ${ metadata.taskId }`] : []);
-    push(metadata.epicId, 'epic', 'Workboard epic associated with this episode.', metadata.epicId ? [`epic ${ metadata.epicId }`] : []);
-    push(metadata.projectId, 'project', 'Workboard project associated with this episode.', metadata.projectId ? [`project ${ metadata.projectId }`] : []);
+    push(metadata.taskId, 'task', 'Projects task associated with this episode.', metadata.taskId ? [`task ${ metadata.taskId }`, `project task ${ metadata.taskId }`] : []);
+    push(metadata.epicId, 'epic', 'Projects epic associated with this episode.', metadata.epicId ? [`epic ${ metadata.epicId }`] : []);
+    push(metadata.projectId, 'project', 'Projects project associated with this episode.', metadata.projectId ? [`project ${ metadata.projectId }`] : []);
     push(metadata.repo, 'repo', 'Repository touched or inspected during this episode.');
     push(metadata.githubIssue, 'issue', 'GitHub issue or PR associated with this episode.');
     push(metadata.commitSha, 'commit', 'Commit associated with this episode.');

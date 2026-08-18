@@ -1,7 +1,7 @@
 /**
  * WorkItemsModel — Projects → epics → tasks (+ comments) in PostgreSQL.
  *
- * This is the operator workboard. It is NOT the filesystem ProjectRegistry
+ * This is the operator Projects. It is NOT the filesystem ProjectRegistry
  * (those are PROJECT.md PRDs under ~/sulla/projects/). It is NOT CRM —
  * CRM belongs in Sulla Cloud. Rows here are the structured agenda:
  * what needs to be done, what stage it is in, last time it moved.
@@ -927,7 +927,7 @@ export class WorkItemsModel {
   /**
    * Unified reverse-chronological activity feed for the Projects area: comments,
    * newly created tasks/epics/projects, status/board moves, and metadata edits —
-   * newest first. Synthesized via UNION over the work tables' timestamp columns
+   * newest first. Synthesized via UNION over the project tables' timestamp columns
    * (no audit table), so each item yields at most one row per event kind.
    *
    * Bind params: $1 = projectId (or null = all), $2 = author filter (or null),

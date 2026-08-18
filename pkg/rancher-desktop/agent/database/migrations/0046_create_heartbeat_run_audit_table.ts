@@ -1,7 +1,7 @@
-// Durable heartbeat run-to-workboard audit trail.
+// Durable heartbeat run-to-Projects audit trail.
 //
 // Heartbeat cycles already emit an in-memory event buffer, but the operator
-// lane needs restart-proof evidence of which work item each run selected and
+// lane needs restart-proof evidence of which project item each run selected and
 // whether the run completed, blocked, failed, or aborted. Schema-only: rows are
 // populated at runtime by HeartbeatService.
 

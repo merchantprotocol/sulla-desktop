@@ -140,7 +140,7 @@ describe('HeartbeatService consecutive-failure escalation', () => {
     expect(svc.consecutiveFailures).toBe(3);
   });
 
-  it('records selected workboard task audit metadata on completed heartbeat runs', async() => {
+  it('records selected Projects task audit metadata on completed heartbeat runs', async() => {
     executeMock.mockImplementation((state: any) => {
       state.metadata.agent = {
         status:      'done',
@@ -148,7 +148,7 @@ describe('HeartbeatService consecutive-failure escalation', () => {
       };
       state.metadata.agentLoopCount = 2;
       state.metadata.heartbeatSelectedTaskId = 'WtS3';
-      state.metadata.heartbeatWorkboardSnapshot = {
+      state.metadata.heartbeatProjectsSnapshot = {
         taskId:       'WtS3',
         projectId:    'proj1',
         epicId:       'epic1',
@@ -169,7 +169,7 @@ describe('HeartbeatService consecutive-failure escalation', () => {
       cycleCount: 2,
       status:     'done',
       focus:      'Patched the run-to-task audit trail.',
-      workboard:  {
+      projects:  {
         selectedTaskId:           'WtS3',
         selectedTaskStatus:       'in_progress',
         selectedTaskAssignee:     'heartbeat',
