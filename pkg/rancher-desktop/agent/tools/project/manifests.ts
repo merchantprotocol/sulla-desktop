@@ -1,7 +1,7 @@
 import type { ToolManifest } from '../registry';
 
 /**
- * Work-item tools — Projects work-state in Postgres (the issue ledger
+ * Project-item tools — Projects project-state in Postgres (the issue ledger
  * behind the Projects view). Full CRUD across the hierarchy:
  *
  *   work_projects → work_epics → work_tasks (optional parent_id subtasks)
@@ -18,12 +18,12 @@ import type { ToolManifest } from '../registry';
 const STATUS_DESC = 'backlog | todo | in_progress | blocked | done | cancelled.';
 const PRIORITY_DESC = 'critical | high | medium | low.';
 
-export const workItemsToolManifests: ToolManifest[] = [
+export const projectToolManifests: ToolManifest[] = [
   // ── reads ────────────────────────────────────────────────────────────
   {
-    name:        'list_work_items',
-    description: 'List Projects work-state from Postgres: projects, epics, and/or tasks. Filter by kind, status, priority, project, epic, parent task, or assignee. Default kind=task shows open work. This is the structured agenda — not the filesystem PROJECT.md PRDs.',
-    category:    'work',
+    name:        'list_project_items',
+    description: 'List Projects project-state from Postgres: projects, epics, and/or tasks. Filter by kind, status, priority, project, epic, parent task, or assignee. Default kind=task shows open work. This is the structured agenda — not the filesystem PROJECT.md PRDs.',
+    category:    'project',
     schemaDef:   {
       kind:         { type: 'string', optional: true, description: 'What to list: "project", "epic", "task", or "all" (default "task").' },
       status:       { type: 'string', optional: true, description: `Filter by status: ${ STATUS_DESC } Omit for all non-archived.` },
@@ -36,23 +36,23 @@ export const workItemsToolManifests: ToolManifest[] = [
       limit:        { type: 'number', optional: true, description: 'Max rows per kind (default 50).' },
     },
     operationTypes: ['read'],
-    loader:         () => import('./list_work_items'),
+    loader:         () => import('./list_project_items'),
   },
   {
-    name:        'get_work_item',
-    description: 'Fetch one work item by id. Auto-detects project / epic / task. For a project, also returns its epics. For an epic, also returns its tasks. For a task, also returns comments and any subtasks.',
-    category:    'work',
+    name:        'get_project_item',
+    description: 'Fetch one project item by id. Auto-detects project / epic / task. For a project, also returns its epics. For an epic, also returns its tasks. For a task, also returns comments and any subtasks.',
+    category:    'project',
     schemaDef:   {
-      id:   { type: 'string', description: 'Work-item id (tiny id from list_work_items / create_*).' },
+      id:   { type: 'string', description: 'Project item id (tiny id from list_project_items / create_*).' },
       kind: { type: 'string', optional: true, description: 'Optional hint: "project", "epic", or "task". Omit to search all three.' },
     },
     operationTypes: ['read'],
-    loader:         () => import('./get_work_item'),
+    loader:         () => import('./get_project_item'),
   },
   {
-    name:        'search_work_items',
+    name:        'search_project_items',
     description: 'Keyword search across project / epic / task titles and descriptions. Use before creating a new item to avoid duplicates, or to find work related to the current turn.',
-    category:    'work',
+    category:    'project',
     schemaDef:   {
       query:            { type: 'string', description: 'Search keyword or phrase.' },
       kind:             { type: 'string', optional: true, description: 'Limit to "project", "epic", or "task". Omit to search all three.' },
@@ -60,12 +60,12 @@ export const workItemsToolManifests: ToolManifest[] = [
       include_archived: { type: 'boolean', optional: true, description: 'When true, also search archived rows. Default false.' },
     },
     operationTypes: ['read'],
-    loader:         () => import('./search_work_items'),
+    loader:         () => import('./search_project_items'),
   },
   {
     name:        'list_task_comments',
     description: 'List the comment thread on a task, oldest first. Comments are append-only history (progress notes, blockers, decisions).',
-    category:    'work',
+    category:    'project',
     schemaDef:   {
       task_id: { type: 'string', description: 'Task id whose comments to list.' },
     },
@@ -73,9 +73,9 @@ export const workItemsToolManifests: ToolManifest[] = [
     loader:         () => import('./list_task_comments'),
   },
   {
-    name:        'work_report',
+    name:        'project_report',
     description: 'Standup report: what got completed in the last N hours (default 24) and the top open tasks to do next, with project/epic context. Optionally scope to one project or assignee. Use this for a quick "what moved and what\'s next" pulse.',
-    category:    'work',
+    category:    'project',
     schemaDef:   {
       hours:      { type: 'number', optional: true, description: 'Look-back window in hours for completed work (default 24).' },
       next_limit: { type: 'number', optional: true, description: 'How many upcoming tasks to list (default 15).' },
@@ -83,14 +83,14 @@ export const workItemsToolManifests: ToolManifest[] = [
       assignee:   { type: 'string', optional: true, description: 'Limit to one assignee (e.g. heartbeat, sulla, human).' },
     },
     operationTypes: ['read'],
-    loader:         () => import('./work_report'),
+    loader:         () => import('./project_report'),
   },
 
   // ── projects ─────────────────────────────────────────────────────────
   {
     name:        'create_project',
-    description: 'Create a NEW work project (top of the operator agenda). Always inserts a new row (a unique slug is resolved automatically). Use update_project to change an existing one. Distinct from the filesystem PROJECT.md PRD tooling.',
-    category:    'work',
+    description: 'Create a NEW project (top of the operator agenda). Always inserts a new row (a unique slug is resolved automatically). Use update_project to change an existing one. Distinct from the filesystem PROJECT.md PRD tooling.',
+    category:    'project',
     schemaDef:   {
       title:          { type: 'string', description: 'Short project name.' },
       slug:           { type: 'string', optional: true, description: 'Stable slug (e.g. operator-transition). Auto-derived from title when omitted; suffixed if taken.' },
@@ -107,8 +107,8 @@ export const workItemsToolManifests: ToolManifest[] = [
   },
   {
     name:        'update_project',
-    description: 'Update an existing work project in place (by id). Only the fields you pass change. Status / priority / due_at changes stamp last_moved_at.',
-    category:    'work',
+    description: 'Update an existing project in place (by id). Only the fields you pass change. Status / priority / due_at changes stamp last_moved_at.',
+    category:    'project',
     schemaDef:   {
       id:             { type: 'string', description: 'Project id to update.' },
       title:          { type: 'string', optional: true, description: 'New project name.' },
@@ -129,7 +129,7 @@ export const workItemsToolManifests: ToolManifest[] = [
   {
     name:        'create_epic',
     description: 'Create a NEW epic under a project (the major chunks of a project). Always inserts a new row (unique slug within the project). Use update_epic to change an existing one.',
-    category:    'work',
+    category:    'project',
     schemaDef:   {
       project_id:  { type: 'string', description: 'Parent project id.' },
       title:       { type: 'string', description: 'Short epic name.' },
@@ -146,7 +146,7 @@ export const workItemsToolManifests: ToolManifest[] = [
   {
     name:        'update_epic',
     description: 'Update an existing epic in place (by id). Only the fields you pass change. Pass project_id to move it to another project; pass position to reorder it inside the project. Status / priority / due_at / project moves stamp last_moved_at.',
-    category:    'work',
+    category:    'project',
     schemaDef:   {
       id:          { type: 'string', description: 'Epic id to update.' },
       project_id:  { type: 'string', optional: true, description: 'Move to another project id.' },
@@ -166,7 +166,7 @@ export const workItemsToolManifests: ToolManifest[] = [
   {
     name:        'create_task',
     description: 'Create a NEW task (issue) under an epic. Always inserts a new row. Pass parent_id to nest a subtask under another task. Use update_task to change an existing one.',
-    category:    'work',
+    category:    'project',
     schemaDef:   {
       epic_id:      { type: 'string', description: 'Parent epic id.' },
       title:        { type: 'string', description: 'Task title.' },
@@ -186,7 +186,7 @@ export const workItemsToolManifests: ToolManifest[] = [
   {
     name:        'update_task',
     description: 'Update an existing task in place (by id). Only the fields you pass change. This is also the MOVE op: pass epic_id to move it to another epic, status to change its board column, or position to reorder inside its epic. Moving status/priority/assignee/due_at/parent_id/epic_id stamps last_moved_at; done/cancelled also stamps completed_at.',
-    category:    'work',
+    category:    'project',
     schemaDef:   {
       id:           { type: 'string', description: 'Task id to update.' },
       epic_id:      { type: 'string', optional: true, description: 'Move to another epic id.' },
@@ -209,7 +209,7 @@ export const workItemsToolManifests: ToolManifest[] = [
   {
     name:        'add_task_comment',
     description: 'Add a note/comment on a task (GitHub-issue style). Append-only history — never edited or hard-deleted. Use for progress notes, blockers, and decisions; use update_task to change status/priority/due date. Author defaults to "sulla"; pass author="human" for the operator.',
-    category:    'work',
+    category:    'project',
     schemaDef:   {
       task_id: { type: 'string', description: 'Task id to comment on.' },
       body:    { type: 'string', description: 'Comment markdown/text.' },
@@ -221,14 +221,14 @@ export const workItemsToolManifests: ToolManifest[] = [
 
   // ── archive (soft-delete, cascades down) ─────────────────────────────
   {
-    name:        'archive_work_item',
-    description: 'Soft-archive a project, epic, or task by id. Never hard-deleted. Archiving a project also archives its epics + tasks; archiving an epic also archives its tasks. Recoverable via get_work_item / search with include_archived.',
-    category:    'work',
+    name:        'archive_project_item',
+    description: 'Soft-archive a project, epic, or task by id. Never hard-deleted. Archiving a project also archives its epics + tasks; archiving an epic also archives its tasks. Recoverable via get_project_item / search with include_archived.',
+    category:    'project',
     schemaDef:   {
-      id:   { type: 'string', description: 'Work-item id to archive.' },
+      id:   { type: 'string', description: 'Project item id to archive.' },
       kind: { type: 'string', optional: true, description: 'Optional hint: "project", "epic", or "task". Omit to search all three.' },
     },
     operationTypes: ['update'],
-    loader:         () => import('./archive_work_item'),
+    loader:         () => import('./archive_project_item'),
   },
 ];

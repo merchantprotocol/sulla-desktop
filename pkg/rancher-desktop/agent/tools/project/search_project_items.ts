@@ -4,7 +4,7 @@ import { BaseTool, ToolResponse } from '../base';
 /**
  * Keyword search across projects, epics, and tasks.
  */
-export class SearchWorkItemsWorker extends BaseTool {
+export class SearchProjectItemsWorker extends BaseTool {
   name = '';
   description = '';
 
@@ -19,7 +19,7 @@ export class SearchWorkItemsWorker extends BaseTool {
       await WorkItemsModel.ensureTables();
       const rows = await WorkItemsModel.search({ query, kind, limit, includeArchived });
       if (rows.length === 0) {
-        return { successBoolean: true, responseString: `No work items matched "${ query }".` };
+        return { successBoolean: true, responseString: `No project items matched "${ query }".` };
       }
       const lines = rows.map(r =>
         `[${ r.kind } ${ r.id }] ${ r.priority } ${ r.status } ${ r.title }${ r.archived ? ' (archived)' : '' }`,
@@ -29,7 +29,7 @@ export class SearchWorkItemsWorker extends BaseTool {
         responseString: `${ rows.length } match(es) for "${ query }":\n${ lines.join('\n') }`,
       };
     } catch (err: any) {
-      return { successBoolean: false, responseString: `Search work items failed: ${ err?.message }` };
+      return { successBoolean: false, responseString: `Search project items failed: ${ err?.message }` };
     }
   }
 }

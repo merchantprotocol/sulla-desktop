@@ -242,7 +242,7 @@
       </div>
     </template>
 
-    <!-- Projects: the issue-ledger workboard (Postgres work_projects/epics/tasks) -->
+    <!-- Projects: the issue-ledger project state (Postgres work_projects/epics/tasks) -->
     <template v-else-if="tabMode === 'projects'">
       <div class="flex-1 min-h-0 overflow-hidden">
         <ProjectsHome />

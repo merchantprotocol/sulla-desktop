@@ -416,12 +416,12 @@ export function resolveSullaLedgerDir(): string {
 }
 
 /**
- * Seed the outcome-ledger scaffold (generic templates only — per the
+ * Seed the legacy outcome-ledger scaffold (generic templates only — per the
  * no-user-data-in-shipped-code rule, nothing install-specific is written).
- * The ledger is the operator's single work-state store: the soul defines the
- * contract, the observation writer maintains it each turn, the heartbeat
- * reads it each cycle, and ledger/scoreboard measures it. Idempotent: only
- * missing files are created; user content is never overwritten.
+ * The ledger is historical archive/readout content. Live agenda and audit
+ * state now live in Projects project-state through the Sulla CLI project
+ * tools. Idempotent: only missing files are created; user content is never
+ * overwritten.
  */
 function seedLedgerDefaults(): void {
   const dir = resolveSullaLedgerDir();
@@ -430,29 +430,20 @@ function seedLedgerDefaults(): void {
   const templates: Array<{ filename: string; content: string }> = [
     {
       filename: 'LEDGER.md',
-      content:  `# Outcome Ledger — Governing Document
+      content:  `# Outcome Ledger — Historical Archive
 
-This is the operator's agenda and record — the ONE work-state store. Every autonomous cycle starts here: pick the top WORKING item, move it, write the outcome back.
+This file is not the live agenda.
 
-## Buckets
-| Bucket | Meaning | Lives in |
-|---|---|---|
-| WORKING | In motion now, or staged at a gate | this file + its goal file |
-| SHOULD | Committed — has an owner and a definition of done | goals/ |
-| WANT / MIGHT | Valuable-not-committed / speculative | this file, Backlog section |
-| DONE | Shipped, outcome recorded | OUTCOMES.md |
+Live project-state lives in Projects, backed by desktop Postgres and accessed through the Sulla CLI project tools:
 
-## Aging rules
-- WORKING untouched 7 days -> flag in weekly review: unblock, demote, or kill.
-- WANT untouched 30 days -> MIGHT. MIGHT untouched 90 days -> archive with one line of why.
-- Every cycle writes back: an outcome in OUTCOMES.md or a changed next-action line here. A cycle that changes nothing was an observer cycle.
+\`\`\`bash
+sulla project/project_report '{}'
+sulla project/list_project_items '{"kind":"task","limit":20}'
+\`\`\`
 
-## WORKING
+Keep this file only as a historical archive/readout. Do not use it as a parallel project-management system.
 
-| Item | Goal | State | Next action | Gate? |
-|---|---|---|---|---|
-
-## Backlog (WANT / MIGHT)
+## Archive Notes
 
 `,
     },
@@ -474,7 +465,7 @@ One line per gate-free autonomous action: date — action — why — undo path.
     },
     {
       filename: path.join('goals', 'README.md'),
-      content:  `One file per goal: outcome metric, definition of done, epics with tasks, and a dated log. Referenced from LEDGER.md WORKING rows.
+      content:  `Legacy goal notes may live here for historical reference. Live projects, epics, tasks, comments, and status live in Projects through the Sulla CLI project tools.
 `,
     },
   ];
@@ -559,7 +550,7 @@ export async function bootstrapSullaHome(): Promise<void> {
   fs.mkdirSync(resolveSullaUserRulesDir(), { recursive: true });
   seedGlobalRuleDefaults();
 
-  // Outcome ledger — the operator's single work-state store (generic
-  // templates only; user content is never overwritten).
+  // Legacy outcome ledger scaffold (generic templates only; user content is
+  // never overwritten). Live project-state is Projects/Postgres.
   seedLedgerDefaults();
 }

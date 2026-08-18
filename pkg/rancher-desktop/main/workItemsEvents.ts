@@ -1,5 +1,5 @@
 /**
- * Work-items IPC — bridge from the renderer to the Postgres workboard:
+ * Work-items IPC — bridge from the renderer to the Postgres Projects:
  * work_projects → work_epics → work_tasks → work_task_comments.
  *
  * Backs the Projects view (ProjectsHome.vue / useProjects.ts). The renderer

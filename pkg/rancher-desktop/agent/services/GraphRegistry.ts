@@ -829,9 +829,9 @@ Your ONLY jobs:
 3. If something important should update an identity file at ~/sulla/identity/,
    read and update that specific file with write_file.
 
-4. Maintain the WORKBOARD (Postgres work_projects / work_epics / work_tasks —
-   the agent's single work-state store). From THIS conversation only, extract:
-   - Commitments made ("I'll build X", "next step is Y") -> search_work_items
+4. Maintain the WORKBOARD (Postgres project_projects / work_epics / work_tasks —
+   the agent's single project-state store). From THIS conversation only, extract:
+   - Commitments made ("I'll build X", "next step is Y") -> search_project_items
      first; update_task the existing row or create_task if none matches.
      Never invent a parallel markdown task list.
    - Outcomes shipped (something merged, pushed, filed, fixed, verified,
@@ -841,7 +841,7 @@ Your ONLY jobs:
      update_task the matching row (blocked -> in_progress / done) and comment.
    ~/sulla/ledger/ is a historical archive — do not write LEDGER.md / OUTCOMES.md.
    Skip entirely when the conversation contains no commitment, outcome, or
-   gate change — most turns need NO workboard write.
+   gate change — most turns need NO Projects write.
 
 When saving new observations, include why certain decisions were made (not just what). Like:
 

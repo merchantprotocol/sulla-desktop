@@ -310,7 +310,7 @@ describe('KnowledgeGraphModel', () => {
       project: { title: 'Sulla Desktop', aliases: ['sulla-desktop'] },
       event:   { title: 'Rebased episodic scribe onto main', summary: 'Writer half now sits on d6eed29ea.' },
       lessons: [{ title: 'Rebase isolated worktrees, never the dirty primary checkout' }],
-      blockers: [{ title: 'Primary checkout is dirty on feat/projects-workboard' }],
+      blockers: [{ title: 'Primary checkout is dirty on feat/projects-state' }],
       entities: [{ title: 'EpisodicScribe' }],
       reinforcePairs: [['Sulla Desktop', 'EpisodicScribe']],
     });

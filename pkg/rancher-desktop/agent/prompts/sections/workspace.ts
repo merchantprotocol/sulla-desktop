@@ -71,7 +71,7 @@ ${ sullaHome }/
 │   ├── business/               # {identity.md, goals.md}
 │   ├── world/                  # {identity.md, goals.md}
 │   └── agent/                  # {identity.md, goals.md}
-├── projects/                   # PRDs / workspaces (agenda is Projects work-state, not these files)
+├── projects/                   # PRDs / workspaces (agenda is Projects project-state, not these files)
 ├── logs/                       # Execution logs (playbook-debug.log, etc.)
 ├── conversations/              # Conversation history
 ├── captures/                   # Capture Studio recordings

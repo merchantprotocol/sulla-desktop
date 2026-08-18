@@ -412,7 +412,7 @@ export interface IpcMainInvokeEvents {
   'workflow-db-get':      (workflowId: string) => any;
   'workflow-history-get': (workflowId: string, limit?: number) => { id: number; workflowId: string; changedBy: string | null; changeReason: string | null; createdAt: string; definitionBefore: unknown; definitionAfter: unknown }[];
 
-  // Work-items workboard (Postgres): projects → epics → tasks (+ comments).
+  // Work-items Projects (Postgres): projects → epics → tasks (+ comments).
   // Full CRUD bridge backing the Projects view (ProjectsHome.vue).
   'work-items:board':    () => {
     projects: import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord[];

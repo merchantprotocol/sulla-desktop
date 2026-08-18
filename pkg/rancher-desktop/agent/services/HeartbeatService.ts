@@ -40,7 +40,7 @@ export interface HeartbeatStatus {
   uptimeMs:         number;
 }
 
-interface HeartbeatWorkboardAudit {
+interface HeartbeatProjectsAudit {
   selectedTaskId?: string;
   selectedProjectId?: string;
   selectedEpicId?: string | null;
@@ -330,7 +330,7 @@ export class HeartbeatService {
       const agentMeta = (state.metadata as any).agent || {};
       const status = agentMeta.status || 'unknown';
       const loopCount = (state.metadata as any).agentLoopCount || 0;
-      const workboardAudit = this.buildWorkboardAudit(state);
+      const projectsAudit = this.buildProjectsAudit(state);
       void this.recordRunAudit({
         runId,
         startedAt,
@@ -341,7 +341,7 @@ export class HeartbeatService {
         statusNote:    agentMeta.status_note || null,
         blockerReason: agentMeta.blocker_reason || null,
         cycleCount:    loopCount,
-        ...workboardAudit,
+        ...projectsAudit,
       });
       this.recordEvent('heartbeat_completed', `Completed in ${ Math.round(durationMs / 1000) }s — ${ loopCount } cycles, status: ${ status }`, {
         durationMs,
@@ -349,7 +349,7 @@ export class HeartbeatService {
           cycleCount: loopCount,
           status,
           focus:     agentMeta.status_note || '',
-          ...(workboardAudit ? { workboard: workboardAudit } : {}),
+          ...(projectsAudit ? { projects: projectsAudit } : {}),
         },
       });
       console.log('[HeartbeatService] Heartbeat graph execution completed');
@@ -393,9 +393,9 @@ export class HeartbeatService {
     }
   }
 
-  private buildWorkboardAudit(state: { metadata?: Record<string, any> }): HeartbeatWorkboardAudit | null {
+  private buildProjectsAudit(state: { metadata?: Record<string, any> }): HeartbeatProjectsAudit | null {
     const metadata = state.metadata || {};
-    const snapshot = metadata.heartbeatWorkboardSnapshot || {};
+    const snapshot = metadata.heartbeatProjectsSnapshot || {};
     const selectedTaskId = String(metadata.heartbeatSelectedTaskId || snapshot.taskId || '').trim();
     if (!selectedTaskId) return null;
 
@@ -421,7 +421,7 @@ export class HeartbeatService {
     blockerReason?: string | null;
     error?: string | null;
     cycleCount?: number | null;
-  } & HeartbeatWorkboardAudit): Promise<void> {
+  } & HeartbeatProjectsAudit): Promise<void> {
     await HeartbeatRunAuditModel.record(input);
   }
 

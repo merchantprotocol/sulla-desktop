@@ -14,9 +14,9 @@ import { resolveSullaLedgerDir } from '../../utils/sullaPaths';
  * human reads it as the trust-ratchet evidence — measured, not vibes.
  */
 
-const DATE_LINE = /^-\s*(\d{4}-\d{2}-\d{2})\s*—/;
+const DATE_LINE = /^-\s*(\d{4}-\d{2}-\d{2})(?:\s+[^—\n]+)?\s*—/;
 
-function countDatedLines(file: string, sinceDays: number): { total: number; recent: number; newestDate: string | null } {
+export function countDatedLines(file: string, sinceDays: number): { total: number; recent: number; newestDate: string | null } {
   let total = 0; let recent = 0; let newestDate: string | null = null;
   const cutoff = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
 
