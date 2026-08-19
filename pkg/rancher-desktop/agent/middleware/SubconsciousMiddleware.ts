@@ -312,8 +312,9 @@ export function runSubconsciousObservationWriters(
   launch('self-observer-agent', () => runIdentityObserver(state, 'agent'));
   launch('business-observer', () => runIdentityObserver(state, 'business'));
   launch('world-observer', () => runIdentityObserver(state, 'world'));
+  launch('environment-observer', () => runIdentityObserver(state, 'environment'));
 
-  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world) | messages: ${ state.messages.length }`);
+  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment) | messages: ${ state.messages.length }`);
 }
 
 // ============================================================================
