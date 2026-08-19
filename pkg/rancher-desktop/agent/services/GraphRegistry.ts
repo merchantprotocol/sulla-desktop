@@ -329,6 +329,24 @@ const HEARTBEAT_TOOLS: string[] = [
   'write_file',
 ];
 
+const SUBCONSCIOUS_ENVIRONMENT_ANCHOR = `## Sulla Desktop environment
+
+You are running inside Sulla Desktop. The Sulla CLI is the canonical tool
+surface for platform operations. Existing tools usually already exist, so do not
+invent new scripts, integrations, or workflow formats when a cataloged Sulla tool
+can do the job.
+
+Primary/operator agents can discover tools with:
+\`sulla meta/browse_tools '{"query":"..."}'\`
+
+Sulla's bundled docs describe the environment, tool catalog, workflows,
+functions, sub-agents, and common operating procedures. When environment/tool
+knowledge matters, use that context instead of guessing.
+
+This context does not expand your authority. If you are a subconscious observer,
+stay within your assigned prompt and allowed tools; observe and write memory only
+when your prompt says to do so.`;
+
 // ============================================================================
 // SUBCONSCIOUS MIDDLEWARE PROMPTS
 // ============================================================================
@@ -1446,7 +1464,7 @@ async function buildSubconsciousState(opts: {
       returnTo:             null,
 
       // Subconscious-specific fields
-      systemPrompt:     opts.systemPrompt,
+      systemPrompt:     `${ SUBCONSCIOUS_ENVIRONMENT_ANCHOR }\n\n${ opts.systemPrompt }`,
       allowedToolNames: opts.tools,
       temperature:      opts.temperature,
       format:           opts.format,
