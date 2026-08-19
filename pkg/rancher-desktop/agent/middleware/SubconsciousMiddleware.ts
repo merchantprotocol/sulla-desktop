@@ -1,20 +1,11 @@
 /**
  * SubconsciousMiddleware — pre-processing step before the main agent LLM call.
  *
- * Launches up to 6 parallel subconscious graphs:
+ * Launches up to 4 parallel subconscious graphs:
  * 1. Conversational Summarizer — compresses/deletes old messages
- * 2. Environment Brief Agent — broad recall: tells the primary agent which
- *    tools, capabilities, and environment systems apply (recallContext;
- *    formerly "memory recall"). Always runs on an actionable turn.
- * 3. Episodic Recall Agent — fast knowledge-graph neighborhood recall
- *    (episodicContext). Runs ALONGSIDE #2 (coexists, does not replace) on
- *    both user turns and the heartbeat.
- * 4. Security Conscience Agent — the read-only "angel on the shoulder" that
- *    reminds the primary agent of the rules and protections to honor before
- *    acting (securityContext). User turns only.
- * 5. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
- * 6. Observation Recall Agent — surfaces relevant observations for context injection
- * 7. Tool-Result Digester — compresses stale tool_result blocks into
+ * 2. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
+ * 3. Observation Recall Agent — surfaces relevant observations for context injection
+ * 4. Tool-Result Digester — compresses stale tool_result blocks into
  *    trusted-citation digests so the primary model re-reads citations
  *    instead of verbatim dumps
  *
@@ -88,8 +79,6 @@ const estimateTokensFromChars = (chars: number) => Math.ceil(Math.max(0, chars) 
 export interface SubconsciousMiddlewareOptions {
   /** Whether observations should be managed (false for planning agents) */
   includeObservations: boolean;
-  /** Optional recall variant — changes the recall prompt/tools for specific agents */
-  recallVariant?:      'default' | 'heartbeat';
   /**
    * Live progress sink. The awaited subconscious phase blocks the primary
    * agent (recall is never time-limited by design), so without a signal the
@@ -243,16 +232,12 @@ export async function runSubconsciousMiddleware(
     }
   }
 
-  const recallLen = ((state.metadata as any).recallContext || '').length;
-  const episodicLen = ((state.metadata as any).episodicContext || '').length;
   const obsRecallLen = ((state.metadata as any).observationContext || '').length;
-  const convRecallLen = ((state.metadata as any).conversationRecallContext || '').length;
-  const securityLen = ((state.metadata as any).securityContext || '').length;
-  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | episodicContext: ${ episodicLen } chars | observationContext: ${ obsRecallLen } chars | conversationRecallContext: ${ convRecallLen } chars | securityContext: ${ securityLen } chars`);
+  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | observationContext: ${ obsRecallLen } chars`);
 
   // Perf: total blocking prelude + per-sub-agent breakdown (which one dominates).
   const breakdown = Object.entries(timings).map(([n, ms]) => `${ n }=${ ms }ms`).join(', ');
-  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] recallChars=${ recallLen } episodicChars=${ episodicLen } obsChars=${ obsRecallLen } convChars=${ convRecallLen }`);
+  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] obsChars=${ obsRecallLen }`);
 }
 
 // ============================================================================

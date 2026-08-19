@@ -160,23 +160,15 @@ export class AgentNode extends BaseNode {
       }
     }
 
-    // Merge episodic recall + legacy/heartbeat recall + observation context into the last assistant message
+    // Merge observation context into the last assistant message
     // (or create one) so the primary agent sees it as information it already has.
     // Strip any blocks injected on previous turns / earlier loop iterations
     // first — this merge must replace, never accumulate (the mutated message
     // is persisted with the thread state).
     this.stripInjectedContextBlocks(state);
-    const episodicContext    = (state.metadata as any).episodicContext;
-    const recallContext       = (state.metadata as any).recallContext;
     const observationContext  = (state.metadata as any).observationContext;
-    const conversationRecallContext = (state.metadata as any).conversationRecallContext;
-    const securityContext     = (state.metadata as any).securityContext;
     const combinedContextParts: string[] = [];
-    if (episodicContext)   combinedContextParts.push(`<episodic_context>\n${ episodicContext }\n</episodic_context>`);
-    if (recallContext)      combinedContextParts.push(`<recall_context>\n${ recallContext }\n</recall_context>`);
     if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
-    if (conversationRecallContext) combinedContextParts.push(`<conversation_recall_context>\n${ conversationRecallContext }\n</conversation_recall_context>`);
-    if (securityContext)    combinedContextParts.push(`<security_context>\n${ securityContext }\n</security_context>`);
 
     if (combinedContextParts.length > 0) {
       const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;

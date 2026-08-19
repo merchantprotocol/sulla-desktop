@@ -7,7 +7,6 @@ import { BaseNode } from './BaseNode';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 import { throwIfAborted } from '../services/AbortService';
-import { GraphRegistry } from '../services/GraphRegistry';
 import { buildRoutinesDigest } from '../tools/workflow/routines_digest';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
 
@@ -117,7 +116,6 @@ export class HeartbeatNode extends BaseNode {
       const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
       await runSubconsciousMiddleware(state, {
         includeObservations: shouldInjectObservations,
-        recallVariant:       'heartbeat',
       });
     }
 
@@ -128,37 +126,12 @@ export class HeartbeatNode extends BaseNode {
       await this.injectTurnContext(state, { isHeartbeat: true });
     }
 
-    // Merge recall context into the last assistant message so the
-    // agent treats it as its own knowledge. Strip previously injected
-    // blocks first so the merge replaces rather than accumulates across
-    // turns and tool-loop iterations (the message is persisted).
+    // Strip previously injected context blocks so downstream merges replace
+    // rather than accumulate across turns and tool-loop iterations (the
+    // message is persisted).
     this.stripInjectedContextBlocks(state);
     if (!isToolCallLoop) {
       await this.injectHeartbeatProjectReport(state);
-    }
-    const recallContext = (state.metadata as any).recallContext;
-    if (recallContext) {
-      const recallBlock = `\n\n<recall_context>\n${ recallContext }\n</recall_context>`;
-      this.mergeHeartbeatContextBlock(state, recallBlock, 'recall');
-    }
-
-    // Merge episodic graph context so the heartbeat gets the SAME memory
-    // picture as a user turn (recall_context + episodic_context). Same
-    // merge-into-last-assistant pattern as recall above; stripInjectedContextBlocks
-    // already covers <episodic_context> so this replaces rather than accumulates.
-    const episodicContext = (state.metadata as any).episodicContext;
-    if (episodicContext) {
-      const episodicBlock = `\n\n<episodic_context>\n${ episodicContext }\n</episodic_context>`;
-      this.mergeHeartbeatContextBlock(state, episodicBlock, 'episodic');
-    }
-
-    // Merge unstuck context from a previous cycle's analysis (if any)
-    const unstuckContext = (state.metadata as any).unstuckContext;
-    if (unstuckContext) {
-      const unstuckBlock = `\n\n<unstuck_context>\nSpecialist agents analyzed why you got stuck and found these options:\n\n${ unstuckContext }\n</unstuck_context>`;
-      this.mergeHeartbeatContextBlock(state, unstuckBlock, 'unstuck');
-      // Clear after injection — consumed once
-      delete (state.metadata as any).unstuckContext;
     }
 
     // Inject the deterministic, zero-LLM routine-stewardship digest (issue
@@ -246,32 +219,6 @@ export class HeartbeatNode extends BaseNode {
 
     if (statusNote) {
       await this.updateAgentStatusNote(state, statusNote);
-    }
-
-    // ----------------------------------------------------------------
-    // 4b. POST-CYCLE UNSTUCK — if blocked or quick done, run analysis
-    // ----------------------------------------------------------------
-    const agentLoopCount = (state.metadata as any).agentLoopCount || 0;
-    const unstuckAttempts = (state.metadata as any).unstuckAttempts || 0;
-    const shouldRunUnstuck =
-      unstuckAttempts === 0 &&
-      (outcome.status === 'blocked' ||
-       (outcome.status === 'done' && agentLoopCount <= 2));
-
-    if (shouldRunUnstuck) {
-      (state.metadata as any).unstuckAttempts = 1;
-      await this.runUnstuckMiddleware(state);
-
-      // If unstuck agents found something, override status to continue
-      // so the graph routes back for another heartbeat cycle with fresh ideas
-      if ((state.metadata as any).unstuckContext) {
-        (state.metadata as any).agent = {
-          ...((state.metadata as any).agent || {}),
-          status: 'continue',
-        };
-        outcome.status = 'continue' as any;
-        state.metadata.cycleComplete = false;
-      }
     }
 
     // ----------------------------------------------------------------
@@ -902,82 +849,5 @@ export class HeartbeatNode extends BaseNode {
       msg?.metadata?.source !== 'heartbeat_project_report' &&
       msg?.metadata?.source !== 'heartbeat_work_context',
     );
-  }
-
-  // ======================================================================
-  // POST-CYCLE UNSTUCK MIDDLEWARE
-  // ======================================================================
-
-  /**
-   * Run two parallel subconscious agents when the heartbeat is stuck:
-   * 1. Research Agent — searches for concrete solutions using tools
-   * 2. Constraint Relaxation Agent — thinks creatively about alternatives
-   * Results are merged into state.metadata.unstuckContext for the next cycle.
-   */
-  private async runUnstuckMiddleware(state: BaseThreadState): Promise<void> {
-    const startTime = Date.now();
-    console.log('[HeartbeatNode:Unstuck] Launching research + relaxation agents in parallel');
-
-    try {
-      const [researchResult, relaxationResult] = await Promise.allSettled([
-        this.runUnstuckAgent(state, 'research'),
-        this.runUnstuckAgent(state, 'relaxation'),
-      ]);
-
-      const parts: string[] = [];
-
-      if (researchResult.status === 'fulfilled' && researchResult.value) {
-        parts.push('## Research Agent Findings\n\n' + researchResult.value);
-      } else if (researchResult.status === 'rejected') {
-        console.error('[HeartbeatNode:Unstuck] Research agent failed:', (researchResult).reason?.message || (researchResult).reason);
-      }
-
-      if (relaxationResult.status === 'fulfilled' && relaxationResult.value) {
-        parts.push('## Creative Alternatives\n\n' + relaxationResult.value);
-      } else if (relaxationResult.status === 'rejected') {
-        console.error('[HeartbeatNode:Unstuck] Relaxation agent failed:', (relaxationResult).reason?.message || (relaxationResult).reason);
-      }
-
-      if (parts.length > 0) {
-        (state.metadata as any).unstuckContext = parts.join('\n\n---\n\n');
-        console.log(`[HeartbeatNode:Unstuck] Complete in ${ Date.now() - startTime }ms | ${ parts.length } agent(s) contributed | ${ ((state.metadata as any).unstuckContext as string).length } chars`);
-      } else {
-        console.log(`[HeartbeatNode:Unstuck] No results from either agent in ${ Date.now() - startTime }ms`);
-      }
-    } catch (error) {
-      console.error('[HeartbeatNode:Unstuck] Middleware failed:', error instanceof Error ? error.message : error);
-    }
-  }
-
-  private async runUnstuckAgent(state: BaseThreadState, variant: 'research' | 'relaxation'): Promise<string | null> {
-    const creator = variant === 'research'
-      ? GraphRegistry.createUnstuckResearch
-      : GraphRegistry.createUnstuckRelaxation;
-
-    const { graph, state: subState, threadId } = await creator.call(GraphRegistry, state);
-    console.log(`[HeartbeatNode:Unstuck:${ variant }] Started | threadId: ${ threadId }`);
-
-    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
-
-    // Extract response — same pattern as runEnvironmentBrief
-    const agentMeta = (subState.metadata as any).agent || {};
-    let response = agentMeta.response;
-    if (!response || !String(response).trim()) {
-      for (let i = subState.messages.length - 1; i >= 0; i--) {
-        const msg = subState.messages[i];
-        if (msg.role === 'assistant' && typeof msg.content === 'string' && msg.content.trim().length > 50) {
-          response = msg.content;
-          break;
-        }
-      }
-    }
-
-    if (response && typeof response === 'string' && response.trim()) {
-      console.log(`[HeartbeatNode:Unstuck:${ variant }] Returned ${ response.length } chars`);
-      return response.trim();
-    }
-
-    console.log(`[HeartbeatNode:Unstuck:${ variant }] No useful response`);
-    return null;
   }
 }
