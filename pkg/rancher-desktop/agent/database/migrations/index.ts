@@ -1,11 +1,3 @@
-File: pkg/rancher-desktop/agent/database/migrations/index.ts
-Size: 7222 bytes
-SHA: 71ae361bfb685be3176eb23164dc370b148f89c0
-Encoding: base64
-Ref: feat/subconscious-per-domain-observers
-
-Content:
-// migrations/index.ts stays the same (re-exports)
 import { up as up_0001, down as down_0001 } from './0001_create_migrations_and_seeders_table';
 import { up as up_0002, down as down_0002 } from './0002_create_agent_awareness_table';
 import { up as up_0008, down as down_0008 } from './0008_create_calendar_events_table';

@@ -1,10 +1,3 @@
-File: pkg/rancher-desktop/agent/services/GraphRegistry.ts
-Size: 60908 bytes
-SHA: 78718d47cf99959d91c960828093ada9d12309e7
-Encoding: base64
-Ref: feat/subconscious-per-domain-observers
-
-Content:
 import * as fs from 'fs';
 import * as path from 'path';
 

@@ -1,10 +1,3 @@
-File: pkg/rancher-desktop/agent/nodes/BaseNode.ts
-Size: 86504 bytes
-SHA: 6ede3bc2a2d3eea072234635d144e38a4abe6083
-Encoding: base64
-Ref: feat/subconscious-per-domain-observers
-
-Content:
 import fs from 'node:fs';
 import path from 'node:path'; // used by enrichPrompt for active_projects_file
 
@@ -839,8 +832,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(observation_context|user_observations|self_observations|business_observations|world_observations|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:observation_context|user_observations|self_observations|business_observations|world_observations|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;

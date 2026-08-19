@@ -1,10 +1,3 @@
-File: pkg/rancher-desktop/agent/tools/meta/manifests.ts
-Size: 20130 bytes
-SHA: 33ea26239bbe8d742f124890d8c68aee8e94cdea
-Encoding: base64
-Ref: feat/subconscious-per-domain-observers
-
-Content:
 import type { ToolManifest } from '../registry';
 
 export const metaToolManifests: ToolManifest[] = [
