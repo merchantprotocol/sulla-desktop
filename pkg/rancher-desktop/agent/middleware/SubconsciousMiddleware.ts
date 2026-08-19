@@ -1,10 +1,3 @@
-File: pkg/rancher-desktop/agent/middleware/SubconsciousMiddleware.ts
-Size: 31509 bytes
-SHA: e0dc9da4caa19420277b0c96cd9bab58440175b2
-Encoding: base64
-Ref: feat/subconscious-per-domain-observers
-
-Content:
 /**
  * SubconsciousMiddleware — pre-processing step before the main agent LLM call.
  *
@@ -206,7 +199,7 @@ export async function runSubconsciousMiddleware(
   // the general Observation Writer + Observation Recall below, plus the focused
   // domain observers (human first) dispatched alongside them.
 
-  // PRE-TURN = RECALLS ONLY. The observation WRITERS (general writer + the four
+  // PRE-TURN = RECALLS ONLY. The observation WRITERS (general writer + domain
   // domain identity observers) moved to a POST-TURN pass:
   // runSubconsciousObservationWriters(), which AgentNode invokes after the loop
   // ends. Two reasons: (1) a writer that runs before the turn can only see up to
@@ -250,6 +243,14 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('business-observation-recall', 'Recalling the business', bizRecallPromise.then(ctx => { (state.metadata as any).businessObservationContext = ctx })));
   }
 
+  // R5. Environment Observation Recall (environment) — awaited: relevant
+  //     `environment`-domain rows, injected as <environment_observations>.
+  if (options.includeObservations && analyzable) {
+    launched.push('environment-observation-recall');
+    const envRecallPromise = runIdentityObservationRecall(state, 'environment');
+    awaitedTasks.push(timed('environment-observation-recall', 'Recalling this environment', envRecallPromise.then(ctx => { (state.metadata as any).environmentObservationContext = ctx })));
+  }
+
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
   // Every task in awaitedTasks writes into the live turn state. The primary
@@ -283,13 +284,14 @@ export async function runSubconsciousMiddleware(
  * longer compete with recall for the shared model during the prelude.
  *
  * Skipped inside workflows (same gate as the pre-turn recall pass) and when the
- * turn carried no analyzable user message. Five writers, each scoped to write
+ * turn carried no analyzable user message. Six writers, each scoped to write
  * only its own domain:
  *   - general Observation Writer   → observation + Projects work-state rows
  *   - Identity Observer  human      → the human user
  *   - Self Observer      agent      → Sulla + how this pair works together
  *   - Business Observer  business   → the human's business/employment
  *   - World Observer      world     → external events relevant to us (gated)
+ *   - Environment Observer environment → this install/host + repeatable processes
  */
 export function runSubconsciousObservationWriters(
   state: BaseThreadState,

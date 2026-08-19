@@ -45,7 +45,7 @@ describe('IdentityObservationsModel', () => {
 
     expect(postgresClient.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO identity_observations'),
-      ['hum1', 'human', 2, 'preference', 'Jonathon prefers direct status reports.', 'Repeated instruction in chat.', 'test'],
+      ['hum1', 'human', 2, 'preference', 'Jonathon prefers direct status reports.', 'Repeated instruction in chat.', null, null, null, null, 'test'],
     );
     expect(row).toBe(inserted);
   });
@@ -93,6 +93,7 @@ describe('IdentityObservationsModel', () => {
   it('normalizes supported identity domains and rejects unsupported domains', () => {
     expect(normalizeIdentityDomain(undefined)).toBe('human');
     expect(normalizeIdentityDomain(' Business ')).toBe('business');
+    expect(normalizeIdentityDomain(' Environment ')).toBe('environment');
     expect(() => normalizeIdentityDomain('not-a-domain')).toThrow('Invalid identity domain');
   });
 
@@ -184,6 +185,10 @@ describe('IdentityObservationsModel', () => {
         category:   'preference',
         content:    'Jonathon prefers direct status reports.',
         basis:      null,
+        subject:    null,
+        evidence:   null,
+        confidence: null,
+        kind:       null,
         created_at: '2026-08-19T18:00:00.000Z',
         updated_at: null,
         archived:   false,

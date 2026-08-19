@@ -1,10 +1,3 @@
-File: pkg/rancher-desktop/agent/database/models/IdentityObservationsModel.ts
-Size: 16086 bytes
-SHA: 1d8ec1a0d5fe3330cf088b0d90f454798c9907c5
-Encoding: base64
-Ref: feat/subconscious-per-domain-observers
-
-Content:
 /**
  * IdentityObservationsModel — domain-keyed identity observation storage.
  *
