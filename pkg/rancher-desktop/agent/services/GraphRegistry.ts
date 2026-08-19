@@ -331,17 +331,23 @@ const HEARTBEAT_TOOLS: string[] = [
 
 const SUBCONSCIOUS_ENVIRONMENT_ANCHOR = `## Sulla Desktop environment
 
-You are running inside Sulla Desktop. The Sulla CLI is the canonical tool
-surface for platform operations. Existing tools usually already exist, so do not
-invent new scripts, integrations, or workflow formats when a cataloged Sulla tool
-can do the job.
+You are running inside Sulla Desktop. Treat this as operational context, not
+background prose:
+
+1. The Sulla CLI is the canonical tool surface for platform operations.
+2. Existing tools usually already exist. Do not invent scripts, integrations,
+   workflow formats, browser workarounds, GitHub flows, schedulers, or file-based
+   substitutes before checking the cataloged Sulla tools.
+3. If an exact command is not already named in your prompt/context, prefer
+   discovering the catalog entry first.
 
 Primary/operator agents can discover tools with:
 \`sulla meta/browse_tools '{"query":"..."}'\`
 
-Sulla's bundled docs describe the environment, tool catalog, workflows,
-functions, sub-agents, and common operating procedures. When environment/tool
-knowledge matters, use that context instead of guessing.
+Sulla's bundled docs are the source of truth for the local environment, tool
+catalog, workflows, functions, sub-agents, host/VM behavior, and common operating
+procedures. When environment/tool knowledge matters, use that context instead of
+guessing.
 
 This context does not expand your authority. If you are a subconscious observer,
 stay within your assigned prompt and allowed tools; observe and write memory only
