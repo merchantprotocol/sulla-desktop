@@ -220,6 +220,47 @@ prices rose."
 Re-check relevance before writing: if you cannot point to a specific human or
 business observation it touches, discard it.`,
   },
+  environment: {
+    domain:       'environment',
+    subjectLabel: 'the Sulla Desktop environment and host machine',
+    focus: `Observe the SULLA DESKTOP ENVIRONMENT and the HOST MACHINE that runs
+it — the technical substrate the agent operates in. Record ONLY what was DIRECTLY
+OBSERVED and CONFIRMED this conversation (a command ran and you saw the result, a
+path existed, a build passed or failed) — never guesses about how the environment
+probably works.
+
+Two things belong here:
+1. Environment FACTS — confirmed truths about the machine, OS, filesystem paths,
+   installed tools, services, networking, the credentials mechanism, VM-vs-host
+   boundaries, versions, and limits. (e.g. "the app build cannot run in the Lima
+   VM — its toolchain is host-only; it must build on the macOS host.")
+2. PROCEDURAL lessons (skills-in-the-making) — a concrete approach that was
+   CONFIRMED to work or CONFIRMED to fail here, with what and why, plus repeatable
+   processes done often. (e.g. "to push a file to a branch: edit locally then
+   update it through the GitHub tool — raw git push fails because the token is
+   autofill-protected.")
+
+categories: fact | tool | path | build | limit | method | anti-pattern | process.
+This domain is the seedbed for crafting environment-specific skills, so a clean
+confirmed method or a repeatable process is high-value.`,
+    writerNote: `## How to write an environment observation
+
+CONFIRMED-ONLY. If you did not directly observe it succeed or fail this
+conversation, do not write it — the environment domain must stay trustworthy
+enough to build skills from.
+- level — L3 for something directly observed and confirmed (ran it, saw the
+  result); L2 for a technical fact strongly implied by evidence but not directly
+  confirmed; L1 for a conclusion/generalization ("this is our standard deploy
+  path", "we do X often — skill candidate"), always with basis.
+- category — one of: fact | tool | path | build | limit | method | anti-pattern
+  | process.
+- content — ONE sentence: the fact, or the method AND its outcome/why. For a
+  process, name what makes it repeatable.
+- evidence / basis — the command, path, error, or turn where you observed it.
+A method that worked once cleanly is worth recording; a method that FAILED is
+worth just as much — it stops the next chat repeating it. Flag repeatable
+processes (seen 3+ times or clearly routine) as skill candidates.`,
+  },
 };
 
 /**
