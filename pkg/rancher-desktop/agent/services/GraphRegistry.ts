@@ -45,6 +45,97 @@ const OBSERVATION_RECALL_TOOLS: string[] = [
   'list_observations',    // Priority-sorted list of active observations
 ];
 
+/** Identity Observer (writer): domain-scoped identity_observations CRUD */
+const IDENTITY_OBSERVER_TOOLS: string[] = [
+  'add_identity_observation',      // Insert or update a domain-keyed identity row
+  'remove_identity_observation',   // Soft-archive a superseded row
+  'search_identity_observations',  // Dedup check before adding
+  'list_identity_observations',    // Browse the domain's current picture
+];
+
+/**
+ * Per-domain focus config for the identity observer template. Mirrors
+ * ~/sulla/identity/ (human / business / world / agent). Adding a new domain
+ * observer = one entry here + one dispatch line in SubconsciousMiddleware —
+ * no new table, model, tools, or migration.
+ */
+interface IdentityObserverDomainConfig {
+  /** The identity_observations.domain value rows are written under. */
+  domain:       string;
+  /** Who/what this observer studies — substituted into the prompt template. */
+  subjectLabel: string;
+  /** Domain-specific guidance: what to look for, with category examples. */
+  focus:        string;
+}
+
+const IDENTITY_OBSERVER_DOMAINS: Record<string, IdentityObserverDomainConfig> = {
+  human: {
+    domain:       'human',
+    subjectLabel: 'the human user',
+    focus: `Observe the HUMAN USER — who they are, not what task is running:
+- identity: name, role, background, circumstances they reveal
+- relationship: people in their life and how they relate to them
+- association: companies, projects, communities, groups they belong to
+- personality: temperament, values, humor, how they handle friction (conclusions — L1)
+- habit: recurring behaviors, schedules, working patterns
+- preference: likes/dislikes, how they want things done, communication style
+- goal: what they are trying to achieve, short- and long-term`,
+  },
+};
+
+/**
+ * Build the writer prompt for a domain observer. The discipline is the
+ * SAME for every domain — record stated facts first (L3), then derived
+ * facts (L2), then reasoned conclusions (L1, always with their basis) —
+ * only the focus block changes.
+ */
+function buildIdentityObserverPrompt(cfg: IdentityObserverDomainConfig): string {
+  return `You are the focused identity OBSERVER for ${ cfg.subjectLabel } (domain: ${ cfg.domain }).
+
+CRITICAL: You are NOT the primary agent. You do NOT execute tasks, answer
+questions, browse websites, call APIs, or do anything the user asked for.
+Another agent handles that. You ONLY manage ${ cfg.domain } identity observations.
+
+${ cfg.focus }
+
+## Certainty levels — the core discipline
+
+Work in this order, and NEVER inflate a level:
+1. L3 — STATED FACTS first. Record anything ${ cfg.subjectLabel } directly
+   stated about themselves in this conversation. These are ground truth.
+2. L2 — DERIVED FACTS second. Things clearly established by conversation
+   evidence without being stated outright. Set basis to the evidence.
+3. L1 — CONCLUSIONS last. Reasoned judgments built from L3/L2 facts —
+   personality reads, style, habits inferred over time. Set basis to the
+   facts you reasoned from. Use logic; do not speculate from nothing.
+
+If new evidence PROMOTES a fact (an L1 conclusion is later stated outright),
+update the existing row to the higher level via its id. If evidence
+contradicts a row, archive it (remove_identity_observation — soft-archive,
+never hard-delete) and record the corrected fact.
+
+## Workflow
+
+BEFORE calling add_identity_observation for any new observation:
+- Call search_identity_observations with the key topic/phrase to check for
+  existing similar entries in the ${ cfg.domain } domain.
+- If a similar entry exists, UPDATE it via add_identity_observation using
+  its existing id rather than creating a duplicate.
+- Only INSERT a fresh entry when nothing similar is found.
+
+Each observation is ONE concise sentence with its context, a level, and a
+category. Include why, not just what, when the reason matters.
+
+If nothing about ${ cfg.subjectLabel } was revealed this conversation, finish
+immediately — most task-focused turns need NO writes.
+
+Do NOT:
+- Try to complete the user's task
+- Record task/project state (the general observation writer owns that)
+- Record facts about other domains
+- Search for tools, APIs, or integrations`;
+}
+
 /**
  * Heartbeat native toolset — the slim primary set MINUS the interactive
  * `ask_user_question` tool. The heartbeat runs autonomously on the `heartbeat`
@@ -556,6 +647,39 @@ export const GraphRegistry = {
       contextWindow:          30,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create a focused Identity Observer (writer) graph for one domain of
+   * ~/sulla/identity/ (human first). Records stated facts (L3), then derived
+   * facts (L2), then reasoned conclusions (L1) into identity_observations.
+   * Reusable template: pass a different registered domain to observe it —
+   * see IDENTITY_OBSERVER_DOMAINS.
+   */
+  createIdentityObserver: async function(parentState: BaseThreadState, domain = 'human'): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const cfg = IDENTITY_OBSERVER_DOMAINS[domain];
+    if (!cfg) throw new Error(`Unknown identity observer domain: ${ domain }`);
+
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           buildIdentityObserverPrompt(cfg),
+      tools:                  IDENTITY_OBSERVER_TOOLS,
+      userMessage:            `Review this conversation for facts about ${ cfg.subjectLabel }. Record stated facts (L3) first, then derived facts (L2), then reasoned conclusions (L1, with their basis). Search for existing entries before adding (update instead of duplicate); promote levels when evidence upgrades a fact; soft-archive contradicted rows. If nothing about ${ cfg.subjectLabel } was revealed, finish immediately.`,
+      messages:               [...parentState.messages],
+      // Same window as the general writer — it mines conversation for facts.
+      contextWindow:          30,
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             `identity-observer-${ cfg.domain }`,
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,

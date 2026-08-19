@@ -16,6 +16,7 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
+import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
@@ -214,6 +215,27 @@ export async function runSubconsciousMiddleware(
     launched.push('observation-recall');
     const obsRecallPromise = runObservationRecall(state);
     awaitedTasks.push(timed('observation-recall', 'Checking observations', obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx })));
+  }
+
+  // 3c. Identity Observer (human) — fire-and-forget writer for the focused,
+  //     domain-keyed identity_observations table. Records stated facts (L3),
+  //     derived facts (L2), and reasoned conclusions (L1) about the human
+  //     user. Runs alongside the general writer; never touches state.messages.
+  if (options.includeObservations && analyzable) {
+    launched.push('identity-observer-human (fire-and-forget)');
+    runIdentityObserver(state, 'human').catch((error) => {
+      console.error('[SubconsciousMiddleware] Identity Observer (human) failed (fire-and-forget):', error instanceof Error ? error.message : error);
+    });
+  }
+
+  // 3d. Identity Observation Recall — awaited: deterministic SQL fast-path
+  //     (no LLM, same design as 3b). Compiles the most important human
+  //     observations — most certain first (L3 stated → L2 derived → L1
+  //     concluded), then most recent — into state.metadata.userObservationContext.
+  if (options.includeObservations && analyzable) {
+    launched.push('identity-observation-recall');
+    const idRecallPromise = runIdentityObservationRecall(state, 'human');
+    awaitedTasks.push(timed('identity-observation-recall', 'Recalling who you are', idRecallPromise.then(ctx => { (state.metadata as any).userObservationContext = ctx })));
   }
 
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
@@ -558,6 +580,74 @@ async function runObservationRecall(state: BaseThreadState): Promise<string | nu
     return response;
   } catch (error) {
     console.error(`[SubconsciousMiddleware:ObservationRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+// ============================================================================
+// IDENTITY OBSERVER (domain-keyed — human first)
+// ============================================================================
+
+/**
+ * Fire-and-forget writer for one identity domain. Same shape as
+ * runObservationAgent: the agent applies its side effects via the
+ * add/remove/search/list_identity_observation tools directly against the
+ * identity_observations table — no state merge needed.
+ */
+async function runIdentityObserver(state: BaseThreadState, domain: string): Promise<void> {
+  const startTime = Date.now();
+
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createIdentityObserver(state, domain);
+    console.log(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Started | threadId: ${ threadId }`);
+
+    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
+
+    const agentMeta = (subState.metadata as any).agent || {};
+    const iterations = (subState.metadata as any).iterations || 0;
+    console.log(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Completed in ${ Date.now() - startTime }ms | iterations: ${ iterations }, status: ${ agentMeta.status }`);
+  } catch (error) {
+    console.error(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Max identity rows surfaced into <user_observations> per turn. The domain
+ * picture is a compact profile, not a search result — certainty-ranked so
+ * the primary agent always sees the stated facts before the conclusions.
+ */
+const IDENTITY_RECALL_MAX_ROWS = 12;
+
+/**
+ * Deterministic SQL fast-path reader for one identity domain — no LLM, same
+ * design (and rationale) as runObservationRecall. Unlike the general recall,
+ * this is NOT query-matched: the domain picture is ranked purely by
+ * certainty level (L3 stated → L2 derived → L1 concluded) then recency,
+ * because who the user IS matters on every turn, not just topical ones.
+ * Returns null when the domain has no rows yet so no block is injected.
+ */
+async function runIdentityObservationRecall(state: BaseThreadState, domain: string): Promise<string | null> {
+  const startTime = Date.now();
+  const threadId = (state.metadata as any).threadId;
+
+  try {
+    const rows = await IdentityObservationsModel.listActive(domain, { limit: IDENTITY_RECALL_MAX_ROWS });
+    const elapsed = Date.now() - startTime;
+
+    if (!rows || rows.length === 0) {
+      perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } matched=0 ms=${ elapsed } path=sql-fast-path`);
+      return null;
+    }
+
+    const response = rows
+      .map((r) => `[${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ (r.created_at || '').slice(0, 10) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`)
+      .join('\n');
+
+    perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
+    console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Returning ${ rows.length } rows (${ response.length } chars) in ${ elapsed }ms (sql-fast-path)`);
+    return response;
+  } catch (error) {
+    console.error(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
     return null;
   }
 }

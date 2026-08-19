@@ -166,9 +166,11 @@ export class AgentNode extends BaseNode {
     // first — this merge must replace, never accumulate (the mutated message
     // is persisted with the thread state).
     this.stripInjectedContextBlocks(state);
-    const observationContext  = (state.metadata as any).observationContext;
+    const observationContext     = (state.metadata as any).observationContext;
+    const userObservationContext = (state.metadata as any).userObservationContext;
     const combinedContextParts: string[] = [];
     if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
+    if (userObservationContext) combinedContextParts.push(`<user_observations>\n${ userObservationContext }\n</user_observations>`);
 
     if (combinedContextParts.length > 0) {
       const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;

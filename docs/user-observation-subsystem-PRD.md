@@ -45,38 +45,46 @@ certainty level** instead of priority.
 - **L1 — concluded:** conclusions/assumptions inferred from observed facts (personality, writing
   style, habits).
 
-### New table `sulla_user_observations` (migration 0050) — clone of `observations` + level/category
+### New table `identity_observations` (migration 0048) — AS BUILT
+Generalized per Jonathon 2026-08-19: instead of a user-only table, ONE domain-keyed table
+mirroring `~/sulla/identity/` (human / business / world / agent). The human observer ships
+first; adding another domain = one config entry + one dispatch line, no new migration.
 ```
 id          TEXT PRIMARY KEY
+domain      TEXT NOT NULL DEFAULT 'human'   -- human | business | world | agent
+level       SMALLINT NOT NULL DEFAULT 2 CHECK (level IN (1,2,3))  -- 3 stated | 2 derived | 1 concluded
+category    TEXT                            -- identity | relationship | association | personality | habit | preference | goal
 content     TEXT NOT NULL
-level       INTEGER NOT NULL DEFAULT 2      -- 1 concluded | 2 derived | 3 stated
-category    TEXT NOT NULL DEFAULT 'identity' -- identity | relationship | association | personality | habit | preference | goal
-subject     TEXT NOT NULL DEFAULT 'user'    -- 'user' or a named relation/association
-source      TEXT
-archived    BOOLEAN NOT NULL DEFAULT false
+basis       TEXT                            -- for L2/L1: the facts it was derived/concluded from
 created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at  TIMESTAMPTZ
+archived    BOOLEAN NOT NULL DEFAULT false  -- soft-archive only, never hard-delete
+source      TEXT
 ```
-Indexes: `(archived, level DESC, created_at DESC)`, `(archived, category)`, trigram GIN on `content`.
+Index: `(domain, archived, level DESC, created_at DESC)`.
 
-### Model `UserObservationsModel` — clone of `ObservationsModel`
-CRUD + `search()` (same phrase→word→recency ranking, level as a tiebreak) + `findDuplicate` +
-`listActive(category?, level?, limit)`.
+### Model `IdentityObservationsModel` — clone of `ObservationsModel`, domain-scoped
+CRUD + `search(domain, query)` (same phrase→word ranking, level-weighted) + `findDuplicate(domain,
+content)` + `listActive(domain, {level?, category?, limit})` ordered level DESC then recency.
 
-### Writer agent `createUserObservationAgent` (fire-and-forget, subconscious slot)
-Prompt discipline: (1) FIRST record concrete **stated** facts (L3); (2) then **derive** assumed
-facts (L2); (3) then form **conclusions** (L1) about personality/style/habits. Dedup via
-`search_user_observations`, update-in-place by id, soft-archive superseded. Tools:
-`add_user_observation`, `remove_user_observation`, `search_user_observations`, `list_user_observations`.
+### Writer `GraphRegistry.createIdentityObserver(state, domain)` (fire-and-forget, subconscious slot)
+Reusable template: `IDENTITY_OBSERVER_DOMAINS` holds per-domain focus config;
+`buildIdentityObserverPrompt` renders the shared L3→L2→L1 discipline — (1) FIRST record **stated**
+facts (L3); (2) then **derive** facts with `basis` (L2); (3) then form **conclusions** (L1) about
+personality/style/habits, always with `basis`. Promote levels when evidence upgrades a fact;
+soft-archive contradicted rows. Tools: `add_identity_observation`, `remove_identity_observation`,
+`search_identity_observations`, `list_identity_observations` (each takes `domain`, default human).
 
-### Reader `runUserObservationRecall` (deterministic, like the proven recall)
-Compile the most important user facts — rank **L3 → L2 → L1**, then recency, with light category
-balancing (don't let one category dominate), cap ~8-10. Inject as a `<user_observations>` block into
-the primary/orchestrator prompt exactly like `<observation_context>`; strip after the call.
+### Reader `runIdentityObservationRecall(state, domain)` (deterministic SQL fast-path, no LLM)
+Compiles the domain picture ranked purely **L3 → L2 → L1** then recency (NOT query-matched — who
+the user is matters every turn), cap 12. Injected as a `<user_observations>` block in
+`AgentNode.ts` exactly like `<observation_context>`; stripped per turn by
+`BaseNode.stripInjectedContextBlocks`.
 
-### Wiring
-- Dispatch both in `SubconsciousMiddleware` alongside the kept observation agents.
-- Inject `<user_observations>` in `CodexService.ts` (~349) / `AgentNode.ts` (~175).
+### Wiring (as built)
+- `SubconsciousMiddleware` 3c/3d: `runIdentityObserver(state, 'human')` fire-and-forget +
+  `runIdentityObservationRecall(state, 'human')` awaited → `metadata.userObservationContext`.
+- Injection in `AgentNode.ts`; strip regex in `BaseNode.ts`.
 - Add `user_observations` to the `BaseNode.ts` strip regex.
 
 ---
