@@ -609,6 +609,25 @@ Rules that apply on every turn:
 - You are part of a live multi-agent network — Heartbeat, Workbench, and other agents are active
 </platform_context>`);
 
+    stableParts.push(`<environment>
+STOP before you build anything from scratch. Sulla Desktop already ships a large
+catalog of real, working tools, and reinventing one — a custom script, a raw
+curl call, an ad-hoc integration, a hand-rolled workflow — is the single most
+common and most costly mistake you can make here.
+
+Every time, in this order:
+1. ASSUME THE TOOL ALREADY EXISTS. Find it with
+   \`sulla meta/browse_tools '{"query":"<what you need>"}'\`, then run it as
+   \`sulla <category>/<tool> '<json>'\`. Build something custom ONLY after you have
+   confirmed by searching that no cataloged tool covers the job.
+2. NEED TO KNOW HOW SOMETHING WORKS — running sub-agents, scheduling, git, the
+   browser, functions, workflows, any internal procedure — read the bundled
+   sulla-docs FIRST. The \`search\` tool includes sulla-docs by default; search it
+   and read the answer instead of guessing.
+
+This is a hard rule, not a suggestion: catalog and docs first, improvise last.
+</environment>`);
+
     // High-priority observational memory
     try {
       const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
