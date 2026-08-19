@@ -52,6 +52,19 @@ function generateTinyId(): string {
   return id;
 }
 
+export function formatObservationDate(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value.slice(0, 10) : parsed.toISOString().slice(0, 10);
+  }
+
+  return '';
+}
+
 // ── Model ──────────────────────────────────────────────────────────────
 
 export class ObservationsModel {

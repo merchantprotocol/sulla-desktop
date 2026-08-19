@@ -1,4 +1,4 @@
-import { IdentityObservationsModel } from '../../database/models/IdentityObservationsModel';
+import { IdentityObservationsModel, normalizeIdentityDomain } from '../../database/models/IdentityObservationsModel';
 import { formatDateOnly } from '../../utils/formatDateOnly';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -14,12 +14,12 @@ export class ListIdentityObservationsWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const domain = (typeof input.domain === 'string' && input.domain.trim()) || 'human';
     const level = input.level !== undefined ? Number(input.level) : undefined;
     const category = typeof input.category === 'string' && input.category.trim() ? input.category.trim() : undefined;
     const limit = Number(input.limit) || 50;
 
     try {
+      const domain = normalizeIdentityDomain(input.domain);
       const rows = await IdentityObservationsModel.listActive(domain, { level, category, limit });
 
       if (rows.length === 0) {

@@ -53,6 +53,12 @@ const IDENTITY_OBSERVER_TOOLS: string[] = [
   'list_identity_observations',    // Browse the domain's current picture
 ];
 
+/** Identity Observation Recall: read-only — search/list domain rows for context injection */
+const IDENTITY_OBSERVATION_RECALL_TOOLS: string[] = [
+  'search_identity_observations',
+  'list_identity_observations',
+];
+
 /**
  * Per-domain focus config for the identity observer template. Mirrors
  * ~/sulla/identity/ (human / business / world / agent). Adding a new domain
@@ -237,6 +243,37 @@ plus list_observations) as ONE batch in your first response, then answer.
 Do not search one term at a time across multiple rounds.
 
 Be selective: a 5-entry relevant subset is better than 30 entries dumped verbatim.`;
+
+function buildIdentityObservationRecallPrompt(cfg: IdentityObserverDomainConfig): string {
+  return `You are the focused identity observation RECALL process for ${ cfg.subjectLabel } (domain: ${ cfg.domain }).
+
+CRITICAL: You are READ-ONLY. You NEVER write, insert, update, or delete identity observations.
+You only search and list — then return the observations relevant to the current conversation.
+
+## Your job
+
+Read the recent conversation context. Based on what the human is asking about,
+what task is in progress, and what identity facts could help the primary
+agent respond well, search the ${ cfg.domain } identity_observations table.
+
+${ cfg.focus }
+
+Rules:
+- Call search_identity_observations with key topic/phrase variants from the conversation.
+- Optionally call list_identity_observations when broad identity context is needed.
+- Return ONLY observations that are relevant or possibly relevant to this turn.
+- Format each result as: \`[id] L<level>·<category> date — content (basis: ...)\`
+- If many observations are relevant, return many. If only a few matter, return a few.
+- If nothing is relevant, return an empty string — do NOT pad with filler.
+- Do NOT narrate your process. Output only the filtered observation lines.
+
+Speed: the primary agent BLOCKS until you finish. Tool calls in the SAME
+response run in PARALLEL — issue every search you need (different phrasings,
+plus list_identity_observations if useful) as ONE batch in your first response,
+then answer. Do not search one term at a time across multiple rounds.
+
+Be selective by relevance, not by recency or a fixed count.`;
+}
 // ── Observation Recall: cache constants ──────────────────────────────────
 
 const SUMMARIZER_PROMPT = `You are the memory compression process for an AI agent. Talk through
@@ -689,6 +726,36 @@ export const GraphRegistry = {
   },
 
   /**
+   * Create an Identity Observation Recall graph — read-only search/list of
+   * domain-keyed identity observations. The recall agent selects observations
+   * relevant to the current conversation; it is not a top-N recency dump.
+   */
+  createIdentityObservationRecall: async function(parentState: BaseThreadState, domain = 'human'): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const cfg = IDENTITY_OBSERVER_DOMAINS[domain];
+    if (!cfg) throw new Error(`Unknown identity observer domain: ${ domain }`);
+
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           buildIdentityObservationRecallPrompt(cfg),
+      tools:                  IDENTITY_OBSERVATION_RECALL_TOOLS,
+      userMessage:            `Read the recent conversation context and return only ${ cfg.domain } identity observations that are relevant or possibly relevant to what is happening now. Return compact lines only — nothing if nothing is relevant.`,
+      messages:               [...parentState.messages],
+      contextWindow:          20,
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             `identity-observation-recall-${ cfg.domain }`,
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
    * Create an Observation Recall graph — read-only search of the observations
    * table to surface entries relevant to the current conversation context.
    * Returns compact `[id] priority date — content` lines, or null when nothing
@@ -716,7 +783,6 @@ export const GraphRegistry = {
     });
     return { graph, state, threadId: state.metadata.threadId };
   },
-
 
   delete(threadId: string): void {
     registry.delete(threadId);

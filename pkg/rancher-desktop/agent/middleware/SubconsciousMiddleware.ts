@@ -16,7 +16,6 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
-import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
@@ -229,10 +228,10 @@ export async function runSubconsciousMiddleware(
     });
   }
 
-  // 3d. Identity Observation Recall — awaited: deterministic SQL fast-path
-  //     (no LLM, same design as 3b). Compiles the most important human
-  //     observations — most certain first (L3 stated → L2 derived → L1
-  //     concluded), then most recent — into state.metadata.userObservationContext.
+  // 3d. Identity Observation Recall — awaited: read-only recall agent that
+  //     searches/lists identity_observations and returns whatever is relevant
+  //     to the current conversation. This deliberately avoids a fixed "last N"
+  //     profile dump; relevance is turn-dependent.
   if (options.includeObservations && analyzable) {
     launched.push('identity-observation-recall');
     const idRecallPromise = runIdentityObservationRecall(state, 'human');
@@ -508,7 +507,7 @@ const OBSERVATION_RECALL_MAX_ROWS = 8;
  * that carries any (string or text-block) content.
  */
 function extractLatestUserText(state: BaseThreadState): string {
-  const messages = state.messages as any[];
+  const messages = state.messages;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== 'user') continue;
@@ -613,39 +612,32 @@ async function runIdentityObserver(state: BaseThreadState, domain: string): Prom
 }
 
 /**
- * Max identity rows surfaced into <user_observations> per turn. The domain
- * picture is a compact profile, not a search result — certainty-ranked so
- * the primary agent always sees the stated facts before the conclusions.
- */
-const IDENTITY_RECALL_MAX_ROWS = 12;
-
-/**
- * Deterministic SQL fast-path reader for one identity domain — no LLM, same
- * design (and rationale) as runObservationRecall. Unlike the general recall,
- * this is NOT query-matched: the domain picture is ranked purely by
- * certainty level (L3 stated → L2 derived → L1 concluded) then recency,
- * because who the user IS matters on every turn, not just topical ones.
- * Returns null when the domain has no rows yet so no block is injected.
+ * Read-only recall agent for one identity domain. It searches/listens through
+ * identity observations and returns only rows relevant to the current turn.
+ * The primary agent blocks on this because the selected rows are injected as
+ * <user_observations> before the main response starts.
  */
 async function runIdentityObservationRecall(state: BaseThreadState, domain: string): Promise<string | null> {
   const startTime = Date.now();
-  const threadId = (state.metadata as any).threadId;
 
   try {
-    const rows = await IdentityObservationsModel.listActive(domain, { limit: IDENTITY_RECALL_MAX_ROWS });
-    const elapsed = Date.now() - startTime;
+    const { graph, state: subState, threadId } = await GraphRegistry.createIdentityObservationRecall(state, domain);
+    console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Started | threadId: ${ threadId }`);
 
-    if (!rows || rows.length === 0) {
-      perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } matched=0 ms=${ elapsed } path=sql-fast-path`);
+    await graph.execute(subState, 'subconscious', { maxIterations: 10 });
+
+    const elapsed = Date.now() - startTime;
+    const agentMeta = (subState.metadata as any).agent || {};
+    const response = typeof agentMeta.response === 'string' ? agentMeta.response.trim() : '';
+
+    if (!response) {
+      perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } chars=0 ms=${ elapsed } path=agent`);
+      console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] No relevant rows in ${ elapsed }ms (agent)`);
       return null;
     }
 
-    const response = rows
-      .map((r) => `[${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ formatDateOnly(r.created_at) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`)
-      .join('\n');
-
-    perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
-    console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Returning ${ rows.length } rows (${ response.length } chars) in ${ elapsed }ms (sql-fast-path)`);
+    perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } chars=${ response.length } ms=${ elapsed } path=agent`);
+    console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Returning ${ response.length } chars in ${ elapsed }ms (agent)`);
     return response;
   } catch (error) {
     console.error(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);

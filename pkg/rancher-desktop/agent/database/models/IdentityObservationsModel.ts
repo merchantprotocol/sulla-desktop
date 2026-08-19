@@ -22,6 +22,12 @@ import { postgresClient } from '../PostgresClient';
 export type IdentityDomain = 'human' | 'business' | 'world' | 'agent';
 
 export const IDENTITY_DOMAINS: IdentityDomain[] = ['human', 'business', 'world', 'agent'];
+const MAX_CONTENT_CHARS = 1200;
+const MAX_BASIS_CHARS = 600;
+const MAX_LABEL_CHARS = 80;
+const MAX_SOURCE_CHARS = 120;
+const DEFAULT_LIST_LIMIT = 100;
+const MAX_LIST_LIMIT = 100;
 
 export interface IdentityObservationRecord {
   id:         string;
@@ -65,9 +71,69 @@ function generateTinyId(): string {
   return id;
 }
 
-function clampLevel(level: any): number {
+export function normalizeIdentityLevel(level: unknown): number {
   const n = Number(level);
-  return n === 1 || n === 2 || n === 3 ? n : 2;
+  if (n === 1 || n === 2 || n === 3) return n;
+  throw new Error(`Invalid identity certainty level "${ String(level) }"; expected 1, 2, or 3.`);
+}
+
+export function normalizeIdentityDomain(domain: unknown): IdentityDomain {
+  const normalized = typeof domain === 'string' && domain.trim()
+    ? domain.trim().toLowerCase()
+    : 'human';
+
+  if (IDENTITY_DOMAINS.includes(normalized as IdentityDomain)) {
+    return normalized as IdentityDomain;
+  }
+
+  throw new Error(`Invalid identity domain "${ String(domain) }"; expected one of: ${ IDENTITY_DOMAINS.join(', ') }`);
+}
+
+export function normalizeIdentityLimit(limit: unknown, fallback = DEFAULT_LIST_LIMIT): number {
+  const n = Math.floor(Number(limit));
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(n, MAX_LIST_LIMIT);
+}
+
+function normalizeRequiredText(value: unknown, field: string, maxChars: number): string {
+  if (typeof value !== 'string') {
+    throw new Error(`${ field } must be a string.`);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${ field } is required.`);
+  }
+  if (trimmed.length > maxChars) {
+    throw new Error(`${ field } must be ${ maxChars } characters or fewer.`);
+  }
+  return trimmed;
+}
+
+function normalizeOptionalText(value: unknown, field: string, maxChars: number): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string') {
+    throw new Error(`${ field } must be a string.`);
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.length > maxChars) {
+    throw new Error(`${ field } must be ${ maxChars } characters or fewer.`);
+  }
+  return trimmed;
+}
+
+export function formatIdentityObservationDate(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value.slice(0, 10) : parsed.toISOString().slice(0, 10);
+  }
+
+  return '';
 }
 
 // ── Model ──────────────────────────────────────────────────────────────
@@ -80,7 +146,7 @@ export class IdentityObservationsModel {
       await postgresClient.query(`
         CREATE TABLE IF NOT EXISTS ${ IdentityObservationsModel.TABLE } (
           id          TEXT        PRIMARY KEY,
-          domain      TEXT        NOT NULL DEFAULT 'human',
+          domain      TEXT        NOT NULL DEFAULT 'human' CHECK (domain IN ('human', 'business', 'world', 'agent')),
           level       SMALLINT    NOT NULL DEFAULT 2 CHECK (level IN (1, 2, 3)),
           category    TEXT,
           content     TEXT        NOT NULL,
@@ -106,18 +172,21 @@ export class IdentityObservationsModel {
 
   static async insert(input: InsertIdentityObservationInput): Promise<IdentityObservationRecord> {
     const id = input.id || generateTinyId();
+    const category = normalizeOptionalText(input.category, 'category', MAX_LABEL_CHARS);
+    const basis = normalizeOptionalText(input.basis, 'basis', MAX_BASIS_CHARS);
+    const source = normalizeOptionalText(input.source, 'source', MAX_SOURCE_CHARS);
     const rows = await postgresClient.query<IdentityObservationRecord>(
       `INSERT INTO ${ IdentityObservationsModel.TABLE } (id, domain, level, category, content, basis, source)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
         id,
-        input.domain || 'human',
-        clampLevel(input.level),
-        input.category ?? null,
-        input.content,
-        input.basis ?? null,
-        input.source ?? null,
+        normalizeIdentityDomain(input.domain),
+        normalizeIdentityLevel(input.level),
+        category ?? null,
+        normalizeRequiredText(input.content, 'content', MAX_CONTENT_CHARS),
+        basis ?? null,
+        source ?? null,
       ],
     );
     return rows[0];
@@ -130,23 +199,23 @@ export class IdentityObservationsModel {
 
     if (changes.level !== undefined) {
       setClauses.push(`level = $${ idx++ }`);
-      values.push(clampLevel(changes.level));
+      values.push(normalizeIdentityLevel(changes.level));
     }
     if (changes.category !== undefined) {
       setClauses.push(`category = $${ idx++ }`);
-      values.push(changes.category);
+      values.push(normalizeOptionalText(changes.category, 'category', MAX_LABEL_CHARS));
     }
     if (changes.content !== undefined) {
       setClauses.push(`content = $${ idx++ }`);
-      values.push(changes.content);
+      values.push(normalizeRequiredText(changes.content, 'content', MAX_CONTENT_CHARS));
     }
     if (changes.basis !== undefined) {
       setClauses.push(`basis = $${ idx++ }`);
-      values.push(changes.basis);
+      values.push(normalizeOptionalText(changes.basis, 'basis', MAX_BASIS_CHARS));
     }
     if (changes.source !== undefined) {
       setClauses.push(`source = $${ idx++ }`);
-      values.push(changes.source);
+      values.push(normalizeOptionalText(changes.source, 'source', MAX_SOURCE_CHARS));
     }
 
     if (setClauses.length === 1) return null; // nothing to update
@@ -186,19 +255,20 @@ export class IdentityObservationsModel {
     domain: string,
     opts: { level?: number; category?: string; limit?: number } = {},
   ): Promise<IdentityObservationRecord[]> {
+    const normalizedDomain = normalizeIdentityDomain(domain);
     const conds = ['archived = false', 'domain = $1'];
-    const values: any[] = [domain];
+    const values: any[] = [normalizedDomain];
     let idx = 2;
 
     if (opts.level !== undefined) {
       conds.push(`level = $${ idx++ }`);
-      values.push(clampLevel(opts.level));
+      values.push(normalizeIdentityLevel(opts.level));
     }
     if (opts.category) {
       conds.push(`category = $${ idx++ }`);
-      values.push(opts.category);
+      values.push(normalizeOptionalText(opts.category, 'category', MAX_LABEL_CHARS));
     }
-    values.push(opts.limit ?? 100);
+    values.push(normalizeIdentityLimit(opts.limit, DEFAULT_LIST_LIMIT));
 
     return postgresClient.query<IdentityObservationRecord>(
       `SELECT * FROM ${ IdentityObservationsModel.TABLE }
@@ -220,6 +290,8 @@ export class IdentityObservationsModel {
     limit = 20,
     includeArchived = false,
   ): Promise<IdentityObservationRecord[]> {
+    const normalizedDomain = normalizeIdentityDomain(domain);
+    const normalizedLimit = normalizeIdentityLimit(limit, 20);
     const activeCond = includeArchived ? 'true' : 'archived = false';
     const words = ObservationsModel.tokenizeQuery(query);
 
@@ -230,7 +302,7 @@ export class IdentityObservationsModel {
            AND content ILIKE $2
          ORDER BY level DESC, created_at DESC
          LIMIT $3`,
-        [domain, `%${ query }%`, limit],
+        [normalizedDomain, `%${ query }%`, normalizedLimit],
       );
     }
 
@@ -243,7 +315,7 @@ export class IdentityObservationsModel {
          AND (content ILIKE $2 OR ${ wordConds.join(' OR ') })
        ORDER BY (content ILIKE $2)::int DESC, (${ matchScore }) DESC, level DESC, created_at DESC
        LIMIT $3`,
-      [domain, `%${ query }%`, limit, ...words.map(w => `%${ w }%`)],
+      [normalizedDomain, `%${ query }%`, normalizedLimit, ...words.map(w => `%${ w }%`)],
     );
   }
 
@@ -253,10 +325,10 @@ export class IdentityObservationsModel {
    * ObservationsModel.findDuplicate, scoped by domain.
    */
   static async findDuplicate(domain: string, content: string): Promise<IdentityObservationRecord | null> {
-    const rows = await IdentityObservationsModel.listActive(domain, { limit: 500 });
+    const rows = await IdentityObservationsModel.listActive(normalizeIdentityDomain(domain), { limit: 500 });
     const normalise = (s: string) =>
       s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-    const norm = normalise(content);
+    const norm = normalise(normalizeRequiredText(content, 'content', MAX_CONTENT_CHARS));
 
     for (const row of rows) {
       const existing = normalise(row.content);
