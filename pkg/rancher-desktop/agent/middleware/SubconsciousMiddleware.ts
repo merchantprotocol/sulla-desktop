@@ -251,6 +251,14 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('environment-observation-recall', 'Recalling this environment', envRecallPromise.then(ctx => { (state.metadata as any).environmentObservationContext = ctx })));
   }
 
+  // R6. Projects Observation Recall (projects) — awaited: relevant
+  //     `projects`-domain rows, injected as <projects_observations>.
+  if (options.includeObservations && analyzable) {
+    launched.push('projects-observation-recall');
+    const projRecallPromise = runIdentityObservationRecall(state, 'projects');
+    awaitedTasks.push(timed('projects-observation-recall', 'Recalling the projects', projRecallPromise.then(ctx => { (state.metadata as any).projectsObservationContext = ctx })));
+  }
+
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
   // Every task in awaitedTasks writes into the live turn state. The primary
@@ -315,8 +323,9 @@ export function runSubconsciousObservationWriters(
   launch('business-observer', () => runIdentityObserver(state, 'business'));
   launch('world-observer', () => runIdentityObserver(state, 'world'));
   launch('environment-observer', () => runIdentityObserver(state, 'environment'));
+  launch('projects-observer', () => runIdentityObserver(state, 'projects'));
 
-  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment) | messages: ${ state.messages.length }`);
+  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects) | messages: ${ state.messages.length }`);
 }
 
 // ============================================================================
