@@ -1,6 +1,6 @@
 import { BaseNode } from './BaseNode';
 import { getAgentOverrideService, getPrimaryService } from '../languagemodels';
-import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
+import { runSubconsciousMiddleware, runSubconsciousObservationWriters } from '../middleware/SubconsciousMiddleware';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
@@ -168,9 +168,15 @@ export class AgentNode extends BaseNode {
     this.stripInjectedContextBlocks(state);
     const observationContext     = (state.metadata as any).observationContext;
     const userObservationContext = (state.metadata as any).userObservationContext;
+    const selfObservationContext = (state.metadata as any).selfObservationContext;
+    const businessObservationContext = (state.metadata as any).businessObservationContext;
+    const environmentObservationContext = (state.metadata as any).environmentObservationContext;
     const combinedContextParts: string[] = [];
     if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
     if (userObservationContext) combinedContextParts.push(`<user_observations>\n${ userObservationContext }\n</user_observations>`);
+    if (selfObservationContext) combinedContextParts.push(`<self_observations>\n${ selfObservationContext }\n</self_observations>`);
+    if (businessObservationContext) combinedContextParts.push(`<business_observations>\n${ businessObservationContext }\n</business_observations>`);
+    if (environmentObservationContext) combinedContextParts.push(`<environment_observations>\n${ environmentObservationContext }\n</environment_observations>`);
 
     if (combinedContextParts.length > 0) {
       const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;
@@ -310,6 +316,23 @@ export class AgentNode extends BaseNode {
         this.bumpStateVersion(state);
       }
       // Text already dispatched to UI in executeAgent() before tool execution
+    }
+
+    // ----------------------------------------------------------------
+    // POST-TURN — observation writers see the COMPLETED exchange
+    // ----------------------------------------------------------------
+    // state.messages now holds the whole turn (user message + this agent's
+    // response + any tool results), so fire the domain writers here to observe
+    // what actually happened — not the pre-turn state the middleware used to see.
+    // Only when the loop has truly ended (done/blocked), never on intermediate
+    // tool-call iterations; fire-and-forget, since the response is already out.
+    if (agentOutcome.status === 'done' || agentOutcome.status === 'blocked') {
+      try {
+        const includeObservations = await this.shouldInjectObservationsForAgent(state);
+        runSubconsciousObservationWriters(state, { includeObservations });
+      } catch (err) {
+        console.warn('[AgentNode] post-turn observation writers failed to launch:', err);
+      }
     }
 
     // ----------------------------------------------------------------

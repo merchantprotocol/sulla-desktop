@@ -1,4 +1,3 @@
-// migrations/index.ts stays the same (re-exports)
 import { up as up_0001, down as down_0001 } from './0001_create_migrations_and_seeders_table';
 import { up as up_0002, down as down_0002 } from './0002_create_agent_awareness_table';
 import { up as up_0008, down as down_0008 } from './0008_create_calendar_events_table';
@@ -40,6 +39,8 @@ import { up as up_0048, down as down_0048 } from './0048_create_system_prompt_se
 import { up as up_0049, down as down_0049 } from './0049_create_system_prompt_section_edits_table';
 import { up as up_0050, down as down_0050 } from './0050_create_identity_observations_table';
 import { up as up_0051, down as down_0051 } from './0051_constrain_identity_observation_domains';
+import { up as up_0052, down as down_0052 } from './0052_add_self_observation_fields';
+import { up as up_0053, down as down_0053 } from './0053_allow_environment_identity_domain';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -80,4 +81,6 @@ export const migrationsRegistry = [
   { name: '0049_create_system_prompt_section_edits_table',      up: up_0049, down: down_0049 },
   { name: '0050_create_identity_observations_table',            up: up_0050, down: down_0050 },
   { name: '0051_constrain_identity_observation_domains',         up: up_0051, down: down_0051 },
+  { name: '0052_add_self_observation_fields',                    up: up_0052, down: down_0052 },
+  { name: '0053_allow_environment_identity_domain',              up: up_0053, down: down_0053 },
 ] as const;

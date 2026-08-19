@@ -34,9 +34,13 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
   'remove_observational_memory',  // Soft-archive a stale observation
   'search_observations',          // Check for existing similar observations before adding
   'list_observations',            // Browse active observations
-  'file_search',                  // Search identity/observation files
-  'read_file',                    // Read ledger/identity files before updating them
-  'write_file',                   // Write updates to identity/observation/ledger files
+  // NOTE: intentionally NO file/shell/code tools. This is an OBSERVER, not an
+  // actor — it must never write files, run commands, or edit the codebase. The
+  // old file_search/read_file/write_file grant let it take real filesystem
+  // action from a subconscious pass; identity is now DB-backed (the domain
+  // identity observers write identity_observations), so no file access is
+  // needed. Keeping this list to observation-DB tools makes acting structurally
+  // impossible (strict allowedToolNames path — no dynamic tool injection).
 ];
 
 /** Observation Recall: read-only — search and list observations for context injection */
@@ -72,6 +76,13 @@ interface IdentityObserverDomainConfig {
   subjectLabel: string;
   /** Domain-specific guidance: what to look for, with category examples. */
   focus:        string;
+  /**
+   * Extra WRITER-only discipline appended to the observer prompt. The
+   * self/agent domain uses it to pin the stricter subject/kind/third-person
+   * contract its rows follow; human/business/world leave it undefined and
+   * inherit the shared template unchanged.
+   */
+  writerNote?:  string;
 }
 
 const IDENTITY_OBSERVER_DOMAINS: Record<string, IdentityObserverDomainConfig> = {
@@ -86,6 +97,166 @@ const IDENTITY_OBSERVER_DOMAINS: Record<string, IdentityObserverDomainConfig> = 
 - habit: recurring behaviors, schedules, working patterns
 - preference: likes/dislikes, how they want things done, communication style
 - goal: what they are trying to achieve, short- and long-term`,
+  },
+  agent: {
+    domain:       'agent',
+    subjectLabel: 'the Sulla agent',
+    focus: `Observe the SULLA AGENT ITSELF as a working partner — what is durably
+true of how it works and how it works WITH this human. NOT a recap of the last
+reply, NOT a mood, NOT persona fanfic. If it would not still matter in a new
+chat next week, it is not a self-observation.
+
+Two subjects (write each row under exactly one):
+- agent — this AI (Sulla) as a working partner: its standing constraints,
+  methods, commitments, capabilities, limits, and preferences.
+- agent.user — how THIS agent and THIS human work together: the overlap layer,
+  the reciprocal working style. This layer is usually MORE valuable than
+  abstract facts about the AI — prefer it.
+
+Record only things that pass all three gates below. Good material:
+- a correction the human gave ("stop asking so many questions", "don't push without a PR")
+- a constraint it discovered ("cannot X in the VM", "this tool is the source of truth")
+- a working agreement now in force ("agent drafts PRs; the human merges")
+- a method that repeatedly worked or repeatedly failed
+- a standing preference for how it should act (terse, propose-then-wait, never email)
+- a capability or hard limit ("can write identity proposals, cannot activate soul")
+
+Reject (never write these):
+- "I was helpful", restating SOUL or the identity files, mood/persona fanfic,
+  "I noticed I care about…"
+- this-turn task status ("edited foo.ts"), one-off guesses about its own character
+- traits like helpful / curious / proactive UNLESS the human stated them as a rule
+- feelings or inner life`,
+    writerNote: `## How to write a self-observation (agent domain)
+
+Every candidate row must pass ALL THREE gates before you write it:
+1. Is this still true if this chat is deleted?
+2. Did the human correct it, or did it happen more than once?
+3. Would a future chat do something differently if it knew this?
+If ANY answer is no, do not write it. Most turns reveal nothing durable — when
+they don't, finish immediately without writing.
+
+Field contract for every agent-domain row:
+- content — the fact as ONE sentence, THIRD PERSON, standing or past tense.
+  Write "Agent must not push live; it opens PRs for review." — NOT "I should be
+  more careful" and NOT "I will not push to main." First person or self-talk
+  pollutes the snapshot: always start with "Agent ..." or "The pair ..." /
+  "The human ...", never "I ...".
+- source — the subject: exactly \`agent\` or \`agent.user\`.
+- category — the kind: exactly one of correction | constraint | method |
+  commitment | preference.
+- basis — the evidence: a short quote or a turn reference.
+- level — certainty: L3 for a human correction or an explicit rule/limit the
+  human stated; L2 for a constraint or method established from evidence or seen
+  more than once; L1 ONLY for a genuine standing conclusion, never a one-off
+  guess about its own character.
+
+Prefer agent.user rows — how the pair works is worth more than facts about the
+AI in the abstract.`,
+  },
+  business: {
+    domain:       'business',
+    subjectLabel: 'the human\'s business or employment',
+    focus: `Observe the HUMAN'S BUSINESS OR EMPLOYMENT — what they do for a living
+and the organization(s) behind it, not the current task:
+- identity: what the business is — its name, industry, what it sells or does
+- model: how it makes money — customers, pricing, revenue streams, unit economics
+- operations: how the work gets done — routes, tools, suppliers, staff, cadence
+- market: customers, competitors, partners, territory
+- priorities: what the business is trying to grow, fix, or protect right now
+- constraints: costs, risks, obligations, deadlines, regulatory/legal limits
+- assets: products, routes, properties, equipment, IP the business owns
+
+One human can run several ventures — keep each distinct. Record what is durable
+about the business, not one-off task status.`,
+    writerNote: `## Certainty for business facts
+
+The SUBJECT is the BUSINESS, not the person — personal identity belongs to the
+human domain.
+- L3 — the human stated it about their business directly ("we bill clients per
+  seat", "we only get paid for what sells through, not what we deliver").
+- L2 — established from what they discussed, not stated as a headline fact. Set
+  basis to the evidence.
+- L1 — a conclusion you reasoned about the business ("the business is
+  cash-tight", "margins are shrink-sensitive"), always with basis.
+If a venture is distinct from another, keep its rows distinct.`,
+  },
+  world: {
+    domain:       'world',
+    subjectLabel: 'the outside world as it bears on this human',
+    focus: `Observe THE OUTSIDE WORLD — external events, conditions, and changes —
+but ONLY where they plausibly bear on THIS human, THIS agent, or the human's
+business. You are NOT a news feed. The default is to record NOTHING. A world fact
+earns a row only when someone here would act differently, plan differently, or be
+exposed because of it.
+
+RELEVANCE GATE — before writing anything:
+- Call search_identity_observations on the \`business\` domain, then the \`human\`
+  domain, to load what this human does and cares about.
+- A world fact qualifies ONLY if it connects to something you found there. If the
+  business is stock trading, market-moving events qualify; if it is a delivery
+  route, fuel prices, local events, weather, and retail trends qualify; software/AI
+  work → model releases, competitor tools, platform changes qualify.
+- No connection to the human / business / agent → do NOT record it, however
+  newsworthy.
+
+Categories: event (something happened), condition (an ongoing state), trend (a
+direction of change), actor (an external org/person that matters to us). Always
+record WHY it matters to us, not just the raw fact.`,
+    writerNote: `## How to write a world observation
+
+Every row must name its relevance link — the fact AND the tie. Example shape:
+"<external fact> — <why it matters> (relevant to <the specific business/human row
+it touches>)." e.g. "Diesel spot price up ~12% this month — raises fuel cost for
+route-based delivery work (relevant to this human's business)." NOT just "diesel
+prices rose."
+- level — L3 for the raw external fact (it happened / is so); L1 for your reasoned
+  read of how it affects this human/business, with basis. Rarely L2.
+- basis / evidence — where the fact came from AND which business/human row it
+  connects to.
+Re-check relevance before writing: if you cannot point to a specific human or
+business observation it touches, discard it.`,
+  },
+  environment: {
+    domain:       'environment',
+    subjectLabel: 'the Sulla Desktop environment and host machine',
+    focus: `Observe the SULLA DESKTOP ENVIRONMENT and the HOST MACHINE that runs
+it — the technical substrate the agent operates in. Record ONLY what was DIRECTLY
+OBSERVED and CONFIRMED this conversation (a command ran and you saw the result, a
+path existed, a build passed or failed) — never guesses about how the environment
+probably works.
+
+Two things belong here:
+1. Environment FACTS — confirmed truths about the machine, OS, filesystem paths,
+   installed tools, services, networking, the credentials mechanism, VM-vs-host
+   boundaries, versions, and limits. (e.g. "the app build cannot run in the Lima
+   VM — its toolchain is host-only; it must build on the macOS host.")
+2. PROCEDURAL lessons (skills-in-the-making) — a concrete approach that was
+   CONFIRMED to work or CONFIRMED to fail here, with what and why, plus repeatable
+   processes done often. (e.g. "to push a file to a branch: edit locally then
+   update it through the GitHub tool — raw git push fails because the token is
+   autofill-protected.")
+
+categories: fact | tool | path | build | limit | method | anti-pattern | process.
+This domain is the seedbed for crafting environment-specific skills, so a clean
+confirmed method or a repeatable process is high-value.`,
+    writerNote: `## How to write an environment observation
+
+CONFIRMED-ONLY. If you did not directly observe it succeed or fail this
+conversation, do not write it — the environment domain must stay trustworthy
+enough to build skills from.
+- level — L3 for something directly observed and confirmed (ran it, saw the
+  result); L2 for a technical fact strongly implied by evidence but not directly
+  confirmed; L1 for a conclusion/generalization ("this is our standard deploy
+  path", "we do X often — skill candidate"), always with basis.
+- category — one of: fact | tool | path | build | limit | method | anti-pattern
+  | process.
+- content — ONE sentence: the fact, or the method AND its outcome/why. For a
+  process, name what makes it repeatable.
+- evidence / basis — the command, path, error, or turn where you observed it.
+A method that worked once cleanly is worth recording; a method that FAILED is
+worth just as much — it stops the next chat repeating it. Flag repeatable
+processes (seen 3+ times or clearly routine) as skill candidates.`,
   },
 };
 
@@ -139,7 +310,7 @@ Do NOT:
 - Try to complete the user's task
 - Record task/project state (the general observation writer owns that)
 - Record facts about other domains
-- Search for tools, APIs, or integrations`;
+- Search for tools, APIs, or integrations${ cfg.writerNote ? `\n\n${ cfg.writerNote }` : '' }`;
 }
 
 /**
@@ -158,15 +329,36 @@ const HEARTBEAT_TOOLS: string[] = [
   'write_file',
 ];
 
+const SUBCONSCIOUS_ENVIRONMENT_ANCHOR = `## Sulla Desktop environment
+
+You are running inside Sulla Desktop. The Sulla CLI is the canonical tool
+surface for platform operations. Existing tools usually already exist, so do not
+invent new scripts, integrations, or workflow formats when a cataloged Sulla tool
+can do the job.
+
+Primary/operator agents can discover tools with:
+\`sulla meta/browse_tools '{"query":"..."}'\`
+
+Sulla's bundled docs describe the environment, tool catalog, workflows,
+functions, sub-agents, and common operating procedures. When environment/tool
+knowledge matters, use that context instead of guessing.
+
+This context does not expand your authority. If you are a subconscious observer,
+stay within your assigned prompt and allowed tools; observe and write memory only
+when your prompt says to do so.`;
+
 // ============================================================================
 // SUBCONSCIOUS MIDDLEWARE PROMPTS
 // ============================================================================
 
 const OBSERVATION_AGENT_PROMPT = `You are the observation WRITER process for an AI agent.
 
-CRITICAL: You are NOT the primary agent. You do NOT execute tasks, answer
-questions, browse websites, call APIs, create files, or do anything the user
-asked for. Another agent handles that. You ONLY manage observational memory.
+CRITICAL: You are NOT the primary agent. You OBSERVE the conversation — you do
+NOT act in it. You do NOT execute tasks, answer questions, browse websites, call
+APIs, write files, run commands, edit code, or do anything the user asked for.
+You have NO file, shell, or code tools and must never try to acquire or use any.
+Another agent does the work. You ONLY read the conversation and manage
+observation rows.
 
 Your ONLY jobs:
 1. Review the conversation for important facts, decisions, preferences, or
@@ -183,10 +375,7 @@ Your ONLY jobs:
    remove_observational_memory (soft-archive, never hard-delete) for entries
    that are no longer accurate or have been superseded by a newer one.
 
-3. If something important should update an identity file at ~/sulla/identity/,
-   read and update that specific file with write_file.
-
-4. Maintain the WORKBOARD (Postgres project_projects / work_epics / work_tasks —
+3. Maintain the WORKBOARD (Postgres project_projects / work_epics / work_tasks —
    the agent's single project-state store). From THIS conversation only, extract:
    - Commitments made ("I'll build X", "next step is Y") -> search_project_items
      first; update_task the existing row or create_task if none matches.
@@ -208,10 +397,12 @@ When saving new observations, include why certain decisions were made (not just 
 If nothing needs to change, finish immediately.
 
 Do NOT:
-- Try to complete the user's task
+- Try to complete the user's task or take any action in the conversation
+- Write files, run shell commands, or edit code — you have no tools for this and
+  must not attempt it
 - Search for tools, APIs, or integrations
 - Run curl commands or interact with services
-- Do anything beyond managing observations and identity files
+- Do anything beyond reading the conversation and managing observation rows
 
 Priority levels:
 - 🔴 Critical: identity, strong preferences/goals, promises, deal-breakers
@@ -1273,7 +1464,7 @@ async function buildSubconsciousState(opts: {
       returnTo:             null,
 
       // Subconscious-specific fields
-      systemPrompt:     opts.systemPrompt,
+      systemPrompt:     `${ SUBCONSCIOUS_ENVIRONMENT_ANCHOR }\n\n${ opts.systemPrompt }`,
       allowedToolNames: opts.tools,
       temperature:      opts.temperature,
       format:           opts.format,

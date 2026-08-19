@@ -61,6 +61,10 @@ function row(overrides: Record<string, any> = {}) {
     category:   'preference',
     content:    'Jonathon prefers direct status reports.',
     basis:      'He asked for direct status.',
+    subject:    null,
+    evidence:   null,
+    confidence: null,
+    kind:       null,
     created_at: '2026-08-19T18:00:00.000Z',
     updated_at: null,
     archived:   false,
@@ -99,7 +103,7 @@ describe('identity observation tools', () => {
   });
 
   it('fails closed for invalid identity domains', async() => {
-    jest.spyOn(IdentityObservationsModel, 'findDuplicate').mockRejectedValue(new Error('Invalid identity domain "bogus"; expected one of: human, business, world, agent'));
+    jest.spyOn(IdentityObservationsModel, 'findDuplicate').mockRejectedValue(new Error('Invalid identity domain "bogus"; expected one of: human, business, world, agent, environment'));
 
     const result = await addWorker().invoke({
       domain:  'bogus',

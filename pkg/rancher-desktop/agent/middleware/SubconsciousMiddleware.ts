@@ -199,46 +199,59 @@ export async function runSubconsciousMiddleware(
   // the general Observation Writer + Observation Recall below, plus the focused
   // domain observers (human first) dispatched alongside them.
 
-  // 3a. Observation Writer — fire-and-forget: writes/archives observation rows
-  //     via DB tools. Never touches state.messages. No need to await.
-  if (options.includeObservations && analyzable) {
-    launched.push('observation-writer (fire-and-forget)');
-    runObservationAgent(state).catch((error) => {
-      console.error('[SubconsciousMiddleware] Observation Writer failed (fire-and-forget):', error instanceof Error ? error.message : error);
-    });
-  }
+  // PRE-TURN = RECALLS ONLY. The observation WRITERS (general writer + domain
+  // domain identity observers) moved to a POST-TURN pass:
+  // runSubconsciousObservationWriters(), which AgentNode invokes after the loop
+  // ends. Two reasons: (1) a writer that runs before the turn can only see up to
+  // the user's message — it misses the agent's response, the tools it ran, and
+  // any mid-turn correction; running after the loop lets each writer observe the
+  // COMPLETED exchange. (2) Writers no longer compete with recall for the shared
+  // model during the latency-critical prelude. Recalls MUST stay here — they
+  // inform the reply, so they run before it. Recalls run in parallel (awaited
+  // together below), so adding domains costs ~max(), not sum().
 
-  // 3b. Observation Recall — awaited: surfaces relevant observations from the
-  //     DB table and writes them to state.metadata.observationContext so the
-  //     primary agent gets targeted observation context instead of the full blob.
+  // R1. Observation Recall — awaited: surfaces relevant observations from the DB
+  //     table into state.metadata.observationContext.
   if (options.includeObservations && analyzable) {
     launched.push('observation-recall');
     const obsRecallPromise = runObservationRecall(state);
     awaitedTasks.push(timed('observation-recall', 'Checking observations', obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx })));
   }
 
-  // 3c. Identity Observer (human) — fire-and-forget writer for the focused,
-  //     domain-keyed identity_observations table. Records stated facts (L3),
-  //     derived facts (L2), and reasoned conclusions (L1) about the human
-  //     user. Runs alongside the general writer; never touches state.messages.
-  if (options.includeObservations && analyzable) {
-    launched.push('identity-observer-human (fire-and-forget)');
-    runIdentityObserver(state, 'human').catch((error) => {
-      console.error('[SubconsciousMiddleware] Identity Observer (human) failed (fire-and-forget):', error instanceof Error ? error.message : error);
-    });
-  }
-
-  // 3d. Identity Observation Recall — awaited: read-only recall agent that
-  //     searches/lists identity_observations and returns whatever is relevant
-  //     to the current conversation. This deliberately avoids a fixed "last N"
-  //     profile dump; relevance is turn-dependent.
+  // R2. Identity Observation Recall (human) — awaited: read-only recall of
+  //     relevant human-domain rows, injected as <user_observations>. Avoids a
+  //     fixed "last N" dump; relevance is turn-dependent.
   if (options.includeObservations && analyzable) {
     launched.push('identity-observation-recall');
     const idRecallPromise = runIdentityObservationRecall(state, 'human');
     awaitedTasks.push(timed('identity-observation-recall', 'Recalling who you are', idRecallPromise.then(ctx => { (state.metadata as any).userObservationContext = ctx })));
   }
 
-  console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
+  // R3. Self Observation Recall (agent) — awaited: relevant `agent`-domain rows,
+  //     injected as <self_observations>.
+  if (options.includeObservations && analyzable) {
+    launched.push('self-observation-recall');
+    const selfRecallPromise = runIdentityObservationRecall(state, 'agent');
+    awaitedTasks.push(timed('self-observation-recall', 'Recalling how we work', selfRecallPromise.then(ctx => { (state.metadata as any).selfObservationContext = ctx })));
+  }
+
+  // R4. Business Observation Recall (business) — awaited: relevant
+  //     `business`-domain rows, injected as <business_observations>.
+  if (options.includeObservations && analyzable) {
+    launched.push('business-observation-recall');
+    const bizRecallPromise = runIdentityObservationRecall(state, 'business');
+    awaitedTasks.push(timed('business-observation-recall', 'Recalling the business', bizRecallPromise.then(ctx => { (state.metadata as any).businessObservationContext = ctx })));
+  }
+
+  // R5. Environment Observation Recall (environment) — awaited: relevant
+  //     `environment`-domain rows, injected as <environment_observations>.
+  if (options.includeObservations && analyzable) {
+    launched.push('environment-observation-recall');
+    const envRecallPromise = runIdentityObservationRecall(state, 'environment');
+    awaitedTasks.push(timed('environment-observation-recall', 'Recalling this environment', envRecallPromise.then(ctx => { (state.metadata as any).environmentObservationContext = ctx })));
+  }
+
+  console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
   // Every task in awaitedTasks writes into the live turn state. The primary
   // agent must never start while one of these tasks can still mutate messages
@@ -260,6 +273,50 @@ export async function runSubconsciousMiddleware(
   // Perf: total blocking prelude + per-sub-agent breakdown (which one dominates).
   const breakdown = Object.entries(timings).map(([n, ms]) => `${ n }=${ ms }ms`).join(', ');
   perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] obsChars=${ obsRecallLen }`);
+}
+
+/**
+ * POST-TURN observation WRITERS. AgentNode invokes this AFTER the loop ends, so
+ * each writer observes the COMPLETED exchange (the user's message + the agent's
+ * response + the tools it ran + any mid-turn correction) instead of the pre-turn
+ * state. All fire-and-forget: the user-facing response has already been
+ * dispatched, so these add zero turn latency, never touch state.messages, and no
+ * longer compete with recall for the shared model during the prelude.
+ *
+ * Skipped inside workflows (same gate as the pre-turn recall pass) and when the
+ * turn carried no analyzable user message. Six writers, each scoped to write
+ * only its own domain:
+ *   - general Observation Writer   → observation + Projects work-state rows
+ *   - Identity Observer  human      → the human user
+ *   - Self Observer      agent      → Sulla + how this pair works together
+ *   - Business Observer  business   → the human's business/employment
+ *   - World Observer      world     → external events relevant to us (gated)
+ *   - Environment Observer environment → this install/host + repeatable processes
+ */
+export function runSubconsciousObservationWriters(
+  state: BaseThreadState,
+  options: { includeObservations: boolean },
+): void {
+  const meta = state.metadata as any;
+  if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
+    return; // inside a workflow — writers stay off, same as the recall pass
+  }
+  if (!options.includeObservations || !hasAnalyzableUserMessage(state)) return;
+
+  const launch = (label: string, run: () => Promise<unknown>): void => {
+    Promise.resolve().then(run).catch((error) => {
+      console.error(`[SubconsciousMiddleware] Post-turn ${ label } failed (fire-and-forget):`, error instanceof Error ? error.message : error);
+    });
+  };
+
+  launch('observation-writer', () => runObservationAgent(state));
+  launch('identity-observer-human', () => runIdentityObserver(state, 'human'));
+  launch('self-observer-agent', () => runIdentityObserver(state, 'agent'));
+  launch('business-observer', () => runIdentityObserver(state, 'business'));
+  launch('world-observer', () => runIdentityObserver(state, 'world'));
+  launch('environment-observer', () => runIdentityObserver(state, 'environment'));
+
+  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment) | messages: ${ state.messages.length }`);
 }
 
 // ============================================================================
