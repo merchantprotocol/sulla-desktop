@@ -136,6 +136,20 @@ describe('identity observation tools', () => {
     });
   });
 
+  it('lists rows returned with Date timestamps', async() => {
+    jest.spyOn(IdentityObservationsModel, 'listActive').mockResolvedValue([
+      row({ created_at: new Date('2026-08-19T18:00:00.000Z') }),
+    ]);
+
+    const result = await listWorker().invoke({
+      domain: 'human',
+      limit:  12,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.result).toContain('[id:hum1] L3·preference 2026-08-19');
+  });
+
   it('searches one identity domain and reports matched rows', async() => {
     jest.spyOn(IdentityObservationsModel, 'search').mockResolvedValue([row()]);
 

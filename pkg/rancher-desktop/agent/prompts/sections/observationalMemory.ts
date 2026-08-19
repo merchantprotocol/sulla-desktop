@@ -22,6 +22,7 @@
 import { ObservationsModel } from '../../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { parseJson } from '../../services/JsonParseService';
+import { datePrefix } from '../../utils/datePrefix';
 
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
@@ -44,7 +45,7 @@ export async function buildObservationalMemorySection(
 
     if (rows.length > 0) {
       const lines = rows.map((r) =>
-        `- [id:${ r.id }] ${ r.priority } ${ r.created_at.slice(0, 10) } — ${ r.content }`.trim(),
+        `- [id:${ r.id }] ${ r.priority } ${ datePrefix(r.created_at) } — ${ r.content }`.trim(),
       );
 
       const content = `## Memory (top-${ TOP_N } observations)
