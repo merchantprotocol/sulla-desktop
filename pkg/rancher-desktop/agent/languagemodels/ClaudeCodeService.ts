@@ -1,3 +1,10 @@
+File: pkg/rancher-desktop/agent/languagemodels/ClaudeCodeService.ts
+Size: 69533 bytes
+SHA: 63b56dc0a0dc9ade8d45180916aec445a3d3fa0b
+Encoding: base64
+Ref: feat/subconscious-per-domain-observers
+
+Content:
 import * as childProcess from 'child_process';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
@@ -671,6 +678,11 @@ Rules that apply on every turn:
     const selfObservationContext = (state?.metadata as any)?.selfObservationContext;
     if (selfObservationContext && typeof selfObservationContext === 'string' && selfObservationContext.trim()) {
       parts.push(`<self_observations>\n${ selfObservationContext.trim() }\n</self_observations>`);
+    }
+
+    const businessObservationContext = (state?.metadata as any)?.businessObservationContext;
+    if (businessObservationContext && typeof businessObservationContext === 'string' && businessObservationContext.trim()) {
+      parts.push(`<business_observations>\n${ businessObservationContext.trim() }\n</business_observations>`);
     }
 
     if (parts.length === 0) return '';
