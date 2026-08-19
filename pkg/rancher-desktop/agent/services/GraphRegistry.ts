@@ -1,3 +1,10 @@
+File: pkg/rancher-desktop/agent/services/GraphRegistry.ts
+Size: 60908 bytes
+SHA: 78718d47cf99959d91c960828093ada9d12309e7
+Encoding: base64
+Ref: feat/subconscious-per-domain-observers
+
+Content:
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -149,6 +156,67 @@ Field contract for every agent-domain row:
 
 Prefer agent.user rows — how the pair works is worth more than facts about the
 AI in the abstract.`,
+  },
+  business: {
+    domain:       'business',
+    subjectLabel: 'the human\'s business or employment',
+    focus: `Observe the HUMAN'S BUSINESS OR EMPLOYMENT — what they do for a living
+and the organization(s) behind it, not the current task:
+- identity: what the business is — its name, industry, what it sells or does
+- model: how it makes money — customers, pricing, revenue streams, unit economics
+- operations: how the work gets done — routes, tools, suppliers, staff, cadence
+- market: customers, competitors, partners, territory
+- priorities: what the business is trying to grow, fix, or protect right now
+- constraints: costs, risks, obligations, deadlines, regulatory/legal limits
+- assets: products, routes, properties, equipment, IP the business owns
+
+One human can run several ventures — keep each distinct. Record what is durable
+about the business, not one-off task status.`,
+    writerNote: `## Certainty for business facts
+
+The SUBJECT is the BUSINESS, not the person — personal identity belongs to the
+human domain.
+- L3 — the human stated it about their business directly ("we get charged for
+  all delivered product", "my route is the SBT Bimbo route").
+- L2 — established from what they discussed, not stated as a headline fact. Set
+  basis to the evidence.
+- L1 — a conclusion you reasoned about the business ("the business is
+  cash-tight", "margins are shrink-sensitive"), always with basis.
+If a venture is distinct from another, keep its rows distinct.`,
+  },
+  world: {
+    domain:       'world',
+    subjectLabel: 'the outside world as it bears on this human',
+    focus: `Observe THE OUTSIDE WORLD — external events, conditions, and changes —
+but ONLY where they plausibly bear on THIS human, THIS agent, or the human's
+business. You are NOT a news feed. The default is to record NOTHING. A world fact
+earns a row only when someone here would act differently, plan differently, or be
+exposed because of it.
+
+RELEVANCE GATE — before writing anything:
+- Call search_identity_observations on the \`business\` domain, then the \`human\`
+  domain, to load what this human does and cares about.
+- A world fact qualifies ONLY if it connects to something you found there. If the
+  business is stock trading, market-moving events qualify; if it is a delivery
+  route, fuel prices, local events, weather, and retail trends qualify; software/AI
+  work → model releases, competitor tools, platform changes qualify.
+- No connection to the human / business / agent → do NOT record it, however
+  newsworthy.
+
+Categories: event (something happened), condition (an ongoing state), trend (a
+direction of change), actor (an external org/person that matters to us). Always
+record WHY it matters to us, not just the raw fact.`,
+    writerNote: `## How to write a world observation
+
+Every row must name its relevance link — the fact AND the tie:
+"Diesel spot price up ~12% this month — raises delivery-route fuel cost (relevant
+to the SBT route business)." NOT just "diesel prices rose."
+- level — L3 for the raw external fact (it happened / is so); L1 for your reasoned
+  read of how it affects this human/business, with basis. Rarely L2.
+- basis / evidence — where the fact came from AND which business/human row it
+  connects to.
+Re-check relevance before writing: if you cannot point to a specific human or
+business observation it touches, discard it.`,
   },
 };
 
