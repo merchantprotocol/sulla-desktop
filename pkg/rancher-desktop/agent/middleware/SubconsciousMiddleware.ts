@@ -1,3 +1,10 @@
+File: pkg/rancher-desktop/agent/middleware/SubconsciousMiddleware.ts
+Size: 31509 bytes
+SHA: e0dc9da4caa19420277b0c96cd9bab58440175b2
+Encoding: base64
+Ref: feat/subconscious-per-domain-observers
+
+Content:
 /**
  * SubconsciousMiddleware — pre-processing step before the main agent LLM call.
  *
@@ -257,6 +264,39 @@ export async function runSubconsciousMiddleware(
     launched.push('self-observation-recall');
     const selfRecallPromise = runIdentityObservationRecall(state, 'agent');
     awaitedTasks.push(timed('self-observation-recall', 'Recalling how we work', selfRecallPromise.then(ctx => { (state.metadata as any).selfObservationContext = ctx })));
+  }
+
+  // 3g. Business Observer (business) — fire-and-forget writer for the `business`
+  //     domain: what the human's business/employment is, how it makes money, how
+  //     it runs, what it needs. Same L3/L2/L1 discipline as the human observer;
+  //     never touches state.messages.
+  if (options.includeObservations && analyzable) {
+    launched.push('business-observer (fire-and-forget)');
+    runIdentityObserver(state, 'business').catch((error) => {
+      console.error('[SubconsciousMiddleware] Business Observer failed (fire-and-forget):', error instanceof Error ? error.message : error);
+    });
+  }
+
+  // 3h. Business Observation Recall — awaited: read-only recall of `business`-domain
+  //     rows relevant to this turn, injected as <business_observations> (parallel
+  //     to <user_observations> / <self_observations>).
+  if (options.includeObservations && analyzable) {
+    launched.push('business-observation-recall');
+    const bizRecallPromise = runIdentityObservationRecall(state, 'business');
+    awaitedTasks.push(timed('business-observation-recall', 'Recalling the business', bizRecallPromise.then(ctx => { (state.metadata as any).businessObservationContext = ctx })));
+  }
+
+  // 3i. World Observer (world) — fire-and-forget writer for the `world` domain.
+  //     RELEVANCE-GATED: its prompt reads the business+human picture first and
+  //     records a world fact ONLY when it bears on this human, business, or agent.
+  //     Recall/injection is deliberately DEFERRED (world runs on a slower beat) so
+  //     world context is tracked and stays queryable without being pushed into
+  //     every turn. Never touches state.messages.
+  if (options.includeObservations && analyzable) {
+    launched.push('world-observer (fire-and-forget)');
+    runIdentityObserver(state, 'world').catch((error) => {
+      console.error('[SubconsciousMiddleware] World Observer failed (fire-and-forget):', error instanceof Error ? error.message : error);
+    });
   }
 
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
