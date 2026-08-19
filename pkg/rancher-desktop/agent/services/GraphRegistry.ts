@@ -176,8 +176,8 @@ about the business, not one-off task status.`,
 
 The SUBJECT is the BUSINESS, not the person — personal identity belongs to the
 human domain.
-- L3 — the human stated it about their business directly ("we get charged for
-  all delivered product", "my route is the SBT Bimbo route").
+- L3 — the human stated it about their business directly ("we bill clients per
+  seat", "we only get paid for what sells through, not what we deliver").
 - L2 — established from what they discussed, not stated as a headline fact. Set
   basis to the evidence.
 - L1 — a conclusion you reasoned about the business ("the business is
@@ -208,9 +208,11 @@ direction of change), actor (an external org/person that matters to us). Always
 record WHY it matters to us, not just the raw fact.`,
     writerNote: `## How to write a world observation
 
-Every row must name its relevance link — the fact AND the tie:
-"Diesel spot price up ~12% this month — raises delivery-route fuel cost (relevant
-to the SBT route business)." NOT just "diesel prices rose."
+Every row must name its relevance link — the fact AND the tie. Example shape:
+"<external fact> — <why it matters> (relevant to <the specific business/human row
+it touches>)." e.g. "Diesel spot price up ~12% this month — raises fuel cost for
+route-based delivery work (relevant to this human's business)." NOT just "diesel
+prices rose."
 - level — L3 for the raw external fact (it happened / is so); L1 for your reasoned
   read of how it affects this human/business, with basis. Rarely L2.
 - basis / evidence — where the fact came from AND which business/human row it
