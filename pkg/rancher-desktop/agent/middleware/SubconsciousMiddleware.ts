@@ -21,6 +21,7 @@ import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
+import { formatDateOnly } from '../utils/formatDateOnly';
 
 import Logging from '@pkg/utils/logging';
 
@@ -511,7 +512,7 @@ function extractLatestUserText(state: BaseThreadState): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== 'user') continue;
-    if ((m?.metadata as any)?.source === 'subconscious') continue;
+    if (m?.metadata?.source === 'subconscious') continue;
 
     const c = m?.content;
     if (typeof c === 'string') {
@@ -572,7 +573,7 @@ async function runObservationRecall(state: BaseThreadState): Promise<string | nu
     }
 
     const response = rows
-      .map((r) => `[${ r.id }] ${ r.priority } ${ (r.created_at || '').slice(0, 10) } — ${ r.content }`)
+      .map((r) => `[${ r.id }] ${ r.priority } ${ formatDateOnly(r.created_at) } — ${ r.content }`)
       .join('\n');
 
     perf.log(`[ObservationRecall] threadId=${ threadId } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
@@ -640,7 +641,7 @@ async function runIdentityObservationRecall(state: BaseThreadState, domain: stri
     }
 
     const response = rows
-      .map((r) => `[${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ (r.created_at || '').slice(0, 10) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`)
+      .map((r) => `[${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ formatDateOnly(r.created_at) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`)
       .join('\n');
 
     perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
