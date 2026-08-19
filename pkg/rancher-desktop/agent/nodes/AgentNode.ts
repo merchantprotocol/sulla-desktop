@@ -7,7 +7,7 @@ Ref: feat/subconscious-per-domain-observers
 Content:
 import { BaseNode } from './BaseNode';
 import { getAgentOverrideService, getPrimaryService } from '../languagemodels';
-import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
+import { runSubconsciousMiddleware, runSubconsciousObservationWriters } from '../middleware/SubconsciousMiddleware';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
 import { stripProtocolTags } from '../utils/stripProtocolTags';
@@ -321,6 +321,23 @@ export class AgentNode extends BaseNode {
         this.bumpStateVersion(state);
       }
       // Text already dispatched to UI in executeAgent() before tool execution
+    }
+
+    // ----------------------------------------------------------------
+    // POST-TURN — observation writers see the COMPLETED exchange
+    // ----------------------------------------------------------------
+    // state.messages now holds the whole turn (user message + this agent's
+    // response + any tool results), so fire the domain writers here to observe
+    // what actually happened — not the pre-turn state the middleware used to see.
+    // Only when the loop has truly ended (done/blocked), never on intermediate
+    // tool-call iterations; fire-and-forget, since the response is already out.
+    if (agentOutcome.status === 'done' || agentOutcome.status === 'blocked') {
+      try {
+        const includeObservations = await this.shouldInjectObservationsForAgent(state);
+        runSubconsciousObservationWriters(state, { includeObservations });
+      } catch (err) {
+        console.warn('[AgentNode] post-turn observation writers failed to launch:', err);
+      }
     }
 
     // ----------------------------------------------------------------
