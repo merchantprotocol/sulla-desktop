@@ -23,6 +23,10 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'Unblock Ladder',
   'Two-Door Rule',
   'You Are the Decider for Your Sub-Agents',
+  'Parallel Projects Dispatch',
+  'up to **10** ungated tasks',
+  'one sub-agent per task',
+  'isolated git worktree',
   'The Prospector',
   'Artifact-per-Cycle',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.

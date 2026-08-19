@@ -78,6 +78,18 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain("never write Redis 'sulla_settings' directly");
   });
 
+  it('dispatches multiple actionable Projects tasks through sub-agents with worktree isolation', () => {
+    expect(heartbeatPrompt).toContain('## Parallel Projects Dispatch');
+    expect(heartbeatPrompt).toContain('up to **10** ungated tasks');
+    expect(heartbeatPrompt).toContain("one asynchronous 'spawn_agent' call");
+    expect(heartbeatPrompt).toContain('one sub-agent per task');
+    expect(heartbeatPrompt).toContain("'parallel:true', 'async:true'");
+    expect(heartbeatPrompt).toContain('isolated git worktree');
+    expect(heartbeatPrompt).toContain('sulla github/git_worktree');
+    expect(heartbeatPrompt).toContain('sulla github/git_push');
+    expect(heartbeatPrompt).toContain('check_agent_jobs');
+  });
+
   // Regression guard for #587: Jonathon rejected the "pick one task, make one
   // move, STOP" cycle ceiling (#581) and required a continuous operator that
   // works the whole portfolio per wake. PR #581 proved this framing can be
