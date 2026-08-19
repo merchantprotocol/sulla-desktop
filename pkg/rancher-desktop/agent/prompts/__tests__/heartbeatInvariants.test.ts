@@ -23,6 +23,15 @@ describe('checkHeartbeatPromptInvariants', () => {
     expect(result.missing).toContain('Never end a wake idle');
   });
 
+  it('fails when the operator doctrine or freeze covenant is stripped from a deployed prompt', () => {
+    for (const phrase of ['Two-Door Rule', 'The Prospector', 'This Prompt Is Frozen']) {
+      const stripped = heartbeatPrompt.split(phrase).join('');
+      const result = checkHeartbeatPromptInvariants(stripped);
+      expect(result.ok).toBe(false);
+      expect(result.missing).toContain(phrase);
+    }
+  });
+
   it('fails when a #581 STOP-ceiling phrase reappears', () => {
     const reverted = `${ heartbeatPrompt }\n\n## Cycle Budget & Escalation\nPick ONE task, make one move, then STOP.`;
     const result = checkHeartbeatPromptInvariants(reverted);

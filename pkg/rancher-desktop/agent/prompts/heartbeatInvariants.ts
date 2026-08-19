@@ -14,9 +14,19 @@
 
 /** Phrases the deployed continuous-operator heartbeat prompt MUST contain. */
 export const HEARTBEAT_REQUIRED_PHRASES = [
+  // Continuous-operator posture (#587): whole-portfolio work, no per-wake cap.
   'not a one-task worker',
   'does not cap you at one item per wake',
   'Never end a wake idle',
+  // Operator doctrine sections — each header is load-bearing; a deployed prompt
+  // missing any of these has been truncated or reverted, not merely reworded.
+  'Unblock Ladder',
+  'Two-Door Rule',
+  'You Are the Decider for Your Sub-Agents',
+  'The Prospector',
+  'Artifact-per-Cycle',
+  // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
+  'This Prompt Is Frozen',
 ] as const;
 
 /**

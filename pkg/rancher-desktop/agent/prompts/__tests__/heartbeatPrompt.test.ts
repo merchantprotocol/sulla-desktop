@@ -65,6 +65,19 @@ describe('heartbeatPrompt', () => {
     }
   });
 
+  // Stability covenant: Jonathon declared the operator prompt nailed down.
+  // Heartbeat must not generate prompt-tweak churn; edits require verified
+  // evidence (capability gap / invariant regression / authority defect) and
+  // ship as a parked DECISION task for Jonathon — never a self-modification.
+  it('carries the prompt-freeze covenant so heartbeat stops tweaking itself', () => {
+    expect(heartbeatPrompt).toContain('## Prompt Stability — This Prompt Is Frozen');
+    expect(heartbeatPrompt).toContain('Never self-modify this prompt');
+    expect(heartbeatPrompt).toContain('never treat "the prompt could be better" as evidence');
+    // The freeze extends to the operator's own switch and settings store.
+    expect(heartbeatPrompt).toContain("never flip 'heartbeatEnabled'");
+    expect(heartbeatPrompt).toContain("never write Redis 'sulla_settings' directly");
+  });
+
   // Regression guard for #587: Jonathon rejected the "pick one task, make one
   // move, STOP" cycle ceiling (#581) and required a continuous operator that
   // works the whole portfolio per wake. PR #581 proved this framing can be
