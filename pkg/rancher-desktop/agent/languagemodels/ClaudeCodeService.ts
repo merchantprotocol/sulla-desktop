@@ -663,6 +663,11 @@ Rules that apply on every turn:
       parts.push(`<observation_context>\n${ observationContext.trim() }\n</observation_context>`);
     }
 
+    const userObservationContext = (state?.metadata as any)?.userObservationContext;
+    if (userObservationContext && typeof userObservationContext === 'string' && userObservationContext.trim()) {
+      parts.push(`<user_observations>\n${ userObservationContext.trim() }\n</user_observations>`);
+    }
+
     if (parts.length === 0) return '';
     return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;
   }

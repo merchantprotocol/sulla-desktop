@@ -1,6 +1,12 @@
 import { IdentityObservationsModel } from '../../database/models/IdentityObservationsModel';
 import { BaseTool, ToolResponse } from '../base';
 
+function datePrefix(value: unknown): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === 'string') return value.slice(0, 10);
+  return '';
+}
+
 /**
  * List Identity Observations Tool
  *
@@ -29,7 +35,7 @@ export class ListIdentityObservationsWorker extends BaseTool {
       }
 
       const lines = rows.map(r =>
-        `[id:${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ (r.created_at || '').slice(0, 10) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`,
+        `[id:${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ datePrefix(r.created_at) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`,
       );
 
       return {
