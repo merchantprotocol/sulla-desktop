@@ -290,6 +290,20 @@ export interface IpcMainInvokeEvents {
   'sulla-settings:get':    (key: string) => any;
   'sulla-settings:set':    (key: string, value: any, cast?: string) => any;
 
+  // DB-backed System Prompt editor (Language Model Settings)
+  'system-prompt:list':              () => import('@pkg/agent/database/models/SystemPromptSectionModel').SystemPromptSectionRecord[];
+  'system-prompt:update':            (id: string, changes: import('@pkg/agent/database/models/SystemPromptSectionModel').UpdateSectionInput) => import('@pkg/agent/database/models/SystemPromptSectionModel').SystemPromptSectionRecord | null;
+  'system-prompt:reset':             (id: string) => import('@pkg/agent/database/models/SystemPromptSectionModel').SystemPromptSectionRecord | null;
+  'system-prompt:add':               (input: import('@pkg/agent/database/models/SystemPromptSectionModel').AddSectionInput) => import('@pkg/agent/database/models/SystemPromptSectionModel').SystemPromptSectionRecord;
+  'system-prompt:remove':            (id: string) => boolean;
+  'system-prompt:preview-generated': (id: string) => string;
+
+  // Staged, human-approved System Prompt edit proposals
+  'system-prompt-edits:list-pending': () => import('@pkg/agent/database/models/SystemPromptSectionEditModel').SectionEditRecord[];
+  'system-prompt-edits:propose':      (input: import('@pkg/agent/database/models/SystemPromptSectionEditModel').ProposeEditInput) => import('@pkg/agent/database/models/SystemPromptSectionEditModel').SectionEditRecord | null;
+  'system-prompt-edits:approve':      (id: string, finalContent?: string) => { section: import('@pkg/agent/database/models/SystemPromptSectionModel').SystemPromptSectionRecord | null; edit: import('@pkg/agent/database/models/SystemPromptSectionEditModel').SectionEditRecord } | null;
+  'system-prompt-edits:deny':         (id: string) => import('@pkg/agent/database/models/SystemPromptSectionEditModel').SectionEditRecord | null;
+
   /** Claude Code OAuth flow */
   'claude-oauth:start':  () => { token?: string; error?: string };
   'claude-oauth:cancel': () => void;

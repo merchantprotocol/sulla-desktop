@@ -1,4 +1,4 @@
-import { IdentityObservationsModel } from '../../database/models/IdentityObservationsModel';
+import { IdentityObservationsModel, normalizeIdentityDomain } from '../../database/models/IdentityObservationsModel';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -21,10 +21,11 @@ export class AddIdentityObservationWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const { id, level, category, content, basis, source } = input;
-    const domain = (typeof input.domain === 'string' && input.domain.trim()) || 'human';
     const existingId = typeof id === 'string' ? id.trim() : '';
 
     try {
+      const domain = normalizeIdentityDomain(input.domain);
+
       if (existingId) {
         const updated = await IdentityObservationsModel.update(existingId, { level, category, content, basis, source });
         if (!updated) {

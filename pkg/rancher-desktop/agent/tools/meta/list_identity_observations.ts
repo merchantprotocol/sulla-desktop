@@ -1,4 +1,4 @@
-import { IdentityObservationsModel } from '../../database/models/IdentityObservationsModel';
+import { formatIdentityObservationDate, IdentityObservationsModel, normalizeIdentityDomain } from '../../database/models/IdentityObservationsModel';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -13,12 +13,12 @@ export class ListIdentityObservationsWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const domain = (typeof input.domain === 'string' && input.domain.trim()) || 'human';
     const level = input.level !== undefined ? Number(input.level) : undefined;
     const category = typeof input.category === 'string' && input.category.trim() ? input.category.trim() : undefined;
     const limit = Number(input.limit) || 50;
 
     try {
+      const domain = normalizeIdentityDomain(input.domain);
       const rows = await IdentityObservationsModel.listActive(domain, { level, category, limit });
 
       if (rows.length === 0) {
@@ -29,7 +29,7 @@ export class ListIdentityObservationsWorker extends BaseTool {
       }
 
       const lines = rows.map(r =>
-        `[id:${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ (r.created_at || '').slice(0, 10) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`,
+        `[id:${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ formatIdentityObservationDate(r.created_at) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`,
       );
 
       return {

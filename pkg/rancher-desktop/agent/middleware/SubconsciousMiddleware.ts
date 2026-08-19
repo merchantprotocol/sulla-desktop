@@ -16,8 +16,8 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
-import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
-import { ObservationsModel } from '../database/models/ObservationsModel';
+import { formatIdentityObservationDate, IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
+import { formatObservationDate, ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
@@ -507,7 +507,7 @@ const OBSERVATION_RECALL_MAX_ROWS = 8;
  * that carries any (string or text-block) content.
  */
 function extractLatestUserText(state: BaseThreadState): string {
-  const messages = state.messages as any[];
+  const messages = state.messages;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== 'user') continue;
@@ -572,7 +572,7 @@ async function runObservationRecall(state: BaseThreadState): Promise<string | nu
     }
 
     const response = rows
-      .map((r) => `[${ r.id }] ${ r.priority } ${ (r.created_at || '').slice(0, 10) } — ${ r.content }`)
+      .map((r) => `[${ r.id }] ${ r.priority } ${ formatObservationDate(r.created_at) } — ${ r.content }`)
       .join('\n');
 
     perf.log(`[ObservationRecall] threadId=${ threadId } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
@@ -640,7 +640,7 @@ async function runIdentityObservationRecall(state: BaseThreadState, domain: stri
     }
 
     const response = rows
-      .map((r) => `[${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ (r.created_at || '').slice(0, 10) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`)
+      .map((r) => `[${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ formatIdentityObservationDate(r.created_at) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`)
       .join('\n');
 
     perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);

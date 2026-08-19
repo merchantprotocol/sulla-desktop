@@ -20,8 +20,8 @@ export interface ObservationRecord {
   id:         string;
   priority:   string;
   content:    string;
-  created_at: string;
-  updated_at: string | null;
+  created_at: string | Date;
+  updated_at: string | Date | null;
   archived:   boolean;
   source:     string | null;
 }
@@ -50,6 +50,19 @@ function generateTinyId(): string {
     id += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return id;
+}
+
+export function formatObservationDate(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value.slice(0, 10) : parsed.toISOString().slice(0, 10);
+  }
+
+  return '';
 }
 
 // ── Model ──────────────────────────────────────────────────────────────
