@@ -64,8 +64,31 @@ export interface PromptBuildContext {
   agentSectionOverrides: Map<string, string>;
   /** Sections to exclude entirely (from config.yaml exclude_sections) */
   excludeSections:       Set<string>;
+  /**
+   * DB-backed system-prompt sections (SystemPromptSectionModel), keyed by id —
+   * the editable CORE layer. Enabled rows only. For a REGISTERED section id the
+   * content replaces the baked factory content (unless an agent .md override is
+   * present, which still wins, or the section is generated — see isGenerated).
+   * A row whose id has no registered factory is injected as a NEW section using
+   * its own priority/cacheStability. Optional: when undefined (empty/unreachable
+   * DB, or a caller/test that doesn't set it) the baked factories are used.
+   */
+  dbSections?:           Map<string, DbPromptSection>;
   /** Base prompt passed by the caller (node-specific content) */
   basePrompt:            string;
+}
+
+/** A DB-backed section row projected into the build context. */
+export interface DbPromptSection {
+  content:        string;
+  priority:       number;
+  cacheStability: 'stable' | 'semi-stable' | 'dynamic';
+  /**
+   * The section's body is partly runtime-generated (e.g. `environment`). Its
+   * factory composes the DB content (static preamble) with the live tail, so
+   * the builder does NOT blindly replace it — the factory reads dbSections itself.
+   */
+  isGenerated:    boolean;
 }
 
 export interface AgentConfig {
@@ -194,14 +217,45 @@ class SystemPromptBuilderImpl {
         continue;
       }
 
-      // Call the factory
+      // Call the factory ONCE. It enforces mode/gating (e.g. the heartbeat
+      // section returns null unless ctx.isHeartbeat) — a null result means the
+      // section is off for this build, and the DB must NOT resurrect it.
+      let section: PromptSection | null = null;
       try {
-        const section = await reg.factory(ctx);
-        if (section && section.content?.trim()) {
-          builtSections.push(section);
-        }
+        section = await reg.factory(ctx);
       } catch (err) {
         console.error(`[SystemPromptBuilder] Section "${ id }" failed:`, err);
+        continue;
+      }
+      if (!section) continue;
+
+      // Layer 2: DB row content replaces the baked factory content, keeping the
+      // factory's priority/cacheStability. Generated sections (isGenerated) are
+      // left as-is — their factory already composed the DB static preamble with
+      // the live runtime tail (it reads ctx.dbSections directly).
+      const dbRow = ctx.dbSections?.get(id);
+      if (dbRow && !dbRow.isGenerated && dbRow.content?.trim()) {
+        builtSections.push({ ...section, content: dbRow.content });
+      } else if (section.content?.trim()) {
+        builtSections.push(section);
+      }
+    }
+
+    // Inject CUSTOM DB sections — enabled rows whose id has no registered
+    // factory (e.g. `user` and any user-added sections). Full/local modes only;
+    // disabled rows are already absent from ctx.dbSections and excluded ids are
+    // skipped. Registered ids were handled in the loop above.
+    if (ctx.dbSections && (ctx.mode === 'full' || ctx.mode === 'local')) {
+      for (const [id, row] of ctx.dbSections) {
+        if (this.sections.has(id)) continue;
+        if (ctx.excludeSections.has(id)) continue;
+        if (!row.content?.trim()) continue;
+        builtSections.push({
+          id,
+          content:        row.content,
+          priority:       row.priority,
+          cacheStability: row.cacheStability,
+        });
       }
     }
 

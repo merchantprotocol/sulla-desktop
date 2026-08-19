@@ -4,10 +4,11 @@ import path from 'node:path'; // used by enrichPrompt for active_projects_file
 import { ChatController, type ChatMode } from '../controllers/ChatController';
 import { ToolExecutor } from '../controllers/ToolExecutor';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
 import { getAgentOverrideService, getPrimaryService, getSecondaryService, getSubconsciousService } from '../languagemodels';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { classifyLLMFailure, redactLLMFailureMessage, sameLLMRoute } from '../languagemodels/providerRecovery';
-import { SystemPromptBuilder, type PromptBuildContext, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
+import { SystemPromptBuilder, type PromptBuildContext, type DbPromptSection, type AgentConfig, type AnthropicSystemBlock } from '../prompts/SystemPromptBuilder';
 import { INTEGRATIONS_INSTRUCTIONS_BLOCK } from '../prompts/environment';
 import { throwIfAborted } from '../services/AbortService';
 import { parseJson } from '../services/JsonParseService';
@@ -686,6 +687,32 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ? 'slim'
       : 'full';
 
+    // Load the DB-backed system-prompt sections — the editable CORE layer that
+    // sits BENEATH each agent's .md overrides and ABOVE the baked factories.
+    // Enabled rows become dbSections; a disabled row excludes its section.
+    // Non-fatal: if the DB is empty or unreachable the baked factories are used.
+    let dbSections: Map<string, DbPromptSection> | undefined;
+    try {
+      const rows = await SystemPromptSectionModel.list();
+      if (rows.length) {
+        dbSections = new Map<string, DbPromptSection>();
+        for (const row of rows) {
+          if (!row.enabled) {
+            excludeSections.add(row.id);
+            continue;
+          }
+          dbSections.set(row.id, {
+            content:        row.content,
+            priority:       row.priority,
+            cacheStability: (row.cache_stability as DbPromptSection['cacheStability']) || 'stable',
+            isGenerated:    row.is_generated,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[BaseNode] Could not load system prompt sections from DB; using baked factories:', err);
+    }
+
     // Build prompt context
     const buildCtx: PromptBuildContext = {
       mode,
@@ -701,6 +728,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       templateVars,
       agentSectionOverrides,
       excludeSections,
+      dbSections,
       basePrompt:           basePrompt || '',
     };
 

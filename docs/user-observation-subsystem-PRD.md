@@ -1,6 +1,6 @@
 # PRD — Subconscious pruning + focused User-Observation subsystem
 
-**Status:** 🟡 Planning / discovery (pending confirmation on the open decisions below)
+**Status:** Implemented on PR #600; production-readiness pass in progress.
 **Branch:** `feature/user-observation-subsystem` · **Started:** 2026-08-19
 **Directive (Jonathon):** most subconscious agents underperform; the Observation Writer +
 Observation Recall (and the Conversational Summarizer) work reliably. Prune the rest, then
@@ -27,10 +27,9 @@ one that learns about the **human user**.
 - **Unstuck Research** — `createUnstuckResearch` [1556-1580], heartbeat dispatch `HeartbeatNode.ts:917-982`
 - **Unstuck Constraint Relaxation** — `createUnstuckRelaxation` [1586-1610]
 
-Each removal deletes: the dispatch call, the `run*` fn in SubconsciousMiddleware, the GraphRegistry
+Each removal deleted: the dispatch call, the `run*` fn in SubconsciousMiddleware, the GraphRegistry
 factory + its `*_TOOLS` const + `*_PROMPT` const, and the `<*_context>` entry in the BaseNode strip
-regex (`BaseNode.ts:835-836`). **Open decision A1:** Tool-Result Digester — keep (it's token
-compression like the summarizer, recommended) or remove?
+regex. Tool-Result Digester stays because it is token compression, not agent memory/reasoning.
 
 ---
 
@@ -45,7 +44,7 @@ certainty level** instead of priority.
 - **L1 — concluded:** conclusions/assumptions inferred from observed facts (personality, writing
   style, habits).
 
-### New table `identity_observations` (migration 0048) — AS BUILT
+### New table `identity_observations` (migration 0050) — AS BUILT
 Generalized per Jonathon 2026-08-19: instead of a user-only table, ONE domain-keyed table
 mirroring `~/sulla/identity/` (human / business / world / agent). The human observer ships
 first; adding another domain = one config entry + one dispatch line, no new migration.
@@ -89,16 +88,15 @@ the user is matters every turn), cap 12. Injected as a `<user_observations>` blo
 
 ---
 
-## Open decisions (need Jonathon)
-- **A1** — keep the Tool-Result Digester? (recommend keep)
-- **B1** — reader stays **deterministic ranking** (recommended, matches the proven recall) vs a light LLM synthesizer?
-- **B2** — the new user observer runs **alongside** the general observation writer/recall (both), correct?
-- **B3** — category set + the `subject` column (supports future relationship queries) — OK, or simplify?
-- **B4** — this establishes a reusable pattern; the `~/sulla/identity/` layout is human/business/world/agent.
-  Build only the **user (human)** observer now as the template, business/world later? (recommend yes)
+## Decisions
+- Tool-Result Digester remains enabled.
+- Identity recall is deterministic SQL ranking, not an LLM synthesizer.
+- The human identity observer runs alongside the general observation writer/recall.
+- One domain-keyed table supports `human / business / world / agent`; PR #600 ships only the human observer.
+- Certainty levels are `L3 stated`, `L2 derived`, `L1 concluded`.
 
 ## Phases
-1. Prune agents (Part A) — surgical, isolated commits.
-2. Table + model + tools (Part B data layer).
-3. Writer agent + reader + wiring.
-4. Rebuild + verify the injected `<user_observations>` block reaches the model.
+1. Prune agents (Part A) — done.
+2. Table + model + tools (Part B data layer) — done.
+3. Writer agent + reader + wiring — done.
+4. Rebuild + verify the injected `<user_observations>` block reaches the model — pending final verification after merge-conflict resolution.

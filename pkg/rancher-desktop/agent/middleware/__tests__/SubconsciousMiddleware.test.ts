@@ -4,7 +4,7 @@ const createSummarizerMock: any = jest.fn();
 const createObservationAgentMock: any = jest.fn();
 const createToolResultDigesterMock: any = jest.fn();
 
-jest.unstable_mockModule('../../services/GraphRegistry', () => ({
+jest.mock('../../services/GraphRegistry', () => ({
   GraphRegistry: {
     createSummarizer:         createSummarizerMock,
     createObservationAgent:   createObservationAgentMock,
@@ -12,7 +12,8 @@ jest.unstable_mockModule('../../services/GraphRegistry', () => ({
   },
 }));
 
-jest.unstable_mockModule('@pkg/utils/logging', () => ({
+jest.mock('@pkg/utils/logging', () => ({
+  __esModule: true,
   default: {
     perf: {
       log: jest.fn(),

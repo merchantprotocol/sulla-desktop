@@ -1,5 +1,5 @@
 /**
- * Migration 0048 — Create identity_observations table.
+ * Migration 0050 — Create identity_observations table.
  *
  * The focused, domain-keyed observation subsystem (docs/user-observation-subsystem-PRD.md).
  * Clones the proven `observations` pattern but replaces free-form priority with
