@@ -16,10 +16,11 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
-import { formatObservationDate, ObservationsModel } from '../database/models/ObservationsModel';
+import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
+import { formatDateOnly } from '../utils/formatDateOnly';
 
 import Logging from '@pkg/utils/logging';
 
@@ -510,7 +511,7 @@ function extractLatestUserText(state: BaseThreadState): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m?.role !== 'user') continue;
-    if ((m?.metadata as any)?.source === 'subconscious') continue;
+    if (m?.metadata?.source === 'subconscious') continue;
 
     const c = m?.content;
     if (typeof c === 'string') {
@@ -571,7 +572,7 @@ async function runObservationRecall(state: BaseThreadState): Promise<string | nu
     }
 
     const response = rows
-      .map((r) => `[${ r.id }] ${ r.priority } ${ formatObservationDate(r.created_at) } — ${ r.content }`)
+      .map((r) => `[${ r.id }] ${ r.priority } ${ formatDateOnly(r.created_at) } — ${ r.content }`)
       .join('\n');
 
     perf.log(`[ObservationRecall] threadId=${ threadId } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);

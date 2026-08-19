@@ -19,9 +19,10 @@
  * on every turn.
  */
 
-import { formatObservationDate, ObservationsModel } from '../../database/models/ObservationsModel';
+import { ObservationsModel } from '../../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
 import { parseJson } from '../../services/JsonParseService';
+import { formatDateOnly } from '../../utils/formatDateOnly';
 
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
@@ -44,7 +45,7 @@ export async function buildObservationalMemorySection(
 
     if (rows.length > 0) {
       const lines = rows.map((r) =>
-        `- [id:${ r.id }] ${ r.priority } ${ formatObservationDate(r.created_at) } — ${ r.content }`.trim(),
+        `- [id:${ r.id }] ${ r.priority } ${ formatDateOnly(r.created_at) } — ${ r.content }`.trim(),
       );
 
       const content = `## Memory (top-${ TOP_N } observations)
