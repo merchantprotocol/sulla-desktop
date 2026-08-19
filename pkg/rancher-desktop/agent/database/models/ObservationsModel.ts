@@ -20,8 +20,8 @@ export interface ObservationRecord {
   id:         string;
   priority:   string;
   content:    string;
-  created_at: string;
-  updated_at: string | null;
+  created_at: string | Date;
+  updated_at: string | Date | null;
   archived:   boolean;
   source:     string | null;
 }

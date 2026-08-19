@@ -119,7 +119,9 @@ describe('identity observation tools', () => {
   });
 
   it('lists active rows in compact certainty-first format', async() => {
-    jest.spyOn(IdentityObservationsModel, 'listActive').mockResolvedValue([row()]);
+    jest.spyOn(IdentityObservationsModel, 'listActive').mockResolvedValue([row({
+      created_at: new Date('2026-08-19T18:00:00.000Z'),
+    })]);
 
     const result = await listWorker().invoke({
       domain: 'human',
