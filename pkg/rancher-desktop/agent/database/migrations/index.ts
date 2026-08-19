@@ -36,6 +36,8 @@ import { up as up_0044, down as down_0044 } from './0044_create_work_items_table
 import { up as up_0045, down as down_0045 } from './0045_bound_stale_routine_digest_failures';
 import { up as up_0046, down as down_0046 } from './0046_create_heartbeat_run_audit_table';
 import { up as up_0047, down as down_0047 } from './0047_add_work_task_actor';
+import { up as up_0048, down as down_0048 } from './0048_create_system_prompt_sections_table';
+import { up as up_0049, down as down_0049 } from './0049_create_system_prompt_section_edits_table';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -72,4 +74,6 @@ export const migrationsRegistry = [
   { name: '0045_bound_stale_routine_digest_failures',        up: up_0045, down: down_0045 },
   { name: '0046_create_heartbeat_run_audit_table',            up: up_0046, down: down_0046 },
   { name: '0047_add_work_task_actor',                          up: up_0047, down: down_0047 },
+  { name: '0048_create_system_prompt_sections_table',          up: up_0048, down: down_0048 },
+  { name: '0049_create_system_prompt_section_edits_table',      up: up_0049, down: down_0049 },
 ] as const;

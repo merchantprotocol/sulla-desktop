@@ -164,6 +164,85 @@ export function initSullaEvents(): void {
   });
 
   // ─────────────────────────────────────────────────────────────
+  // System Prompt sections — DB-backed editable core of the agent
+  // system prompt (see SystemPromptSectionModel / migration 0048).
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('system-prompt:list', async() => {
+    const { SystemPromptSectionModel } = await import('@pkg/agent/database/models/SystemPromptSectionModel');
+
+    return SystemPromptSectionModel.list();
+  });
+
+  ipcMainProxy.handle('system-prompt:update', async(_event: unknown, id: string, changes: any) => {
+    const { SystemPromptSectionModel } = await import('@pkg/agent/database/models/SystemPromptSectionModel');
+
+    return SystemPromptSectionModel.update(id, changes);
+  });
+
+  ipcMainProxy.handle('system-prompt:reset', async(_event: unknown, id: string) => {
+    const { SystemPromptSectionModel } = await import('@pkg/agent/database/models/SystemPromptSectionModel');
+
+    return SystemPromptSectionModel.resetToDefault(id);
+  });
+
+  ipcMainProxy.handle('system-prompt:add', async(_event: unknown, input: any) => {
+    const { SystemPromptSectionModel } = await import('@pkg/agent/database/models/SystemPromptSectionModel');
+
+    return SystemPromptSectionModel.addCustom(input);
+  });
+
+  ipcMainProxy.handle('system-prompt:remove', async(_event: unknown, id: string) => {
+    const { SystemPromptSectionModel } = await import('@pkg/agent/database/models/SystemPromptSectionModel');
+
+    return SystemPromptSectionModel.remove(id);
+  });
+
+  // Read-only preview of the runtime-generated tail for a generated section
+  // (currently just `environment` → live installed-extensions block).
+  ipcMainProxy.handle('system-prompt:preview-generated', async(_event: unknown, id: string) => {
+    if (id !== 'environment') return '';
+    try {
+      const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+      // installed_extensions is assembled and cached as a setting the prompt
+      // builder consumes; surface it verbatim so the human sees what ships.
+      return await SullaSettingsModel.get('installedExtensionsBlock', '') || '';
+    } catch (err) {
+      console.warn('[system-prompt:preview-generated] failed:', err);
+      return '';
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────
+  // System Prompt EDITS — staged, human-approved proposals. Agents
+  // propose; the human approves/edits/denies here (see migration 0049).
+  // ─────────────────────────────────────────────────────────────
+
+  ipcMainProxy.handle('system-prompt-edits:list-pending', async() => {
+    const { SystemPromptSectionEditModel } = await import('@pkg/agent/database/models/SystemPromptSectionEditModel');
+
+    return SystemPromptSectionEditModel.listPending();
+  });
+
+  ipcMainProxy.handle('system-prompt-edits:propose', async(_event: unknown, input: any) => {
+    const { SystemPromptSectionEditModel } = await import('@pkg/agent/database/models/SystemPromptSectionEditModel');
+
+    return SystemPromptSectionEditModel.propose(input);
+  });
+
+  ipcMainProxy.handle('system-prompt-edits:approve', async(_event: unknown, id: string, finalContent?: string) => {
+    const { SystemPromptSectionEditModel } = await import('@pkg/agent/database/models/SystemPromptSectionEditModel');
+
+    return SystemPromptSectionEditModel.approve(id, { finalContent, reviewed_by: 'human' });
+  });
+
+  ipcMainProxy.handle('system-prompt-edits:deny', async(_event: unknown, id: string) => {
+    const { SystemPromptSectionEditModel } = await import('@pkg/agent/database/models/SystemPromptSectionEditModel');
+
+    return SystemPromptSectionEditModel.deny(id, { reviewed_by: 'human' });
+  });
+
+  // ─────────────────────────────────────────────────────────────
   // Labs — experimental feature launchers
   // ─────────────────────────────────────────────────────────────
 

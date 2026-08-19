@@ -17,10 +17,35 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const navItems = [
   { id: 'overview', name: 'Overview' },
   { id: 'models', name: 'Models' },
-  { id: 'claude-code', name: 'Claude Code (deprecated)' },
-  { id: 'soul', name: 'Soul' },
+  { id: 'system-prompt', name: 'System Prompt' },
   { id: 'heartbeat', name: 'Heartbeat' },
 ];
+
+// Shape of a system-prompt section row returned by the `system-prompt:*` IPC.
+interface SystemPromptSectionRow {
+  id:            string;
+  title:         string;
+  content:       string;
+  priority:      number;
+  enabled:       boolean;
+  is_builtin:    boolean;
+  is_generated:  boolean;
+  is_customized: boolean;
+}
+
+// A staged, AI-proposed edit awaiting human review (`system-prompt-edits:*`).
+interface SectionEditRow {
+  id:               string;
+  section_id:       string;
+  proposed_content: string;
+  base_content:     string;
+  rationale:        string | null;
+  status:           string;
+  proposed_by:      string | null;
+  created_at:       string;
+}
+
+type DiffLine = { type: 'ctx' | 'add' | 'del'; text: string };
 
 export default defineComponent({
   name: 'language-model-settings',
@@ -76,6 +101,22 @@ export default defineComponent({
       botName:         'Sulla',
       primaryUserName: '',
 
+      // System Prompt tab — DB-backed editable sections (master → detail)
+      systemPromptSections: [] as SystemPromptSectionRow[],
+      selectedSectionId:    '' as string,   // '' = list view; id = detail view
+      sectionDraft:         '' as string,   // working copy of the open section's content
+      envGeneratedPreview:  '' as string,   // read-only runtime-generated tail for `environment`
+      loadingSections:      false,
+      savingSection:        false,
+      sectionError:         '' as string,
+
+      // Staged AI-proposed edits awaiting review (approve / edit / deny)
+      pendingEdits:         [] as SectionEditRow[],
+      reviewingEditId:      '' as string,   // '' = not reviewing; id = review view
+      editApproveMode:      false,          // false = diff view, true = amend-before-approve
+      editApproveDraft:     '' as string,
+      reviewError:          '' as string,
+
       // Default prompts for reset
       soulPromptDefault:      soulPrompt,
       heartbeatPromptDefault: heartbeatPrompt,
@@ -91,22 +132,6 @@ export default defineComponent({
       savingSettings:         false,
       // Guard flag to prevent feedback loop between primaryProvider watcher and IPC handler
       _suppressProviderWatch: false,
-
-      // Claude Code auth
-      claudeAuthMode:      'none' as 'none' | 'api-key' | 'oauth',
-      claudeApiKey:        '',
-      claudeOAuthToken:    '',
-      claudeApiKeyVisible: false,
-      claudeSaving:        false,
-      claudeOAuthRunning:  false,
-      claudeOAuthStatus:   'Starting...',
-      claudeOAuthError:    '',
-      claudeOAuthUrl:      '',
-      claudeOAuthCode:     '',
-
-      // Deprecated legacy-credentials panel — collapsed by default now that
-      // the Integrations page is the primary path.
-      showLegacyClaudeCreds: false,
     };
   },
 
@@ -144,6 +169,28 @@ export default defineComponent({
 
       return model?.description || '';
     },
+    selectedSection(): SystemPromptSectionRow | null {
+      return this.systemPromptSections.find(s => s.id === this.selectedSectionId) || null;
+    },
+    reviewingEdit(): SectionEditRow | null {
+      return this.pendingEdits.find(e => e.id === this.reviewingEditId) || null;
+    },
+    reviewingEditSection(): SystemPromptSectionRow | null {
+      const e = this.reviewingEdit;
+      return e ? (this.systemPromptSections.find(s => s.id === e.section_id) || null) : null;
+    },
+    reviewingEditIndex(): number {
+      return this.pendingEdits.findIndex(e => e.id === this.reviewingEditId);
+    },
+    pendingCountBySection(): Record<string, number> {
+      const counts: Record<string, number> = {};
+      for (const e of this.pendingEdits) counts[e.section_id] = (counts[e.section_id] || 0) + 1;
+      return counts;
+    },
+    reviewDiff(): DiffLine[] {
+      const e = this.reviewingEdit;
+      return e ? this.diffLines(e.base_content, e.proposed_content) : [];
+    },
   },
 
   async mounted() {
@@ -155,9 +202,6 @@ export default defineComponent({
     });
 
     this.activeMode = await SullaSettingsModel.get('activeMode', 'remote');
-
-    // Load Claude Code credentials
-    await this.loadClaudeCredentials();
 
     // Listen for state changes from ModelProviderService (source of truth)
     ipcRenderer.on('model-provider:state-changed', this.handleProviderStateChanged);
@@ -232,6 +276,10 @@ export default defineComponent({
 
     // Load model lists for all three provider slots
     await this.loadSlotModels();
+
+    // Load DB-backed system prompt sections + any staged AI edits for review
+    await this.loadSystemPromptSections();
+    await this.loadPendingEdits();
 
     ipcRenderer.send('dialog/ready');
   },
@@ -643,123 +691,6 @@ export default defineComponent({
       }
     },
 
-    async startClaudeOAuth() {
-      this.claudeOAuthError = '';
-      this.claudeOAuthStatus = 'Starting claude setup-token in the VM...';
-      this.claudeOAuthUrl = '';
-      this.claudeOAuthCode = '';
-      this.claudeOAuthRunning = true;
-
-      const onProgress = (_event: unknown, text: string) => {
-        const trimmed = text.trim();
-        if (trimmed) this.claudeOAuthStatus = trimmed.split('\n').pop() || this.claudeOAuthStatus;
-      };
-      const onUrl = (_event: unknown, url: string) => {
-        this.claudeOAuthUrl = url;
-        this.claudeOAuthStatus = 'Sign in in your browser, then paste the code below.';
-      };
-      ipcRenderer.on('claude-oauth:progress', onProgress);
-      ipcRenderer.on('claude-oauth:url', onUrl);
-
-      try {
-        const result = await ipcRenderer.invoke('claude-oauth:start');
-        if (result.token) {
-          this.claudeOAuthToken = result.token;
-          await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', result.token, 'string');
-          await ipcRenderer.invoke('sulla-settings-set', 'claudeApiKey', '', 'string');
-          this.claudeApiKey = '';
-          this.claudeOAuthStatus = 'Signed in';
-        } else if (result.error) {
-          this.claudeOAuthError = result.error;
-        }
-      } catch (err: any) {
-        this.claudeOAuthError = err?.message || 'OAuth flow failed';
-      } finally {
-        ipcRenderer.removeListener('claude-oauth:progress', onProgress);
-        ipcRenderer.removeListener('claude-oauth:url', onUrl);
-        this.claudeOAuthRunning = false;
-        this.claudeOAuthUrl = '';
-      }
-    },
-
-    async submitClaudeOAuthCode() {
-      const code = this.claudeOAuthCode.trim();
-      if (!code) return;
-      try {
-        // Send the code followed by newline to feed the CLI's stdin
-        await ipcRenderer.invoke('claude-oauth:send-input', code + '\r');
-        this.claudeOAuthCode = '';
-        this.claudeOAuthStatus = 'Code submitted, waiting for token...';
-      } catch (err) {
-        console.warn('Failed to submit OAuth code:', err);
-      }
-    },
-
-    async copyAuthUrl() {
-      const { clipboard } = require('electron');
-      if (this.claudeOAuthUrl) {
-        clipboard.writeText(this.claudeOAuthUrl);
-        this.claudeOAuthStatus = 'URL copied to clipboard. Paste it into your browser.';
-      }
-    },
-
-    async cancelClaudeOAuth() {
-      try {
-        await ipcRenderer.invoke('claude-oauth:cancel');
-      } catch { /* ignore */ }
-      this.claudeOAuthRunning = false;
-      this.claudeOAuthStatus = 'Starting...';
-      this.claudeOAuthUrl = '';
-      this.claudeOAuthCode = '';
-    },
-
-    async disconnectClaudeOAuth() {
-      this.claudeOAuthToken = '';
-      await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', '', 'string');
-    },
-
-    async saveClaudeCredentials() {
-      this.claudeSaving = true;
-      try {
-        if (this.claudeAuthMode === 'api-key' && this.claudeApiKey) {
-          await ipcRenderer.invoke('sulla-settings-set', 'claudeApiKey', this.claudeApiKey, 'string');
-          await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', '', 'string');
-        } else if (this.claudeAuthMode === 'oauth' && this.claudeOAuthToken) {
-          await ipcRenderer.invoke('sulla-settings-set', 'claudeOAuthToken', this.claudeOAuthToken.trim(), 'string');
-          await ipcRenderer.invoke('sulla-settings-set', 'claudeApiKey', '', 'string');
-        }
-        console.log('[LM Settings] Claude credentials saved');
-      } catch (err) {
-        console.error('Failed to save Claude credentials:', err);
-      } finally {
-        this.claudeSaving = false;
-      }
-    },
-
-
-    async loadClaudeCredentials() {
-      try {
-        const apiKey = await ipcRenderer.invoke('sulla-settings-get', 'claudeApiKey', '');
-        const oauthToken = await ipcRenderer.invoke('sulla-settings-get', 'claudeOAuthToken', '');
-        this.claudeApiKey = apiKey || '';
-        this.claudeOAuthToken = oauthToken || '';
-        if (oauthToken) {
-          this.claudeAuthMode = 'oauth';
-        } else if (apiKey) {
-          this.claudeAuthMode = 'api-key';
-        } else {
-          this.claudeAuthMode = 'none';
-        }
-        // If legacy creds are present, expand the legacy panel automatically
-        // so the user can see they're still active.
-        if (this.claudeApiKey || this.claudeOAuthToken) {
-          this.showLegacyClaudeCreds = true;
-        }
-      } catch {
-        // Settings not available yet
-      }
-    },
-
     openExternal(url: string) {
       const { shell } = require('electron');
       shell.openExternal(url);
@@ -816,6 +747,215 @@ export default defineComponent({
         console.error('[LM Settings] Error in writeExperimentalSettings:', err);
         throw err;
       }
+    },
+
+    // ── System Prompt tab (DB-backed sections) ──────────────────────────
+    async loadSystemPromptSections() {
+      this.loadingSections = true;
+      this.sectionError = '';
+      try {
+        this.systemPromptSections = await ipcRenderer.invoke('system-prompt:list') || [];
+      } catch (err) {
+        console.error('[LM Settings] Failed to load system prompt sections:', err);
+        this.sectionError = 'Could not load system prompt sections.';
+      } finally {
+        this.loadingSections = false;
+      }
+    },
+
+    async openSection(id: string) {
+      const section = this.systemPromptSections.find(s => s.id === id);
+      if (!section) return;
+      this.selectedSectionId = id;
+      this.sectionDraft = section.content;
+      this.sectionError = '';
+      this.envGeneratedPreview = '';
+      // For generated sections (e.g. environment) fetch the live read-only tail.
+      if (section.is_generated) {
+        try {
+          this.envGeneratedPreview = await ipcRenderer.invoke('system-prompt:preview-generated', id) || '';
+        } catch (err) {
+          console.warn('[LM Settings] Failed to load generated preview for', id, err);
+        }
+      }
+    },
+
+    closeSection() {
+      this.selectedSectionId = '';
+      this.sectionDraft = '';
+      this.envGeneratedPreview = '';
+    },
+
+    async saveSection() {
+      if (!this.selectedSection || this.savingSection) return;
+      this.savingSection = true;
+      this.sectionError = '';
+      try {
+        const updated = await ipcRenderer.invoke('system-prompt:update', this.selectedSection.id, { content: this.sectionDraft });
+        if (updated) this.applyUpdatedSection(updated);
+      } catch (err) {
+        console.error('[LM Settings] Failed to save section:', err);
+        this.sectionError = 'Failed to save this section.';
+      } finally {
+        this.savingSection = false;
+      }
+    },
+
+    async toggleSection(section: SystemPromptSectionRow) {
+      try {
+        const updated = await ipcRenderer.invoke('system-prompt:update', section.id, { enabled: !section.enabled });
+        if (updated) this.applyUpdatedSection(updated);
+      } catch (err) {
+        console.error('[LM Settings] Failed to toggle section:', err);
+      }
+    },
+
+    async resetSection(section: SystemPromptSectionRow) {
+      try {
+        const updated = await ipcRenderer.invoke('system-prompt:reset', section.id);
+        if (updated) {
+          this.applyUpdatedSection(updated);
+          if (this.selectedSectionId === section.id) this.sectionDraft = updated.content;
+        }
+      } catch (err) {
+        console.error('[LM Settings] Failed to reset section:', err);
+      }
+    },
+
+    async addSection() {
+      const title = String(window.prompt('New section title (e.g. Business Context):') || '').trim();
+      if (!title) return;
+      const id = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      if (!id) return;
+      try {
+        const created = await ipcRenderer.invoke('system-prompt:add', { id, title, priority: 100 });
+        if (created) {
+          await this.loadSystemPromptSections();
+          this.openSection(created.id);
+        }
+      } catch (err) {
+        console.error('[LM Settings] Failed to add section:', err);
+        this.sectionError = 'Could not add section (id may already exist).';
+      }
+    },
+
+    async deleteSection(section: SystemPromptSectionRow) {
+      if (section.is_builtin) return; // builtin rows can be disabled/reset, not deleted
+      if (!window.confirm(`Delete the "${ section.title }" section? This cannot be undone.`)) return;
+      try {
+        await ipcRenderer.invoke('system-prompt:remove', section.id);
+        if (this.selectedSectionId === section.id) this.closeSection();
+        await this.loadSystemPromptSections();
+      } catch (err) {
+        console.error('[LM Settings] Failed to delete section:', err);
+      }
+    },
+
+    // Merge an updated row back into the in-memory list without a full reload.
+    applyUpdatedSection(updated: SystemPromptSectionRow) {
+      const idx = this.systemPromptSections.findIndex(s => s.id === updated.id);
+      if (idx !== -1) this.systemPromptSections.splice(idx, 1, updated);
+    },
+
+    sectionSnippet(content: string): string {
+      const oneLine = String(content || '').replace(/\s+/g, ' ').trim();
+      return oneLine.length > 90 ? `${ oneLine.slice(0, 90) }…` : (oneLine || 'Empty');
+    },
+
+    // ── Staged AI edits: review queue ──────────────────────────────────
+    async loadPendingEdits() {
+      try {
+        this.pendingEdits = await ipcRenderer.invoke('system-prompt-edits:list-pending') || [];
+      } catch (err) {
+        console.error('[LM Settings] Failed to load pending edits:', err);
+      }
+    },
+
+    sectionTitle(sectionId: string): string {
+      return this.systemPromptSections.find(s => s.id === sectionId)?.title || sectionId;
+    },
+
+    openReview(editId: string) {
+      const edit = this.pendingEdits.find(e => e.id === editId);
+      if (!edit) return;
+      this.reviewingEditId = editId;
+      this.editApproveMode = false;
+      this.editApproveDraft = edit.proposed_content;
+      this.reviewError = '';
+      // Leave any open section editor — the review takes over the panel.
+      this.selectedSectionId = '';
+    },
+
+    openFirstPendingForSection(sectionId: string) {
+      const edit = this.pendingEdits.find(e => e.section_id === sectionId);
+      if (edit) this.openReview(edit.id);
+    },
+
+    closeReview() {
+      this.reviewingEditId = '';
+      this.editApproveMode = false;
+      this.editApproveDraft = '';
+      this.reviewError = '';
+    },
+
+    // After a review action, jump to the next pending edit or exit the queue.
+    advanceReviewQueue() {
+      const next = this.pendingEdits[0];
+      if (next) this.openReview(next.id);
+      else this.closeReview();
+    },
+
+    async approveEdit() {
+      const edit = this.reviewingEdit;
+      if (!edit) return;
+      this.reviewError = '';
+      try {
+        const finalContent = this.editApproveMode ? this.editApproveDraft : undefined;
+        await ipcRenderer.invoke('system-prompt-edits:approve', edit.id, finalContent);
+        await Promise.all([this.loadSystemPromptSections(), this.loadPendingEdits()]);
+        this.advanceReviewQueue();
+      } catch (err) {
+        console.error('[LM Settings] Failed to approve edit:', err);
+        this.reviewError = 'Failed to approve this change.';
+      }
+    },
+
+    async denyEdit() {
+      const edit = this.reviewingEdit;
+      if (!edit) return;
+      this.reviewError = '';
+      try {
+        await ipcRenderer.invoke('system-prompt-edits:deny', edit.id);
+        await this.loadPendingEdits();
+        this.advanceReviewQueue();
+      } catch (err) {
+        console.error('[LM Settings] Failed to deny edit:', err);
+        this.reviewError = 'Failed to deny this change.';
+      }
+    },
+
+    // Compact LCS line diff (base → proposed). Prompts are at most a few hundred
+    // lines, so the O(n*m) table is negligible.
+    diffLines(base: string, proposed: string): DiffLine[] {
+      const a = String(base || '').split('\n');
+      const b = String(proposed || '').split('\n');
+      const n = a.length;
+      const m = b.length;
+      const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+      for (let i = n - 1; i >= 0; i--) {
+        for (let j = m - 1; j >= 0; j--) {
+          dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+        }
+      }
+      const out: DiffLine[] = [];
+      let i = 0;
+      let j = 0;
+      while (i < n && j < m) {
+        if (a[i] === b[j]) { out.push({ type: 'ctx', text: a[i] }); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ type: 'del', text: a[i] }); i++; } else { out.push({ type: 'add', text: b[j] }); j++; }
+      }
+      while (i < n) { out.push({ type: 'del', text: a[i] }); i++; }
+      while (j < m) { out.push({ type: 'add', text: b[j] }); j++; }
+      return out;
     },
 
     closeWindow() {
@@ -1122,49 +1262,301 @@ export default defineComponent({
           </div>
         </div>
 
-        <!-- Soul Tab -->
+        <!-- System Prompt Tab -->
         <div
-          v-if="currentNav === 'soul'"
-          class="tab-content"
+          v-if="currentNav === 'system-prompt'"
+          class="tab-content sp-tab"
         >
-          <h2>Soul</h2>
-          <p class="description">
-            Configure the agent's identity and system prompt. The bot name and user name will be prefixed to the soul prompt.
-          </p>
+          <!-- REVIEW VIEW — a staged AI-proposed edit -->
+          <template v-if="reviewingEdit">
+            <div class="sp-detail-bar">
+              <span
+                class="sp-back"
+                @click="closeReview"
+              >‹ Back to sections</span>
+              <span class="sp-detail-bar-spacer" />
+              <span
+                v-if="pendingEdits.length > 1"
+                class="sp-detail-meta"
+              >{{ reviewingEditIndex + 1 }} of {{ pendingEdits.length }}</span>
+            </div>
 
-          <div
-            class="form-group"
-            style="margin-bottom: 1.5rem;"
-          >
-            <label class="form-label">Bot Name</label>
-            <input
-              v-model="botName"
-              type="text"
-              class="text-input"
-              placeholder="Sulla"
-              style="max-width: 400px;"
-            >
-            <p class="setting-description">
-              The name of the AI assistant (default: Sulla)
-            </p>
-          </div>
+            <div class="sp-detail-head">
+              <h2>{{ sectionTitle(reviewingEdit.section_id) }}</h2>
+              <span class="sp-detail-meta">proposed edit · staged, not live</span>
+            </div>
+            <div class="sp-review-by">
+              Proposed by <strong>{{ reviewingEdit.proposed_by || 'an agent' }}</strong>
+              <span v-if="reviewingEdit.created_at"> · {{ reviewingEdit.created_at }}</span>
+            </div>
 
-          <div
-            class="form-group"
-            style="margin-bottom: 2rem;"
-          >
-            <label class="form-label">Your Human's Name</label>
-            <input
-              v-model="primaryUserName"
-              type="text"
-              class="text-input"
-              placeholder="Enter your name (optional)"
-              style="max-width: 400px;"
+            <div
+              v-if="reviewingEdit.rationale"
+              class="sp-rationale"
             >
-            <p class="setting-description">
-              Your name (optional) - helps personalize interactions
+              <div class="sp-rationale-label">WHY THIS CHANGE</div>
+              <div class="sp-rationale-body">{{ reviewingEdit.rationale }}</div>
+            </div>
+
+            <!-- Diff (default) or amend-before-approve editor -->
+            <template v-if="!editApproveMode">
+              <div class="sp-list-header">PROPOSED CHANGES</div>
+              <div class="sp-diff">
+                <div
+                  v-for="(line, i) in reviewDiff"
+                  :key="i"
+                  class="sp-diff-line"
+                  :class="'sp-diff-' + line.type"
+                >
+                  <span class="sp-diff-gutter">{{ line.type === 'add' ? '+' : (line.type === 'del' ? '−' : '') }}</span>
+                  <span class="sp-diff-text">{{ line.text || ' ' }}</span>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <div class="sp-list-header">AMEND BEFORE APPROVING</div>
+              <textarea
+                v-model="editApproveDraft"
+                class="sp-editor"
+                spellcheck="false"
+              />
+            </template>
+
+            <div
+              v-if="reviewError"
+              class="activation-error"
+            >
+              {{ reviewError }}
+            </div>
+
+            <div class="sp-detail-actions">
+              <button
+                class="btn sp-approve-btn"
+                @click="approveEdit"
+              >
+                ✓ {{ editApproveMode ? 'Approve amended' : 'Approve & apply' }}
+              </button>
+              <button
+                class="btn role-secondary"
+                @click="editApproveMode = !editApproveMode"
+              >
+                {{ editApproveMode ? 'View diff' : 'Edit & approve' }}
+              </button>
+              <button
+                class="btn sp-deny-btn"
+                @click="denyEdit"
+              >
+                Deny
+              </button>
+              <span class="sp-detail-bar-spacer" />
+              <span class="sp-review-note">Approving writes this into the live prompt.</span>
+            </div>
+          </template>
+
+          <!-- LIST VIEW -->
+          <template v-else-if="!selectedSectionId">
+            <h2>System Prompt</h2>
+            <p class="description">
+              The compiled system prompt for every Sulla agent. Each row is editable raw markdown, seeded from the shipped defaults. Agent-specific <code>.md</code> files still override these per-agent.
             </p>
-          </div>
+
+            <!-- Staged AI edits awaiting review -->
+            <div
+              v-if="pendingEdits.length"
+              class="sp-review-banner"
+            >
+              <span class="sp-review-banner-icon">⏳</span>
+              <div class="sp-review-banner-text">
+                <div class="sp-review-banner-title">
+                  {{ pendingEdits.length }} proposed edit{{ pendingEdits.length === 1 ? '' : 's' }} awaiting your review
+                </div>
+                <div class="sp-review-banner-sub">Staged by Sulla — nothing is live until you approve.</div>
+              </div>
+              <button
+                class="btn sp-review-banner-btn"
+                @click="openReview(pendingEdits[0].id)"
+              >
+                Review
+              </button>
+            </div>
+
+            <!-- Identity fields -->
+            <div class="sp-identity">
+              <div class="form-group">
+                <label class="form-label">Sulla's Name</label>
+                <input
+                  v-model="botName"
+                  type="text"
+                  class="text-input"
+                  placeholder="Sulla"
+                >
+              </div>
+              <div class="form-group">
+                <label class="form-label">Human's Name</label>
+                <input
+                  v-model="primaryUserName"
+                  type="text"
+                  class="text-input"
+                  placeholder="Your name (optional)"
+                >
+              </div>
+            </div>
+
+            <div class="sp-list-header">
+              SECTIONS · compiled top → bottom by priority
+            </div>
+
+            <div
+              v-if="sectionError"
+              class="activation-error"
+            >
+              {{ sectionError }}
+            </div>
+
+            <div class="sp-list">
+              <div
+                v-for="section in systemPromptSections"
+                :key="section.id"
+                class="sp-row"
+                :class="{ 'sp-row--disabled': !section.enabled }"
+                @click="openSection(section.id)"
+              >
+                <span class="sp-grip">⋮⋮</span>
+                <div class="sp-row-main">
+                  <div class="sp-row-title">
+                    {{ section.title }}
+                    <span
+                      v-if="pendingCountBySection[section.id]"
+                      class="sp-badge sp-badge--pending"
+                      @click.stop="openFirstPendingForSection(section.id)"
+                    >● {{ pendingCountBySection[section.id] }} proposed</span>
+                    <span
+                      v-if="section.is_generated"
+                      class="sp-badge sp-badge--warn"
+                    >partly generated</span>
+                    <span
+                      v-if="section.id === 'heartbeat'"
+                      class="sp-badge sp-badge--dim"
+                    >heartbeat agent only</span>
+                  </div>
+                  <div class="sp-row-snippet">
+                    {{ sectionSnippet(section.content) }}
+                  </div>
+                </div>
+                <span
+                  v-if="section.is_builtin"
+                  class="sp-badge sp-badge--accent"
+                >builtin</span>
+                <span
+                  v-else
+                  class="sp-badge sp-badge--custom"
+                >custom</span>
+                <label
+                  class="switch"
+                  @click.stop
+                >
+                  <input
+                    type="checkbox"
+                    :checked="section.enabled"
+                    @change="toggleSection(section)"
+                  >
+                  <span class="slider" />
+                </label>
+                <span class="sp-chevron">›</span>
+              </div>
+            </div>
+
+            <div class="sp-list-actions">
+              <button
+                class="btn role-primary"
+                @click="addSection"
+              >
+                + Add section
+              </button>
+            </div>
+          </template>
+
+          <!-- DETAIL VIEW -->
+          <template v-else-if="selectedSection">
+            <div class="sp-detail-bar">
+              <span
+                class="sp-back"
+                @click="closeSection"
+              >‹ All sections</span>
+              <span class="sp-detail-bar-spacer" />
+              <span
+                v-if="selectedSection.is_builtin"
+                class="sp-badge sp-badge--accent"
+              >builtin</span>
+              <span
+                v-else
+                class="sp-badge sp-badge--custom"
+              >custom</span>
+              <button
+                v-if="selectedSection.is_builtin"
+                class="btn role-secondary sp-mini-btn"
+                @click="resetSection(selectedSection)"
+              >
+                Reset to default
+              </button>
+              <button
+                v-else
+                class="btn role-secondary sp-mini-btn"
+                @click="deleteSection(selectedSection)"
+              >
+                Delete
+              </button>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  :checked="selectedSection.enabled"
+                  @change="toggleSection(selectedSection)"
+                >
+                <span class="slider" />
+              </label>
+            </div>
+
+            <div class="sp-detail-head">
+              <h2>{{ selectedSection.title }}</h2>
+              <span class="sp-detail-meta">
+                {{ selectedSection.id }} · priority {{ selectedSection.priority }}
+                <template v-if="selectedSection.is_customized"> · customized</template>
+              </span>
+            </div>
+
+            <textarea
+              v-model="sectionDraft"
+              class="sp-editor"
+              spellcheck="false"
+              placeholder="Raw markdown for this section…"
+            />
+
+            <!-- Read-only runtime-generated tail (environment, etc.) -->
+            <div
+              v-if="selectedSection.is_generated"
+              class="sp-generated"
+            >
+              <div class="sp-generated-label">🔒 RUNTIME-GENERATED · appended live, read-only</div>
+              <pre class="sp-generated-body">{{ envGeneratedPreview || 'Nothing generated right now (e.g. no installed extensions).' }}</pre>
+            </div>
+
+            <div
+              v-if="sectionError"
+              class="activation-error"
+            >
+              {{ sectionError }}
+            </div>
+
+            <div class="sp-detail-actions">
+              <button
+                class="btn role-primary"
+                :disabled="savingSection"
+                @click="saveSection"
+              >
+                {{ savingSection ? 'Saving…' : 'Save' }}
+              </button>
+            </div>
+          </template>
         </div>
 
         <!-- Heartbeat Tab -->
@@ -1257,179 +1649,6 @@ export default defineComponent({
             <p class="setting-description">
               Subconscious agents (memory recall, observation, unstuck research) run in the background and need a fast tool-emitting chat model. "Use Primary Provider" mirrors your main provider. Avoid autonomous models like Claude Code here — they over-invest in quick recall tasks.
             </p>
-          </div>
-        </div>
-
-        <!-- Claude Code Tab -->
-        <div
-          v-if="currentNav === 'claude-code'"
-          class="tab-content"
-        >
-          <h2>Claude Code <span class="claude-deprecated-badge">Deprecated</span></h2>
-          <div class="claude-deprecation-banner">
-            <p>
-              <strong>Claude Code sign-in has moved to Integrations.</strong>
-              Connect via <em>Integrations → Claude Code</em>. Credentials now live in
-              the encrypted vault and propagate through the Integration service, so
-              the same account works everywhere without writing to SullaSettingsModel.
-            </p>
-            <p>
-              This tab stays available while we validate the new path. It will be
-              removed once the Integrations flow is confirmed stable.
-            </p>
-          </div>
-
-          <!-- Legacy credentials — collapsed by default; only show if the user
-               explicitly expands or legacy credentials already exist. -->
-          <div class="setting-group claude-legacy">
-            <button
-              type="button"
-              class="btn role-secondary"
-              @click="showLegacyClaudeCreds = !showLegacyClaudeCreds"
-            >
-              {{ showLegacyClaudeCreds ? 'Hide legacy credentials' : 'Show legacy credentials (deprecated)' }}
-            </button>
-          </div>
-
-          <div v-if="showLegacyClaudeCreds">
-            <p class="description claude-legacy-warning">
-              These fields still write to <code>SullaSettingsModel</code>. They continue
-              to work as a fallback, but new connections should go through
-              <em>Integrations → Claude Code</em>.
-            </p>
-
-          <!-- Auth Mode Selection -->
-          <div class="setting-group">
-            <label class="setting-label">Authentication Method</label>
-            <div class="claude-auth-buttons">
-              <button
-                class="btn"
-                :class="claudeAuthMode === 'api-key' ? 'role-primary' : 'role-secondary'"
-                @click="claudeAuthMode = 'api-key'"
-              >
-                API Key
-              </button>
-              <button
-                class="btn"
-                :class="claudeAuthMode === 'oauth' ? 'role-primary' : 'role-secondary'"
-                @click="claudeAuthMode = 'oauth'"
-              >
-                Claude Max (OAuth)
-              </button>
-            </div>
-            <p class="setting-description">
-              Use an API key for pay-per-token billing, or sign in with your Claude Max/Pro subscription.
-            </p>
-          </div>
-
-          <!-- API Key Input -->
-          <div
-            v-if="claudeAuthMode === 'api-key'"
-            class="setting-group"
-          >
-            <label class="setting-label">Anthropic API Key</label>
-            <div class="claude-input-row">
-              <input
-                v-model="claudeApiKey"
-                :type="claudeApiKeyVisible ? 'text' : 'password'"
-                class="input-field claude-input-field"
-                placeholder="sk-ant-..."
-              >
-              <button
-                class="btn role-secondary"
-                @click="claudeApiKeyVisible = !claudeApiKeyVisible"
-              >
-                {{ claudeApiKeyVisible ? 'Hide' : 'Show' }}
-              </button>
-            </div>
-            <p class="setting-description">
-              Get your API key from
-              <a
-                href="#"
-                @click.prevent="openExternal('https://console.anthropic.com/settings/keys')"
-              >console.anthropic.com</a>
-            </p>
-          </div>
-
-          <!-- OAuth Sign-In -->
-          <div
-            v-if="claudeAuthMode === 'oauth'"
-            class="setting-group"
-          >
-            <label class="setting-label">Claude Max / Pro Subscription</label>
-            <p class="setting-description claude-oauth-instructions">
-              Sign in with your Anthropic account to use your Claude Max or Pro subscription.
-              We'll open a browser window for you to authorize.
-            </p>
-            <button
-              v-if="!claudeOAuthToken && !claudeOAuthRunning"
-              class="btn role-primary"
-              @click="startClaudeOAuth"
-            >
-              Sign in with Claude
-            </button>
-            <div
-              v-if="claudeOAuthRunning"
-              class="claude-oauth-progress-container"
-            >
-              <p class="setting-description">
-                {{ claudeOAuthStatus }}
-              </p>
-              <button
-                class="btn role-secondary"
-                @click="cancelClaudeOAuth"
-              >
-                Cancel
-              </button>
-            </div>
-            <div
-              v-if="claudeOAuthToken && !claudeOAuthRunning"
-              class="claude-oauth-signed-in"
-            >
-              <span class="claude-status-dot" />
-              <span class="setting-description claude-status-text">Signed in</span>
-              <button
-                class="btn role-secondary"
-                @click="disconnectClaudeOAuth"
-              >
-                Sign out
-              </button>
-            </div>
-            <p
-              v-if="claudeOAuthError"
-              class="setting-description claude-oauth-error"
-            >
-              {{ claudeOAuthError }}
-            </p>
-          </div>
-
-          <!-- Save Button (API key only) -->
-          <div
-            v-if="claudeAuthMode === 'api-key'"
-            class="setting-group"
-          >
-            <button
-              class="btn role-primary"
-              :disabled="claudeSaving"
-              @click="saveClaudeCredentials"
-            >
-              {{ claudeSaving ? 'Saving...' : 'Save API Key' }}
-            </button>
-          </div>
-
-          <!-- Status -->
-          <div
-            v-if="claudeAuthMode !== 'none' && (claudeApiKey || claudeOAuthToken)"
-            class="setting-group"
-          >
-            <div class="claude-status">
-              <span class="claude-status-dot" />
-              <span class="setting-description claude-status-text">
-                Claude Code credentials configured. They will be injected into the VM on next boot.
-              </span>
-            </div>
-          </div>
-
           </div>
         </div>
       </div>
@@ -1619,116 +1838,6 @@ export default defineComponent({
   margin-bottom: 1rem;
   color: var(--text-error, var(--status-error, #ef4444));
   font-size: var(--fs-body);
-}
-
-.claude-auth-buttons {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.claude-input-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.claude-input-field {
-  flex: 1;
-}
-
-.claude-oauth-instructions {
-  margin-bottom: 0.5rem;
-}
-
-.claude-oauth-textarea {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  resize: vertical;
-  width: 100%;
-}
-
-.claude-deprecated-badge {
-  display: inline-block;
-  margin-left: 0.5rem;
-  padding: 0.1rem 0.5rem;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--status-warning, #d29922);
-  background: rgba(210, 153, 34, 0.12);
-  border: 1px solid rgba(210, 153, 34, 0.3);
-  border-radius: 0.25rem;
-  vertical-align: middle;
-}
-
-.claude-deprecation-banner {
-  padding: 0.75rem 1rem;
-  margin: 0.5rem 0 1rem;
-  color: var(--text-primary, inherit);
-  background: rgba(210, 153, 34, 0.08);
-  border: 1px solid rgba(210, 153, 34, 0.25);
-  border-radius: 0.4rem;
-}
-
-.claude-deprecation-banner p {
-  margin: 0 0 0.5rem;
-}
-.claude-deprecation-banner p:last-child {
-  margin-bottom: 0;
-}
-
-.claude-legacy-warning {
-  font-size: 0.85rem;
-  opacity: 0.75;
-  margin-bottom: 1rem;
-}
-
-.claude-legacy .btn {
-  font-size: 0.85rem;
-}
-
-.claude-status {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.claude-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--status-success, #3fb950);
-}
-
-.claude-status-text {
-  margin: 0;
-}
-
-.claude-oauth-progress-container {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  margin-top: 0.5rem;
-}
-
-.claude-oauth-paste-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.claude-oauth-signed-in {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.claude-oauth-error {
-  color: var(--status-error, #f85149);
-  margin-top: 0.5rem;
 }
 
 .tab-content {
@@ -2836,4 +2945,389 @@ export default defineComponent({
   color: var(--text-muted, var(--muted));
 }
 
+</style>
+
+<!-- ─────────────────────────────────────────────────────────────
+     Unified "noir / steel-blue" restyle. This block is intentionally
+     LAST so its rules win at equal specificity, retuning the shared
+     chrome (header, sidebar, inputs, buttons) across EVERY tab, plus
+     the System Prompt master → detail styles.
+     ───────────────────────────────────────────────────────────── -->
+<style lang="scss" scoped>
+.lm-settings {
+  // Theme-driven aliases. Every value resolves from the ACTIVE theme's tokens
+  // (Protocol gives the steel-blue/noir/mono look; Ocean/Nord/Default give
+  // their own). Fallbacks are generic (never a pinned brand colour) so nothing
+  // is hardcoded and every theme renders correctly.
+  --sp-accent:        var(--accent-primary);
+  --sp-accent-dim:    var(--bg-active, var(--bg-surface-hover));
+  --sp-accent-border: var(--border-accent, var(--border-default));
+  --sp-bg:            var(--bg-page, var(--bg));
+  --sp-surface-1:     var(--bg-surface, var(--surface-1));
+  --sp-surface-2:     var(--bg-surface-alt, var(--surface-2));
+  --sp-surface-3:     var(--bg-surface-hover, var(--surface-3));
+  --sp-border:        var(--border-default, var(--border-muted));
+  --sp-text:          var(--text-primary, var(--text));
+  --sp-text-muted:    var(--text-muted);
+  --sp-text-dim:      var(--text-dim, var(--text-muted));
+
+  // Body font follows the theme's monospace token; headings follow an optional
+  // per-theme display token, falling back to inherit (never a pinned face).
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  background: var(--sp-bg);
+  color: var(--sp-text);
+}
+
+.lm-header {
+  background: var(--sp-surface-1);
+
+  h1 {
+    font-family: var(--font-display, inherit);
+    font-size: 1.1rem;
+    letter-spacing: 0.01em;
+  }
+}
+
+.lm-nav {
+  background: var(--sp-surface-1);
+
+  .nav-item {
+    font-size: 0.82rem;
+
+    &.active {
+      background: var(--sp-accent-dim);
+      color: var(--sp-text);
+      border-left: 2px solid var(--sp-accent);
+    }
+
+    &:hover:not(.active) {
+      background: var(--sp-surface-2);
+    }
+  }
+}
+
+.tab-content {
+  h2 {
+    font-family: var(--font-display, inherit);
+    font-size: 1.35rem;
+    font-weight: 600;
+  }
+}
+
+// Shared form controls — retuned for the whole window.
+.text-input,
+.model-select {
+  background-color: var(--sp-surface-2);
+  border: 1px solid var(--sp-border);
+  border-radius: 6px;
+  color: var(--sp-text);
+  font-family: inherit;
+  font-size: 0.82rem;
+
+  &:focus {
+    outline: none;
+    border-color: var(--sp-accent);
+  }
+}
+
+.btn.role-primary {
+  background: var(--sp-accent);
+  border-color: var(--sp-accent);
+  color: var(--text-on-accent, #fff);
+  font-weight: 600;
+}
+
+.switch input:checked + .slider {
+  background-color: var(--sp-accent);
+}
+
+// ── System Prompt tab ───────────────────────────────────────────
+.sp-identity {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  max-width: 640px;
+
+  .form-group { flex: 1; }
+
+  .form-label {
+    display: block;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    color: var(--sp-text-dim);
+    margin-bottom: 0.35rem;
+    text-transform: uppercase;
+  }
+
+  .text-input { width: 100%; }
+}
+
+.sp-list-header {
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  color: var(--sp-text-dim);
+  margin-bottom: 0.6rem;
+}
+
+.sp-list {
+  border: 1px solid var(--sp-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sp-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.85rem;
+  border-bottom: 1px solid var(--sp-border);
+  cursor: pointer;
+  transition: background 0.12s;
+
+  &:last-child { border-bottom: none; }
+  &:hover { background: var(--sp-surface-1); }
+  &--disabled { opacity: 0.5; }
+
+  .sp-grip {
+    color: var(--sp-text-dim);
+    cursor: grab;
+    font-size: 0.8rem;
+  }
+
+  .sp-row-main { flex: 1; min-width: 0; }
+
+  .sp-row-title {
+    font-size: 0.85rem;
+    color: var(--sp-text);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .sp-row-snippet {
+    font-size: 0.72rem;
+    color: var(--sp-text-dim);
+    margin-top: 0.2rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sp-chevron {
+    color: var(--sp-text-dim);
+    font-size: 1.1rem;
+  }
+}
+
+.sp-badge {
+  font-size: 0.62rem;
+  padding: 0.12rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid var(--sp-border);
+  color: var(--sp-text-muted);
+  white-space: nowrap;
+
+  &--accent { color: var(--sp-accent); border-color: var(--sp-accent-border); }
+  &--custom { color: var(--status-info, var(--info)); border-color: var(--border-info, var(--sp-border)); }
+  &--warn   { color: var(--status-warning, var(--warning)); border-color: var(--border-warning, var(--sp-border)); }
+  &--dim    { color: var(--sp-text-dim); }
+}
+
+.sp-list-actions { margin-top: 0.85rem; }
+
+// Detail view
+.sp-tab {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.sp-detail-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+
+  .sp-detail-bar-spacer { flex: 1; }
+}
+
+.sp-back {
+  color: var(--sp-accent);
+  font-size: 0.82rem;
+  cursor: pointer;
+
+  &:hover { text-decoration: underline; }
+}
+
+.sp-mini-btn {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.6rem;
+}
+
+.sp-detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+
+  h2 { margin: 0; }
+
+  .sp-detail-meta {
+    font-size: 0.72rem;
+    color: var(--sp-text-dim);
+  }
+}
+
+.sp-editor {
+  flex: 1;
+  min-height: 320px;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--sp-surface-2);
+  border: 1px solid var(--sp-border);
+  border-radius: 8px;
+  color: var(--sp-text);
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-size: 0.82rem;
+  line-height: 1.6;
+  padding: 0.9rem;
+  resize: none;
+
+  &:focus { outline: none; border-color: var(--sp-accent); }
+}
+
+.sp-generated {
+  margin-top: 0.75rem;
+  border: 1px dashed var(--sp-border);
+  border-radius: 8px;
+  background: var(--sp-surface-1);
+  padding: 0.65rem 0.8rem;
+
+  .sp-generated-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.05em;
+    color: var(--sp-text-dim);
+    margin-bottom: 0.4rem;
+  }
+
+  .sp-generated-body {
+    margin: 0;
+    font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+    font-size: 0.72rem;
+    color: var(--sp-text-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+}
+
+.sp-detail-actions {
+  margin-top: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+// ── Staged AI edits: review banner, pending badge, rationale, diff ──
+.sp-review-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  margin-bottom: 16px;
+  border-radius: 8px;
+  background: var(--bg-warning, rgba(254, 188, 46, .08));
+  border: 1px solid var(--border-warning, var(--sp-border));
+
+  .sp-review-banner-icon { font-size: 15px; }
+  .sp-review-banner-text { flex: 1; }
+  .sp-review-banner-title { font-size: 13px; color: var(--sp-text); }
+  .sp-review-banner-sub { font-size: 11px; color: var(--sp-text-dim); margin-top: 2px; }
+
+  .sp-review-banner-btn {
+    background: var(--status-warning, var(--warning));
+    border: none;
+    color: var(--text-on-accent, #1a1300);
+    font-weight: 600;
+    font-size: 12px;
+    padding: 7px 13px;
+  }
+}
+
+.sp-badge--pending {
+  color: var(--status-warning, var(--warning));
+  border-color: var(--border-warning, var(--sp-border));
+  background: var(--bg-warning, rgba(254, 188, 46, .08));
+  cursor: pointer;
+}
+
+.sp-review-by {
+  font-size: 11px;
+  color: var(--sp-text-muted);
+  margin-bottom: 14px;
+
+  strong { color: var(--sp-text); }
+}
+
+.sp-rationale {
+  border-left: 2px solid var(--sp-accent);
+  background: var(--sp-surface-1);
+  padding: 10px 14px;
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 16px;
+
+  .sp-rationale-label {
+    font-size: 10px;
+    letter-spacing: .05em;
+    color: var(--sp-text-dim);
+    margin-bottom: 4px;
+  }
+  .sp-rationale-body {
+    font-size: 12px;
+    color: var(--sp-text-muted);
+    line-height: 1.5;
+  }
+}
+
+.sp-diff {
+  border: 1px solid var(--sp-border);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 46vh;
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.sp-diff-line {
+  display: flex;
+  gap: 8px;
+  padding: 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+
+  .sp-diff-gutter { width: 0.8em; flex-shrink: 0; text-align: center; opacity: .8; }
+  .sp-diff-text { flex: 1; }
+
+  &.sp-diff-ctx  { color: var(--sp-text-dim); }
+  &.sp-diff-add  { background: var(--bg-success, rgba(40, 200, 64, .12)); color: var(--status-success, var(--success)); }
+  &.sp-diff-del  { background: var(--bg-error, rgba(255, 95, 87, .12)); color: var(--status-error, var(--danger)); }
+}
+
+.sp-approve-btn {
+  background: var(--status-success, var(--success));
+  border: none;
+  color: var(--text-on-accent, #04120a);
+  font-weight: 600;
+}
+
+.sp-deny-btn {
+  background: transparent;
+  border: 1px solid var(--border-error, var(--sp-border));
+  color: var(--status-error, var(--danger));
+}
+
+.sp-review-note {
+  font-size: 11px;
+  color: var(--sp-text-dim);
+}
 </style>
