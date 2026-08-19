@@ -41,6 +41,7 @@ import { up as up_0050, down as down_0050 } from './0050_create_identity_observa
 import { up as up_0051, down as down_0051 } from './0051_constrain_identity_observation_domains';
 import { up as up_0052, down as down_0052 } from './0052_add_self_observation_fields';
 import { up as up_0053, down as down_0053 } from './0053_allow_environment_identity_domain';
+import { up as up_0054, down as down_0054 } from './0054_allow_projects_identity_domain';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -83,4 +84,5 @@ export const migrationsRegistry = [
   { name: '0051_constrain_identity_observation_domains',         up: up_0051, down: down_0051 },
   { name: '0052_add_self_observation_fields',                    up: up_0052, down: down_0052 },
   { name: '0053_allow_environment_identity_domain',              up: up_0053, down: down_0053 },
+  { name: '0054_allow_projects_identity_domain',                 up: up_0054, down: down_0054 },
 ] as const;
