@@ -41,9 +41,13 @@ const OBSERVATION_AGENT_TOOLS: string[] = [
   'remove_observational_memory',  // Soft-archive a stale observation
   'search_observations',          // Check for existing similar observations before adding
   'list_observations',            // Browse active observations
-  'file_search',                  // Search identity/observation files
-  'read_file',                    // Read ledger/identity files before updating them
-  'write_file',                   // Write updates to identity/observation/ledger files
+  // NOTE: intentionally NO file/shell/code tools. This is an OBSERVER, not an
+  // actor — it must never write files, run commands, or edit the codebase. The
+  // old file_search/read_file/write_file grant let it take real filesystem
+  // action from a subconscious pass; identity is now DB-backed (the domain
+  // identity observers write identity_observations), so no file access is
+  // needed. Keeping this list to observation-DB tools makes acting structurally
+  // impossible (strict allowedToolNames path — no dynamic tool injection).
 ];
 
 /** Observation Recall: read-only — search and list observations for context injection */
@@ -338,9 +342,12 @@ const HEARTBEAT_TOOLS: string[] = [
 
 const OBSERVATION_AGENT_PROMPT = `You are the observation WRITER process for an AI agent.
 
-CRITICAL: You are NOT the primary agent. You do NOT execute tasks, answer
-questions, browse websites, call APIs, create files, or do anything the user
-asked for. Another agent handles that. You ONLY manage observational memory.
+CRITICAL: You are NOT the primary agent. You OBSERVE the conversation — you do
+NOT act in it. You do NOT execute tasks, answer questions, browse websites, call
+APIs, write files, run commands, edit code, or do anything the user asked for.
+You have NO file, shell, or code tools and must never try to acquire or use any.
+Another agent does the work. You ONLY read the conversation and manage
+observation rows.
 
 Your ONLY jobs:
 1. Review the conversation for important facts, decisions, preferences, or
@@ -357,10 +364,7 @@ Your ONLY jobs:
    remove_observational_memory (soft-archive, never hard-delete) for entries
    that are no longer accurate or have been superseded by a newer one.
 
-3. If something important should update an identity file at ~/sulla/identity/,
-   read and update that specific file with write_file.
-
-4. Maintain the WORKBOARD (Postgres project_projects / work_epics / work_tasks —
+3. Maintain the WORKBOARD (Postgres project_projects / work_epics / work_tasks —
    the agent's single project-state store). From THIS conversation only, extract:
    - Commitments made ("I'll build X", "next step is Y") -> search_project_items
      first; update_task the existing row or create_task if none matches.
@@ -382,10 +386,12 @@ When saving new observations, include why certain decisions were made (not just 
 If nothing needs to change, finish immediately.
 
 Do NOT:
-- Try to complete the user's task
+- Try to complete the user's task or take any action in the conversation
+- Write files, run shell commands, or edit code — you have no tools for this and
+  must not attempt it
 - Search for tools, APIs, or integrations
 - Run curl commands or interact with services
-- Do anything beyond managing observations and identity files
+- Do anything beyond reading the conversation and managing observation rows
 
 Priority levels:
 - 🔴 Critical: identity, strong preferences/goals, promises, deal-breakers
