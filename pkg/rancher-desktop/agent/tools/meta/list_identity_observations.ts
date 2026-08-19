@@ -29,9 +29,16 @@ export class ListIdentityObservationsWorker extends BaseTool {
         };
       }
 
-      const lines = rows.map(r =>
-        `[id:${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ formatDateOnly(r.created_at) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`,
-      );
+      const lines = rows.map(r => {
+        const labels = [
+          `L${ r.level }`,
+          r.category,
+          r.subject ? `subject:${ r.subject }` : null,
+          r.kind ? `kind:${ r.kind }` : null,
+          r.confidence !== null && r.confidence !== undefined ? `confidence:${ r.confidence }` : null,
+        ].filter(Boolean).join('·');
+        return `[id:${ r.id }] ${ labels } ${ formatDateOnly(r.created_at) } — ${ r.content }${ r.evidence ? ` (evidence: ${ r.evidence })` : '' }${ r.basis ? ` (basis: ${ r.basis })` : '' }`;
+      });
 
       return {
         successBoolean: true,

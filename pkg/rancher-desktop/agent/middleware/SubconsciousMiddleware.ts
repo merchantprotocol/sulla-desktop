@@ -238,6 +238,27 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('identity-observation-recall', 'Recalling who you are', idRecallPromise.then(ctx => { (state.metadata as any).userObservationContext = ctx })));
   }
 
+  // 3e. Self Observer (agent) — fire-and-forget writer for the `agent` domain
+  //     of identity_observations. Records what is durably true of Sulla as a
+  //     working partner and of how this agent and this human work together
+  //     (subjects agent / agent.user), NOT this-turn task state. Same discipline
+  //     as the human observer; never touches state.messages.
+  if (options.includeObservations && analyzable) {
+    launched.push('self-observer-agent (fire-and-forget)');
+    runIdentityObserver(state, 'agent').catch((error) => {
+      console.error('[SubconsciousMiddleware] Self Observer (agent) failed (fire-and-forget):', error instanceof Error ? error.message : error);
+    });
+  }
+
+  // 3f. Self Observation Recall — awaited: read-only recall of `agent`-domain
+  //     rows relevant to this turn, injected as <self_observations> before the
+  //     primary response starts (parallel to <user_observations>).
+  if (options.includeObservations && analyzable) {
+    launched.push('self-observation-recall');
+    const selfRecallPromise = runIdentityObservationRecall(state, 'agent');
+    awaitedTasks.push(timed('self-observation-recall', 'Recalling how we work', selfRecallPromise.then(ctx => { (state.metadata as any).selfObservationContext = ctx })));
+  }
+
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
   // Every task in awaitedTasks writes into the live turn state. The primary

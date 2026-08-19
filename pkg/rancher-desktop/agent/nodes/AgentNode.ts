@@ -168,9 +168,11 @@ export class AgentNode extends BaseNode {
     this.stripInjectedContextBlocks(state);
     const observationContext     = (state.metadata as any).observationContext;
     const userObservationContext = (state.metadata as any).userObservationContext;
+    const selfObservationContext = (state.metadata as any).selfObservationContext;
     const combinedContextParts: string[] = [];
     if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
     if (userObservationContext) combinedContextParts.push(`<user_observations>\n${ userObservationContext }\n</user_observations>`);
+    if (selfObservationContext) combinedContextParts.push(`<self_observations>\n${ selfObservationContext }\n</self_observations>`);
 
     if (combinedContextParts.length > 0) {
       const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;

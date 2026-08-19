@@ -26,8 +26,12 @@ const MAX_CONTENT_CHARS = 1200;
 const MAX_BASIS_CHARS = 600;
 const MAX_LABEL_CHARS = 80;
 const MAX_SOURCE_CHARS = 120;
+const MAX_EVIDENCE_CHARS = 600;
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 100;
+
+export type IdentityObservationSubject = 'agent' | 'agent.user';
+export type IdentityObservationKind = 'correction' | 'constraint' | 'method' | 'commitment' | 'preference';
 
 export interface IdentityObservationRecord {
   id:         string;
@@ -36,6 +40,10 @@ export interface IdentityObservationRecord {
   category:   string | null;
   content:    string;
   basis:      string | null;
+  subject:    string | null;
+  evidence:   string | null;
+  confidence: number | null;
+  kind:       string | null;
   created_at: string | Date;
   updated_at: string | Date | null;
   archived:   boolean;
@@ -49,6 +57,10 @@ export interface InsertIdentityObservationInput {
   category?: string;
   content:   string;
   basis?:    string;
+  subject?:  string;
+  evidence?: string;
+  confidence?: number;
+  kind?:     string;
   source?:   string;
 }
 
@@ -57,6 +69,10 @@ export interface UpdateIdentityObservationInput {
   category?: string;
   content?:  string;
   basis?:    string;
+  subject?:  string;
+  evidence?: string;
+  confidence?: number;
+  kind?:     string;
   source?:   string;
 }
 
@@ -93,6 +109,32 @@ export function normalizeIdentityLimit(limit: unknown, fallback = DEFAULT_LIST_L
   const n = Math.floor(Number(limit));
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(n, MAX_LIST_LIMIT);
+}
+
+function normalizeIdentitySubject(value: unknown): IdentityObservationSubject | null | undefined {
+  const normalized = normalizeOptionalText(value, 'subject', MAX_LABEL_CHARS);
+  if (normalized === undefined || normalized === null) return normalized;
+  if (normalized === 'agent' || normalized === 'agent.user') return normalized;
+  throw new Error('subject must be "agent" or "agent.user" when provided.');
+}
+
+function normalizeIdentityKind(value: unknown): IdentityObservationKind | null | undefined {
+  const normalized = normalizeOptionalText(value, 'kind', MAX_LABEL_CHARS);
+  if (normalized === undefined || normalized === null) return normalized;
+  if (['correction', 'constraint', 'method', 'commitment', 'preference'].includes(normalized)) {
+    return normalized as IdentityObservationKind;
+  }
+  throw new Error('kind must be one of: correction, constraint, method, commitment, preference.');
+}
+
+function normalizeConfidence(value: unknown): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || n > 1) {
+    throw new Error('confidence must be a number from 0 to 1.');
+  }
+  return n;
 }
 
 function normalizeRequiredText(value: unknown, field: string, maxChars: number): string {
@@ -151,6 +193,10 @@ export class IdentityObservationsModel {
           category    TEXT,
           content     TEXT        NOT NULL,
           basis       TEXT,
+          subject     TEXT,
+          evidence    TEXT,
+          confidence  REAL,
+          kind        TEXT,
           created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at  TIMESTAMPTZ,
           archived    BOOLEAN     NOT NULL DEFAULT false,
@@ -160,6 +206,13 @@ export class IdentityObservationsModel {
       await postgresClient.query(`
         CREATE INDEX IF NOT EXISTS idx_identity_obs_domain_level_created
           ON ${ IdentityObservationsModel.TABLE } (domain, archived, level DESC, created_at DESC)
+      `);
+      await postgresClient.query(`
+        ALTER TABLE ${ IdentityObservationsModel.TABLE }
+          ADD COLUMN IF NOT EXISTS subject TEXT,
+          ADD COLUMN IF NOT EXISTS evidence TEXT,
+          ADD COLUMN IF NOT EXISTS confidence REAL,
+          ADD COLUMN IF NOT EXISTS kind TEXT
       `);
     } catch (err) {
       console.error('[IdentityObservationsModel] Failed to ensure table:', err);
@@ -174,10 +227,14 @@ export class IdentityObservationsModel {
     const id = input.id || generateTinyId();
     const category = normalizeOptionalText(input.category, 'category', MAX_LABEL_CHARS);
     const basis = normalizeOptionalText(input.basis, 'basis', MAX_BASIS_CHARS);
+    const subject = normalizeIdentitySubject(input.subject);
+    const evidence = normalizeOptionalText(input.evidence, 'evidence', MAX_EVIDENCE_CHARS);
+    const confidence = normalizeConfidence(input.confidence);
+    const kind = normalizeIdentityKind(input.kind);
     const source = normalizeOptionalText(input.source, 'source', MAX_SOURCE_CHARS);
     const rows = await postgresClient.query<IdentityObservationRecord>(
-      `INSERT INTO ${ IdentityObservationsModel.TABLE } (id, domain, level, category, content, basis, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO ${ IdentityObservationsModel.TABLE } (id, domain, level, category, content, basis, subject, evidence, confidence, kind, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         id,
@@ -186,6 +243,10 @@ export class IdentityObservationsModel {
         category ?? null,
         normalizeRequiredText(input.content, 'content', MAX_CONTENT_CHARS),
         basis ?? null,
+        subject ?? null,
+        evidence ?? null,
+        confidence ?? null,
+        kind ?? null,
         source ?? null,
       ],
     );
@@ -212,6 +273,22 @@ export class IdentityObservationsModel {
     if (changes.basis !== undefined) {
       setClauses.push(`basis = $${ idx++ }`);
       values.push(normalizeOptionalText(changes.basis, 'basis', MAX_BASIS_CHARS));
+    }
+    if (changes.subject !== undefined) {
+      setClauses.push(`subject = $${ idx++ }`);
+      values.push(normalizeIdentitySubject(changes.subject));
+    }
+    if (changes.evidence !== undefined) {
+      setClauses.push(`evidence = $${ idx++ }`);
+      values.push(normalizeOptionalText(changes.evidence, 'evidence', MAX_EVIDENCE_CHARS));
+    }
+    if (changes.confidence !== undefined) {
+      setClauses.push(`confidence = $${ idx++ }`);
+      values.push(normalizeConfidence(changes.confidence));
+    }
+    if (changes.kind !== undefined) {
+      setClauses.push(`kind = $${ idx++ }`);
+      values.push(normalizeIdentityKind(changes.kind));
     }
     if (changes.source !== undefined) {
       setClauses.push(`source = $${ idx++ }`);

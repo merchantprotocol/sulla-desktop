@@ -72,6 +72,13 @@ interface IdentityObserverDomainConfig {
   subjectLabel: string;
   /** Domain-specific guidance: what to look for, with category examples. */
   focus:        string;
+  /**
+   * Extra WRITER-only discipline appended to the observer prompt. The
+   * self/agent domain uses it to pin the stricter subject/kind/third-person
+   * contract its rows follow; human/business/world leave it undefined and
+   * inherit the shared template unchanged.
+   */
+  writerNote?:  string;
 }
 
 const IDENTITY_OBSERVER_DOMAINS: Record<string, IdentityObserverDomainConfig> = {
@@ -86,6 +93,62 @@ const IDENTITY_OBSERVER_DOMAINS: Record<string, IdentityObserverDomainConfig> = 
 - habit: recurring behaviors, schedules, working patterns
 - preference: likes/dislikes, how they want things done, communication style
 - goal: what they are trying to achieve, short- and long-term`,
+  },
+  agent: {
+    domain:       'agent',
+    subjectLabel: 'the Sulla agent',
+    focus: `Observe the SULLA AGENT ITSELF as a working partner — what is durably
+true of how it works and how it works WITH this human. NOT a recap of the last
+reply, NOT a mood, NOT persona fanfic. If it would not still matter in a new
+chat next week, it is not a self-observation.
+
+Two subjects (write each row under exactly one):
+- agent — this AI (Sulla) as a working partner: its standing constraints,
+  methods, commitments, capabilities, limits, and preferences.
+- agent.user — how THIS agent and THIS human work together: the overlap layer,
+  the reciprocal working style. This layer is usually MORE valuable than
+  abstract facts about the AI — prefer it.
+
+Record only things that pass all three gates below. Good material:
+- a correction the human gave ("stop asking so many questions", "don't push without a PR")
+- a constraint it discovered ("cannot X in the VM", "this tool is the source of truth")
+- a working agreement now in force ("agent drafts PRs; the human merges")
+- a method that repeatedly worked or repeatedly failed
+- a standing preference for how it should act (terse, propose-then-wait, never email)
+- a capability or hard limit ("can write identity proposals, cannot activate soul")
+
+Reject (never write these):
+- "I was helpful", restating SOUL or the identity files, mood/persona fanfic,
+  "I noticed I care about…"
+- this-turn task status ("edited foo.ts"), one-off guesses about its own character
+- traits like helpful / curious / proactive UNLESS the human stated them as a rule
+- feelings or inner life`,
+    writerNote: `## How to write a self-observation (agent domain)
+
+Every candidate row must pass ALL THREE gates before you write it:
+1. Is this still true if this chat is deleted?
+2. Did the human correct it, or did it happen more than once?
+3. Would a future chat do something differently if it knew this?
+If ANY answer is no, do not write it. Most turns reveal nothing durable — when
+they don't, finish immediately without writing.
+
+Field contract for every agent-domain row:
+- content — the fact as ONE sentence, THIRD PERSON, standing or past tense.
+  Write "Agent must not push live; it opens PRs for review." — NOT "I should be
+  more careful" and NOT "I will not push to main." First person or self-talk
+  pollutes the snapshot: always start with "Agent ..." or "The pair ..." /
+  "The human ...", never "I ...".
+- source — the subject: exactly \`agent\` or \`agent.user\`.
+- category — the kind: exactly one of correction | constraint | method |
+  commitment | preference.
+- basis — the evidence: a short quote or a turn reference.
+- level — certainty: L3 for a human correction or an explicit rule/limit the
+  human stated; L2 for a constraint or method established from evidence or seen
+  more than once; L1 ONLY for a genuine standing conclusion, never a one-off
+  guess about its own character.
+
+Prefer agent.user rows — how the pair works is worth more than facts about the
+AI in the abstract.`,
   },
 };
 
@@ -139,7 +202,7 @@ Do NOT:
 - Try to complete the user's task
 - Record task/project state (the general observation writer owns that)
 - Record facts about other domains
-- Search for tools, APIs, or integrations`;
+- Search for tools, APIs, or integrations${ cfg.writerNote ? `\n\n${ cfg.writerNote }` : '' }`;
 }
 
 /**
