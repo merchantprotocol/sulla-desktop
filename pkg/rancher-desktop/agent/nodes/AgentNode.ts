@@ -1,3 +1,10 @@
+File: pkg/rancher-desktop/agent/nodes/AgentNode.ts
+Size: 26073 bytes
+SHA: b6ddf46b3efa6c513954d70dfbb543082fec0d5e
+Encoding: base64
+Ref: feat/subconscious-per-domain-observers
+
+Content:
 import { BaseNode } from './BaseNode';
 import { getAgentOverrideService, getPrimaryService } from '../languagemodels';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
@@ -169,10 +176,12 @@ export class AgentNode extends BaseNode {
     const observationContext     = (state.metadata as any).observationContext;
     const userObservationContext = (state.metadata as any).userObservationContext;
     const selfObservationContext = (state.metadata as any).selfObservationContext;
+    const businessObservationContext = (state.metadata as any).businessObservationContext;
     const combinedContextParts: string[] = [];
     if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
     if (userObservationContext) combinedContextParts.push(`<user_observations>\n${ userObservationContext }\n</user_observations>`);
     if (selfObservationContext) combinedContextParts.push(`<self_observations>\n${ selfObservationContext }\n</self_observations>`);
+    if (businessObservationContext) combinedContextParts.push(`<business_observations>\n${ businessObservationContext }\n</business_observations>`);
 
     if (combinedContextParts.length > 0) {
       const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;
