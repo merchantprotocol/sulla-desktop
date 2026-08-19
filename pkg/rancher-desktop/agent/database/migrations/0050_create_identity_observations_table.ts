@@ -18,7 +18,7 @@
 export const up = `
   CREATE TABLE IF NOT EXISTS identity_observations (
     id          TEXT        PRIMARY KEY,
-    domain      TEXT        NOT NULL DEFAULT 'human',
+    domain      TEXT        NOT NULL DEFAULT 'human' CHECK (domain IN ('human', 'business', 'world', 'agent')),
     level       SMALLINT    NOT NULL DEFAULT 2 CHECK (level IN (1, 2, 3)),
     category    TEXT,
     content     TEXT        NOT NULL,

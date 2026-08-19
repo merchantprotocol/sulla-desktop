@@ -39,6 +39,7 @@ import { up as up_0047, down as down_0047 } from './0047_add_work_task_actor';
 import { up as up_0048, down as down_0048 } from './0048_create_system_prompt_sections_table';
 import { up as up_0049, down as down_0049 } from './0049_create_system_prompt_section_edits_table';
 import { up as up_0050, down as down_0050 } from './0050_create_identity_observations_table';
+import { up as up_0051, down as down_0051 } from './0051_constrain_identity_observation_domains';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -78,4 +79,5 @@ export const migrationsRegistry = [
   { name: '0048_create_system_prompt_sections_table',          up: up_0048, down: down_0048 },
   { name: '0049_create_system_prompt_section_edits_table',      up: up_0049, down: down_0049 },
   { name: '0050_create_identity_observations_table',            up: up_0050, down: down_0050 },
+  { name: '0051_constrain_identity_observation_domains',         up: up_0051, down: down_0051 },
 ] as const;
