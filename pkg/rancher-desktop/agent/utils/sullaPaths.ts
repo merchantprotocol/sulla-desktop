@@ -1,16 +1,16 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import paths from '@pkg/utils/paths';
 
 const execFileAsync = promisify(execFile);
 
-// Package is `"type": "module"` — __dirname isn't defined in ESM scope.
-// Derive this module's directory from import.meta.url for the dev walk-up.
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+// Use a CJS-safe dev walk-up start. Packaged builds resolve via
+// process.resourcesPath before this fallback; tests run through ts-jest's CJS
+// transform, where import.meta is not available.
+const MODULE_DIR = typeof __dirname === 'string' ? __dirname : process.cwd();
 
 const SULLA_HOME_DIR_ENV = 'SULLA_HOME_DIR';
 const SULLA_PROJECTS_DIR_ENV = 'SULLA_PROJECTS_DIR';

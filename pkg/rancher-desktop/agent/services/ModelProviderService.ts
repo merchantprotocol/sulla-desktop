@@ -23,8 +23,8 @@ export interface ModelProviderState {
   secondaryProvider:   string;
   heartbeatProvider:   string;
   /**
-   * Provider used by subconscious agents (memory-recall, observation,
-   * unstuck-research). Defaults to 'default', which means "fall back to the
+   * Provider used by subconscious agents (observation writer/recall,
+   * summarizer). Defaults to 'default', which means "fall back to the
    * secondary provider". Any provider including 'claude-code' is valid here —
    * setting it to 'claude-code' runs a full autonomous Claude Code subprocess
    * for each subconscious turn.

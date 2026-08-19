@@ -821,9 +821,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /**
    * Remove previously injected subconscious context blocks
-   * (<episodic_context>, <recall_context>, <observation_context>,
-   * <security_context>, <unstuck_context>) from all assistant messages, so the
-   * per-turn merge below replaces rather than
+   * (<observation_context>, <user_observations>, <routine_digest>,
+   * <lane_health>) from all
+   * assistant messages, so the per-turn merge below replaces rather than
    * accumulates. Two accumulation paths existed without this:
    * - the merge runs on every graph iteration of a tool-call loop, re-
    *   appending the same metadata context within a single turn, and
@@ -832,8 +832,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(episodic_context|recall_context|observation_context|conversation_recall_context|security_context|unstuck_context|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:episodic_context|recall_context|observation_context|conversation_recall_context|security_context|unstuck_context|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(observation_context|user_observations|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:observation_context|user_observations|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -939,8 +939,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   ): Promise<NormalizedResponse | null> {
     // Agent-definition override first: an agent whose config.yaml declares
     // model/provider gets its own service instance regardless of role slot.
-    // Otherwise: subconscious agents (memory-recall, observation,
-    // unstuck-research) need a fast tool-emitting chat peer, not the
+    // Otherwise: subconscious agents (observation writer/recall,
+    // summarizer) need a fast tool-emitting chat peer, not the
     // autonomous Claude-Code-style primary. Route them to the dedicated
     // subconscious provider (falls back to secondary, then primary).
     const isSubAgent = !!(state.metadata as any).isSubAgent;

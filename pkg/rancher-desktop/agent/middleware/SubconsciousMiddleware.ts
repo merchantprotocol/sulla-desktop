@@ -1,20 +1,11 @@
 /**
  * SubconsciousMiddleware — pre-processing step before the main agent LLM call.
  *
- * Launches up to 6 parallel subconscious graphs:
+ * Launches up to 4 parallel subconscious graphs:
  * 1. Conversational Summarizer — compresses/deletes old messages
- * 2. Environment Brief Agent — broad recall: tells the primary agent which
- *    tools, capabilities, and environment systems apply (recallContext;
- *    formerly "memory recall"). Always runs on an actionable turn.
- * 3. Episodic Recall Agent — fast knowledge-graph neighborhood recall
- *    (episodicContext). Runs ALONGSIDE #2 (coexists, does not replace) on
- *    both user turns and the heartbeat.
- * 4. Security Conscience Agent — the read-only "angel on the shoulder" that
- *    reminds the primary agent of the rules and protections to honor before
- *    acting (securityContext). User turns only.
- * 5. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
- * 6. Observation Recall Agent — surfaces relevant observations for context injection
- * 7. Tool-Result Digester — compresses stale tool_result blocks into
+ * 2. Observation Writer Agent — writes/archives observational memories (fire-and-forget)
+ * 3. Observation Recall Agent — surfaces relevant observations for context injection
+ * 4. Tool-Result Digester — compresses stale tool_result blocks into
  *    trusted-citation digests so the primary model re-reads citations
  *    instead of verbatim dumps
  *
@@ -25,6 +16,7 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
+import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
@@ -88,8 +80,6 @@ const estimateTokensFromChars = (chars: number) => Math.ceil(Math.max(0, chars) 
 export interface SubconsciousMiddlewareOptions {
   /** Whether observations should be managed (false for planning agents) */
   includeObservations: boolean;
-  /** Optional recall variant — changes the recall prompt/tools for specific agents */
-  recallVariant?:      'default' | 'heartbeat';
   /**
    * Live progress sink. The awaited subconscious phase blocks the primary
    * agent (recall is never time-limited by design), so without a signal the
@@ -201,57 +191,13 @@ export async function runSubconsciousMiddleware(
 
   // Recall is NEVER time-limited — the primary agent waits as long as recall
   // needs, because starting a turn without the right context is worse than
-  // starting it late (Jonathon, 2026-07-06). Recall latency is addressed by
-  // making its TOOLS fast (the file_search sidecar fix took its searches
-  // from 20-30s degraded scans to sub-second indexed queries) and by not
-  // dispatching at all when a turn carries nothing to analyze — not by
-  // cutting the agents off mid-job.
-
-  // 2. Recall — three lanes, awaited, run in parallel (wall-clock is the
-  //    slowest, not the sum):
-  //      • Environment Brief (recallContext) — broad recall. On user turns it
-  //        delivers the Sulla tool surface + environment so the agent knows
-  //        what it can do; on heartbeat it loads active projects, presence, and
-  //        sub-agent jobs. Always runs on an actionable turn.
-  //      • Episodic graph recall (episodicContext) — ranked knowledge-graph
-  //        neighborhood. Runs alongside the brief on BOTH user turns and
-  //        heartbeat, so the heartbeat gets the same memory picture.
-  //    Distinct metadata keys + distinct injected blocks → additive, not competing.
-  if (options.recallVariant === 'heartbeat' || analyzable) {
-    launched.push('environment-brief');
-    const briefPromise = runEnvironmentBrief(state, options.recallVariant);
-    awaitedTasks.push(timed('environment-brief', 'Briefing environment & tools', briefPromise.then(ctx => { (state.metadata as any).recallContext = ctx })));
-
-    launched.push('episodic-recall');
-    const episodicPromise = runEpisodicRecall(state);
-    awaitedTasks.push(timed('episodic-recall', 'Recalling graph memories', episodicPromise.then(ctx => { (state.metadata as any).episodicContext = ctx })));
-  } else {
-    console.log('[SubconsciousMiddleware] Recall skipped — no user message in state to analyze');
-  }
-
-  // 2b. Security Conscience — awaited: writes state.metadata.securityContext.
-  //     The read-only "angel on the shoulder" must land BEFORE the primary
-  //     agent acts, so it blocks the turn like the brief. User turns only —
-  //     the heartbeat variant carries no user message to judge.
-  if (analyzable) {
-    launched.push('security-conscience');
-    const securityPromise = runSecurityConscience(state);
-    awaitedTasks.push(timed('security-conscience', 'Checking security', securityPromise.then(ctx => { (state.metadata as any).securityContext = ctx })));
-  } else {
-    console.log('[SubconsciousMiddleware] Security Conscience skipped — no user message in state to analyze');
-  }
-
-  // 2c. Conversation Recall — awaited: searches PAST conversations (titles,
-  //     summaries, transcripts) and writes state.metadata.conversationRecallContext.
-  //     Runs in PARALLEL with the recall lane above (all awaitedTasks are
-  //     Promise.allSettled'd together), so it only adds wall-clock if it is
-  //     slower than the slowest existing lane. Gated on an analyzable user turn
-  //     for the same reason as the others — nothing to recall against otherwise.
-  if (analyzable) {
-    launched.push('conversation-recall');
-    const convRecallPromise = runConversationRecall(state);
-    awaitedTasks.push(timed('conversation-recall', 'Recalling past conversations', convRecallPromise.then(ctx => { (state.metadata as any).conversationRecallContext = ctx })));
-  }
+  // starting it late (Jonathon, 2026-07-06).
+  //
+  // 2026-08-19 subconscious prune (docs/user-observation-subsystem-PRD.md):
+  // Environment Brief, Episodic Recall, Security Conscience, and Conversation
+  // Recall were removed — they didn't perform reliably. The retained recall is
+  // the general Observation Writer + Observation Recall below, plus the focused
+  // domain observers (human first) dispatched alongside them.
 
   // 3a. Observation Writer — fire-and-forget: writes/archives observation rows
   //     via DB tools. Never touches state.messages. No need to await.
@@ -271,6 +217,27 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('observation-recall', 'Checking observations', obsRecallPromise.then(ctx => { (state.metadata as any).observationContext = ctx })));
   }
 
+  // 3c. Identity Observer (human) — fire-and-forget writer for the focused,
+  //     domain-keyed identity_observations table. Records stated facts (L3),
+  //     derived facts (L2), and reasoned conclusions (L1) about the human
+  //     user. Runs alongside the general writer; never touches state.messages.
+  if (options.includeObservations && analyzable) {
+    launched.push('identity-observer-human (fire-and-forget)');
+    runIdentityObserver(state, 'human').catch((error) => {
+      console.error('[SubconsciousMiddleware] Identity Observer (human) failed (fire-and-forget):', error instanceof Error ? error.message : error);
+    });
+  }
+
+  // 3d. Identity Observation Recall — awaited: deterministic SQL fast-path
+  //     (no LLM, same design as 3b). Compiles the most important human
+  //     observations — most certain first (L3 stated → L2 derived → L1
+  //     concluded), then most recent — into state.metadata.userObservationContext.
+  if (options.includeObservations && analyzable) {
+    launched.push('identity-observation-recall');
+    const idRecallPromise = runIdentityObservationRecall(state, 'human');
+    awaitedTasks.push(timed('identity-observation-recall', 'Recalling who you are', idRecallPromise.then(ctx => { (state.metadata as any).userObservationContext = ctx })));
+  }
+
   console.log(`[SubconsciousMiddleware] Launched: ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
   // Every task in awaitedTasks writes into the live turn state. The primary
@@ -287,16 +254,12 @@ export async function runSubconsciousMiddleware(
     }
   }
 
-  const recallLen = ((state.metadata as any).recallContext || '').length;
-  const episodicLen = ((state.metadata as any).episodicContext || '').length;
   const obsRecallLen = ((state.metadata as any).observationContext || '').length;
-  const convRecallLen = ((state.metadata as any).conversationRecallContext || '').length;
-  const securityLen = ((state.metadata as any).securityContext || '').length;
-  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | recallContext: ${ recallLen } chars | episodicContext: ${ episodicLen } chars | observationContext: ${ obsRecallLen } chars | conversationRecallContext: ${ convRecallLen } chars | securityContext: ${ securityLen } chars`);
+  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | observationContext: ${ obsRecallLen } chars`);
 
   // Perf: total blocking prelude + per-sub-agent breakdown (which one dominates).
   const breakdown = Object.entries(timings).map(([n, ms]) => `${ n }=${ ms }ms`).join(', ');
-  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] recallChars=${ recallLen } episodicChars=${ episodicLen } obsChars=${ obsRecallLen } convChars=${ convRecallLen }`);
+  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] timings=[${ breakdown }] obsChars=${ obsRecallLen }`);
 }
 
 // ============================================================================
@@ -488,164 +451,6 @@ async function runToolResultDigester(state: BaseThreadState, eligible: Digestibl
 }
 
 // ============================================================================
-// ENVIRONMENT BRIEF (formerly "memory recall")
-// ============================================================================
-
-async function runEnvironmentBrief(state: BaseThreadState, variant?: 'default' | 'heartbeat'): Promise<string | null> {
-  const startTime = Date.now();
-
-  try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createEnvironmentBrief(state, variant);
-    console.log(`[SubconsciousMiddleware:EnvironmentBrief] Started | threadId: ${ threadId }`);
-
-    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
-
-    const agentMeta = (subState.metadata as any).agent || {};
-    const iterations = (subState.metadata as any).iterations || 0;
-    const toolCalls = subState.messages.filter((m: any) =>
-      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
-    ).length;
-
-    // Extract only the structured contract from AGENT_DONE.
-    // Never fall back to raw assistant messages — those are narration for the
-    // thinking bubble, not a contract for the primary agent.
-    const response = agentMeta.response;
-
-    if (response && typeof response === 'string' && response.trim()) {
-      console.log(`[SubconsciousMiddleware:EnvironmentBrief] Returning ${ response.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-      return response.trim();
-    }
-
-    console.log(`[SubconsciousMiddleware:EnvironmentBrief] No relevant context found in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-    return null;
-  } catch (error) {
-    console.error(`[SubconsciousMiddleware:EnvironmentBrief] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
-    return null;
-  }
-}
-
-// ============================================================================
-// SECURITY CONSCIENCE — the "angel on the shoulder"
-// ============================================================================
-
-async function runSecurityConscience(state: BaseThreadState): Promise<string | null> {
-  const startTime = Date.now();
-
-  try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createSecurityConscience(state);
-    console.log(`[SubconsciousMiddleware:SecurityConscience] Started | threadId: ${ threadId }`);
-
-    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
-
-    const agentMeta = (subState.metadata as any).agent || {};
-    const iterations = (subState.metadata as any).iterations || 0;
-    const toolCalls = subState.messages.filter((m: any) =>
-      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
-    ).length;
-
-    // Only the structured AGENT_DONE contract — never raw narration.
-    const response = agentMeta.response;
-
-    if (response && typeof response === 'string' && response.trim()) {
-      console.log(`[SubconsciousMiddleware:SecurityConscience] Returning ${ response.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-      return response.trim();
-    }
-
-    console.log(`[SubconsciousMiddleware:SecurityConscience] No briefing produced in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-    return null;
-  } catch (error) {
-    console.error(`[SubconsciousMiddleware:SecurityConscience] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
-    return null;
-  }
-}
-
-async function runEpisodicRecall(state: BaseThreadState): Promise<string | null> {
-  const startTime = Date.now();
-
-  try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createEpisodicRecall(state);
-    console.log(`[SubconsciousMiddleware:EpisodicRecall] Started | threadId: ${ threadId }`);
-
-    await graph.execute(subState, 'subconscious');
-
-    const agentMeta = (subState.metadata as any).agent || {};
-    const iterations = (subState.metadata as any).iterations || 0;
-    const toolCalls = subState.messages.filter((m: any) =>
-      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
-    ).length;
-    const response = agentMeta.response;
-
-    if (response && typeof response === 'string' && response.trim()) {
-      const normalized = stripEpisodicContextEnvelope(response);
-      if (!normalized) {
-        console.log(`[SubconsciousMiddleware:EpisodicRecall] Empty graph context in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-        return null;
-      }
-      console.log(`[SubconsciousMiddleware:EpisodicRecall] Returning ${ normalized.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-      return normalized;
-    }
-
-    console.log(`[SubconsciousMiddleware:EpisodicRecall] No relevant graph context found in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-    return null;
-  } catch (error) {
-    console.error(`[SubconsciousMiddleware:EpisodicRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
-    return null;
-  }
-}
-
-function stripEpisodicContextEnvelope(response: string): string {
-  const trimmed = response.trim();
-  if (trimmed === '<episodic_context />') return '';
-  const match = /<episodic_context>\s*([\s\S]*?)\s*<\/episodic_context>/i.exec(trimmed);
-  return (match ? match[1] : trimmed).trim();
-}
-
-// ============================================================================
-// CONVERSATION RECALL
-// ============================================================================
-
-async function runConversationRecall(state: BaseThreadState): Promise<string | null> {
-  const startTime = Date.now();
-
-  try {
-    const { graph, state: subState, threadId } = await GraphRegistry.createConversationRecall(state);
-    console.log(`[SubconsciousMiddleware:ConversationRecall] Started | threadId: ${ threadId }`);
-
-    await graph.execute(subState, 'subconscious', { maxIterations: 10 });
-
-    const agentMeta = (subState.metadata as any).agent || {};
-    const iterations = (subState.metadata as any).iterations || 0;
-    const toolCalls = subState.messages.filter((m: any) =>
-      Array.isArray(m.content) && m.content.some((b: any) => b?.type === 'tool_use'),
-    ).length;
-    const response = agentMeta.response;
-
-    if (response && typeof response === 'string' && response.trim()) {
-      const normalized = stripConversationContextEnvelope(response);
-      if (!normalized) {
-        console.log(`[SubconsciousMiddleware:ConversationRecall] Empty conversation context in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-        return null;
-      }
-      console.log(`[SubconsciousMiddleware:ConversationRecall] Returning ${ normalized.length } chars in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-      return normalized;
-    }
-
-    console.log(`[SubconsciousMiddleware:ConversationRecall] No relevant conversation context found in ${ Date.now() - startTime }ms | iterations: ${ iterations }, tool_calls: ${ toolCalls }, status: ${ agentMeta.status }`);
-    return null;
-  } catch (error) {
-    console.error(`[SubconsciousMiddleware:ConversationRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
-    return null;
-  }
-}
-
-function stripConversationContextEnvelope(response: string): string {
-  const trimmed = response.trim();
-  if (/^<conversation_recall_context\s*\/>$/i.test(trimmed)) return '';
-  const match = /<conversation_recall_context>\s*([\s\S]*?)\s*<\/conversation_recall_context>/i.exec(trimmed);
-  return (match ? match[1] : trimmed).trim();
-}
-
-// ============================================================================
 // OBSERVATION WRITER AGENT
 // ============================================================================
 
@@ -775,6 +580,74 @@ async function runObservationRecall(state: BaseThreadState): Promise<string | nu
     return response;
   } catch (error) {
     console.error(`[SubconsciousMiddleware:ObservationRecall] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+// ============================================================================
+// IDENTITY OBSERVER (domain-keyed — human first)
+// ============================================================================
+
+/**
+ * Fire-and-forget writer for one identity domain. Same shape as
+ * runObservationAgent: the agent applies its side effects via the
+ * add/remove/search/list_identity_observation tools directly against the
+ * identity_observations table — no state merge needed.
+ */
+async function runIdentityObserver(state: BaseThreadState, domain: string): Promise<void> {
+  const startTime = Date.now();
+
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createIdentityObserver(state, domain);
+    console.log(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Started | threadId: ${ threadId }`);
+
+    await graph.execute(subState, 'subconscious', { maxIterations: 20 });
+
+    const agentMeta = (subState.metadata as any).agent || {};
+    const iterations = (subState.metadata as any).iterations || 0;
+    console.log(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Completed in ${ Date.now() - startTime }ms | iterations: ${ iterations }, status: ${ agentMeta.status }`);
+  } catch (error) {
+    console.error(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/**
+ * Max identity rows surfaced into <user_observations> per turn. The domain
+ * picture is a compact profile, not a search result — certainty-ranked so
+ * the primary agent always sees the stated facts before the conclusions.
+ */
+const IDENTITY_RECALL_MAX_ROWS = 12;
+
+/**
+ * Deterministic SQL fast-path reader for one identity domain — no LLM, same
+ * design (and rationale) as runObservationRecall. Unlike the general recall,
+ * this is NOT query-matched: the domain picture is ranked purely by
+ * certainty level (L3 stated → L2 derived → L1 concluded) then recency,
+ * because who the user IS matters on every turn, not just topical ones.
+ * Returns null when the domain has no rows yet so no block is injected.
+ */
+async function runIdentityObservationRecall(state: BaseThreadState, domain: string): Promise<string | null> {
+  const startTime = Date.now();
+  const threadId = (state.metadata as any).threadId;
+
+  try {
+    const rows = await IdentityObservationsModel.listActive(domain, { limit: IDENTITY_RECALL_MAX_ROWS });
+    const elapsed = Date.now() - startTime;
+
+    if (!rows || rows.length === 0) {
+      perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } matched=0 ms=${ elapsed } path=sql-fast-path`);
+      return null;
+    }
+
+    const response = rows
+      .map((r) => `[${ r.id }] L${ r.level }${ r.category ? `·${ r.category }` : '' } ${ (r.created_at || '').slice(0, 10) } — ${ r.content }${ r.basis ? ` (basis: ${ r.basis })` : '' }`)
+      .join('\n');
+
+    perf.log(`[IdentityRecall] threadId=${ threadId } domain=${ domain } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
+    console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Returning ${ rows.length } rows (${ response.length } chars) in ${ elapsed }ms (sql-fast-path)`);
+    return response;
+  } catch (error) {
+    console.error(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
     return null;
   }
 }
