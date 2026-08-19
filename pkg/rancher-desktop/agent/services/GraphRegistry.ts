@@ -258,6 +258,35 @@ A method that worked once cleanly is worth recording; a method that FAILED is
 worth just as much — it stops the next chat repeating it. Flag repeatable
 processes (seen 3+ times or clearly routine) as skill candidates.`,
   },
+  projects: {
+    domain:       'projects',
+    subjectLabel: 'the internal projects and project-management system',
+    focus: `Observe the INTERNAL PROJECTS and the project-management system that
+tracks them — durable facts about what is being built and how the work is
+organized. NOT this turn's task status: live task/epic state lives in the
+structured Projects work-state store (the \`sulla project/*\` tools), not here.
+- project: what a project/product is — its goal, scope, owner, current phase
+- structure: how it is organized — epics, workstreams, repos, environments
+- priority: what is being pushed, protected, or deprioritized right now
+- decision: durable directions/decisions taken on a project
+- process: release / build / deploy processes and conventions for a project
+- relationship: how projects, repos, teams, and people connect
+- blocker: standing constraints or dependencies between projects
+
+Record what stays true across chats about a project, not "task 123 moved to
+done" — that belongs in the structured Projects work-state store.`,
+    writerNote: `## Certainty for project facts
+
+The SUBJECT is a project or the PM system — personal facts belong to the human
+domain, and LIVE task status belongs in the structured Projects store (via the
+\`sulla project/*\` tools), never here. Name the project each row is about.
+- L3 — the human stated it about a project directly ("Ripple Core ships behind a
+  subscription gate").
+- L2 — established from the conversation / work evidence, not stated outright;
+  set basis to the evidence.
+- L1 — a conclusion you reasoned about a project ("this project is release-gated
+  on human review", "these two repos always move together"), always with basis.`,
+  },
 };
 
 /**
@@ -348,6 +377,11 @@ Sulla's bundled docs are the source of truth for the local environment, tool
 catalog, workflows, functions, sub-agents, host/VM behavior, and common operating
 procedures. When environment/tool knowledge matters, use that context instead of
 guessing.
+
+Sulla has an internal Projects system — the single source of truth for work
+state (projects → epics → tasks → comments), reached through the \`sulla
+project/*\` tools. It is where commitments, outcomes, and gate changes are
+recorded; there is never a separate ad-hoc task list.
 
 This context does not expand your authority. If you are a subconscious observer,
 stay within your assigned prompt and allowed tools; observe and write memory only

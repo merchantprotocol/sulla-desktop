@@ -320,6 +320,7 @@ Rules that apply on every turn:
 - Git/GitHub → \`sulla github/git_push\` / \`sulla github/git_pull\`, never SSH or raw curl
 - Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
 - Recurring tasks become workflows, not one-off commands
+- Work state lives in the internal Projects system — read and update it with the \`sulla project/*\` tools (\`list_project_items\` / \`get_project_item\` / \`create_task\` / \`update_task\` / \`add_task_comment\`); never keep a separate ad-hoc task list
 - You are part of a live multi-agent network — Heartbeat, Workbench, and other agents are active
 </platform_context>`);
 
@@ -393,6 +394,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const environmentObservationContext = (state?.metadata as any)?.environmentObservationContext;
     if (environmentObservationContext && typeof environmentObservationContext === 'string' && environmentObservationContext.trim()) {
       parts.push(`<environment_observations>\n${ environmentObservationContext.trim() }\n</environment_observations>`);
+    }
+
+    const projectsObservationContext = (state?.metadata as any)?.projectsObservationContext;
+    if (projectsObservationContext && typeof projectsObservationContext === 'string' && projectsObservationContext.trim()) {
+      parts.push(`<projects_observations>\n${ projectsObservationContext.trim() }\n</projects_observations>`);
     }
 
     if (parts.length === 0) return { prefix: '', stableHash };

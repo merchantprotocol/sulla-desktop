@@ -19,9 +19,9 @@ import { postgresClient } from '../PostgresClient';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-export type IdentityDomain = 'human' | 'business' | 'world' | 'agent' | 'environment';
+export type IdentityDomain = 'human' | 'business' | 'world' | 'agent' | 'environment' | 'projects';
 
-export const IDENTITY_DOMAINS: IdentityDomain[] = ['human', 'business', 'world', 'agent', 'environment'];
+export const IDENTITY_DOMAINS: IdentityDomain[] = ['human', 'business', 'world', 'agent', 'environment', 'projects'];
 const MAX_CONTENT_CHARS = 1200;
 const MAX_BASIS_CHARS = 600;
 const MAX_LABEL_CHARS = 80;
@@ -188,7 +188,7 @@ export class IdentityObservationsModel {
       await postgresClient.query(`
         CREATE TABLE IF NOT EXISTS ${ IdentityObservationsModel.TABLE } (
           id          TEXT        PRIMARY KEY,
-          domain      TEXT        NOT NULL DEFAULT 'human' CHECK (domain IN ('human', 'business', 'world', 'agent', 'environment')),
+          domain      TEXT        NOT NULL DEFAULT 'human' CHECK (domain IN ('human', 'business', 'world', 'agent', 'environment', 'projects')),
           level       SMALLINT    NOT NULL DEFAULT 2 CHECK (level IN (1, 2, 3)),
           category    TEXT,
           content     TEXT        NOT NULL,
