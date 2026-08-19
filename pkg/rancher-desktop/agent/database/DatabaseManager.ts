@@ -55,6 +55,16 @@ export class DatabaseManager {
     // Settings are ready to be used in seeding
     await this.runSeeders();
 
+    // Seed the editable system-prompt sections from their baked native
+    // fallbacks (write-only-if-absent; honors is_customized). Non-fatal —
+    // the section factories remain the runtime fallback if this fails.
+    try {
+      const { SystemPromptSectionModel } = await import('@pkg/agent/database/models/SystemPromptSectionModel');
+      await SystemPromptSectionModel.seedDefaults();
+    } catch (error) {
+      console.warn('[DB] SystemPromptSectionModel.seedDefaults() failed:', error);
+    }
+
     // Warm skills registry cache
     try {
       await skillsRegistry.initialize();
