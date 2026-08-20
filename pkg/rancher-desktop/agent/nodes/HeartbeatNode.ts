@@ -831,6 +831,24 @@ export class HeartbeatNode extends BaseNode {
 
   private async resolveHeartbeatProjectReportOpts(): Promise<{ projectId?: string; assignee?: string }> {
     await WorkItemsModel.ensureTables();
+
+    // Primary: the cross-project assignee lane (per the "Boot From Your Lane"
+    // prompt contract — `list_project_items {assignee:"heartbeat"}` is the
+    // queue, spanning every project a task was assigned into, not just one).
+    // This must be checked FIRST. Scoping straight to a matched "operator
+    // platform" project here would silently hide every other project's
+    // heartbeat-assigned work (e.g. Data Ripple DOD1 tasks) behind whatever
+    // project happens to be named/owned as the operator lane — regardless of
+    // priority, since a same-project task always wins a project-scoped query.
+    const assigneeTasks = await WorkItemsModel.listTasks({ assignee: 'heartbeat', limit: 1 });
+    if (assigneeTasks.length > 0) {
+      return { assignee: 'heartbeat' };
+    }
+
+    // Fallback: the assignee lane is genuinely empty — per "Lane is empty ->
+    // pick the top open task from the operator-platform project", find it by
+    // owner, slug, or title and scope to it so Heartbeat still has somewhere
+    // to work instead of going idle.
     const projects = await WorkItemsModel.listProjects({ includeDone: false, limit: 500 });
     const operatorProject = projects.find(project => String(project.owner || '').trim().toLowerCase() === 'heartbeat') ??
       projects.find(project => project.slug === HEARTBEAT_OPERATOR_PROJECT_SLUG) ??
