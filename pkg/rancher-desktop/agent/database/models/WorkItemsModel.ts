@@ -290,7 +290,10 @@ function slugify(value: string): string {
 
 const CLOSED_STATUSES = `status IN ('done', 'cancelled', 'parked')`;
 
-const PRIORITY_RANK = `
+// Bare CASE expression, no trailing ASC — reused standalone (with ASC appended
+// for ORDER BY) and nested inside EPIC_PRIORITY_RANK_FOR_TASK's COALESCE, where
+// an embedded ASC would land inside the parens and break the SQL.
+const PRIORITY_CASE = `
   CASE priority
     WHEN '🔴' THEN 0 WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0
     WHEN 'p1' THEN 1 WHEN 'P1' THEN 1 WHEN 'high' THEN 1
@@ -298,7 +301,9 @@ const PRIORITY_RANK = `
     WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
     WHEN '⚪' THEN 4 WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4
     ELSE 5
-  END ASC`;
+  END`;
+
+const PRIORITY_RANK = `${ PRIORITY_CASE } ASC`;
 
 // Same rank scale as PRIORITY_RANK, but resolved for the parent epic via a
 // correlated subquery so a task's *epic* priority is available to ORDER BY
@@ -318,7 +323,7 @@ const EPIC_PRIORITY_RANK_FOR_TASK = `
       ELSE 5
     END
     FROM work_epics we WHERE we.id = work_tasks.epic_id),
-    ${ PRIORITY_RANK.replace('priority', 'work_tasks.priority') }
+    ${ PRIORITY_CASE.replace('priority', 'work_tasks.priority') }
   ) ASC`;
 
 const STOPWORDS = new Set([
