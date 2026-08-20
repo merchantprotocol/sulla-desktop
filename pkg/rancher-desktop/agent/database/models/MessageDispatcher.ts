@@ -50,12 +50,27 @@ function isUserTurnBoundary(m: ChatMessage, msgThreadId: string): boolean {
   return m.id.startsWith('user_');
 }
 
+function isAssistantOutputBoundary(m: ChatMessage, msgThreadId: string): boolean {
+  if (m.role !== 'assistant') return false;
+  if (m.threadId && msgThreadId && m.threadId !== msgThreadId) return false;
+
+  // Visible assistant output ends one thinking lifecycle. The final full reply
+  // dump is often dropped when streaming segments already showed it, so the
+  // completed streaming segment itself has to serve as the boundary.
+  if (!m.kind || m.kind === 'text' || m.kind === 'streaming' || m.kind === 'html') {
+    return true;
+  }
+
+  return false;
+}
+
 function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, content: string): void {
   let existingIdx = -1;
 
   for (let i = ctx.messages.length - 1; i >= 0; i--) {
     const m = ctx.messages[i];
     if (isUserTurnBoundary(m, msgThreadId)) break;
+    if (isAssistantOutputBoundary(m, msgThreadId)) break;
     if (m.kind === 'thinking' && m.role === 'assistant') {
       existingIdx = i;
       break;

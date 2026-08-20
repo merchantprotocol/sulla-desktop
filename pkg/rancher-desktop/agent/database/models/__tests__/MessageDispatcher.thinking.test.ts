@@ -107,4 +107,42 @@ describe('MessageDispatcher thinking coalescing', () => {
     expect(thinkingMessages).toHaveLength(2);
     expect(thinkingMessages[1].content).toBe('Thinking about the second request');
   });
+
+  it('starts a new thinking bubble after visible assistant output', () => {
+    const messages: ChatMessage[] = [
+      {
+        id:        'user_1',
+        channelId: 'sulla-desktop',
+        threadId:  'thread-1',
+        role:      'user',
+        content:   'request',
+      },
+      {
+        id:        'thinking_1',
+        channelId: 'sulla-desktop',
+        threadId:  'thread-1',
+        role:      'assistant',
+        kind:      'thinking',
+        content:   'Thinking before the answer',
+        _completed: true,
+      } as ChatMessage,
+      {
+        id:         'streaming_1',
+        channelId:  'sulla-desktop',
+        threadId:   'thread-1',
+        role:       'assistant',
+        kind:       'streaming',
+        content:    'The answer already streamed here.',
+        _completed: true,
+      } as ChatMessage,
+    ];
+    const ctx = makeContext(messages);
+
+    createMessageDispatcher().dispatch(ctx, 'sulla-desktop', 'thread-1', thinking('Thinking after the answer'));
+
+    const thinkingMessages = ctx.messages.filter(m => m.kind === 'thinking');
+    expect(thinkingMessages).toHaveLength(2);
+    expect(thinkingMessages[0].content).toBe('Thinking before the answer');
+    expect(thinkingMessages[1].content).toBe('Thinking after the answer');
+  });
 });
