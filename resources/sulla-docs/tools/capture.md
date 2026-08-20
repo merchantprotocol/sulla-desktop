@@ -1,10 +1,22 @@
 # Capture Studio Tools
 
-Headless control of Capture Studio components — teleprompter, microphone, desktop-audio loopback, screen enumeration, and screenshots. **All tools run in the main process (no Capture Studio tab needed)** so you can drive these from chat without the user opening the recorder window.
+**20 tools** for headless control of Capture Studio — teleprompter, microphone, desktop-audio loopback, screen/window enumeration, screenshots, and now a full recording pipeline (recorder + camera + screen stream + quality). **You can drive all of it from chat** without the user opening the recorder window.
 
-## What's NOT here (yet)
+## Recording, camera & screen
 
-The renderer-side recorder (multi-track WebM via `MediaRecorder`, camera/screen stream acquisition via `getUserMedia` / `desktopCapturer` in the renderer) is intentionally out of scope for this tool surface. To start a full multi-source recording session today, the user still opens the Capture Studio window manually. The tools here cover everything that doesn't require renderer plumbing — which turns out to be most of what you need for: prompted reads, voice memos, system-audio transcription, screen captures, and AI-driven teleprompter sessions.
+The recorder pipeline is now agent-drivable (it used to require opening the Capture Studio window). Acquire the streams you want, set quality, then start/stop the session.
+
+| Tool | Purpose |
+|------|---------|
+| `sulla capture/list_screens '{"kind":"all"}'` | Enumerate capturable displays and/or windows (`kind`: `screen`/`window`/`all`). |
+| `sulla capture/screen_set '{"sourceId":"..."}'` | Acquire a screen/window capture stream by `sourceId` (from `list_screens`). |
+| `sulla capture/camera_list` | Enumerate video input devices (webcams, capture cards). |
+| `sulla capture/camera_set` | Acquire a camera stream. |
+| `sulla capture/camera_release` | Stop and release the current camera stream. |
+| `sulla capture/quality_set '{"target":"screen","preset":"1080p"}'` | Set the quality preset (`480p`/`720p`/`1080p`/`4k`/`auto`) for the `screen` or `camera` stream. |
+| `sulla capture/recorder_start` | Start a recording session. |
+| `sulla capture/recorder_stop` | Stop the active recording session. |
+| `sulla capture/recorder_status` | Active? + elapsed seconds, bytes written, session directory, last error. |
 
 ## Tool families
 
