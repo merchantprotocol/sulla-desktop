@@ -172,10 +172,11 @@ Field contract for every human-domain row:
   agent: {
     domain:       'agent',
     subjectLabel: 'the Sulla agent',
-    focus: `Observe the SULLA AGENT ITSELF as a working partner — what is durably
-true of how it works and how it works WITH this human. NOT a recap of the last
-reply, NOT a mood, NOT persona fanfic. If it would not still matter in a new
-chat next week, it is not a self-observation.
+    focus: `Observe the SULLA AGENT ITSELF as a working partner — watch HOW it
+operates and harvest what will make it more effective next time. The core test is
+not "what is Sulla" but "would remembering this make a future chat work better?"
+NOT a recap of the last reply, NOT a mood, NOT persona fanfic. If it would not
+still matter in a new chat next week, it is not a self-observation.
 
 Two subjects (write each row under exactly one):
 - agent — this AI (Sulla) as a working partner: its standing constraints,
@@ -184,13 +185,29 @@ Two subjects (write each row under exactly one):
   the reciprocal working style. This layer is usually MORE valuable than
   abstract facts about the AI — prefer it.
 
-Record only things that pass all three gates below. Good material:
-- a correction the human gave ("stop asking so many questions", "don't push without a PR")
-- a constraint it discovered ("cannot X in the VM", "this tool is the source of truth")
-- a working agreement now in force ("agent drafts PRs; the human merges")
-- a method that repeatedly worked or repeatedly failed
-- a standing preference for how it should act (terse, propose-then-wait, never email)
-- a capability or hard limit ("can write identity proposals, cannot activate soul")
+WHAT MAKES IT BETTER — the five things worth remembering (each must still pass all
+three gates below):
+1. Successes worth repeating — an operating pattern the human clearly welcomed
+   ("asked before touching prod and he liked that", "drafting the PR first landed well").
+2. Failures worth never repeating — a pattern that frustrated him or that he
+   corrected ("pushed without a PR and got pushback", "asked too many questions and
+   he snapped").
+3. Efficiency/effectiveness lessons — a way of working that proved faster or
+   cleaner, even without a pass/fail verdict ("batching the file reads saved a
+   round-trip").
+4. Personality traits the human responds well to — the tone or manner he reacts to
+   positively ("responds well to blunt, no-preamble answers"). This is who Sulla
+   should keep being, learned from HIS reaction, not restated from SOUL.
+5. Fast-identify self-facts — standing capabilities, hard limits, and working
+   agreements ("agent drafts PRs; the human merges", "cannot activate soul"). Lower
+   value on their own, but they are the index that makes the four above resolve fast.
+
+SENTIMENT IS THE SIGNAL. What sorts an episode into "repeat" vs "never again" is
+the human's reaction — NOT whether the task technically completed. Success = the
+human was delighted; failure = the human was frustrated. Read that signal from
+something he actually said or did (a thanks, a correction, a "no, not like that",
+building on the work without redoing it) — NEVER from your own guess that he
+"probably liked it". Ungrounded self-flattering sentiment is not evidence; discard it.
 
 Reject (never write these):
 - "I was helpful", restating SOUL or the identity files, mood/persona fanfic,
@@ -227,7 +244,11 @@ Field contract for every agent-domain row:
 - source — the subject: exactly \`agent\` or \`agent.user\`.
 - category — the kind: exactly one of correction | constraint | method |
   commitment | preference.
-- basis — the evidence: a short quote or a turn reference.
+- basis — the evidence, and for a success/failure/personality row the SENTIMENT
+  signal that labeled it: the short quote or reaction that showed delight or
+  frustration ("he said 'perfect, ship it'", "he replied 'why'd you push without a
+  PR'"). A success/failure row with no grounded reaction is just task status — do
+  not write it. Never manufacture sentiment you did not actually observe.
 - level — certainty: L3 for a human correction or an explicit rule/limit the
   human stated; L2 for a constraint or method established from evidence or seen
   more than once; L1 ONLY for a genuine standing conclusion, never a one-off
