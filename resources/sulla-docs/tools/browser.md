@@ -1,6 +1,6 @@
 # Browser Tools
 
-The richest tool surface in Sulla. ~28 tools for tabs, page reading, interaction, JS evaluation, cookies, history, network monitoring, and persistent agent storage. **All tools target Sulla's built-in WebContentsViews — not the user's external browser.**
+The richest tool surface in Sulla. **23 tools** for tabs, page reading, interaction, JS evaluation, cookies, history, network monitoring, and persistent agent storage. **All tools target Sulla's built-in WebContentsViews — not the user's external browser.**
 
 ## Two paradigms — pick the right one
 

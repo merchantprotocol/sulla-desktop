@@ -18,8 +18,8 @@ The heartbeat is an **autonomous background agent** that wakes up on a schedule 
 3. Acquire abort signal, start caffeinate.
 4. Build a system prompt that includes:
    - Current time, timezone
-   - Projects project-state standup + goals (injected `<project_report>` from Postgres project tables; environment brief, observations)
-   - Directive to work autonomously from Projects project-state through `sulla *` — not from `~/sulla/ledger/`
+   - Projects project-state standup + goals (injected `<project_report>` from Postgres project tables, plus recalled observations)
+   - Directive to work autonomously from Projects project-state through `sulla project/*` — not from `~/sulla/ledger/`
 5. Dispatch to the **HeartbeatGraph** via `GraphRegistry.getOrCreateOverlordGraph('heartbeat', fullPrompt)`
 6. The HeartbeatNode loops: LLM → tool calls → check completion wrapper → loop or exit
 7. On exit, show a desktop notification in the top-right frameless window with the run summary
@@ -93,7 +93,7 @@ There's a `forceCheck()` on the service. The agent rarely needs this — usually
 
 ## When NOT to use the heartbeat
 
-- For one-off scheduled tasks → use `calendar/create` or a `schedule` trigger node in a workflow
+- For one-off scheduled tasks → use `calendar/calendar_create` or a `schedule` trigger node in a workflow
 - For user-initiated work → just respond in the active channel, don't queue it for the heartbeat
 - For high-frequency monitoring → workflows with `every-minutes` cron are better
 

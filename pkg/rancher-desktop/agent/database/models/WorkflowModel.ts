@@ -69,6 +69,9 @@ export interface WorkflowListRow {
   // consumers don't need to re-parse the full definition just to show
   // "N agents" in a summary row.
   nodeCount:   number;
+  // True for locked core routines — the UI shows a lock badge and hides the
+  // edit/delete/archive/publish actions (enforcement is also server-side).
+  system:      boolean;
 }
 
 export class WorkflowModel extends BaseModel<WorkflowAttributes> {
@@ -130,6 +133,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
               name,
               description,
               status,
+              system,
               updated_at,
               CASE
                 WHEN jsonb_typeof(definition->'nodes') = 'array'
@@ -147,6 +151,7 @@ export class WorkflowModel extends BaseModel<WorkflowAttributes> {
       status:      r.status as WorkflowStatus,
       updatedAt:   r.updated_at instanceof Date ? r.updated_at.toISOString() : String(r.updated_at ?? ''),
       nodeCount:   Number(r.node_count ?? 0),
+      system:      r.system === true,
     }));
   }
 

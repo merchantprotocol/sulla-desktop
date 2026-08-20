@@ -10,7 +10,7 @@ Sulla Desktop is an Electron application with three distinct execution environme
 | Lima VM | Linux guest (QEMU) | Docker containers: Postgres, Redis, Python/Node/Shell runtimes |
 | Vue Renderer | Electron window | Chat UI, AgentRoutines, workflow canvas |
 
-Agent turns run through Sulla's graph/model-provider layer. Some providers are API-backed services; command-line agent providers such as Claude Code and OpenAI Codex spawn CLI processes inside Lima and stream results back through the same graph. Tool calls route through the Sulla Tools API/MCP bridge and channel messages return over WebSocket.
+Agent turns run through Sulla's own graph + model-provider layer, not a single hardcoded model. Some providers are API-backed (Anthropic, OpenAI); command-line providers (Claude Code, OpenAI Codex) spawn CLI processes inside Lima and stream results back through the same graph. Tool calls route through the Sulla Tools API / in-process MCP server, and channel messages return over WebSocket. Around every actionable turn, a **subconscious layer** recalls memory before the reply and writes observations after — see [`environment/subconscious.md`](subconscious.md).
 
 ---
 
@@ -18,33 +18,38 @@ Agent turns run through Sulla's graph/model-provider layer. Some providers are A
 
 Entry point: `pkg/rancher-desktop/sulla.ts`
 
-**Initialization order:**
+**Startup order.** Early HTTP/IPC surface comes up first (before DB/Redis), then Lima boots, then `instantiateSullaStart()` registers services with the `ServiceLifecycleManager`, which topologically sorts by declared dependency and starts them in order.
 
 ```
-1. onMainProxyLoad()              — Early startup (no DB/Redis yet)
-   ├── Tools API HTTP    :3000    — Authenticated tool call endpoint (token in chat-api-token.json)
+1. Early startup (no DB/Redis yet)
+   ├── Tools API HTTP    :3000    — Authenticated tool-call endpoint (token in chat-api-token.json)
    ├── Backend API       :6107    — Internal extension/install API (Basic auth)
    ├── Terminal WebSocket :6108   — PTY into Lima
    └── IPC handlers registered
 
 2. Lima VM boots
 
-3. instantiateSullaStart()        — After Lima is up
-   ├── bootstrapSullaHome()       — Creates ~/sulla/ directory tree
-   └── ServiceLifecycleManager.startAll()
-       ├── postgres      :30116   — PostgreSQL in Lima container
-       ├── redis         :30117   — Redis in Lima container
-       ├── database-manager
-       ├── scheduler
-       ├── heartbeat
-       ├── workflow-scheduler
-       ├── chat-server
-       ├── mcp-server-host        — In-process HTTP, agent tool calls land here
-       ├── vault
-       ├── model-provider
-       ├── integrations
-       └── oauth
+3. instantiateSullaStart() → bootstrapSullaHome() (creates ~/sulla/ tree)
+   → ServiceLifecycleManager.startAll(), which registers (deps in parens):
+       ├── backend-ws              ()                      — BackendGraphWebSocketService (chat transport)
+       ├── model-provider-ipc      ()                      — model-provider IPC handlers (early, so UI can query)
+       ├── postgres                ()   persistOnRestart   — waits for the Lima Postgres connection
+       ├── redis                   ()   persistOnRestart   — waits for the Lima Redis connection
+       ├── database-manager        (postgres)              — runs migrations, brings models online
+       ├── scheduler               (database-manager)      — calendar/alarm SchedulerService
+       ├── heartbeat               (database-manager,redis)— autonomous operator loop
+       ├── workflow-scheduler      (database-manager)      — arms routine cron triggers
+       ├── chat-server             (database-manager)      — chat completions API server
+       ├── mcp-server-host         ()                      — in-process MCP HTTP; agent tool calls land here
+       ├── vault                   (database-manager)      — unlocks the credential vault
+       ├── model-provider          (database-manager,redis)— provider inventory; invalidates LLM caches on change
+       ├── integrations            (vault)                 — loads integration configs
+       ├── oauth                   (database-manager,vault)— resumes OAuth refresh timers
+       ├── file-search             ()                      — warms the file-search index
+       └── host-access-sync        (database-manager,redis)— reconciles the host-access gate from disk
 ```
+
+`postgres` and `redis` are marked `persistOnRestart` — a backend restart re-uses the live connections instead of tearing them down.
 
 ---
 
