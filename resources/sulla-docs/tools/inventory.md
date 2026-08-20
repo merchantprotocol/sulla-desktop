@@ -1,344 +1,295 @@
 # Tool Inventory
 
-Master list of every tool the agent can call. **Verified against the live backend 2026-04-23.** Each line is `sulla <category>/<tool> — purpose`.
+Master list of every tool the agent can call. **Regenerated from the source manifests (`pkg/rancher-desktop/agent/tools/<category>/manifests.ts`) on 2026-08-19 — 266 tools across 31 categories.** Each line is `sulla <category>/<tool> — purpose`.
 
-**Important routing note:** the backend resolves tools by **name only** — the category segment in the URL is ignored. So `sulla anything/spawn_agent` works the same as `sulla meta/spawn_agent`. But the **canonical** form (what `sulla <cat> --help` lists) is what you should use for clarity. Categories and canonical pairings below.
+**Important routing note:** the backend resolves tools by **name only** — the category segment in the URL is ignored. So `sulla anything/spawn_agent` works the same as `sulla meta/spawn_agent`. But the **canonical** form (what `sulla <cat> --help` lists, and what the manifest's own `category` field says) is what you should use for clarity. Categories and canonical pairings below.
 
-When in doubt about a tool, the live source of truth is:
+**Source vs. installed drift:** these counts reflect the **source tree** — i.e. what ships in the next build. The `sulla` CLI baked into a *running* install can lag (e.g. an older build exposes only 8 of the current 15 workflow-file tools). When the CLI and this doc disagree, the CLI tells you what *this* install can do today; this doc tells you what the code defines. Reconcile with:
 ```bash
-sulla <category> --help
+sulla <category> --help          # what THIS install exposes right now
 ```
-(requires `SULLA_API_TOKEN` from `~/Library/Application Support/rancher-desktop/chat-api-token.json` + `SULLA_HOST=localhost` when running outside Lima)
+(Requires `SULLA_API_TOKEN` from `~/Library/Application Support/rancher-desktop/chat-api-token.json` + `SULLA_HOST=localhost` when running outside Lima.)
 
 ---
 
-## meta — system foundation + workflow execution (14 tools)
-- `sulla meta/exec` — Run shell commands inside the Lima VM (root, 2-min default timeout, 160KB output cap) — **default for everyday work**
-- `sulla meta/exechost` — LAST RESORT host-macOS shell (only when parent host MUST be used; gated by hostAccess)
-- `sulla meta/browse_tools` — Discover tools by category or keyword (returns docs, not executions)
-- `sulla meta/file_search` — Full-text (BM25) keyword search across files
-- `sulla meta/read_file` — Read file with optional line range
-- `sulla meta/ask_user_question` — Pause mid-turn and ask the user one or more multiple-choice questions, incl. yes/no approvals via Approve/Deny options (blocks until user answers; 5 min default timeout)
-- `sulla meta/spawn_agent` — Launch sub-agents (canonical for spawn_agent; NOT under `agents/`)
-- `sulla meta/execute_workflow` — Run a named Sulla workflow by slug
-- `sulla meta/validate_sulla_workflow` — Validate workflow YAML
-- `sulla meta/restart_from_checkpoint` — Resume workflow from a specific node
-- `sulla meta/stop_workflow` — Request a running workflow to stop (cooperative — Redis flag, honored at next frontier tick)
-- `sulla meta/pause_workflow` — Pause without releasing (in-flight work continues)
-- `sulla meta/resume_workflow` — Resume a paused workflow
-- `sulla meta/dry_run_workflow` — Static walk from triggers — reports execution order, orphans, ambiguous branches (no side effects)
+## meta — system foundation: exec, discovery, files, questions, workflow control (14 tools)
+- `sulla meta/spawn_agent` — Spawn one or more sub-agents to work on tasks independently (canonical category is `meta`, though it lives in the agents folder).
+- `sulla meta/exec` — Run any shell command inside the isolated Lima VM with root access — also how you invoke every `sulla <cat>/<tool>` CLI call.
+- `sulla meta/exechost` — LAST RESORT host-macOS shell (only when the parent host MUST be used; gated by host access).
+- `sulla meta/ask_user_question` — Pause and ask the user multiple-choice question(s); BLOCKS until they answer (5-min default). Use for approvals via Approve/Deny options.
+- `sulla meta/file_search` — Fast BM25 keyword search across any directory PLUS the bundled sulla-docs by default (`includeSullaDocs:false` to skip).
+- `sulla meta/read_file` — Read a file with optional line range; can also list a directory.
+- `sulla meta/browse_tools` — Discover tools by category or keyword (returns ready-to-run commands + schemas, not executions).
+- `sulla meta/execute_workflow` — Execute a pre-registered workflow by its EXACT slug (only when the slug appears verbatim in your prompt).
+- `sulla meta/validate_sulla_workflow` — Validate a workflow YAML for structural correctness before it goes live.
+- `sulla meta/restart_from_checkpoint` — Restart a workflow execution from a specific node checkpoint.
+- `sulla meta/stop_workflow` — Cooperatively request a running workflow to stop (Redis flag honored at next frontier tick).
+- `sulla meta/pause_workflow` — Pause a running workflow without releasing it (in-flight sub-agent work is not cancelled).
+- `sulla meta/resume_workflow` — Resume a paused workflow.
+- `sulla meta/dry_run_workflow` — Statically walk a workflow from triggers — reports execution order, orphans, ambiguous branches (no side effects).
 
 → See [`tools/meta.md`](meta.md), [`workflows/authoring.md`](../workflows/authoring.md)
 
-## observation — memory + file writes (3 tools)
-- `sulla observation/add_observational_memory` — Store an observation with priority
-- `sulla observation/remove_observational_memory` — Delete by 4-char id
-- `sulla observation/write_file` — Write / overwrite file in home dir (also works as `meta/write_file` — category is ignored)
+## memory — recall / citation index for the subconscious recall path (3 tools)
+- `sulla memory/recall_index_lookup` — Check the Redis citation index for previously-researched digests BEFORE re-reading files / re-searching directories.
+- `sulla memory/recall_index_store` — Persist freshly-researched citation digests into the Redis citation index (verified by content hash; 24h TTL unless re-hit).
+- `sulla memory/recall_conversations` — Search/read the on-disk conversation logs (`~/sulla/logs/conv_*.jsonl`) — full past transcripts (subconscious agents are never logged here).
 
-→ See [`tools/meta.md`](meta.md) for the memory + write_file section
+→ See [`tools/meta.md`](meta.md), [`environment/subconscious.md`](../environment/subconscious.md)
+
+## observation — observational + identity memory (+ home write_file) (9 tools)
+- `sulla observation/add_observational_memory` — Store an operational observation into long-term memory (with priority).
+- `sulla observation/remove_observational_memory` — Archive (soft-delete) an observational memory by id.
+- `sulla observation/search_observations` — Search active observational memories by keyword/phrase (do this before adding, to dedupe).
+- `sulla observation/list_observations` — List active observations, critical/high first then recency.
+- `sulla observation/add_identity_observation` — Store/update a domain-keyed identity observation (human / business / world / agent / environment / projects) with certainty level 3/2/1.
+- `sulla observation/remove_identity_observation` — Archive (soft-delete) an identity observation by id.
+- `sulla observation/search_identity_observations` — Search identity observations within one domain (dedupe before adding).
+- `sulla observation/list_identity_observations` — List identity observations for one domain, most certain first (L3→L2→L1) then recency.
+- `sulla observation/write_file` — Write/overwrite a file. **Restricted to the home directory.** (Category is `observation`; `meta/write_file` resolves to the same tool.)
+
+→ See [`tools/meta.md`](meta.md) (memory + identity sections), [`environment/subconscious.md`](../environment/subconscious.md)
+
+## agents — sub-agent jobs, conversations, and the live agent directory (7 tools)
+- `sulla agents/check_agent_jobs` — Fallback/history read of async `spawn_agent` jobs (results normally wake the parent graph on their own).
+- `sulla agents/stop_agent_job` — Kill switch: cancel a running async job (cooperative abort, cascades to its sub-agents).
+- `sulla agents/start_agent_conversation` — LEGACY multi-turn wrapper — prefer `spawn_agent`.
+- `sulla agents/send_agent_message` — Send a follow-up to an open sub-agent conversation and get the reply.
+- `sulla agents/read_agent_conversation` — Read a conversation transcript, or list open conversations.
+- `sulla agents/close_agent_conversation` — Close a conversation and free its graph + state.
+- `sulla agents/list_agents` — Directory of live named agents (heartbeat, workbench, mobile-relay, …) you can `<channel:NAME>`-message.
+
+**ONE delegation pattern:** `sulla meta/spawn_agent` (async results wake the parent graph). `list_agents` + `<channel:NAME>` is messaging to already-running named agents, not delegation. See [`tools/agents.md`](agents.md).
+
+## workflow — routine/workflow lifecycle + schedules (8 tools)
+- `sulla workflow/import_workflow` — Import `~/sulla/routines/<slug>/routine.yaml` into the workflows DB so it can execute.
+- `sulla workflow/refresh_schedules` — Re-scan production workflows and re-arm schedule triggers; reports armed cron/timezone/next-fire.
+- `sulla workflow/catch_up_schedules` — Detect + dispatch scheduled fires missed while the app/scheduler was down (`dryRun` to preview).
+- `sulla workflow/set_workflow_status` — Change status (draft | production | archive) or enable/disable, then re-arm the scheduler live.
+- `sulla workflow/routines_digest` — Deterministic exceptions-only digest of routine health (the standing routine-stewardship context).
+- `sulla workflow/routine_report` — Drill-down for a flagged routine: last-run status/timing/error + step-by-step tool-call trace.
+- `sulla workflow/find_repeated_tasks` — Promotion detector: operations recurring across ≥ threshold distinct sessions — candidates to codify as a routine or function.
+- `sulla workflow/display_workflow` — Surface a saved routine as a workflow artifact in the chat sidebar (run after import + after each edit).
+
+→ See [`workflows/authoring.md`](../workflows/authoring.md). (Execution/control verbs — execute/validate/pause/resume/stop/dry_run/restart — live under `meta`, above.)
 
 ## function — custom functions (3 tools)
-- `sulla function/function_list` — List functions in `~/sulla/functions/`
-- `sulla function/function_run` — Execute by slug (logs every call to `function_runs` table)
-- `sulla function/function_runs` — Query run history (filter by slug / only_failures / since; verbose for full inputs/outputs)
-
-**Note:** the host CLI script (`/Users/jonathonbyrdziak/.rd/bin/sulla`) has a stale category whitelist that may route `function/*` through the proxy path and fail. The agent inside the desktop calls tools via registry directly, so these work. From the host, use the direct backend URL form if the CLI fails.
+- `sulla function/function_list` — List functions in `~/sulla/functions/` (slug, runtime, entrypoint, inputs, outputs).
+- `sulla function/function_run` — Execute a function by slug (logs every call to the `function_runs` table).
+- `sulla function/function_runs` — Query run history (filter by slug / only_failures / since; verbose for full IO).
 
 → See [`functions/authoring.md`](../functions/authoring.md)
 
 ## browser — web automation (23 tools)
-- `sulla browser/tab` — Open / navigate / close tabs (upsert/remove)
-- `sulla browser/list` — List open tabs
-- `sulla browser/snapshot` — Dehydrated DOM with handles (~5k tokens)
-- `sulla browser/text` — Reader-mode text content
-- `sulla browser/form` — Current form field values
-- `sulla browser/screenshot` — Save image to disk; grid + annotate options
-- `sulla browser/click` — Click by handle (`@btn-submit`)
-- `sulla browser/fill` — Set form value, optional submit
-- `sulla browser/press_key` — Enter / Escape / Tab / arrows
-- `sulla browser/scroll` — Scroll element into view (CSS selector)
-- `sulla browser/wait` — Wait for selector to appear
-- `sulla browser/click_at` — Click at pixel coords (CDP trusted event)
-- `sulla browser/type_at` — Click + type at coords
-- `sulla browser/hover` — Mouse to coords (no click)
-- `sulla browser/eval_js` — Run JS with diagnostics
-- `sulla browser/manage_cookies` — Get/getAll/set/remove cookies
-- `sulla browser/modify_history` — Add/delete/clear history entries
-- `sulla browser/search_history` — Search browser history
-- `sulla browser/search_conversations` — Search chats / browser visits / workflow runs
-- `sulla browser/agent_storage` — Persistent KV across conversations
-- `sulla browser/monitor_network` — Capture or watch network requests
-- `sulla browser/background_browse` — Hidden tab browsing
-- `sulla browser/schedule_alarm` — In-process timers (don't survive restart)
+- `sulla browser/tab` — Open / navigate / close a tab (`action: upsert | remove`).
+- `sulla browser/list` — List open tabs (assetId, URL, title, ready/loading).
+- `sulla browser/snapshot` — Dehydrated DOM with clickable handles.
+- `sulla browser/text` — Reader-mode text content (+ title, URL, scroll position).
+- `sulla browser/form` — Current visible form field values.
+- `sulla browser/screenshot` — Capture a screenshot of a tab.
+- `sulla browser/click` — Click an element by handle (`@btn-submit`).
+- `sulla browser/fill` — Set a form field value (optional submit).
+- `sulla browser/press_key` — Press a key (Enter / Escape / Tab / arrows).
+- `sulla browser/scroll` — Scroll a CSS-selector element into view.
+- `sulla browser/wait` — Wait for a CSS selector to become visible.
+- `sulla browser/click_at` — Click at pixel coordinates (trusted CDP event).
+- `sulla browser/type_at` — Click + type at coordinates (trusted events).
+- `sulla browser/hover` — Move the mouse to coordinates without clicking.
+- `sulla browser/eval_js` — Evaluate JS in the active tab with diagnostics.
+- `sulla browser/manage_cookies` — Read / set / delete cookies.
+- `sulla browser/background_browse` — Browse in a hidden tab without disrupting the visible browser.
+- `sulla browser/search_history` — Search browsing history by text / time range.
+- `sulla browser/modify_history` — Add / delete / clear history entries.
+- `sulla browser/search_conversations` — Search past chats, browser visits, and workflow runs (DB titles/summaries).
+- `sulla browser/agent_storage` — Persistent KV for agent state across conversations.
+- `sulla browser/monitor_network` — Capture/watch network requests for a duration.
+- `sulla browser/schedule_alarm` — Set / list / clear named in-process timers (do NOT survive restart).
 
 → See [`tools/browser.md`](browser.md)
 
-## github (28 tools)
-- `sulla github/git_status` — Working tree status
-- `sulla github/git_add` — Stage files
-- `sulla github/git_commit` — Stage + commit
-- `sulla github/git_push` — Push to remote (PAT injected from vault)
-- `sulla github/git_pull` — Pull from remote
-- `sulla github/git_branch` — Create / switch / delete / list
-- `sulla github/git_checkout` — Restore from commit / branch
-- `sulla github/git_log` — Commit history
-- `sulla github/git_diff` — Diff working / staged / commits
-- `sulla github/git_blame` — Per-line attribution
-- `sulla github/git_conflicts` — List conflicted files
-- `sulla github/git_stash` — Save / list / apply / pop / drop
-- `sulla github/github_init` — git init at path
-- `sulla github/github_add_remote` — Add remote
-- `sulla github/github_list_branches` — List remote branches
-- `sulla github/github_read_file` — Read file via GitHub API
-- `sulla github/github_create_file` — Create file via API
-- `sulla github/github_update_file` — Update via API
-- `sulla github/github_create_issue` — Open new issue
-- `sulla github/github_get_issue` — Fetch one
-- `sulla github/github_get_issues` — List with filters
-- `sulla github/github_update_issue` — Update title/body/labels/assignees
-- `sulla github/github_close_issue` — Close with optional reason
-- `sulla github/github_comment_on_issue` — Add comment
-- `sulla github/github_create_pr` — Open PR
-- `sulla github/github_merge_pr` — Merge a PR (merge / squash / rebase; requires `confirm:true`)
-- `sulla github/github_check_runs` — List CI check runs for a ref (is CI green?)
-- `sulla github/github_trigger_workflow_run` — Dispatch a workflow manually (requires workflow_dispatch trigger)
+## github — git + GitHub API (52 tools)
+**Local git:** `git_status`, `git_add`, `git_commit`, `git_push`, `git_pull`, `git_branch`, `git_checkout`, `git_log`, `git_diff`, `git_blame`, `git_conflicts`, `git_stash`, `git_worktree`.
+**Repo/init:** `github_init`, `github_add_remote`, `github_create_repo`, `github_get_repo`, `github_list_repos`, `github_delete_repo`, `github_fork_repo`, `github_list_branches`, `github_create_ref`, `github_delete_ref`.
+**Files via API:** `github_read_file`, `github_create_file`, `github_update_file`.
+**Issues:** `github_create_issue`, `github_get_issue`, `github_get_issues`, `github_get_issue_comments`, `github_update_issue`, `github_close_issue`, `github_comment_on_issue`.
+**Pull requests:** `github_create_pr`, `github_get_pr`, `github_list_prs`, `github_update_pr`, `github_ready_pr`, `github_close_pr`, `github_merge_pr`, `github_add_pr_review`, `github_list_pr_reviews`, `github_request_pr_reviewers`, `github_get_pr_files`.
+**Releases/CI:** `github_create_release`, `github_check_runs`, `github_trigger_workflow_run`.
+**Projects V2 boards:** `github_list_projects`, `github_add_issue_to_project`, `github_set_project_field`.
+**Heartbeat issue-discovery (#500):** `heartbeat_new_issues`, `heartbeat_claim_issue`.
 
-→ See [`tools/github.md`](github.md)
+`git_push`/`git_pull` inject the vault PAT automatically — never extract it for raw git. Merges require `confirm:true`. → See [`tools/github.md`](github.md)
 
-## docker — host Docker daemon (whatever the user has installed — e.g. Docker Desktop)
-- `sulla docker/docker_ps` — List containers (host, NOT Lima)
-- `sulla docker/docker_images` — List images
-- `sulla docker/docker_pull` — Pull from registry
-- `sulla docker/docker_run` — Run container
-- `sulla docker/docker_exec` — Run command in running container
-- `sulla docker/docker_logs` — Tail / follow logs
-- `sulla docker/docker_stop` — Stop container
-- `sulla docker/docker_rm` — Remove container
-- `sulla docker/docker_build` — Build from Dockerfile
+## pg — PostgreSQL (6 tools)
+- `sulla pg/pg_query` — SELECT (rows).
+- `sulla pg/pg_queryall` — SELECT, all rows (explicit).
+- `sulla pg/pg_queryone` — SELECT, first row only.
+- `sulla pg/pg_count` — COUNT scalar.
+- `sulla pg/pg_execute` — INSERT / UPDATE / DELETE.
+- `sulla pg/pg_transaction` — Atomic multi-statement transaction.
 
-⚠️ **docker_ps does NOT show Lima-internal services** (sulla_postgres, sulla_redis, python_runtime, etc.) See [`environment/docker.md`](../environment/docker.md).
+→ See [`tools/pg.md`](pg.md)
+
+## redis — Redis KV (12 tools)
+- Strings: `redis_get`, `redis_set`, `redis_del`. Counters: `redis_incr`, `redis_decr`. TTL: `redis_expire`, `redis_ttl`.
+- Hashes: `redis_hget`, `redis_hset`, `redis_hgetall`. Lists: `redis_lpop`, `redis_rpush`.
+
+**Do not use these on `sulla_settings`** — that hash is owned by `SullaSettingsModel` and the redis tools refuse it. Use `settings/*`. → See [`tools/redis.md`](redis.md)
+
+## settings — authoritative settings path (2 tools)
+- `sulla settings/settings_get` — Read through `SullaSettingsModel` (Redis cache → Postgres → file fallback).
+- `sulla settings/settings_set` — Write through `SullaSettingsModel` (Postgres + Redis write-through).
+
+→ See [`tools/settings.md`](settings.md)
+
+## vault — credential vault (8 tools)
+- `sulla vault/vault_is_enabled` — Is integration X connected?
+- `sulla vault/vault_list_accounts` — Accounts on integration X.
+- `sulla vault/vault_read_secrets` — Read credential fields (masked per LLM access level).
+- `sulla vault/vault_set_credential` — Create / update a credential.
+- `sulla vault/vault_set_active_account` — Set the default account for an integration.
+- `sulla vault/vault_list` — List saved website credentials (no passwords).
+- `sulla vault/vault_autofill` — Inject saved credentials into the active browser tab.
+- `sulla vault/vault_delete_credential` — Delete a credential property (requires `confirm:true`).
+
+→ See [`tools/vault.md`](vault.md)
+
+## calendar — local Postgres-backed events (7 tools)
+- `sulla calendar/calendar_create` — Create an event / reminder.
+- `sulla calendar/calendar_get` — Fetch one by id.
+- `sulla calendar/calendar_list` — List within a date range.
+- `sulla calendar/calendar_list_upcoming` — Next N days (default 7).
+- `sulla calendar/calendar_update` — Patch an event.
+- `sulla calendar/calendar_cancel` — Soft cancel (status='cancelled').
+- `sulla calendar/calendar_delete` — Hard delete.
+
+→ See [`tools/calendar.md`](calendar.md)
+
+## notify — desktop + mobile notifications (2 tools)
+- `sulla notify/notify_user` — Desktop + mobile fan-out (`targets:["desktop","mobile"]`; logged to `notifications`).
+- `sulla notify/history` — Query notification history (filter by target / only_failures / since).
+
+→ See [`tools/notify.md`](notify.md)
+
+## bridge — human presence (2 tools)
+- `sulla bridge/update_human_presence` — Publish what the human is viewing/doing + availability to Redis.
+- `sulla bridge/get_human_presence` — Read the current human-presence state.
+
+→ See [`tools/notify.md`](notify.md)
+
+## slack — messaging (7 tools)
+- `sulla slack/slack_send_message` — Post to a channel / DM.
+- `sulla slack/slack_update` — Edit a message.
+- `sulla slack/slack_thread` — Get thread replies.
+- `sulla slack/slack_search_users` — Find a user by name / email.
+- `sulla slack/slack_user` — Get one user.
+- `sulla slack/slack_unreact` — Remove a reaction.
+- `sulla slack/slack_connection_health` — Health check + auto-recovery.
+
+→ See [`tools/slack.md`](slack.md)
+
+## mobile — Sulla Mobile companion (read-only) (5 tools)
+- `sulla mobile/list_calls` — Recent AI-receptionist calls (filter by status).
+- `sulla mobile/get_call` — Full call details (transcript, summary, lead metadata).
+- `sulla mobile/list_leads` — Inbox leads (filter by qualified/urgency).
+- `sulla mobile/list_messages` — SMS + voicemail transcripts (filter unread).
+- `sulla mobile/list_devices` — Every desktop + mobile device registered to the contractor, with online/offline status.
+
+Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`. → See [`mobile/overview.md`](../mobile/overview.md)
+
+## project — Projects project-state (the ONE work-state store) (13 tools)
+- `sulla project/list_project_items` — List projects / epics / tasks (filter by kind / status / priority / project / epic / parent / assignee).
+- `sulla project/get_project_item` — One item + children + comments.
+- `sulla project/search_project_items` — Title + description search (dedupe before create).
+- `sulla project/project_report` — Standup: completed last N hours (default 24) + top open tasks.
+- `sulla project/create_project` / `update_project` — Project CRUD.
+- `sulla project/create_epic` / `update_epic` — Epic CRUD (under a project).
+- `sulla project/create_task` / `update_task` — Task CRUD (`parent_id` for a subtask).
+- `sulla project/add_task_comment` — Append a note (author defaults `sulla`; Heartbeat passes `heartbeat`; UI stamps `human`).
+- `sulla project/list_task_comments` — Comment thread, oldest first.
+- `sulla project/archive_project_item` — Soft-archive a project / epic / task (cascades).
+
+The ONE project-state store — not CRM, distinct from the `~/sulla/projects/<slug>/PROJECT.md` PRDs. → See [`tools/project.md`](project.md)
+
+## ledger — leftover ledger scoreboard (NOT the pick-path) (1 tool)
+- `sulla ledger/ledger_scoreboard` — Zero-LLM scoreboard over the leftover `~/sulla/ledger/` markdown archive. Do **not** pick work from those files — the agenda lives in the project tables.
+
+→ See [`tools/ledger.md`](ledger.md)
+
+## rules — user rules the Security Conscience enforces (4 tools)
+- `sulla rules/list_rules` — Active user-created rules, most severe first.
+- `sulla rules/search_rules` — Search rules across title + content.
+- `sulla rules/add_rule` — Add/update a rule the Security Conscience should enforce.
+- `sulla rules/archive_rule` — Archive a rule by id.
+
+→ See [`tools/rules.md`](rules.md)
+
+## models — AI provider / model inventory (3 tools)
+- `sulla models/models_providers` — Providers, connected/on vs off, whether the required CLI is installed in the VM, and whether Sulla can use it.
+- `sulla models/models_list` — Models for one provider (live discovery, static-catalog fallback).
+- `sulla models/models_usage` — Locally-tracked model usage (Codex + Claude Code rolling usage today).
+
+→ See [`tools/models.md`](models.md)
+
+## applescript — macOS app automation (5 tools)
+- `sulla applescript/applescript_execute` — Drive a `target_app` via AppleScript (per-app allowlist); every call logged to `applescript_audit`.
+- `sulla applescript/computer_use_list` — List allowlisted apps + enabled state.
+- `sulla applescript/computer_use_enable` — Enable an app target.
+- `sulla applescript/computer_use_disable` — Disable an app target.
+- `sulla applescript/audit_log` — Query the AppleScript audit log (filter by target_app / only_failures / since).
+
+→ See [`tools/applescript.md`](applescript.md), [`tools/computer-use.md`](computer-use.md)
+
+## capture — Capture Studio control (headless) (20 tools)
+**Teleprompter:** `teleprompter_open`, `teleprompter_close`, `teleprompter_status`, `teleprompter_script`, `teleprompter_style`.
+**Audio (ref-counted):** `mic_start`, `mic_stop`, `speaker_start`, `speaker_stop`, `audio_state`.
+**Recording:** `recorder_start`, `recorder_stop`, `recorder_status`.
+**Camera:** `camera_list`, `camera_set`, `camera_release`.
+**Screen / screenshots:** `list_screens`, `screen_set`, `screenshot`, `quality_set` (480p | 720p | 1080p | 4k | auto).
+
+→ See [`tools/capture.md`](capture.md), [`desktop/capture-studio.md`](../desktop/capture-studio.md)
+
+## ui — open Sulla Desktop views from chat (1 tool)
+- `sulla ui/open_tab` — Open/focus a built-in view (`mode`: marketplace, vault, integrations, routines, history, secretary, chat, document, browser, projects, agents) — or pass `url` for a raw browser tab.
+
+→ See [`tools/ui.md`](ui.md)
+
+## marketplace — generic artifact lifecycle, all 6 kinds (11 tools)
+- `search`, `info`, `download`, `scaffold`, `validate`, `publish`, `unpublish`, `list_local`, `list_published`, `update`, `diff`.
+- Kinds: skill / function / workflow / agent / recipe / integration. `unpublish` requires `confirm:true`.
+
+→ See [`tools/marketplace.md`](marketplace.md)
+
+## extensions — marketplace recipe lifecycle (7 tools)
+- `list_extension_catalog`, `list_installed_extensions`, `install_extension`, `uninstall_extension` (preserves data by default), `start_extension`, `stop_extension` (`confirm:true`), `get_extension_status`.
+
+→ See [`marketplace/overview.md`](../marketplace/overview.md)
+
+## docker — host Docker daemon (NOT Lima services) (9 tools)
+- `docker_ps`, `docker_images`, `docker_pull`, `docker_run`, `docker_exec`, `docker_logs`, `docker_stop`, `docker_rm`, `docker_build`.
+
+⚠️ **`docker_ps` does NOT show Lima-internal services** (`sulla_postgres`, `sulla_redis`, the runtimes). → See [`environment/docker.md`](../environment/docker.md)
 
 ## lima — VM management (6 tools)
-- `sulla lima/lima_list` — List instances
-- `sulla lima/lima_create` — Create from template
-- `sulla lima/lima_start` — Start instance
-- `sulla lima/lima_stop` — Stop instance
-- `sulla lima/lima_shell` — Run command (always pass `command`, never go interactive)
-- `sulla lima/lima_delete` — Delete instance
+- `lima_list`, `lima_create`, `lima_start`, `lima_stop`, `lima_shell` (always pass `command`), `lima_delete`.
 
 → See [`environment/docker.md`](../environment/docker.md)
 
 ## kubectl — k3s in Lima (3 tools)
-- `sulla kubectl/kubectl_apply` — Apply manifest (offer `dryRun:'server'` for unfamiliar)
-- `sulla kubectl/kubectl_delete` — Delete resource (confirm before `force:true`)
-- `sulla kubectl/kubectl_describe` — Resource details
-
-For `kubectl get`, `kubectl logs`, etc. → workaround via `rdctl_shell`.
+- `kubectl_apply` (offer `dryRun:'server'`), `kubectl_delete` (confirm before `force:true`), `kubectl_describe`. For `get`/`logs`, fall back to `rdctl_shell`.
 
 → See [`environment/kubernetes.md`](../environment/kubernetes.md)
 
-## rdctl — Rancher Desktop / Sulla VM control (10 tools)
-- `sulla rdctl/rdctl_info` — App version / runtime / features
-- `sulla rdctl/rdctl_list_settings` — Current settings
-- `sulla rdctl/rdctl_set` — Update setting + restart backend
-- `sulla rdctl/rdctl_shell` — Shell command in Lima. **Does NOT accept pipes, redirects, or `&&` — single command + args only**
-- `sulla rdctl/rdctl_extension` — Install / uninstall extensions (lower-level than `extensions/*`)
-- `sulla rdctl/rdctl_snapshot` — VM snapshot management
-- `sulla rdctl/rdctl_start` — Start the backend
-- `sulla rdctl/rdctl_shutdown` — Shut down the backend
-- `sulla rdctl/rdctl_reset` — **Destructive — wipes the cluster**
-- `sulla rdctl/rdctl_version` — rdctl version
+## rdctl — Rancher / Sulla VM control (10 tools)
+- `rdctl_info`, `rdctl_list_settings`, `rdctl_set` (updates + restarts backend), `rdctl_shell` (single command + args — no pipes/redirects/`&&`), `rdctl_extension`, `rdctl_snapshot`, `rdctl_start`, `rdctl_shutdown`, `rdctl_reset` (**destructive — wipes the cluster**), `rdctl_version`.
 
 → See [`environment/kubernetes.md`](../environment/kubernetes.md)
 
-## calendar — local Postgres-backed events (7 tools)
-- `sulla calendar/calendar_create` — Create event / reminder
-- `sulla calendar/calendar_get` — Fetch one
-- `sulla calendar/calendar_list` — List in date range
-- `sulla calendar/calendar_list_upcoming` — Next N days (default 7)
-- `sulla calendar/calendar_update` — Patch event
-- `sulla calendar/calendar_cancel` — Soft cancel (status='cancelled')
-- `sulla calendar/calendar_delete` — Hard delete
+## secretary — Secretary Mode, live meeting transcription (3 tools)
+- `sulla secretary/start` — Open/focus a Secretary tab and begin listening.
+- `sulla secretary/stop` — End the listening session.
+- `sulla secretary/status` — Is Secretary Mode listening?
 
-→ See [`tools/calendar.md`](calendar.md)
-
-## vault — credentials (8 tools)
-- `sulla vault/vault_is_enabled` — Is integration X connected?
-- `sulla vault/vault_list_accounts` — Accounts on integration X
-- `sulla vault/vault_read_secrets` — Read fields (masked per access level)
-- `sulla vault/vault_set_credential` — Create / update credential
-- `sulla vault/vault_set_active_account` — Set default account
-- `sulla vault/vault_list` — List website credentials (no passwords)
-- `sulla vault/vault_autofill` — Inject credentials into active browser tab
-- `sulla vault/vault_delete_credential` — Delete a credential property (requires `confirm:true`)
-
-→ See [`tools/vault.md`](vault.md)
-
-## extensions — marketplace recipes (7 tools)
-- `sulla extensions/list_extension_catalog` — Browse marketplace
-- `sulla extensions/list_installed_extensions` — What's installed (with URLs)
-- `sulla extensions/install_extension` — Install by ID
-- `sulla extensions/uninstall_extension` — Uninstall (default preserves data)
-- `sulla extensions/start_extension` — Bring a stopped recipe back up
-- `sulla extensions/stop_extension` — Stop a running recipe (`confirm:true` required)
-- `sulla extensions/get_extension_status` — running / stopped / not_installed
-
-→ See [`marketplace/overview.md`](../marketplace/overview.md)
-
-## marketplace — generic artifact lifecycle (11 tools, all 6 kinds)
-- `sulla marketplace/search` — Search by query / kind / category (cloud + GitHub fallback for recipes)
-- `sulla marketplace/info` — Full metadata for `kind` + `slug`
-- `sulla marketplace/download` — Pull and materialise locally (`overwrite` flag)
-- `sulla marketplace/scaffold` — Generate kind-appropriate skeleton dir
-- `sulla marketplace/validate` — Schema check against the kind's contract
-- `sulla marketplace/publish` — POST to Sulla Cloud marketplace
-- `sulla marketplace/unpublish` — DELETE published artifact (`confirm:true` required)
-- `sulla marketplace/list_local` — Locally-installed artifacts (filterable by kind)
-- `sulla marketplace/list_published` — Artifacts the current user has published
-- `sulla marketplace/update` — Pull latest version (overwrites local)
-- `sulla marketplace/diff` — Compare local artifact vs marketplace version (preview before update)
-
-→ See [`tools/marketplace.md`](marketplace.md)
-
-## redis (12 tools)
-- `sulla redis/redis_get` / `redis_set` — String KV
-- `sulla redis/redis_del` — Delete keys
-- `sulla redis/redis_incr` / `redis_decr` — Integer counters
-- `sulla redis/redis_expire` / `redis_ttl` — TTL management
-- `sulla redis/redis_hget` / `redis_hset` / `redis_hgetall` — Hash fields
-- `sulla redis/redis_lpop` / `redis_rpush` — List ops
-
-**Do not use these on `sulla_settings`.** That hash is owned by `SullaSettingsModel`; the redis tools refuse it. Use `sulla settings/settings_get` / `settings_set` instead.
-
-→ See [`tools/redis.md`](redis.md)
-
-## settings — authoritative settings path (2 tools)
-- `sulla settings/settings_get` — Read a setting through `SullaSettingsModel` (Redis cache → Postgres → file fallback)
-- `sulla settings/settings_set` — Write a setting through `SullaSettingsModel` (Postgres + Redis write-through)
-
-→ See [`tools/redis.md`](redis.md) (settings guardrail) and `pkg/rancher-desktop/agent/database/models/SullaSettingsModel.ts`
-
-## project — Projects project-state (13 tools)
-- `sulla project/list_project_items` — Projects project-state list: filter by kind / status / priority / project / epic / parent / assignee
-- `sulla project/get_project_item` — One project, epic, or task + children + comments
-- `sulla project/search_project_items` — Title + description search (dedupe before create)
-- `sulla project/project_report` — Standup: completed last N hours + next open tasks
-- `sulla project/create_project` — Insert a new project (slug auto-derived)
-- `sulla project/update_project` — Patch an existing project by id
-- `sulla project/create_epic` — Insert a new epic under a project
-- `sulla project/update_epic` — Patch an existing epic by id
-- `sulla project/create_task` — Insert a new task (`parent_id` for a subtask)
-- `sulla project/update_task` — Patch an existing task by id
-- `sulla project/add_task_comment` — Append a note (`author` defaults to `sulla`; Heartbeat passes `heartbeat`; UI stamps `human`)
-- `sulla project/list_task_comments` — Comment thread, oldest first
-- `sulla project/archive_project_item` — Soft-archive a project, epic, or task (cascades)
-
-→ See [`tools/project.md`](project.md). This is the ONE project-state store. Not CRM. Distinct from filesystem `~/sulla/projects/<slug>/PROJECT.md` PRDs.
-
-## ledger — leftover measurement (1 tool, do not pick from)
-- `sulla ledger/ledger_scoreboard` — Zero-LLM scoreboard of leftover `~/sulla/ledger/` markdown. Do **not** pick work from those files.
-
-→ Agenda + record live in the project tables. See [`tools/project.md`](project.md).
-
-
-## pg — PostgreSQL queries (6 tools)
-- `sulla pg/pg_query` — SELECT, all rows
-- `sulla pg/pg_queryall` — SELECT, all rows (explicit)
-- `sulla pg/pg_queryone` — SELECT, first row only
-- `sulla pg/pg_count` — COUNT scalar
-- `sulla pg/pg_execute` — INSERT / UPDATE / DELETE
-- `sulla pg/pg_transaction` — Atomic multi-statement
-
-→ See [`tools/pg.md`](pg.md)
-
-## slack (7 tools)
-- `sulla slack/slack_send_message` — Post to channel / DM
-- `sulla slack/slack_update` — Edit message
-- `sulla slack/slack_thread` — Get thread replies
-- `sulla slack/slack_search_users` — Find user by name / email
-- `sulla slack/slack_user` — Get one user
-- `sulla slack/slack_unreact` — Remove reaction
-- `sulla slack/slack_connection_health` — Health check + auto-recovery
-
-→ See [`tools/slack.md`](slack.md)
-
-## mobile — Sulla Mobile companion (4 tools)
-- `sulla mobile/list_calls` — Recent AI-receptionist calls (filter by status)
-- `sulla mobile/get_call` — Full call details (transcript, lead metadata, summary)
-- `sulla mobile/list_leads` — Inbox leads (filter by qualified_only / urgency)
-- `sulla mobile/list_messages` — SMS + voicemail transcripts (filter unread_only)
-
-Read-only. Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`.
-
-## agents — sub-agent jobs, conversations, directory (7 tools)
-- `sulla agents/check_agent_jobs` — Fallback/history read of async spawn_agent jobs (results normally arrive via parent-graph wake)
-- `sulla agents/stop_agent_job` — Kill switch: cancel a running async job (cooperative abort, cascades to its sub-agents)
-- `sulla agents/start_agent_conversation` — LEGACY: open a persistent multi-turn conversation with a sub-agent. Prefer `spawn_agent`.
-- `sulla agents/send_agent_message` — Send a follow-up to an open conversation, get the reply
-- `sulla agents/read_agent_conversation` — Read a conversation transcript, or list all open conversations
-- `sulla agents/close_agent_conversation` — Close a conversation and free its graph + state
-- `sulla agents/list_agents` — Directory of live named agents (heartbeat, workbench, mobile-relay, …) you can `<channel:>`-message
-
-**ONE delegation pattern:** `sulla meta/spawn_agent` (async results wake the parent graph). `start_agent_conversation` is a legacy multi-turn wrapper. `list_agents` + `<channel:NAME>` is messaging to already-running named agents, not delegation. See [`tools/agents.md`](agents.md).
-
-## bridge — human presence (2 tools)
-- `sulla bridge/get_human_presence` — Read presence state from Redis
-- `sulla bridge/update_human_presence` — Update presence
-
-→ See [`tools/notify.md`](notify.md)
-
-## notify — desktop + mobile notifications (2 tools)
-- `sulla notify/notify_user` — Desktop + mobile fan-out (`targets: ["desktop","mobile"]`; logged to `notifications` table)
-- `sulla notify/history` — Query the notification history (filter by target / only_failures / since)
-
-→ See [`tools/notify.md`](notify.md)
-
-## applescript — macOS app automation (5 tools)
-- `sulla applescript/applescript_execute` — Drive a target_app via AppleScript (per-app allowlist); every call logged to `applescript_audit`
-- `sulla applescript/computer_use_list` — List allowlisted apps
-- `sulla applescript/computer_use_enable` — Toggle an app on
-- `sulla applescript/computer_use_disable` — Toggle an app off
-- `sulla applescript/audit_log` — Query applescript_audit (filter by target_app / only_failures / since)
-
-→ See [`tools/applescript.md`](applescript.md), [`tools/computer-use.md`](computer-use.md)
-
-## ui — open Sulla Desktop views from chat (1 tool)
-- `sulla ui/open_tab` — Open / focus a built-in view (`mode`: marketplace, vault, integrations, routines, history, secretary, chat, document, browser, welcome, settings) — or pass `url` to open a raw browser tab
-
-→ See [`tools/ui.md`](ui.md)
-
-## capture — Capture Studio control (13 tools)
-**Teleprompter:**
-- `sulla capture/teleprompter_open` — Open the floating script window
-- `sulla capture/teleprompter_close` — Close it
-- `sulla capture/teleprompter_status` — Is it open?
-- `sulla capture/teleprompter_script` — Push script text (auto-opens, sets `currentIndex`)
-- `sulla capture/teleprompter_style` — Update fontSize / highlightColor
-
-**Microphone (ref-counted):**
-- `sulla capture/mic_start` — Start mic capture (optional `formats: ["webm-opus","pcm-s16le"]`)
-- `sulla capture/mic_stop` — Release this agent's hold
-
-**Speaker / desktop audio loopback (ref-counted):**
-- `sulla capture/speaker_start` — Start system-audio capture
-- `sulla capture/speaker_stop` — Release hold
-
-**State + screens:**
-- `sulla capture/audio_state` — Are mic/speaker capturing? Which devices?
-- `sulla capture/list_screens` — Enumerate displays + windows (`kind: screen | window | all`)
-- `sulla capture/screenshot` — PNG of a screen/window → `~/sulla/captures/screenshots/YYYY-MM-DD/`
-
-→ See [`tools/capture.md`](capture.md)
-
----
-
-## Categories visible in CLI --help but NOT in `sulla --help` output
-
-The host CLI script has a stale hardcoded `TOOL_CATEGORIES` whitelist. These categories exist on the backend (`sulla <cat> --help` works) but aren't in the top-level `sulla --help` list:
-- **`function`** (2 tools)
-- **`observation`** (3 tools)
-
-These categories work when called directly. The `workflow` category does NOT exist on the backend (returns "Unknown category") — use `meta/` for workflow tools.
+→ See [`desktop/secretary-mode.md`](../desktop/secretary-mode.md)
 
 ---
 
@@ -348,47 +299,33 @@ For external SaaS APIs the agent calls via the proxy form:
 ```bash
 sulla <account_id>/<integration_slug> '{"method":"GET","path":"/api/...","body":{...}}'
 ```
-
-**Verified format:** `<account_id>` first, then `/`, then `<integration_slug>`. Example:
+`<account_id>` first, then `/`, then `<integration_slug>`. Example:
 ```bash
 sulla jonathonbyrdziaks_token/github '{"method":"GET","path":"/user/repos"}'
 ```
-
-Account IDs are discoverable via `sulla vault/vault_list_accounts '{"account_type":"<slug>"}'`. The slug (second segment) is typically the same as the integration name. Credentials are auto-injected — the agent never handles raw tokens.
-
-Common integrations (as of verification):
-- `github` (user has `jonathonbyrdziaks_token` account connected)
-- `slack`, `twenty`, `intuit`, `openai`, `anthropic` (connect as needed). Third-party tools like n8n are installable as **recipes** (extensions) — hit them via the integration proxy pattern after install, no special tool category needed.
+Account IDs are discoverable via `sulla vault/vault_list_accounts '{"account_type":"<slug>"}'`. Credentials are auto-injected — the agent never handles raw tokens. Third-party tools (e.g. n8n) install as **recipes** (extensions) and are reached via this proxy after install — no special tool category needed.
 
 ---
 
-## Summary counts (verified live 2026-04-23)
+## Summary counts (regenerated from source manifests 2026-08-19)
 
-| Category | Tool count |
-|----------|-----------|
-| meta | 12 |
-| observation | 3 |
-| browser | 23 |
-| github | 28 |
-| docker | 9 |
-| lima | 6 |
-| kubectl | 3 |
-| rdctl | 10 |
-| calendar | 7 |
-| vault | 8 |
-| extensions | 7 |
-| marketplace | 11 |
-| redis | 12 |
-| pg | 6 |
-| slack | 7 |
-| mobile | 4 |
-| agents | 1 |
-| bridge | 2 |
-| notify | 2 |
-| applescript | 5 |
-| function | 3 |
-| ui | 1 |
-| capture | 13 |
-| **Total** | **~183** |
+| Category | Tools | | Category | Tools |
+|----------|------:|-|----------|------:|
+| github | 52 | | vault | 8 |
+| browser | 23 | | slack | 7 |
+| capture | 20 | | agents | 7 |
+| meta | 14 | | calendar | 7 |
+| project | 13 | | extensions | 7 |
+| redis | 12 | | pg | 6 |
+| marketplace | 11 | | lima | 6 |
+| rdctl | 10 | | mobile | 5 |
+| observation | 9 | | applescript | 5 |
+| docker | 9 | | rules | 4 |
+| workflow | 8 | | function | 3 |
+| memory | 3 | | secretary | 3 |
+| models | 3 | | kubectl | 3 |
+| settings | 2 | | notify | 2 |
+| bridge | 2 | | ledger | 1 |
+| ui | 1 | | **Total** | **266** |
 
 If a new category appears in `pkg/rancher-desktop/agent/tools/` or `sulla <cat> --help` that's not on this list, add it here AND write a doc.
