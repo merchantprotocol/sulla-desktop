@@ -15,11 +15,18 @@
 // available without re-aggregating over workflow_executions).
 //
 // View-only, additive, fully reversible (`down` restores the exact 0037 view).
+//
+// The ::varchar(255) cast on routine_slug is required, not cosmetic: Postgres
+// rejects CREATE OR REPLACE VIEW if a column's data type changes, and
+// COALESCE(varchar(255), regexp_replace(...)) resolves to an unconstrained
+// varchar — without the cast this migration fails with "cannot change data
+// type of view column" and (since runMigrations fails fast) silently blocks
+// every migration after it from ever running.
 
 export const up = `
   CREATE OR REPLACE VIEW routine_scorecard AS
   SELECT
-    COALESCE(w.source_template_slug, regexp_replace(w.id, '^workflow-', '')) AS routine_slug,
+    COALESCE(w.source_template_slug, regexp_replace(w.id, '^workflow-', ''))::varchar(255) AS routine_slug,
     w.name                                                                    AS routine_name,
     w.description                                                             AS problem,
     CASE
