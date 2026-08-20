@@ -177,6 +177,8 @@ export class AgentNode extends BaseNode {
     if (environmentObservationContext) combinedContextParts.push(`<environment_observations>\n${ environmentObservationContext }\n</environment_observations>`);
     const projectsObservationContext = (state.metadata as any).projectsObservationContext;
     if (projectsObservationContext) combinedContextParts.push(`<projects_observations>\n${ projectsObservationContext }\n</projects_observations>`);
+    const skillsObservationContext = (state.metadata as any).skillsObservationContext;
+    if (skillsObservationContext) combinedContextParts.push(`<skills_observations>\n${ skillsObservationContext }\n</skills_observations>`);
 
     if (combinedContextParts.length > 0) {
       const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;

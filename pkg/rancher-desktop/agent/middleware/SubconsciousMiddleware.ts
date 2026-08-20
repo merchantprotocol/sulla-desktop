@@ -270,6 +270,18 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('world-observation-recall', 'Recalling the world', worldRecallPromise.then(ctx => { (state.metadata as any).worldObservationContext = ctx })));
   }
 
+  // R8. Skills Observation Recall (skills) — awaited: relevant `skills`-domain
+  //     rows (provenance/success/failure/gap/inventory for named skill
+  //     artifacts), injected as <skills_observations>. Also searches the
+  //     marketplace + local ~/sulla/skills/ install (read-only) so recall can
+  //     surface a skill that fits the current turn even if it was never run
+  //     before, not just skills already logged.
+  if (options.includeObservations && analyzable) {
+    launched.push('skills-observation-recall');
+    const skillsRecallPromise = runIdentityObservationRecall(state, 'skills');
+    awaitedTasks.push(timed('skills-observation-recall', 'Recalling what skills exist', skillsRecallPromise.then(ctx => { (state.metadata as any).skillsObservationContext = ctx })));
+  }
+
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
   // Every task in awaitedTasks writes into the live turn state. The primary
@@ -311,6 +323,7 @@ export async function runSubconsciousMiddleware(
  *   - Business Observer  business   → the human's business/employment
  *   - World Observer      world     → external events relevant to us (gated)
  *   - Environment Observer environment → this install/host + repeatable processes
+ *   - Skills Observer     skills    → provenance + run outcomes of named skill artifacts
  */
 export function runSubconsciousObservationWriters(
   state: BaseThreadState,
@@ -335,8 +348,9 @@ export function runSubconsciousObservationWriters(
   launch('world-observer', () => runIdentityObserver(state, 'world'));
   launch('environment-observer', () => runIdentityObserver(state, 'environment'));
   launch('projects-observer', () => runIdentityObserver(state, 'projects'));
+  launch('skills-observer', () => runIdentityObserver(state, 'skills'));
 
-  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects) | messages: ${ state.messages.length }`);
+  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/skills) | messages: ${ state.messages.length }`);
 }
 
 // ============================================================================

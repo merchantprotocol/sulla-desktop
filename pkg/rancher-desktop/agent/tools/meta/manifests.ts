@@ -78,11 +78,11 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'add_identity_observation',
-    description: 'Store a focused identity observation into the domain-keyed identity_observations table (human / business / world / agent / environment / projects — mirrors ~/sulla/identity/). Levels are CERTAINTY: 3 = stated fact (subject directly told us), 2 = derived fact (established from conversation evidence), 1 = conclusion (reasoned from L3/L2 facts — personality, style, habits). Pass an existing id to update in place; otherwise a substantially similar active row in the same domain is updated instead of duplicated.',
+    description: 'Store a focused identity observation into the domain-keyed identity_observations table (human / business / world / agent / environment / projects / skills — mirrors ~/sulla/identity/). Levels are CERTAINTY: 3 = stated fact (subject directly told us), 2 = derived fact (established from conversation evidence), 1 = conclusion (reasoned from L3/L2 facts — personality, style, habits). Pass an existing id to update in place; otherwise a substantially similar active row in the same domain is updated instead of duplicated.',
     category:    'observation',
     schemaDef:   {
       id:       { type: 'string', optional: true, description: 'Existing observation ID to update in place. Omit to add a new observation or update a duplicate by content.' },
-      domain:   { type: 'string', optional: true, description: 'Identity domain: human, business, world, agent, environment, or projects (default human).' },
+      domain:   { type: 'string', optional: true, description: 'Identity domain: human, business, world, agent, environment, projects, or skills (default human).' },
       level:    { type: 'number', description: 'Certainty level: 3 = stated fact, 2 = derived fact, 1 = conclusion.' },
       category: { type: 'string', optional: true, description: 'Focus category — e.g. identity, relationship, association, personality, habit, preference, goal.' },
       content:  { type: 'string', description: 'One sentence only — extremely concise, always include the context.' },
@@ -108,11 +108,11 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'search_identity_observations',
-    description: 'Search active identity observations within one domain (human / business / world / agent / environment / projects) by keyword or phrase. Any-word ILIKE match ranked by phrase hit, word-match count, then certainty level (stated facts first) and recency. Use this before adding a new identity observation to check for existing similar ones.',
+    description: 'Search active identity observations within one domain (human / business / world / agent / environment / projects / skills) by keyword or phrase. Any-word ILIKE match ranked by phrase hit, word-match count, then certainty level (stated facts first) and recency. Use this before adding a new identity observation to check for existing similar ones.',
     category:    'observation',
     schemaDef:   {
       query:            { type: 'string', description: 'Search keyword or phrase — split into words, any-word ILIKE match against observation content.' },
-      domain:           { type: 'string', optional: true, description: 'Identity domain to search: human, business, world, agent, environment, or projects (default human).' },
+      domain:           { type: 'string', optional: true, description: 'Identity domain to search: human, business, world, agent, environment, projects, or skills (default human).' },
       limit:            { type: 'number', optional: true, description: 'Max results to return (default 20).' },
       include_archived: { type: 'boolean', optional: true, description: 'When true, also searches archived (soft-deleted) rows (default false).' },
     },
@@ -124,7 +124,7 @@ export const metaToolManifests: ToolManifest[] = [
     description: 'List active identity observations for one domain, most certain first (L3 stated → L2 derived → L1 concluded) then most recent. Optionally filter by level and/or category.',
     category:    'observation',
     schemaDef:   {
-      domain:   { type: 'string', optional: true, description: 'Identity domain: human, business, world, agent, environment, or projects (default human).' },
+      domain:   { type: 'string', optional: true, description: 'Identity domain: human, business, world, agent, environment, projects, or skills (default human).' },
       level:    { type: 'number', optional: true, description: 'Certainty level filter: 3, 2, or 1. Omit to list all levels.' },
       category: { type: 'string', optional: true, description: 'Category filter — e.g. identity, relationship, personality, habit. Omit to list all.' },
       limit:    { type: 'number', optional: true, description: 'Max results to return (default 50).' },

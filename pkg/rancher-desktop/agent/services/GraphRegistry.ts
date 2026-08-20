@@ -76,6 +76,23 @@ function identityObservationRecallToolsForDomain(domain: string): string[] {
     ];
   }
 
+  // Skills recall also needs read-only discovery across every place a skill
+  // can actually live — the public/cloud marketplace, and artifacts already
+  // materialised locally under ~/sulla/skills/ (list_local reads that
+  // directory; no raw filesystem tool is granted). All three are
+  // operationTypes:['read'] — no download/publish/scaffold/update capability,
+  // so this cannot be used to install or mutate anything (Jonathon,
+  // 2026-08-20: marketplace read tools are fine for an observer; they are not
+  // the filesystem/shell access the observer lockdown forbids).
+  if (domain === 'skills') {
+    return [
+      ...IDENTITY_OBSERVATION_RECALL_TOOLS,
+      'search',      // marketplace/search — public Sulla Cloud marketplace, kind:'skill'
+      'info',        // marketplace/info — full metadata for one marketplace or local skill
+      'list_local',  // marketplace/list_local — skills already installed under ~/sulla/skills/
+    ];
+  }
+
   return IDENTITY_OBSERVATION_RECALL_TOOLS;
 }
 
@@ -460,6 +477,68 @@ domain, and LIVE task status belongs in the structured Projects store (via the
   set basis to the evidence.
 - L1 — a conclusion you reasoned about a project ("this project is release-gated
   on human review", "these two repos always move together"), always with basis.`,
+  },
+  skills: {
+    domain:       'skills',
+    subjectLabel: 'the skill files (SKILL.md artifacts) the agent uses or could use',
+    focus: `Observe the SKILL FILES — the reusable SKILL.md artifacts the agent runs
+to perform a repeatable task — never the task itself. A row belongs here ONLY if
+its real subject is a NAMED skill artifact: what it is, where it lives, and
+whether running it worked. If you cannot name the specific skill slug the row is
+about, it does NOT belong in this domain.
+
+Record, always naming the skill slug/name:
+- provenance: where a specific skill was actually found this conversation —
+  its marketplace slug + version/publisher ("marketplace/search returned
+  'pdf-fill' v1.2.0 from publisher X"), its local install path under
+  ~/sulla/skills/ ("'commit-msg' is installed locally at ~/sulla/skills/
+  commit-msg"), or another concrete source it was discovered at
+- success: a named skill was run and worked — record which skill, for what kind
+  of task, and any reason it's worth reaching for again
+- failure: a named skill was run and did NOT work — record which skill, what
+  broke, and why, so it is not reached for the same way again
+- gap: a task needed a skill and NONE existed for it (a scaffolding/publishing
+  candidate) — name the task and what kind of skill would have covered it
+- inventory: a durable catalog fact about a skill's purpose or scope ("'pdf-fill'
+  fills PDF form fields from a JSON map") — NOT its internal steps, which
+  already live in SKILL.md; do not duplicate the file's content here
+
+Reject (never write these — they are this domain's most common pollution):
+- anything that is not about a specific, named skill artifact. A general working
+  method or lesson that never invokes a named SKILL.md file belongs in the agent
+  domain, not here
+- the task itself, its outcome, or its business context ("fixed the invoice
+  parser", "shipped PR #614") — unless the row's actual subject is a named skill
+  that ran as part of it
+- a paraphrase or summary of a skill's instructions/steps — that duplicates the
+  SKILL.md file, which is already the source of truth; record only that it
+  exists and what it is for
+- a marketplace/product feature request about Sulla Desktop itself ("the
+  marketplace UI should…") — belongs to the projects domain, not here
+- a PR/branch/commit status about building the skills system or marketplace
+  itself — that is work-state, not a fact about a skill artifact
+- a generic tool call or command that isn't backed by an actual named skill file`,
+    writerNote: `## How to write a skills observation
+
+Every candidate row must name the exact skill slug it is about. Pass it through
+this gate first: is the subject a specific SKILL.md artifact — not the task, not
+the agent's general working style, not Sulla Desktop's skills feature? If you
+cannot point to the slug, do not write the row.
+
+Field contract for every skills-domain row:
+- content — ONE sentence, third person, naming the skill: "Skill 'pdf-fill' …" —
+  never a first-person narration of what you just did.
+- category — exactly one of: provenance | success | failure | gap | inventory.
+- basis / evidence — the concrete signal: the marketplace/local lookup result
+  for provenance, or what happened when the skill ran for success/failure.
+- level — L3 when the run outcome or location was directly observed this
+  conversation (it ran, or the lookup returned it); L2 when established from
+  strong evidence without directly observing it; L1 only for a genuine
+  generalization across repeated runs, always with basis.
+
+A failure is worth exactly as much as a success — it stops the skill being
+reached for the same broken way next time. If nothing named a specific skill
+this conversation, finish immediately; most turns need NO write here.`,
   },
 };
 

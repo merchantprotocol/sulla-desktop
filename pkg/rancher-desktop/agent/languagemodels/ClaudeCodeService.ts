@@ -764,6 +764,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       parts.push(`<projects_observations>\n${ projectsObservationContext.trim() }\n</projects_observations>`);
     }
 
+    const skillsObservationContext = (state?.metadata as any)?.skillsObservationContext;
+    if (skillsObservationContext && typeof skillsObservationContext === 'string' && skillsObservationContext.trim()) {
+      parts.push(`<skills_observations>\n${ skillsObservationContext.trim() }\n</skills_observations>`);
+    }
+
     if (parts.length === 0) return '';
     return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;
   }
