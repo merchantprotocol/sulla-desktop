@@ -229,7 +229,10 @@ AI in the abstract.`,
     domain:       'business',
     subjectLabel: 'the human\'s business or employment',
     focus: `Observe the HUMAN'S BUSINESS OR EMPLOYMENT — what they do for a living
-and the organization(s) behind it, not the current task:
+and the organization(s) behind it, NOT the task the agent is doing for it. The
+subject is the BUSINESS itself: a durable portrait of how it works, makes money,
+and what it is trying to do — not a log of the engineering or work performed this
+session.
 - identity: what the business is — its name, industry, what it sells or does
 - model: how it makes money — customers, pricing, revenue streams, unit economics
 - operations: how the work gets done — routes, tools, suppliers, staff, cadence
@@ -238,19 +241,50 @@ and the organization(s) behind it, not the current task:
 - constraints: costs, risks, obligations, deadlines, regulatory/legal limits
 - assets: products, routes, properties, equipment, IP the business owns
 
-One human can run several ventures — keep each distinct. Record what is durable
-about the business, not one-off task status.`,
-    writerNote: `## Certainty for business facts
+One human can run several ventures (e.g. software AND a physical route business) —
+keep each distinct.
 
-The SUBJECT is the BUSINESS, not the person — personal identity belongs to the
-human domain.
+Reject (never write these — they are this domain's most common pollution):
+- a task or sub-agent assignment ("route these sharedOnly sites", "handle the POS
+  cluster"), a branch/PR/commit report, or any this-session engineering status —
+  that is work-state, not a business fact. Work-state lives in the Projects
+  system, not here
+- a product/feature request, bug, or implementation detail about software the
+  human builds ("thinking bubbles should…", "add a Heartbeat prompt section",
+  "PR #610 fixes the CLI") — the software's day-to-day engineering churn is not a
+  business fact. Only a DURABLE fact about the product AS A BUSINESS qualifies
+  ("Data Ripple sells per-org-isolated receptionist software to contractors,
+  billed by subscription")
+- an engineering-process or collaboration rule ("always open a draft PR", "one
+  task per agent") — that belongs to the agent domain, not the business
+- anything whose real subject is the agent or the agent+human pair — if you are
+  about to set subject to agent.user, it does NOT belong in this domain`,
+    writerNote: `## How to write a business observation
+
+The SUBJECT is the BUSINESS, not the person and not the agent — personal identity
+belongs to the human domain, and how the agent works belongs to the agent domain.
+
+This domain's most common failure is logging the WORK the agent did for the
+business (routing tasks, PR pushes, feature tickets) as if it were a fact about
+the business. It is not. Pass every candidate row through this gate first:
+1. Is this a durable truth about what the business IS, SELLS, OWES, or is TRYING
+   TO DO — still true next quarter? Or is it this-session task/engineering status?
+   If it is task or engineering status, do NOT write it here.
+2. Is the subject genuinely the business? If the natural subject is the agent or
+   the agent+human working relationship (subject agent.user), it belongs to the
+   agent domain, not here.
+3. Would knowing this help someone understand how the human earns a living, even
+   if they never saw this conversation? If no, discard it.
+
+Certainty:
 - L3 — the human stated it about their business directly ("we bill clients per
   seat", "we only get paid for what sells through, not what we deliver").
-- L2 — established from what they discussed, not stated as a headline fact. Set
-  basis to the evidence.
-- L1 — a conclusion you reasoned about the business ("the business is
-  cash-tight", "margins are shrink-sensitive"), always with basis.
-If a venture is distinct from another, keep its rows distinct.`,
+- L2 — established from what they discussed or you researched, not stated as a
+  headline fact. Set basis to the evidence.
+- L1 — a conclusion you reasoned about the business ("the business is cash-tight",
+  "margins are shrink-sensitive"), always with basis.
+Keep each venture's rows distinct, and never collapse the agent's task log into
+any of them.`,
   },
   world: {
     domain:       'world',
