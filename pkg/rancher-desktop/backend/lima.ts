@@ -701,11 +701,29 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const dockerComposeScript = '#!/bin/sh\nset -o errexit\napk info -e docker-cli-compose >/dev/null 2>&1 || { apk update && apk add --no-cache docker-cli-compose; }';
     const pythonNodeScript = '#!/bin/sh\nset -o errexit\napk info -e python3 nodejs npm >/dev/null 2>&1 || apk add --no-cache python3 py3-pip nodejs npm git jq yq tree rsync curl nano vim';
 
+    // Real GNU bash. The base image only ships busybox (/bin/sh -> /bin/ash).
+    // Claude Code's Bash tool launches its persistent shell with bash-only
+    // options (e.g. `-O expand_aliases`) and sources a snapshot that uses bash
+    // arrays. busybox ash rejects the unknown option and exits 2 *before*
+    // running anything, so every Bash call returns a constant exit 2 with no
+    // stdout/stderr. A hand-rolled `/bin/bash -> ash` shim makes it worse: the
+    // CLI finds a "bash" that silently fails instead of a missing-binary error.
+    // Kept as its own guarded step so existing VMs (where python3/nodejs/npm
+    // are already present and that install short-circuits) still get bash.
+    const bashScript = [
+      '#!/bin/sh',
+      'set -o errexit',
+      'apk info -e bash >/dev/null 2>&1 && exit 0',
+      '# Drop a non-apk shim squatting on the path so apk can own /bin/bash.',
+      'if [ -e /bin/bash ] && ! apk info -W /bin/bash >/dev/null 2>&1; then rm -f /bin/bash; fi',
+      'apk add --no-cache bash',
+    ].join('\n');
+
     // Remove any previously appended copies (including old unguarded format) to prevent duplication
     config.provision = config.provision.filter((p: { script?: string }) => {
       const s = p.script ?? '';
 
-      return !s.includes('docker-cli-compose') && !s.includes('py3-pip nodejs npm');
+      return !s.includes('docker-cli-compose') && !s.includes('py3-pip nodejs npm') && !s.includes('apk info -W /bin/bash');
     });
 
     if (this.cfg?.containerEngine?.name === ContainerEngine.MOBY) {
@@ -719,6 +737,12 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     config.provision.push({
       mode:   'system',
       script: pythonNodeScript,
+    });
+
+    // Install real bash before the AI CLIs — their Bash tool depends on it.
+    config.provision.push({
+      mode:   'system',
+      script: bashScript,
     });
 
     // Install Claude Code CLI.
