@@ -29,6 +29,11 @@
           v-if="routine.featured"
           class="chip violet"
         >Featured</span>
+        <span
+          v-if="routine.system"
+          class="chip lock"
+          title="Core routine — ships with Sulla Desktop. You can disable it, but not edit or delete it."
+        >🔒 Core</span>
       </div>
       <div class="title">
         {{ routine.name }}
@@ -111,6 +116,7 @@
               Duplicate
             </button>
             <button
+              v-if="!routine.system"
               type="button"
               class="menu-item"
               role="menuitem"
@@ -127,6 +133,7 @@
               Export…
             </button>
             <button
+              v-if="!routine.system"
               type="button"
               class="menu-item"
               role="menuitem"
@@ -134,15 +141,23 @@
             >
               Publish to Marketplace…
             </button>
-            <div class="menu-sep" />
-            <button
-              type="button"
-              class="menu-item danger"
-              role="menuitem"
-              @click="emitAction('delete')"
+            <template v-if="!routine.system">
+              <div class="menu-sep" />
+              <button
+                type="button"
+                class="menu-item danger"
+                role="menuitem"
+                @click="emitAction('delete')"
+              >
+                Delete…
+              </button>
+            </template>
+            <div
+              v-else
+              class="menu-locked"
             >
-              Delete…
-            </button>
+              🔒 Core routine — you can disable it, but not edit or delete it.
+            </div>
           </div>
         </div>
       </div>
@@ -384,6 +399,11 @@ const timingLabel = computed(() => {
   background: #fb7185;
   animation: pulse-v 1.2s infinite;
 }
+.chip.lock {
+  border-color: rgba(148, 163, 184, 0.5);
+  color: #cbd5e1;
+  background: rgba(71, 85, 105, 0.28);
+}
 @keyframes pulse-v { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 .metrics {
@@ -494,6 +514,14 @@ const timingLabel = computed(() => {
   height: 1px;
   background: rgba(168, 192, 220, 0.14);
   margin: 4px 2px;
+}
+.menu-locked {
+  padding: 7px 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  color: var(--steel-400);
 }
 
 .btn {

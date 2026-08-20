@@ -39,6 +39,7 @@ interface DbListRow {
   status:      'draft' | 'production' | 'archive';
   updatedAt:   string;
   nodeCount:   number;
+  system?:     boolean;
 }
 
 /** Map the DB's coarse status to the richer view status. */
@@ -140,6 +141,7 @@ function rowToSummary(row: DbListRow): RoutineSummary {
     agents:        row.nodeCount,
     integrations:  [],      // TODO: surface from definition when we enrich the query
     lastRunAgo:    timeAgo(row.updatedAt),
+    system:        row.system === true,
     // Runtime metrics (runsPerWeek, avgCycle, costPerRun, schedule,
     // featured) come from run history + trigger analysis in later phases.
   };

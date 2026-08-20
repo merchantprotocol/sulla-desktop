@@ -35,6 +35,8 @@ export interface RoutineSummary {
   nextIn?:       string;
   schedule?:     string;
   featured?:     boolean;
+  /** Locked core routine baked into Sulla Desktop — read-only in the UI. */
+  system?:       boolean;
 }
 
 export type RoutineCategory =
