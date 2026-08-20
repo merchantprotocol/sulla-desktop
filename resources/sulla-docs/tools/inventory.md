@@ -1,6 +1,8 @@
 # Tool Inventory
 
-Master list of every tool the agent can call. **Regenerated from the source manifests (`pkg/rancher-desktop/agent/tools/<category>/manifests.ts`) on 2026-08-19 — 266 tools across 31 categories.** Each line is `sulla <category>/<tool> — purpose`.
+Master list of every tool the agent can call. **Regenerated from the source manifests (`pkg/rancher-desktop/agent/tools/<category>/manifests.ts`) on 2026-08-19 — 262 tools across 30 categories.** Each line is `sulla <category>/<tool> — purpose`.
+
+> The `rules` category (user-created guardrail rules) and its **Security Conscience** enforcement were **retired 2026-08-19** and are intentionally omitted here. Some `rules/*` tool code may still linger in a given build; treat it as vestigial and don't re-add it to this doc.
 
 **Important routing note:** the backend resolves tools by **name only** — the category segment in the URL is ignored. So `sulla anything/spawn_agent` works the same as `sulla meta/spawn_agent`. But the **canonical** form (what `sulla <cat> --help` lists, and what the manifest's own `category` field says) is what you should use for clarity. Categories and canonical pairings below.
 
@@ -215,14 +217,6 @@ The ONE project-state store — not CRM, distinct from the `~/sulla/projects/<sl
 
 → See [`tools/ledger.md`](ledger.md)
 
-## rules — user-created guardrail rules (4 tools)
-- `sulla rules/list_rules` — Active user-created rules, most severe first.
-- `sulla rules/search_rules` — Search rules across title + content.
-- `sulla rules/add_rule` — Add/update a guardrail rule (dedupes against similar rules).
-- `sulla rules/archive_rule` — Archive a rule by id.
-
-Rules live in the `rules` table (+ global markdown under `~/sulla/rules/global/`). ⚠️ The **Security Conscience** subconscious agent that used to fold these into a `<security_context>` each turn was removed 2026-08-19, and nothing currently re-injects them — so today they're a managed store you surface on demand (`list_rules`/`search_rules`), not an automatic per-turn gate. → See [`tools/rules.md`](rules.md)
-
 ## models — AI provider / model inventory (3 tools)
 - `sulla models/models_providers` — Providers, connected/on vs off, whether the required CLI is installed in the VM, and whether Sulla can use it.
 - `sulla models/models_list` — Models for one provider (live discovery, static-catalog fallback).
@@ -311,21 +305,21 @@ Account IDs are discoverable via `sulla vault/vault_list_accounts '{"account_typ
 
 | Category | Tools | | Category | Tools |
 |----------|------:|-|----------|------:|
-| github | 52 | | vault | 8 |
-| browser | 23 | | slack | 7 |
-| capture | 20 | | agents | 7 |
-| meta | 14 | | calendar | 7 |
-| project | 13 | | extensions | 7 |
-| redis | 12 | | pg | 6 |
-| marketplace | 11 | | lima | 6 |
-| rdctl | 10 | | mobile | 5 |
-| observation | 9 | | applescript | 5 |
-| docker | 9 | | rules | 4 |
-| workflow | 8 | | function | 3 |
-| memory | 3 | | secretary | 3 |
-| models | 3 | | kubectl | 3 |
-| settings | 2 | | notify | 2 |
-| bridge | 2 | | ledger | 1 |
-| ui | 1 | | **Total** | **266** |
+| github | 52 | | extensions | 7 |
+| browser | 23 | | pg | 6 |
+| capture | 20 | | lima | 6 |
+| meta | 14 | | mobile | 5 |
+| project | 13 | | applescript | 5 |
+| redis | 12 | | function | 3 |
+| marketplace | 11 | | secretary | 3 |
+| rdctl | 10 | | kubectl | 3 |
+| observation | 9 | | memory | 3 |
+| docker | 9 | | models | 3 |
+| workflow | 8 | | settings | 2 |
+| vault | 8 | | notify | 2 |
+| slack | 7 | | bridge | 2 |
+| agents | 7 | | ui | 1 |
+| calendar | 7 | | ledger | 1 |
+| | | | **Total** | **262** |
 
 If a new category appears in `pkg/rancher-desktop/agent/tools/` or `sulla <cat> --help` that's not on this list, add it here AND write a doc.
