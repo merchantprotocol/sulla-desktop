@@ -170,12 +170,14 @@ export class AgentNode extends BaseNode {
     const userObservationContext = (state.metadata as any).userObservationContext;
     const selfObservationContext = (state.metadata as any).selfObservationContext;
     const businessObservationContext = (state.metadata as any).businessObservationContext;
+    const worldObservationContext = (state.metadata as any).worldObservationContext;
     const environmentObservationContext = (state.metadata as any).environmentObservationContext;
     const combinedContextParts: string[] = [];
     if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
     if (userObservationContext) combinedContextParts.push(`<user_observations>\n${ userObservationContext }\n</user_observations>`);
     if (selfObservationContext) combinedContextParts.push(`<self_observations>\n${ selfObservationContext }\n</self_observations>`);
     if (businessObservationContext) combinedContextParts.push(`<business_observations>\n${ businessObservationContext }\n</business_observations>`);
+    if (worldObservationContext) combinedContextParts.push(`<world_observations>\n${ worldObservationContext }\n</world_observations>`);
     if (environmentObservationContext) combinedContextParts.push(`<environment_observations>\n${ environmentObservationContext }\n</environment_observations>`);
     const projectsObservationContext = (state.metadata as any).projectsObservationContext;
     if (projectsObservationContext) combinedContextParts.push(`<projects_observations>\n${ projectsObservationContext }\n</projects_observations>`);

@@ -44,15 +44,17 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `communication.md` — WebSocket channels, IPC, exec tool, inter-agent messaging
 - `docker.md` — Lima vs host Docker, pre-installed containers, docker_* and lima_* tools
 - `heartbeat.md` — Autonomous heartbeat agent: cadence, tick lifecycle, status, history, time-window config
+- `subconscious.md` — The recall/memory/observation layer around every turn: pre-turn recalls, post-turn observer writers, the observations + identity_observations tables, recall index
 - `kubernetes.md` — k3s built into Lima, kubectl_* and rdctl_* tools, no safety rails
 - `updates.md` — In-app updater (electron-updater + Longhorn provider, release channels, dev-mode config)
 
 ## tools/
 - `inventory.md` — **MASTER LIST** of every tool, grouped by category, one-line each
 - `overview.md` — ⚠️ CRITICAL: invocation pattern, anti-patterns, all tool categories
-- `meta.md` — Foundational: exec, browse_tools, file_search, read_file, write_file, observation memory
-- `browser.md` — Full ~28-tool surface: tab/snapshot/screenshot/click/click_at/type_at/eval_js/cookies/history/storage/alarms
-- `github.md` — git_push/pull/commit, GitHub API, PAT auth
+- `meta.md` — Foundational: exec, browse_tools, file_search, read_file, spawn_agent, observational + identity memory, recall index
+- `models.md` — AI provider/model inventory: models_providers / models_list / models_usage
+- `browser.md` — Full 23-tool surface: tab/snapshot/screenshot/click/click_at/type_at/eval_js/cookies/history/storage/alarms
+- `github.md` — git + GitHub API (52 tools): git_push/pull/commit, PRs, issues, Projects V2, PAT auth
 - `function.md` — function_list, function_run, invocation examples
 - `vault.md` — Password vault: encryption, LLM access levels, autofill, proxy injection
 - `notify.md` — notify_user, presence detection, when (and when not) to notify
@@ -64,7 +66,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `computer-use.md` — What's shipped (AppleScript + browser pixel control) vs what's planned (full OS pixel-level)
 - `ui.md` — Open Sulla Desktop views (marketplace, vault, routines, etc.) from chat via `ui/open_tab`
 - `marketplace.md` — Search / download / scaffold / validate / publish / unpublish artifacts of all 6 kinds
-- `capture.md` — Capture Studio control: teleprompter, mic, speaker loopback, screenshots (13 tools, headless)
+- `capture.md` — Capture Studio control: teleprompter, mic, speaker loopback, camera, recorder, screenshots (20 tools, headless)
 - `redis.md` — 12 Redis tools + how Sulla uses Redis (`sulla:bridge:human_presence`)
 - `pg.md` — 6 Postgres tools + all 16 tables + critical do-not-write list
 - `slack.md` — Slack tools, two-token auth, scopes, common patterns

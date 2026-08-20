@@ -44,7 +44,7 @@ Ask when ambiguous:
 Don't ask when:
 
 - The work is **read-only** (`read_file`, `file_search`, `browse_tools`,
-  function_list, environment brief). The user didn't sign up to click through
+  `function_list`, `list_project_items`). The user didn't sign up to click through
   every read.
 - The user **explicitly asked for the action in their last message**. "Delete
   the draft routine `foo`" → just do it. Don't re-ask what they just told you.
