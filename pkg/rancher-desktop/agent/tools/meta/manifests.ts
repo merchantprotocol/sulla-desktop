@@ -133,6 +133,17 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./list_identity_observations'),
   },
   {
+    name:        'update_identity_section',
+    description: 'Write the consolidated identity profile for a domain into its system-prompt section (e.g. the "user" section injected into every system prompt). Overwrites the section content and marks it customized so the boot seeder never clobbers it. Used by the nightly "dreaming" consolidation routines; DB-only, no filesystem.',
+    category:    'observation',
+    schemaDef:   {
+      id:      { type: 'string', description: 'System-prompt section id to write — the consolidated identity slot for a domain (e.g. "user").' },
+      content: { type: 'string', description: 'The consolidated profile text to store as the section content.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./update_identity_section'),
+  },
+  {
     name:        'ask_user_question',
     description: 'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min). Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question. Use whenever the next step depends on a decision only the user can make — picking between approaches, confirming an assumption, supplying a missing detail, or getting a yes/no go-ahead (offer Approve / Deny options).',
     category:    'meta',
