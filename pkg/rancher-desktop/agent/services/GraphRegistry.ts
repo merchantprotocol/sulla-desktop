@@ -141,6 +141,17 @@ Reject (never write these):
 - "I was helpful", restating SOUL or the identity files, mood/persona fanfic,
   "I noticed I care about…"
 - this-turn task status ("edited foo.ts"), one-off guesses about its own character
+- a PR / branch / commit / per-feature implementation report ("PR #614 fixed the
+  thinking bubble", "commit abc wired world recall", "opened draft PR #615") — a
+  ticket is not a durable working-partner fact. Record the reusable METHOD it
+  proves ("agent captures shared-checkout work into an isolated worktree before
+  pushing"), never the ticket
+- a specific tool name, model id, source-file path, or config value discovered
+  this session ("Codex exposes gpt-5.3-codex", "heartbeat.ts exports X") — that is
+  an environment fact, not an agent fact
+- restating an AGENTS.md / system-prompt rule verbatim as if it were a fresh
+  observation — only record the standing operating rule when it genuinely governs
+  how the pair works, not because the prompt listed it
 - traits like helpful / curious / proactive UNLESS the human stated them as a rule
 - feelings or inner life`,
     writerNote: `## How to write a self-observation (agent domain)
@@ -216,6 +227,18 @@ RELEVANCE GATE — before writing anything:
 - No connection to the human / business / agent → do NOT record it, however
   newsworthy.
 
+Reject (these are NOT world facts, however they arrived):
+- anything about Sulla Desktop itself — its features, PRs, prompts, routines,
+  memory system, or the agent's own work. That is internal product/engineering,
+  not the OUTSIDE world. The world domain is for things happening beyond this
+  system (markets, weather, fuel, regulation, competitor/model releases, local
+  events)
+- a task, instruction, product request, or code/PR/commit status — even one that
+  names a company. If the natural subject is the agent or the agent+human pair
+  (subject agent.user), it does NOT belong here
+- a fact with no external origin. If it did not happen out in the world and reach
+  you as news/research/observation, it is not a world observation
+
 Categories: event (something happened), condition (an ongoing state), trend (a
 direction of change), actor (an external org/person that matters to us). Always
 record WHY it matters to us, not just the raw fact.`,
@@ -255,7 +278,19 @@ Two things belong here:
 
 categories: fact | tool | path | build | limit | method | anti-pattern | process.
 This domain is the seedbed for crafting environment-specific skills, so a clean
-confirmed method or a repeatable process is high-value.`,
+confirmed method or a repeatable process is high-value.
+
+Reject (not environment facts, even when observed this session):
+- a PR / branch / commit / feature-implementation status ("PR #614 fixed the
+  thinking bubble", "commit abc wired world recall") — that is task/work-state.
+  Record the durable LESSON instead ("focused ts-jest passes while full tsc
+  OOM-kills in the VM"), never the ticket or SHA
+- a product/feature request or preference the human stated ("world domain should
+  recall every turn", "heartbeat prompt should…") — that is product direction,
+  not the substrate; it belongs to the projects or agent domain, not here
+- content copied from AGENTS.md / the system prompt / platform context as if it
+  were a discovered fact. Record only what a command, path, error, or build
+  actually showed you this conversation`,
     writerNote: `## How to write an environment observation
 
 CONFIRMED-ONLY. If you did not directly observe it succeed or fail this
@@ -290,7 +325,20 @@ structured Projects work-state store (the \`sulla project/*\` tools), not here.
 - blocker: standing constraints or dependencies between projects
 
 Record what stays true across chats about a project, not "task 123 moved to
-done" — that belongs in the structured Projects work-state store.`,
+done" — that belongs in the structured Projects work-state store.
+
+Reject (belongs in the live Projects work-state store, or nowhere — never here):
+- a task or sub-agent assignment, a branch/worktree/commit/PR report, routed/
+  exempted/blocked counts, or tsc/test results — that is live work-state the
+  \`sulla project/*\` tools already track, not durable project identity
+- a point-in-time status dump (the injected project_report, "7 done / 76 open",
+  task ids and their current column) — that is a snapshot, not a durable fact
+- a Sulla Desktop feature/PR (heartbeat prompt, thinking bubbles, subconscious
+  lockdown, model CLI) logged as a project fact — the per-feature engineering
+  churn is work-state. Only a durable project truth qualifies ("DOD1 = per-org
+  Durable-Object SQLite isolation, tracked in issue #2086")
+- anything whose real subject is the agent or the agent+human pair (subject
+  agent.user) — that belongs to the agent domain`,
     writerNote: `## Certainty for project facts
 
 The SUBJECT is a project or the PM system — personal facts belong to the human
