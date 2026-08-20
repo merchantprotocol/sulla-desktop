@@ -741,44 +741,65 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     //    install up to 5× with a 5-second backoff; even one extra cycle is
     //    enough for the CRNG to settle.
     //
-    // Net effect: a freshly-provisioned VM installs claude once to
+    // Net effect: a freshly-provisioned VM installs the CLI once to
     // /mnt/data/npm-global, retrying through any first-boot CRNG flakiness;
     // every subsequent reboot just recreates the /usr/local/bin symlink
     // (cheap, doesn't touch Node) and exits. If a previous boot died
     // mid-install leaving an empty $PREFIX, this script re-attempts the
     // install on the next boot.
-    const claudeCodeScript = [
+    //
+    // 3. Version staleness. A plain install-once freezes the CLI on whatever
+    //    version first shipped — and model availability is gated on CLI
+    //    version (e.g. codex must be >=0.144.0 before its catalog exposes the
+    //    GPT-5.6 Sol/Terra/Luna models). So the fast path ALSO fires a
+    //    throttled, detached `npm install -g <pkg>@latest` — at most once per
+    //    24h (stamp-file gated), run under setsid so it never blocks boot, and
+    //    safe on failure (npm swaps atomically; a failed update leaves the
+    //    existing working binary in place). This keeps every install current
+    //    with new model rollouts without paying an install cost each boot.
+    const buildAiCliProvisionScript = (bin: string, pkg: string): string => [
       '#!/bin/sh',
       'PREFIX=/mnt/data/npm-global',
-      'LINK=/usr/local/bin/claude',
-      '# Fast path: persistent install already exists — just recreate the',
-      '# symlink that tmpfs wiped on reboot. No Node invocation, no CRNG',
-      '# race, can\'t fail due to script 00000010 crashing.',
-      'if [ -x "$PREFIX/bin/claude" ]; then',
-      '  ln -sf "$PREFIX/bin/claude" "$LINK"',
+      `LINK=/usr/local/bin/${ bin }`,
+      `PKG=${ pkg }`,
+      `STAMP="$PREFIX/.${ bin }-last-update"`,
+      'MAXAGE=86400', // 24h throttle between self-update checks
+      '# Throttled, detached self-update. Stamp is written up-front so a failing',
+      '# update cannot re-run on every boot; setsid detaches it from the provision',
+      '# session so boot returns immediately.',
+      'selfupdate() {',
+      '  now=$(date +%s); last=$(cat "$STAMP" 2>/dev/null || echo 0)',
+      '  [ $((now - last)) -lt "$MAXAGE" ] && return 0',
+      '  date +%s > "$STAMP"',
+      `  setsid sh -c "npm install --prefix $PREFIX -g $PKG@latest && ln -sf $PREFIX/bin/${ bin } $LINK" >/dev/null 2>&1 &`,
+      '}',
+      '# Fast path: persistent install exists — restore the tmpfs-wiped symlink',
+      '# (no Node/CRNG dependency), then kick a throttled background update.',
+      `if [ -x "$PREFIX/bin/${ bin }" ]; then`,
+      `  ln -sf "$PREFIX/bin/${ bin }" "$LINK"`,
+      '  selfupdate',
       '  exit 0',
       'fi',
-      '# First boot (or after a persistent-prefix wipe): real install.',
+      '# First boot (or after a persistent-prefix wipe): real blocking install.',
       'mkdir -p "$PREFIX"',
       '# Block until the kernel CRNG is seeded so Node\'s PlatformInit',
       '# doesn\'t abort on getrandom() EAGAIN.',
       'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
       '# Retry through any residual CRNG flakiness — 5 attempts × 5s backoff.',
-      '# Without this, a single Node abort during npm install leaves the VM',
-      '# permanently without claude until the user re-provisions.',
       'attempt=0',
       'while [ "$attempt" -lt 5 ]; do',
-      '  if npm install --prefix "$PREFIX" -g @anthropic-ai/claude-code; then',
-      '    ln -sf "$PREFIX/bin/claude" "$LINK"',
+      '  if npm install --prefix "$PREFIX" -g "$PKG@latest"; then',
+      `    date +%s > "$STAMP"; ln -sf "$PREFIX/bin/${ bin }" "$LINK"`,
       '    exit 0',
       '  fi',
       '  attempt=$((attempt + 1))',
-      '  echo "[claude-install] npm install attempt $attempt failed; retrying in 5s" >&2',
+      `  echo "[${ bin }-install] npm install attempt $attempt failed; retrying in 5s" >&2`,
       '  sleep 5',
       'done',
-      'echo "[claude-install] failed after 5 attempts — claude CLI will not be available" >&2',
+      `echo "[${ bin }-install] failed after 5 attempts — ${ bin } CLI will not be available" >&2`,
       'exit 1',
     ].join('\n');
+    const claudeCodeScript = buildAiCliProvisionScript('claude', '@anthropic-ai/claude-code');
     config.provision = config.provision.filter((p: { script?: string }) => {
       return !(p.script ?? '').includes('@anthropic-ai/claude-code');
     });
@@ -789,29 +810,7 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
 
     // Install the OpenAI Codex CLI — same persistent-prefix + per-boot
     // symlink strategy (and the same CRNG-retry rationale) as claude above.
-    const codexScript = [
-      '#!/bin/sh',
-      'PREFIX=/mnt/data/npm-global',
-      'LINK=/usr/local/bin/codex',
-      'if [ -x "$PREFIX/bin/codex" ]; then',
-      '  ln -sf "$PREFIX/bin/codex" "$LINK"',
-      '  exit 0',
-      'fi',
-      'mkdir -p "$PREFIX"',
-      'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
-      'attempt=0',
-      'while [ "$attempt" -lt 5 ]; do',
-      '  if npm install --prefix "$PREFIX" -g @openai/codex; then',
-      '    ln -sf "$PREFIX/bin/codex" "$LINK"',
-      '    exit 0',
-      '  fi',
-      '  attempt=$((attempt + 1))',
-      '  echo "[codex-install] npm install attempt $attempt failed; retrying in 5s" >&2',
-      '  sleep 5',
-      'done',
-      'echo "[codex-install] failed after 5 attempts — codex CLI will not be available" >&2',
-      'exit 1',
-    ].join('\n');
+    const codexScript = buildAiCliProvisionScript('codex', '@openai/codex');
     config.provision = config.provision.filter((p: { script?: string }) => {
       return !(p.script ?? '').includes('@openai/codex');
     });
@@ -2042,14 +2041,17 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const installScript = [
       'PREFIX=/mnt/data/npm-global',
       'LINK=/usr/local/bin/claude',
+      'STAMP="$PREFIX/.claude-last-update"',
       'mkdir -p "$PREFIX"',
       // CRNG should be seeded by now (the VM has been up long enough for
       // services to start), but block briefly to be safe.
       'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
       'attempt=0',
       'while [ "$attempt" -lt 5 ]; do',
-      '  if npm install --prefix "$PREFIX" -g @anthropic-ai/claude-code; then',
-      '    ln -sf "$PREFIX/bin/claude" "$LINK"',
+      // @latest + stamp keeps this safety-net install consistent with the boot
+      // provision script's throttled self-update (see buildAiCliProvisionScript).
+      '  if npm install --prefix "$PREFIX" -g @anthropic-ai/claude-code@latest; then',
+      '    date +%s > "$STAMP"; ln -sf "$PREFIX/bin/claude" "$LINK"',
       '    exit 0',
       '  fi',
       '  attempt=$((attempt + 1))',
@@ -2091,12 +2093,15 @@ export default class LimaBackend extends events.EventEmitter implements VMBacken
     const installScript = [
       'PREFIX=/mnt/data/npm-global',
       'LINK=/usr/local/bin/codex',
+      'STAMP="$PREFIX/.codex-last-update"',
       'mkdir -p "$PREFIX"',
       'dd if=/dev/random of=/dev/null bs=1 count=1 2>/dev/null',
       'attempt=0',
       'while [ "$attempt" -lt 5 ]; do',
-      '  if npm install --prefix "$PREFIX" -g @openai/codex; then',
-      '    ln -sf "$PREFIX/bin/codex" "$LINK"',
+      // @latest + stamp keeps this safety-net install consistent with the boot
+      // provision script's throttled self-update (see buildAiCliProvisionScript).
+      '  if npm install --prefix "$PREFIX" -g @openai/codex@latest; then',
+      '    date +%s > "$STAMP"; ln -sf "$PREFIX/bin/codex" "$LINK"',
       '    exit 0',
       '  fi',
       '  attempt=$((attempt + 1))',
