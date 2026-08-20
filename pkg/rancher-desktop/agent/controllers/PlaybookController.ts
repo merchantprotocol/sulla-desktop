@@ -39,6 +39,20 @@ const SUB_AGENT_MAX_MS = parseInt(
 );
 const SUB_AGENT_WATCHDOG_INTERVAL_MS = 5000;
 
+// Parent-turn reentry watchdog for the spawn_sub_agent walker branch (see
+// raceWithParentTurnTimeout below). A single orchestrator formulation /
+// delegation-announce / evaluate turn is one LLM turn, not a whole
+// sub-agent task, so it should complete in well under this cap — a stall
+// here means the call is genuinely wedged (provider hang, stuck tool),
+// not "still working." Unlike the sub-agent watchdog above, this is a
+// plain hard timeout with no activity-bump nudging: those reentries
+// reuse the persistent orchestrator `state`, and injecting synthetic
+// "[bump]" user turns into that live conversation would pollute it in a
+// way a throwaway sub-state doesn't risk.
+const ORCHESTRATOR_REENTRY_MAX_MS = parseInt(
+  process.env.SULLA_ORCHESTRATOR_REENTRY_MAX_MS || '300000', 10, // 5 min hard cap
+);
+
 import { throwIfAborted } from '../services/AbortService';
 import { getConversationLogger } from '../services/ConversationLogger';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -887,7 +901,10 @@ export class PlaybookController<TState = any> {
 
             const validatePrompt = `[Workflow Tool Call: ${ subNodeLabel }]\n${ toolInfo }\n${ paramSummary ? `\nParameters:\n${ paramSummary }` : '' }\n${ preCallDesc ? `\nDescription: ${ preCallDesc }` : '' }\n\nValidate these parameters. The tool will execute after your review.`;
             this.injectWorkflowMessage(state, validatePrompt);
-            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+            state = await this.raceWithParentTurnTimeout(
+              `Integration call "${ subNodeLabel }" — parameter validation`,
+              () => this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true }),
+            );
 
             try {
               const result = await this.executeSubAgent(state, step.nodeId, step.agentId, step.prompt, step.config);
@@ -953,7 +970,10 @@ export class PlaybookController<TState = any> {
 
             this.injectWorkflowMessage(state, formationMsg);
             (state as any).metadata._muteWsChat = true;
-            state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+            state = await this.raceWithParentTurnTimeout(
+              `Agent dispatch "${ subNodeLabel }" — formulate sub-agent task`,
+              () => this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true }),
+            );
             (state as any).metadata._muteWsChat = false;
 
             const lastMsg = (state as any).messages?.[(state as any).messages.length - 1];
@@ -982,7 +1002,10 @@ export class PlaybookController<TState = any> {
                 `  ${ i + 1 }. [${ pp.label || `prompt-${ i }` }] (agent: ${ pp.agentId || agentName })`,
               ).join('\n');
               this.injectWorkflowMessage(state, `[Workflow: Agent Delegation — ${ subNodeLabel }]\nSpawning ${ cappedPrompts.length } agents in parallel:\n${ delegationSummary }\n\nAll agents are launching now.`);
-              state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+              state = await this.raceWithParentTurnTimeout(
+                `Agent dispatch "${ subNodeLabel }" — delegation announcement`,
+                () => this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true }),
+              );
 
               const parallelPromises = cappedPrompts.map((pp, i) => {
                 const promptParts: string[] = [];
@@ -1034,7 +1057,10 @@ export class PlaybookController<TState = any> {
                 `The workflow "${ currentPlaybook.definition?.name }" is paused. Ask the user what to do.`;
 
                 this.injectWorkflowMessage(state, escalationMsg);
-                state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+                state = await this.raceWithParentTurnTimeout(
+                  `Agent dispatch "${ subNodeLabel }" — all-delegates-failed escalation`,
+                  () => this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true }),
+                );
                 return state;
               }
 
@@ -1066,7 +1092,10 @@ export class PlaybookController<TState = any> {
                 `If they fail any criteria, respond with NEEDS_REVISION and explain what fell short.`;
 
                 this.injectWorkflowMessage(state, evalMsg);
-                state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
+                state = await this.raceWithParentTurnTimeout(
+                  `Agent dispatch "${ subNodeLabel }" — evaluate delegated results`,
+                  () => this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true }),
+                );
               } else {
                 const resultMsg = `[Workflow Node Complete: ${ subNodeLabel } — ${ successes.length }/${ cappedPrompts.length } agents]\n${ batchSummaryText }${ failureNote }`;
                 this.injectWorkflowMessage(state, resultMsg, true);
@@ -2118,6 +2147,35 @@ export class PlaybookController<TState = any> {
     state = await this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true });
 
     return state;
+  }
+
+  // Hard-cap wrapper for the orchestrator's own graph.execute() reentries
+  // inside the spawn_sub_agent walker branch (Formulate / Delegation-
+  // announce / All-failed-escalation / Evaluate phases, plus the
+  // integration-call parameter-validation reentry). Root-caused via QvXQ:
+  // CtLk (project-momentum-engine) froze 33h+ at exactly one of these
+  // calls with zero timeout, zero checkpoint, zero error — the
+  // parent-turn equivalent of the gap #626 fixed for delegated
+  // sub-workflows. Every call site wrapped here is already reached from
+  // inside a try/catch (either this method's own local catch for the
+  // integration-call branch, or the walker's outer "Walker crashed"
+  // catch), so a rejection here degrades to the existing
+  // fail-the-node/fail-the-workflow path instead of hanging forever.
+  private async raceWithParentTurnTimeout(
+    label: string,
+    execute: () => Promise<TState>,
+  ): Promise<TState> {
+    let timeoutId: NodeJS.Timeout | null = null;
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(
+          `Orchestrator reentry "${ label }" exceeded hard cap of ${ Math.round(ORCHESTRATOR_REENTRY_MAX_MS / 1000) }s — parent turn is wedged`,
+        )), ORCHESTRATOR_REENTRY_MAX_MS);
+      });
+      return await Promise.race([execute(), timeoutPromise]);
+    } finally {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+    }
   }
 
   // ─── Sub-Agent Execution ────────────────────────────────────────
