@@ -45,14 +45,19 @@ const MAX_DEDUP_SCAN = 500;
  * ..." list as an exhaustive scheme, not examples). Enforced at the DB
  * boundary so a miscategorized write fails with a reason INSTEAD of silently
  * landing — a tool error at the decision moment is what a prompt reject-list
- * could never be: unignorable. `agent` is intentionally omitted — its
- * "category" field semantics overlap with the separately-enforced `kind`
- * enum and are not cleanly closed; left as free text pending a follow-up.
+ * could never be: unignorable. `agent` gets an EMPTY set, not an omission —
+ * the agent domain's certainty/kind field is `kind` (correction | constraint
+ * | method | commitment | preference), not `category`; the writerNote used
+ * to say "category — the kind: ..." which pointed the writer at the wrong
+ * column entirely (silently landing in `category`, leaving `kind` — the
+ * field validateKindForDomain actually enforces — always null). Rejecting
+ * `category` outright on this domain forces the correct field.
  */
 const DOMAIN_CATEGORIES: Partial<Record<IdentityDomain, string[]>> = {
   human:       ['identity', 'relationship', 'association', 'personality', 'habit', 'preference', 'goal'],
   business:    ['identity', 'model', 'operations', 'market', 'priorities', 'constraints', 'assets'],
   world:       ['event', 'condition', 'trend', 'actor'],
+  agent:       [],
   environment: ['fact', 'tool', 'path', 'build', 'limit', 'method', 'anti-pattern', 'process'],
   projects:    ['project', 'structure', 'priority', 'decision', 'process', 'relationship', 'blocker'],
   skills:      ['provenance', 'success', 'failure', 'gap', 'inventory'],
@@ -89,6 +94,7 @@ export interface IdentityObservationRecord {
   evidence:   string | null;
   confidence: number | null;
   kind:       string | null;
+  skill_slug: string | null;
   created_at: string | Date;
   updated_at: string | Date | null;
   archived:   boolean;
@@ -106,6 +112,7 @@ export interface InsertIdentityObservationInput {
   evidence?: string;
   confidence?: number;
   kind?:     string;
+  skillSlug?: string;
   source?:   string;
 }
 
@@ -118,6 +125,7 @@ export interface UpdateIdentityObservationInput {
   evidence?: string;
   confidence?: number;
   kind?:     string;
+  skillSlug?: string;
   source?:   string;
 }
 
@@ -172,6 +180,19 @@ function normalizeIdentityKind(value: unknown): IdentityObservationKind | null |
   throw new Error('kind must be one of: correction, constraint, method, commitment, preference.');
 }
 
+/** Kebab-case artifact slug — same shape marketplace/scaffold requires. */
+const SKILL_SLUG_SHAPE_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+function normalizeSkillSlug(value: unknown): string | null | undefined {
+  const normalized = normalizeOptionalText(value, 'skillSlug', MAX_LABEL_CHARS);
+  if (normalized === undefined || normalized === null) return normalized;
+  const lower = normalized.toLowerCase();
+  if (!SKILL_SLUG_SHAPE_RE.test(lower)) {
+    throw new Error('skillSlug must be a kebab-case artifact slug (lowercase letters, digits, hyphens — e.g. "pdf-fill").');
+  }
+  return lower;
+}
+
 function normalizeConfidence(value: unknown): number | null | undefined {
   if (value === undefined) return undefined;
   if (value === null || value === '') return null;
@@ -221,7 +242,10 @@ function normalizeOptionalText(value: unknown, field: string, maxChars: number):
 function validateCategoryForDomain(domain: IdentityDomain, category: string | null | undefined): void {
   if (category == null) return;
   const allowed = DOMAIN_CATEGORIES[domain];
-  if (!allowed) return; // domain has no closed set (currently only `agent`) — free text
+  if (allowed === undefined) return; // no closed set registered for this domain — free text
+  if (allowed.length === 0) {
+    throw new Error(`category is not used in the "${ domain }" domain — did you mean to set kind instead? (agent-domain rows use kind: correction | constraint | method | commitment | preference.)`);
+  }
   if (!allowed.includes(category)) {
     throw new Error(`category "${ category }" is not valid for domain "${ domain }"; expected one of: ${ allowed.join(', ') }.`);
   }
@@ -254,6 +278,26 @@ function validateContentForDomain(domain: IdentityDomain, content: string): void
   }
   if (domain === 'skills' && !SKILLS_SLUG_CONTENT_RE.test(content)) {
     throw new Error('skills-domain content must name the exact skill in the shape "Skill \'<slug>\' …" — a row with no quoted skill slug is not about a specific skill artifact and does not belong in this domain.');
+  }
+}
+
+/**
+ * skill_slug is the structural counterpart to the content-regex check above:
+ * the column makes "every row about skill X" queryable without parsing
+ * prose; the content regex proves the row's own text actually names the
+ * skill (defense in depth — a writer could set the column without ever
+ * saying the skill's name out loud in content). Required on every
+ * skills-domain row, illegal everywhere else — same shape as subject/kind.
+ */
+function validateSkillSlugForDomain(domain: IdentityDomain, skillSlug: string | null | undefined): void {
+  if (domain === 'skills') {
+    if (skillSlug == null) {
+      throw new Error('skillSlug is required for skills-domain rows — set it to the exact artifact slug (e.g. "pdf-fill") this row is about.');
+    }
+    return;
+  }
+  if (skillSlug != null) {
+    throw new Error(`skillSlug is only valid in the skills domain (got domain "${ domain }").`);
   }
 }
 
@@ -304,7 +348,8 @@ export class IdentityObservationsModel {
           ADD COLUMN IF NOT EXISTS subject TEXT,
           ADD COLUMN IF NOT EXISTS evidence TEXT,
           ADD COLUMN IF NOT EXISTS confidence REAL,
-          ADD COLUMN IF NOT EXISTS kind TEXT
+          ADD COLUMN IF NOT EXISTS kind TEXT,
+          ADD COLUMN IF NOT EXISTS skill_slug TEXT
       `);
     } catch (err) {
       console.error('[IdentityObservationsModel] Failed to ensure table:', err);
@@ -324,17 +369,19 @@ export class IdentityObservationsModel {
     const evidence = normalizeOptionalText(input.evidence, 'evidence', MAX_EVIDENCE_CHARS);
     const confidence = normalizeConfidence(input.confidence);
     const kind = normalizeIdentityKind(input.kind);
+    const skillSlug = normalizeSkillSlug(input.skillSlug);
     const source = normalizeOptionalText(input.source, 'source', MAX_SOURCE_CHARS);
     const content = normalizeRequiredText(input.content, 'content', MAX_CONTENT_CHARS);
 
     validateCategoryForDomain(domain, category);
     validateSubjectForDomain(domain, subject);
     validateKindForDomain(domain, kind);
+    validateSkillSlugForDomain(domain, skillSlug);
     validateContentForDomain(domain, content);
 
     const rows = await postgresClient.query<IdentityObservationRecord>(
-      `INSERT INTO ${ IdentityObservationsModel.TABLE } (id, domain, level, category, content, basis, subject, evidence, confidence, kind, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO ${ IdentityObservationsModel.TABLE } (id, domain, level, category, content, basis, subject, evidence, confidence, kind, skill_slug, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
       [
         id,
@@ -347,6 +394,7 @@ export class IdentityObservationsModel {
         evidence ?? null,
         confidence ?? null,
         kind ?? null,
+        skillSlug ?? null,
         source ?? null,
       ],
     );
@@ -405,6 +453,12 @@ export class IdentityObservationsModel {
       validateKindForDomain(domain, kind);
       setClauses.push(`kind = $${ idx++ }`);
       values.push(kind);
+    }
+    if (changes.skillSlug !== undefined) {
+      const skillSlug = normalizeSkillSlug(changes.skillSlug);
+      validateSkillSlugForDomain(domain, skillSlug);
+      setClauses.push(`skill_slug = $${ idx++ }`);
+      values.push(skillSlug);
     }
     if (changes.source !== undefined) {
       setClauses.push(`source = $${ idx++ }`);

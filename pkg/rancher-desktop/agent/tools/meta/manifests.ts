@@ -91,6 +91,7 @@ export const metaToolManifests: ToolManifest[] = [
       evidence: { type: 'string', optional: true, description: 'Optional quote or turn reference supporting the observation.' },
       confidence: { type: 'number', optional: true, description: 'Optional confidence score from 0 to 1.' },
       kind:     { type: 'string', optional: true, description: 'Optional self-observation kind: correction, constraint, method, commitment, or preference.' },
+      skillSlug: { type: 'string', optional: true, description: 'REQUIRED for domain:skills — the exact kebab-case artifact slug this row is about (e.g. "pdf-fill"). Illegal in every other domain.' },
       source:   { type: 'string', optional: true, description: 'Optional source label for this observation.' },
     },
     operationTypes: ['create', 'read', 'update'],

@@ -258,9 +258,12 @@ Field contract for every agent-domain row:
   more careful" and NOT "I will not push to main." First person or self-talk
   pollutes the snapshot: always start with "Agent ..." or "The pair ..." /
   "The human ...", never "I ...".
-- source — the subject: exactly \`agent\` or \`agent.user\`.
-- category — the kind: exactly one of correction | constraint | method |
-  commitment | preference.
+- subject — exactly \`agent\` or \`agent.user\` (NOT the \`source\` parameter —
+  \`source\` is an unrelated free-text label; set \`subject\` or the row is
+  rejected as agent.user work correctly categorized nowhere).
+- kind — exactly one of correction | constraint | method | commitment |
+  preference (NOT the \`category\` parameter — \`category\` has no meaning in
+  this domain; set \`kind\` or add_identity_observation rejects it).
 - basis — the evidence, and for a success/failure/personality row the SENTIMENT
   signal that labeled it: the short quote or reaction that showed delight or
   frustration ("he said 'perfect, ship it'", "he replied 'why'd you push without a
@@ -526,8 +529,13 @@ the agent's general working style, not Sulla Desktop's skills feature? If you
 cannot point to the slug, do not write the row.
 
 Field contract for every skills-domain row:
+- skillSlug — REQUIRED. The exact kebab-case artifact slug (e.g. "pdf-fill").
+  add_identity_observation rejects any skills-domain write missing this — it
+  is what makes rows about one skill queryable without parsing prose.
 - content — ONE sentence, third person, naming the skill: "Skill 'pdf-fill' …" —
-  never a first-person narration of what you just did.
+  never a first-person narration of what you just did. Must name the same
+  skill as skillSlug; add_identity_observation rejects skills-domain content
+  with no quoted skill name even when skillSlug is set.
 - category — exactly one of: provenance | success | failure | gap | inventory.
 - basis / evidence — the concrete signal: the marketplace/local lookup result
   for provenance, or what happened when the skill ran for success/failure.

@@ -45,7 +45,7 @@ describe('IdentityObservationsModel', () => {
 
     expect(postgresClient.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO identity_observations'),
-      ['hum1', 'human', 2, 'preference', 'Jonathon prefers direct status reports.', 'Repeated instruction in chat.', null, null, null, null, 'test'],
+      ['hum1', 'human', 2, 'preference', 'Jonathon prefers direct status reports.', 'Repeated instruction in chat.', null, null, null, null, null, 'test'],
     );
     expect(row).toBe(inserted);
   });
@@ -189,6 +189,20 @@ describe('IdentityObservationsModel', () => {
     expect(row).toBe(inserted);
   });
 
+  it('rejects category on the agent domain (points the writer at kind instead)', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:       'bad12',
+      domain:   'agent',
+      level:    2,
+      category: 'method',
+      content:  'Agent drafts PRs; the human merges.',
+    })).rejects.toThrow('did you mean to set kind instead');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
   it('rejects content that reads as task/PR/commit status', async() => {
     (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
 
@@ -202,31 +216,78 @@ describe('IdentityObservationsModel', () => {
     expect(postgresClient.query).not.toHaveBeenCalled();
   });
 
-  it('rejects skills-domain content with no quoted skill slug', async() => {
+  it('rejects skills-domain inserts missing skillSlug', async() => {
     (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
 
     await expect(IdentityObservationsModel.insert({
       id:      'bad8',
       domain:  'skills',
       level:   2,
-      content: 'A skill ran successfully today.',
+      content: "Skill 'pdf-fill' ran successfully today.",
+    })).rejects.toThrow('skillSlug is required');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects skillSlug outside the skills domain', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:        'bad10',
+      domain:    'human',
+      level:     2,
+      skillSlug: 'pdf-fill',
+      content:   'Jonathon prefers direct status reports.',
+    })).rejects.toThrow('skillSlug is only valid in the skills domain');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed skillSlug', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:        'bad11',
+      domain:    'skills',
+      level:     2,
+      skillSlug: 'PDF Fill!',
+      content:   "Skill 'pdf-fill' ran successfully today.",
+    })).rejects.toThrow('kebab-case artifact slug');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects skills-domain content with no quoted skill slug even when skillSlug is set', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:        'bad9',
+      domain:    'skills',
+      level:     2,
+      skillSlug: 'pdf-fill',
+      content:   'A skill ran successfully today.',
     })).rejects.toThrow('must name the exact skill');
 
     expect(postgresClient.query).not.toHaveBeenCalled();
   });
 
-  it('accepts well-formed skills-domain content naming a slug', async() => {
-    const inserted = { id: 'sk01', domain: 'skills', level: 3, category: 'success', content: "Skill 'pdf-fill' succeeded filling a 12-field form." };
+  it('accepts well-formed skills-domain content naming a slug, with skillSlug set', async() => {
+    const inserted = { id: 'sk01', domain: 'skills', level: 3, category: 'success', skill_slug: 'pdf-fill', content: "Skill 'pdf-fill' succeeded filling a 12-field form." };
     (postgresClient as any).query = jest.fn(() => Promise.resolve([inserted]));
 
     const row = await IdentityObservationsModel.insert({
-      id:       'sk01',
-      domain:   'skills',
-      level:    3,
-      category: 'success',
-      content:  "Skill 'pdf-fill' succeeded filling a 12-field form.",
+      id:        'sk01',
+      domain:    'skills',
+      level:     3,
+      category:  'success',
+      skillSlug: 'PDF-Fill',
+      content:   "Skill 'pdf-fill' succeeded filling a 12-field form.",
     });
 
+    expect(postgresClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('skill_slug'),
+      expect.arrayContaining(['pdf-fill']),
+    );
     expect(row).toBe(inserted);
   });
 

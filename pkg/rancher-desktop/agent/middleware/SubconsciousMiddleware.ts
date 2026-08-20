@@ -727,6 +727,19 @@ function formatIdentityRecallRow(row: IdentityObservationRecord): string {
 }
 
 /**
+ * Cheap relevance prefilter for skills recall's marketplace-augmented LLM
+ * path. Skills is the only recall domain whose agent-loop can make a LIVE
+ * NETWORK CALL (marketplace search) — dispatching that on every turn
+ * regardless of relevance was flagged as a real cost. When the turn doesn't
+ * even look skill/task-shaped, skills recall falls back to the same SQL
+ * fast-path the other five domains use (still surfaces already-logged skill
+ * facts by keyword, just without live marketplace discovery or the LLM
+ * round-trip) instead of either skipping outright or paying the full cost
+ * on every turn.
+ */
+const SKILL_SHAPED_TURN_RE = /\bskill(s)?\b|\bautomat(e|es|ed|ion|ic|ing)\b|\brepeatable\b|\btemplate\b|\bhow do i\b|\bworkflow\b|\bscript\b|\brecipe\b|\bmarketplace\b/i;
+
+/**
  * Read-only recall for one identity domain. The primary agent blocks on this
  * because the selected rows are injected as <xxx_observations> before the
  * main response starts — recall is never time-limited by design, so the
@@ -779,6 +792,30 @@ async function runIdentityObservationRecall(state: BaseThreadState, domain: stri
       perf.log(`[IdentityRecall] threadId=${ parentThreadId } domain=${ domain } chars=0 ms=${ elapsed } path=agent-skipped-empty`);
       console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Skipped — 0 logged rows (agent-skipped-empty)`);
       return null;
+    }
+
+    // Skills-only relevance gate — see SKILL_SHAPED_TURN_RE. Falls back to
+    // the SQL fast-path instead of the marketplace-augmented agent when the
+    // turn gives no signal it's skill/task-shaped.
+    if (domain === 'skills') {
+      const query = extractLatestUserText(state);
+      if (!query) {
+        console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] No user text to search — skipped`);
+        return null;
+      }
+      if (!SKILL_SHAPED_TURN_RE.test(query)) {
+        const rows = await IdentityObservationsModel.search(domain, query, IDENTITY_RECALL_MAX_ROWS, false);
+        const elapsed = Date.now() - startTime;
+        if (!rows || rows.length === 0) {
+          perf.log(`[IdentityRecall] threadId=${ parentThreadId } domain=${ domain } matched=0 ms=${ elapsed } path=sql-fast-path-ungated`);
+          console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Turn not skill-shaped, no matches in ${ elapsed }ms (sql-fast-path-ungated)`);
+          return null;
+        }
+        const response = rows.map(formatIdentityRecallRow).join('\n');
+        perf.log(`[IdentityRecall] threadId=${ parentThreadId } domain=${ domain } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path-ungated`);
+        console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Turn not skill-shaped — SQL fast-path returned ${ rows.length } rows in ${ elapsed }ms instead of dispatching the marketplace-augmented agent`);
+        return response;
+      }
     }
 
     const { graph, state: subState, threadId } = await GraphRegistry.createIdentityObservationRecall(state, domain);
