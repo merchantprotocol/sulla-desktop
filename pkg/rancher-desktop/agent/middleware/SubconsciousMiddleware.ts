@@ -16,6 +16,7 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
+import { formatIdentityObservationDate, IdentityObservationsModel, type IdentityObservationRecord } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
@@ -703,15 +704,83 @@ async function runIdentityObserver(state: BaseThreadState, domain: string): Prom
 }
 
 /**
- * Read-only recall agent for one identity domain. It searches/listens through
- * identity observations and returns only rows relevant to the current turn.
- * The primary agent blocks on this because the selected rows are injected as
- * <user_observations> before the main response starts.
+ * Domains whose recall never needs anything beyond the identity_observations
+ * table — safe to route through the same deterministic SQL fast-path
+ * ObservationsModel recall already uses (see runObservationRecall above),
+ * for the identical reason: these used to spin up a full LLM agent loop (up
+ * to 10 iterations) to keyword-search a domain that, post the 2026-08-19
+ * pollution cleanup, holds a handful of rows (or, for business/world, zero).
+ * `projects` and `skills` are excluded — their recall also augments with
+ * live tools (Projects work-state / marketplace discovery) that only an LLM
+ * can decide whether and how to call; they keep the agent-loop path below.
+ */
+const IDENTITY_SQL_FAST_PATH_DOMAINS = new Set(['human', 'business', 'world', 'agent', 'environment']);
+
+/** Max identity rows surfaced per domain per turn via the SQL fast-path. */
+const IDENTITY_RECALL_MAX_ROWS = 8;
+
+function formatIdentityRecallRow(row: IdentityObservationRecord): string {
+  const date = formatIdentityObservationDate(row.created_at);
+  const cat = row.category ? `·${ row.category }` : '';
+  const basis = row.basis ? ` (basis: ${ row.basis })` : '';
+  return `[${ row.id }] L${ row.level }${ cat } ${ date } — ${ row.content }${ basis }`;
+}
+
+/**
+ * Read-only recall for one identity domain. The primary agent blocks on this
+ * because the selected rows are injected as <xxx_observations> before the
+ * main response starts — recall is never time-limited by design, so the
+ * SQL fast-path below isn't just an optimization, it removes the entire
+ * class of 17-120s-blocking-prelude-to-search-almost-nothing failure the
+ * general ObservationsModel recall was already converted to fix.
  */
 async function runIdentityObservationRecall(state: BaseThreadState, domain: string): Promise<string | null> {
   const startTime = Date.now();
+  const parentThreadId = (state.metadata as any).threadId;
 
+  if (IDENTITY_SQL_FAST_PATH_DOMAINS.has(domain)) {
+    try {
+      const query = extractLatestUserText(state);
+      if (!query) {
+        console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] No user text to search — skipped`);
+        return null;
+      }
+
+      const rows = await IdentityObservationsModel.search(domain, query, IDENTITY_RECALL_MAX_ROWS, false);
+      const elapsed = Date.now() - startTime;
+
+      if (!rows || rows.length === 0) {
+        perf.log(`[IdentityRecall] threadId=${ parentThreadId } domain=${ domain } matched=0 ms=${ elapsed } path=sql-fast-path`);
+        console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] No matching rows in ${ elapsed }ms (sql-fast-path)`);
+        return null;
+      }
+
+      const response = rows.map(formatIdentityRecallRow).join('\n');
+      perf.log(`[IdentityRecall] threadId=${ parentThreadId } domain=${ domain } matched=${ rows.length } chars=${ response.length } ms=${ elapsed } path=sql-fast-path`);
+      console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Returning ${ rows.length } rows (${ response.length } chars) in ${ elapsed }ms (sql-fast-path)`);
+      return response;
+    } catch (error) {
+      console.error(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Failed in ${ Date.now() - startTime }ms (sql-fast-path):`, error instanceof Error ? error.message : error);
+      return null;
+    }
+  }
+
+  // Remaining domains (projects, skills) augment DB search with live tools
+  // (search_project_items / marketplace discovery) an LLM must decide
+  // whether and how to call — keep the agent-loop path. But skip dispatching
+  // it entirely when the domain has logged nothing yet: an empty table plus
+  // an unused live-tool grant isn't worth up to 10 LLM iterations — and for
+  // skills specifically, a live marketplace network call — on every turn
+  // regardless of whether the turn is remotely skill/project-shaped.
   try {
+    const loggedCount = await IdentityObservationsModel.countActive(domain);
+    if (loggedCount === 0) {
+      const elapsed = Date.now() - startTime;
+      perf.log(`[IdentityRecall] threadId=${ parentThreadId } domain=${ domain } chars=0 ms=${ elapsed } path=agent-skipped-empty`);
+      console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Skipped — 0 logged rows (agent-skipped-empty)`);
+      return null;
+    }
+
     const { graph, state: subState, threadId } = await GraphRegistry.createIdentityObservationRecall(state, domain);
     console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Started | threadId: ${ threadId }`);
 

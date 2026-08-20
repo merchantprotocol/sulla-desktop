@@ -543,6 +543,34 @@ this conversation, finish immediately; most turns need NO write here.`,
 };
 
 /**
+ * Shared reject rules for EVERY identity-observer domain, hoisted out of the
+ * per-domain focus text. Every domain audit (2026-08-19: human/business/
+ * world/agent/environment/projects) found the SAME three pollution classes —
+ * task/PR/commit status, agent instructions restated as fact, and system-
+ * prompt/AGENTS.md residue — independently re-derived per domain. Maintaining
+ * one canonical block instead of six near-copies is both less error-prone and
+ * gives the tool-layer validation (IdentityObservationsModel work-state lint)
+ * a single prompt-side rule it actually matches.
+ */
+const IDENTITY_OBSERVER_UNIVERSAL_REJECTS = `## Universal rejects — apply in EVERY domain, before the domain-specific rules below
+
+These three classes caused every domain audit finding to date. Reject them
+regardless of how relevant the domain-specific focus makes them sound:
+1. Task/work status: a PR/branch/commit/worktree reference, a tsc/test/CI
+   result, a routed/exempted/blocked count, "shipped X", "opened draft PR #N".
+   This is work-state — it belongs in the Projects system, never here, in ANY
+   domain, even the projects domain itself.
+2. An instruction restated as fact: something the human told the agent to DO
+   ("split the work one task per agent", "always draft a PR first") is a task
+   directive, not identity — unless it is genuinely a standing working
+   agreement, in which case it belongs in the agent domain (subject
+   agent.user), not wherever it happened to come up.
+3. System-prompt / AGENTS.md / platform-context residue: a rule, persona
+   trait, or behavior spec copied from your own instructions and presented as
+   if it were something learned this conversation. If your only basis is "the
+   instructions say…", that is not an observation — discard it.`;
+
+/**
  * Build the writer prompt for a domain observer. The discipline is the
  * SAME for every domain — record stated facts first (L3), then derived
  * facts (L2), then reasoned conclusions (L1, always with their basis) —
@@ -554,6 +582,14 @@ function buildIdentityObserverPrompt(cfg: IdentityObserverDomainConfig): string 
 CRITICAL: You are NOT the primary agent. You do NOT execute tasks, answer
 questions, browse websites, call APIs, or do anything the user asked for.
 Another agent handles that. You ONLY manage ${ cfg.domain } identity observations.
+
+DEFAULT IS ZERO WRITES. Most turns reveal nothing durable about ${ cfg.subjectLabel }
+— that is the expected, correct outcome, not a failure to find something. Write
+budget: at most 1-2 rows this turn. If more than 3 candidates pass every gate
+below, keep only the most durable and drop the rest — do not write all of them
+just because they qualify.
+
+${ IDENTITY_OBSERVER_UNIVERSAL_REJECTS }
 
 ${ cfg.focus }
 
@@ -583,7 +619,10 @@ BEFORE calling add_identity_observation for any new observation:
 - Only INSERT a fresh entry when nothing similar is found.
 
 Each observation is ONE concise sentence with its context, a level, and a
-category. Include why, not just what, when the reason matters.
+category. Include why, not just what, when the reason matters. In basis, name
+which gate/evidence justified the row (e.g. "L3: human stated this directly" /
+"L1 conclusion from repeated behavior, see evidence") — not what the system
+prompt says the domain covers.
 
 If nothing about ${ cfg.subjectLabel } was revealed this conversation, finish
 immediately — most task-focused turns need NO writes.
@@ -592,7 +631,11 @@ Do NOT:
 - Try to complete the user's task
 - Record task/project state (the general observation writer owns that)
 - Record facts about other domains
-- Search for tools, APIs, or integrations${ cfg.writerNote ? `\n\n${ cfg.writerNote }` : '' }`;
+- Search for tools, APIs, or integrations${ cfg.writerNote ? `\n\n${ cfg.writerNote }` : '' }
+
+Before you finish, re-read every row you are about to write against the
+Universal rejects above one more time — it is the single most common reason
+a domain regresses.`;
 }
 
 /**
@@ -728,6 +771,17 @@ Do not search one term at a time across multiple rounds.
 
 Be selective: a 5-entry relevant subset is better than 30 entries dumped verbatim.`;
 
+/**
+ * Recall only needs to know what a domain CONTAINS, not the writer's reject
+ * rules — those are "never write" instructions to an agent with no write
+ * tools, and they were bloating every recall prompt with the writer's full
+ * charter. Every domain's focus block follows "Observe X ... Record: ...
+ * \n\nReject (...)" — cut at that boundary and keep only the scope half.
+ */
+function identityRecallScope(cfg: IdentityObserverDomainConfig): string {
+  return cfg.focus.split(/\nReject \(/)[0].trim();
+}
+
 function buildIdentityObservationRecallPrompt(cfg: IdentityObserverDomainConfig): string {
   return `You are the focused identity observation RECALL process for ${ cfg.subjectLabel } (domain: ${ cfg.domain }).
 
@@ -740,12 +794,12 @@ Read the recent conversation context. Based on what the human is asking about,
 what task is in progress, and what identity facts could help the primary
 agent respond well, search the ${ cfg.domain } identity_observations table.
 
-${ cfg.focus }
+${ identityRecallScope(cfg) }
 
 Rules:
 - Call search_identity_observations with key topic/phrase variants from the conversation.
 - Optionally call list_identity_observations when broad identity context is needed.
-${ cfg.domain === 'projects' ? '- Also call search_project_items when the current turn names, implies, or depends on live Projects work-state. Use it only to find relevant project/epic/task context; do not create, update, archive, or comment on project items from recall.\n- When a search hit is clearly central to this turn and its title/status is not enough, drill down: call get_project_item to pull that item\'s full detail (children, status) or list_task_comments to read a task\'s progress/blocker/decision thread. These are READ-ONLY. Drill down only for the one or two items that actually matter — you block the primary agent, so do not fetch detail for every hit.\n' : '' }- Return ONLY observations that are relevant or possibly relevant to this turn.
+${ cfg.domain === 'projects' ? '- Also call search_project_items when the current turn names, implies, or depends on live Projects work-state. Use it only to find relevant project/epic/task context; do not create, update, archive, or comment on project items from recall.\n- When a search hit is clearly central to this turn and its title/status is not enough, drill down: call get_project_item to pull that item\'s full detail (children, status) or list_task_comments to read a task\'s progress/blocker/decision thread. These are READ-ONLY. Drill down only for the one or two items that actually matter — you block the primary agent, so do not fetch detail for every hit.\n' : '' }${ cfg.domain === 'skills' ? '- Also call the marketplace tools `search` and `list_local` — ALWAYS pass `kind:\'skill\'`, never omit it (they default to searching every artifact kind) — but ONLY when the current turn describes a repeatable task a skill could plausibly cover. Most turns are not skill-shaped; do not call them speculatively. Budget: at most 1-2 marketplace lookups — you block the primary agent on a live network call, so do not go searching multiple phrasings. Use `info` only to pull full detail on the one hit that actually matters.\n' : '' }- Return ONLY observations that are relevant or possibly relevant to this turn.
 - Format each result as: \`[id] L<level>·<category> date — content (basis: ...)\`
 - When including live Projects work-state from search_project_items, format it as: \`[project:<id>] <kind> <status> — <title> (source: Projects work-state)\`
 - If many observations are relevant, return many. If only a few matter, return a few.
@@ -1205,7 +1259,7 @@ export const GraphRegistry = {
     const state = await buildSubconsciousState({
       systemPrompt:           buildIdentityObserverPrompt(cfg),
       tools:                  IDENTITY_OBSERVER_TOOLS,
-      userMessage:            `Review this conversation for facts about ${ cfg.subjectLabel }. Record stated facts (L3) first, then derived facts (L2), then reasoned conclusions (L1, with their basis). Search for existing entries before adding (update instead of duplicate); promote levels when evidence upgrades a fact; soft-archive contradicted rows. If nothing about ${ cfg.subjectLabel } was revealed, finish immediately.`,
+      userMessage:            `Review this conversation for facts about ${ cfg.subjectLabel }. Record stated facts (L3) first, then derived facts (L2), then reasoned conclusions (L1, with their basis). Search for existing entries before adding (update instead of duplicate); promote levels when evidence upgrades a fact; soft-archive contradicted rows. If nothing about ${ cfg.subjectLabel } was revealed, finish immediately. Before writing anything: is it task/PR/commit status, an instruction restated as fact, or system-prompt residue? If so, do not write it — default is zero writes.`,
       messages:               [...parentState.messages],
       // Same window as the general writer — it mines conversation for facts.
       contextWindow:          30,
@@ -1728,6 +1782,18 @@ function observerBlocksToText(content: any): string {
 }
 
 /**
+ * Matches BaseNode.stripInjectedContextBlocks' tag list — kept in sync
+ * manually since it lives on the node layer and this is the service layer.
+ * Recall/writer subagents were reading THIS TURN's own injected
+ * <xxx_observations> blocks back out of the last assistant message (merged in
+ * by AgentNode before the primary reply, not stripped until the NEXT turn's
+ * injection) and could re-record a recalled row as if it were fresh
+ * conversational evidence — a self-reinforcement loop. Stripped here so no
+ * subconscious subagent ever observes its own — or a sibling's — injection.
+ */
+const INJECTED_CONTEXT_BLOCK_RE = /\n*<(observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+
+/**
  * Flatten a windowed conversation context into a single observer message: a
  * plain-text transcript bracketed by explicit markers, preceded by a hard
  * observe-don't-act instruction and followed by the caller's task prompt. The
@@ -1741,7 +1807,7 @@ function buildObserverTranscriptMessage(context: any[], userMessage: string): st
     if (!m || m.role === 'system') continue;                 // observer has its own system prompt
     if (m?.metadata?.source === 'subconscious') continue;    // skip prior subconscious injections
     const who = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : (m.role || 'unknown');
-    const text = observerBlocksToText(m.content).trim();
+    const text = observerBlocksToText(m.content).replace(INJECTED_CONTEXT_BLOCK_RE, '').trim();
     if (!text) continue;
     lines.push(`${ who }: ${ text }`);
   }
