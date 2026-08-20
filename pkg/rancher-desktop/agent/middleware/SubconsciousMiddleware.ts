@@ -259,6 +259,17 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('projects-observation-recall', 'Recalling the projects', projRecallPromise.then(ctx => { (state.metadata as any).projectsObservationContext = ctx })));
   }
 
+  // R7. World Observation Recall (world) — awaited: relevant `world`-domain
+  //     rows, injected as <world_observations>. Jonathon (2026-08-19): world
+  //     context (external events touching the human / Sulla / the business) is
+  //     important on every turn, so it recalls pre-turn like the other domains
+  //     rather than being written-only.
+  if (options.includeObservations && analyzable) {
+    launched.push('world-observation-recall');
+    const worldRecallPromise = runIdentityObservationRecall(state, 'world');
+    awaitedTasks.push(timed('world-observation-recall', 'Recalling the world', worldRecallPromise.then(ctx => { (state.metadata as any).worldObservationContext = ctx })));
+  }
+
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
   // Every task in awaitedTasks writes into the live turn state. The primary
