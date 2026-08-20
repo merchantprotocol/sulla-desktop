@@ -99,7 +99,8 @@ Subconscious writers are **observers, not actors**. They are granted only observ
 | Tool-Result Digester | none |
 | Observation Recall | `search_observations`, `list_observations` (read-only) |
 | Observation Writer | `add_/remove_/search_/list_observational_memory` |
-| Identity Recall (per domain) | `search_/list_identity_observations` (read-only) |
+| Identity Recall (human / agent / business / world / environment) | `search_/list_identity_observations` (read-only) |
+| Identity Recall (projects) | `search_/list_identity_observations` + `search_project_items` (read-only) |
 | Identity Observer (per domain) | `add_/remove_/search_/list_identity_observation` |
 
 Subconscious agents also never get host access even when the primary Sulla agent does.
@@ -135,6 +136,6 @@ Every user-facing conversation is written to `~/sulla/logs/conv_*.jsonl` (traini
 ---
 
 ## Adding a new identity domain
-It's deliberately cheap: add one `IdentityObserverDomainConfig` entry in `GraphRegistry.ts`, one dispatch line in `SubconsciousMiddleware.ts`, and (if it's a new `domain` value) widen the check constraint with a migration. No new table, model, or tool — every domain shares `identity_observations` and the same four identity tools.
+It's deliberately cheap: add one `IdentityObserverDomainConfig` entry in `GraphRegistry.ts`, one dispatch line in `SubconsciousMiddleware.ts`, and (if it's a new `domain` value) widen the check constraint with a migration. No new table or model — every domain shares `identity_observations`; only add domain-specific read tools when recall needs another existing source of truth, as projects recall does with `search_project_items`.
 
 See also: [`tools/meta.md`](../tools/meta.md) (memory + identity tool reference), [`identity/structure.md`](../identity/structure.md) (the `~/sulla/identity/` files), [`environment/heartbeat.md`](heartbeat.md).
