@@ -709,6 +709,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       parts.push(`<business_observations>\n${ businessObservationContext.trim() }\n</business_observations>`);
     }
 
+    const worldObservationContext = (state?.metadata as any)?.worldObservationContext;
+    if (worldObservationContext && typeof worldObservationContext === 'string' && worldObservationContext.trim()) {
+      parts.push(`<world_observations>\n${ worldObservationContext.trim() }\n</world_observations>`);
+    }
+
     const environmentObservationContext = (state?.metadata as any)?.environmentObservationContext;
     if (environmentObservationContext && typeof environmentObservationContext === 'string' && environmentObservationContext.trim()) {
       parts.push(`<environment_observations>\n${ environmentObservationContext.trim() }\n</environment_observations>`);

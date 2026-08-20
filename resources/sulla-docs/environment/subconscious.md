@@ -22,6 +22,7 @@ user message
 │    • Identity Recall: human         → <user_observations>                             │
 │    • Identity Recall: agent         → <self_observations>                             │
 │    • Identity Recall: business      → <business_observations>                         │
+│    • Identity Recall: world          → <world_observations>                           │
 │    • Identity Recall: environment   → <environment_observations>                      │
 │    • Identity Recall: projects      → <projects_observations>                         │
 └──────────────────────────────────────────────────────────────────────────────────────┘
@@ -72,10 +73,11 @@ One read-only LLM agent per domain, capped at 10 iterations, each surfacing only
 | `human` | `<user_observations>` | who you are |
 | `agent` | `<self_observations>` | how we work |
 | `business` | `<business_observations>` | the business |
+| `world` | `<world_observations>` | the world |
 | `environment` | `<environment_observations>` | this environment |
 | `projects` | `<projects_observations>` | the projects |
 
-Note `world` is **not** recalled pre-turn — it's written post-turn only.
+All six identity domains are recalled pre-turn (Jonathon, 2026-08-19 — world context matters on every turn, not just when it's written). The recall path is generic per domain: adding one means one dispatch line in `SubconsciousMiddleware.ts` plus one injection read in `AgentNode.ts`, `ClaudeCodeService.ts`, and `CodexService.ts`.
 
 ---
 
