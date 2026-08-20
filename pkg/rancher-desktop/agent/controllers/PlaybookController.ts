@@ -1690,7 +1690,7 @@ export class PlaybookController<TState = any> {
               // (e.g. the sub-workflow's own first node never starting)
               // froze the parent workflow_executions row forever with no
               // failure signal. Same watchdog treatment as executeSubAgent.
-              const finalSubState = await this.raceWithSubAgentWatchdog(
+              const finalSubState: any = await this.raceWithSubAgentWatchdog(
                 subState,
                 `Sub-workflow "${ subWfLabel }" (agent "${ step.agentId }")`,
                 () => subGraph.execute(subState),
