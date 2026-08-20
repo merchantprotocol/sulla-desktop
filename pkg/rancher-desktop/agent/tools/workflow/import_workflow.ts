@@ -55,6 +55,23 @@ export class ImportWorkflowWorker extends BaseTool {
 
     const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
 
+    // Lock guard: never let an import overwrite a locked core routine. Core
+    // routines are seeded from the bundled definition on boot — not importable.
+    try {
+      const locked = await postgresClient.queryOne(
+        `SELECT system FROM workflows WHERE id = $1 LIMIT 1`,
+        [definition.id],
+      );
+      if (locked?.system === true) {
+        return {
+          successBoolean: false,
+          responseString: `"${ definition.id }" is a locked core routine baked into Sulla Desktop and cannot be imported over. You can disable it, but not replace it.`,
+        };
+      }
+    } catch {
+      // If the lookup fails, fall through — the DB upsert below surfaces real errors.
+    }
+
     try {
       await postgresClient.query(
         `INSERT INTO workflows (id, name, description, version, status, definition, enabled, source_template_slug, created_at, updated_at)
