@@ -933,6 +933,10 @@ export const GraphRegistry = {
       // Wider than recall — the writer mines the conversation for facts —
       // but still bounded; the summarizer compacts anything older anyway.
       contextWindow:          30,
+      // Observe a flat transcript, not a live agentic thread — see
+      // buildObserverTranscriptMessage. Keeps the writer recording memory
+      // instead of continuing the assistant's work.
+      observeAsTranscript:    true,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation',
       // Post-turn writer — runs after the loop closed; narrate nothing.
@@ -968,6 +972,7 @@ export const GraphRegistry = {
       messages:               [...parentState.messages],
       // Same window as the general writer — it mines conversation for facts.
       contextWindow:          30,
+      observeAsTranscript:    true,   // flat transcript — observe, don't act
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             `identity-observer-${ cfg.domain }`,
       // Post-turn writer — runs after the loop closed; narrate nothing.
@@ -1000,6 +1005,7 @@ export const GraphRegistry = {
       userMessage:            `Read the recent conversation context and return only ${ cfg.domain } identity observations that are relevant or possibly relevant to what is happening now. Return compact lines only — nothing if nothing is relevant.`,
       messages:               [...parentState.messages],
       contextWindow:          20,
+      observeAsTranscript:    true,   // flat transcript — observe, don't act
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             `identity-observation-recall-${ cfg.domain }`,
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
@@ -1030,6 +1036,7 @@ export const GraphRegistry = {
       messages:               [...parentState.messages],
       // Recent tail only: obs-recall reads the latest exchange, then searches the table.
       contextWindow:          20,
+      observeAsTranscript:    true,   // flat transcript — observe, don't act
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
@@ -1448,6 +1455,73 @@ function windowedContext(messages: any[], windowSize: number, maxBlockChars: num
   });
 }
 
+/**
+ * Render one message's content as a compact plain-text line for an observer
+ * transcript. tool_use / tool_result blocks are described in prose ("[called
+ * tool X …]", "[tool result …]") rather than replayed as structural blocks —
+ * the observer only needs to know what happened, not to sit inside a live
+ * tool-calling turn it might feel compelled to continue.
+ */
+function observerBlocksToText(content: any): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content);
+
+  const parts: string[] = [];
+  for (const b of content) {
+    if (!b || typeof b !== 'object') { if (b != null) parts.push(String(b)); continue }
+    if (b.type === 'text' && typeof b.text === 'string') {
+      parts.push(b.text);
+    } else if (b.type === 'tool_use') {
+      const input = b.input ? ` ${ JSON.stringify(b.input).slice(0, 300) }` : '';
+      parts.push(`[called tool ${ b.name || 'unknown' }${ input }]`);
+    } else if (b.type === 'tool_result') {
+      const inner = typeof b.content === 'string'
+        ? b.content
+        : Array.isArray(b.content)
+          ? b.content.map((c: any) => (c?.type === 'text' && typeof c.text === 'string' ? c.text : c?.type === 'image' ? '[image omitted]' : '')).filter(Boolean).join('\n')
+          : JSON.stringify(b.content ?? '');
+      parts.push(`[tool result] ${ inner }`);
+    } else if (b.type === 'image') {
+      parts.push('[image omitted]');
+    } else {
+      parts.push(JSON.stringify(b));
+    }
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Flatten a windowed conversation context into a single observer message: a
+ * plain-text transcript bracketed by explicit markers, preceded by a hard
+ * observe-don't-act instruction and followed by the caller's task prompt. The
+ * absence of any real assistant/tool_use/tool_result message structure — plus
+ * the explicit framing — is what stops the observer from continuing the
+ * assistant's work instead of recording memory about it.
+ */
+function buildObserverTranscriptMessage(context: any[], userMessage: string): string {
+  const lines: string[] = [];
+  for (const m of context) {
+    if (!m || m.role === 'system') continue;                 // observer has its own system prompt
+    if (m?.metadata?.source === 'subconscious') continue;    // skip prior subconscious injections
+    const who = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : (m.role || 'unknown');
+    const text = observerBlocksToText(m.content).trim();
+    if (!text) continue;
+    lines.push(`${ who }: ${ text }`);
+  }
+  const transcript = lines.join('\n\n') || '(no prior conversation)';
+
+  return [
+    'You are a silent OBSERVER of the conversation below. Your ONLY job is to analyze it and record memory through your provided database tools.',
+    'You are NOT a participant. Do NOT continue the assistant\'s work, do NOT take any action the conversation describes, and do NOT read, write, or edit files, run commands, browse, or use source control. Only observe and record.',
+    '',
+    '=== BEGIN CONVERSATION TRANSCRIPT ===',
+    transcript,
+    '=== END CONVERSATION TRANSCRIPT ===',
+    '',
+    userMessage,
+  ].join('\n');
+}
+
 async function buildSubconsciousState(opts: {
   systemPrompt:          string;
   tools:                 string[];
@@ -1457,6 +1531,18 @@ async function buildSubconsciousState(opts: {
   contextWindow?:        number;
   /** Per-block truncation size used with contextWindow; default 4000 chars */
   maxContextBlockChars?: number;
+  /**
+   * OBSERVER FRAMING. When true, the conversation is NOT inherited as a live
+   * multi-turn message array (assistant turns + tool_use / tool_result blocks).
+   * Instead it is flattened into a single plain-text transcript wrapped in one
+   * user message: "here is a conversation to observe; record memory; take no
+   * action." Handing an observer the raw agentic message array makes the model
+   * read it as a live session it's sitting inside — so it keeps working (runs
+   * tools, edits files) instead of observing. A flat transcript with no
+   * tool_use/tool_result scaffolding removes that structural cue. Pair with the
+   * subconscious native-tool lockdown in ClaudeCodeService for defense in depth.
+   */
+  observeAsTranscript?:  boolean;
   maxIterations?:        number;
   temperature?:          number;
   format?:               'json';
@@ -1507,7 +1593,19 @@ async function buildSubconsciousState(opts: {
   const context: any[] = opts.messages
     ? (opts.contextWindow ? windowedContext(opts.messages, opts.contextWindow, opts.maxContextBlockChars ?? 4_000) : [...opts.messages])
     : [];
-  const messages: any[] = [...context, { role: 'user', content: opts.userMessage, metadata: { source: 'subconscious' } }];
+
+  // OBSERVER FRAMING (observeAsTranscript): collapse the inherited conversation
+  // into ONE user message containing a flat transcript + an observe-don't-act
+  // instruction, so the model treats it as material to analyze, not a live
+  // session to continue. Otherwise keep the legacy behavior: replay the raw
+  // message array and append the instruction as the last user turn.
+  const messages: any[] = opts.observeAsTranscript
+    ? [{
+      role:     'user',
+      content:  buildObserverTranscriptMessage(context, opts.userMessage),
+      metadata: { source: 'subconscious' },
+    }]
+    : [...context, { role: 'user', content: opts.userMessage, metadata: { source: 'subconscious' } }];
 
   return {
     messages,
