@@ -17,7 +17,7 @@ When you wake up on a non-trivial task, read these in order:
 6. `~/sulla/identity/human/identity.md` — who you work for, operating model
 7. `~/sulla/identity/business/identity.md` — business model, active deadlines
 8. `~/sulla/identity/human/goals.md` — current goals, financial targets, operating rules
-9. The **project tables** (`work_projects` → `work_epics` → `work_tasks`) — the ONE project-state store. Open the Projects view or call `sulla project/list_project_items`. Filesystem `~/sulla/projects/<slug>/PROJECT.md` are PRDs, not the agenda. `~/sulla/ledger/` is a historical archive.
+9. The **project tables** (`work_projects` → `work_epics` → `work_tasks`) — the ONE project-state store. Open the Projects view or call `sulla list_project_items`. Filesystem `~/sulla/projects/<slug>/PROJECT.md` are PRDs, not the agenda. `~/sulla/ledger/` is a historical archive.
 
 For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the relevant doc.
 
@@ -50,7 +50,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 ## tools/
 - `inventory.md` — **MASTER LIST** of every tool, grouped by category, one-line each
 - `overview.md` — ⚠️ CRITICAL: invocation pattern, anti-patterns, all tool categories
-- `meta.md` — Foundational: exec, browse_tools, file_search, read_file, write_file, observation memory
+- `meta.md` — Foundational: exec, browse_tools, file_search, read_file, observation memory, identity observations
 - `browser.md` — Full ~28-tool surface: tab/snapshot/screenshot/click/click_at/type_at/eval_js/cookies/history/storage/alarms
 - `github.md` — git_push/pull/commit, GitHub API, PAT auth
 - `function.md` — function_list, function_run, invocation examples

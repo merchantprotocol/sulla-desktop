@@ -279,13 +279,22 @@ export class SubconsciousAgentNode extends BaseNode {
   }
 
   /**
-   * The observation sub-agent is fire-and-forget — it runs async and its
-   * narration has no place in the user-facing chat. Suppress its emissions
-   * so fire-and-forget stays truly silent, while memory-recall and others
-   * continue to narrate as before.
+   * Fully silent sub-agents suppress ALL parent-channel thinking emissions.
+   * Post-turn observation WRITERS (the general observation writer + the
+   * per-domain identity observers) are fire-and-forget: they run AFTER the
+   * primary loop already emitted graph_execution_complete, so any thinking
+   * bubble they push lands on a closed run and spins forever until the user
+   * hits Stop. They set `subconsciousSilent` (see GraphRegistry
+   * buildSubconsciousState) so they narrate nothing — they just run and write
+   * to the DB. Recall agents run BEFORE the reply and stay non-silent so their
+   * progress is still visible.
+   *
+   * The legacy `agentLabel === 'observation'` check is kept as a
+   * belt-and-suspenders fallback for any caller that hasn't set the flag.
    */
   private isSilentAgent(state: BaseThreadState): boolean {
-    return (state.metadata as any).agentLabel === 'observation';
+    const meta = state.metadata as any;
+    return meta.subconsciousSilent === true || meta.agentLabel === 'observation';
   }
 
   private async emitThinking(state: BaseThreadState, content: string): Promise<void> {
@@ -306,6 +315,7 @@ export class SubconsciousAgentNode extends BaseNode {
    */
   private async emitThinkingComplete(state: BaseThreadState): Promise<void> {
     if (this.isSilentAgent(state)) return;
+    if ((state.metadata as any).deferParentThinkingComplete === true) return;
     const parentState = this.buildParentState(state);
     if (!parentState) return;
 

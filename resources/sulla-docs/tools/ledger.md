@@ -16,8 +16,8 @@ sulla ledger/ledger_scoreboard '{"days":7}'
 
 Deterministic, zero LLM. Counts leftover markdown outcomes / WORKING rows /
 AUDIT lines. Useful only while an install still has those files. New
-installs should ignore this tool and use `sulla project/project_report` +
-`sulla project/list_project_items`.
+installs should ignore this tool and use `sulla project_report` +
+`sulla list_project_items`.
 
 ## Layout (archive)
 

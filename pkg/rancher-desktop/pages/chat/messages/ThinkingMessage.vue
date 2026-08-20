@@ -69,9 +69,14 @@ const thinkingLines = computed(() => {
 // at whatever it reads when the backend marks the message completed.
 const startMs = Date.now();
 const elapsed = ref('0.0s');
-let timer: ReturnType<typeof setInterval> | null = setInterval(() => {
-  elapsed.value = `${ ((Date.now() - startMs) / 1000).toFixed(1) }s`;
-}, 100);
+let timer: ReturnType<typeof setInterval> | null = null;
+
+function startTimer() {
+  if (timer) return;
+  timer = setInterval(() => {
+    elapsed.value = `${ ((Date.now() - startMs) / 1000).toFixed(1) }s`;
+  }, 100);
+}
 
 function stopTimer() {
   if (timer) {
@@ -80,7 +85,13 @@ function stopTimer() {
   }
 }
 
-watch(completed, (done) => { if (done) stopTimer(); }, { immediate: true });
+watch(completed, (done) => {
+  if (done) {
+    stopTimer();
+  } else {
+    startTimer();
+  }
+}, { immediate: true });
 onUnmounted(stopTimer);
 
 function toggle() {

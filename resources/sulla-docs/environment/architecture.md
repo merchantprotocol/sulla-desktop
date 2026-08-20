@@ -10,7 +10,7 @@ Sulla Desktop is an Electron application with three distinct execution environme
 | Lima VM | Linux guest (QEMU) | Docker containers: Postgres, Redis, Python/Node/Shell runtimes |
 | Vue Renderer | Electron window | Chat UI, AgentRoutines, workflow canvas |
 
-Agents run as Claude Code processes spawned by the main process. They communicate back to the main process via the MCP server (in-process HTTP) and WebSocket.
+Agent turns run through Sulla's graph/model-provider layer. Some providers are API-backed services; command-line agent providers such as Claude Code and OpenAI Codex spawn CLI processes inside Lima and stream results back through the same graph. Tool calls route through the Sulla Tools API/MCP bridge and channel messages return over WebSocket.
 
 ---
 

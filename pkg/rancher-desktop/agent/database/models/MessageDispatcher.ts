@@ -39,6 +39,49 @@ function capText(s: string, max: number): string {
   return s.length <= max ? s : s.slice(s.length - max);
 }
 
+function isUserTurnBoundary(m: ChatMessage, msgThreadId: string): boolean {
+  if (m.role !== 'user') return false;
+  if (m.threadId && msgThreadId && m.threadId !== msgThreadId) return false;
+
+  // Real user turns are inserted locally by AgentPersonaService with a
+  // `user_…` id before the backend responds. Other user-role records can be
+  // restored/context frames from the orchestration path; those should not split
+  // one visible thinking lifecycle into several bubbles.
+  return m.id.startsWith('user_');
+}
+
+function appendThinkingMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, content: string): void {
+  let existingIdx = -1;
+
+  for (let i = ctx.messages.length - 1; i >= 0; i--) {
+    const m = ctx.messages[i];
+    if (isUserTurnBoundary(m, msgThreadId)) break;
+    if (m.kind === 'thinking' && m.role === 'assistant') {
+      existingIdx = i;
+      break;
+    }
+  }
+
+  if (existingIdx !== -1) {
+    const existing = ctx.messages[existingIdx];
+    ctx.messages[existingIdx] = {
+      ...existing,
+      content:    capText(existing.content + '\n\n' + content, MAX_THINKING_CHARS),
+      _completed: false,
+    } as ChatMessage;
+    return;
+  }
+
+  ctx.messages.push({
+    id:        `${ Date.now() }_ws_thinking`,
+    channelId: agentId,
+    threadId:  msgThreadId,
+    role:      'assistant',
+    kind:      'thinking',
+    content,
+  });
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function contentToString(content: any): string {
   if (typeof content === 'string') return content;
@@ -528,47 +571,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
 
   // ── Thinking: accumulate into a single growing bubble ──
   if (kind === 'thinking' && role === 'assistant') {
-    // Trace why bubble does/doesn't merge: walk back and report the FIRST
-    // thinking message we encounter (whether _completed or not), plus what
-    // got in the way if we couldn't merge.
-    let existingIdx = -1;
-    let blockerKind: string | undefined;
-    let nearestThinkingId: string | undefined;
-    let nearestThinkingCompleted: boolean | undefined;
-    let nearestThinkingThreadId: string | undefined;
-    for (let i = ctx.messages.length - 1; i >= 0; i--) {
-      const m = ctx.messages[i];
-      if (m.kind === 'thinking' && m.role === 'assistant') {
-        if (nearestThinkingId === undefined) {
-          nearestThinkingId = m.id;
-          nearestThinkingCompleted = !!(m as any)._completed;
-          nearestThinkingThreadId = m.threadId;
-        }
-        if (!(m as any)._completed) {
-          existingIdx = i;
-          break;
-        }
-      } else if (existingIdx === -1 && blockerKind === undefined && m.role === 'assistant') {
-        // A non-thinking assistant message between us and the open bubble
-        // (or before the first thinking entirely) — note it for trace.
-        blockerKind = m.kind || 'text';
-      }
-    }
-    if (existingIdx !== -1) {
-      const existing = ctx.messages[existingIdx];
-      console.log(`[ThinkingTrace] dispatcher MERGED kind=thinking content="${ finalContent.slice(0, 60) }" → existing id=${ existing.id } (channel=${ agentId }, msgThreadId=${ msgThreadId }, existingThreadId=${ existing.threadId })`);
-      ctx.messages[existingIdx] = { ...existing, content: capText(existing.content + '\n\n' + finalContent, MAX_THINKING_CHARS) };
-    } else {
-      console.log(`[ThinkingTrace] dispatcher CREATED NEW kind=thinking content="${ finalContent.slice(0, 60) }" (channel=${ agentId }, msgThreadId=${ msgThreadId }, nearestThinkingId=${ nearestThinkingId ?? '(none)' }, nearestThinkingCompleted=${ nearestThinkingCompleted ?? '(n/a)' }, nearestThinkingThreadId=${ nearestThinkingThreadId ?? '(n/a)' }, blockerKind=${ blockerKind ?? '(none)' }, totalMessages=${ ctx.messages.length })`);
-      ctx.messages.push({
-        id:        `${ Date.now() }_ws_thinking`,
-        channelId: agentId,
-        threadId:  msgThreadId,
-        role,
-        kind:      'thinking',
-        content:   finalContent,
-      });
-    }
+    appendThinkingMessage(ctx, agentId, msgThreadId, finalContent);
     return;
   }
 
@@ -831,28 +834,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
         const range = start ? ` (lines ${ start }${ end ? `-${ end }` : '+' })` : '';
         thinkingText = `Opening ${ filePath }${ range }`;
       }
-      // Push as thinking — find or create thinking bubble
-      let existingIdx = -1;
-      for (let i = ctx.messages.length - 1; i >= 0; i--) {
-        const m = ctx.messages[i];
-        if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {
-          existingIdx = i;
-          break;
-        }
-      }
-      if (existingIdx !== -1) {
-        const existing = ctx.messages[existingIdx];
-        ctx.messages[existingIdx] = { ...existing, content: capText(existing.content + '\n\n' + thinkingText, MAX_THINKING_CHARS) };
-      } else {
-        ctx.messages.push({
-          id:        `${ Date.now() }_ws_thinking`,
-          channelId: agentId,
-          threadId:  msgThreadId,
-          role:      'assistant',
-          kind:      'thinking',
-          content:   thinkingText,
-        });
-      }
+      appendThinkingMessage(ctx, agentId, msgThreadId, thinkingText);
       return;
     }
 

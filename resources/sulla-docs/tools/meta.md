@@ -1,6 +1,6 @@
 # Meta — Foundational Tools
 
-The tools the agent uses constantly: shell exec, file ops, tool discovery, search, observational memory. Master these — they're the bedrock everything else sits on.
+The tools the agent uses constantly: shell exec, file ops, tool discovery, search, observational memory, and identity observations. Master these — they're the bedrock everything else sits on.
 
 ## Tool inventory
 
@@ -45,7 +45,7 @@ sulla meta/exechost '{
 | `stdin` | none | Piped to the command |
 
 **VM-first rule (non-negotiable):**
-- Everyday work stays in the Lima VM via regular `exec` / `file_search` / `read_file` / `write_file`.
+- Everyday work stays in the Lima VM via regular `exec` / `file_search` / `read_file` and normal repo editing tools.
 - The host home directory is mounted into the VM at the **same absolute path**, so project files, installs, builds, tests, and sulla CLI calls do **not** need host execution.
 - Use `exechost` **only** when the parent host MUST be used:
   - Host-only binaries / GUI apps (e.g. macOS app bundles under `/Applications`)
@@ -92,19 +92,6 @@ sulla meta/read_file '{"path":"...","startLine":50,"endLine":150}'
 - Directories return a listing
 - Path validation: blocks traversal outside the user's home directory
 - No size limit — large files load fully into memory
-
-### `observation/write_file` — Write to home directory
-```bash
-sulla observation/write_file '{"path":"~/sulla/notes/scratch.md","content":"..."}'
-```
-**Canonical category is `observation`** (per `sulla observation --help`), even though it's not a memory tool. Both `sulla observation/write_file` and `sulla meta/write_file` resolve at the backend (the URL category is ignored — tools are looked up by name only). Use `observation/` for clarity.
-
-- Creates parent directories as needed
-- Overwrites existing files
-- **Restricted to the user's home directory** for safety
-- No size limit
-
-For edits to existing files, prefer the editor's `Edit` tool (smaller diffs) over rewriting via `write_file`.
 
 ### `meta/ask_user_question` — Pause mid-turn and ask the user
 ```bash
@@ -212,6 +199,32 @@ sulla observation/list_observations '{"limit":50,"include_archived":false}'
 
 Lists active observations by priority and recency. Pass `include_archived:true` only for curation, stale-state checks, or duplicate prevention.
 
+## Identity observation tools
+
+Identity observations live in the domain-keyed `identity_observations` table. They are different from the short top-N operational memory above: they carry a `domain`, certainty `level`, optional `category`, provenance fields, confidence, and optional `kind`.
+
+Domains currently supported by the live backend:
+- `human`
+- `business`
+- `world`
+- `agent`
+- `environment`
+- `projects`
+
+Certainty levels:
+- `3` = stated fact from the subject or direct instruction
+- `2` = derived fact established from conversation/tool evidence
+- `1` = reasoned conclusion from L2/L3 facts
+
+Search before writing; pass an existing `id` to update/promote/archive instead of duplicating.
+
+```bash
+sulla observation/search_identity_observations '{"domain":"human","query":"prefers concise updates","limit":10}'
+sulla observation/add_identity_observation '{"domain":"human","level":3,"category":"communication_preferences","content":"The human prefers concise status updates.","basis":"Directly stated by the human.","confidence":1}'
+sulla observation/list_identity_observations '{"domain":"human","category":"communication_preferences","limit":20}'
+sulla observation/remove_identity_observation '{"id":"abcd"}'
+```
+
 ## Patterns
 
 ### Run a one-off shell command
@@ -246,7 +259,6 @@ sulla observation/add_observational_memory '{"priority":"high","content":"Twenty
 - **`exec` runs in Lima, not on host.** Default to it for everyday work. Home files are mounted into the VM at the same path.
 - **`exechost` is LAST RESORT.** Use only when the parent host MUST be used (host-only binaries/GUI apps, host Docker Desktop, tools unavailable in the VM, or explicit user request). Never for routine search/edit/build/test.
 - **Prefer VM → host network (`192.168.5.2`) over host shell** when you only need to reach a host-side service.
-- **`write_file` is home-dir only.** Don't attempt to write into `/tmp/`, `/etc/`, or anywhere outside `~`. Tested and confirmed: returns "Write operations are restricted to the home directory" otherwise.
 - **Observational memory is durable but prompt space is finite.** Don't fill it with verbose status updates — save only durable, surprising, or non-obvious facts.
 - **`browse_tools` is the source of truth for tool existence.** When in doubt, check it before calling. Don't hallucinate tool names.
 - **Backend ignores category in URL.** Tools resolve by NAME alone. So `sulla anything/spawn_agent` works as `sulla meta/spawn_agent`. But the canonical name (what `sulla <cat> --help` lists) is what you should use.

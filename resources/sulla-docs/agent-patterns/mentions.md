@@ -82,12 +82,12 @@ sulla meta/restart_from_checkpoint '{"executionId":"<id>"}'
 
 ### `@project:<slug>`
 ```bash
-sulla project/search_project_items '{"query":"<slug>","kind":"project"}'
-sulla project/get_project_item '{"id":"<id-from-search>"}'
+sulla search_project_items '{"query":"<slug>","kind":"project"}'
+sulla get_project_item '{"id":"<id-from-search>"}'
 # PRD (if one exists — specs, not the agenda):
 cat ~/sulla/projects/<slug>/PROJECT.md
 ```
-A `@project` mention is a **Projects project-state project** first (Postgres `work_projects`). Use `sulla project/*` tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
+A `@project` mention is a **Projects project-state project** first (Postgres `work_projects`). Use `sulla *` tools to read status, epics, and tasks. The filesystem `~/sulla/projects/<slug>/PROJECT.md` is an optional PRD/spec — do not treat it as the live agenda.
 
 ## Intent inference
 

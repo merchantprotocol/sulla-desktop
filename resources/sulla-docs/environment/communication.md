@@ -2,11 +2,11 @@
 
 ## Agent → Main Process (MCP Server)
 
-Agents running as Claude Code processes communicate with the Electron main process via the **MCP server** (in-process HTTP). Tool calls like `exec`, `browse_tools`, `browser/tab` etc. are handled here.
+Agent turns communicate with the Electron main process through Sulla's tool bridge. API-backed providers call tools through the graph runtime; CLI agent providers such as Claude Code and OpenAI Codex run inside Lima and reach Sulla tools through the MCP/native bridge. Tool calls like `exec`, `browse_tools`, `browser/tab` etc. are handled here.
 
 Flow:
 ```
-Agent (Claude Code in Lima) → MCP HTTP → Main Process → executes tool → returns result
+Agent/model provider → tool bridge/MCP HTTP → Main Process → executes tool → returns result
 ```
 
 ---

@@ -18,13 +18,21 @@
 │   ├── identity.md          # Sulla's role and behavioral commitments
 │   └── goals.md             # Agent 13-week arc, behavioral rules
 │
+├── environment/
+│   ├── identity.md          # Directly observed facts about this Sulla Desktop runtime/host
+│   └── goals.md             # Environment/process improvement targets
+│
+├── projects/
+│   ├── identity.md          # Observations about the internal Projects system and work-state behavior
+│   └── goals.md             # Project-system improvement targets
+│
 └── world/
     ├── identity.md          # External market, competitive landscape
     └── goals.md             # Market-level targets
 
 Postgres project tables         # ONE project-state store (operator agenda)
   work_projects → work_epics → work_tasks → work_task_comments
-  Tools: sulla project/*   UI: Projects view (open_tab mode=projects)
+  Tools: sulla *   UI: Projects view (open_tab mode=projects)
 
 ~/sulla/projects/<slug>/     # PRDs + workspaces (specs, not the agenda)
 ~/sulla/ledger/              # Legacy markdown. Frozen. Do not pick from it.
@@ -108,16 +116,29 @@ Short-term facts injected into every agent context:
 
 ```bash
 # Add a memory
-exec({ command: "sulla meta/add_observational_memory '{\"priority\":\"high\",\"content\":\"ICP is security-conscious small businesses, not solopreneurs\"}'" })
+exec({ command: "sulla observation/add_observational_memory '{\"priority\":\"high\",\"content\":\"ICP is security-conscious small businesses, not solopreneurs\"}'" })
 
 # Remove stale memory
-exec({ command: "sulla meta/remove_observational_memory '{\"id\":\"abc123\"}'" })
+exec({ command: "sulla observation/remove_observational_memory '{\"id\":\"abc123\"}'" })
 ```
 
 Observations appear in every agent's context automatically. Use for facts that affect ongoing behavior — not for temporary task state.
+
+## Identity Observations
+
+Longer-lived domain facts live in Postgres `identity_observations`, not only in markdown files. Use these tools for domain-scoped memory:
+
+```bash
+sulla observation/search_identity_observations '{"domain":"human","query":"communication preference","limit":10}'
+sulla observation/add_identity_observation '{"domain":"human","level":3,"category":"communication_preferences","content":"The human prefers concise updates.","basis":"Directly stated by the human.","confidence":1}'
+sulla observation/list_identity_observations '{"domain":"human","limit":20}'
+sulla observation/remove_identity_observation '{"id":"abcd"}'
+```
+
+Supported domains mirror the identity areas: `human`, `business`, `world`, `agent`, `environment`, and `projects`. Levels are certainty, not priority: L3 = directly stated, L2 = derived from evidence, L1 = reasoned conclusion. Search first and update existing rows by `id` instead of duplicating.
 
 ---
 
 ## Projects Work-State (the one project-state store)
 
-Project work in motion lives in the Postgres project tables (`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`), not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` / `~/sulla/ledger/` (those are transition leftovers and freeze). Every autonomous cycle starts with the injected `<project_report>` (or `sulla project/list_project_items` / `sulla project/project_report`), picks the top open task, moves it, and writes back with `sulla project/update_task` + `sulla project/add_task_comment`. Measure by task status and `last_moved_at`, not markdown. Do not look for native project-management tools outside the Sulla CLI catalog.
+Project work in motion lives in the Postgres project tables (`work_projects` → `work_epics` → `work_tasks` → `work_task_comments`), not in `identity/agent/goals.md` and not in `projects/ACTIVE_PROJECTS.md` / `PARKED_DECISIONS.md` / `~/sulla/ledger/` (those are transition leftovers and freeze). Every autonomous cycle starts with the injected `<project_report>` (or `sulla list_project_items` / `sulla project_report`), picks the top open task, moves it, and writes back with `sulla update_task` + `sulla add_task_comment`. Measure by task status and `last_moved_at`, not markdown. Do not look for native project-management tools outside the Sulla CLI catalog.
