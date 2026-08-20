@@ -159,6 +159,36 @@ describe('IdentityObservationsModel', () => {
     expect(postgresClient.query).not.toHaveBeenCalled();
   });
 
+  it('rejects kind outside the agent domain (same gap as subject, same fix)', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:      'bad9',
+      domain:  'environment',
+      level:   2,
+      kind:    'method',
+      content: 'The build cannot run in the Lima VM.',
+    })).rejects.toThrow('kind is only valid in the agent domain');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('accepts kind within the agent domain', async() => {
+    const inserted = { id: 'ag01', domain: 'agent', level: 3, kind: 'method', content: 'Agent drafts PRs; the human merges.' };
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([inserted]));
+
+    const row = await IdentityObservationsModel.insert({
+      id:      'ag01',
+      domain:  'agent',
+      level:   3,
+      kind:    'method',
+      subject: 'agent.user',
+      content: 'Agent drafts PRs; the human merges.',
+    });
+
+    expect(row).toBe(inserted);
+  });
+
   it('rejects content that reads as task/PR/commit status', async() => {
     (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
 

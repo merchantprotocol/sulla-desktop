@@ -234,6 +234,20 @@ function validateSubjectForDomain(domain: IdentityDomain, subject: string | null
   }
 }
 
+/**
+ * Same gap as validateSubjectForDomain, same fix: `kind` (correction |
+ * constraint | method | commitment | preference) is agent-domain field
+ * contract per the agent writerNote in GraphRegistry.ts, but was never
+ * actually gated to that domain — any domain could set it and pass. Caught
+ * during the same review pass that found the subject gap.
+ */
+function validateKindForDomain(domain: IdentityDomain, kind: string | null | undefined): void {
+  if (kind == null) return;
+  if (domain !== 'agent') {
+    throw new Error(`kind is only valid in the agent domain (got domain "${ domain }") — it is the agent-domain field contract (correction | constraint | method | commitment | preference), not a general-purpose tag.`);
+  }
+}
+
 function validateContentForDomain(domain: IdentityDomain, content: string): void {
   if (WORK_STATE_CONTENT_RE.test(content)) {
     throw new Error('content reads as task/engineering status (a PR/commit/branch/tsc/worktree reference) — that is work-state and belongs in the Projects system, never an identity domain. If this is genuinely a durable fact, rephrase it without the ticket/branch/commit/SHA.');
@@ -315,6 +329,7 @@ export class IdentityObservationsModel {
 
     validateCategoryForDomain(domain, category);
     validateSubjectForDomain(domain, subject);
+    validateKindForDomain(domain, kind);
     validateContentForDomain(domain, content);
 
     const rows = await postgresClient.query<IdentityObservationRecord>(
@@ -386,8 +401,10 @@ export class IdentityObservationsModel {
       values.push(normalizeConfidence(changes.confidence));
     }
     if (changes.kind !== undefined) {
+      const kind = normalizeIdentityKind(changes.kind);
+      validateKindForDomain(domain, kind);
       setClauses.push(`kind = $${ idx++ }`);
-      values.push(normalizeIdentityKind(changes.kind));
+      values.push(kind);
     }
     if (changes.source !== undefined) {
       setClauses.push(`source = $${ idx++ }`);
