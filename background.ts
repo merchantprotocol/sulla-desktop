@@ -1045,11 +1045,39 @@ function isK8sError(object: any): object is K8sError {
 
 // When true, the app is restarting (not fully quitting) — skip container/VM teardown
 let isRestarting = false;
+let relaunchSpawned = false;
 
 mainEvents.on('restarting', () => {
   console.log('[Shutdown] background.ts received "restarting" event — setting isRestarting=true');
   isRestarting = true;
 });
+
+// Electron.app.relaunch() (called once, early, in mainmenu.ts's
+// restartApplication()) only actually spawns the new instance as part of
+// Electron's own native quit path completing. Both force-exit backstops
+// below call raw process.exit(), which terminates the process immediately
+// and bypasses that native path entirely — so a restart that hits either
+// backstop (the exact "some item hanging that wouldn't ever let go" case)
+// silently drops the relaunch: the app shuts down and never comes back.
+// Guard against that by spawning the new instance ourselves, independent
+// of how cleanly the current process manages to exit. Idempotent (only
+// ever spawns once) so it's safe to call from more than one backstop.
+function ensureRelaunchIfRestarting(): void {
+  if (!isRestarting || relaunchSpawned) return;
+  relaunchSpawned = true;
+  try {
+    const child = spawn(process.execPath, process.argv.slice(1), {
+      detached: true,
+      stdio:    'ignore',
+      cwd:      process.cwd(),
+    });
+
+    child.unref();
+    sullaLog({ topic: 'shutdown', level: 'info', message: 'ensureRelaunchIfRestarting: spawned detached relaunch process' });
+  } catch (err: any) {
+    sullaLog({ topic: 'shutdown', level: 'error', message: `ensureRelaunchIfRestarting failed: ${ err?.message }`, error: err });
+  }
+}
 
 Electron.app.on('before-quit', async(event) => {
   const triggerStack = new Error('before-quit trigger trace').stack;
@@ -1079,6 +1107,7 @@ Electron.app.on('before-quit', async(event) => {
   const forceExitTimer = setTimeout(() => {
     sullaLog({ topic: 'shutdown', level: 'error', message: `Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting` });
     console.error(`[Shutdown] Graceful shutdown exceeded ${ SHUTDOWN_DEADLINE_MS / 1000 }s — force-exiting`);
+    ensureRelaunchIfRestarting();
     process.exit(1);
   }, SHUTDOWN_DEADLINE_MS);
 
@@ -1219,6 +1248,7 @@ Electron.app.on('before-quit', async(event) => {
     const postQuitTimer = setTimeout(() => {
       sullaLog({ topic: 'shutdown', level: 'warn', message: 'Post-quit backstop: process still alive after 15s — force-exiting' });
       console.warn('[Shutdown] Post-quit backstop: process still alive after 15s — force-exiting');
+      ensureRelaunchIfRestarting();
       process.exit(0);
     }, 15_000);
 
