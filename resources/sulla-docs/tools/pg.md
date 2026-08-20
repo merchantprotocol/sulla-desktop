@@ -60,6 +60,12 @@ Params are typed `string[]` in manifests but `pg.Pool` coerces to the column typ
 | `work_epics` | Epics under a project (status default `working`) | ✅ | ⚠️ Use work tools |
 | `work_tasks` | Tasks / subtasks (`parent_id`; status default `todo`) | ✅ | ⚠️ Use work tools |
 | `work_task_comments` | Notes on a task (GitHub-issue style) | ✅ | ⚠️ Use `add_task_comment` |
+| `observations` | Operational memory (priority-ranked) | ✅ | ⚠️ Use `observation/*` tools |
+| `identity_observations` | Domain-keyed identity memory (6 domains, L3/L2/L1) | ✅ | ⚠️ Use `observation/*_identity_observation` tools |
+| `notifications` | Desktop/mobile notification history | ✅ | ⚠️ Use `notify/*` tools |
+| `applescript_audit` | AppleScript execution audit log | ✅ | ⚠️ Use `applescript/audit_log` |
+| `function_runs` | Custom-function run history | ✅ | ⚠️ Use `function/function_runs` |
+| `knowledge_nodes` / `node_links` / `node_aliases` | ⚠️ **Orphaned dead schema** (migration 0029 — abandoned KG design) | ✅ (empty) | ❌ Nothing reads/writes these; don't build on them |
 
 ## Schemas of the tables you'll query most
 

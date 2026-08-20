@@ -4,7 +4,7 @@ Every actionable turn runs a **subconscious layer** around the primary agent: a 
 
 Source of truth: `pkg/rancher-desktop/agent/middleware/SubconsciousMiddleware.ts` (orchestration) and `pkg/rancher-desktop/agent/services/GraphRegistry.ts` (per-agent prompts + tool grants). This doc is kept in sync with that code.
 
-> **What this is NOT.** There is no episodic "knowledge graph", no `knowledge_nodes`/`node_links` tables, and no "Scribe" or "Dreamer" agent in the shipped system. That was an earlier design that was never merged. The real memory substrate is two Postgres tables (`observations`, `identity_observations`), a Redis citation index, and the on-disk conversation logs — described below. Don't document or rely on the KG design.
+> **What this is NOT.** There is no working episodic "knowledge graph" and no "Scribe" or "Dreamer" agent in the shipped system. Migration `0029_create_knowledge_graph` *does* create `knowledge_nodes` / `node_links` / `node_aliases`, but those tables are **orphaned dead schema** — nothing in the codebase reads or writes them (no model, no tools, no recall path). That design was started and abandoned. The real, live memory substrate is two Postgres tables (`observations`, `identity_observations`), a Redis citation index, and the on-disk conversation logs — described below. Don't rely on the KG tables or document them as functional.
 
 ---
 
