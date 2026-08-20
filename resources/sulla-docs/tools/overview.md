@@ -65,17 +65,20 @@ Default to regular `exec` (Lima VM) for search, edit, install, build, test, and 
 | `redis` | redis_get, redis_set, redis_hget, redis_hset, redis_hgetall, redis_lpop, redis_rpush, redis_expire | Key-value store |
 | `pg` | pg_query, pg_queryall, pg_queryone, pg_execute, pg_transaction | PostgreSQL |
 | `calendar` | calendar_create, calendar_get, calendar_list, calendar_list_upcoming, calendar_update, calendar_cancel | Events |
-| `workflow` | execute_workflow, validate_sulla_workflow, restart_from_checkpoint | Workflow execution |
+| `workflow` | import_workflow, refresh_schedules, catch_up_schedules, set_workflow_status, routines_digest, routine_report, find_repeated_tasks, display_workflow | Routine lifecycle + schedules (execute/pause/resume/stop/dry_run live under `meta`) |
 | `vault` | vault_read_secrets, vault_is_enabled, vault_list_accounts, vault_set_credential, vault_list | Credentials |
-| `agents` | spawn_agent, check_agent_jobs | Sub-agent spawning |
-| `applescript` | applescript_execute | macOS app automation |
+| `agents` | check_agent_jobs, stop_agent_job, list_agents, start/send/read/close_agent_conversation | Async sub-agent jobs + live agent directory (spawn_agent is under `meta`) |
+| `models` | models_providers, models_list, models_usage | AI provider/model inventory (read-only) |
+| `memory` | recall_index_lookup, recall_index_store, recall_conversations | Recall index + conversation-log recall |
+| `secretary` | start, stop, status | Secretary Mode (live meeting transcription) |
+| `applescript` | applescript_execute, computer_use_list/enable/disable, audit_log | macOS app automation |
 | `extensions` | list_extension_catalog, list_installed_extensions, install_extension, uninstall_extension, start_extension, stop_extension, get_extension_status | Recipe lifecycle |
 | `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update | Generic artifact lifecycle (6 kinds: skill / function / workflow / agent / recipe / integration) |
 | `bridge` | update_human_presence, get_human_presence | Agent presence/state |
 | `project` | list/get/search, create/update project+epic+task, add_task_comment, list_task_comments, archive_project_item, project_report | Projects project-state (Postgres) — the ONE project-state store, accessed through the Sulla CLI catalog |
 | `ui` | open_tab | Open Sulla Desktop views from chat (incl. `projects`) |
-| `capture` | teleprompter_*, mic_start/stop, speaker_start/stop, audio_state, list_screens, screenshot | Capture Studio control (headless) |
-| `observation` | add_observational_memory, remove_observational_memory, write_file | Long-term memory + file writes |
+| `capture` | teleprompter_*, mic/speaker_*, recorder_*, camera_*, screen_set, list_screens, screenshot, quality_set | Capture Studio control (headless, 20 tools) |
+| `observation` | add/remove/search/list observational memory + identity observations, write_file | Operational + domain-keyed identity memory (+ home write_file) |
 
 ---
 
