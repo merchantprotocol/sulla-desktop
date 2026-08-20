@@ -102,19 +102,43 @@ The business identity and goals files are the authoritative source for:
 
 ---
 
-## Observational Memory
+## Two memory layers
 
-Short-term facts injected into every agent context:
+Identity lives in **two** places now — the editable `~/sulla/identity/` files above, and a **domain-keyed Postgres store** that the subconscious writes and recalls automatically. Prefer the DB store for anything the agent should learn on its own; the files remain a human-editable baseline.
 
-```bash
-# Add a memory
-exec({ command: "sulla meta/add_observational_memory '{\"priority\":\"high\",\"content\":\"ICP is security-conscious small businesses, not solopreneurs\"}'" })
+### 1. `identity_observations` — domain-keyed identity (the live store)
+Migrations `0050`–`0054`. One row = one focused fact about a domain. The `domain` column is constrained to exactly six values, mirroring `~/sulla/identity/`:
 
-# Remove stale memory
-exec({ command: "sulla meta/remove_observational_memory '{\"id\":\"abc123\"}'" })
+```
+human · business · world · agent · environment · projects
 ```
 
-Observations appear in every agent's context automatically. Use for facts that affect ongoing behavior — not for temporary task state.
+Each row carries a **certainty level**:
+- **L3 — stated fact:** the subject told us directly, or it's a direct instruction.
+- **L2 — derived fact:** established from conversation/tool evidence.
+- **L1 — conclusion:** reasoned from L2/L3 (personality, style, habits).
+
+Plus `category`, provenance/basis, and confidence. Writes **dedupe** — pass an existing `id`, or a substantially-similar active row in the same domain is updated in place instead of duplicated. Soft-archive only.
+
+```bash
+sulla observation/search_identity_observations '{"domain":"human","query":"communication preferences"}'
+sulla observation/add_identity_observation '{"domain":"human","level":3,"category":"preference","content":"Prefers concise status updates.","basis":"Stated directly."}'
+sulla observation/list_identity_observations '{"domain":"business"}'
+sulla observation/remove_identity_observation '{"id":"abcd"}'
+```
+
+A subconscious **observer** per domain writes these after each turn, and a per-domain **recall** agent surfaces the relevant rows before each turn — injected as `<user_observations>` (human), `<self_observations>` (agent), `<business_observations>`, `<world_observations>`, `<environment_observations>`, `<projects_observations>`. Don't hardcode a specific person/business into observer logic — the domain describes *what* to study. Full mechanics: [`environment/subconscious.md`](../environment/subconscious.md).
+
+### 2. `observations` — operational memory
+Migration `0028`. Short, priority-ranked operational facts (surprising or non-obvious), recalled by keyword each turn into `<observation_context>`.
+
+```bash
+sulla observation/add_observational_memory '{"priority":"high","content":"ICP is security-conscious small businesses, not solopreneurs"}'
+sulla observation/search_observations '{"query":"ICP"}'
+sulla observation/remove_observational_memory '{"id":"abc123"}'
+```
+
+Both stores soft-archive (never hard-delete), so history is recoverable. Use them for facts that affect ongoing behavior — not temporary task state (that's Projects, below).
 
 ---
 
