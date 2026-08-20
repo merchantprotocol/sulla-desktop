@@ -15,6 +15,7 @@
 import { getIntegrationService } from './IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { integrations } from '../integrations/catalog';
+import { getSelectBoxProvider } from '../integrations/select_box';
 
 // ── Public types ─────────────────────────────────────────────────
 
@@ -185,54 +186,51 @@ class ModelProviderService {
   }
 
   async getModelsForProvider(providerId: string): Promise<ProviderModelInfo[]> {
-    // Claude Code can accept an explicit --model flag; expose the known models
-    // plus an "auto" sentinel that omits the flag and lets the CLI choose.
-    if (providerId === 'claude-code') {
-      return [
-        { id: 'claude-code',        name: 'Auto (CLI default)',   description: 'Let Claude Code choose the best model automatically' },
-        { id: 'claude-fable-5',     name: 'Claude Fable 5',       description: 'Latest flagship model' },
-        { id: 'claude-opus-4-8',    name: 'Claude Opus 4.8',      description: 'Most capable Opus — orchestration and complex tasks' },
-        { id: 'claude-opus-4-7',    name: 'Claude Opus 4.7',      description: 'Previous most capable model' },
-        { id: 'claude-sonnet-4-6',  name: 'Claude Sonnet 4.6',    description: 'Latest balanced model' },
-        { id: 'claude-opus-4-6',    name: 'Claude Opus 4.6',      description: 'Older capable model' },
-        { id: 'claude-opus-4-5',    name: 'Claude Opus 4.5',      description: 'Older capable model' },
-        { id: 'claude-sonnet-4-5',  name: 'Claude Sonnet 4.5',    description: 'Previous balanced model' },
-        { id: 'claude-haiku-4-5',   name: 'Claude Haiku 4.5',     description: 'Fast and lightweight' },
-      ];
-    }
-
-    // Codex accepts an explicit --model flag; expose the known models plus
-    // an "auto" sentinel that omits the flag and lets the CLI choose.
-    if (providerId === 'codex') {
-      return [
-        { id: 'codex',         name: 'Auto (CLI default)', description: 'Let Codex choose the best model automatically' },
-        { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex',      description: 'Latest Codex flagship model' },
-        { id: 'gpt-5-codex',   name: 'GPT-5 Codex',        description: 'Previous Codex model' },
-      ];
-    }
-
     const integration = integrations[providerId];
-    if (!integration) return [];
+    if (!integration) {
+      return this.getCliProviderModels(providerId);
+    }
 
     const modelProp = integration.properties?.find(p => p.key === 'model');
-    if (!modelProp?.selectBoxId) return [];
+    if (!modelProp?.selectBoxId) {
+      return this.getCliProviderModels(providerId);
+    }
 
     try {
       const integrationService = getIntegrationService();
-      const accountId = await integrationService.getActiveAccountId(providerId);
+      const accountId = await integrationService.getActiveAccountId(providerId).catch(() => '');
       const formVals = await integrationService.getFormValues(providerId, accountId);
       const formMap: Record<string, string> = {};
       for (const v of formVals) formMap[v.property] = v.value;
 
-      const options = await integrationService.getSelectOptions(
-        modelProp.selectBoxId, providerId, accountId, formMap,
-      );
+      const selectBoxProvider = getSelectBoxProvider(modelProp.selectBoxId);
+      const options = selectBoxProvider
+        ? await selectBoxProvider.getOptions({ integrationId: providerId, accountId, formValues: formMap })
+        : await integrationService.getSelectOptions(modelProp.selectBoxId, providerId, accountId, formMap);
 
-      return options.map(opt => ({ id: opt.value, name: opt.label }));
+      return options.map(opt => ({ id: opt.value, name: opt.label, description: opt.description }));
     } catch (err) {
       console.warn(`[ModelProviderService] Failed to fetch models for ${ providerId }:`, err);
       return [];
     }
+  }
+
+  private async getCliProviderModels(providerId: string): Promise<ProviderModelInfo[]> {
+    if (providerId === 'claude-code') {
+      return [
+        { id: 'claude-code', name: 'Auto (CLI default)', description: 'Let Claude Code choose the best model automatically' },
+      ];
+    }
+
+    if (providerId === 'codex') {
+      // No hardcoded codex model list — read the live catalog from the codex
+      // CLI (through Sulla, so vault OAuth creds are injected). Degrades to the
+      // "Auto" sentinel on any failure. See codexModelCatalog.ts.
+      const { listCodexModels } = await import('../languagemodels/codexModelCatalog');
+      return listCodexModels();
+    }
+
+    return [];
   }
 
   async getProviderConfig(providerId: string): Promise<Record<string, string>> {
