@@ -49,8 +49,8 @@ export class SetWorkflowStatusWorker extends BaseTool {
     let rows: any[];
     try {
       rows = id
-        ? await postgresClient.queryAll(`SELECT id, name, status, enabled FROM workflows WHERE id = $1`, [id])
-        : await postgresClient.queryAll(`SELECT id, name, status, enabled FROM workflows WHERE LOWER(name) = LOWER($1)`, [name]);
+        ? await postgresClient.queryAll(`SELECT id, name, status, enabled, system FROM workflows WHERE id = $1`, [id])
+        : await postgresClient.queryAll(`SELECT id, name, status, enabled, system FROM workflows WHERE LOWER(name) = LOWER($1)`, [name]);
     } catch (err) {
       return { successBoolean: false, responseString: `Workflow lookup failed: ${ (err as Error).message }` };
     }
@@ -65,6 +65,17 @@ export class SetWorkflowStatusWorker extends BaseTool {
     }
 
     const target = rows[0];
+
+    // Lock guard: a locked core routine is pinned to its seeded status. The
+    // `enabled` toggle stays open (that's the sanctioned pause), but status
+    // changes (draft/production/archive) are refused.
+    if (target.system === true && status !== undefined && status !== target.status) {
+      return {
+        successBoolean: false,
+        responseString: `"${ target.name }" is a locked core routine — its status is fixed at "${ target.status }". You can disable it with { "enabled": false }, but not change its status.`,
+      };
+    }
+
     const sets: string[] = [];
     const params: unknown[] = [];
 
