@@ -215,13 +215,13 @@ The ONE project-state store — not CRM, distinct from the `~/sulla/projects/<sl
 
 → See [`tools/ledger.md`](ledger.md)
 
-## rules — user rules the Security Conscience enforces (4 tools)
+## rules — user-created guardrail rules (4 tools)
 - `sulla rules/list_rules` — Active user-created rules, most severe first.
 - `sulla rules/search_rules` — Search rules across title + content.
-- `sulla rules/add_rule` — Add/update a rule the Security Conscience should enforce.
+- `sulla rules/add_rule` — Add/update a guardrail rule (dedupes against similar rules).
 - `sulla rules/archive_rule` — Archive a rule by id.
 
-→ See [`tools/rules.md`](rules.md)
+Rules live in the `rules` table (+ global markdown under `~/sulla/rules/global/`). ⚠️ The **Security Conscience** subconscious agent that used to fold these into a `<security_context>` each turn was removed 2026-08-19, and nothing currently re-injects them — so today they're a managed store you surface on demand (`list_rules`/`search_rules`), not an automatic per-turn gate. → See [`tools/rules.md`](rules.md)
 
 ## models — AI provider / model inventory (3 tools)
 - `sulla models/models_providers` — Providers, connected/on vs off, whether the required CLI is installed in the VM, and whether Sulla can use it.

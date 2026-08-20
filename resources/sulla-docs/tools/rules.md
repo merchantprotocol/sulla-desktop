@@ -1,11 +1,20 @@
-# Rules — the guardrails the Security Conscience enforces
+# Rules — user + global guardrails
 
-Sulla keeps a set of **rules** that the subconscious **Security Conscience**
-agent reads every actionable turn and folds into a `<security_context>`
-briefing for the primary agent — "confirm before touching prod", "never
-deploy on Fridays", "always double-check the path before overwrite".
+Sulla keeps a set of **rules** — "confirm before touching prod", "never deploy
+on Fridays", "always double-check the path before overwrite".
 
-There are **two sources**, read together:
+> ⚠️ **Injection status (2026-08-19).** A subconscious **Security Conscience**
+> agent used to read the rules every actionable turn and fold them into a
+> `<security_context>` briefing for the primary agent. That agent was **removed**
+> (it didn't perform reliably), and nothing currently re-injects rules
+> automatically. The `rules` table, the global markdown files, and the tools
+> below all still exist — so rules are a **managed store you surface on demand**
+> (`list_rules` / `search_rules` before a risky action), not an automatic
+> per-turn gate. If you want them honored, read them explicitly. (Some in-code
+> tool descriptions still say "the Security Conscience reads this each turn" —
+> that text is stale.)
+
+There are **two sources**:
 
 ## 1. Global rules — files (product baselines)
 
