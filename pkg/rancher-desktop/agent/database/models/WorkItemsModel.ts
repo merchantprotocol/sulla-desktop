@@ -300,6 +300,27 @@ const PRIORITY_RANK = `
     ELSE 5
   END ASC`;
 
+// Same rank scale as PRIORITY_RANK, but resolved for the parent epic via a
+// correlated subquery so a task's *epic* priority is available to ORDER BY
+// without joining work_epics into the main query (which would make the
+// bare `status`/`priority` columns shared with pushClosedFilter's WHERE
+// clause ambiguous). Tasks with no epic (or whose epic priority is unset)
+// fall back to the task's own rank, so they sort by their own priority
+// exactly as before rather than being pushed to the bottom.
+const EPIC_PRIORITY_RANK_FOR_TASK = `
+  COALESCE(
+    (SELECT CASE we.priority
+      WHEN '🔴' THEN 0 WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0
+      WHEN 'p1' THEN 1 WHEN 'P1' THEN 1 WHEN 'high' THEN 1
+      WHEN '🟡' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN 'medium' THEN 2
+      WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
+      WHEN '⚪' THEN 4 WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4
+      ELSE 5
+    END
+    FROM work_epics we WHERE we.id = work_tasks.epic_id),
+    ${ PRIORITY_RANK.replace('priority', 'work_tasks.priority') }
+  ) ASC`;
+
 const STOPWORDS = new Set([
   'the', 'and', 'for', 'are', 'was', 'were', 'with', 'that', 'this', 'these', 'those',
   'have', 'has', 'had', 'about', 'into', 'from', 'when', 'where', 'what', 'which', 'who',
@@ -904,7 +925,7 @@ export class WorkItemsModel {
     return postgresClient.query<WorkTaskRecord>(
       `SELECT * FROM ${ WorkItemsModel.TASKS }
         WHERE ${ conds.join(' AND ') }
-        ORDER BY ${ PRIORITY_RANK }, due_at ASC NULLS LAST, last_moved_at ASC, position ASC
+        ORDER BY ${ EPIC_PRIORITY_RANK_FOR_TASK }, ${ PRIORITY_RANK }, due_at ASC NULLS LAST, last_moved_at ASC, position ASC
         LIMIT $${ idx }`,
       values,
     );
