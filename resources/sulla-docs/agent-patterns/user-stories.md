@@ -259,13 +259,13 @@ sulla marketplace/update '{"kind":"function","slug":"pdf-extract-text"}'
 
 ### "What's on my calendar today / this week?"
 ```bash
-sulla calendar/calendar_list_upcoming '{"days":7}'
+sulla calendar/list_upcoming '{"days":7}'
 ```
 
 ### "Schedule a meeting with X tomorrow at 2pm"
 Compute the ISO time first (use the user's TZ), then:
 ```bash
-sulla calendar/calendar_create '{"title":"...","start":"2026-04-24T14:00:00-07:00","end":"...","people":["x@y.com"]}'
+sulla calendar/create '{"title":"...","start":"2026-04-24T14:00:00-07:00","end":"...","people":["x@y.com"]}'
 ```
 
 ### "Remind me to do X tomorrow at 9am"
@@ -273,7 +273,7 @@ Same tool — reminders aren't separate. Use a short event. SchedulerService sur
 
 ### "Cancel that meeting"
 ```bash
-sulla calendar/calendar_cancel '{"eventId":123}'
+sulla calendar/cancel '{"eventId":123}'
 ```
 
 See: [`tools/calendar.md`](../tools/calendar.md)
@@ -417,7 +417,7 @@ sulla browser/background_browse '{"action":"open","url":"https://...","waitMs":3
 ```bash
 sulla browser/schedule_alarm '{"action":"create","name":"deploy-check","delayInMinutes":5}'
 ```
-**Doesn't survive app restart** — for durable scheduling use `calendar/calendar_create`.
+**Doesn't survive app restart** — for durable scheduling use `calendar/create`.
 
 ### "Search what we talked about before"
 ```bash
@@ -432,7 +432,7 @@ See: [`tools/browser.md`](../tools/browser.md)
 
 ### "Add this to my macOS Calendar / Reminders / Notes"
 ```bash
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Calendar","action_type":"write",
   "script":"tell application \"Calendar\" to ..."
 }'
@@ -443,7 +443,7 @@ sulla applescript/applescript_execute '{
 
 ### "What song is playing?" / "Pause Music"
 ```bash
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Music","action_type":"read",
   "script":"tell application \"Music\" to if player state is playing then return name of current track & \" — \" & artist of current track"
 }'
@@ -454,7 +454,7 @@ Compose with `visible:true` so the user clicks Send themselves — don't auto-se
 
 ### "Open this file in Finder"
 ```bash
-sulla applescript/applescript_execute '{
+sulla applescript/execute '{
   "target_app":"Finder","action_type":"write",
   "script":"tell application \"Finder\" to open POSIX file \"/path/to/file\""
 }'
@@ -519,13 +519,13 @@ See: [`cloud/overview.md`](../cloud/overview.md)
 
 ### "Remember that I prefer X"
 ```bash
-sulla meta/add_observational_memory '{"priority":"high","content":"..."}'
+sulla observation/add_observational_memory '{"priority":"high","content":"..."}'
 ```
 
 ### "Forget that"
 Find the memory id (in the system prompt's memory list), then:
 ```bash
-sulla meta/remove_observational_memory '{"id":"..."}'
+sulla observation/remove_observational_memory '{"id":"..."}'
 ```
 
 ### "What do you know about me?"
@@ -758,8 +758,8 @@ Vocabulary: status `backlog | todo | in_progress | blocked | done | cancelled | 
 ### "What's on the board?" / "What should we work on?"
 The first turn of a chat already injects a `<project_report>` standup (last 24h done + next open tasks). Lead with that. To refresh:
 ```bash
-sulla project/project_report '{}'
-sulla project/list_project_items '{"kind":"task","limit":20}'
+sulla project_report '{}'
+sulla list_project_items '{"kind":"task","limit":20}'
 ```
 Open the board:
 ```bash
@@ -768,39 +768,39 @@ sulla ui/open_tab '{"mode":"projects"}'
 
 ### "Show me project X" / "Where are we on X?"
 ```bash
-sulla project/search_project_items '{"query":"X","kind":"project"}'
-sulla project/get_project_item '{"id":"<id>"}'
+sulla search_project_items '{"query":"X","kind":"project"}'
+sulla get_project_item '{"id":"<id>"}'
 ```
 Then list its epics/tasks. Read `~/sulla/projects/<slug>/PROJECT.md` only if you need the spec.
 
 ### "Add a task / epic / project"
 Search first to avoid dupes, then create explicitly (no upsert):
 ```bash
-sulla project/search_project_items '{"query":"the title"}'
-sulla project/create_project '{"title":"…","description":"…","outcome_metric":"…"}'
-sulla project/create_epic '{"project_id":"…","title":"…"}'
-sulla project/create_task '{"project_id":"…","epic_id":"…","title":"…","priority":"p1"}'
+sulla search_project_items '{"query":"the title"}'
+sulla create_project '{"title":"…","description":"…","outcome_metric":"…"}'
+sulla create_epic '{"project_id":"…","title":"…"}'
+sulla create_task '{"project_id":"…","epic_id":"…","title":"…","priority":"p1"}'
 ```
 For a subtask, pass `parent_id` on `create_task`.
 
 ### "Mark this done" / "Block this" / "Reprioritize"
 ```bash
-sulla project/update_task '{"id":"…","status":"done"}'
-sulla project/update_task '{"id":"…","status":"blocked"}'
-sulla project/add_task_comment '{"task_id":"…","body":"[date] blocked: <why> | rec: <default> | staged: <what> | check: <unblock>"}'
-sulla project/update_task '{"id":"…","priority":"p0"}'
+sulla update_task '{"id":"…","status":"done"}'
+sulla update_task '{"id":"…","status":"blocked"}'
+sulla add_task_comment '{"task_id":"…","body":"[date] blocked: <why> | rec: <default> | staged: <what> | check: <unblock>"}'
+sulla update_task '{"id":"…","priority":"p0"}'
 ```
 Status / priority / assignee / due_at changes stamp `last_moved_at`.
 
 ### "What moved overnight?" / "Standup"
 ```bash
-sulla project/project_report '{"hours":24}'
+sulla project_report '{"hours":24}'
 ```
 Optional: `project_id`, `assignee` (`heartbeat`, `sulla`, `human`), `next_limit`.
 
 ### "Archive this"
 ```bash
-sulla project/archive_project_item '{"id":"…"}'
+sulla archive_project_item '{"id":"…"}'
 ```
 Soft-archive only; cascades down. Never hard-delete. Never write these tables with raw `pg_execute`.
 

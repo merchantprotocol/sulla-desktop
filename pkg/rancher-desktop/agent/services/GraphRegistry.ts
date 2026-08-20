@@ -752,6 +752,7 @@ export const GraphRegistry = {
     agentLabel?:            string;
     parentConversationId?:  string;
     parentWsChannel?:       string;
+    deferParentThinkingComplete?: boolean;
     workflowNodeId?:        string;
     workflowParentChannel?: string;
   }): Promise<{
@@ -796,6 +797,7 @@ export const GraphRegistry = {
       agentLabel:             'summarizer',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      deferParentThinkingComplete: true,
       parentAbortSignal:    (parentState.metadata as any).options?.abort,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
@@ -874,6 +876,7 @@ export const GraphRegistry = {
       agentLabel:             'tool-result-digester',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      deferParentThinkingComplete: true,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
@@ -915,6 +918,8 @@ export const GraphRegistry = {
       contextWindow:          30,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation',
+      // Post-turn writer — runs after the loop closed; narrate nothing.
+      silent:                 true,
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
@@ -948,6 +953,8 @@ export const GraphRegistry = {
       contextWindow:          30,
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             `identity-observer-${ cfg.domain }`,
+      // Post-turn writer — runs after the loop closed; narrate nothing.
+      silent:                 true,
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
@@ -980,6 +987,7 @@ export const GraphRegistry = {
       agentLabel:             `identity-observation-recall-${ cfg.domain }`,
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      deferParentThinkingComplete: true,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
     });
@@ -1009,6 +1017,7 @@ export const GraphRegistry = {
       agentLabel:             'observation-recall',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      deferParentThinkingComplete: true,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
     });
@@ -1439,10 +1448,22 @@ async function buildSubconsciousState(opts: {
   parentAbortSignal?:    any;
   /** Label for logging — identifies which subconscious agent this is */
   agentLabel?:           string;
+  /**
+   * Fully silent sub-agent: suppress ALL parent-channel thinking emissions.
+   * Post-turn observation WRITERS run fire-and-forget AFTER the primary loop
+   * has already emitted graph_execution_complete — any thinking bubble they
+   * push then arrives on a closed run and spins forever (the user has to hit
+   * Stop to clear it). Silent writers narrate nothing to the UI; they just
+   * run and write to the DB. Recall agents (which run BEFORE the reply and
+   * inform it) stay non-silent so their progress is still visible.
+   */
+  silent?:               boolean;
   /** Parent conversation ID for log tracing */
   parentConversationId?: string;
   /** Parent's WebSocket channel — subconscious agents push thinking messages here */
   parentWsChannel?:      string;
+  /** Let the primary turn close the parent thinking bubble after all recalls finish. */
+  deferParentThinkingComplete?: boolean;
   /** When invoked inside a workflow run, these route the subagent's
       BaseNode.wsChatMessage emits into the workflow's live stream so the
       user can see subconscious work progressing (otherwise a long memory-
@@ -1482,7 +1503,9 @@ async function buildSubconsciousState(opts: {
       conversationId:       threadId,
       parentConversationId: opts.parentConversationId,
       parentWsChannel:      opts.parentWsChannel,
+      deferParentThinkingComplete: !!opts.deferParentThinkingComplete,
       agentLabel:           opts.agentLabel,
+      subconsciousSilent:   !!opts.silent,
       wsChannel:            opts.agentLabel ? `subconscious:${ opts.agentLabel }` : 'subconscious',
       cycleComplete:        false,
       waitingForUser:       false,

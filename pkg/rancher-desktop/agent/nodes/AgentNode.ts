@@ -55,15 +55,15 @@ export class AgentNode extends BaseNode {
     const startTime = Date.now();
 
     // Emit an immediate thinking heartbeat so the UI shows activity within
-    // milliseconds of the user sending a message — before enrichPrompt or
-    // subconscious agents (which can take 30+ seconds with Claude Code).
-    // Only on fresh turns, never inside workflows (subconscious already skips those).
+    // milliseconds of the user sending a message, then keep that same bubble
+    // open for recall/progress/model activity. Real output or graph completion
+    // closes it; closing it here creates a separate one-line "Thinking..."
+    // bubble above the rest of the turn's thinking.
     const _isFirstEntry = ((state.metadata as any).consecutiveSameNode ?? 0) === 0;
     const _inWorkflow   = (state.metadata as any).workflowNodeId || (state.metadata as any).activeWorkflow || (state.metadata as any).scopedWorkflowId;
     if (_isFirstEntry && !_inWorkflow) {
-      console.log(`[ThinkingTrace] AgentNode emit "Thinking…" + immediate thinking_complete (threadId=${ state.metadata.threadId }, wsChannel=${ state.metadata.wsChannel })`);
+      console.log(`[ThinkingTrace] AgentNode emit "Thinking…" (threadId=${ state.metadata.threadId }, wsChannel=${ state.metadata.wsChannel })`);
       await this.wsChatMessage(state, 'Thinking…', 'assistant', 'thinking');
-      await this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
     }
 
     // ----------------------------------------------------------------
@@ -120,10 +120,6 @@ export class AgentNode extends BaseNode {
         onProgress: (message) => { void this.wsChatMessage(state, message, 'assistant', 'thinking') },
       });
       subconsciousMs = Date.now() - subStart;
-      // Close the bubble the progress lines opened — in voice mode the
-      // end-of-turn sentinel flush is skipped, so without this the last
-      // subconscious bubble would stay stuck "live" on the desktop UI.
-      await this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
     }
 
     // Inject the compact per-turn <turn_context> block (current time, agent

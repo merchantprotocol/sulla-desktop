@@ -43,10 +43,10 @@ Multi-display support, restricted regions, action logging with before/after scre
 | User says | Agent should... |
 |----------|-----------------|
 | "Open this PDF in Preview" | Use AppleScript on Finder/Preview |
-| "Add a reminder for tomorrow" | AppleScript on Reminders, OR `calendar/calendar_create` (different destination — confirm intent) |
+| "Add a reminder for tomorrow" | AppleScript on Reminders, OR `calendar/create` (different destination — confirm intent) |
 | "What song is playing?" | AppleScript on Music or Spotify |
 | "Click the button on this webpage" | `browser/click` (handle) or `browser/click_at` (coords) — works because it's inside Sulla's browser |
-| "Take a screenshot of my whole screen" | **Not yet.** Tell user it's planned. Workaround: `sulla applescript/applescript_execute` with `screencapture` shell command — but `do shell script` is blocked. Best workaround: ask user to take it themselves and paste. |
+| "Take a screenshot of my whole screen" | **Not yet.** Tell user it's planned. Workaround: `sulla applescript/execute` with `screencapture` shell command — but `do shell script` is blocked. Best workaround: ask user to take it themselves and paste. |
 | "Click the menu bar / Dock / a non-Sulla app's window" | **Not yet.** Phase 3 will enable this. AppleScript on System Events has limited UI scripting that may help in some cases. |
 | "Move my mouse to (x, y) on the desktop" | **Not yet.** Phase 2. |
 | "Type into TextEdit" | **Not yet** — at least not via a clean computer-use tool. Could attempt via System Events keystroke (high-risk, prompts user). |

@@ -55,7 +55,7 @@ Default to regular `exec` (Lima VM) for search, edit, install, build, test, and 
 
 | Category | Tools | Primary Use |
 |----------|-------|------------|
-| `meta` | exec, exechost (last resort), browse_tools, file_search, read_file, write_file, ask_user_question, workflow helpers | System, file ops, tool discovery |
+| `meta` | exec, exechost (last resort), browse_tools, file_search, read_file, ask_user_question, workflow helpers | System, file ops, tool discovery |
 | `browser` | tab, screenshot, eval_js, snapshot, text, form, click, fill, scroll, manage_cookies, background_browse | Web automation |
 | `github` | git_push, git_pull, git_commit, git_add, git_status, git_log, git_diff, git_branch, github_create_pr, github_create_issue | Git & GitHub |
 | `function` | function_list, function_run | Custom function execution |
@@ -64,18 +64,18 @@ Default to regular `exec` (Lima VM) for search, edit, install, build, test, and 
 | `notify` | notify_user | Desktop notifications |
 | `redis` | redis_get, redis_set, redis_hget, redis_hset, redis_hgetall, redis_lpop, redis_rpush, redis_expire | Key-value store |
 | `pg` | pg_query, pg_queryall, pg_queryone, pg_execute, pg_transaction | PostgreSQL |
-| `calendar` | calendar_create, calendar_get, calendar_list, calendar_list_upcoming, calendar_update, calendar_cancel | Events |
-| `workflow` | execute_workflow, validate_sulla_workflow, restart_from_checkpoint | Workflow execution |
+| `calendar` | create, get, list, list_upcoming, update, cancel, delete | Local events |
+| `workflow` | import_workflow, refresh_schedules, catch_up_schedules, set_workflow_status, routine_report, display_workflow | Workflow lifecycle and schedules |
 | `vault` | vault_read_secrets, vault_is_enabled, vault_list_accounts, vault_set_credential, vault_list | Credentials |
-| `agents` | spawn_agent, check_agent_jobs | Sub-agent spawning |
-| `applescript` | applescript_execute | macOS app automation |
+| `agents` | list_agents, check_agent_jobs, stop_agent_job, conversation tools | Agent registry and async job management |
+| `applescript` | execute, computer_use_list, computer_use_enable | macOS app automation |
 | `extensions` | list_extension_catalog, list_installed_extensions, install_extension, uninstall_extension, start_extension, stop_extension, get_extension_status | Recipe lifecycle |
 | `marketplace` | search, info, download, scaffold, validate, publish, unpublish, list_local, list_published, update | Generic artifact lifecycle (6 kinds: skill / function / workflow / agent / recipe / integration) |
 | `bridge` | update_human_presence, get_human_presence | Agent presence/state |
 | `project` | list/get/search, create/update project+epic+task, add_task_comment, list_task_comments, archive_project_item, project_report | Projects project-state (Postgres) — the ONE project-state store, accessed through the Sulla CLI catalog |
 | `ui` | open_tab | Open Sulla Desktop views from chat (incl. `projects`) |
 | `capture` | teleprompter_*, mic_start/stop, speaker_start/stop, audio_state, list_screens, screenshot | Capture Studio control (headless) |
-| `observation` | add_observational_memory, remove_observational_memory, write_file | Long-term memory + file writes |
+| `observation` | add/search/list/remove observational memory; add/search/list/remove identity observations | Memory and domain-keyed identity observations |
 
 ---
 
