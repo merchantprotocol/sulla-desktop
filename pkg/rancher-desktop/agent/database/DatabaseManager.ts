@@ -65,6 +65,16 @@ export class DatabaseManager {
       console.warn('[DB] SystemPromptSectionModel.seedDefaults() failed:', error);
     }
 
+    // Re-assert the locked core routines (nightly "dreaming" consolidation, etc.)
+    // from their bundled definitions. Idempotent + self-healing; non-fatal — a
+    // failure here just means the routine re-seeds on the next boot.
+    try {
+      const { seedCoreRoutines } = await import('@pkg/agent/routines/core/seedCoreRoutines');
+      await seedCoreRoutines();
+    } catch (error) {
+      console.warn('[DB] seedCoreRoutines() failed:', error);
+    }
+
     // Warm skills registry cache
     try {
       await skillsRegistry.initialize();
