@@ -43,6 +43,7 @@ import { up as up_0052, down as down_0052 } from './0052_add_self_observation_fi
 import { up as up_0053, down as down_0053 } from './0053_allow_environment_identity_domain';
 import { up as up_0054, down as down_0054 } from './0054_allow_projects_identity_domain';
 import { up as up_0055, down as down_0055 } from './0055_add_system_and_content_hash_to_workflows';
+import { up as up_0056, down as down_0056 } from './0056_fix_routine_scorecard_null_slug';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -87,4 +88,5 @@ export const migrationsRegistry = [
   { name: '0053_allow_environment_identity_domain',              up: up_0053, down: down_0053 },
   { name: '0054_allow_projects_identity_domain',                 up: up_0054, down: down_0054 },
   { name: '0055_add_system_and_content_hash_to_workflows',       up: up_0055, down: down_0055 },
+  { name: '0056_fix_routine_scorecard_null_slug',                 up: up_0056, down: down_0056 },
 ] as const;
