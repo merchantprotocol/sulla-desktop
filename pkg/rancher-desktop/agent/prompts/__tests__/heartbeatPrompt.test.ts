@@ -78,6 +78,25 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain("never write Redis 'sulla_settings' directly");
   });
 
+  it('fans out delegable Projects tasks through planner/work agents and verifies the fleet', () => {
+    expect(heartbeatPrompt).toContain('## Orchestrator Mode — Fan Out, Then Verify');
+    expect(heartbeatPrompt).toContain('dispatch up to **10** sub-agents');
+    expect(heartbeatPrompt).toContain('one per task');
+    expect(heartbeatPrompt).toContain("'async: true, parallel: true'");
+    expect(heartbeatPrompt).toContain('Never double-dispatch');
+    expect(heartbeatPrompt).toContain('Plan-first split');
+    expect(heartbeatPrompt).toContain('planner agent');
+    expect(heartbeatPrompt).toContain('Planner agents write no code');
+    expect(heartbeatPrompt).toContain('work agent');
+    expect(heartbeatPrompt).toContain('own git worktree');
+    expect(heartbeatPrompt).toContain('hb/<task-id>-<slug>');
+    expect(heartbeatPrompt).toContain('sulla github/git_push');
+    expect(heartbeatPrompt).toContain('DRAFT PR');
+    expect(heartbeatPrompt).toContain('returned jobs plus open');
+    expect(heartbeatPrompt).toContain('one fix-up agent');
+    expect(heartbeatPrompt).toContain('fan out up to 10 sub-agents');
+  });
+
   // Regression guard for #587: Jonathon rejected the "pick one task, make one
   // move, STOP" cycle ceiling (#581) and required a continuous operator that
   // works the whole portfolio per wake. PR #581 proved this framing can be
