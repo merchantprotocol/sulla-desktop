@@ -217,9 +217,12 @@ class ModelProviderService {
 
   private async getCliProviderModels(providerId: string): Promise<ProviderModelInfo[]> {
     if (providerId === 'claude-code') {
-      return [
-        { id: 'claude-code', name: 'Auto (CLI default)', description: 'Let Claude Code choose the best model automatically' },
-      ];
+      // No hardcoded claude-code model list — read the live catalog from
+      // Anthropic's /v1/models using the signed-in account's credentials.
+      // Degrades to Auto + a static list on any failure. See
+      // claudeModelCatalog.ts.
+      const { listClaudeCodeModels } = await import('../languagemodels/claudeModelCatalog');
+      return listClaudeCodeModels();
     }
 
     if (providerId === 'codex') {
