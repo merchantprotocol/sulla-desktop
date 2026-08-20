@@ -63,6 +63,22 @@ const IDENTITY_OBSERVATION_RECALL_TOOLS: string[] = [
   'list_identity_observations',
 ];
 
+/** Projects recall also needs read-only access to live Projects work-state:
+ *  keyword search to find relevant items, plus drill-down to pull a hit's full
+ *  detail (children/status) and its comment thread when the turn needs it. */
+function identityObservationRecallToolsForDomain(domain: string): string[] {
+  if (domain === 'projects') {
+    return [
+      ...IDENTITY_OBSERVATION_RECALL_TOOLS,
+      'search_project_items',  // keyword search across projects/epics/tasks
+      'get_project_item',      // fetch one hit's full detail + children/comments
+      'list_task_comments',    // read a task's progress/blocker/decision thread
+    ];
+  }
+
+  return IDENTITY_OBSERVATION_RECALL_TOOLS;
+}
+
 /**
  * Per-domain focus config for the identity observer template. Mirrors
  * ~/sulla/identity/ (human / business / world / agent). Adding a new domain
@@ -492,8 +508,9 @@ ${ cfg.focus }
 Rules:
 - Call search_identity_observations with key topic/phrase variants from the conversation.
 - Optionally call list_identity_observations when broad identity context is needed.
-- Return ONLY observations that are relevant or possibly relevant to this turn.
+${ cfg.domain === 'projects' ? '- Also call search_project_items when the current turn names, implies, or depends on live Projects work-state. Use it only to find relevant project/epic/task context; do not create, update, archive, or comment on project items from recall.\n- When a search hit is clearly central to this turn and its title/status is not enough, drill down: call get_project_item to pull that item\'s full detail (children, status) or list_task_comments to read a task\'s progress/blocker/decision thread. These are READ-ONLY. Drill down only for the one or two items that actually matter — you block the primary agent, so do not fetch detail for every hit.\n' : '' }- Return ONLY observations that are relevant or possibly relevant to this turn.
 - Format each result as: \`[id] L<level>·<category> date — content (basis: ...)\`
+- When including live Projects work-state from search_project_items, format it as: \`[project:<id>] <kind> <status> — <title> (source: Projects work-state)\`
 - If many observations are relevant, return many. If only a few matter, return a few.
 - If nothing is relevant, return an empty string — do NOT pad with filler.
 - Do NOT narrate your process. Output only the filtered observation lines.
@@ -979,7 +996,7 @@ export const GraphRegistry = {
     const graph = createSubconsciousGraph();
     const state = await buildSubconsciousState({
       systemPrompt:           buildIdentityObservationRecallPrompt(cfg),
-      tools:                  IDENTITY_OBSERVATION_RECALL_TOOLS,
+      tools:                  identityObservationRecallToolsForDomain(cfg.domain),
       userMessage:            `Read the recent conversation context and return only ${ cfg.domain } identity observations that are relevant or possibly relevant to what is happening now. Return compact lines only — nothing if nothing is relevant.`,
       messages:               [...parentState.messages],
       contextWindow:          20,
