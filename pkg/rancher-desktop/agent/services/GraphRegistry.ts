@@ -105,14 +105,69 @@ const IDENTITY_OBSERVER_DOMAINS: Record<string, IdentityObserverDomainConfig> = 
   human: {
     domain:       'human',
     subjectLabel: 'the human user',
-    focus: `Observe the HUMAN USER — who they are, not what task is running:
+    focus: `Observe the HUMAN USER as a PERSON — who they are, not what they asked
+the agent to do. You are building a portrait that helps someone understand this
+human even when no task is running. If a candidate row is really about a task, a
+PR, a feature request, a tool, or an instruction to the agent, it does NOT belong
+in this domain.
+
+Record:
 - identity: name, role, background, circumstances they reveal
 - relationship: people in their life and how they relate to them
-- association: companies, projects, communities, groups they belong to
+- association: companies, communities, groups they personally belong to
 - personality: temperament, values, humor, how they handle friction (conclusions — L1)
-- habit: recurring behaviors, schedules, working patterns
-- preference: likes/dislikes, how they want things done, communication style
-- goal: what they are trying to achieve, short- and long-term`,
+- habit: recurring behaviors, schedules, rhythms of how they live and work
+- preference: durable PERSONAL likes/dislikes and communication style — how they
+  are as a person, NOT one-off directions for the task in front of the agent
+- goal: what they are trying to achieve in life and work, short- and long-term
+
+Reject (never write these — they are this domain's most common pollution):
+- an instruction they gave for the current task ("review those PRs", "split the
+  work one task per agent", "merge #603") — task state, not identity
+- a product or feature request about Sulla Desktop or any software they build
+  ("add a projects domain", "thinking bubbles should…") — belongs to the projects
+  domain, not here
+- how the AGENT should behave, taken from the system prompt / AGENTS.md / platform
+  context (persona, tone rules, completion wrappers, "prefer native tools",
+  "verify everything", privacy rules) — that describes the agent's configured
+  behavior, NOT a fact you learned about the human
+- a working agreement about how the pair collaborates ("agent drafts PRs; human
+  merges") — belongs to the agent domain (agent.user)
+- facts about their business or employment — belong to the business domain
+- this-conversation task status, build errors, file paths, or debugging notes`,
+    writerNote: `## How to write a human observation
+
+The human domain is a portrait of the PERSON. Its most common failure is
+recording what the human told the agent to DO as if it were who the human IS.
+Every task directive is "how they want things done" — that phrasing is a trap;
+do not let it pull task residue into this domain.
+
+Pass every candidate row through all three gates before writing it:
+1. Is this about who the human IS, or about what they told the agent to DO? If it
+   is a task, an instruction, a feature request, or a rule for agent behavior, do
+   NOT write it here — it belongs to projects, business, or the agent domain, or
+   nowhere.
+2. Would this still be true, and still worth knowing, in a brand-new chat about a
+   completely different subject next month? If no, do not write it.
+3. Did I learn this from the human themselves — what they said about their life,
+   how they actually behave — or am I reading it off the system prompt / AGENTS.md
+   / platform context? If the basis is "the instructions say…", it is not an
+   observation about the human. Discard it.
+
+A durable personal preference ("prefers blunt honesty over reassurance", "wants
+to be told when something is wrong even if it stings") is worth keeping. A task
+direction ("don't push without a PR on this work") is not — at most it is an
+agent.user working agreement for the agent domain. When in doubt, prefer NOT
+writing: an empty pass beats polluting the portrait with task residue.
+
+Field contract for every human-domain row:
+- content — ONE sentence, third person, about the human ("Jonathon …" / "The
+  human …"). Never restate an instruction as if it were a personal trait.
+- level — L3 for a fact the human stated about themselves or a trait they
+  explicitly claimed; L2 for something established from how they actually behaved
+  over evidence; L1 for a reasoned personality or goal conclusion, always with basis.
+- basis / evidence — where it came from. If the only basis is the system prompt or
+  AGENTS.md, that is a signal to discard, not to write.`,
   },
   agent: {
     domain:       'agent',
