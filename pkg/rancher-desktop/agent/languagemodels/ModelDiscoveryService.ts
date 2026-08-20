@@ -351,13 +351,11 @@ export class ModelDiscoveryService {
       throw new Error(`Unsupported provider: ${ providerId }`);
     }
 
-    // If provider has a static model list (e.g. endpoint doesn't support /models), use it —
-    // unless it opts into live discovery, in which case the static list is only a fallback.
-    if (provider.staticModels?.length && !provider.preferLive) {
-      this.cache.set(cacheKey, { models: provider.staticModels, timestamp: Date.now() });
-      return provider.staticModels;
-    }
-
+    // Always attempt live discovery first for every provider so newly released
+    // models appear automatically. Any `staticModels` array is treated purely as
+    // an offline fallback (used only when the live fetch fails or returns nothing),
+    // never as the authoritative catalog. See the catch block and empty-result
+    // handling below.
     try {
       const url = `${ provider.baseUrl }${ provider.modelsEndpoint }`;
       const headers: Record<string, string> = {
@@ -396,10 +394,14 @@ export class ModelDiscoveryService {
       const data = await response.json();
       const models = provider.parseResponse(data);
 
-      // Cache the results
-      this.cache.set(cacheKey, { models, timestamp: Date.now() });
+      // If the endpoint responded but yielded no usable models, fall back to the
+      // offline static list (if any) rather than caching an empty catalog.
+      const resolved = models.length > 0 ? models : (provider.staticModels ?? []);
 
-      return models;
+      // Cache the results
+      this.cache.set(cacheKey, { models: resolved, timestamp: Date.now() });
+
+      return resolved;
     } catch (error) {
       console.warn(`[ModelDiscovery] Failed to fetch models for ${ providerId }:`, error);
 
