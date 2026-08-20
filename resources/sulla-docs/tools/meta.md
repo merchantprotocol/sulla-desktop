@@ -212,6 +212,35 @@ sulla observation/list_observations '{"limit":50,"include_archived":false}'
 
 Lists active observations by priority and recency. Pass `include_archived:true` only for curation, stale-state checks, or duplicate prevention.
 
+## Identity observation tools
+
+Separate from the operational `observations` above: the **domain-keyed** `identity_observations` store (who the human is, how Sulla works, the business, the world, this environment, the projects). Domains: `human`, `business`, `world`, `agent`, `environment`, `projects`. Each row carries a certainty **level** — `3` stated fact, `2` derived fact, `1` conclusion — plus optional `category`, `basis`, `confidence`. Writes dedupe (pass an `id`, or a similar active row in the same domain updates in place).
+
+```bash
+sulla observation/add_identity_observation '{"domain":"human","level":3,"category":"preference","content":"Prefers concise status updates.","basis":"Stated directly."}'
+sulla observation/search_identity_observations '{"domain":"human","query":"communication"}'
+sulla observation/list_identity_observations '{"domain":"business","level":3}'
+sulla observation/remove_identity_observation '{"id":"abcd"}'
+```
+
+These are written by the per-domain subconscious observers and recalled per-turn — full mechanics in [`environment/subconscious.md`](../environment/subconscious.md) and [`identity/structure.md`](../identity/structure.md).
+
+## Recall index & conversation recall (`memory/*`)
+
+Speed up repeat research and recall past conversations.
+
+```bash
+# Before re-reading files/dirs, check the Redis citation index for trusted digests
+sulla memory/recall_index_lookup '{"topic":"vault key derivation","paths":["pkg/.../VaultKeyService.ts"]}'
+# Persist digests you produced so future passes skip the re-read (24h TTL unless re-hit)
+sulla memory/recall_index_store '{"entries":[{"path":"...","digest":"..."}]}'
+# Search/read the on-disk conversation logs (~/sulla/logs/conv_*.jsonl) by CONTENT
+sulla memory/recall_conversations '{"action":"search","query":"selkirk FK integrity"}'
+sulla memory/recall_conversations '{"action":"read","id":"<conv id>"}'
+```
+
+`recall_conversations` searches actual message content (unlike `browser/search_conversations`, which matches DB titles/summaries). Subconscious agents are never logged to these files.
+
 ## Patterns
 
 ### Run a one-off shell command
