@@ -25,7 +25,7 @@ BODY="$2"
 # Known internal tool categories. Must stay in sync with agent/tools/registry.ts
 # `categoriesList` so `sulla <category>/<tool>` routes to /v1/tools/internal
 # instead of falling through as a proxy call.
-TOOL_CATEGORIES="agents|applescript|bridge|browser|calendar|capture|docker|extensions|fs|function|github|integrations|kubectl|ledger|lima|marketplace|memory|meta|mobile|notify|observation|pg|projects|rdctl|redis|rules|secretary|settings|skills|slack|ui|vault|work|workflow|workspace"
+TOOL_CATEGORIES="agents|applescript|bridge|browser|calendar|capture|docker|extensions|fs|function|github|integrations|kubectl|ledger|lima|marketplace|memory|meta|mobile|models|notify|observation|pg|project|projects|rdctl|redis|rules|secretary|settings|skills|slack|ui|vault|work|workflow|workspace"
 
 # ── Help & discovery ─────────────────────────────────────────────
 # sulla --help | sulla -h | sulla help | sulla (no args) — query the backend
