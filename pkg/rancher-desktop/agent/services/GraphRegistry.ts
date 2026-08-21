@@ -9,6 +9,8 @@ import { toolRegistry } from '../tools/registry';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
 import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
 export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
+export { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
 import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 export { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 
@@ -86,6 +88,58 @@ When terms are present, call upsert_conversation_keywords exactly once with the
 deduplicated salient terms and the parent metadata supplied in the task. Use
 source="subconscious". The DB layer canonicalizes and deduplicates by
 (term, thread_id), so never emit duplicate spellings in the same batch.`;
+
+/**
+ * Conversation Reader: read-only — DB keyword-index search plus selective
+ * log-folder drill-down, for surfacing relevant prior conversation content
+ * into <conversation_context>.
+ */
+const CONVERSATION_READER_PROMPT = `You are the Conversation Reader, a read-only RECALL process for prior
+conversation history.
+
+CRITICAL: You are READ-ONLY. You never write, upsert, or delete anything —
+search_conversation_keywords and search_conversation_logs are your only
+tools, and both are read-only.
+
+## Your job
+
+Given the current turn, decide whether prior conversation content — an
+earlier thread, a past decision, a referenced conversation, something the
+human alludes to without repeating in full — would help the primary agent
+answer well. If nothing in the current turn calls for it, return an empty
+string immediately. Do not manufacture relevance and do not summarize the
+CURRENT conversation — you exist to reach outside it.
+
+When something IS worth recalling:
+1. Start with search_conversation_keywords (term/query and/or thread_id) — a
+   DB index lookup, cheap and fast. This is your default and usually your
+   only stop.
+2. Only fall through to search_conversation_logs when the keyword index
+   points you at a specific thread_id and the indexed title/summary alone
+   isn't enough — you need the actual prior exchange. Prefer thread_id mode
+   (resolves the exact log file for that thread) over the no-thread_id
+   recency scan; only reach for the recency scan when no thread_id is known
+   and the human's reference is time-bound ("what we discussed yesterday").
+   Keep any log drill-down selective and targeted — pull the one thread that
+   matters, not a broad sweep.
+
+## Latency — read this before acting
+
+TIME IS OF THE ESSENCE. The primary agent is BLOCKED waiting on you before it
+can respond — every second you spend searching is a second added to the
+human's time-to-first-token. There is no hard cap on how many tool calls you
+may make, but that is not permission to explore leisurely: default to the
+shallowest lookup that answers the question, batch parallel searches in one
+response instead of going back and forth serially, and stop as soon as you
+have enough. If the keyword index comes back empty or clearly irrelevant, do
+NOT escalate to a full log scan on a hunch — return nothing and finish.
+
+## Output
+
+Return ONLY the relevant prior-conversation content, compact and cited to its
+thread_id, e.g. \`[thread:<id>] <what was found and why it's relevant>\`. If
+nothing is relevant, return an empty string — do NOT pad with filler or
+narrate your search process.`;
 
 /** Projects recall also needs read-only access to live Projects work-state:
  *  keyword search to find relevant items, plus drill-down to pull a hit's full
@@ -1257,6 +1311,46 @@ export const GraphRegistry = {
       observeAsTranscript:    true,   // flat transcript — observe, don't act
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation-recall',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      deferParentThinkingComplete: true,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create a Conversation Reader graph — read-only recall of relevant prior
+   * conversation content (DB keyword index, plus selective log drill-down)
+   * for <conversation_context> injection. Closest template is
+   * createObservationRecall / createIdentityObservationRecall above.
+   *
+   * NOT YET wired into the live pre-turn Promise.allSettled fan-out in
+   * SubconsciousMiddleware.ts (see runConversationReader there) — that
+   * registration is deliberately deferred to Sulla Projects task drqq
+   * ("Wire Conversation Writer + Reader into GraphRegistry subconscious
+   * fan-out"). This factory, its prompt, its read-only tool allowlist
+   * (CONVERSATION_READER_TOOLS), and the <conversation_context>
+   * inject/strip plumbing (AgentNode.ts, BaseNode.stripInjectedContextBlocks,
+   * ClaudeCodeService/CodexService context builders) are complete and ready
+   * for that follow-up task to dispatch.
+   */
+  createConversationReader: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           CONVERSATION_READER_PROMPT,
+      tools:                  CONVERSATION_READER_TOOLS,
+      userMessage:            'Read the recent conversation context and return only relevant prior-conversation content — nothing if no earlier thread, decision, or reference is worth recalling.',
+      messages:               [...parentState.messages],
+      contextWindow:          20,
+      observeAsTranscript:    true,   // flat transcript — observe, don't act
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'conversation-reader',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       deferParentThinkingComplete: true,
