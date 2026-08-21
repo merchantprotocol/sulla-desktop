@@ -2,6 +2,34 @@ import type { ToolManifest } from '../registry';
 
 export const metaToolManifests: ToolManifest[] = [
   {
+    name:        'upsert_conversation_keywords',
+    description: 'Observer-only database writer for salient terms from the completed conversation turn. Canonicalizes and upserts terms by (term, thread_id), bumping hit_count and last_seen on repeats.',
+    category:    'observation',
+    schemaDef:   {
+      terms:                    { type: 'array', description: 'Salient terms only (not stopwords, prose, or secrets); maximum 100.', items: { type: 'string' } },
+      thread_id:                { type: 'string', description: 'Parent conversation thread id.' },
+      conversation_history_id:  { type: 'string', optional: true, nullable: true, description: 'Parent conversation_history row id, when known.' },
+      channel_id:               { type: 'string', optional: true, nullable: true, description: 'Parent channel id, when known.' },
+      agent_id:                 { type: 'string', optional: true, nullable: true, description: 'Parent agent id, when known.' },
+      source:                   { type: 'enum', optional: true, default: 'subconscious', enum: ['primary', 'subconscious', 'worker'], description: 'Writer source; use subconscious here.' },
+    },
+    operationTypes: ['create', 'update'],
+    loader:         () => import('./upsert_conversation_keywords'),
+  },
+  {
+    name:        'search_conversation_keywords',
+    description: 'Read-only search for the Conversation Reader over the conversation_keywords index. Pass term (or query) for exact canonical-term match, falling back to pg_trgm fuzzy match, falling back to ILIKE over conversation_history title/summary/last_summary; or pass thread_id to list every indexed keyword for that thread. Deliberately includes conversations hidden from the primary UI (subconscious/worker channels) — that is the point of this tool.',
+    category:    'observation',
+    schemaDef:   {
+      term:      { type: 'string', optional: true, description: 'Term to search for (exact -> fuzzy -> title/summary fallback). Provide this or thread_id.' },
+      query:     { type: 'string', optional: true, description: 'Alias for term.' },
+      thread_id: { type: 'string', optional: true, description: 'List every indexed keyword for this thread id instead of searching by term.' },
+      limit:     { type: 'number', optional: true, description: 'Max results to return (default 20).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./search_conversation_keywords'),
+  },
+  {
     name:        'add_observational_memory',
     description: 'Use this tool to store the observations you make into long-term memory.',
     category:    'observation',
@@ -13,6 +41,20 @@ export const metaToolManifests: ToolManifest[] = [
     },
     operationTypes: ['create', 'read', 'update', 'delete'],
     loader:         () => import('./add_observational_memory'),
+  },
+  {
+    name:        'search_conversation_logs',
+    description: 'Read-only search over ~/sulla/logs/ for the Conversation Reader. Pass thread_id to resolve that conversation\'s specific log file(s) (channel-scoped .log plus the conv_<id>.jsonl event stream); omit it to scan all thread-scoped log files within a recency window (since / days). Add keyword to filter to matching content lines instead of whole-file listings/previews. Excludes global non-thread-scoped infra logs (chat.log, dispatcher.log, index.log, etc).',
+    category:    'observation',
+    schemaDef:   {
+      thread_id: { type: 'string', optional: true, description: 'Conversation/thread id to resolve log files for. Provide this or rely on the recency window below.' },
+      keyword:   { type: 'string', optional: true, description: 'Case-insensitive substring to filter matched files down to content lines.' },
+      since:     { type: 'string', optional: true, description: 'ISO 8601 timestamp lower bound for the recency window (ignored when thread_id is set).' },
+      days:      { type: 'number', optional: true, description: 'Recency window in days from now, used when since is omitted (ignored when thread_id is set).' },
+      limit:     { type: 'number', optional: true, description: 'Max files or matching lines to return (default 50, max 200).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./search_conversation_logs'),
   },
   {
     name:        'exec',

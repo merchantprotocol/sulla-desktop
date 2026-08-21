@@ -7,6 +7,12 @@ import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph,
 import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
 import { toolRegistry } from '../tools/registry';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
+import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
+export { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
+import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
+export { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
@@ -62,6 +68,78 @@ const IDENTITY_OBSERVATION_RECALL_TOOLS: string[] = [
   'search_identity_observations',
   'list_identity_observations',
 ];
+
+/** Conversation Writer: the single DB-only keyword upsert tool. */
+const CONVERSATION_WRITER_PROMPT = `You are the Conversation Writer, a silent post-episode observer.
+
+Your ONLY job is to scan the completed conversation transcript for a small set
+of durable, salient search terms that would help a later reader find this turn.
+Write only meaningful proper nouns, product/project names, technical terms,
+decisions, entities, and distinctive phrases. Do not write stopwords, generic
+verbs, prose, secrets, credentials, tokens, private payloads, or whole
+sentences. Do not infer facts that are not present in the transcript.
+
+You are NOT the primary agent. Do not continue the work described in the
+transcript. Do not answer the user, browse, call APIs, read or write files, run
+commands, use source control, or use any tool except the provided keyword DB
+upsert tool. If no salient terms are present, finish without calling the tool.
+
+When terms are present, call upsert_conversation_keywords exactly once with the
+deduplicated salient terms and the parent metadata supplied in the task. Use
+source="subconscious". The DB layer canonicalizes and deduplicates by
+(term, thread_id), so never emit duplicate spellings in the same batch.`;
+
+/**
+ * Conversation Reader: read-only — DB keyword-index search plus selective
+ * log-folder drill-down, for surfacing relevant prior conversation content
+ * into <conversation_context>.
+ */
+const CONVERSATION_READER_PROMPT = `You are the Conversation Reader, a read-only RECALL process for prior
+conversation history.
+
+CRITICAL: You are READ-ONLY. You never write, upsert, or delete anything —
+search_conversation_keywords and search_conversation_logs are your only
+tools, and both are read-only.
+
+## Your job
+
+Given the current turn, decide whether prior conversation content — an
+earlier thread, a past decision, a referenced conversation, something the
+human alludes to without repeating in full — would help the primary agent
+answer well. If nothing in the current turn calls for it, return an empty
+string immediately. Do not manufacture relevance and do not summarize the
+CURRENT conversation — you exist to reach outside it.
+
+When something IS worth recalling:
+1. Start with search_conversation_keywords (term/query and/or thread_id) — a
+   DB index lookup, cheap and fast. This is your default and usually your
+   only stop.
+2. Only fall through to search_conversation_logs when the keyword index
+   points you at a specific thread_id and the indexed title/summary alone
+   isn't enough — you need the actual prior exchange. Prefer thread_id mode
+   (resolves the exact log file for that thread) over the no-thread_id
+   recency scan; only reach for the recency scan when no thread_id is known
+   and the human's reference is time-bound ("what we discussed yesterday").
+   Keep any log drill-down selective and targeted — pull the one thread that
+   matters, not a broad sweep.
+
+## Latency — read this before acting
+
+TIME IS OF THE ESSENCE. The primary agent is BLOCKED waiting on you before it
+can respond — every second you spend searching is a second added to the
+human's time-to-first-token. There is no hard cap on how many tool calls you
+may make, but that is not permission to explore leisurely: default to the
+shallowest lookup that answers the question, batch parallel searches in one
+response instead of going back and forth serially, and stop as soon as you
+have enough. If the keyword index comes back empty or clearly irrelevant, do
+NOT escalate to a full log scan on a hunch — return nothing and finish.
+
+## Output
+
+Return ONLY the relevant prior-conversation content, compact and cited to its
+thread_id, e.g. \`[thread:<id>] <what was found and why it's relevant>\`. If
+nothing is relevant, return an empty string — do NOT pad with filler or
+narrate your search process.`;
 
 /** Projects recall also needs read-only access to live Projects work-state:
  *  keyword search to find relevant items, plus drill-down to pull a hit's full
@@ -1284,6 +1362,42 @@ export const GraphRegistry = {
     return { graph, state, threadId: state.metadata.threadId };
   },
 
+  /** Create the post-episode Conversation Writer. It receives a flat
+   * transcript and only the keyword DB writer, so it cannot become an actor. */
+  createConversationWriter: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const parentMeta = parentState.metadata as any;
+    const parentThreadId = String(parentMeta.threadId || parentMeta.conversationId || '');
+    if (!parentThreadId) throw new Error('Conversation Writer requires a parent thread id');
+
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt: CONVERSATION_WRITER_PROMPT,
+      tools:        CONVERSATION_WRITER_TOOLS,
+      userMessage:  `Scan the completed turn and index salient terms only. Parent metadata (copy exactly into the tool call): ${ JSON.stringify({
+        thread_id:                parentThreadId,
+        conversation_history_id:  parentMeta.conversationHistoryId || parentMeta.conversation_history_id || null,
+        channel_id:               parentMeta.channelId || parentMeta.channel_id || parentMeta.wsChannel || null,
+        agent_id:                 parentMeta.agentId || parentMeta.agent_id || null,
+        source:                   'subconscious',
+      }) }`,
+      messages:     [...parentState.messages],
+      contextWindow: 30,
+      observeAsTranscript: true,
+      parentAbortSignal: (parentMeta.options as any)?.abort,
+      agentLabel: 'conversation-writer',
+      silent: true,
+      parentWsChannel: String(parentMeta.wsChannel || ''),
+      parentConversationId: parentThreadId,
+      workflowNodeId: parentMeta.workflowNodeId,
+      workflowParentChannel: parentMeta.workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
   /**
    * Create an Identity Observation Recall graph — read-only search/list of
    * domain-keyed identity observations. The recall agent selects observations
@@ -1338,6 +1452,46 @@ export const GraphRegistry = {
       observeAsTranscript:    true,   // flat transcript — observe, don't act
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation-recall',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      deferParentThinkingComplete: true,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create a Conversation Reader graph — read-only recall of relevant prior
+   * conversation content (DB keyword index, plus selective log drill-down)
+   * for <conversation_context> injection. Closest template is
+   * createObservationRecall / createIdentityObservationRecall above.
+   *
+   * NOT YET wired into the live pre-turn Promise.allSettled fan-out in
+   * SubconsciousMiddleware.ts (see runConversationReader there) — that
+   * registration is deliberately deferred to Sulla Projects task drqq
+   * ("Wire Conversation Writer + Reader into GraphRegistry subconscious
+   * fan-out"). This factory, its prompt, its read-only tool allowlist
+   * (CONVERSATION_READER_TOOLS), and the <conversation_context>
+   * inject/strip plumbing (AgentNode.ts, BaseNode.stripInjectedContextBlocks,
+   * ClaudeCodeService/CodexService context builders) are complete and ready
+   * for that follow-up task to dispatch.
+   */
+  createConversationReader: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           CONVERSATION_READER_PROMPT,
+      tools:                  CONVERSATION_READER_TOOLS,
+      userMessage:            'Read the recent conversation context and return only relevant prior-conversation content — nothing if no earlier thread, decision, or reference is worth recalling.',
+      messages:               [...parentState.messages],
+      contextWindow:          20,
+      observeAsTranscript:    true,   // flat transcript — observe, don't act
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'conversation-reader',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       deferParentThinkingComplete: true,
@@ -1752,85 +1906,6 @@ function windowedContext(messages: any[], windowSize: number, maxBlockChars: num
 
     return m;
   });
-}
-
-/**
- * Render one message's content as a compact plain-text line for an observer
- * transcript. tool_use / tool_result blocks are described in prose ("[called
- * tool X …]", "[tool result …]") rather than replayed as structural blocks —
- * the observer only needs to know what happened, not to sit inside a live
- * tool-calling turn it might feel compelled to continue.
- */
-function observerBlocksToText(content: any): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content);
-
-  const parts: string[] = [];
-  for (const b of content) {
-    if (!b || typeof b !== 'object') { if (b != null) parts.push(String(b)); continue }
-    if (b.type === 'text' && typeof b.text === 'string') {
-      parts.push(b.text);
-    } else if (b.type === 'tool_use') {
-      const input = b.input ? ` ${ JSON.stringify(b.input).slice(0, 300) }` : '';
-      parts.push(`[called tool ${ b.name || 'unknown' }${ input }]`);
-    } else if (b.type === 'tool_result') {
-      const inner = typeof b.content === 'string'
-        ? b.content
-        : Array.isArray(b.content)
-          ? b.content.map((c: any) => (c?.type === 'text' && typeof c.text === 'string' ? c.text : c?.type === 'image' ? '[image omitted]' : '')).filter(Boolean).join('\n')
-          : JSON.stringify(b.content ?? '');
-      parts.push(`[tool result] ${ inner }`);
-    } else if (b.type === 'image') {
-      parts.push('[image omitted]');
-    } else {
-      parts.push(JSON.stringify(b));
-    }
-  }
-  return parts.join('\n');
-}
-
-/**
- * Matches BaseNode.stripInjectedContextBlocks' tag list — kept in sync
- * manually since it lives on the node layer and this is the service layer.
- * Recall/writer subagents were reading THIS TURN's own injected
- * <xxx_observations> blocks back out of the last assistant message (merged in
- * by AgentNode before the primary reply, not stripped until the NEXT turn's
- * injection) and could re-record a recalled row as if it were fresh
- * conversational evidence — a self-reinforcement loop. Stripped here so no
- * subconscious subagent ever observes its own — or a sibling's — injection.
- */
-const INJECTED_CONTEXT_BLOCK_RE = /\n*<(observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-
-/**
- * Flatten a windowed conversation context into a single observer message: a
- * plain-text transcript bracketed by explicit markers, preceded by a hard
- * observe-don't-act instruction and followed by the caller's task prompt. The
- * absence of any real assistant/tool_use/tool_result message structure — plus
- * the explicit framing — is what stops the observer from continuing the
- * assistant's work instead of recording memory about it.
- */
-function buildObserverTranscriptMessage(context: any[], userMessage: string): string {
-  const lines: string[] = [];
-  for (const m of context) {
-    if (!m || m.role === 'system') continue;                 // observer has its own system prompt
-    if (m?.metadata?.source === 'subconscious') continue;    // skip prior subconscious injections
-    const who = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : (m.role || 'unknown');
-    const text = observerBlocksToText(m.content).replace(INJECTED_CONTEXT_BLOCK_RE, '').trim();
-    if (!text) continue;
-    lines.push(`${ who }: ${ text }`);
-  }
-  const transcript = lines.join('\n\n') || '(no prior conversation)';
-
-  return [
-    'You are a silent OBSERVER of the conversation below. Your ONLY job is to analyze it and record memory through your provided database tools.',
-    'You are NOT a participant. Do NOT continue the assistant\'s work, do NOT take any action the conversation describes, and do NOT read, write, or edit files, run commands, browse, or use source control. Only observe and record.',
-    '',
-    '=== BEGIN CONVERSATION TRANSCRIPT ===',
-    transcript,
-    '=== END CONVERSATION TRANSCRIPT ===',
-    '',
-    userMessage,
-  ].join('\n');
 }
 
 async function buildSubconsciousState(opts: {

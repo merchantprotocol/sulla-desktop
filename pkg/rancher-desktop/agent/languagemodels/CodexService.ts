@@ -13,6 +13,24 @@ import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 
 const log = Logging.background;
 
+/** Idle timeout for a speculatively-booted process that is never claimed. */
+const PREWARM_IDLE_REAP_MS = 60_000;
+
+/**
+ * A `codex exec` process speculatively booted during the pre-turn
+ * (accumulator) phase, waiting to be adopted by the next runCodex for its
+ * conversation. See CodexService.prewarm().
+ */
+interface CodexPrewarmRecord {
+  proc:            childProcess.ChildProcessWithoutNullStreams;
+  model:           string;
+  existingSession: string | undefined;
+  createdAt:       number;
+  closed:          boolean;
+  busy:            boolean;
+  reapTimer:       ReturnType<typeof setTimeout> | null;
+}
+
 /**
  * CodexService — runs `codex exec` inside the Lima VM and streams the
  * --json JSONL output back into Sulla's agent loop.
@@ -39,10 +57,36 @@ const log = Logging.background;
  *     user message; codex's own session state keeps prior context warm.
  *   - Resume failures (expired/missing thread): drop the cached id and
  *     retry once with a fresh session (full history).
+ *
+ * Speculative boot (prewarm): mirrors ClaudeCodeService's Phase 1. `codex
+ * exec` reads its prompt from stdin when invoked with no positional PROMPT
+ * arg (or `-`), so the process can be spawned — and pay its Node/CLI boot +
+ * auth-file read cost — before the turn's prompt exists, overlapping that
+ * cost with the subconscious/recall phase. AgentNode.maybePrewarmPrimary
+ * picks this up automatically via the same `typeof llm.prewarm ===
+ * 'function'` duck-type check used for Claude Code.
+ *
+ * NOT implemented: a Claude-style "warm pool" that keeps one process alive
+ * across multiple turns. Claude's Phase 2 works because `claude -p
+ * --input-format stream-json` is explicitly designed to accept a *stream* of
+ * JSON user messages on one long-lived process. `codex exec` has no
+ * equivalent — per `codex exec --help` it reads exactly one prompt, runs to
+ * `task_complete`, and exits; the codebase's existing `runCodex` already
+ * relies on this (it resolves its promise on the process `close` event, and
+ * turn N+1 is `codex exec resume <threadId>`, a brand-new process). Codex
+ * does ship an experimental persistent multi-turn protocol (`codex
+ * app-server`, JSON-RPC 2.0 over stdio) that could support a real warm pool,
+ * but that's a different wire protocol from the JSONL event stream this
+ * file parses today — a separate, larger integration, not a mirror of this
+ * one. See the latency-opportunities notes in PR description for follow-up.
  */
 export class CodexService extends BaseLanguageModel {
   // conversationId → codex thread_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
+
+  // conversationId → a speculatively-booted process warming up during the
+  // pre-turn phase, claimed by the next runCodex. See prewarm().
+  private prewarmed = new Map<string, CodexPrewarmRecord>();
 
   /**
    * Tracks the hash of the stable <sulla_context> payload last sent per
@@ -79,6 +123,158 @@ export class CodexService extends BaseLanguageModel {
     try {
       await redisClient.del(`${ this.SESSION_KEY_PREFIX }${ convId }`);
     } catch { /* Redis unavailable — non-fatal */ }
+  }
+
+  /**
+   * Whether speculative boot (prewarm) is enabled. Default ON — see the
+   * class doc for why there is no Codex "warm pool" counterpart. No UI
+   * toggle; override by setting the row to 'false' via SullaSettingsModel
+   * if a specific install needs to fall back to cold spawns.
+   */
+  private async speculativeBootEnabled(): Promise<boolean> {
+    try {
+      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
+      return (await SullaSettingsModel.get('codexSpeculativeBoot', 'true')) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Build the `limactl shell` argv that launches `codex exec` in the VM.
+   * Shared by runCodex (fresh spawn) and prewarm (speculative boot) so both
+   * stay identical. The prompt is never baked into this argv — `codex
+   * exec`'s positional PROMPT arg is always omitted (trailing `-`) so the
+   * CLI reads its prompt from stdin once the caller writes it (see `codex
+   * exec --help`: "If not provided as an argument (or if `-` is used),
+   * instructions are read from stdin"). That's what lets prewarm spawn the
+   * process before the turn's prompt exists — runCodex and prewarm both
+   * write the prompt to stdin themselves, at different times.
+   */
+  private buildSpawnArgs(p: { existingSession?: string }): string[] {
+    const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
+
+    const codexArgs = ['codex', 'exec'];
+    if (p.existingSession) {
+      codexArgs.push('resume', shq(p.existingSession));
+    }
+    codexArgs.push(
+      '--json',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--skip-git-repo-check',
+    );
+    if (this.model && this.model !== 'codex') {
+      codexArgs.push('--model', shq(this.model));
+    }
+    codexArgs.push('-'); // read the prompt from stdin
+
+    // limactl shell sets HOME to the guest path (/home/<user>.linux), so
+    // codex would look for auth under the guest home and miss the host
+    // ~/.codex/auth.json written by CodexOAuth. Force CODEX_HOME (and HOME
+    // for any secondary path resolution) to the host home mount.
+    const hostCodexHome = shq(codexHomeDir());
+    const hostHome = shq(path.dirname(codexHomeDir()));
+
+    // `exec` replaces the inner sh with codex so there's no shell layer
+    // between the SSH session and the CLI — best chance of signal
+    // propagation when we kill limactl on the host side.
+    const innerCmd = `export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }; exec ${ codexArgs.join(' ') }`;
+    return ['shell', '0', '--', 'sh', '-c', innerCmd];
+  }
+
+  /**
+   * Speculatively boot a `codex exec` process for this conversation while
+   * the caller does pre-turn work (recall / observations). The process pays
+   * its Node/CLI boot + auth-file read cost and then idles reading stdin;
+   * the next runCodex adopts it and just writes the prompt — hiding that
+   * cost the same way ClaudeCodeService.prewarm hides claude's cold start.
+   * Fire-and-forget: every failure mode falls back to a normal cold spawn.
+   * No-op unless the codexSpeculativeBoot setting is on.
+   */
+  async prewarm(state: BaseThreadState): Promise<void> {
+    try {
+      if (process.platform === 'win32') return;         // no Lima on Windows
+      if (!await this.speculativeBootEnabled()) return;
+
+      const convId = typeof (state.metadata as any)?.threadId === 'string'
+        ? (state.metadata as any).threadId
+        : '__default__';
+
+      const existing = this.prewarmed.get(convId);
+      if (existing && !existing.closed) return;          // already warming
+      if (existing) this.disposePrewarm(convId);          // stale/dead — replace
+
+      const hasAuth = await ensureCodexAuthFile();
+      if (!hasAuth) return;                               // no creds → nothing to warm
+
+      const existingSession = await this.getSession(convId);
+
+      const limactlPath = paths.limactl;
+      const limaHome = paths.lima;
+      const args = this.buildSpawnArgs({ existingSession });
+      const proc = childProcess.spawn(limactlPath, args, {
+        env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
+      });
+
+      const record: CodexPrewarmRecord = {
+        proc,
+        model:     this.model || 'codex',
+        existingSession,
+        createdAt: Date.now(),
+        closed:    false,
+        busy:      false,
+        reapTimer: null,
+      };
+      // Deliberately attach NO stdout 'data' listener: leaving stdout paused
+      // lets Node buffer any early output so the adopting runCodex receives
+      // it intact when it switches the stream to flowing mode.
+      proc.stdin.on('error', () => { /* EPIPE before adoption — non-fatal */ });
+      proc.once('exit', () => { record.closed = true; });
+      proc.once('error', () => { record.closed = true; });
+      record.reapTimer = setTimeout(() => {
+        if (this.prewarmed.get(convId) === record) this.disposePrewarm(convId);
+      }, PREWARM_IDLE_REAP_MS);
+      record.reapTimer.unref?.();
+
+      this.prewarmed.set(convId, record);
+      log.log(`[CodexService] prewarm: speculative boot for convId=${ convId } session=${ existingSession ?? '(new)' }`);
+    } catch (err) {
+      log.log(`[CodexService] prewarm skipped: ${ (err as Error)?.message ?? err }`);
+    }
+  }
+
+  /**
+   * Claim a live pre-warmed process for this conversation, or null. Unlike
+   * ClaudeCodeService (whose --resume argument can be swapped on adoption
+   * since the prompt strategy only depends on it at message-build time),
+   * Codex bakes `resume <threadId>` into the spawned argv at prewarm time —
+   * so a session mismatch between prewarm and claim time (e.g. a session
+   * was minted concurrently) must also evict the record, not just a model
+   * mismatch.
+   */
+  private claimPrewarm(convId: string, model: string, existingSession: string | undefined): CodexPrewarmRecord | null {
+    const rec = this.prewarmed.get(convId);
+    if (!rec) return null;
+    this.prewarmed.delete(convId);
+    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
+    if (rec.closed || rec.model !== model || rec.existingSession !== existingSession) {
+      this.killPrewarmRecord(rec);                       // dead, model, or session mismatch
+      return null;
+    }
+    return rec;
+  }
+
+  /** Tear down and forget the pre-warmed process for a conversation. */
+  private disposePrewarm(convId: string): void {
+    const rec = this.prewarmed.get(convId);
+    if (!rec) return;
+    this.prewarmed.delete(convId);
+    this.killPrewarmRecord(rec);
+  }
+
+  private killPrewarmRecord(rec: CodexPrewarmRecord): void {
+    if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
+    try { rec.proc.kill('SIGTERM'); } catch { /* already dead */ }
   }
 
   override getContextWindow(): number {
@@ -411,6 +607,16 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       parts.push(`<skills_observations>\n${ skillsObservationContext.trim() }\n</skills_observations>`);
     }
 
+    // Conversation Reader output (relevant prior conversation content).
+    // Nothing sets state.metadata.conversationContext yet — the recall
+    // dispatch is deferred to Sulla Projects task drqq — but this build path
+    // is wired the same as the other recall contexts so that task only needs
+    // to set the metadata field.
+    const conversationContext = (state?.metadata as any)?.conversationContext;
+    if (conversationContext && typeof conversationContext === 'string' && conversationContext.trim()) {
+      parts.push(`<conversation_context>\n${ conversationContext.trim() }\n</conversation_context>`);
+    }
+
     if (parts.length === 0) return { prefix: '', stableHash };
     return { prefix: `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`, stableHash };
   }
@@ -468,10 +674,6 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const limactlPath = paths.limactl;
     const limaHome = paths.lima;
 
-    // POSIX single-quote escape. Single-quoted strings are literal in sh, so
-    // no backtick/$VAR/! expansion can fire against untrusted text.
-    const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
-
     // Refresh ~/.codex/AGENTS.md with the full system prompt before spawning.
     // AGENTS.md is the sole source of system context for codex. On a NEW
     // session the write must land before the spawn — codex reads the file at
@@ -485,46 +687,34 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       await memoryFileWrite;
     }
 
-    // The prompt is fed via stdin (`-` positional), NOT as an argv element —
-    // a large transcript on the command line overflows limactl's SSH
+    // Speculative boot: adopt a process pre-warmed for this conversation
+    // during the accumulator phase; otherwise spawn fresh below. Flag off →
+    // adopted is always null and the legacy path runs byte-for-byte as
+    // before. --dangerously-bypass-approvals-and-sandbox: codex runs inside
+    // the Lima VM, which IS the sandbox — its own landlock layer is
+    // redundant here and approval prompts have no TTY to land on. The
+    // prompt is fed via stdin (`-` positional), NOT as an argv element — a
+    // large transcript on the command line overflows limactl's SSH
     // multiplexing channel (same failure mode ClaudeCodeService hit).
-    //
-    // --dangerously-bypass-approvals-and-sandbox: codex runs inside the Lima
-    // VM, which IS the sandbox — its own landlock layer is redundant here and
-    // approval prompts have no TTY to land on.
-    const codexArgs = ['codex', 'exec'];
-    if (existingSession) {
-      codexArgs.push('resume', shq(existingSession));
-    }
-    codexArgs.push(
-      '--json',
-      '--dangerously-bypass-approvals-and-sandbox',
-      '--skip-git-repo-check',
-    );
-    // Pass --model only when explicitly overridden. The 'codex' sentinel means
-    // "auto" — omit the flag and let the CLI use its configured default.
-    if (this.model && this.model !== 'codex') {
-      codexArgs.push('--model', shq(this.model));
-    }
-    codexArgs.push('-'); // read the prompt from stdin
-
-    // limactl shell sets HOME to the guest path (/home/<user>.linux), so
-    // codex would look for auth under the guest home and miss the host
-    // ~/.codex/auth.json written by CodexOAuth. Force CODEX_HOME (and HOME
-    // for any secondary path resolution) to the host home mount.
-    const hostCodexHome = shq(codexHomeDir());
-    const hostHome = shq(path.dirname(codexHomeDir()));
-
-    // `exec` replaces the inner sh with codex so there's no shell layer
-    // between the SSH session and the CLI — best chance of signal
-    // propagation when we kill limactl on the host side.
-    const innerCmd = `export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }; exec ${ codexArgs.join(' ') }`;
-    const args = ['shell', '0', '--', 'sh', '-c', innerCmd];
+    const speculative = await this.speculativeBootEnabled();
+    const adopted = speculative ? this.claimPrewarm(convId, this.model || 'codex', existingSession) : null;
+    const args = this.buildSpawnArgs({ existingSession });
 
     return await new Promise((resolve, reject) => {
-      const proc = childProcess.spawn(limactlPath, args, {
-        env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
-      });
+      let proc: childProcess.ChildProcessWithoutNullStreams;
+      let adoptedSpawned = false;
+      if (adopted) {
+        proc = adopted.proc;
+        adoptedSpawned = true;
+        // Drop the prewarm holding listeners; this run attaches its own below.
+        proc.removeAllListeners('exit');
+        proc.removeAllListeners('error');
+        proc.stdin.removeAllListeners('error');
+      } else {
+        proc = childProcess.spawn(limactlPath, args, {
+          env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
+        });
+      }
 
       // Feed the prompt through stdin instead of the command line. Guard
       // against EPIPE in case codex exits before we finish.
@@ -539,9 +729,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         try { callbacks.onActivity?.(msg) } catch { /* ignore */ }
       };
 
-      proc.once('spawn', () => {
-        emitActivity('Booting isolated environment…');
-      });
+      if (adoptedSpawned) {
+        emitActivity('Isolated environment ready…');
+      } else {
+        proc.once('spawn', () => {
+          emitActivity('Booting isolated environment…');
+        });
+      }
 
       let stdoutBuffer = '';
       let stderrBuffer = '';

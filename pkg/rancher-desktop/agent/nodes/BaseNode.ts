@@ -821,8 +821,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /**
    * Remove previously injected subconscious context blocks
-   * (<observation_context>, <user_observations>, <routine_digest>,
-   * <lane_health>) from all
+   * (<observation_context>, <user_observations>, <conversation_context>,
+   * <routine_digest>, <lane_health>) from all
    * assistant messages, so the per-turn merge below replaces rather than
    * accumulates. Two accumulation paths existed without this:
    * - the merge runs on every graph iteration of a tool-call loop, re-
@@ -832,8 +832,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -1657,7 +1657,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
     };
 
-    const reply = await this.llm!.chatStream(messages, { onToken, onActivity, onFilePatch }, { ...options, state });
+    // Tool_use/tool_result pairs run inside the provider's own CLI (Claude
+    // Code, Codex) and never touch Sulla's ToolExecutor — this is the only
+    // place that sees them, so log each one directly once its result lands.
+    const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; resultChars: number; isError?: boolean }): void => {
+      this.logConversationToolCall(state, event.toolName, event.input, {
+        chars: event.resultChars,
+        error: event.isError || undefined,
+      });
+    };
+
+    const reply = await this.llm!.chatStream(messages, { onToken, onActivity, onFilePatch, onToolEvent }, { ...options, state });
 
     // End-of-turn flush. `onActivity` only fires segment boundaries while
     // the model is still producing activity; a stream that ends naturally
@@ -1837,12 +1847,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const muted = !!(state.metadata as any)._muteWsChat;
 
     // Log to conversation logger so the Live Monitor can see all messages.
-    const convId = (state.metadata as any).conversationId;
-    if (convId && kind !== 'thinking' && kind !== 'streaming') {
-      try {
-        const { getConversationLogger } = require('../services/ConversationLogger');
-        getConversationLogger().logMessage(convId, role, content.trim());
-      } catch { /* best-effort */ }
+    // Individual streaming/thinking chunks are excluded (too noisy — the
+    // caller is responsible for logging the assembled final text once the
+    // turn completes, even when it skips re-sending it over the WebSocket
+    // because streaming already displayed it — see logConversationMessage).
+    if (kind !== 'thinking' && kind !== 'streaming' && content.trim()) {
+      this.logConversationMessage(state, role, content);
     }
 
     if (muted) {
@@ -1930,6 +1940,39 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * content. All speak content must flow through here — never through
    * `wsChatMessage()`.
    */
+
+  /**
+   * Log one message (user/assistant/system) to the conversation logger.
+   * Extracted out of wsChatMessage so callers can log the fully-assembled
+   * text of a turn even when they deliberately skip re-sending it over the
+   * WebSocket (e.g. AgentNode's `alreadyStreamed` dedup — the UI already
+   * has the text from streaming chunks, but the log still needs it since
+   * individual streaming chunks are excluded from logging as noise).
+   */
+  protected logConversationMessage(state: BaseThreadState, role: 'user' | 'assistant' | 'system', content: string): void {
+    if (!content.trim()) return;
+    const convId = (state.metadata as any).conversationId;
+    if (!convId) return;
+    try {
+      const { getConversationLogger } = require('../services/ConversationLogger');
+      getConversationLogger().logMessage(convId, role, content.trim());
+    } catch { /* best-effort */ }
+  }
+
+  /**
+   * Log a completed tool_use/tool_result pair to the conversation logger.
+   * Used for CLI-backed providers (ClaudeCodeService, CodexService) whose
+   * tool execution happens inside their own subprocess and never touches
+   * Sulla's ToolExecutor — see StreamCallbacks.onToolEvent.
+   */
+  protected logConversationToolCall(state: BaseThreadState, toolName: string, args: unknown, result?: unknown): void {
+    const convId = (state.metadata as any).conversationId;
+    if (!convId) return;
+    try {
+      const { getConversationLogger } = require('../services/ConversationLogger');
+      getConversationLogger().logToolCall(convId, toolName, args, result);
+    } catch { /* best-effort */ }
+  }
 
   /**
    * Log a voice pipeline event to ConversationLogger with a grep-friendly tag.

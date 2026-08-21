@@ -1,7 +1,7 @@
 /**
- * Migration 0058 — Add `skill_slug` to identity_observations.
+ * Migration 0060 — Add `skill_slug` to identity_observations.
  *
- * The skills domain (0057) originally enforced "must name the skill" via a
+ * The skills domain (0059) originally enforced "must name the skill" via a
  * content regex only (content must contain "Skill '<slug>' ..."). That is
  * enforceable but not queryable — you cannot ask "every row about skill
  * 'pdf-fill'" without parsing prose. Adds a real column so skills-domain

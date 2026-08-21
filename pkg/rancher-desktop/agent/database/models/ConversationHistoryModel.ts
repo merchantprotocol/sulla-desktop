@@ -28,6 +28,7 @@ export interface ConversationHistoryRecord {
   training_file?: string;
   last_summary?:  string;
   pinned:         boolean;
+  hidden:         boolean;
 }
 
 export interface RecordConversationInput {
@@ -47,6 +48,22 @@ export interface RecordConversationInput {
   training_file?: string;
   last_summary?:  string;
   pinned?:        boolean;
+  /** Explicit override. Omit to let recordConversation() derive it from channel_id (see isHiddenChannel). */
+  hidden?:        boolean;
+}
+
+/**
+ * Internal machinery channels that must never surface in user-facing
+ * history: the `subconscious:<agent>` namespace (memory-recall, observation
+ * writer/recall, summarizer, dreaming loops) plus the named worker/dispatch
+ * channels agents are spawned on. Mirrors migration 0058's backfill
+ * predicate — keep the two in sync if this set changes.
+ */
+const HIDDEN_WORKER_CHANNELS = new Set(['codex-test', 'thinker-worker', 'opus-worker', 'fable-planner']);
+
+function isHiddenChannel(channelId?: string | null): boolean {
+  if (!channelId) return false;
+  return channelId.startsWith('subconscious') || HIDDEN_WORKER_CHANNELS.has(channelId);
 }
 
 export class ConversationHistoryModel {
@@ -79,7 +96,8 @@ export class ConversationHistoryModel {
           log_file        TEXT,
           training_file   TEXT,  -- reference only; NEVER auto-delete (used for local model training)
           last_summary    TEXT,
-          pinned          BOOLEAN DEFAULT FALSE
+          pinned          BOOLEAN DEFAULT FALSE,
+          hidden          BOOLEAN NOT NULL DEFAULT FALSE
         )
       `);
 
@@ -106,12 +124,13 @@ export class ConversationHistoryModel {
    */
   static async recordConversation(meta: RecordConversationInput): Promise<void> {
     try {
+      const hidden = meta.hidden ?? isHiddenChannel(meta.channel_id);
       await postgresClient.query(`
         INSERT INTO ${ ConversationHistoryModel.TABLE }
           (id, thread_id, session_id, type, title, summary, url, favicon,
            channel_id, agent_id, tab_id, status, log_file, training_file,
-           last_summary, pinned, created_at, last_active_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW(), NOW())
+           last_summary, pinned, hidden, created_at, last_active_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW())
         ON CONFLICT (id) DO UPDATE SET
           thread_id      = COALESCE(EXCLUDED.thread_id, ${ ConversationHistoryModel.TABLE }.thread_id),
           session_id     = COALESCE(EXCLUDED.session_id, ${ ConversationHistoryModel.TABLE }.session_id),
@@ -128,6 +147,7 @@ export class ConversationHistoryModel {
           training_file  = COALESCE(EXCLUDED.training_file, ${ ConversationHistoryModel.TABLE }.training_file),
           last_summary   = COALESCE(EXCLUDED.last_summary, ${ ConversationHistoryModel.TABLE }.last_summary),
           pinned         = COALESCE(EXCLUDED.pinned, ${ ConversationHistoryModel.TABLE }.pinned),
+          hidden         = EXCLUDED.hidden OR ${ ConversationHistoryModel.TABLE }.hidden,
           last_active_at = NOW()
       `, [
         meta.id,
@@ -146,6 +166,7 @@ export class ConversationHistoryModel {
         meta.training_file ?? null,
         meta.last_summary ?? null,
         meta.pinned ?? false,
+        hidden,
       ]);
     } catch (err) {
       console.error('[ConversationHistoryModel] Failed to record conversation:', err);
@@ -241,7 +262,7 @@ export class ConversationHistoryModel {
         return await postgresClient.query<ConversationHistoryRecord>(`
           SELECT * FROM ${ ConversationHistoryModel.TABLE }
           WHERE type = $1 AND status != 'deleted'
-            AND (channel_id NOT LIKE 'subconscious%' OR channel_id IS NULL)
+            AND hidden = FALSE
           ORDER BY last_active_at DESC
           LIMIT $2
         `, [type, limit]);
@@ -249,7 +270,7 @@ export class ConversationHistoryModel {
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
         WHERE status != 'deleted'
-          AND (channel_id NOT LIKE 'subconscious%' OR channel_id IS NULL)
+          AND hidden = FALSE
         ORDER BY last_active_at DESC
         LIMIT $1
       `, [limit]);
@@ -268,7 +289,7 @@ export class ConversationHistoryModel {
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
         WHERE (title ILIKE $1 OR summary ILIKE $1) AND status != 'deleted'
-          AND (channel_id NOT LIKE 'subconscious%' OR channel_id IS NULL)
+          AND hidden = FALSE
         ORDER BY last_active_at DESC
         LIMIT 100
       `, [pattern]);
@@ -286,7 +307,7 @@ export class ConversationHistoryModel {
       return await postgresClient.query<ConversationHistoryRecord>(`
         SELECT * FROM ${ ConversationHistoryModel.TABLE }
         WHERE created_at >= $1 AND created_at <= $2 AND status != 'deleted'
-          AND (channel_id NOT LIKE 'subconscious%' OR channel_id IS NULL)
+          AND hidden = FALSE
         ORDER BY last_active_at DESC
       `, [from.toISOString(), to.toISOString()]);
     } catch (err) {

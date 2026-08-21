@@ -97,6 +97,20 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('fan out up to 10 sub-agents');
   });
 
+  // aQLP: Jonathon does not want to be the default unblock mechanism. Every
+  // task that goes blocked must get a Fable investigation + concrete unblock
+  // recommendation as a task comment, not a question punted back to him.
+  it('dispatches a Fable sub-agent to investigate every blocked task before parking or notifying', () => {
+    expect(heartbeatPrompt).toContain('## Auto-Dispatch on Blocked — Fable Investigates, Never Just Asks');
+    expect(heartbeatPrompt).toContain('does not want to be the default unblock mechanism');
+    expect(heartbeatPrompt).toContain('Fable sub-agent');
+    expect(heartbeatPrompt).toContain("'sulla meta/spawn_agent'");
+    expect(heartbeatPrompt).toContain('post a concrete unblock recommendation as a task comment');
+    expect(heartbeatPrompt).toContain('never a bare punt');
+    expect(heartbeatPrompt).toContain('standing process for every blocked item, not a one-off triage');
+    expect(heartbeatPrompt).toContain('never double-dispatch');
+  });
+
   // Regression guard for #587: Jonathon rejected the "pick one task, make one
   // move, STOP" cycle ceiling (#581) and required a continuous operator that
   // works the whole portfolio per wake. PR #581 proved this framing can be

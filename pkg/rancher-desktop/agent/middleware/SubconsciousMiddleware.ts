@@ -283,6 +283,16 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('skills-observation-recall', 'Recalling what skills exist', skillsRecallPromise.then(ctx => { (state.metadata as any).skillsObservationContext = ctx })));
   }
 
+  // R8. Conversation Reader — NOT YET dispatched here. runConversationReader()
+  // (below) and its GraphRegistry.createConversationReader graph are built and
+  // ready — surfacing relevant prior conversation content into
+  // <conversation_context> the same way R1-R7 surface observations — but
+  // registering it into this parallel fan-out (a `launched.push(...)` /
+  // `awaitedTasks.push(timed(...))` pair setting
+  // `state.metadata.conversationContext`) is deliberately deferred to Sulla
+  // Projects task drqq ("Wire Conversation Writer + Reader into GraphRegistry
+  // subconscious fan-out"), so it can be reviewed/landed as its own change.
+
   console.log(`[SubconsciousMiddleware] Launched (pre-turn recalls): ${ launched.join(', ') } | messages: ${ state.messages.length }`);
 
   // Every task in awaitedTasks writes into the live turn state. The primary
@@ -350,8 +360,9 @@ export function runSubconsciousObservationWriters(
   launch('environment-observer', () => runIdentityObserver(state, 'environment'));
   launch('projects-observer', () => runIdentityObserver(state, 'projects'));
   launch('skills-observer', () => runIdentityObserver(state, 'skills'));
+  launch('conversation-writer', () => runConversationWriter(state));
 
-  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/skills) | messages: ${ state.messages.length }`);
+  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/skills/conversation-keywords) | messages: ${ state.messages.length }`);
 }
 
 // ============================================================================
@@ -703,6 +714,19 @@ async function runIdentityObserver(state: BaseThreadState, domain: string): Prom
   }
 }
 
+/** Fire-and-forget post-episode keyword indexer. */
+async function runConversationWriter(state: BaseThreadState): Promise<void> {
+  const startTime = Date.now();
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createConversationWriter(state);
+    console.log(`[SubconsciousMiddleware:ConversationWriter] Started | threadId: ${ threadId }`);
+    await graph.execute(subState, 'subconscious', { maxIterations: 3 });
+    console.log(`[SubconsciousMiddleware:ConversationWriter] Completed in ${ Date.now() - startTime }ms | iterations: ${ (subState.metadata as any).iterations || 0 }`);
+  } catch (error) {
+    console.error('[SubconsciousMiddleware:ConversationWriter] Failed:', error instanceof Error ? error.message : error);
+  }
+}
+
 /**
  * Read-only recall for one identity domain. The primary agent blocks on this
  * because the selected rows are injected as <xxx_observations> before the
@@ -762,6 +786,63 @@ async function runIdentityObservationRecall(state: BaseThreadState, domain: stri
     return response;
   } catch (error) {
     console.error(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+// ============================================================================
+// CONVERSATION READER
+// ============================================================================
+
+/**
+ * Read-only recall agent for relevant PRIOR conversation content (as opposed
+ * to the current thread's own observations/identity rows). Searches the
+ * conversation_keywords DB index and, selectively, the log folder via
+ * search_conversation_keywords / search_conversation_logs, then returns
+ * compact content for <conversation_context> injection.
+ *
+ * Exported (rather than module-private like its sibling run* helpers) so it
+ * is independently unit-testable and directly callable by the follow-up
+ * fan-out registration.
+ *
+ * NOT YET dispatched from runSubconsciousMiddleware's pre-turn recall pass
+ * (R1-R7 above). Wiring an R8 entry there — `launched.push('conversation-
+ * reader')` / `awaitedTasks.push(timed('conversation-reader', ...,
+ * runConversationReader(state).then(ctx => { state.metadata.conversation
+ * Context = ctx })))` — plus adding the matching agent config to the live
+ * fan-out is deliberately deferred to Sulla Projects task drqq ("Wire
+ * Conversation Writer + Reader into GraphRegistry subconscious fan-out").
+ * This function is complete and ready for that task to call.
+ */
+export async function runConversationReader(state: BaseThreadState): Promise<string | null> {
+  const startTime = Date.now();
+
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createConversationReader(state);
+    console.log(`[SubconsciousMiddleware:ConversationReader] Started | threadId: ${ threadId }`);
+
+    // No maxIterations cap (default: Graph.execute's 1,000,000 safety
+    // ceiling) — per the standing rule this agent must never hard-stop at N
+    // iterations. Latency is governed instead by CONVERSATION_READER_PROMPT's
+    // "time is of the essence" guidance: default to the cheap DB index,
+    // batch searches, and stop as soon as it has enough.
+    await graph.execute(subState, 'subconscious');
+
+    const elapsed = Date.now() - startTime;
+    const agentMeta = (subState.metadata as any).agent || {};
+    const response = typeof agentMeta.response === 'string' ? agentMeta.response.trim() : '';
+
+    if (!response) {
+      perf.log(`[ConversationReader] threadId=${ threadId } chars=0 ms=${ elapsed }`);
+      console.log(`[SubconsciousMiddleware:ConversationReader] No relevant prior content in ${ elapsed }ms`);
+      return null;
+    }
+
+    perf.log(`[ConversationReader] threadId=${ threadId } chars=${ response.length } ms=${ elapsed }`);
+    console.log(`[SubconsciousMiddleware:ConversationReader] Returning ${ response.length } chars in ${ elapsed }ms`);
+    return response;
+  } catch (error) {
+    console.error(`[SubconsciousMiddleware:ConversationReader] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
     return null;
   }
 }

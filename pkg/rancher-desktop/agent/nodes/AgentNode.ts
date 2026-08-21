@@ -180,6 +180,14 @@ export class AgentNode extends BaseNode {
     const skillsObservationContext = (state.metadata as any).skillsObservationContext;
     if (skillsObservationContext) combinedContextParts.push(`<skills_observations>\n${ skillsObservationContext }\n</skills_observations>`);
 
+    // Conversation Reader output (relevant PRIOR conversation content, as
+    // opposed to this thread's own observations). Nothing sets this yet —
+    // the recall dispatch is deferred to Sulla Projects task drqq — but the
+    // inject side of the plumbing is wired here so that task only needs to
+    // set state.metadata.conversationContext.
+    const conversationContext = (state.metadata as any).conversationContext;
+    if (conversationContext) combinedContextParts.push(`<conversation_context>\n${ conversationContext }\n</conversation_context>`);
+
     if (combinedContextParts.length > 0) {
       const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;
       let merged = false;
@@ -404,6 +412,11 @@ export class AgentNode extends BaseNode {
         const alreadyStreamed = !!reply.metadata.streamingEmitted;
         if (!isDuplicate && !alreadyStreamed) {
           await this.wsChatMessage(state, userVisibleText, 'assistant');
+        } else if (!isDuplicate) {
+          // UI already has this text from streaming chunks (which are
+          // excluded from conversation logging as noise) — still persist
+          // the assembled text so the conversation log isn't blank.
+          this.logConversationMessage(state, 'assistant', userVisibleText);
         }
       }
 

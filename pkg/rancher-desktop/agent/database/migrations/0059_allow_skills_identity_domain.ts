@@ -1,5 +1,5 @@
 /**
- * Migration 0057 — Allow the `skills` identity-observation domain.
+ * Migration 0059 — Allow the `skills` identity-observation domain.
  *
  * The `skills` domain records durable facts about actual skill ARTIFACTS
  * (SKILL.md files) — where a named skill was found (marketplace, locally
