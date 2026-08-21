@@ -773,6 +773,16 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       parts.push(`<projects_observations>\n${ projectsObservationContext.trim() }\n</projects_observations>`);
     }
 
+    // Conversation Reader output (relevant prior conversation content).
+    // Nothing sets state.metadata.conversationContext yet — the recall
+    // dispatch is deferred to Sulla Projects task drqq — but this build path
+    // is wired the same as the other recall contexts so that task only needs
+    // to set the metadata field.
+    const conversationContext = (state?.metadata as any)?.conversationContext;
+    if (conversationContext && typeof conversationContext === 'string' && conversationContext.trim()) {
+      parts.push(`<conversation_context>\n${ conversationContext.trim() }\n</conversation_context>`);
+    }
+
     if (parts.length === 0) return '';
     return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;
   }
