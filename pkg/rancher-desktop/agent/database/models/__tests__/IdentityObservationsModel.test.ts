@@ -45,7 +45,7 @@ describe('IdentityObservationsModel', () => {
 
     expect(postgresClient.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO identity_observations'),
-      ['hum1', 'human', 2, 'preference', 'Jonathon prefers direct status reports.', 'Repeated instruction in chat.', null, null, null, null, 'test'],
+      ['hum1', 'human', 2, 'preference', 'Jonathon prefers direct status reports.', 'Repeated instruction in chat.', null, null, null, null, null, 'test'],
     );
     expect(row).toBe(inserted);
   });
@@ -104,7 +104,11 @@ describe('IdentityObservationsModel', () => {
   });
 
   it('updates only provided mutable fields and stamps updated_at', async() => {
-    (postgresClient as any).query = jest.fn(() => Promise.resolve([{ id: 'hum1', level: 3 }]));
+    // update() fetches the existing row first (getById) to know the row's
+    // domain for write-guard validation, then issues the UPDATE — two calls.
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'hum1', domain: 'human', level: 2 }])
+      .mockResolvedValueOnce([{ id: 'hum1', level: 3 }]);
 
     await IdentityObservationsModel.update('hum1', {
       level:   3,
@@ -115,7 +119,176 @@ describe('IdentityObservationsModel', () => {
       expect.stringContaining('updated_at = now(), level = $1, content = $2'),
       [3, 'Jonathon stated this directly.', 'hum1'],
     );
-    expect((postgresClient.query as any).mock.calls[0][0]).toContain('WHERE id = $3 RETURNING *');
+    expect((postgresClient.query as any).mock.calls[1][0]).toContain('WHERE id = $3 RETURNING *');
+  });
+
+  it('returns null when updating an observation that no longer exists', async() => {
+    (postgresClient as any).query = (jest.fn() as any).mockResolvedValueOnce([]);
+
+    const result = await IdentityObservationsModel.update('gone', { level: 3 });
+
+    expect(result).toBeNull();
+    expect(postgresClient.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a category outside the domain\'s closed set', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:       'bad5',
+      domain:   'human',
+      level:    2,
+      category: 'not-a-real-category',
+      content:  'Some fact about the human.',
+    })).rejects.toThrow('is not valid for domain "human"');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects subject outside the agent domain (the business-domain misfile pattern)', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:      'bad6',
+      domain:  'business',
+      level:   2,
+      subject: 'agent.user',
+      content: 'The business ships receptionist software.',
+    })).rejects.toThrow('subject is only valid in the agent domain');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects kind outside the agent domain (same gap as subject, same fix)', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:      'bad9',
+      domain:  'environment',
+      level:   2,
+      kind:    'method',
+      content: 'The build cannot run in the Lima VM.',
+    })).rejects.toThrow('kind is only valid in the agent domain');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('accepts kind within the agent domain', async() => {
+    const inserted = { id: 'ag01', domain: 'agent', level: 3, kind: 'method', content: 'Agent drafts PRs; the human merges.' };
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([inserted]));
+
+    const row = await IdentityObservationsModel.insert({
+      id:      'ag01',
+      domain:  'agent',
+      level:   3,
+      kind:    'method',
+      subject: 'agent.user',
+      content: 'Agent drafts PRs; the human merges.',
+    });
+
+    expect(row).toBe(inserted);
+  });
+
+  it('rejects category on the agent domain (points the writer at kind instead)', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:       'bad12',
+      domain:   'agent',
+      level:    2,
+      category: 'method',
+      content:  'Agent drafts PRs; the human merges.',
+    })).rejects.toThrow('did you mean to set kind instead');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects content that reads as task/PR/commit status', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:      'bad7',
+      domain:  'human',
+      level:   2,
+      content: 'Opened draft PR #633 for the skills domain.',
+    })).rejects.toThrow('task/engineering status');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects skills-domain inserts missing skillSlug', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:      'bad8',
+      domain:  'skills',
+      level:   2,
+      content: "Skill 'pdf-fill' ran successfully today.",
+    })).rejects.toThrow('skillSlug is required');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects skillSlug outside the skills domain', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:        'bad10',
+      domain:    'human',
+      level:     2,
+      skillSlug: 'pdf-fill',
+      content:   'Jonathon prefers direct status reports.',
+    })).rejects.toThrow('skillSlug is only valid in the skills domain');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed skillSlug', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:        'bad11',
+      domain:    'skills',
+      level:     2,
+      skillSlug: 'PDF Fill!',
+      content:   "Skill 'pdf-fill' ran successfully today.",
+    })).rejects.toThrow('kebab-case artifact slug');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('rejects skills-domain content with no quoted skill slug even when skillSlug is set', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await expect(IdentityObservationsModel.insert({
+      id:        'bad9',
+      domain:    'skills',
+      level:     2,
+      skillSlug: 'pdf-fill',
+      content:   'A skill ran successfully today.',
+    })).rejects.toThrow('must name the exact skill');
+
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
+  it('accepts well-formed skills-domain content naming a slug, with skillSlug set', async() => {
+    const inserted = { id: 'sk01', domain: 'skills', level: 3, category: 'success', skill_slug: 'pdf-fill', content: "Skill 'pdf-fill' succeeded filling a 12-field form." };
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([inserted]));
+
+    const row = await IdentityObservationsModel.insert({
+      id:        'sk01',
+      domain:    'skills',
+      level:     3,
+      category:  'success',
+      skillSlug: 'PDF-Fill',
+      content:   "Skill 'pdf-fill' succeeded filling a 12-field form.",
+    });
+
+    expect(postgresClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('skill_slug'),
+      expect.arrayContaining(['pdf-fill']),
+    );
+    expect(row).toBe(inserted);
   });
 
   it('lists active rows by domain, certainty, and recency', async() => {
@@ -176,8 +349,8 @@ describe('IdentityObservationsModel', () => {
     );
   });
 
-  it('finds duplicates only within the requested domain', async() => {
-    jest.spyOn(IdentityObservationsModel, 'listActive').mockResolvedValue([
+  it('finds duplicates by scanning up to 500 rows directly, bypassing the public 100-row list cap', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([
       {
         id:         'hum1',
         domain:     'human',
@@ -194,11 +367,25 @@ describe('IdentityObservationsModel', () => {
         archived:   false,
         source:     null,
       },
-    ]);
+    ]));
 
     const duplicate = await IdentityObservationsModel.findDuplicate('human', 'Jonathon prefers direct status reports');
 
-    expect(IdentityObservationsModel.listActive).toHaveBeenCalledWith('human', { limit: 500 });
+    const [sql, params] = (postgresClient.query as any).mock.calls[0];
+    expect(sql).toContain('WHERE archived = false AND domain = $1');
+    expect(params).toEqual(['human', 500]);
     expect(duplicate?.id).toBe('hum1');
+  });
+
+  it('counts active rows for the recall row-count gate', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([{ count: '7' }]));
+
+    const count = await IdentityObservationsModel.countActive('agent');
+
+    expect(postgresClient.query).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE archived = false AND domain = $1'),
+      ['agent'],
+    );
+    expect(count).toBe(7);
   });
 });

@@ -65,6 +65,7 @@ function row(overrides: Record<string, any> = {}) {
     evidence:   null,
     confidence: null,
     kind:       null,
+    skill_slug: null,
     created_at: '2026-08-19T18:00:00.000Z',
     updated_at: null,
     archived:   false,

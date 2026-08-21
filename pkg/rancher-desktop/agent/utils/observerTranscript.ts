@@ -27,13 +27,17 @@ function observerBlocksToText(content: any): string {
   return parts.join('\n');
 }
 
+// Keep recalled/injected context out of observer transcripts so writers do
+// not record recalled rows again as fresh conversational evidence.
+const INJECTED_CONTEXT_BLOCK_RE = /\n*<(observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+
 export function buildObserverTranscriptMessage(context: any[], userMessage: string): string {
   const lines: string[] = [];
   for (const m of context) {
     if (!m || m.role === 'system') continue;
     if (m?.metadata?.source === 'subconscious') continue;
     const who = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : (m.role || 'unknown');
-    const text = observerBlocksToText(m.content).trim();
+    const text = observerBlocksToText(m.content).replace(INJECTED_CONTEXT_BLOCK_RE, '').trim();
     if (text) lines.push(`${ who }: ${ text }`);
   }
   const transcript = lines.join('\n\n') || '(no prior conversation)';

@@ -16,6 +16,7 @@
  * Logs are written to ~/sulla/logs/ and can be inspected for debugging.
  */
 
+import { IdentityObservationsModel } from '../database/models/IdentityObservationsModel';
 import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
@@ -270,6 +271,18 @@ export async function runSubconsciousMiddleware(
     awaitedTasks.push(timed('world-observation-recall', 'Recalling the world', worldRecallPromise.then(ctx => { (state.metadata as any).worldObservationContext = ctx })));
   }
 
+  // R8. Skills Observation Recall (skills) — awaited: relevant `skills`-domain
+  //     rows (provenance/success/failure/gap/inventory for named skill
+  //     artifacts), injected as <skills_observations>. Also searches the
+  //     marketplace + local ~/sulla/skills/ install (read-only) so recall can
+  //     surface a skill that fits the current turn even if it was never run
+  //     before, not just skills already logged.
+  if (options.includeObservations && analyzable) {
+    launched.push('skills-observation-recall');
+    const skillsRecallPromise = runIdentityObservationRecall(state, 'skills');
+    awaitedTasks.push(timed('skills-observation-recall', 'Recalling what skills exist', skillsRecallPromise.then(ctx => { (state.metadata as any).skillsObservationContext = ctx })));
+  }
+
   // R8. Conversation Reader — NOT YET dispatched here. runConversationReader()
   // (below) and its GraphRegistry.createConversationReader graph are built and
   // ready — surfacing relevant prior conversation content into
@@ -321,6 +334,7 @@ export async function runSubconsciousMiddleware(
  *   - Business Observer  business   → the human's business/employment
  *   - World Observer      world     → external events relevant to us (gated)
  *   - Environment Observer environment → this install/host + repeatable processes
+ *   - Skills Observer     skills    → provenance + run outcomes of named skill artifacts
  */
 export function runSubconsciousObservationWriters(
   state: BaseThreadState,
@@ -345,9 +359,10 @@ export function runSubconsciousObservationWriters(
   launch('world-observer', () => runIdentityObserver(state, 'world'));
   launch('environment-observer', () => runIdentityObserver(state, 'environment'));
   launch('projects-observer', () => runIdentityObserver(state, 'projects'));
+  launch('skills-observer', () => runIdentityObserver(state, 'skills'));
   launch('conversation-writer', () => runConversationWriter(state));
 
-  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/conversation-keywords) | messages: ${ state.messages.length }`);
+  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/skills/conversation-keywords) | messages: ${ state.messages.length }`);
 }
 
 // ============================================================================
@@ -713,15 +728,44 @@ async function runConversationWriter(state: BaseThreadState): Promise<void> {
 }
 
 /**
- * Read-only recall agent for one identity domain. It searches/listens through
- * identity observations and returns only rows relevant to the current turn.
- * The primary agent blocks on this because the selected rows are injected as
- * <user_observations> before the main response starts.
+ * Read-only recall for one identity domain. The primary agent blocks on this
+ * because the selected rows are injected as <xxx_observations> before the
+ * main response starts — recall is never time-limited by design (Jonathon,
+ * jJ76: "I expect to wait forever for the memory recall agents… help them do
+ * their job more efficiently").
+ *
+ * A prior version of this function routed 5 of the 7 domains through a
+ * deterministic SQL search with NO model in the loop, and gated skills'
+ * marketplace-augmented recall behind a keyword prefilter that could skip
+ * the LLM entirely. Jonathon reverted both (2026-08-20): "I want the model
+ * to choose what to search and then choose what to provide to the primary
+ * context. I explicitly want a model in the loop doing the searching. Sure
+ * give them efficient tools, but I want a model deciding." Every domain
+ * therefore always dispatches the LLM agent — it decides what to search
+ * (via search_identity_observations / list_identity_observations, and for
+ * projects/skills the extra live-tool grants), and decides what's relevant
+ * enough to surface. "Efficient tools" means the SQL underneath those tools
+ * stays fast (IdentityObservationsModel.search/listActive, both ms-scale) —
+ * not that the model gets bypassed.
+ *
+ * The one thing still short-circuited below is dispatch on a domain with 0
+ * logged rows — there is nothing for a model to find or decide over, so
+ * this isn't the model being cut out of a judgment call, it's not asking a
+ * question with a definitionally empty answer. Flag if you want that gone
+ * too.
  */
 async function runIdentityObservationRecall(state: BaseThreadState, domain: string): Promise<string | null> {
   const startTime = Date.now();
 
   try {
+    const loggedCount = await IdentityObservationsModel.countActive(domain);
+    if (loggedCount === 0) {
+      const elapsed = Date.now() - startTime;
+      perf.log(`[IdentityRecall] threadId=${ (state.metadata as any).threadId } domain=${ domain } chars=0 ms=${ elapsed } path=agent-skipped-empty`);
+      console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Skipped — 0 logged rows (agent-skipped-empty)`);
+      return null;
+    }
+
     const { graph, state: subState, threadId } = await GraphRegistry.createIdentityObservationRecall(state, domain);
     console.log(`[SubconsciousMiddleware:IdentityRecall:${ domain }] Started | threadId: ${ threadId }`);
 
