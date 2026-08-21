@@ -2,6 +2,21 @@ import type { ToolManifest } from '../registry';
 
 export const metaToolManifests: ToolManifest[] = [
   {
+    name:        'upsert_conversation_keywords',
+    description: 'Observer-only database writer for salient terms from the completed conversation turn. Canonicalizes and upserts terms by (term, thread_id), bumping hit_count and last_seen on repeats.',
+    category:    'observation',
+    schemaDef:   {
+      terms:                    { type: 'array', description: 'Salient terms only (not stopwords, prose, or secrets); maximum 100.', items: { type: 'string' } },
+      thread_id:                { type: 'string', description: 'Parent conversation thread id.' },
+      conversation_history_id:  { type: 'string', optional: true, nullable: true, description: 'Parent conversation_history row id, when known.' },
+      channel_id:               { type: 'string', optional: true, nullable: true, description: 'Parent channel id, when known.' },
+      agent_id:                 { type: 'string', optional: true, nullable: true, description: 'Parent agent id, when known.' },
+      source:                   { type: 'enum', optional: true, default: 'subconscious', enum: ['primary', 'subconscious', 'worker'], description: 'Writer source; use subconscious here.' },
+    },
+    operationTypes: ['create', 'update'],
+    loader:         () => import('./upsert_conversation_keywords'),
+  },
+  {
     name:        'add_observational_memory',
     description: 'Use this tool to store the observations you make into long-term memory.',
     category:    'observation',
