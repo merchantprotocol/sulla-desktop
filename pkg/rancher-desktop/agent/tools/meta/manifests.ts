@@ -17,6 +17,19 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./upsert_conversation_keywords'),
   },
   {
+    name:        'search_conversation_keywords',
+    description: 'Read-only search for the Conversation Reader over the conversation_keywords index. Pass term (or query) for exact canonical-term match, falling back to pg_trgm fuzzy match, falling back to ILIKE over conversation_history title/summary/last_summary; or pass thread_id to list every indexed keyword for that thread. Deliberately includes conversations hidden from the primary UI (subconscious/worker channels) — that is the point of this tool.',
+    category:    'observation',
+    schemaDef:   {
+      term:      { type: 'string', optional: true, description: 'Term to search for (exact -> fuzzy -> title/summary fallback). Provide this or thread_id.' },
+      query:     { type: 'string', optional: true, description: 'Alias for term.' },
+      thread_id: { type: 'string', optional: true, description: 'List every indexed keyword for this thread id instead of searching by term.' },
+      limit:     { type: 'number', optional: true, description: 'Max results to return (default 20).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./search_conversation_keywords'),
+  },
+  {
     name:        'add_observational_memory',
     description: 'Use this tool to store the observations you make into long-term memory.',
     category:    'observation',
