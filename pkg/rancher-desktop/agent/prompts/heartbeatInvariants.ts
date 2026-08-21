@@ -34,6 +34,11 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'DRAFT PR',
   'The Prospector',
   'Artifact-per-Cycle',
+  // Auto-dispatch-on-blocked (aQLP): every blocked task gets a Fable
+  // investigation + concrete unblock recommendation, not a bare punt.
+  'Auto-Dispatch on Blocked',
+  'Fable sub-agent',
+  'never a bare punt',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',
 ] as const;
