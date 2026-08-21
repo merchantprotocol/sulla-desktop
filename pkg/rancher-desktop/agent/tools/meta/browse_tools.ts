@@ -5,9 +5,11 @@ import { toolRegistry } from '../registry';
  * BrowseToolsWorker — read-only tool discovery.
  *
  * Returns ready-to-run `sulla <category>/<tool>` CLI invocations plus an
- * explicit reminder that these commands must be dispatched through the
- * `exec` tool (models routinely forget this and dead-end in a "how do I
- * call this" loop).
+ * explicit reminder that these commands must be dispatched through a shell
+ * tool — `exec` in the Lima-VM runtime, or the generic `Bash` tool on
+ * surfaces (e.g. this Claude Code MCP bridge) that don't carry a
+ * Sulla-branded exec — models routinely forget this and dead-end in a "how
+ * do I call this" loop.
  */
 
 /** Tools excluded from the listing — internal plumbing the agent already has */
@@ -36,13 +38,15 @@ const CATEGORY_TO_INTEGRATION: Record<string, string> = {
  */
 const INVOCATION_PREAMBLE = [
   'HOW TO CALL: every entry below is a shell command. Dispatch it through',
-  'your `exec` tool — do NOT try to call `sulla` as if it were a tool name.',
+  'your `exec` tool if you have one, or plain `Bash` if that is what your',
+  'surface provides — do NOT try to call `sulla` as if it were a tool name.',
   '',
   '  exec({ command: "sulla <category>/<tool> \'<json-args>\'" })',
+  '  Bash({ command: "sulla <category>/<tool> \'<json-args>\'" })',
   '',
   'CRITICAL — avoid this common failure mode:',
   '  ❌ WRONG: execute_workflow({ workflowId: "..." })  ← always fails, this is not how tools work',
-  '  ✅ RIGHT: exec({ command: "sulla <category>/<tool> \'<json-args>\'" })',
+  '  ✅ RIGHT: exec/Bash ({ command: "sulla <category>/<tool> \'<json-args>\'" })',
   '',
   'execute_workflow is ONLY for named Sulla routines/workflows. It is NEVER the',
   'correct dispatch method for tools listed here.',
