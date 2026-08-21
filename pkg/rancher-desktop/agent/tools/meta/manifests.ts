@@ -43,6 +43,20 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./add_observational_memory'),
   },
   {
+    name:        'search_conversation_logs',
+    description: 'Read-only search over ~/sulla/logs/ for the Conversation Reader. Pass thread_id to resolve that conversation\'s specific log file(s) (channel-scoped .log plus the conv_<id>.jsonl event stream); omit it to scan all thread-scoped log files within a recency window (since / days). Add keyword to filter to matching content lines instead of whole-file listings/previews. Excludes global non-thread-scoped infra logs (chat.log, dispatcher.log, index.log, etc).',
+    category:    'observation',
+    schemaDef:   {
+      thread_id: { type: 'string', optional: true, description: 'Conversation/thread id to resolve log files for. Provide this or rely on the recency window below.' },
+      keyword:   { type: 'string', optional: true, description: 'Case-insensitive substring to filter matched files down to content lines.' },
+      since:     { type: 'string', optional: true, description: 'ISO 8601 timestamp lower bound for the recency window (ignored when thread_id is set).' },
+      days:      { type: 'number', optional: true, description: 'Recency window in days from now, used when since is omitted (ignored when thread_id is set).' },
+      limit:     { type: 'number', optional: true, description: 'Max files or matching lines to return (default 50, max 200).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./search_conversation_logs'),
+  },
+  {
     name:        'exec',
     description: 'Run any shell command inside a fully isolated sandboxed Linux VM with root access. This is ALSO how you invoke every `sulla <category>/<tool>` CLI command surfaced by browse_tools — pass the full `sulla ...` command string as the `command` arg (e.g. command: "sulla github/create_issue \'{\\"title\\":\\"bug\\"}\'"). Safe to install packages, compile code, delete files, or run any system command.',
     category:    'meta',

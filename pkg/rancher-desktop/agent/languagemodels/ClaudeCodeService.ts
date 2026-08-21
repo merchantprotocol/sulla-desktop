@@ -180,11 +180,18 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return { oauthToken, apiKey };
   }
 
-  /** Whether speculative boot (prewarm) is enabled. Default OFF. */
+  /**
+   * Whether speculative boot (prewarm) is enabled. Default ON — cuts the
+   * cold-spawn tax on every turn by overlapping the ~1.5-2s CLI boot with
+   * the subconscious/recall phase that already runs before it. No UI
+   * toggle; override by setting the row to 'false' via SullaSettingsModel
+   * (e.g. `sulla settings/set` or the settings_set tool) if it ever needs
+   * to be disabled for a specific install.
+   */
   private async speculativeBootEnabled(): Promise<boolean> {
     try {
       const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      return (await SullaSettingsModel.get('claudeCodeSpeculativeBoot', 'false')) === 'true';
+      return (await SullaSettingsModel.get('claudeCodeSpeculativeBoot', 'true')) === 'true';
     } catch {
       return false;
     }
@@ -192,13 +199,15 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   /**
    * Whether the warm pool (keep the process alive across turns) is enabled.
-   * Default OFF. Implies speculative boot — a warm process is just a
-   * pre-warmed one that is re-parked instead of closed after each turn.
+   * Default ON. Implies speculative boot — a warm process is just a
+   * pre-warmed one that is re-parked instead of closed after each turn. No
+   * UI toggle; override by setting the row to 'false' via SullaSettingsModel
+   * if a specific install needs to fall back to cold spawns.
    */
   private async warmPoolEnabled(): Promise<boolean> {
     try {
       const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      return (await SullaSettingsModel.get('claudeCodeWarmPool', 'false')) === 'true';
+      return (await SullaSettingsModel.get('claudeCodeWarmPool', 'true')) === 'true';
     } catch {
       return false;
     }
@@ -1003,15 +1012,15 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
       // to time the gap between a tool_use block's input completing and its
       // matching tool_result arriving. Keyed by the tool_use id so parallel
       // tool calls are timed independently.
-      const toolStarts = new Map<string, { name: string; startedAt: number }>();
+      const toolStarts = new Map<string, { name: string; input?: unknown; startedAt: number }>();
       const toolTotals = new Map<string, { count: number; ms: number }>();
       let firstTokenAt = 0;
       const runStartedAt = Date.now();
-      const noteToolStart = (id?: string, name?: string) => {
+      const noteToolStart = (id?: string, name?: string, input?: unknown) => {
         if (!id || toolStarts.has(id)) return;
-        toolStarts.set(id, { name: name ?? 'tool', startedAt: Date.now() });
+        toolStarts.set(id, { name: name ?? 'tool', input, startedAt: Date.now() });
       };
-      const noteToolResult = (id?: string, resultChars = 0) => {
+      const noteToolResult = (id?: string, resultChars = 0, isError = false) => {
         if (!id) return;
         const started = toolStarts.get(id);
         if (!started) return;
@@ -1022,6 +1031,11 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         agg.ms += ms;
         toolTotals.set(started.name, agg);
         perf.log(`[ToolTiming] tool=${ started.name } ms=${ ms } resultChars=${ resultChars } convId=${ convId }`);
+        try {
+          callbacks.onToolEvent?.({
+            toolUseId: id, toolName: started.name, input: started.input, resultChars, isError,
+          });
+        } catch { /* ignore */ }
       };
 
       // Kill any lingering claude process inside the VM. Without a TTY, SSH
@@ -1306,7 +1320,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
             const name = ev.content_block.name ?? 'tool';
             // Input is fully streamed → the CLI is about to RUN the tool. Start
             // the clock here so input-generation time isn't counted as tool time.
-            noteToolStart(ev.content_block.id, name);
+            noteToolStart(ev.content_block.id, name, ev.content_block.input);
             emitActivity(activityForToolUse(name, ev.content_block.input));
             emitFilePatch(name, ev.content_block.input);
             return;
@@ -1337,7 +1351,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
               // Fallback start for CLI versions that batch the whole assistant
               // message instead of emitting streamed content_block_stop events.
               // Idempotent — won't override an earlier stream-path start.
-              noteToolStart(b.id, b.name);
+              noteToolStart(b.id, b.name, b.input);
               emitActivity(activityForToolUse(b.name, b.input));
               emitFilePatch(b.name, b.input);
             }
@@ -1357,7 +1371,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
               } else if (Array.isArray(b.content)) {
                 chars = b.content.reduce((n: number, c: any) => n + (typeof c?.text === 'string' ? c.text.length : 0), 0);
               }
-              noteToolResult(b.tool_use_id, chars);
+              noteToolResult(b.tool_use_id, chars, b.is_error === true);
             }
           }
         }

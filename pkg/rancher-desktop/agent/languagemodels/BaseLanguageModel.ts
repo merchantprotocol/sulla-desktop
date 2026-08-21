@@ -67,6 +67,23 @@ export interface StreamCallbacks {
    * Providers with no built-in file tools simply never call it.
    */
   onFilePatch?: (info: import('../util/linePatch').FilePatchInfo) => void;
+  /**
+   * Emitted once a tool_use block's matching tool_result has arrived —
+   * i.e. after the tool actually ran, not at call time. Carries enough to
+   * write one conversation-log entry (tool name, key input, result size/
+   * error) without the caller needing to correlate call/result itself.
+   *
+   * Currently only ClaudeCodeService fires this — CLI tool execution
+   * happens inside the spawned `claude -p` process, invisible to Sulla's
+   * own ToolExecutor, so this is the only place that sees it.
+   */
+  onToolEvent?: (event: {
+    toolUseId:  string;
+    toolName:   string;
+    input?:     unknown;
+    resultChars: number;
+    isError?:   boolean;
+  }) => void;
 }
 
 /**

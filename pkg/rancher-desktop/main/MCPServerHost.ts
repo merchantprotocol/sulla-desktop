@@ -40,6 +40,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 import { ApprovalService } from '@pkg/agent/services/ApprovalService';
+import { toolRegistry } from '@pkg/agent/tools/registry';
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
 import {
   clampTimeout,
@@ -436,6 +437,40 @@ export class MCPServerHost {
         const resolution = await approvals.parkQuestion(questionId, clamped);
         return {
           content: [{ type: 'text' as const, text: formatQuestionResolution(normalized, resolution, clamped) }],
+        };
+      },
+    );
+
+    // browse_tools — native discovery for the full sulla CLI catalog. Claude
+    // Code otherwise only knows about the handful of tools registered above;
+    // this gives the primary agent a first-class way to search the other
+    // ~250 without any of them being individually registered as MCP tools —
+    // dispatches in-process straight to the same ToolRegistry-backed worker
+    // the CLI's `sulla meta/browse_tools` uses, so results (and the shell
+    // invocations it hands back) are identical either way.
+    server.registerTool(
+      'browse_tools',
+      {
+        description: [
+          'Discover available sulla CLI tools by category or keyword. Returns ready-to-run',
+          '`sulla <category>/<tool>` commands with descriptions and parameter JSON.',
+          'The commands it returns are NOT directly callable tools — you invoke each one by',
+          'passing the full command string to your shell tool (`exec` or `Bash`, whichever',
+          'this surface provides). NEVER call execute_workflow for anything listed here —',
+          'execute_workflow is only for named Sulla routines/workflows.',
+          'Call this before assuming a capability is unavailable.',
+        ].join(' '),
+        inputSchema: {
+          category: z.string().optional().describe('Tool category to list (e.g. docker, github, slack, redis, pg, calendar, n8n, kubectl, lima, vault, extensions, rdctl, meta, agents, project, github, memory, observation).'),
+          query:    z.string().optional().describe('Keyword to search tool names and descriptions across all categories.'),
+        },
+      },
+      async ({ category, query }) => {
+        const worker = await toolRegistry.getTool('browse_tools');
+        const result = await worker.call({ category, query });
+        return {
+          content: [{ type: 'text' as const, text: String(result.result ?? result.error ?? '') }],
+          isError: !result.success,
         };
       },
     );

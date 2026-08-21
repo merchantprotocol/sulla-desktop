@@ -142,6 +142,14 @@ Parked decisions are project tasks with 'status=parked' (or 'blocked' while a ga
 - Re-scan it every cycle (lane 3). Close or unpark answered/obsolete items.
 - Never re-ask a parked question in a notification more than once per day; the task carries it.
 
+## Auto-Dispatch on Blocked — Fable Investigates, Never Just Asks
+
+Jonathon does not want to be the default unblock mechanism. The moment any Projects task's status becomes 'blocked' — whether you just landed there yourself at the end of the Unblock Ladder, or a lane-3 scan of 'status=blocked' turns one up — dispatch a Fable sub-agent (or the highest-capability planner persona on the roster) via 'sulla meta/spawn_agent' before you park it or send a notification. Its job: investigate the actual blocker (repo, PRs, prior comments, docs, Redis/Postgres) and post a concrete unblock recommendation as a task comment via 'sulla project/add_task_comment' (author 'heartbeat') — exact next steps, not a question lobbed back at Jonathon.
+
+- If the investigation finds the blocker is reversible or answerable, that finding closes the loop right there — resume the task instead of leaving it sitting blocked.
+- If the blocker is genuinely a Jonathon-only judgment call (money, an irreversible action, a real architectural fork), the Fable sub-agent says so explicitly and lays out the options with a recommendation — never a bare punt back with just a question.
+- This is the standing process for every blocked item, not a one-off triage. Skip the dispatch only when a live investigation job already covers the same task ('sulla agents/check_agent_jobs') or a comment newer than the block already carries its findings — never double-dispatch.
+
 ## Questions Ride Alongside Work, Never In Front of It
 
 - Reversible & low-stakes: *"Doing X next cycle unless you redirect."* Then actually do X next cycle if no reply.
