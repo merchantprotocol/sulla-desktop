@@ -180,11 +180,18 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return { oauthToken, apiKey };
   }
 
-  /** Whether speculative boot (prewarm) is enabled. Default OFF. */
+  /**
+   * Whether speculative boot (prewarm) is enabled. Default ON — cuts the
+   * cold-spawn tax on every turn by overlapping the ~1.5-2s CLI boot with
+   * the subconscious/recall phase that already runs before it. No UI
+   * toggle; override by setting the row to 'false' via SullaSettingsModel
+   * (e.g. `sulla settings/set` or the settings_set tool) if it ever needs
+   * to be disabled for a specific install.
+   */
   private async speculativeBootEnabled(): Promise<boolean> {
     try {
       const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      return (await SullaSettingsModel.get('claudeCodeSpeculativeBoot', 'false')) === 'true';
+      return (await SullaSettingsModel.get('claudeCodeSpeculativeBoot', 'true')) === 'true';
     } catch {
       return false;
     }
@@ -192,13 +199,15 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   /**
    * Whether the warm pool (keep the process alive across turns) is enabled.
-   * Default OFF. Implies speculative boot — a warm process is just a
-   * pre-warmed one that is re-parked instead of closed after each turn.
+   * Default ON. Implies speculative boot — a warm process is just a
+   * pre-warmed one that is re-parked instead of closed after each turn. No
+   * UI toggle; override by setting the row to 'false' via SullaSettingsModel
+   * if a specific install needs to fall back to cold spawns.
    */
   private async warmPoolEnabled(): Promise<boolean> {
     try {
       const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      return (await SullaSettingsModel.get('claudeCodeWarmPool', 'false')) === 'true';
+      return (await SullaSettingsModel.get('claudeCodeWarmPool', 'true')) === 'true';
     } catch {
       return false;
     }
