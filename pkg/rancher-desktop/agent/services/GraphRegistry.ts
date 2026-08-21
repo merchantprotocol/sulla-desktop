@@ -7,6 +7,10 @@ import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph,
 import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
 import { toolRegistry } from '../tools/registry';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
+import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
+export { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
@@ -62,6 +66,26 @@ const IDENTITY_OBSERVATION_RECALL_TOOLS: string[] = [
   'search_identity_observations',
   'list_identity_observations',
 ];
+
+/** Conversation Writer: the single DB-only keyword upsert tool. */
+const CONVERSATION_WRITER_PROMPT = `You are the Conversation Writer, a silent post-episode observer.
+
+Your ONLY job is to scan the completed conversation transcript for a small set
+of durable, salient search terms that would help a later reader find this turn.
+Write only meaningful proper nouns, product/project names, technical terms,
+decisions, entities, and distinctive phrases. Do not write stopwords, generic
+verbs, prose, secrets, credentials, tokens, private payloads, or whole
+sentences. Do not infer facts that are not present in the transcript.
+
+You are NOT the primary agent. Do not continue the work described in the
+transcript. Do not answer the user, browse, call APIs, read or write files, run
+commands, use source control, or use any tool except the provided keyword DB
+upsert tool. If no salient terms are present, finish without calling the tool.
+
+When terms are present, call upsert_conversation_keywords exactly once with the
+deduplicated salient terms and the parent metadata supplied in the task. Use
+source="subconscious". The DB layer canonicalizes and deduplicates by
+(term, thread_id), so never emit duplicate spellings in the same batch.`;
 
 /** Projects recall also needs read-only access to live Projects work-state:
  *  keyword search to find relevant items, plus drill-down to pull a hit's full
@@ -1143,6 +1167,42 @@ export const GraphRegistry = {
     return { graph, state, threadId: state.metadata.threadId };
   },
 
+  /** Create the post-episode Conversation Writer. It receives a flat
+   * transcript and only the keyword DB writer, so it cannot become an actor. */
+  createConversationWriter: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const parentMeta = parentState.metadata as any;
+    const parentThreadId = String(parentMeta.threadId || parentMeta.conversationId || '');
+    if (!parentThreadId) throw new Error('Conversation Writer requires a parent thread id');
+
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt: CONVERSATION_WRITER_PROMPT,
+      tools:        CONVERSATION_WRITER_TOOLS,
+      userMessage:  `Scan the completed turn and index salient terms only. Parent metadata (copy exactly into the tool call): ${ JSON.stringify({
+        thread_id:                parentThreadId,
+        conversation_history_id:  parentMeta.conversationHistoryId || parentMeta.conversation_history_id || null,
+        channel_id:               parentMeta.channelId || parentMeta.channel_id || parentMeta.wsChannel || null,
+        agent_id:                 parentMeta.agentId || parentMeta.agent_id || null,
+        source:                   'subconscious',
+      }) }`,
+      messages:     [...parentState.messages],
+      contextWindow: 30,
+      observeAsTranscript: true,
+      parentAbortSignal: (parentMeta.options as any)?.abort,
+      agentLabel: 'conversation-writer',
+      silent: true,
+      parentWsChannel: String(parentMeta.wsChannel || ''),
+      parentConversationId: parentThreadId,
+      workflowNodeId: parentMeta.workflowNodeId,
+      workflowParentChannel: parentMeta.workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
   /**
    * Create an Identity Observation Recall graph — read-only search/list of
    * domain-keyed identity observations. The recall agent selects observations
@@ -1611,73 +1671,6 @@ function windowedContext(messages: any[], windowSize: number, maxBlockChars: num
 
     return m;
   });
-}
-
-/**
- * Render one message's content as a compact plain-text line for an observer
- * transcript. tool_use / tool_result blocks are described in prose ("[called
- * tool X …]", "[tool result …]") rather than replayed as structural blocks —
- * the observer only needs to know what happened, not to sit inside a live
- * tool-calling turn it might feel compelled to continue.
- */
-function observerBlocksToText(content: any): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return content == null ? '' : JSON.stringify(content);
-
-  const parts: string[] = [];
-  for (const b of content) {
-    if (!b || typeof b !== 'object') { if (b != null) parts.push(String(b)); continue }
-    if (b.type === 'text' && typeof b.text === 'string') {
-      parts.push(b.text);
-    } else if (b.type === 'tool_use') {
-      const input = b.input ? ` ${ JSON.stringify(b.input).slice(0, 300) }` : '';
-      parts.push(`[called tool ${ b.name || 'unknown' }${ input }]`);
-    } else if (b.type === 'tool_result') {
-      const inner = typeof b.content === 'string'
-        ? b.content
-        : Array.isArray(b.content)
-          ? b.content.map((c: any) => (c?.type === 'text' && typeof c.text === 'string' ? c.text : c?.type === 'image' ? '[image omitted]' : '')).filter(Boolean).join('\n')
-          : JSON.stringify(b.content ?? '');
-      parts.push(`[tool result] ${ inner }`);
-    } else if (b.type === 'image') {
-      parts.push('[image omitted]');
-    } else {
-      parts.push(JSON.stringify(b));
-    }
-  }
-  return parts.join('\n');
-}
-
-/**
- * Flatten a windowed conversation context into a single observer message: a
- * plain-text transcript bracketed by explicit markers, preceded by a hard
- * observe-don't-act instruction and followed by the caller's task prompt. The
- * absence of any real assistant/tool_use/tool_result message structure — plus
- * the explicit framing — is what stops the observer from continuing the
- * assistant's work instead of recording memory about it.
- */
-function buildObserverTranscriptMessage(context: any[], userMessage: string): string {
-  const lines: string[] = [];
-  for (const m of context) {
-    if (!m || m.role === 'system') continue;                 // observer has its own system prompt
-    if (m?.metadata?.source === 'subconscious') continue;    // skip prior subconscious injections
-    const who = m.role === 'assistant' ? 'Assistant' : m.role === 'user' ? 'User' : (m.role || 'unknown');
-    const text = observerBlocksToText(m.content).trim();
-    if (!text) continue;
-    lines.push(`${ who }: ${ text }`);
-  }
-  const transcript = lines.join('\n\n') || '(no prior conversation)';
-
-  return [
-    'You are a silent OBSERVER of the conversation below. Your ONLY job is to analyze it and record memory through your provided database tools.',
-    'You are NOT a participant. Do NOT continue the assistant\'s work, do NOT take any action the conversation describes, and do NOT read, write, or edit files, run commands, browse, or use source control. Only observe and record.',
-    '',
-    '=== BEGIN CONVERSATION TRANSCRIPT ===',
-    transcript,
-    '=== END CONVERSATION TRANSCRIPT ===',
-    '',
-    userMessage,
-  ].join('\n');
 }
 
 async function buildSubconsciousState(opts: {

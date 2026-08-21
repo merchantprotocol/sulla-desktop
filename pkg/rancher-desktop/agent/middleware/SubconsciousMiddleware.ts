@@ -335,8 +335,9 @@ export function runSubconsciousObservationWriters(
   launch('world-observer', () => runIdentityObserver(state, 'world'));
   launch('environment-observer', () => runIdentityObserver(state, 'environment'));
   launch('projects-observer', () => runIdentityObserver(state, 'projects'));
+  launch('conversation-writer', () => runConversationWriter(state));
 
-  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects) | messages: ${ state.messages.length }`);
+  console.log(`[SubconsciousMiddleware] Post-turn writers launched (observation + human/agent/business/world/environment/projects/conversation-keywords) | messages: ${ state.messages.length }`);
 }
 
 // ============================================================================
@@ -685,6 +686,19 @@ async function runIdentityObserver(state: BaseThreadState, domain: string): Prom
     console.log(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Completed in ${ Date.now() - startTime }ms | iterations: ${ iterations }, status: ${ agentMeta.status }`);
   } catch (error) {
     console.error(`[SubconsciousMiddleware:IdentityObserver:${ domain }] Failed in ${ Date.now() - startTime }ms:`, error instanceof Error ? error.message : error);
+  }
+}
+
+/** Fire-and-forget post-episode keyword indexer. */
+async function runConversationWriter(state: BaseThreadState): Promise<void> {
+  const startTime = Date.now();
+  try {
+    const { graph, state: subState, threadId } = await GraphRegistry.createConversationWriter(state);
+    console.log(`[SubconsciousMiddleware:ConversationWriter] Started | threadId: ${ threadId }`);
+    await graph.execute(subState, 'subconscious', { maxIterations: 3 });
+    console.log(`[SubconsciousMiddleware:ConversationWriter] Completed in ${ Date.now() - startTime }ms | iterations: ${ (subState.metadata as any).iterations || 0 }`);
+  } catch (error) {
+    console.error('[SubconsciousMiddleware:ConversationWriter] Failed:', error instanceof Error ? error.message : error);
   }
 }
 
