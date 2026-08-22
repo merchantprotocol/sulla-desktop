@@ -14,6 +14,7 @@ import { throwIfAborted } from '../services/AbortService';
 import { parseJson } from '../services/JsonParseService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
+import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
 
@@ -602,8 +603,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     state: ThreadState,
     options: PromptEnrichmentOptions,
   ): Promise<string> {
-    // Resolve the agent ID and config from graph state
-    const agentId = String(state.metadata.wsChannel || '').trim();
+    // Agent identity is stable; wsChannel may be rewritten to the delivery
+    // transport (for example mobile-relay) after graph creation.
+    const agentId = resolveAgentIdentity(state.metadata);
     const agentMeta = (state.metadata as any).agent as AgentConfig | undefined;
 
     // Build template variables
@@ -960,7 +962,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Planning pipeline agents (observer, thinker, etc.) opt out via config.yaml.
    */
   protected async shouldInjectObservationsForAgent(state: BaseThreadState): Promise<boolean> {
-    const agentId = String(state.metadata.wsChannel || '').trim();
+    const agentId = resolveAgentIdentity(state.metadata);
     if (!agentId) return true;
 
     try {
