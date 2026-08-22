@@ -1883,6 +1883,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // their emissions render in the chat bubble but don't affect run-state.
     messageType: 'assistant_message' | 'subconscious_message' = 'assistant_message',
   ): Promise<boolean> {
+    // Post-turn subconscious writers are fire-and-forget observers. Their
+    // graph runs after the primary graph has already emitted completion, so
+    // ANY chat emission from them can reopen the finished run in the UI.
+    // Keep this guard at the shared WebSocket boundary: provider streaming,
+    // activity callbacks, tool rendering, and SubconsciousAgentNode narration
+    // all eventually pass through here, while a guard in the subclass only
+    // catches the last of those paths.
+    if ((state.metadata as any).subconsciousSilent === true) {
+      return true;
+    }
+
     // Defence-in-depth: strip agent protocol XML before any user-visible output
     content = stripProtocolTags(content);
     // Segment-boundary sentinels (streaming_complete, thinking_complete)
