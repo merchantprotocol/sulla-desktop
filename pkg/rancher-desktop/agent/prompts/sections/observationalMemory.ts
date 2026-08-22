@@ -1,7 +1,7 @@
 /**
- * Observational Memory Section — Injects a slim set of top-priority
- * observations into the system prompt so the active LLM has baseline
- * "what I know about this user/business" context.
+ * Observational Memory Section — Builds a slim set of top-priority
+ * observations for assistant-role injection so the active LLM has baseline
+ * "what I know about this user/business" context without polluting policy.
  *
  * PRIMARY PATH: reads the top 10 critical/high-priority active rows from the
  * observations Postgres table (cheap direct query, no LLM involved).
@@ -14,9 +14,8 @@
  * Full memory (all observations) is accessible via the observation-recall
  * subconscious agent or via the search_observations / list_observations tools.
  *
- * Cache stability: 'semi-stable' — top-N snapshot changes infrequently
- * relative to the turn rate, so it doesn't bust the stable prompt cache
- * on every turn.
+ * Cache stability remains descriptive metadata; SystemPromptBuilder routes
+ * this section out of system content and into its assistant-context result.
  */
 
 import { ObservationsModel } from '../../database/models/ObservationsModel';
@@ -26,7 +25,7 @@ import { formatDateOnly } from '../../utils/formatDateOnly';
 
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
 
-/** Max observations to inject into the system prompt. */
+/** Max observations to inject into the assistant context message. */
 const TOP_N = 10;
 
 interface ObservationEntry {
