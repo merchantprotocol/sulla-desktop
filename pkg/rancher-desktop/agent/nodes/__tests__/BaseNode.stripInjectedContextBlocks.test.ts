@@ -162,4 +162,78 @@ describe('BaseNode.stripInjectedContextBlocks', () => {
 
     expect(state.messages[0].content).toBe('Please recall <conversation_context>not a real block</conversation_context>');
   });
+
+  it('injects all subconscious output into one fresh assistant message before the latest user turn', async() => {
+    const { BaseNode } = await import('../BaseNode');
+
+    class TestNode extends BaseNode<any> {
+      async execute(state: any) {
+        return { state, decision: { type: 'end' as const } };
+      }
+
+      injectContext(state: any) {
+        this.injectSubconsciousAssistantContext(state);
+      }
+    }
+
+    const node = new TestNode('test-node', 'TestNode');
+    const state: any = {
+      messages: [
+        { role: 'user', content: 'old turn' },
+        { role: 'assistant', content: 'real historical answer' },
+        { role: 'user', content: 'current turn' },
+      ],
+      metadata: {
+        humanIdentityContext:    'durable human identity',
+        observationalMemoryContext: 'top observations',
+        observationContext:      'targeted recall',
+        conversationContext:     'prior conversation',
+      },
+    };
+
+    (node as any).injectContext(state);
+
+    expect(state.messages.map((message: any) => message.role)).toEqual([
+      'user', 'assistant', 'assistant', 'user',
+    ]);
+    expect(state.messages[1].content).toBe('real historical answer');
+    expect(state.messages[2].metadata).toEqual({ source: 'subconscious_context', _synthetic: true });
+    expect(state.messages[2].content).toContain('<human_identity_context>\ndurable human identity\n</human_identity_context>');
+    expect(state.messages[2].content).toContain('<observational_memory>\ntop observations\n</observational_memory>');
+    expect(state.messages[2].content).toContain('<observation_context>\ntargeted recall\n</observation_context>');
+    expect(state.messages[2].content).toContain('<conversation_context>\nprior conversation\n</conversation_context>');
+  });
+
+  it('replaces the prior synthetic context carrier instead of accumulating it', async() => {
+    const { BaseNode } = await import('../BaseNode');
+
+    class TestNode extends BaseNode<any> {
+      async execute(state: any) {
+        return { state, decision: { type: 'end' as const } };
+      }
+
+      injectContext(state: any) {
+        this.injectSubconsciousAssistantContext(state);
+      }
+    }
+
+    const node = new TestNode('test-node', 'TestNode');
+    const state: any = {
+      messages: [
+        {
+          role: 'assistant',
+          content: '<human_identity_context>\nstale\n</human_identity_context>',
+          metadata: { source: 'subconscious_context', _synthetic: true },
+        },
+        { role: 'user', content: 'current turn' },
+      ],
+      metadata: { humanIdentityContext: 'fresh' },
+    };
+
+    (node as any).injectContext(state);
+
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[0].content).toContain('fresh');
+    expect(state.messages[0].content).not.toContain('stale');
+  });
 });

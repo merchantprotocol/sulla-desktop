@@ -735,6 +735,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Build the prompt using the section-based builder
     const built = await SystemPromptBuilder.build(buildCtx);
 
+    // Subconscious/dream-consolidated identity is context, not policy. Keep it
+    // out of the system prompt and hand it to the shared assistant-message
+    // injector used by both AgentNode and HeartbeatNode.
+    const routedAssistantSections = new Map(
+      built.assistantContextSections.map(section => [section.id, section.content.trim()]),
+    );
+    (state.metadata as any).humanIdentityContext = routedAssistantSections.get('user') || '';
+    (state.metadata as any).observationalMemoryContext = routedAssistantSections.get('observational_memory') || '';
+
     // Store Anthropic cache blocks on state metadata for AnthropicService pickup
     if (built.anthropicSystem) {
       (state.metadata as any).__anthropicSystemBlocks = built.anthropicSystem;
@@ -821,7 +830,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /**
    * Remove previously injected subconscious context blocks
-   * (<observation_context>, <user_observations>, <conversation_context>,
+   * (<human_identity_context>, <observational_memory>, <observation_context>, <user_observations>, <conversation_context>,
    * <routine_digest>, <lane_health>) from all
    * assistant messages, so the per-turn merge below replaces rather than
    * accumulates. Two accumulation paths existed without this:
@@ -832,8 +841,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|conversation_context|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -857,6 +866,53 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (typeof m.content === 'string') return m.content.trim().length > 0;
       if (Array.isArray(m.content)) return m.content.length > 0;
       return true;
+    });
+  }
+
+  /**
+   * Put every subconscious-produced context block in one dedicated synthetic
+   * assistant message immediately before the latest user turn. Never append
+   * these blocks to a real historical assistant response: resumed CLI sessions
+   * already own that history and would not observe an in-place mutation.
+   */
+  protected injectSubconsciousAssistantContext(state: BaseThreadState): void {
+    this.stripInjectedContextBlocks(state);
+
+    const metadata = state.metadata as any;
+    const fields: Array<[string, string]> = [
+      ['human_identity_context', 'humanIdentityContext'],
+      ['observational_memory', 'observationalMemoryContext'],
+      ['observation_context', 'observationContext'],
+      ['user_observations', 'userObservationContext'],
+      ['self_observations', 'selfObservationContext'],
+      ['business_observations', 'businessObservationContext'],
+      ['world_observations', 'worldObservationContext'],
+      ['environment_observations', 'environmentObservationContext'],
+      ['projects_observations', 'projectsObservationContext'],
+      ['skills_observations', 'skillsObservationContext'],
+      ['conversation_context', 'conversationContext'],
+    ];
+    const blocks = fields.flatMap(([tag, key]) => {
+      const value = metadata[key];
+      return typeof value === 'string' && value.trim()
+        ? [`<${ tag }>\n${ value.trim() }\n</${ tag }>`]
+        : [];
+    });
+    if (blocks.length === 0) return;
+
+    state.messages = state.messages.filter((message: any) =>
+      message?.metadata?.source !== 'subconscious_context');
+    let insertIdx = state.messages.length;
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      if (state.messages[i].role === 'user') {
+        insertIdx = i;
+        break;
+      }
+    }
+    state.messages.splice(insertIdx, 0, {
+      role:     'assistant',
+      content:  blocks.join('\n\n'),
+      metadata: { source: 'subconscious_context', _synthetic: true },
     });
   }
 
