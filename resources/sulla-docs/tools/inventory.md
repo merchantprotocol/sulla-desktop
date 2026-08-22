@@ -55,10 +55,10 @@ sulla <category> --help          # what THIS install exposes right now
 ## agents — sub-agent jobs, conversations, and the live agent directory (7 tools)
 - `sulla agents/check_agent_jobs` — Fallback/history read of async `spawn_agent` jobs (results normally wake the parent graph on their own).
 - `sulla agents/stop_agent_job` — Kill switch: cancel a running async job (cooperative abort, cascades to its sub-agents).
-- `sulla agents/start_agent_conversation` — LEGACY multi-turn wrapper — prefer `spawn_agent`.
-- `sulla agents/send_agent_message` — Send a follow-up to an open sub-agent conversation and get the reply.
-- `sulla agents/read_agent_conversation` — Read a conversation transcript, or list open conversations.
-- `sulla agents/close_agent_conversation` — Close a conversation and free its graph + state.
+- `sulla agents/start_agent_conversation` — DEPRECATED compatibility shim over async `spawn_agent`; returns a jobId/conversationId alias.
+- `sulla agents/send_agent_message` — DEPRECATED; returns migration guidance to `spawn_agent` / `check_agent_jobs`.
+- `sulla agents/read_agent_conversation` — Temporary read compatibility for pre-migration conversations.
+- `sulla agents/close_agent_conversation` — Temporary close compatibility for pre-migration conversations.
 - `sulla agents/list_agents` — Directory of live named agents (heartbeat, workbench, mobile-relay, …) you can `<channel:NAME>`-message.
 
 **ONE delegation pattern:** `sulla meta/spawn_agent` (async results wake the parent graph). `list_agents` + `<channel:NAME>` is messaging to already-running named agents, not delegation. See [`tools/agents.md`](agents.md).

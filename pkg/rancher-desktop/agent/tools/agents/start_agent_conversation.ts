@@ -1,15 +1,9 @@
 import { BaseTool, ToolResponse } from '../base';
-import { createConversation, atConversationCap } from './agentConversations';
-import { runConversationTurn } from './conversationRunner';
-
-const MAX_DEPTH = 3;
+import { SpawnAgentWorker } from './spawn_agent';
 
 /**
- * LEGACY multi-turn wrapper. Prefer spawn_agent for delegation.
- * Open a persistent conversation with a sub-agent. Runs the first turn
- * synchronously and returns the sub-agent's reply plus a conversationId to
- * continue with send_agent_message / read_agent_conversation. Use only when
- * you genuinely need iterative back-and-forth with the same worker.
+ * Deprecated compatibility wrapper over spawn_agent. The old persistent
+ * conversation model is retired; conversationId is now a jobId alias.
  */
 export class StartAgentConversationWorker extends BaseTool {
   name = '';
@@ -24,36 +18,28 @@ export class StartAgentConversationWorker extends BaseTool {
       };
     }
 
-    const parentDepth: number = (this.state)?.metadata?.subAgentDepth ?? 0;
-    if (parentDepth >= MAX_DEPTH) {
-      return {
-        successBoolean: false,
-        responseString: `Sub-agent depth limit reached (${ MAX_DEPTH }). Cannot open further conversations from here.`,
-      };
-    }
-
-    if (atConversationCap()) {
-      return {
-        successBoolean: false,
-        responseString: 'Too many open sub-agent conversations. Close one with close_agent_conversation before opening another.',
-      };
-    }
-
-    const parentChannel = (this.state)?.metadata?.wsChannel || 'sulla-desktop';
-    const channel = input.agentId || parentChannel;
     const label = input.label || input.agentId || 'conversation';
+    const spawn = new SpawnAgentWorker();
+    const result = await spawn.runValidated({
+      tasks:    [{ prompt, agentId: input.agentId, label }],
+      parallel: false,
+      async:    true,
+    }, this.state);
 
-    const conv = createConversation(channel, label);
-    const result = await runConversationTurn(conv, prompt, this.state, true);
+    if (!result.successBoolean) return result;
+
+    const spawned = JSON.parse(result.responseString);
 
     return {
-      successBoolean: result.status !== 'error',
+      successBoolean: true,
       responseString: JSON.stringify({
-        conversationId: conv.conversationId,
-        label:          conv.label,
-        status:         result.status,
-        reply:          result.reply,
-        hint:           `Continue with send_agent_message(conversationId: "${ conv.conversationId }", message: "...") or close_agent_conversation when done.`,
+        conversationId: spawned.jobId,
+        jobId:          spawned.jobId,
+        label,
+        status:         'running',
+        reply:          '',
+        deprecated:     true,
+        hint:           `start_agent_conversation now launches an async spawn_agent job. Results wake the parent graph automatically; use check_agent_jobs(jobId: "${ spawned.jobId }") only as fallback/history. Multi-turn follow-ups are no longer supported.`,
       }, null, 2),
     };
   }

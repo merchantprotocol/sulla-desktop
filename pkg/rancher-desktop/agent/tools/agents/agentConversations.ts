@@ -6,10 +6,8 @@
  * the parent can send follow-up messages and read replies across many turns —
  * a real back-and-forth with a sub-agent.
  *
- * This module is a PURE registry (no GraphRegistry import): it holds metadata
- * and the transcript. The actual turn execution lives in conversationRunner.ts.
- * Conversations are pruned after a TTL of inactivity; close_agent_conversation
- * frees one eagerly (and drops its GraphRegistry entry).
+ * This module remains only for read/close compatibility with conversations
+ * opened before the migration. New work is launched through spawn_agent.
  */
 
 export interface ConversationTurn {

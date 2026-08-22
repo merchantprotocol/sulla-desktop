@@ -9,8 +9,7 @@ import { BaseTool, ToolResponse } from '../base';
  *   <channel:heartbeat>your message</channel:heartbeat>
  * Channel messages are fire-and-forget; the agent's reply arrives on your
  * channel on a later turn (it is not a synchronous request/response). For a
- * synchronous back-and-forth with a fresh delegated sub-agent, use
- * start_agent_conversation / send_agent_message instead.
+ * bounded delegated task, use spawn_agent instead.
  */
 export class ListAgentsWorker extends BaseTool {
   name = '';

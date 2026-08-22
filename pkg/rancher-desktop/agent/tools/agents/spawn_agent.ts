@@ -30,6 +30,13 @@ export class SpawnAgentWorker extends BaseTool {
   name = '';
   description = '';
 
+  /** Reuse the canonical spawn path from compatibility wrappers. */
+  public runValidated(input: any, state?: any): Promise<ToolResponse> {
+    if (state) this.setState(state);
+
+    return this._validatedCall(input);
+  }
+
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     // ── Validate tasks ──────────────────────────────────────────
     const tasks: SpawnTask[] = input.tasks;
@@ -143,7 +150,7 @@ export class SpawnAgentWorker extends BaseTool {
         // Execute the sub-agent graph
         const finalState = await graph.execute(subState);
 
-        // Same blocked-branch + output-fallback chain conversationRunner uses.
+        // Canonical blocked-branch + output-fallback chain for spawned jobs.
         const { status, text } = extractAgentTurnOutcome(finalState);
 
         return {
