@@ -529,7 +529,7 @@ export class PlaybookController<TState = any> {
         this.pendingEscalations.shift();
         this.pendingSubAgents.delete(esc.nodeId);
         playbookLog('core_routine_agent_blocked', {
-          workflowId:  playbook.workflowId,
+          workflowId: playbook.workflowId,
           executionId: playbook.executionId,
           nodeId:       esc.nodeId,
           label:        esc.nodeLabel,
@@ -1028,7 +1028,7 @@ export class PlaybookController<TState = any> {
             } else {
               orchestratorResponse = resolveAgentTaskForDispatch(true, step.prompt, '');
               playbookLog('core_routine_task_direct', {
-                workflowId:  currentPlaybook.workflowId,
+                workflowId: currentPlaybook.workflowId,
                 executionId: currentPlaybook.executionId,
                 nodeId:       step.nodeId,
                 label:        subNodeLabel,
