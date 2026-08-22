@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const logMessageMock: any = jest.fn();
 const logToolCallMock: any = jest.fn();
+const wsSendMock: any = jest.fn(async() => true);
 
 // BaseNode reaches the conversation logger through a lazy `require(...)`
 // inside a try/catch (deliberate — avoids a hard import cycle). Under
@@ -84,7 +85,7 @@ jest.unstable_mockModule('../../services/JsonParseService', () => ({
 
 jest.unstable_mockModule('../../services/WebSocketClientService', () => ({
   getWebSocketClientService: jest.fn(() => ({
-    send:        jest.fn(async() => true),
+    send:        wsSendMock,
     onMessage:   jest.fn(),
     connect:     jest.fn(() => true),
     isConnected: jest.fn(() => true),
@@ -112,6 +113,7 @@ describe('BaseNode conversation logging', () => {
   beforeEach(() => {
     logMessageMock.mockReset();
     logToolCallMock.mockReset();
+    wsSendMock.mockClear();
   });
 
   const buildState = () => ({
@@ -186,6 +188,36 @@ describe('BaseNode conversation logging', () => {
     await node.send(state, 'streaming_complete');
     await node.send(state, 'thinking_complete');
 
+    expect(logMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('suppresses every WebSocket emission from a silent post-turn subconscious writer', async() => {
+    const { BaseNode } = await import('../BaseNode');
+
+    class TestNode extends BaseNode<any> {
+      async execute(state: any) {
+        return { state, decision: { type: 'end' as const }, response: '' };
+      }
+
+      async send(state: any, content: string, kind: string, messageType: 'assistant_message' | 'subconscious_message' = 'assistant_message') {
+        return this.wsChatMessage(state, content, 'assistant', kind, undefined, messageType);
+      }
+    }
+
+    const node = new TestNode('test-node', 'TestNode');
+    const state = buildState();
+    state.metadata.isSubAgent = true;
+    state.metadata.subconsciousSilent = true;
+    state.metadata.parentWsChannel = 'sulla-desktop';
+
+    // These cover the shared provider-stream paths that bypassed
+    // SubconsciousAgentNode.emitThinking() and reopened graphRunning after
+    // the primary loop had completed.
+    await node.send(state, 'Provider is still thinking', 'thinking');
+    await node.send(state, 'partial observer output', 'streaming');
+    await node.send(state, '', 'thinking_complete', 'subconscious_message');
+
+    expect(wsSendMock).not.toHaveBeenCalled();
     expect(logMessageMock).not.toHaveBeenCalled();
   });
 
