@@ -80,6 +80,7 @@ describe('HeartbeatNode Projects context injection', () => {
       { id: 'proj1', slug: 'goal-operator-transition', title: 'Operator Platform', owner: null },
     ]);
     listTasksMock
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
           id:           'task1',
@@ -153,6 +154,73 @@ describe('HeartbeatNode Projects context injection', () => {
     expect(state.messages[1].role).toBe('user');
   });
 
+  it('skips blocked and planning tasks when actionable work exists', async() => {
+    listTasksMock
+      .mockReset()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 'blocked1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
+          title: 'Blocked first', description: 'Needs recovery.', status: 'blocked',
+          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+        },
+        {
+          id: 'planning1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
+          title: 'Planning active', description: 'Council running.', status: 'planning',
+          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+        },
+        {
+          id: 'action1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
+          title: 'Actionable peer', description: 'Ship this.', status: 'todo',
+          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const node = await makeNode();
+    const state: any = {
+      messages: [{ role: 'user', content: 'Scheduled autonomous work time.' }],
+      metadata: {},
+    };
+
+    await node.injectHeartbeatProjectReport(state);
+
+    expect(state.messages[0].content).toContain('id="action1"');
+    expect(state.messages[0].content).toContain('Actionable peer');
+    expect(state.metadata.heartbeatSelectedTaskId).toBe('action1');
+  });
+
+  it('hydrates the top blocked recovery task when no actionable work exists', async() => {
+    listTasksMock
+      .mockReset()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 'planning1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
+          title: 'Planning active', description: 'Council running.', status: 'planning',
+          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+        },
+        {
+          id: 'blocked1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
+          title: 'Blocked recovery', description: 'Needs council.', status: 'blocked',
+          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const node = await makeNode();
+    const state: any = {
+      messages: [{ role: 'user', content: 'Scheduled autonomous work time.' }],
+      metadata: {},
+    };
+
+    await node.injectHeartbeatProjectReport(state);
+
+    expect(state.messages[0].content).toContain('id="blocked1"');
+    expect(state.messages[0].content).toContain('independent planner council');
+    expect(state.metadata.heartbeatSelectedTaskId).toBe('blocked1');
+  });
+
   it('merges heartbeat context blocks into the latest assistant message', async() => {
     const node = await makeNode();
     const state: any = {
@@ -204,6 +272,7 @@ describe('HeartbeatNode Projects context injection', () => {
     ]);
     listTasksMock
       .mockReset()
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
           id:           'task"1',
@@ -361,6 +430,7 @@ describe('HeartbeatNode Projects context injection', () => {
   it('carries Projects comments from one heartbeat cycle into the next selected task hydration', async() => {
     listTasksMock
       .mockReset()
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
           id:            'task1',
@@ -378,6 +448,7 @@ describe('HeartbeatNode Projects context injection', () => {
           last_moved_at: '2026-08-17T11:00:00.000Z',
         },
       ])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {

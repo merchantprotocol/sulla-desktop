@@ -44,7 +44,7 @@ export class UpdateTaskWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `Task updated: "${ updated.title }" (id: ${ updated.id }, epic: ${ updated.epic_id }, status: ${ updated.status }, priority: ${ updated.priority }, position: ${ updated.position }, last_moved_at: ${ updated.last_moved_at })`,
+        responseString: `Task updated: "${ updated.title }" (id: ${ updated.id }, epic: ${ updated.epic_id }, status: ${ updated.status }, priority: ${ updated.priority }, position: ${ updated.position }, last_moved_at: ${ updated.last_moved_at }, last_activity_at: ${ updated.last_activity_at })`,
       };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Failed to update task: ${ err?.message }` };

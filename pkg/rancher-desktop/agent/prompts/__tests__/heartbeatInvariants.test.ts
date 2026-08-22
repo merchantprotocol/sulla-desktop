@@ -49,6 +49,21 @@ describe('checkHeartbeatPromptInvariants', () => {
     expect(HEARTBEAT_REQUIRED_PHRASES.length).toBeGreaterThan(0);
     expect(HEARTBEAT_FORBIDDEN_PHRASES.length).toBeGreaterThan(0);
   });
+
+  it('keeps blocked recovery autonomous and council-driven', () => {
+    expect(heartbeatPrompt).toContain('Blocked Recovery Council — Decide, Do Not Escalate');
+    expect(heartbeatPrompt).toContain('three independent high-reasoning planner agents');
+    expect(heartbeatPrompt).toContain('make the decision yourself');
+    expect(heartbeatPrompt).toContain("move it to 'planning'");
+    expect(heartbeatPrompt).toContain('unchanged gates get no repeated notification');
+  });
+
+  it('requires portfolio fan-out instead of one-task-per-wake behavior', () => {
+    expect(heartbeatPrompt).toContain('multiple tasks per wake');
+    expect(heartbeatPrompt).toContain('Do not stop after one dispatch');
+    expect(heartbeatPrompt).toContain('one task per work agent');
+    expect(heartbeatPrompt).toContain('Fill available slots with independent queue work');
+  });
 });
 
 describe('SystemPromptBuilder heartbeat invariant wiring', () => {

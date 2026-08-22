@@ -12,10 +12,12 @@ import type { ToolManifest } from '../registry';
  * PRDs). Soft-archive only; archiving cascades down.
  *
  * Vocabulary (free-text columns, but use these consistently):
- *   status   → backlog | todo | in_progress | blocked | done | cancelled
+ *   status   → backlog | todo | planning | in_progress | in_review | blocked | done | cancelled | parked
  *   priority → critical | high | medium | low
  */
-const STATUS_DESC = 'backlog | todo | in_progress | blocked | done | cancelled.';
+const ITEM_STATUS_DESC = 'working | backlog | todo | planning | in_progress | in_review | blocked | done | cancelled | parked.';
+const PROJECT_STATUS_DESC = 'working | backlog | blocked | done | cancelled | parked.';
+const TASK_STATUS_DESC = 'backlog | todo | planning | in_progress | in_review | blocked | done | cancelled | parked.';
 const PRIORITY_DESC = 'critical | high | medium | low.';
 
 export const projectToolManifests: ToolManifest[] = [
@@ -26,7 +28,7 @@ export const projectToolManifests: ToolManifest[] = [
     category:    'project',
     schemaDef:   {
       kind:         { type: 'string', optional: true, description: 'What to list: "project", "epic", "task", or "all" (default "task").' },
-      status:       { type: 'string', optional: true, description: `Filter by status: ${ STATUS_DESC } Omit for all non-archived.` },
+      status:       { type: 'string', optional: true, description: `Filter by status: ${ ITEM_STATUS_DESC } Omit for all non-archived.` },
       priority:     { type: 'string', optional: true, description: `Filter by priority: ${ PRIORITY_DESC }` },
       project_id:   { type: 'string', optional: true, description: 'Limit to one project id (applies to epics + tasks).' },
       epic_id:      { type: 'string', optional: true, description: 'Limit to one epic id (tasks only).' },
@@ -74,7 +76,7 @@ export const projectToolManifests: ToolManifest[] = [
   },
   {
     name:        'project_report',
-    description: 'Standup report: what got completed in the last N hours (default 24) and the top open tasks to do next, with project/epic context. Optionally scope to one project or assignee. Use this for a quick "what moved and what\'s next" pulse.',
+    description: 'Standup report: recent completions plus activity-rotated actionable, blocked-recovery, and planning queues with project/epic context. Optionally scope to one project or assignee. Use this for a quick "what moved and what\'s next" pulse.',
     category:    'project',
     schemaDef:   {
       hours:      { type: 'number', optional: true, description: 'Look-back window in hours for completed work (default 24).' },
@@ -96,7 +98,7 @@ export const projectToolManifests: ToolManifest[] = [
       slug:           { type: 'string', optional: true, description: 'Stable slug (e.g. operator-transition). Auto-derived from title when omitted; suffixed if taken.' },
       description:    { type: 'string', optional: true, description: 'What this project is and what done looks like.' },
       outcome_metric: { type: 'string', optional: true, description: 'How you will know it is done.' },
-      status:         { type: 'string', optional: true, description: `Status: ${ STATUS_DESC } Default backlog.` },
+      status:         { type: 'string', optional: true, description: `Status: ${ PROJECT_STATUS_DESC } Default backlog.` },
       priority:       { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC } Default medium.` },
       owner:          { type: 'string', optional: true, description: 'Who owns the project (e.g. heartbeat, sulla, human).' },
       github_repo:    { type: 'string', optional: true, description: 'Optional owner/repo this project maps to.' },
@@ -115,7 +117,7 @@ export const projectToolManifests: ToolManifest[] = [
       slug:           { type: 'string', optional: true, description: 'New stable slug.' },
       description:    { type: 'string', optional: true, description: 'Updated description.' },
       outcome_metric: { type: 'string', optional: true, description: 'Updated outcome metric.' },
-      status:         { type: 'string', optional: true, description: `Status: ${ STATUS_DESC }` },
+      status:         { type: 'string', optional: true, description: `Status: ${ PROJECT_STATUS_DESC }` },
       priority:       { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC }` },
       owner:          { type: 'string', optional: true, description: 'New owner, or empty string to unassign.' },
       github_repo:    { type: 'string', optional: true, description: 'owner/repo mapping.' },
@@ -135,7 +137,7 @@ export const projectToolManifests: ToolManifest[] = [
       title:       { type: 'string', description: 'Short epic name.' },
       slug:        { type: 'string', optional: true, description: 'Stable slug inside the project. Auto-derived from title when omitted; suffixed if taken.' },
       description: { type: 'string', optional: true, description: 'What this epic delivers.' },
-      status:      { type: 'string', optional: true, description: `Status: ${ STATUS_DESC } Default todo.` },
+      status:      { type: 'string', optional: true, description: `Status: ${ PROJECT_STATUS_DESC } Default todo.` },
       priority:    { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC } Default medium.` },
       position:    { type: 'number', optional: true, description: 'Manual sort order inside the project (default 0).' },
       due_at:      { type: 'string', optional: true, description: 'ISO due date.' },
@@ -153,7 +155,7 @@ export const projectToolManifests: ToolManifest[] = [
       title:       { type: 'string', optional: true, description: 'New epic name.' },
       slug:        { type: 'string', optional: true, description: 'New stable slug.' },
       description: { type: 'string', optional: true, description: 'Updated description.' },
-      status:      { type: 'string', optional: true, description: `Status: ${ STATUS_DESC }` },
+      status:      { type: 'string', optional: true, description: `Status: ${ PROJECT_STATUS_DESC }` },
       priority:    { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC }` },
       position:    { type: 'number', optional: true, description: 'Manual sort order inside the project.' },
       due_at:      { type: 'string', optional: true, description: 'ISO due date, or empty string to clear.' },
@@ -172,7 +174,7 @@ export const projectToolManifests: ToolManifest[] = [
       title:        { type: 'string', description: 'Task title.' },
       parent_id:    { type: 'string', optional: true, description: 'Parent task id when this is a subtask.' },
       description:  { type: 'string', optional: true, description: 'Issue-style body — what done looks like.' },
-      status:       { type: 'string', optional: true, description: `Status: ${ STATUS_DESC } Default todo.` },
+      status:       { type: 'string', optional: true, description: `Status: ${ TASK_STATUS_DESC } Default todo.` },
       priority:     { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC } Default medium.` },
       assignee:     { type: 'string', optional: true, description: 'Who is carrying it (heartbeat, sulla, human).' },
       due_at:       { type: 'string', optional: true, description: 'ISO due date.' },
@@ -194,7 +196,7 @@ export const projectToolManifests: ToolManifest[] = [
       parent_id:    { type: 'string', optional: true, description: 'Parent task id when nesting; empty string clears it.' },
       title:        { type: 'string', optional: true, description: 'New task title.' },
       description:  { type: 'string', optional: true, description: 'Updated body.' },
-      status:       { type: 'string', optional: true, description: `Status: ${ STATUS_DESC }` },
+      status:       { type: 'string', optional: true, description: `Status: ${ TASK_STATUS_DESC }` },
       priority:     { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC }` },
       assignee:     { type: 'string', optional: true, description: 'New assignee, or empty string to unassign.' },
       due_at:       { type: 'string', optional: true, description: 'ISO due date, or empty string to clear.' },
