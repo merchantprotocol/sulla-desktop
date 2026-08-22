@@ -8,7 +8,8 @@
  * - Sections are registered factories that return content or null (skip)
  * - Cache boundary splits stable vs dynamic content for Anthropic KV cache
  * - Prompt modes (full/minimal/none) control which sections are included
- * - Agent config .md files can override any section by matching the section ID
+ * - Agent config .md files can override sections by matching the section ID
+ *   (except Heartbeat's frozen operator contract)
  */
 
 import type { ChatMode } from '../controllers/ChatController';
@@ -179,11 +180,21 @@ class SystemPromptBuilderImpl {
       // Skip if mode doesn't match
       if (!reg.modes.has(ctx.mode)) continue;
 
+      // Heartbeat's operator contract is frozen and DB-backed. Legacy files in
+      // ~/sulla/agents/heartbeat previously leaked in through two paths:
+      // heartbeat.md replaced the registered heartbeat section, while files
+      // such as PLAYBOOK.md were concatenated into agent_prompt. Both paths
+      // made stale install-local doctrine outrank the shipped contract.
+      if (ctx.isHeartbeat && id === 'agent_prompt') continue;
+      const isFrozenHeartbeatSection = ctx.isHeartbeat && id === 'heartbeat';
+
       // Skip if agent config excludes this section
-      if (ctx.excludeSections.has(id)) continue;
+      if (ctx.excludeSections.has(id) && !isFrozenHeartbeatSection) continue;
 
       // Check for agent config override
-      const override = ctx.agentSectionOverrides.get(id);
+      const override = isFrozenHeartbeatSection
+        ? undefined
+        : ctx.agentSectionOverrides.get(id);
       if (override !== undefined) {
         // Use override content with the factory's default priority/stability
         // We still call the factory to get the default metadata (priority, cacheStability)

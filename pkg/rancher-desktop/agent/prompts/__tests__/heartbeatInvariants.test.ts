@@ -82,6 +82,38 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     expect(built.heartbeatInvariants?.ok).toBe(true);
   });
 
+  it('does not let install-local markdown replace or append to the frozen heartbeat contract', async () => {
+    SystemPromptBuilder.register('agent_prompt', () => ({
+      id:             'agent_prompt',
+      content:        'STALE LOCAL PLAYBOOK CONTENT',
+      priority:       90,
+      cacheStability: 'stable',
+    }), ['full']);
+    SystemPromptBuilder.register('heartbeat', () => ({
+      id:             'heartbeat',
+      content:        heartbeatPrompt,
+      priority:       110,
+      cacheStability: 'stable',
+    }), ['full']);
+
+    const built = await SystemPromptBuilder.build(baseCtx({
+      agentConfig: {
+        prompt: 'STALE LOCAL PLAYBOOK CONTENT',
+      },
+      agentSectionOverrides: new Map([
+        ['heartbeat', 'STALE LOCAL HEARTBEAT OVERRIDE'],
+      ]),
+      excludeSections: new Set(['heartbeat']),
+    }));
+
+    expect(built.includedSections).toContain('heartbeat');
+    expect(built.includedSections).not.toContain('agent_prompt');
+    expect(built.text).toContain('## Orchestrator Mode — Fan Out, Then Verify');
+    expect(built.text).not.toContain('STALE LOCAL HEARTBEAT OVERRIDE');
+    expect(built.text).not.toContain('STALE LOCAL PLAYBOOK CONTENT');
+    expect(built.heartbeatInvariants?.ok).toBe(true);
+  });
+
   it('flags a stale/reverted heartbeat build', async () => {
     SystemPromptBuilder.register('heartbeat', () => ({
       id:             'heartbeat',
