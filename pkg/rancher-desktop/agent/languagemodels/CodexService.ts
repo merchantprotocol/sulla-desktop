@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
-import { buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
+import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { redisClient } from '../database/RedisClient';
 import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
 
@@ -662,14 +662,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const adopted = speculative ? this.claimPrewarm(convId, this.model || 'codex', existingSession) : null;
 
     let mcpSession: RegisteredSession | null = adopted?.mcpSession ?? null;
-    if (mcpSession && options.state) {
-      try { getMCPServerHost().rebindSession(mcpSession.id, options.state) } catch { /* continue with prewarm binding */ }
-    } else if (!mcpSession && options.state) {
+    if (options.state) {
       try {
         const host = getMCPServerHost();
-        if (host.running) {
-          mcpSession = host.registerSession(options.state);
-          log.log(`[CodexService] MCP session minted — url=${ mcpSession.url }`);
+        const boundSession = bindCodexMcpSession(host, options.state, mcpSession);
+        if (boundSession !== mcpSession) {
+          mcpSession = boundSession;
+          if (mcpSession) log.log(`[CodexService] MCP session minted — url=${ mcpSession.url }`);
         }
       } catch (err) {
         log.log(`[CodexService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
