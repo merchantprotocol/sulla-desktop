@@ -148,7 +148,7 @@ export class AgentNode extends BaseNode {
           state.messages.splice(insertIdx, 0, {
             role:     'assistant',
             content:  `<project_report>\n${ report }\n</project_report>`,
-            metadata: { source: 'project_report' },
+            metadata: { source: 'project_report', _synthetic: true },
           });
         }
       } catch (err) {
@@ -156,69 +156,7 @@ export class AgentNode extends BaseNode {
       }
     }
 
-    // Merge observation context into the last assistant message
-    // (or create one) so the primary agent sees it as information it already has.
-    // Strip any blocks injected on previous turns / earlier loop iterations
-    // first — this merge must replace, never accumulate (the mutated message
-    // is persisted with the thread state).
-    this.stripInjectedContextBlocks(state);
-    const observationContext     = (state.metadata as any).observationContext;
-    const userObservationContext = (state.metadata as any).userObservationContext;
-    const selfObservationContext = (state.metadata as any).selfObservationContext;
-    const businessObservationContext = (state.metadata as any).businessObservationContext;
-    const worldObservationContext = (state.metadata as any).worldObservationContext;
-    const environmentObservationContext = (state.metadata as any).environmentObservationContext;
-    const combinedContextParts: string[] = [];
-    if (observationContext) combinedContextParts.push(`<observation_context>\n${ observationContext }\n</observation_context>`);
-    if (userObservationContext) combinedContextParts.push(`<user_observations>\n${ userObservationContext }\n</user_observations>`);
-    if (selfObservationContext) combinedContextParts.push(`<self_observations>\n${ selfObservationContext }\n</self_observations>`);
-    if (businessObservationContext) combinedContextParts.push(`<business_observations>\n${ businessObservationContext }\n</business_observations>`);
-    if (worldObservationContext) combinedContextParts.push(`<world_observations>\n${ worldObservationContext }\n</world_observations>`);
-    if (environmentObservationContext) combinedContextParts.push(`<environment_observations>\n${ environmentObservationContext }\n</environment_observations>`);
-    const projectsObservationContext = (state.metadata as any).projectsObservationContext;
-    if (projectsObservationContext) combinedContextParts.push(`<projects_observations>\n${ projectsObservationContext }\n</projects_observations>`);
-    const skillsObservationContext = (state.metadata as any).skillsObservationContext;
-    if (skillsObservationContext) combinedContextParts.push(`<skills_observations>\n${ skillsObservationContext }\n</skills_observations>`);
-
-    // Conversation Reader output (relevant PRIOR conversation content, as
-    // opposed to this thread's own observations). Nothing sets this yet —
-    // the recall dispatch is deferred to Sulla Projects task drqq — but the
-    // inject side of the plumbing is wired here so that task only needs to
-    // set state.metadata.conversationContext.
-    const conversationContext = (state.metadata as any).conversationContext;
-    if (conversationContext) combinedContextParts.push(`<conversation_context>\n${ conversationContext }\n</conversation_context>`);
-
-    if (combinedContextParts.length > 0) {
-      const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;
-      let merged = false;
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        if (state.messages[i].role === 'assistant') {
-          const msg = state.messages[i];
-          if (typeof msg.content === 'string') {
-            // Plain string content — append directly
-            msg.content += contextBlock;
-          } else if (Array.isArray(msg.content)) {
-            // Content blocks array (e.g. [{type:'text', text:'...'}, ...])
-            // Append a new text block with the context
-            msg.content.push({ type: 'text', text: contextBlock });
-          } else {
-            // Unknown format — wrap as string
-            msg.content = (msg.content ? JSON.stringify(msg.content) : '') + contextBlock;
-          }
-          merged = true;
-          break;
-        }
-      }
-      if (!merged) {
-        // First turn — no assistant message yet, insert one before the last user message
-        const insertIdx = Math.max(0, state.messages.length - 1);
-        state.messages.splice(insertIdx, 0, {
-          role:     'assistant',
-          content:  contextBlock.trim(),
-          metadata: { source: 'recall', _synthetic: true },
-        });
-      }
-    }
+    this.injectSubconsciousAssistantContext(state);
 
     // ----------------------------------------------------------------
     // 2. EXECUTE — LLM reads conversation, calls tools, responds

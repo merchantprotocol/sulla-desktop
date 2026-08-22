@@ -4,7 +4,8 @@
  * written — no cherry-picking, no section markers, no partial injection.
  *
  * Called on every Claude Code session spawn AND whenever observational memory
- * is updated (add/remove_observational_memory tools) so the file stays current.
+ * is updated. Subconscious observation and identity context is intentionally
+ * excluded by SystemPromptBuilder and delivered in an assistant message.
  */
 
 import * as fs from 'fs';

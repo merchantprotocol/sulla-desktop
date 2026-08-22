@@ -382,10 +382,10 @@ export class CodexService extends BaseLanguageModel {
   }
 
   /**
-   * Extract the last user message. Walks backward to find the newest
-   * user-role content, flattening string + content-block shapes. When a
-   * resume session exists, this is all we send — codex already has
-   * everything earlier in its session state.
+   * Extract the latest turn for a resumed session. A dedicated synthetic
+   * assistant context message may immediately precede the user message; it
+   * must be replayed because Codex's stored session does not contain this
+   * turn's newly generated subconscious context.
    */
   private extractLatestUserMessage(messages: ChatMessage[]): string {
     const blockToText = (b: any): string => {
@@ -413,7 +413,17 @@ export class CodexService extends BaseLanguageModel {
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role === 'user') {
         const text = msgToText(messages[i]).trim();
-        if (text) return text;
+        if (text) {
+          const turn: string[] = [];
+          let contextIdx = i - 1;
+          while (contextIdx >= 0 && messages[contextIdx].role === 'assistant' && (messages[contextIdx] as any).metadata?._synthetic) {
+            const assistantText = msgToText(messages[contextIdx]).trim();
+            if (assistantText) turn.unshift(`Assistant:\n${ assistantText }`);
+            contextIdx--;
+          }
+          turn.push(`User:\n${ text }`);
+          return turn.join('\n\n');
+        }
       }
     }
     // Fallback — pick any extractable text so a tool_result-dominated turn
@@ -539,23 +549,6 @@ Every time, in this order:
 This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 </environment>`);
 
-    // High-priority observational memory
-    try {
-      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      const { parseJson } = await import('../services/JsonParseService');
-      const raw     = await SullaSettingsModel.get('observationalMemory', '[]');
-      const entries = parseJson(raw);
-      if (Array.isArray(entries)) {
-        const high = (entries as any[]).filter(e =>
-          ['critical', 'high'].includes((e?.priority ?? '').toLowerCase()),
-        );
-        if (high.length > 0) {
-          const lines = high.map((e: any) => `- ${ e.content ?? '' }`).join('\n');
-          stableParts.push(`<observational_memory>\n${ lines }\n</observational_memory>`);
-        }
-      }
-    } catch { /* non-fatal */ }
-
     const parts: string[] = [];
 
     // Only send the stable tier when it's new to this session or has changed
@@ -564,57 +557,6 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     const stableHash = crypto.createHash('sha1').update(stableText).digest('hex');
     if (opts.isNewSession || this.lastStableContextHash.get(opts.convId) !== stableHash) {
       parts.push(stableText);
-    }
-
-    // Observation context from observation-recall agent (targeted DB observations)
-    const observationContext = (state?.metadata as any)?.observationContext;
-    if (observationContext && typeof observationContext === 'string' && observationContext.trim()) {
-      parts.push(`<observation_context>\n${ observationContext.trim() }\n</observation_context>`);
-    }
-
-    const userObservationContext = (state?.metadata as any)?.userObservationContext;
-    if (userObservationContext && typeof userObservationContext === 'string' && userObservationContext.trim()) {
-      parts.push(`<user_observations>\n${ userObservationContext.trim() }\n</user_observations>`);
-    }
-
-    const selfObservationContext = (state?.metadata as any)?.selfObservationContext;
-    if (selfObservationContext && typeof selfObservationContext === 'string' && selfObservationContext.trim()) {
-      parts.push(`<self_observations>\n${ selfObservationContext.trim() }\n</self_observations>`);
-    }
-
-    const businessObservationContext = (state?.metadata as any)?.businessObservationContext;
-    if (businessObservationContext && typeof businessObservationContext === 'string' && businessObservationContext.trim()) {
-      parts.push(`<business_observations>\n${ businessObservationContext.trim() }\n</business_observations>`);
-    }
-
-    const worldObservationContext = (state?.metadata as any)?.worldObservationContext;
-    if (worldObservationContext && typeof worldObservationContext === 'string' && worldObservationContext.trim()) {
-      parts.push(`<world_observations>\n${ worldObservationContext.trim() }\n</world_observations>`);
-    }
-
-    const environmentObservationContext = (state?.metadata as any)?.environmentObservationContext;
-    if (environmentObservationContext && typeof environmentObservationContext === 'string' && environmentObservationContext.trim()) {
-      parts.push(`<environment_observations>\n${ environmentObservationContext.trim() }\n</environment_observations>`);
-    }
-
-    const projectsObservationContext = (state?.metadata as any)?.projectsObservationContext;
-    if (projectsObservationContext && typeof projectsObservationContext === 'string' && projectsObservationContext.trim()) {
-      parts.push(`<projects_observations>\n${ projectsObservationContext.trim() }\n</projects_observations>`);
-    }
-
-    const skillsObservationContext = (state?.metadata as any)?.skillsObservationContext;
-    if (skillsObservationContext && typeof skillsObservationContext === 'string' && skillsObservationContext.trim()) {
-      parts.push(`<skills_observations>\n${ skillsObservationContext.trim() }\n</skills_observations>`);
-    }
-
-    // Conversation Reader output (relevant prior conversation content).
-    // Nothing sets state.metadata.conversationContext yet — the recall
-    // dispatch is deferred to Sulla Projects task drqq — but this build path
-    // is wired the same as the other recall contexts so that task only needs
-    // to set the metadata field.
-    const conversationContext = (state?.metadata as any)?.conversationContext;
-    if (conversationContext && typeof conversationContext === 'string' && conversationContext.trim()) {
-      parts.push(`<conversation_context>\n${ conversationContext.trim() }\n</conversation_context>`);
     }
 
     if (parts.length === 0) return { prefix: '', stableHash };

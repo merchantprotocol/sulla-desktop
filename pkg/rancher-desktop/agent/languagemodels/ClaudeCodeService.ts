@@ -115,16 +115,9 @@ export class ClaudeCodeService extends BaseLanguageModel {
   private readonly SESSION_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
   /**
-   * Redis key holding the hash of the stable <sulla_context> tier last stamped
-   * into ANY conversation on this install. The stable tier (platform rules +
-   * top-priority memory) is install-global, and it is ALSO carried by the
-   * byte-stable system prompt (soul/tooling + the observational_memory
-   * section), which is sent on every session — fresh or resumed. So a
-   * brand-new session already has this content via the system prompt; we use
-   * this persisted hash to skip re-stamping the ~6k tier into the first
-   * message of every fresh session (e.g. the heartbeat's per-cycle
-   * conversations). It only needs to ride the message when its content
-   * actually changes — see buildUserMessageContextPrefix.
+   * Redis key holding the hash of the stable platform/environment context last
+   * stamped into any conversation on this install. Subconscious output is not
+   * part of this tier; it travels only in the synthetic assistant message.
    */
   private readonly STABLE_CTX_KEY = 'claude_code_stable_ctx_hash';
 
@@ -485,10 +478,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
   }
 
   /**
-   * Extract the last user message. Walks backward to find the newest
-   * user-role content, flattening string + content-block shapes. When a
-   * --resume session exists, this is all we send — Claude already has
-   * everything earlier in its session state.
+   * Extract the latest turn for a resumed session. A dedicated synthetic
+   * assistant context message may immediately precede the user message; it
+   * must be replayed because Claude's stored session does not contain this
+   * turn's newly generated subconscious context.
    *
    * Image blocks are saved to disk and their paths injected into the text
    * so the Claude Code agent can read them with the Read tool.
@@ -519,7 +512,17 @@ export class ClaudeCodeService extends BaseLanguageModel {
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role === 'user') {
         const text = msgToText(messages[i]).trim();
-        if (text) return text;
+        if (text) {
+          const turn: string[] = [];
+          let contextIdx = i - 1;
+          while (contextIdx >= 0 && messages[contextIdx].role === 'assistant' && (messages[contextIdx] as any).metadata?._synthetic) {
+            const assistantText = msgToText(messages[contextIdx]).trim();
+            if (assistantText) turn.unshift(`Assistant:\n${ assistantText }`);
+            contextIdx--;
+          }
+          turn.push(`User:\n${ text }`);
+          return turn.join('\n\n');
+        }
       }
     }
     // Fallback — pick any extractable text so a tool_result-dominated turn
@@ -683,30 +686,12 @@ Every time, in this order:
 This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 </environment>`);
 
-    // High-priority observational memory
-    try {
-      const { SullaSettingsModel } = await import('../database/models/SullaSettingsModel');
-      const { parseJson } = await import('../services/JsonParseService');
-      const raw     = await SullaSettingsModel.get('observationalMemory', '[]');
-      const entries = parseJson(raw);
-      if (Array.isArray(entries)) {
-        const high = (entries as any[]).filter(e =>
-          ['critical', 'high'].includes((e?.priority ?? '').toLowerCase()),
-        );
-        if (high.length > 0) {
-          const lines = high.map((e: any) => `- ${ e.content ?? '' }`).join('\n');
-          stableParts.push(`<observational_memory>\n${ lines }\n</observational_memory>`);
-        }
-      }
-    } catch { /* non-fatal */ }
-
     const parts: string[] = [];
 
     // Decide whether to stamp the stable tier into this message.
     //
-    // The stable tier is redundant with the byte-stable system prompt (which
-    // carries the same platform rules + top-priority memory and is sent on
-    // EVERY session, fresh or resumed). So it only needs to ride the message
+    // The stable tier is redundant with the byte-stable system prompt's
+    // platform rules. It only needs to ride the message
     // when its content has CHANGED since a conversation last saw it — repeating
     // it verbatim otherwise just multiplies token cost in the permanent history.
     //
@@ -714,7 +699,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     //     earlier this session. Unchanged → skip (existing dedup). Changed →
     //     re-send, because a resumed session never re-receives the system prompt.
     //   - Fresh session (new convId, empty per-conv hash): the system prompt has
-    //     ALREADY delivered the current stable content, so seed this
+    //     already delivered the platform rules, so seed this
     //     conversation's baseline from the install-global hash instead of
     //     force-sending. Only send if the global hash is missing/stale (first
     //     call, Redis down, or the content genuinely changed) — a safe fallback.
@@ -736,57 +721,6 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     try {
       await redisClient.set(this.STABLE_CTX_KEY, stableHash, this.SESSION_TTL_SECONDS);
     } catch { /* Redis unavailable — non-fatal, we simply re-send next new session */ }
-
-    // Observation context from observation-recall agent (targeted DB observations)
-    const observationContext = (state?.metadata as any)?.observationContext;
-    if (observationContext && typeof observationContext === 'string' && observationContext.trim()) {
-      parts.push(`<observation_context>\n${ observationContext.trim() }\n</observation_context>`);
-    }
-
-    const userObservationContext = (state?.metadata as any)?.userObservationContext;
-    if (userObservationContext && typeof userObservationContext === 'string' && userObservationContext.trim()) {
-      parts.push(`<user_observations>\n${ userObservationContext.trim() }\n</user_observations>`);
-    }
-
-    const selfObservationContext = (state?.metadata as any)?.selfObservationContext;
-    if (selfObservationContext && typeof selfObservationContext === 'string' && selfObservationContext.trim()) {
-      parts.push(`<self_observations>\n${ selfObservationContext.trim() }\n</self_observations>`);
-    }
-
-    const businessObservationContext = (state?.metadata as any)?.businessObservationContext;
-    if (businessObservationContext && typeof businessObservationContext === 'string' && businessObservationContext.trim()) {
-      parts.push(`<business_observations>\n${ businessObservationContext.trim() }\n</business_observations>`);
-    }
-
-    const worldObservationContext = (state?.metadata as any)?.worldObservationContext;
-    if (worldObservationContext && typeof worldObservationContext === 'string' && worldObservationContext.trim()) {
-      parts.push(`<world_observations>\n${ worldObservationContext.trim() }\n</world_observations>`);
-    }
-
-    const environmentObservationContext = (state?.metadata as any)?.environmentObservationContext;
-    if (environmentObservationContext && typeof environmentObservationContext === 'string' && environmentObservationContext.trim()) {
-      parts.push(`<environment_observations>\n${ environmentObservationContext.trim() }\n</environment_observations>`);
-    }
-
-    const projectsObservationContext = (state?.metadata as any)?.projectsObservationContext;
-    if (projectsObservationContext && typeof projectsObservationContext === 'string' && projectsObservationContext.trim()) {
-      parts.push(`<projects_observations>\n${ projectsObservationContext.trim() }\n</projects_observations>`);
-    }
-
-    const skillsObservationContext = (state?.metadata as any)?.skillsObservationContext;
-    if (skillsObservationContext && typeof skillsObservationContext === 'string' && skillsObservationContext.trim()) {
-      parts.push(`<skills_observations>\n${ skillsObservationContext.trim() }\n</skills_observations>`);
-    }
-
-    // Conversation Reader output (relevant prior conversation content).
-    // Nothing sets state.metadata.conversationContext yet — the recall
-    // dispatch is deferred to Sulla Projects task drqq — but this build path
-    // is wired the same as the other recall contexts so that task only needs
-    // to set the metadata field.
-    const conversationContext = (state?.metadata as any)?.conversationContext;
-    if (conversationContext && typeof conversationContext === 'string' && conversationContext.trim()) {
-      parts.push(`<conversation_context>\n${ conversationContext.trim() }\n</conversation_context>`);
-    }
 
     if (parts.length === 0) return '';
     return `<sulla_context>\n${ parts.join('\n\n') }\n</sulla_context>`;

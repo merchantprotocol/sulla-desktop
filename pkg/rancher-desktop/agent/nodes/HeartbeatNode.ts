@@ -126,10 +126,9 @@ export class HeartbeatNode extends BaseNode {
       await this.injectTurnContext(state, { isHeartbeat: true });
     }
 
-    // Strip previously injected context blocks so downstream merges replace
-    // rather than accumulate across turns and tool-loop iterations (the
-    // message is persisted).
-    this.stripInjectedContextBlocks(state);
+    // Subconscious recall and dream-consolidated identity are always carried
+    // by a dedicated assistant message, never the Heartbeat system prompt.
+    this.injectSubconsciousAssistantContext(state);
     if (!isToolCallLoop) {
       await this.injectHeartbeatProjectReport(state);
     }

@@ -66,8 +66,10 @@ export interface PromptBuildContext {
   /** Sections to exclude entirely (from config.yaml exclude_sections) */
   excludeSections:       Set<string>;
   /**
-   * DB-backed system-prompt sections (SystemPromptSectionModel), keyed by id —
-   * the editable CORE layer. Enabled rows only. For a REGISTERED section id the
+   * DB-backed prompt sections (SystemPromptSectionModel), keyed by id — the
+   * editable CORE layer. Enabled rows only. The subconscious-produced `user`
+   * row is returned as assistant context instead of system content. For any
+   * other REGISTERED section id the
    * content replaces the baked factory content (unless an agent .md override is
    * present, which still wins, or the section is generated — see isGenerated).
    * A row whose id has no registered factory is injected as a NEW section using
@@ -109,6 +111,12 @@ export interface BuiltPrompt {
   anthropicSystem?: AnthropicSystemBlock[];
   /** Which sections were included in the build */
   includedSections: string[];
+  /**
+   * Contextual sections that must be delivered as assistant-role context,
+   * never as system instructions. This includes the `observational_memory`
+   * recall section and the dream-consolidated DB `user` section.
+   */
+  assistantContextSections: PromptSection[];
   /**
    * Heartbeat-only: runtime invariant check of the composed prompt — confirms
    * the deployed continuous-operator wording is present and the #581 STOP-ceiling
@@ -170,11 +178,13 @@ class SystemPromptBuilderImpl {
       return {
         text:             ctx.basePrompt || 'You are a personal assistant operating inside Sulla Desktop.',
         includedSections: [],
+        assistantContextSections: [],
       };
     }
 
     // Collect sections
     const builtSections: PromptSection[] = [];
+    const assistantContextSections: PromptSection[] = [];
 
     for (const [id, reg] of this.sections) {
       // Skip if mode doesn't match
@@ -261,13 +271,28 @@ class SystemPromptBuilderImpl {
         if (this.sections.has(id)) continue;
         if (ctx.excludeSections.has(id)) continue;
         if (!row.content?.trim()) continue;
-        builtSections.push({
+        const section = {
           id,
           content:        row.content,
           priority:       row.priority,
           cacheStability: row.cacheStability,
-        });
+        };
+        if (id === 'user') {
+          assistantContextSections.push(section);
+        } else {
+          builtSections.push(section);
+        }
       }
+    }
+
+    // Observational memory is subconscious context, not governing policy.
+    // Factories still build it normally, but it leaves the system section list
+    // here and travels through the same assistant-role carrier as the DB user
+    // identity section.
+    for (let i = builtSections.length - 1; i >= 0; i--) {
+      if (builtSections[i].id !== 'observational_memory') continue;
+      assistantContextSections.unshift(builtSections[i]);
+      builtSections.splice(i, 1);
     }
 
     // Sort by priority
@@ -358,7 +383,7 @@ class SystemPromptBuilderImpl {
       }
     }
 
-    return { text, anthropicSystem, includedSections, heartbeatInvariants };
+    return { text, anthropicSystem, includedSections, assistantContextSections, heartbeatInvariants };
   }
 }
 
