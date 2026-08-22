@@ -563,7 +563,7 @@ Your active projects and goals have been loaded into your recall context. Review
  * Permissive on malformed input — returns true so a bad config doesn't
  * silently lock the heartbeat off forever.
  */
-function isInsideWindow(raw: unknown): boolean {
+export function isInsideWindow(raw: unknown): boolean {
   try {
     let cfg: any = raw;
     if (typeof cfg === 'string') cfg = JSON.parse(cfg);
