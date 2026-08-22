@@ -88,6 +88,11 @@ export interface BaseThreadState {
     action:                'direct_answer' | 'ask_clarification' | 'use_tools' | 'create_plan' | 'run_again';
     threadId:              string;
     wsChannel:             string;
+    /**
+     * Stable agent identity set when the graph is created. Unlike wsChannel,
+     * this is not rewritten when a turn arrives through another transport.
+     */
+    agentId?:              string;
     /** Conversation logger ID — set by workflow agent handler or graph creator */
     conversationId?:       string;
     /** Parent conversation ID (e.g. the workflow execution that spawned this graph) */

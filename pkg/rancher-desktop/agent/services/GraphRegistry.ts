@@ -1695,6 +1695,7 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
       action:               'use_tools',
       threadId,
       wsChannel,
+      agentId:              wsChannel,
       cycleComplete:        false,
       waitingForUser:       false,
       isSubAgent:           false,
@@ -1756,6 +1757,7 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
       action:    'direct_answer',
       threadId:  id,
       wsChannel,
+      agentId:   wsChannel,
 
       cycleComplete:  false,
       waitingForUser: false,
