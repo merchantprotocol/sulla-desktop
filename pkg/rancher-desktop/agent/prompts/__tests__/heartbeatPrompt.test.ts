@@ -78,37 +78,23 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain("never write Redis 'sulla_settings' directly");
   });
 
-  it('fans out delegable Projects tasks through planner/work agents and verifies the fleet', () => {
-    expect(heartbeatPrompt).toContain('## Orchestrator Mode — Fan Out, Then Verify');
-    expect(heartbeatPrompt).toContain('dispatch up to **10** sub-agents');
-    expect(heartbeatPrompt).toContain('one per task');
-    expect(heartbeatPrompt).toContain("'async: true, parallel: true'");
-    expect(heartbeatPrompt).toContain('Never double-dispatch');
-    expect(heartbeatPrompt).toContain('Plan-first split');
-    expect(heartbeatPrompt).toContain('planner agent');
-    expect(heartbeatPrompt).toContain('Planner agents write no code');
-    expect(heartbeatPrompt).toContain('work agent');
-    expect(heartbeatPrompt).toContain('own git worktree');
-    expect(heartbeatPrompt).toContain('hb/<task-id>-<slug>');
-    expect(heartbeatPrompt).toContain('sulla github/git_push');
-    expect(heartbeatPrompt).toContain('DRAFT PR');
-    expect(heartbeatPrompt).toContain('returned jobs plus open');
-    expect(heartbeatPrompt).toContain('one fix-up agent');
-    expect(heartbeatPrompt).toContain('fan out up to 10 sub-agents');
+  it('delegates ordinary queue selection to the mechanical dispatcher and keeps heartbeat supervisory', () => {
+    expect(heartbeatPrompt).toContain('## Mechanical Dispatch — Heartbeat Supervises, PostgreSQL Decides');
+    expect(heartbeatPrompt).toContain('TaskDispatcherService mechanically fills configured worker capacity');
+    expect(heartbeatPrompt).toContain('one live dispatch per task');
+    expect(heartbeatPrompt).toContain('Heartbeat does not select or launch ordinary queue work');
+    expect(heartbeatPrompt).toContain("do not self-assign unclaimed 'todo' tasks");
+    expect(heartbeatPrompt).toContain('## Supervisor Loop — Verify, Recover, Decide');
+    expect(heartbeatPrompt).toContain("Review tasks returned to 'in_review'");
+    expect(heartbeatPrompt).toContain("return the task to 'todo' for a fresh mechanical run");
   });
 
-  // aQLP: Jonathon does not want to be the default unblock mechanism. Every
-  // task that goes blocked must get a Fable investigation + concrete unblock
-  // recommendation as a task comment, not a question punted back to him.
-  it('dispatches a Fable sub-agent to investigate every blocked task before parking or notifying', () => {
-    expect(heartbeatPrompt).toContain('## Auto-Dispatch on Blocked — Fable Investigates, Never Just Asks');
-    expect(heartbeatPrompt).toContain('does not want to be the default unblock mechanism');
-    expect(heartbeatPrompt).toContain('Fable sub-agent');
-    expect(heartbeatPrompt).toContain("'sulla meta/spawn_agent'");
-    expect(heartbeatPrompt).toContain('post a concrete unblock recommendation as a task comment');
-    expect(heartbeatPrompt).toContain('never a bare punt');
-    expect(heartbeatPrompt).toContain('standing process for every blocked item, not a one-off triage');
-    expect(heartbeatPrompt).toContain('never double-dispatch');
+  it('keeps blocked recovery as the reasoning-only dispatch exception', () => {
+    expect(heartbeatPrompt).toContain('## Auto-Dispatch on Blocked — Independent Council, Then Act');
+    expect(heartbeatPrompt).toContain('independent high-reasoning council');
+    expect(heartbeatPrompt).toContain('choose the recommendation, and act');
+    expect(heartbeatPrompt).toContain('never a bare question');
+    expect(heartbeatPrompt).toContain('standing process for every blocked item');
   });
 
   // Regression guard for #587: Jonathon rejected the "pick one task, make one
