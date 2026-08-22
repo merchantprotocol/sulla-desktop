@@ -412,7 +412,7 @@ const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
 
-const STATUSES = ['backlog', 'todo', 'in_progress', 'blocked', 'done', 'cancelled'];
+const STATUSES = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
 // Canonical assignees. Values are the exact lowercase tokens the Projects tools and
 // the Heartbeat lane filter match on — 'heartbeat' is what routes work into the
@@ -507,13 +507,13 @@ function cleanTitle(raw: string): string {
   return s;
 }
 
-const MARK: Record<string, string> = { in_progress: 'hi', todo: 'hi', backlog: 'hi', blocked: 'wait', done: 'gray' };
+const MARK: Record<string, string> = { planning: 'hi', in_progress: 'hi', in_review: 'hi', todo: 'hi', backlog: 'hi', blocked: 'wait', done: 'gray' };
 function markClass(status: string): string {
   return MARK[status] ?? 'gray';
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  in_progress: 'In progress', todo: 'To do', backlog: 'Backlog', blocked: 'Blocked', done: 'Done', cancelled: 'Cancelled', parked: 'Parked',
+  planning: 'Planning', in_progress: 'In progress', in_review: 'In review', todo: 'To do', backlog: 'Backlog', blocked: 'Blocked', done: 'Done', cancelled: 'Cancelled', parked: 'Parked',
 };
 function statusLabel(status: string): string {
   return STATUS_LABEL[status] ?? status;
@@ -559,7 +559,7 @@ const boardColumns = computed(() => {
   if (sel.value) {
     for (const epic of sel.value.epics) {
       for (const t of epic.tasks) {
-        if (t.status === 'in_progress') cols.inprogress.push(t);
+        if (t.status === 'planning' || t.status === 'in_progress' || t.status === 'in_review') cols.inprogress.push(t);
         else if (t.status === 'blocked') cols.waiting.push(t);
         else if (t.status === 'done' || t.status === 'cancelled' || t.status === 'parked') cols.done.push(t);
         else cols.todo.push(t);

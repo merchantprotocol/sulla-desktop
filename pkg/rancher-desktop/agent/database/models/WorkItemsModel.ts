@@ -76,6 +76,7 @@ export interface WorkTaskRecord {
   created_at:    string;
   updated_at:    string | null;
   last_moved_at: string;
+  last_activity_at: string;
   created_by:    string | null;
   last_moved_by: string | null;
   completed_at:  string | null;
@@ -434,11 +435,16 @@ export class WorkItemsModel {
           created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at      TIMESTAMPTZ,
           last_moved_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+          last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           created_by      TEXT,
           last_moved_by   TEXT,
           completed_at    TIMESTAMPTZ,
           archived        BOOLEAN     NOT NULL DEFAULT false
         )
+      `);
+      await postgresClient.query(`
+        ALTER TABLE ${ WorkItemsModel.TASKS }
+          ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ
       `);
       await postgresClient.query(`
         CREATE INDEX IF NOT EXISTS idx_work_tasks_epic
@@ -477,6 +483,28 @@ export class WorkItemsModel {
       await postgresClient.query(`
         CREATE INDEX IF NOT EXISTS idx_work_task_comments_task
           ON ${ WorkItemsModel.COMMENTS } (task_id, archived, created_at ASC)
+      `);
+      await postgresClient.query(`
+        UPDATE ${ WorkItemsModel.TASKS } t
+           SET last_activity_at = GREATEST(
+             t.last_moved_at,
+             COALESCE(t.updated_at, t.last_moved_at),
+             COALESCE((
+               SELECT MAX(c.created_at)
+                 FROM ${ WorkItemsModel.COMMENTS } c
+                WHERE c.task_id = t.id AND c.archived = false
+             ), t.last_moved_at)
+           )
+         WHERE t.last_activity_at IS NULL
+      `);
+      await postgresClient.query(`
+        ALTER TABLE ${ WorkItemsModel.TASKS }
+          ALTER COLUMN last_activity_at SET DEFAULT now(),
+          ALTER COLUMN last_activity_at SET NOT NULL
+      `);
+      await postgresClient.query(`
+        CREATE INDEX IF NOT EXISTS idx_work_tasks_activity
+          ON ${ WorkItemsModel.TASKS } (archived, status, priority, last_activity_at ASC)
       `);
 
       try {
@@ -904,6 +932,7 @@ export class WorkItemsModel {
       assign('last_moved_by', changes.actor ?? 'sulla');
     }
     if (setClauses.length === 1) return existing;
+    setClauses.push('last_activity_at = now()');
 
     values.push(id);
     const rows = await postgresClient.query<WorkTaskRecord>(
@@ -930,7 +959,7 @@ export class WorkItemsModel {
     return postgresClient.query<WorkTaskRecord>(
       `SELECT * FROM ${ WorkItemsModel.TASKS }
         WHERE ${ conds.join(' AND ') }
-        ORDER BY ${ EPIC_PRIORITY_RANK_FOR_TASK }, ${ PRIORITY_RANK }, due_at ASC NULLS LAST, last_moved_at ASC, position ASC
+        ORDER BY ${ EPIC_PRIORITY_RANK_FOR_TASK }, ${ PRIORITY_RANK }, last_activity_at ASC, due_at ASC NULLS LAST, position ASC
         LIMIT $${ idx }`,
       values,
     );
@@ -945,9 +974,17 @@ export class WorkItemsModel {
     if (!task) throw new Error(`No task found with id: ${ input.task_id }`);
     const id = input.id || await WorkItemsModel.uniqueId(WorkItemsModel.COMMENTS);
     const rows = await postgresClient.query<WorkCommentRecord>(
-      `INSERT INTO ${ WorkItemsModel.COMMENTS } (id, task_id, body, author)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
+      `WITH inserted AS (
+         INSERT INTO ${ WorkItemsModel.COMMENTS } (id, task_id, body, author)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *
+       ), touched AS (
+         UPDATE ${ WorkItemsModel.TASKS }
+            SET last_activity_at = now()
+          WHERE id = $2
+          RETURNING id
+       )
+       SELECT inserted.* FROM inserted JOIN touched ON true`,
       [id, input.task_id, input.body, input.author ?? input.actor ?? 'sulla'],
     );
     return rows[0];

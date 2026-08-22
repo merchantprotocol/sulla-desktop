@@ -25,6 +25,16 @@ The heartbeat is an **autonomous background agent** that wakes up on a schedule 
 7. On exit, show a desktop notification in the top-right frameless window with the run summary
 8. Stop caffeinate, record `heartbeat_completed` (or `_error` / `_aborted`)
 
+## Projects dispatch and task rotation
+
+The injected project report is a portfolio queue, not a one-task assignment:
+
+- **Actionable now** is ordered by priority, then oldest `last_activity_at`. Heartbeat hydrates and dispatches multiple independent tasks per wake, up to available agent capacity, with one task per work agent.
+- Any task update or task comment advances `last_activity_at`, rotating that task behind untouched peers in the same priority block. This prevents unchanged work from monopolizing consecutive wakes.
+- **Blocked tasks — recovery planning** is a separate queue. Heartbeat moves the selected task to `planning`, launches independent high-reasoning planners, cross-checks their proposals, chooses the strongest reversible path itself, and returns executable work to `in_progress`.
+- **Planning in flight** is excluded from fresh dispatch so another wake cannot launch a duplicate council.
+- Human escalation is reserved for a genuine irreversible or high-blast boundary after reversible work is staged. An unchanged gate is not repeatedly notified.
+
 ## Channel & messaging
 
 The heartbeat owns the `heartbeat` channel. Other agents can message it via inter-agent XML tags:

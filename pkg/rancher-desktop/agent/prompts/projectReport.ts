@@ -3,8 +3,10 @@
  * and the one-time context injection into the orchestrating agent's first run
  * (see AgentNode). Read-only; builds from WorkItemsModel.
  *
- * "Done" = tasks whose completed_at falls in the look-back window. "Next" =
- * the top open tasks by priority → due → last moved.
+ * "Done" = tasks whose completed_at falls in the look-back window. Open work
+ * is split into actionable, planning, and blocked queues. Within a priority
+ * block the least-recently-active task comes first, producing deterministic
+ * round-robin rotation whenever an agent edits or comments on a task.
  */
 
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
@@ -61,9 +63,15 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   const doneEpics = epics.filter(e => e.status === 'done' && Date.parse(e.last_moved_at) >= cutoffMs);
   const doneProjects = projects.filter(p => p.status === 'done' && Date.parse(p.last_moved_at) >= cutoffMs);
 
-  // NEXT
+  // OPEN QUEUES — WorkItemsModel already orders by epic priority → task
+  // priority → oldest activity. Preserve that order while separating states.
   const openRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
-  const next = openRows.slice(0, nextLimit);
+  const actionableRows = openRows.filter(t => t.status !== 'blocked' && t.status !== 'planning');
+  const blockedRows = openRows.filter(t => t.status === 'blocked');
+  const planningRows = openRows.filter(t => t.status === 'planning');
+  const next = actionableRows.slice(0, nextLimit);
+  const blocked = blockedRows.slice(0, nextLimit);
+  const planning = planningRows.slice(0, nextLimit);
 
   const lines: string[] = [];
   const scope = [projectId ? `project ${ projectId }` : null, assignee ? `assignee ${ assignee }` : null]
@@ -83,7 +91,8 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   for (const p of doneProjects) lines.push(`- _(project)_ **${ p.title }** completed (id ${ p.id })`);
 
   lines.push('');
-  lines.push(`## ▶️ Next up (${ next.length } of ${ openRows.length } open)`);
+  lines.push(`## ▶️ Actionable now (${ next.length } of ${ actionableRows.length })`);
+  lines.push('_This is a portfolio dispatch queue, not a one-task limit. Heartbeat should hydrate and dispatch as many independent tasks as available sub-agent capacity allows, one task per work agent, then continue across the queue for the full wake._');
   if (!next.length) {
     lines.push('_No open tasks in scope._');
   } else {
@@ -91,6 +100,28 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
       const due = t.due_at ? ` · due ${ fmt(t.due_at) }` : '';
       const who = t.assignee ? ` · ${ t.assignee }` : '';
       lines.push(`- [${ t.priority }] **${ t.title }** — ${ context(t) } · ${ t.status }${ due }${ who } (id ${ t.id })`);
+    }
+  }
+
+  lines.push('');
+  lines.push(`## 🧭 Blocked tasks — recovery planning (${ blocked.length } of ${ blockedRows.length })`);
+  lines.push('_These are recovery-planning work, not a human review queue. After dispatching across actionable tasks, Heartbeat should use remaining capacity on the oldest blocked task in the highest priority block: move it to `planning` and dispatch a council of independent high-reasoning planners. Cross-check their proposals, choose the strongest reversible path, record the decision, move the task to `in_progress`, and execute it. Escalate only a genuinely irreversible/high-blast action after staging the reversible work. If no execution path exists, return it to `blocked`; the new activity rotates it to the bottom of its priority block._');
+  if (!blocked.length) {
+    lines.push('_No blocked tasks in scope._');
+  } else {
+    for (const t of blocked) {
+      const who = t.assignee ? ` · ${ t.assignee }` : '';
+      lines.push(`- [${ t.priority }] **${ t.title }** — ${ context(t) }${ who } (id ${ t.id })`);
+    }
+  }
+
+  if (planningRows.length) {
+    lines.push('');
+    lines.push(`## 🛠 Planning in flight (${ planning.length } of ${ planningRows.length })`);
+    lines.push('_Do not dispatch these again. A planning agent already owns the recovery pass._');
+    for (const t of planning) {
+      const who = t.assignee ? ` · ${ t.assignee }` : '';
+      lines.push(`- [${ t.priority }] **${ t.title }** — ${ context(t) }${ who } (id ${ t.id })`);
     }
   }
 

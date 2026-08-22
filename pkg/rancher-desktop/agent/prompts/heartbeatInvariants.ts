@@ -26,6 +26,8 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'Orchestrator Mode',
   'Fan Out, Then Verify',
   'dispatch up to **10** sub-agents',
+  'multiple tasks per wake',
+  'Do not stop after one dispatch',
   'Plan-first split',
   'planner agent',
   'work agent',
@@ -34,11 +36,13 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'DRAFT PR',
   'The Prospector',
   'Artifact-per-Cycle',
-  // Auto-dispatch-on-blocked (aQLP): every blocked task gets a Fable
-  // investigation + concrete unblock recommendation, not a bare punt.
+  // Blocked recovery (aQLP/haNi): independent high-reasoning planners,
+  // Heartbeat synthesis, and autonomous reversible decisions.
   'Auto-Dispatch on Blocked',
-  'Fable sub-agent',
-  'never a bare punt',
+  'Blocked Recovery Council',
+  'three independent high-reasoning planner agents',
+  'make the decision yourself',
+  'unchanged gates get no repeated notification',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',
 ] as const;

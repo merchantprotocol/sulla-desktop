@@ -91,6 +91,7 @@ export const up = `
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ,
     last_moved_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at    TIMESTAMPTZ,
     archived        BOOLEAN     NOT NULL DEFAULT false
   );

@@ -93,4 +93,47 @@ describe('WorkItemsModel', () => {
       [null, null, 1],
     );
   });
+
+  it('orders tasks by oldest activity inside each priority block', async() => {
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+
+    await WorkItemsModel.listTasks({ assignee: 'heartbeat', limit: 12 });
+
+    const sql = (postgresClient.query as any).mock.calls[0][0] as string;
+    expect(sql).toContain('ORDER BY');
+    expect(sql).toContain('last_activity_at ASC, due_at ASC NULLS LAST, position ASC');
+    expect(sql.indexOf('last_activity_at ASC')).toBeGreaterThan(sql.indexOf('CASE priority'));
+  });
+
+  it('advances task activity on every task mutation', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{
+        id: 'task-1', status: 'todo', priority: 'high', assignee: 'heartbeat',
+      }])
+      .mockResolvedValueOnce([{
+        id: 'task-1', status: 'todo', priority: 'high', assignee: 'heartbeat', title: 'Updated',
+      }]);
+
+    await WorkItemsModel.updateTask('task-1', { title: 'Updated', actor: 'heartbeat' });
+
+    const sql = (postgresClient.query as any).mock.calls[1][0] as string;
+    expect(sql).toContain('updated_at = now()');
+    expect(sql).toContain('last_activity_at = now()');
+    expect(sql).not.toContain('last_moved_at = now()');
+  });
+
+  it('inserts a comment and touches its task in one SQL statement', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'task-1', title: 'Rotate me' }])
+      .mockResolvedValueOnce([{
+        id: 'comment-1', task_id: 'task-1', body: 'Checked.', author: 'heartbeat',
+      }]);
+
+    await WorkItemsModel.addComment({ id: 'comment-1', task_id: 'task-1', body: 'Checked.', author: 'heartbeat' });
+
+    const sql = (postgresClient.query as any).mock.calls[1][0] as string;
+    expect(sql).toContain('WITH inserted AS');
+    expect(sql).toContain('SET last_activity_at = now()');
+    expect(sql).toContain('SELECT inserted.* FROM inserted JOIN touched ON true');
+  });
 });

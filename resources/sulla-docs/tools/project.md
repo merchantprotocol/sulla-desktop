@@ -25,13 +25,15 @@ Free-text columns. Use these consistently:
 | Field | Allowed values |
 |---|---|
 | `status` (projects + epics) | `working` (default) · `backlog` · `blocked` · `done` · `cancelled` · `parked` |
-| `status` (tasks) | `todo` (default) · `backlog` · `in_progress` · `blocked` · `done` · `cancelled` · `parked` |
+| `status` (tasks) | `todo` (default) · `backlog` · `planning` · `in_progress` · `in_review` · `blocked` · `done` · `cancelled` · `parked` |
 | `priority` | `p0`/`critical` · `p1`/`high` · `p2`/`medium` (default) · `p3`/`low` · `p4` |
 
 There is **no `bucket` column**. Closed = `done` / `cancelled` / `parked`.
 Rows are never hard-deleted — `archive_project_item` sets `archived=true` and
 cascades down. `last_moved_at` updates on status / priority / assignee /
-due-date / parent changes.
+due-date / parent changes. `last_activity_at` updates automatically on every
+task edit and comment. Agents never set it directly; Heartbeat uses it as the
+round-robin cursor inside each priority block.
 
 Defaults from `WorkItemsModel`: projects + epics `status='working'`
 `priority='p2'`; tasks `status='todo'` `priority='p2'`.
@@ -46,7 +48,7 @@ Reads:
 | `sulla project/get_project_item` | One row + children + comments. |
 | `sulla project/search_project_items` | Title + description search. Use before creating. |
 | `sulla project/list_task_comments` | Comment thread on a task, oldest first. |
-| `sulla project/project_report` | Standup: completed in last N hours + top open next. Injected as `<project_report>` on first chat turn. |
+| `sulla project/project_report` | Standup: completed work plus separate actionable, blocked-recovery, and planning-in-flight queues. Within each priority block, least-recent activity comes first. Injected as `<project_report>` on first chat turn. |
 
 Writes — explicit create / update, **no upsert**:
 
