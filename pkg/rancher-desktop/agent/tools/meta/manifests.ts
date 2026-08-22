@@ -17,6 +17,19 @@ export const metaToolManifests: ToolManifest[] = [
     loader:         () => import('./upsert_conversation_keywords'),
   },
   {
+    name:        'search_conversation_keywords',
+    description: 'Read-only search for the Conversation Reader over the conversation_keywords index. Pass term (or query) for exact canonical-term match, falling back to pg_trgm fuzzy match, falling back to ILIKE over conversation_history title/summary/last_summary; or pass thread_id to list every indexed keyword for that thread. Deliberately includes conversations hidden from the primary UI (subconscious/worker channels) — that is the point of this tool.',
+    category:    'observation',
+    schemaDef:   {
+      term:      { type: 'string', optional: true, description: 'Term to search for (exact -> fuzzy -> title/summary fallback). Provide this or thread_id.' },
+      query:     { type: 'string', optional: true, description: 'Alias for term.' },
+      thread_id: { type: 'string', optional: true, description: 'List every indexed keyword for this thread id instead of searching by term.' },
+      limit:     { type: 'number', optional: true, description: 'Max results to return (default 20).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./search_conversation_keywords'),
+  },
+  {
     name:        'add_observational_memory',
     description: 'Use this tool to store the observations you make into long-term memory.',
     category:    'observation',
@@ -107,11 +120,11 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'add_identity_observation',
-    description: 'Store a focused identity observation into the domain-keyed identity_observations table (human / business / world / agent / environment / projects — mirrors ~/sulla/identity/). Levels are CERTAINTY: 3 = stated fact (subject directly told us), 2 = derived fact (established from conversation evidence), 1 = conclusion (reasoned from L3/L2 facts — personality, style, habits). Pass an existing id to update in place; otherwise a substantially similar active row in the same domain is updated instead of duplicated.',
+    description: 'Store a focused identity observation into the domain-keyed identity_observations table (human / business / world / agent / environment / projects / skills — mirrors ~/sulla/identity/). Levels are CERTAINTY: 3 = stated fact (subject directly told us), 2 = derived fact (established from conversation evidence), 1 = conclusion (reasoned from L3/L2 facts — personality, style, habits). Pass an existing id to update in place; otherwise a substantially similar active row in the same domain is updated instead of duplicated.',
     category:    'observation',
     schemaDef:   {
       id:       { type: 'string', optional: true, description: 'Existing observation ID to update in place. Omit to add a new observation or update a duplicate by content.' },
-      domain:   { type: 'string', optional: true, description: 'Identity domain: human, business, world, agent, environment, or projects (default human).' },
+      domain:   { type: 'string', optional: true, description: 'Identity domain: human, business, world, agent, environment, projects, or skills (default human).' },
       level:    { type: 'number', description: 'Certainty level: 3 = stated fact, 2 = derived fact, 1 = conclusion.' },
       category: { type: 'string', optional: true, description: 'Focus category — e.g. identity, relationship, association, personality, habit, preference, goal.' },
       content:  { type: 'string', description: 'One sentence only — extremely concise, always include the context.' },
@@ -120,6 +133,7 @@ export const metaToolManifests: ToolManifest[] = [
       evidence: { type: 'string', optional: true, description: 'Optional quote or turn reference supporting the observation.' },
       confidence: { type: 'number', optional: true, description: 'Optional confidence score from 0 to 1.' },
       kind:     { type: 'string', optional: true, description: 'Optional self-observation kind: correction, constraint, method, commitment, or preference.' },
+      skillSlug: { type: 'string', optional: true, description: 'REQUIRED for domain:skills — the exact kebab-case artifact slug this row is about (e.g. "pdf-fill"). Illegal in every other domain.' },
       source:   { type: 'string', optional: true, description: 'Optional source label for this observation.' },
     },
     operationTypes: ['create', 'read', 'update'],
@@ -137,11 +151,11 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'search_identity_observations',
-    description: 'Search active identity observations within one domain (human / business / world / agent / environment / projects) by keyword or phrase. Any-word ILIKE match ranked by phrase hit, word-match count, then certainty level (stated facts first) and recency. Use this before adding a new identity observation to check for existing similar ones.',
+    description: 'Search active identity observations within one domain (human / business / world / agent / environment / projects / skills) by keyword or phrase. Any-word ILIKE match ranked by phrase hit, word-match count, then certainty level (stated facts first) and recency. Use this before adding a new identity observation to check for existing similar ones.',
     category:    'observation',
     schemaDef:   {
       query:            { type: 'string', description: 'Search keyword or phrase — split into words, any-word ILIKE match against observation content.' },
-      domain:           { type: 'string', optional: true, description: 'Identity domain to search: human, business, world, agent, environment, or projects (default human).' },
+      domain:           { type: 'string', optional: true, description: 'Identity domain to search: human, business, world, agent, environment, projects, or skills (default human).' },
       limit:            { type: 'number', optional: true, description: 'Max results to return (default 20).' },
       include_archived: { type: 'boolean', optional: true, description: 'When true, also searches archived (soft-deleted) rows (default false).' },
     },
@@ -153,7 +167,7 @@ export const metaToolManifests: ToolManifest[] = [
     description: 'List active identity observations for one domain, most certain first (L3 stated → L2 derived → L1 concluded) then most recent. Optionally filter by level and/or category.',
     category:    'observation',
     schemaDef:   {
-      domain:   { type: 'string', optional: true, description: 'Identity domain: human, business, world, agent, environment, or projects (default human).' },
+      domain:   { type: 'string', optional: true, description: 'Identity domain: human, business, world, agent, environment, projects, or skills (default human).' },
       level:    { type: 'number', optional: true, description: 'Certainty level filter: 3, 2, or 1. Omit to list all levels.' },
       category: { type: 'string', optional: true, description: 'Category filter — e.g. identity, relationship, personality, habit. Omit to list all.' },
       limit:    { type: 'number', optional: true, description: 'Max results to return (default 50).' },

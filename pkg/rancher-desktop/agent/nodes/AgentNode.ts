@@ -177,6 +177,16 @@ export class AgentNode extends BaseNode {
     if (environmentObservationContext) combinedContextParts.push(`<environment_observations>\n${ environmentObservationContext }\n</environment_observations>`);
     const projectsObservationContext = (state.metadata as any).projectsObservationContext;
     if (projectsObservationContext) combinedContextParts.push(`<projects_observations>\n${ projectsObservationContext }\n</projects_observations>`);
+    const skillsObservationContext = (state.metadata as any).skillsObservationContext;
+    if (skillsObservationContext) combinedContextParts.push(`<skills_observations>\n${ skillsObservationContext }\n</skills_observations>`);
+
+    // Conversation Reader output (relevant PRIOR conversation content, as
+    // opposed to this thread's own observations). Nothing sets this yet —
+    // the recall dispatch is deferred to Sulla Projects task drqq — but the
+    // inject side of the plumbing is wired here so that task only needs to
+    // set state.metadata.conversationContext.
+    const conversationContext = (state.metadata as any).conversationContext;
+    if (conversationContext) combinedContextParts.push(`<conversation_context>\n${ conversationContext }\n</conversation_context>`);
 
     if (combinedContextParts.length > 0) {
       const contextBlock = `\n\n${ combinedContextParts.join('\n\n') }`;

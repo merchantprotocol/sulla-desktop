@@ -20,14 +20,14 @@ export class AddIdentityObservationWorker extends BaseTool {
   description = '';
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
-    const { id, level, category, content, basis, subject, evidence, confidence, kind, source } = input;
+    const { id, level, category, content, basis, subject, evidence, confidence, kind, skillSlug, source } = input;
     const existingId = typeof id === 'string' ? id.trim() : '';
 
     try {
       const domain = normalizeIdentityDomain(input.domain);
 
       if (existingId) {
-        const updated = await IdentityObservationsModel.update(existingId, { level, category, content, basis, subject, evidence, confidence, kind, source });
+        const updated = await IdentityObservationsModel.update(existingId, { level, category, content, basis, subject, evidence, confidence, kind, skillSlug, source });
         if (!updated) {
           return {
             successBoolean: false,
@@ -44,14 +44,14 @@ export class AddIdentityObservationWorker extends BaseTool {
       const duplicate = await IdentityObservationsModel.findDuplicate(domain, content);
 
       if (duplicate) {
-        await IdentityObservationsModel.update(duplicate.id, { level, category, content, basis, subject, evidence, confidence, kind, source });
+        await IdentityObservationsModel.update(duplicate.id, { level, category, content, basis, subject, evidence, confidence, kind, skillSlug, source });
         return {
           successBoolean: true,
           responseString: `Remembering (updated): "${ content }" (id: ${ duplicate.id }, domain: ${ domain }, L${ level })`,
         };
       }
 
-      const record = await IdentityObservationsModel.insert({ domain, level, category, content, basis, subject, evidence, confidence, kind, source });
+      const record = await IdentityObservationsModel.insert({ domain, level, category, content, basis, subject, evidence, confidence, kind, skillSlug, source });
       return {
         successBoolean: true,
         responseString: `Remembering: "${ content }" (id: ${ record.id }, domain: ${ record.domain }, L${ record.level }${ record.category ? `, ${ record.category }` : '' })`,

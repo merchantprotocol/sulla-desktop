@@ -9,6 +9,8 @@ import { toolRegistry } from '../tools/registry';
 import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
 import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
 export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
+export { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
 import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 export { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 
@@ -87,6 +89,58 @@ deduplicated salient terms and the parent metadata supplied in the task. Use
 source="subconscious". The DB layer canonicalizes and deduplicates by
 (term, thread_id), so never emit duplicate spellings in the same batch.`;
 
+/**
+ * Conversation Reader: read-only — DB keyword-index search plus selective
+ * log-folder drill-down, for surfacing relevant prior conversation content
+ * into <conversation_context>.
+ */
+const CONVERSATION_READER_PROMPT = `You are the Conversation Reader, a read-only RECALL process for prior
+conversation history.
+
+CRITICAL: You are READ-ONLY. You never write, upsert, or delete anything —
+search_conversation_keywords and search_conversation_logs are your only
+tools, and both are read-only.
+
+## Your job
+
+Given the current turn, decide whether prior conversation content — an
+earlier thread, a past decision, a referenced conversation, something the
+human alludes to without repeating in full — would help the primary agent
+answer well. If nothing in the current turn calls for it, return an empty
+string immediately. Do not manufacture relevance and do not summarize the
+CURRENT conversation — you exist to reach outside it.
+
+When something IS worth recalling:
+1. Start with search_conversation_keywords (term/query and/or thread_id) — a
+   DB index lookup, cheap and fast. This is your default and usually your
+   only stop.
+2. Only fall through to search_conversation_logs when the keyword index
+   points you at a specific thread_id and the indexed title/summary alone
+   isn't enough — you need the actual prior exchange. Prefer thread_id mode
+   (resolves the exact log file for that thread) over the no-thread_id
+   recency scan; only reach for the recency scan when no thread_id is known
+   and the human's reference is time-bound ("what we discussed yesterday").
+   Keep any log drill-down selective and targeted — pull the one thread that
+   matters, not a broad sweep.
+
+## Latency — read this before acting
+
+TIME IS OF THE ESSENCE. The primary agent is BLOCKED waiting on you before it
+can respond — every second you spend searching is a second added to the
+human's time-to-first-token. There is no hard cap on how many tool calls you
+may make, but that is not permission to explore leisurely: default to the
+shallowest lookup that answers the question, batch parallel searches in one
+response instead of going back and forth serially, and stop as soon as you
+have enough. If the keyword index comes back empty or clearly irrelevant, do
+NOT escalate to a full log scan on a hunch — return nothing and finish.
+
+## Output
+
+Return ONLY the relevant prior-conversation content, compact and cited to its
+thread_id, e.g. \`[thread:<id>] <what was found and why it's relevant>\`. If
+nothing is relevant, return an empty string — do NOT pad with filler or
+narrate your search process.`;
+
 /** Projects recall also needs read-only access to live Projects work-state:
  *  keyword search to find relevant items, plus drill-down to pull a hit's full
  *  detail (children/status) and its comment thread when the turn needs it. */
@@ -97,6 +151,23 @@ function identityObservationRecallToolsForDomain(domain: string): string[] {
       'search_project_items',  // keyword search across projects/epics/tasks
       'get_project_item',      // fetch one hit's full detail + children/comments
       'list_task_comments',    // read a task's progress/blocker/decision thread
+    ];
+  }
+
+  // Skills recall also needs read-only discovery across every place a skill
+  // can actually live — the public/cloud marketplace, and artifacts already
+  // materialised locally under ~/sulla/skills/ (list_local reads that
+  // directory; no raw filesystem tool is granted). All three are
+  // operationTypes:['read'] — no download/publish/scaffold/update capability,
+  // so this cannot be used to install or mutate anything (Jonathon,
+  // 2026-08-20: marketplace read tools are fine for an observer; they are not
+  // the filesystem/shell access the observer lockdown forbids).
+  if (domain === 'skills') {
+    return [
+      ...IDENTITY_OBSERVATION_RECALL_TOOLS,
+      'search',      // marketplace/search — public Sulla Cloud marketplace, kind:'skill'
+      'info',        // marketplace/info — full metadata for one marketplace or local skill
+      'list_local',  // marketplace/list_local — skills already installed under ~/sulla/skills/
     ];
   }
 
@@ -265,9 +336,12 @@ Field contract for every agent-domain row:
   more careful" and NOT "I will not push to main." First person or self-talk
   pollutes the snapshot: always start with "Agent ..." or "The pair ..." /
   "The human ...", never "I ...".
-- source — the subject: exactly \`agent\` or \`agent.user\`.
-- category — the kind: exactly one of correction | constraint | method |
-  commitment | preference.
+- subject — exactly \`agent\` or \`agent.user\` (NOT the \`source\` parameter —
+  \`source\` is an unrelated free-text label; set \`subject\` or the row is
+  rejected as agent.user work correctly categorized nowhere).
+- kind — exactly one of correction | constraint | method | commitment |
+  preference (NOT the \`category\` parameter — \`category\` has no meaning in
+  this domain; set \`kind\` or add_identity_observation rejects it).
 - basis — the evidence, and for a success/failure/personality row the SENTIMENT
   signal that labeled it: the short quote or reaction that showed delight or
   frustration ("he said 'perfect, ship it'", "he replied 'why'd you push without a
@@ -485,7 +559,102 @@ domain, and LIVE task status belongs in the structured Projects store (via the
 - L1 — a conclusion you reasoned about a project ("this project is release-gated
   on human review", "these two repos always move together"), always with basis.`,
   },
+  skills: {
+    domain:       'skills',
+    subjectLabel: 'the skill files (SKILL.md artifacts) the agent uses or could use',
+    focus: `Observe the SKILL FILES — the reusable SKILL.md artifacts the agent runs
+to perform a repeatable task — never the task itself. A row belongs here ONLY if
+its real subject is a NAMED skill artifact: what it is, where it lives, and
+whether running it worked. If you cannot name the specific skill slug the row is
+about, it does NOT belong in this domain.
+
+Record, always naming the skill slug/name:
+- provenance: where a specific skill was actually found this conversation —
+  its marketplace slug + version/publisher ("marketplace/search returned
+  'pdf-fill' v1.2.0 from publisher X"), its local install path under
+  ~/sulla/skills/ ("'commit-msg' is installed locally at ~/sulla/skills/
+  commit-msg"), or another concrete source it was discovered at
+- success: a named skill was run and worked — record which skill, for what kind
+  of task, and any reason it's worth reaching for again
+- failure: a named skill was run and did NOT work — record which skill, what
+  broke, and why, so it is not reached for the same way again
+- gap: a task needed a skill and NONE existed for it (a scaffolding/publishing
+  candidate) — name the task and what kind of skill would have covered it
+- inventory: a durable catalog fact about a skill's purpose or scope ("'pdf-fill'
+  fills PDF form fields from a JSON map") — NOT its internal steps, which
+  already live in SKILL.md; do not duplicate the file's content here
+
+Reject (never write these — they are this domain's most common pollution):
+- anything that is not about a specific, named skill artifact. A general working
+  method or lesson that never invokes a named SKILL.md file belongs in the agent
+  domain, not here
+- the task itself, its outcome, or its business context ("fixed the invoice
+  parser", "shipped PR #614") — unless the row's actual subject is a named skill
+  that ran as part of it
+- a paraphrase or summary of a skill's instructions/steps — that duplicates the
+  SKILL.md file, which is already the source of truth; record only that it
+  exists and what it is for
+- a marketplace/product feature request about Sulla Desktop itself ("the
+  marketplace UI should…") — belongs to the projects domain, not here
+- a PR/branch/commit status about building the skills system or marketplace
+  itself — that is work-state, not a fact about a skill artifact
+- a generic tool call or command that isn't backed by an actual named skill file`,
+    writerNote: `## How to write a skills observation
+
+Every candidate row must name the exact skill slug it is about. Pass it through
+this gate first: is the subject a specific SKILL.md artifact — not the task, not
+the agent's general working style, not Sulla Desktop's skills feature? If you
+cannot point to the slug, do not write the row.
+
+Field contract for every skills-domain row:
+- skillSlug — REQUIRED. The exact kebab-case artifact slug (e.g. "pdf-fill").
+  add_identity_observation rejects any skills-domain write missing this — it
+  is what makes rows about one skill queryable without parsing prose.
+- content — ONE sentence, third person, naming the skill: "Skill 'pdf-fill' …" —
+  never a first-person narration of what you just did. Must name the same
+  skill as skillSlug; add_identity_observation rejects skills-domain content
+  with no quoted skill name even when skillSlug is set.
+- category — exactly one of: provenance | success | failure | gap | inventory.
+- basis / evidence — the concrete signal: the marketplace/local lookup result
+  for provenance, or what happened when the skill ran for success/failure.
+- level — L3 when the run outcome or location was directly observed this
+  conversation (it ran, or the lookup returned it); L2 when established from
+  strong evidence without directly observing it; L1 only for a genuine
+  generalization across repeated runs, always with basis.
+
+A failure is worth exactly as much as a success — it stops the skill being
+reached for the same broken way next time. If nothing named a specific skill
+this conversation, finish immediately; most turns need NO write here.`,
+  },
 };
+
+/**
+ * Shared reject rules for EVERY identity-observer domain, hoisted out of the
+ * per-domain focus text. Every domain audit (2026-08-19: human/business/
+ * world/agent/environment/projects) found the SAME three pollution classes —
+ * task/PR/commit status, agent instructions restated as fact, and system-
+ * prompt/AGENTS.md residue — independently re-derived per domain. Maintaining
+ * one canonical block instead of six near-copies is both less error-prone and
+ * gives the tool-layer validation (IdentityObservationsModel work-state lint)
+ * a single prompt-side rule it actually matches.
+ */
+const IDENTITY_OBSERVER_UNIVERSAL_REJECTS = `## Universal rejects — apply in EVERY domain, before the domain-specific rules below
+
+These three classes caused every domain audit finding to date. Reject them
+regardless of how relevant the domain-specific focus makes them sound:
+1. Task/work status: a PR/branch/commit/worktree reference, a tsc/test/CI
+   result, a routed/exempted/blocked count, "shipped X", "opened draft PR #N".
+   This is work-state — it belongs in the Projects system, never here, in ANY
+   domain, even the projects domain itself.
+2. An instruction restated as fact: something the human told the agent to DO
+   ("split the work one task per agent", "always draft a PR first") is a task
+   directive, not identity — unless it is genuinely a standing working
+   agreement, in which case it belongs in the agent domain (subject
+   agent.user), not wherever it happened to come up.
+3. System-prompt / AGENTS.md / platform-context residue: a rule, persona
+   trait, or behavior spec copied from your own instructions and presented as
+   if it were something learned this conversation. If your only basis is "the
+   instructions say…", that is not an observation — discard it.`;
 
 /**
  * Build the writer prompt for a domain observer. The discipline is the
@@ -499,6 +668,14 @@ function buildIdentityObserverPrompt(cfg: IdentityObserverDomainConfig): string 
 CRITICAL: You are NOT the primary agent. You do NOT execute tasks, answer
 questions, browse websites, call APIs, or do anything the user asked for.
 Another agent handles that. You ONLY manage ${ cfg.domain } identity observations.
+
+DEFAULT IS ZERO WRITES. Most turns reveal nothing durable about ${ cfg.subjectLabel }
+— that is the expected, correct outcome, not a failure to find something. Write
+budget: at most 1-2 rows this turn. If more than 3 candidates pass every gate
+below, keep only the most durable and drop the rest — do not write all of them
+just because they qualify.
+
+${ IDENTITY_OBSERVER_UNIVERSAL_REJECTS }
 
 ${ cfg.focus }
 
@@ -528,7 +705,10 @@ BEFORE calling add_identity_observation for any new observation:
 - Only INSERT a fresh entry when nothing similar is found.
 
 Each observation is ONE concise sentence with its context, a level, and a
-category. Include why, not just what, when the reason matters.
+category. Include why, not just what, when the reason matters. In basis, name
+which gate/evidence justified the row (e.g. "L3: human stated this directly" /
+"L1 conclusion from repeated behavior, see evidence") — not what the system
+prompt says the domain covers.
 
 If nothing about ${ cfg.subjectLabel } was revealed this conversation, finish
 immediately — most task-focused turns need NO writes.
@@ -537,7 +717,11 @@ Do NOT:
 - Try to complete the user's task
 - Record task/project state (the general observation writer owns that)
 - Record facts about other domains
-- Search for tools, APIs, or integrations${ cfg.writerNote ? `\n\n${ cfg.writerNote }` : '' }`;
+- Search for tools, APIs, or integrations${ cfg.writerNote ? `\n\n${ cfg.writerNote }` : '' }
+
+Before you finish, re-read every row you are about to write against the
+Universal rejects above one more time — it is the single most common reason
+a domain regresses.`;
 }
 
 /**
@@ -673,6 +857,17 @@ Do not search one term at a time across multiple rounds.
 
 Be selective: a 5-entry relevant subset is better than 30 entries dumped verbatim.`;
 
+/**
+ * Recall only needs to know what a domain CONTAINS, not the writer's reject
+ * rules — those are "never write" instructions to an agent with no write
+ * tools, and they were bloating every recall prompt with the writer's full
+ * charter. Every domain's focus block follows "Observe X ... Record: ...
+ * \n\nReject (...)" — cut at that boundary and keep only the scope half.
+ */
+function identityRecallScope(cfg: IdentityObserverDomainConfig): string {
+  return cfg.focus.split(/\nReject \(/)[0].trim();
+}
+
 function buildIdentityObservationRecallPrompt(cfg: IdentityObserverDomainConfig): string {
   return `You are the focused identity observation RECALL process for ${ cfg.subjectLabel } (domain: ${ cfg.domain }).
 
@@ -685,12 +880,12 @@ Read the recent conversation context. Based on what the human is asking about,
 what task is in progress, and what identity facts could help the primary
 agent respond well, search the ${ cfg.domain } identity_observations table.
 
-${ cfg.focus }
+${ identityRecallScope(cfg) }
 
 Rules:
 - Call search_identity_observations with key topic/phrase variants from the conversation.
 - Optionally call list_identity_observations when broad identity context is needed.
-${ cfg.domain === 'projects' ? '- Also call search_project_items when the current turn names, implies, or depends on live Projects work-state. Use it only to find relevant project/epic/task context; do not create, update, archive, or comment on project items from recall.\n- When a search hit is clearly central to this turn and its title/status is not enough, drill down: call get_project_item to pull that item\'s full detail (children, status) or list_task_comments to read a task\'s progress/blocker/decision thread. These are READ-ONLY. Drill down only for the one or two items that actually matter — you block the primary agent, so do not fetch detail for every hit.\n' : '' }- Return ONLY observations that are relevant or possibly relevant to this turn.
+${ cfg.domain === 'projects' ? '- Also call search_project_items when the current turn names, implies, or depends on live Projects work-state. Use it only to find relevant project/epic/task context; do not create, update, archive, or comment on project items from recall.\n- When a search hit is clearly central to this turn and its title/status is not enough, drill down: call get_project_item to pull that item\'s full detail (children, status) or list_task_comments to read a task\'s progress/blocker/decision thread. These are READ-ONLY. Drill down only for the one or two items that actually matter — you block the primary agent, so do not fetch detail for every hit.\n' : '' }${ cfg.domain === 'skills' ? '- Also call the marketplace tools `search` and `list_local` — ALWAYS pass `kind:\'skill\'`, never omit it (they default to searching every artifact kind) — but ONLY when the current turn describes a repeatable task a skill could plausibly cover. Most turns are not skill-shaped; do not call them speculatively. Budget: at most 1-2 marketplace lookups — you block the primary agent on a live network call, so do not go searching multiple phrasings. Use `info` only to pull full detail on the one hit that actually matters.\n' : '' }- Return ONLY observations that are relevant or possibly relevant to this turn.
 - Format each result as: \`[id] L<level>·<category> date — content (basis: ...)\`
 - When including live Projects work-state from search_project_items, format it as: \`[project:<id>] <kind> <status> — <title> (source: Projects work-state)\`
 - If many observations are relevant, return many. If only a few matter, return a few.
@@ -1150,7 +1345,7 @@ export const GraphRegistry = {
     const state = await buildSubconsciousState({
       systemPrompt:           buildIdentityObserverPrompt(cfg),
       tools:                  IDENTITY_OBSERVER_TOOLS,
-      userMessage:            `Review this conversation for facts about ${ cfg.subjectLabel }. Record stated facts (L3) first, then derived facts (L2), then reasoned conclusions (L1, with their basis). Search for existing entries before adding (update instead of duplicate); promote levels when evidence upgrades a fact; soft-archive contradicted rows. If nothing about ${ cfg.subjectLabel } was revealed, finish immediately.`,
+      userMessage:            `Review this conversation for facts about ${ cfg.subjectLabel }. Record stated facts (L3) first, then derived facts (L2), then reasoned conclusions (L1, with their basis). Search for existing entries before adding (update instead of duplicate); promote levels when evidence upgrades a fact; soft-archive contradicted rows. If nothing about ${ cfg.subjectLabel } was revealed, finish immediately. Before writing anything: is it task/PR/commit status, an instruction restated as fact, or system-prompt residue? If so, do not write it — default is zero writes.`,
       messages:               [...parentState.messages],
       // Same window as the general writer — it mines conversation for facts.
       contextWindow:          30,
@@ -1257,6 +1452,46 @@ export const GraphRegistry = {
       observeAsTranscript:    true,   // flat transcript — observe, don't act
       parentAbortSignal:      (parentState.metadata as any).options?.abort,
       agentLabel:             'observation-recall',
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
+      deferParentThinkingComplete: true,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Create a Conversation Reader graph — read-only recall of relevant prior
+   * conversation content (DB keyword index, plus selective log drill-down)
+   * for <conversation_context> injection. Closest template is
+   * createObservationRecall / createIdentityObservationRecall above.
+   *
+   * NOT YET wired into the live pre-turn Promise.allSettled fan-out in
+   * SubconsciousMiddleware.ts (see runConversationReader there) — that
+   * registration is deliberately deferred to Sulla Projects task drqq
+   * ("Wire Conversation Writer + Reader into GraphRegistry subconscious
+   * fan-out"). This factory, its prompt, its read-only tool allowlist
+   * (CONVERSATION_READER_TOOLS), and the <conversation_context>
+   * inject/strip plumbing (AgentNode.ts, BaseNode.stripInjectedContextBlocks,
+   * ClaudeCodeService/CodexService context builders) are complete and ready
+   * for that follow-up task to dispatch.
+   */
+  createConversationReader: async function(parentState: BaseThreadState): Promise<{
+    graph:    Graph<BaseThreadState>;
+    state:    BaseThreadState;
+    threadId: string;
+  }> {
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           CONVERSATION_READER_PROMPT,
+      tools:                  CONVERSATION_READER_TOOLS,
+      userMessage:            'Read the recent conversation context and return only relevant prior-conversation content — nothing if no earlier thread, decision, or reference is worth recalling.',
+      messages:               [...parentState.messages],
+      contextWindow:          20,
+      observeAsTranscript:    true,   // flat transcript — observe, don't act
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             'conversation-reader',
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       deferParentThinkingComplete: true,
