@@ -91,6 +91,14 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('Never duplicate a live verification lease');
   });
 
+  it('hands unchanged external waits to one durable monitor and keeps moving', () => {
+    expect(heartbeatPrompt).toContain('## External Waits — Register Once, Then Keep Moving');
+    expect(heartbeatPrompt).toContain("call 'register_task_wait'");
+    expect(heartbeatPrompt).toContain('Never append unchanged wait comments');
+    expect(heartbeatPrompt).toContain('never stop after registering a wait');
+    expect(heartbeatPrompt).toContain('Human gates are event-driven and must not poll GitHub');
+  });
+
   it('keeps blocked recovery as the reasoning-only dispatch exception', () => {
     expect(heartbeatPrompt).toContain('## Auto-Dispatch on Blocked — Independent Council, Then Act');
     expect(heartbeatPrompt).toContain('independent high-reasoning council');

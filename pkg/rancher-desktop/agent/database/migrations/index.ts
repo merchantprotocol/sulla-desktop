@@ -52,6 +52,7 @@ import { up as up_0061, down as down_0061 } from './0061_add_work_task_activity'
 import { up as up_0062, down as down_0062 } from './0062_create_work_task_dispatches';
 import { up as up_0063, down as down_0063 } from './0063_normalize_autonomous_task_ownership';
 import { up as up_0064, down as down_0064 } from './0064_add_verification_dispatches';
+import { up as up_0065, down as down_0065 } from './0065_create_work_task_waits';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -105,4 +106,5 @@ export const migrationsRegistry = [
   { name: '0062_create_work_task_dispatches',                      up: up_0062, down: down_0062 },
   { name: '0063_normalize_autonomous_task_ownership',              up: up_0063, down: down_0063 },
   { name: '0064_add_verification_dispatches',                       up: up_0064, down: down_0064 },
+  { name: '0065_create_work_task_waits',                            up: up_0065, down: down_0065 },
 ] as const;
