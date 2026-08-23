@@ -36,8 +36,8 @@ describe('buildProjectReport activity rotation queues', () => {
     expect(report).toContain('## ▶️ Actionable now (2 of 2)');
     expect(report).toContain('## 🧭 Blocked tasks — recovery planning (1 of 1)');
     expect(report).toContain('## 🛠 Planning in flight (1 of 1)');
-    expect(report).toContain('council of independent high-reasoning planners');
-    expect(report).toContain('choose the strongest reversible path');
+    expect(report).toContain('triggers the locked core planning routine');
+    expect(report).toContain('Heartbeat must not launch a second council');
     expect(report).toContain('portfolio dispatch queue, not a one-task limit');
     expect(report).toContain('as many independent tasks as available sub-agent capacity allows');
 

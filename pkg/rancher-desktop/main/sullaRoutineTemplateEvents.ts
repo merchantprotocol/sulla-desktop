@@ -640,8 +640,11 @@ export function initSullaRoutineTemplateEvents(): void {
 }
 
 export interface RoutineExecutionResult {
-  executionId: string;
-  workflowId:  string;
+  /** Graph/thread execution id used by GraphRegistry. */
+  executionId:         string;
+  /** Durable playbook execution id used by checkpoints and workflow_executions. */
+  playbookExecutionId?: string;
+  workflowId:          string;
 }
 
 /**
@@ -659,6 +662,8 @@ export interface RoutineExecutionOptions {
    * activation marks it failed and starts a new run anyway.
    */
   force?:             boolean;
+  /** Internal only: concurrency is guarded by a task-scoped durable ledger. */
+  allowConcurrent?:   boolean;
 }
 
 export async function executeRoutine(
@@ -695,6 +700,7 @@ export async function executeRoutine(
     startNodeId:       options?.startNodeId,
     resumeExecutionId: options?.resumeExecutionId,
     force:             options?.force,
+    allowConcurrent:   options?.allowConcurrent,
   });
 
   if (!activation.ok) {
@@ -707,5 +713,11 @@ export async function executeRoutine(
 
   console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);
 
-  return { executionId, workflowId };
+  let playbookExecutionId: string | undefined;
+  try {
+    const parsed = JSON.parse(activation.responseString);
+    if (typeof parsed?.executionId === 'string') playbookExecutionId = parsed.executionId;
+  } catch { /* activation errors were handled above; response parsing is best-effort */ }
+
+  return { executionId, playbookExecutionId, workflowId };
 }

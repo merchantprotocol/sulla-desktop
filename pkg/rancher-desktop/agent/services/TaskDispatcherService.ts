@@ -159,16 +159,27 @@ export class TaskDispatcherService {
       ? `Dispatch ${ dispatch.id } failed: ${ summary }`
       : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }.\n\n${ summary }`;
 
+    // Persist the worker's blocker/result before the status transition. A
+    // blocked transition immediately snapshots the task for the planning
+    // council, so racing the comment and update could omit the original
+    // blocker from every planner's input.
     const settled = await Promise.allSettled([
       WorkTaskDispatchModel.settle(dispatch.id, status, result, error),
       WorkItemsModel.addComment({ task_id: task.id, author: 'dispatcher', body: comment }),
-      WorkItemsModel.updateTask(task.id, { status: taskStatus, assignee: 'heartbeat', actor: 'dispatcher' }),
     ]);
 
     for (const outcome of settled) {
       if (outcome.status === 'rejected') {
         console.error(`[TaskDispatcher] Could not finalize ${ dispatch.id }:`, outcome.reason);
       }
+    }
+
+    try {
+      await WorkItemsModel.updateTask(task.id, {
+        status: taskStatus, assignee: 'heartbeat', actor: 'dispatcher',
+      });
+    } catch (err) {
+      console.error(`[TaskDispatcher] Could not move task ${ task.id } after ${ dispatch.id }:`, err);
     }
   }
 

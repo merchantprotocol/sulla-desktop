@@ -89,12 +89,12 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain("return the task to 'todo' for a fresh mechanical run");
   });
 
-  it('keeps blocked recovery as the reasoning-only dispatch exception', () => {
-    expect(heartbeatPrompt).toContain('## Auto-Dispatch on Blocked — Independent Council, Then Act');
-    expect(heartbeatPrompt).toContain('independent high-reasoning council');
-    expect(heartbeatPrompt).toContain('choose the recommendation, and act');
+  it('delegates blocked recovery to the locked core routine', () => {
+    expect(heartbeatPrompt).toContain('## Auto-Dispatch on Blocked — Locked Core Routine');
+    expect(heartbeatPrompt).toContain('core-routine-plan-project-task');
+    expect(heartbeatPrompt).toContain('Do not manually dispatch planning agents');
     expect(heartbeatPrompt).toContain('never a bare question');
-    expect(heartbeatPrompt).toContain('standing process for every blocked item');
+    expect(heartbeatPrompt).toContain('durable task-scoped claim prevents duplicate councils');
   });
 
   // Regression guard for #587: Jonathon rejected the "pick one task, make one

@@ -346,6 +346,26 @@ function isClosedStatus(status: string | undefined): boolean {
   return status === 'done' || status === 'cancelled' || status === 'parked';
 }
 
+/**
+ * Bridge committed Projects status writes into the locked planning routine.
+ * Dynamic import keeps the Projects model free of main-process/workflow cycles.
+ * The task write is already durable when this runs, so bridge failures are
+ * audited/logged and recovered by the planning ledger rather than surfacing a
+ * misleading "task update failed" result to the caller.
+ */
+async function notifyTaskStatusCommitted(
+  task: WorkTaskRecord,
+  previousStatus: string,
+  actor?: string,
+): Promise<void> {
+  try {
+    const { PlanningCouncilService } = await import('../../services/PlanningCouncilService');
+    await PlanningCouncilService.handleTaskStatusTransition(task, previousStatus, actor);
+  } catch (err) {
+    console.error(`[WorkItemsModel] Planning status bridge failed for task ${ task.id }:`, err);
+  }
+}
+
 // ── Model ──────────────────────────────────────────────────────────────
 
 export class WorkItemsModel {
@@ -853,7 +873,11 @@ export class WorkItemsModel {
         isClosedStatus(status) ? new Date().toISOString() : null,
       ],
     );
-    return rows[0];
+    const created = rows[0];
+    if (created && ['blocked', 'planning'].includes(created.status)) {
+      await notifyTaskStatusCommitted(created, '', input.actor);
+    }
+    return created;
   }
 
   static async upsertTask(input: UpsertTaskInput): Promise<WorkTaskRecord> {
@@ -940,7 +964,11 @@ export class WorkItemsModel {
         WHERE id = $${ idx } RETURNING *`,
       values,
     );
-    return rows[0] ?? null;
+    const updated = rows[0] ?? null;
+    if (updated && changes.status !== undefined) {
+      await notifyTaskStatusCommitted(updated, existing.status, changes.actor);
+    }
+    return updated;
   }
 
   static async listTasks(opts: ListTasksOpts = {}): Promise<WorkTaskRecord[]> {
