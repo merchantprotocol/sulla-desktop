@@ -12,10 +12,6 @@ const executeMock: any = jest.fn();
 const graphDeleteMock: any = jest.fn();
 const recoverPreviousRuntimeMock: any = jest.fn(() => Promise.resolve([]));
 const reportCapabilityMock: any = jest.fn(() => Promise.resolve({}));
-const claimStageMock: any = jest.fn(() => Promise.resolve({
-  claimed: true,
-  claim:   { id: 'stage-claim-1' },
-}));
 const releaseStageMock: any = jest.fn(() => Promise.resolve());
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
@@ -25,7 +21,6 @@ jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () =>
   LifecycleCapabilityModel: {
     recoverPreviousRuntime: recoverPreviousRuntimeMock,
     report:                 reportCapabilityMock,
-    claimStage:             claimStageMock,
     releaseStage:           releaseStageMock,
   },
 }));
@@ -69,7 +64,6 @@ describe('TaskDispatcherService', () => {
     });
     recoverPreviousRuntimeMock.mockResolvedValue([]);
     reportCapabilityMock.mockResolvedValue({});
-    claimStageMock.mockResolvedValue({ claimed: true, claim: { id: 'stage-claim-1' } });
     releaseStageMock.mockResolvedValue(undefined);
   });
 
@@ -98,6 +92,7 @@ describe('TaskDispatcherService', () => {
       dispatch: {
         id: 'dispatch-1', task_id: 'task-1', agent_id: 'opus-worker', thread_id: 'thread-1',
       },
+      stage_claim: { id: 'stage-claim-1' },
     };
     claimNextMock
       .mockResolvedValueOnce(claim)
@@ -114,13 +109,10 @@ describe('TaskDispatcherService', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     service.destroy();
 
-    expect(claimNextMock).toHaveBeenCalledWith('opus-worker');
+    expect(claimNextMock).toHaveBeenCalledWith('opus-worker', expect.stringContaining('task-dispatcher-'));
     expect(executeMock).toHaveBeenCalled();
     expect(settleMock).toHaveBeenCalledWith(
       'dispatch-1', 'completed', 'Draft PR opened and tests passed.', undefined,
-    );
-    expect(claimStageMock).toHaveBeenCalledWith(
-      'task-1', 'todo-execution', 'execution', 'dispatcher', expect.stringContaining('task-dispatcher-'),
     );
     expect(releaseStageMock).toHaveBeenCalledWith('stage-claim-1');
     expect(updateTaskMock).toHaveBeenCalledWith('task-1', {

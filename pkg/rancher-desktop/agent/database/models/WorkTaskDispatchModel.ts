@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
@@ -21,15 +22,16 @@ export interface WorkTaskDispatchRecord {
 }
 
 export interface ClaimedDispatch {
-  dispatch: WorkTaskDispatchRecord;
-  task:     WorkTaskRecord;
+  dispatch:    WorkTaskDispatchRecord;
+  task:        WorkTaskRecord;
+  stage_claim: LifecycleStageClaim;
 }
 
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
 const NON_AUTONOMOUS_LABELS = ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'];
 
 export class WorkTaskDispatchModel {
-  static async claimNext(agentId: string): Promise<ClaimedDispatch | null> {
+  static async claimNext(agentId: string, runtimeInstanceId: string): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
       const candidate = await client.query<WorkTaskRecord>(`
         SELECT t.*
@@ -48,6 +50,10 @@ export class WorkTaskDispatchModel {
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
               WHERE d.task_id = t.id AND d.status = 'running'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM work_task_stage_claims c
+              WHERE c.task_id = t.id AND c.stage = 'in_progress' AND c.status = 'active'
            )
            AND NOT EXISTS (
              SELECT 1 FROM work_tasks child
@@ -80,6 +86,16 @@ export class WorkTaskDispatchModel {
       const task = candidate.rows[0];
       if (!task) return null;
 
+      const stageClaim = await LifecycleCapabilityModel.claimStageWithClient(
+        client,
+        task.id,
+        'todo-execution',
+        'in_progress',
+        'dispatcher',
+        runtimeInstanceId,
+      );
+      if (!stageClaim.claimed || !stageClaim.claim) return null;
+
       const id = `dispatch-${ randomUUID() }`;
       const threadId = `task-dispatch-${ task.id }-${ Date.now() }`;
       const inserted = await client.query<WorkTaskDispatchRecord>(`
@@ -88,18 +104,22 @@ export class WorkTaskDispatchModel {
         RETURNING *
       `, [id, task.id, agentId, threadId]);
 
-      await client.query(`
+      const updated = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = 'planning',
+           SET status = 'in_progress',
                assignee = 'dispatcher',
                updated_at = now(),
                last_moved_at = now(),
                last_activity_at = now(),
                last_moved_by = 'dispatcher'
-         WHERE id = $1
+         WHERE id = $1 AND status = 'todo'
+        RETURNING *
       `, [task.id]);
+      if (!updated.rows[0]) {
+        throw new Error(`Atomic dispatch lost task ${ task.id } before execution handoff`);
+      }
 
-      return { dispatch: inserted.rows[0], task };
+      return { dispatch: inserted.rows[0], task: updated.rows[0], stage_claim: stageClaim.claim };
     });
   }
 
@@ -150,7 +170,7 @@ export class WorkTaskDispatchModel {
              SET status = 'todo', assignee = NULL,
                  updated_at = now(), last_moved_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
-           WHERE id = ANY($1::text[]) AND status = 'planning' AND assignee = 'dispatcher'
+           WHERE id = ANY($1::text[]) AND status = 'in_progress' AND assignee = 'dispatcher'
         `, [taskIds]);
       }
       return taskIds;

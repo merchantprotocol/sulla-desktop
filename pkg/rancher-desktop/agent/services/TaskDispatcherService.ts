@@ -117,7 +117,7 @@ export class TaskDispatcherService {
 
       let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning());
       while (freeSlots > 0 && this.initialized) {
-        const claim = await WorkTaskDispatchModel.claimNext(agentId);
+        const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID);
         if (!claim) break;
         this.runClaim(claim).catch(err => console.error('[TaskDispatcher] Worker promise failed:', err));
         freeSlots -= 1;
@@ -139,19 +139,7 @@ export class TaskDispatcherService {
   }
 
   private async runClaim(claim: ClaimedDispatch): Promise<void> {
-    const { dispatch, task } = claim;
-    const stageClaim = await LifecycleCapabilityModel.claimStage(
-      task.id,
-      'todo-execution',
-      'execution',
-      'dispatcher',
-      RUNTIME_INSTANCE_ID,
-    );
-    if (!stageClaim.claimed || !stageClaim.claim) {
-      await this.finalizeClaim(claim, 'failed', `Lifecycle ownership denied: ${ stageClaim.reason ?? 'unknown reason' }`);
-      return;
-    }
-    const liveStageClaim = stageClaim.claim;
+    const { dispatch, task, stage_claim: liveStageClaim } = claim;
     const abort = new AbortService();
     this.active.set(dispatch.id, abort);
     const leaseTimer = setInterval(

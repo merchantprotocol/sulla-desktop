@@ -169,42 +169,58 @@ export class LifecycleCapabilityModel {
     owner: string,
     runtimeInstanceId: string,
   ): Promise<ClaimResult> {
-    return postgresClient.transaction(async(client) => {
-      const capabilityResult = await client.query<LifecycleCapabilityRecord>(`
+    return postgresClient.transaction(client => LifecycleCapabilityModel.claimStageWithClient(
+      client,
+      taskId,
+      key,
+      stage,
+      owner,
+      runtimeInstanceId,
+    ));
+  }
+
+  static async claimStageWithClient(
+    client: PoolClient,
+    taskId: string,
+    key: LifecycleCapabilityKey,
+    stage: string,
+    owner: string,
+    runtimeInstanceId: string,
+  ): Promise<ClaimResult> {
+    const capabilityResult = await client.query<LifecycleCapabilityRecord>(`
         SELECT * FROM lifecycle_capabilities WHERE capability_key = $1 FOR UPDATE
       `, [key]);
-      const capability = capabilityResult.rows[0];
-      if (!capability) return { claimed: false, reason: `capability ${ key } is not registered` };
+    const capability = capabilityResult.rows[0];
+    if (!capability) return { claimed: false, reason: `capability ${ key } is not registered` };
 
-      const authorized = effectiveOwner(capability);
-      if (!authorized) {
-        return { claimed: false, reason: `${ key } is ${ capability.enabled ? capability.health : 'disabled' }; fallback ${ capability.fallback_mode } holds work` };
-      }
-      if (authorized !== owner) {
-        return { claimed: false, reason: `${ key } is owned by ${ authorized }` };
-      }
+    const authorized = effectiveOwner(capability);
+    if (!authorized) {
+      return { claimed: false, reason: `${ key } is ${ capability.enabled ? capability.health : 'disabled' }; fallback ${ capability.fallback_mode } holds work` };
+    }
+    if (authorized !== owner) {
+      return { claimed: false, reason: `${ key } is owned by ${ authorized }` };
+    }
 
-      const existing = await client.query<LifecycleStageClaim>(`
+    const existing = await client.query<LifecycleStageClaim>(`
         SELECT * FROM work_task_stage_claims
          WHERE task_id = $1 AND stage = $2 AND status = 'active'
          FOR UPDATE
       `, [taskId, stage]);
-      if (existing.rows[0]) {
-        const claim = existing.rows[0];
-        if (claim.owner === owner && claim.runtime_instance_id === runtimeInstanceId) {
-          return { claimed: true, claim };
-        }
-        return { claimed: false, reason: `${ stage } already claimed by ${ claim.owner }` };
+    if (existing.rows[0]) {
+      const claim = existing.rows[0];
+      if (claim.owner === owner && claim.runtime_instance_id === runtimeInstanceId) {
+        return { claimed: true, claim };
       }
+      return { claimed: false, reason: `${ stage } already claimed by ${ claim.owner }` };
+    }
 
-      const inserted = await client.query<LifecycleStageClaim>(`
+    const inserted = await client.query<LifecycleStageClaim>(`
         INSERT INTO work_task_stage_claims
           (id, task_id, capability_key, stage, owner, runtime_instance_id)
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
       `, [`stage-${ randomUUID() }`, taskId, key, stage, owner, runtimeInstanceId]);
-      return { claimed: true, claim: inserted.rows[0] };
-    });
+    return { claimed: true, claim: inserted.rows[0] };
   }
 
   static async releaseStage(claimId: string, status: 'released' | 'cancelled' = 'released'): Promise<void> {
