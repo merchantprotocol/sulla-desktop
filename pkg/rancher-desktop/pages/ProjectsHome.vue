@@ -92,6 +92,7 @@
               Projects
             </button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'lanes' }" @click="tab = 'lanes'">Lanes</button>
+            <button type="button" class="ph-tab" :class="{ on: tab === 'knowledge' }" @click="tab = 'knowledge'">Knowledge</button>
           </div>
           <div class="ph-sp" />
           <label
@@ -244,8 +245,15 @@
                     v-if="sel.github_repo"
                     class="ph-pill"
                   >{{ sel.github_repo }}</span>
+                  <span v-if="sel.knowledge_count" class="ph-pill">{{ sel.knowledge_count }} knowledge</span>
                 </div>
               </div>
+
+              <KnowledgeLinksPanel
+                item-kind="project"
+                :item-id="sel.id"
+                @open-node="openKnowledgeNode"
+              />
 
               <div
                 v-for="epic in sel.epics"
@@ -277,6 +285,7 @@
                   </button>
                   <h3>{{ epic.title }}</h3>
                   <span class="ph-cnt">{{ epicSummary(epic) }}</span>
+                  <span v-if="epic.knowledge_count" class="ph-cnt">{{ epic.knowledge_count }} knowledge</span>
                   <div class="ph-sp" />
                   <div class="ph-actions">
                     <button
@@ -302,6 +311,11 @@
                     </button>
                   </div>
                 </div>
+                <KnowledgeLinksPanel
+                  item-kind="epic"
+                  :item-id="epic.id"
+                  @open-node="openKnowledgeNode"
+                />
                 <div
                   v-if="!collapsedEpics.has(epic.id) && !filteredEpicTasks(epic).length"
                   class="ph-muted ph-dropzone"
@@ -347,6 +361,7 @@
                     >
                       <span>{{ t.priority }}</span>
                     </div>
+                    <div v-if="t.knowledge_count" class="ph-m"><span>{{ t.knowledge_count }} knowledge</span></div>
                   </div>
                   <span
                     class="ph-tag"
@@ -437,6 +452,7 @@
                         {{ statusLabel(status) }}
                       </option>
                     </select>
+                    <div v-if="t.knowledge_count" class="ph-cm">{{ t.knowledge_count }} knowledge</div>
                   </div>
                 </div>
               </div>
@@ -847,6 +863,15 @@
 
             <!-- LANE SETTINGS -->
             <LaneSettings v-if="sel" v-show="tab === 'lanes'" ref="laneSettings" :project="sel" @refresh="refresh" />
+
+            <!-- KNOWLEDGE BASE -->
+            <div v-show="tab === 'knowledge'">
+              <KnowledgeBrowserPanel
+                :projects="projects"
+                :selected-node-id="selectedKnowledgeNodeId"
+                @open-work="openLinkedWork"
+              />
+            </div>
           </template>
         </div>
       </section>
@@ -1073,6 +1098,13 @@
           </button>
         </div>
 
+        <KnowledgeLinksPanel
+          v-if="taskMode === 'edit' && openTask?.id"
+          item-kind="task"
+          :item-id="openTask.id"
+          @open-node="openKnowledgeNode"
+        />
+
         <!-- comments -->
         <template v-if="taskMode === 'edit'">
           <div class="ph-cmt-h">
@@ -1296,6 +1328,9 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
+import type { LinkedWorkItemRecord } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
+import KnowledgeBrowserPanel from '@pkg/components/KnowledgeBrowserPanel.vue';
+import KnowledgeLinksPanel from '@pkg/components/KnowledgeLinksPanel.vue';
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
@@ -1321,8 +1356,9 @@ const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
   { key: 'calendar', label: 'Calendar', icon: '□' },
   { key: 'list', label: 'List', icon: '☷' },
 ];
-type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes';
+type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes' | 'knowledge';
 const tab = ref<ProjectsTab>('board');
+const selectedKnowledgeNodeId = ref('');
 const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
@@ -1480,6 +1516,22 @@ async function refreshActivity(): Promise<void> {
     activity.value = await loadActivity(selectedId.value, 80);
   } finally {
     activityLoading.value = false;
+  }
+}
+
+function openKnowledgeNode(id: string): void {
+  selectedKnowledgeNodeId.value = id;
+  tab.value = 'knowledge';
+  closeTask();
+}
+
+async function openLinkedWork(item: LinkedWorkItemRecord): Promise<void> {
+  select(item.project_id_resolved);
+  tab.value = 'today';
+  if (item.item_kind === 'task') {
+    const task = projects.value.flatMap(project => project.epics.flatMap(epic => epic.tasks))
+      .find(candidate => candidate.id === item.item_id);
+    if (task) await openTaskDrawer(task);
   }
 }
 

@@ -26,6 +26,7 @@ export const up = `
     note              TEXT,
     source            TEXT,
     created_by        TEXT,
+    updated_by        TEXT,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     archived          BOOLEAN     NOT NULL DEFAULT false,

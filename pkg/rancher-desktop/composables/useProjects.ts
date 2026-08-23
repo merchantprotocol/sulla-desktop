@@ -50,14 +50,16 @@ export type {
 
 /** An epic with its tasks attached, ready to render. */
 export interface EpicWithTasks extends WorkEpicRecord {
-  tasks: WorkTaskRecord[];
+  tasks:            (WorkTaskRecord & { knowledge_count?: number })[];
+  knowledge_count?: number;
 }
 
 /** A project with its epics (each carrying tasks) and roll-up counts. */
 export interface ProjectView extends WorkProjectRecord {
-  epics:     EpicWithTasks[];
-  openCount: number;
-  doneCount: number;
+  epics:            EpicWithTasks[];
+  openCount:        number;
+  doneCount:        number;
+  knowledge_count?: number;
 }
 
 const CLOSED = new Set(['done', 'cancelled', 'parked']);

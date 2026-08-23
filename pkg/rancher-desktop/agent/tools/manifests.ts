@@ -9,6 +9,7 @@ import { browserToolManifests } from './browser/manifests';
 import { calendarToolManifests } from './calendar/manifests';
 import { captureToolManifests } from './capture/manifests';
 import { dockerToolManifests } from './docker/manifests';
+import { episodicToolManifests } from './episodic/manifests';
 import { extensionsToolManifests } from './extensions/manifests';
 import { functionToolManifests } from './function/manifests';
 import { githubToolManifests } from './github/manifests';
@@ -42,6 +43,7 @@ toolRegistry.registerManifests([
   ...captureToolManifests,
   ...dockerToolManifests,
   ...extensionsToolManifests,
+  ...episodicToolManifests,
   ...functionToolManifests,
   ...githubToolManifests,
   ...integrationsToolManifests,

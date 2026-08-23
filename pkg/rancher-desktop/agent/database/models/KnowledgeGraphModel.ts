@@ -121,7 +121,8 @@ export class KnowledgeGraphModel {
     if (!clean.length) return [];
 
     return postgresClient.query<KnowledgeNodeRecord>(
-      `WITH input AS (SELECT norm_alias(unnest($1::text[])) AS term_norm),
+      `WITH input_terms AS (SELECT unnest($1::text[]) AS term),
+       input AS (SELECT norm_alias(term) AS term_norm FROM input_terms),
        matched AS (
          SELECT DISTINCT a.node_id
          FROM input i JOIN ${ this.ALIASES_TABLE } a

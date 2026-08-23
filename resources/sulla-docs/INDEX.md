@@ -60,6 +60,7 @@ For unfamiliar requests: `grep -rli '<keyword>' <path-to-this-dir>/` to find the
 - `notify.md` — notify_user, presence detection, when (and when not) to notify
 - `settings.md` — SullaSettingsModel is the one settings path; settings_get / settings_set; Redis hash is cache-only
 - `project.md` — **the project-state store**: projects → epics → tasks → comments in desktop Postgres; Projects view + project tools
+- `knowledge.md` — Knowledge Base nodes, Projects associations, scoped recall, and the two-sided tool surface
 - `ledger.md` — historical: `~/sulla/ledger/` markdown archive + leftover `ledger_scoreboard` tool. Not the pick-path.
 - `calendar.md` — calendar_create/list/update/cancel, scheduler triggers, no GCal sync
 - `applescript.md` — Drive macOS apps via AppleScript; per-app allowlist + macOS Automation perms
