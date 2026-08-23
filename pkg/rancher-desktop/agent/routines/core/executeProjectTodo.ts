@@ -42,7 +42,9 @@ export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
   name:        'Execute Projects Todo',
   description: 'Locked core routine for atomic todo execution, capability-based worker fan-out, independent acceptance review, repair/replan routing, and durable artifact custody.',
   version:     1,
-  enabled:     true,
+  // Ship dark. The human enables the protected routine only after shadow and
+  // low-risk acceptance passes; the legacy owner remains the default meanwhile.
+  enabled:     false,
   createdAt:   '2026-08-23T19:00:00.000Z',
   updatedAt:   '2026-08-23T19:00:00.000Z',
   nodes:       [
