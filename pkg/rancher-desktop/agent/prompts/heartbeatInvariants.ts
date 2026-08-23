@@ -31,12 +31,12 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'TaskDispatcherService',
   'The Prospector',
   'Artifact-per-Cycle',
-  // Blocked recovery (aQLP/haNi): independent high-reasoning planners,
-  // Heartbeat synthesis, and autonomous reversible decisions.
+  // Blocked recovery (#667): locked task-scoped routine owns independent
+  // planners and synthesis; Heartbeat must not recreate prompt-only dispatch.
   'Auto-Dispatch on Blocked',
   'Blocked Recovery Council',
   'three independent high-reasoning planner agents',
-  'make the decision yourself',
+  'Heartbeat does not spawn planners',
   'unchanged gates get no repeated notification',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',

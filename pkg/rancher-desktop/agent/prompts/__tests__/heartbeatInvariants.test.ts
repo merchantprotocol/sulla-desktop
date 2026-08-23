@@ -53,8 +53,8 @@ describe('checkHeartbeatPromptInvariants', () => {
   it('keeps blocked recovery autonomous and council-driven', () => {
     expect(heartbeatPrompt).toContain('Blocked Recovery Council — Decide, Do Not Escalate');
     expect(heartbeatPrompt).toContain('three independent high-reasoning planner agents');
-    expect(heartbeatPrompt).toContain('make the decision yourself');
-    expect(heartbeatPrompt).toContain("move it to 'planning'");
+    expect(heartbeatPrompt).toContain('core-routine-plan-project-task');
+    expect(heartbeatPrompt).toContain('Heartbeat does not spawn planners');
     expect(heartbeatPrompt).toContain('unchanged gates get no repeated notification');
   });
 

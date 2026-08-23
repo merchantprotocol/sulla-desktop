@@ -75,6 +75,17 @@ export class DatabaseManager {
       console.warn('[DB] seedCoreRoutines() failed:', error);
     }
 
+    // A workflow graph cannot survive a process restart. Close any durable
+    // planning claims left active by the prior process and launch one fresh
+    // council per still-planning task. Non-fatal; the next status event also
+    // retries through the same collision-safe ledger.
+    try {
+      const { PlanningCouncilService } = await import('@pkg/agent/services/PlanningCouncilService');
+      await PlanningCouncilService.recoverOnStartup();
+    } catch (error) {
+      console.warn('[DB] PlanningCouncilService.recoverOnStartup() failed:', error);
+    }
+
     // Warm skills registry cache
     try {
       await skillsRegistry.initialize();

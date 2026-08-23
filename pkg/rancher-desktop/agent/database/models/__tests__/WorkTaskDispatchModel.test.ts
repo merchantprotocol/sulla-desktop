@@ -85,10 +85,10 @@ describe('WorkTaskDispatchModel', () => {
       .mockResolvedValueOnce({ rows: [{ status: 'running' }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: 'task-1' }] });
+      .mockResolvedValueOnce({ rows: [{ id: 'task-1', status: 'in_review', assignee: 'heartbeat' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
-    await WorkTaskDispatchModel.finalize('dispatch-1', 'task-1', {
+    const committed = await WorkTaskDispatchModel.finalize('dispatch-1', 'task-1', {
       dispatchStatus: 'completed',
       taskStatus:     'in_review',
       taskAssignee:   'heartbeat',
@@ -103,5 +103,6 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
     expect(query.mock.calls[3][0]).toContain('UPDATE work_tasks');
     expect(query.mock.calls[3][0]).toContain("status = 'in_progress'");
+    expect(committed).toEqual(expect.objectContaining({ id: 'task-1', status: 'in_review' }));
   });
 });

@@ -4,9 +4,13 @@ import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
 
 const forceDispatcherCheckMock: any = jest.fn(() => Promise.resolve());
+const planningTransitionMock: any = jest.fn(() => Promise.resolve());
 
 jest.unstable_mockModule('../../../services/TaskDispatcherService', () => ({
   getTaskDispatcherService: () => ({ forceCheck: forceDispatcherCheckMock }),
+}));
+jest.unstable_mockModule('../../../services/PlanningCouncilService', () => ({
+  PlanningCouncilService: { handleTaskStatusTransition: planningTransitionMock },
 }));
 
 describe('WorkItemsModel', () => {
@@ -19,6 +23,7 @@ describe('WorkItemsModel', () => {
   afterEach(() => {
     (postgresClient as any).query = originalQuery;
     forceDispatcherCheckMock.mockClear();
+    planningTransitionMock.mockClear();
     jest.restoreAllMocks();
   });
 
@@ -136,7 +141,10 @@ describe('WorkItemsModel', () => {
 
     await WorkItemsModel.updateTask('task-1', { status: 'todo', actor: 'planner' });
 
+    expect(planningTransitionMock).toHaveBeenCalledTimes(1);
     expect(forceDispatcherCheckMock).toHaveBeenCalledTimes(1);
+    expect(planningTransitionMock.mock.invocationCallOrder[0])
+      .toBeLessThan(forceDispatcherCheckMock.mock.invocationCallOrder[0]);
   });
 
   it('inserts a comment and touches its task in one SQL statement', async() => {

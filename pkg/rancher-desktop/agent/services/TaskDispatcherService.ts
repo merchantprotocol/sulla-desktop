@@ -1,4 +1,5 @@
 import { AbortService } from './AbortService';
+import { CanonicalArtifactCustodyService } from './CanonicalArtifactCustodyService';
 import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
@@ -133,12 +134,6 @@ export class TaskDispatcherService {
     );
 
     try {
-      await WorkItemsModel.addComment({
-        task_id: task.id,
-        author:  'dispatcher',
-        body:    `Mechanical dispatch started with ${ dispatch.agent_id } (dispatch ${ dispatch.id }).`,
-      }).catch(err => console.error(`[TaskDispatcher] Could not write start comment for ${ dispatch.id }:`, err));
-
       const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(
         dispatch.agent_id,
         dispatch.thread_id,
@@ -197,7 +192,7 @@ export class TaskDispatcherService {
     playbook?: WorkflowPlaybookState,
   ): Promise<void> {
     const { dispatch, task } = claim;
-    const evidence = playbook ? this.extractWorkflowEvidence(playbook) : null;
+    const evidence = playbook ? await this.extractWorkflowEvidence(playbook, task) : null;
     const coreContractMissing = executionOwner === 'core-routine' && !evidence;
     const taskStatus = status === 'failed' || coreContractMissing
       ? 'planning'
@@ -215,9 +210,16 @@ export class TaskDispatcherService {
     const error = dispatchStatus === 'failed' ? contractError || summary : undefined;
     const comment = dispatchStatus === 'failed'
       ? `Dispatch ${ dispatch.id } requires replanning: ${ error }`
-      : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }.\n\n${ summary }`;
+      : [
+        `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }.`,
+        evidence?.proposedComment,
+        evidence?.ledger.artifactUrl || evidence?.ledger.artifactLocation
+          ? `Canonical artifact: ${ evidence.ledger.artifactUrl || evidence.ledger.artifactLocation } @ ${ evidence.ledger.contentHash || evidence.ledger.artifactRef || 'verified' }`
+          : null,
+        summary,
+      ].filter(Boolean).join('\n\n');
 
-    await WorkTaskDispatchModel.finalize(dispatch.id, task.id, {
+    const committed = await WorkTaskDispatchModel.finalize(dispatch.id, task.id, {
       dispatchStatus,
       taskStatus,
       taskAssignee: assignee,
@@ -226,6 +228,11 @@ export class TaskDispatcherService {
       error,
       evidence:     evidence?.ledger,
     });
+
+    if (taskStatus === 'planning') {
+      const { PlanningCouncilService } = await import('./PlanningCouncilService');
+      await PlanningCouncilService.handleTaskStatusTransition(committed, 'in_progress', 'dispatcher');
+    }
   }
 
   private parseJsonResult(value: unknown): Record<string, any> | null {
@@ -241,12 +248,13 @@ export class TaskDispatcherService {
     }
   }
 
-  private extractWorkflowEvidence(playbook: WorkflowPlaybookState): {
-    ledger:         WorkTaskDispatchEvidence;
-    nextState:      'in_review' | 'planning' | 'blocked';
-    contractValid:  boolean;
-    contractError?: string;
-  } {
+  private async extractWorkflowEvidence(playbook: WorkflowPlaybookState, task: WorkTaskRecord): Promise<{
+    ledger:           WorkTaskDispatchEvidence;
+    nextState:        'in_review' | 'planning' | 'blocked';
+    contractValid:    boolean;
+    contractError?:   string;
+    proposedComment?: string;
+  }> {
     const output = (id: string) => this.parseJsonResult(playbook.nodeOutputs[id]?.result);
     const classifier = output('node-todo-classify');
     const workers = output('node-todo-workers');
@@ -257,32 +265,36 @@ export class TaskDispatcherService {
     const custodyVerdict = String(custody?.verdict || '').toLowerCase();
     const repairRoute = String(repair?.route || '').toLowerCase();
     const reviewerVerdict = String(custody?.reviewerVerdict || review?.verdict || '').toLowerCase();
-    const workType = String(classifier?.workType || '').toLowerCase();
-    const isCode = workType.includes('coding') || workType.includes('repository') || String(custody?.artifactType || '').toLowerCase() === 'code';
     const hasReviewEvidence = review?.evidence !== undefined && review?.evidence !== null && JSON.stringify(review.evidence).length > 2;
     const hasVerification = custody?.verificationEvidence !== undefined && custody?.verificationEvidence !== null && JSON.stringify(custody.verificationEvidence).length > 2;
-    const hasStableArtifact = Boolean(custody?.artifactUrl || custody?.artifactLocation || custody?.artifactRef);
-    const headSha = String(custody?.headSha || '');
-    const hasCodeCustody = !isCode || (
-      /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(String(custody?.artifactUrl || '')) &&
-      Boolean(custody?.artifactRef) &&
-      /^[0-9a-f]{7,40}$/i.test(headSha) &&
-      String(custody?.contentHash || '') === headSha
-    );
-    const passContract = custodyVerdict === 'pass' &&
+    const proposedComment = String(record?.proposedComment || '').trim();
+    const passProposal = custodyVerdict === 'pass' &&
       ['pass', 'repaired'].includes(repairRoute) &&
       reviewerVerdict === 'pass' &&
       hasReviewEvidence &&
       hasVerification &&
-      hasStableArtifact &&
-      hasCodeCustody &&
-      record?.recorded === true;
+      record?.taskId === task.id &&
+      record?.nextState === 'in_review' &&
+      proposedComment.length > 0;
     const explicitExternalBlock = custodyVerdict === 'blocked' &&
       repairRoute === 'blocked' &&
       Boolean(custody?.terminalReason) &&
       hasReviewEvidence;
+    let canonical = null;
+    let canonicalError: string | undefined;
+    if (passProposal) {
+      try {
+        canonical = await CanonicalArtifactCustodyService.verify(task, custody || {}, record || {});
+        canonicalError = canonical.valid ? undefined : canonical.error;
+      } catch (err) {
+        canonicalError = `canonical artifact verification failed: ${ err instanceof Error ? err.message : String(err) }`;
+      }
+    }
+    const passContract = passProposal && canonical?.valid === true;
     const contractValid = passContract || explicitExternalBlock || repairRoute === 'replan';
-    const contractError = contractValid ? undefined : 'structured review or durable artifact custody evidence is incomplete';
+    const contractError = contractValid
+      ? undefined
+      : canonicalError || 'structured review or durable artifact custody evidence is incomplete';
     const nextState = passContract
       ? 'in_review'
       : explicitExternalBlock
@@ -293,7 +305,8 @@ export class TaskDispatcherService {
       nextState,
       contractValid,
       contractError,
-      ledger: {
+      proposedComment: passContract ? proposedComment : undefined,
+      ledger:          {
         workflowExecutionId: playbook.executionId,
         classifierDecision:  classifier ?? undefined,
         selectedAgents:      Array.isArray(classifier?.selectedAgents) ? classifier.selectedAgents : undefined,
@@ -301,10 +314,10 @@ export class TaskDispatcherService {
         reviewCount:         review ? 1 : 0,
         repairCount:         repairRoute === 'repaired' ? 1 : 0,
         artifactType:        custody?.artifactType,
-        artifactLocation:    custody?.artifactLocation,
-        artifactUrl:         custody?.artifactUrl,
-        artifactRef:         custody?.artifactRef || custody?.headSha,
-        contentHash:         custody?.contentHash || custody?.headSha,
+        artifactLocation:    canonical?.artifactLocation || custody?.artifactLocation,
+        artifactUrl:         canonical?.artifactUrl || custody?.artifactUrl,
+        artifactRef:         canonical?.artifactRef || custody?.artifactRef || custody?.headSha,
+        contentHash:         canonical?.contentHash || custody?.contentHash || custody?.headSha,
         reviewerVerdict,
         reviewEvidence:      review?.evidence ?? review ?? undefined,
         terminalReason:      custody?.terminalReason || contractError || (nextState === 'planning' ? 'acceptance_or_custody_incomplete' : undefined),

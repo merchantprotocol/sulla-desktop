@@ -13,6 +13,8 @@ export const EXECUTE_PROJECT_TODO_ID = 'core-routine-execute-project-todo';
 
 const SAFETY = [
   'Projects is the only work-state system. Work autonomously to the reversible edge.',
+  'Graph nodes are proposal-only: never create, update, move, or comment on any Projects row.',
+  'Only the dispatcher controller may atomically finalize the task after this graph returns.',
   'Never merge or deploy, spend money, make legal commitments, send external communication in the human\'s name,',
   'or perform destructive shared-system actions. Do not create a parallel markdown task list.',
   'Use the Sulla CLI catalog and bundled docs before inventing a tool or workaround.',
@@ -73,7 +75,7 @@ export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
       'node-todo-workers',
       'Dynamic Worker Fan-out',
       300,
-      `${ SAFETY } Original claimed task: {{trigger}} Classifier decision: {{Classify Work}}. Use the Sulla agent catalog to launch every selected worker, up to 10, in parallel only when assignments are independent and sequentially when dependencies require it. Give each worker the original acceptance criteria, its exact assignment, validation evidence required, forbidden actions, and artifact destination. Wait for every worker, reconcile their results without hiding failures, and return JSON only with keys childIds, workers, combinedOutcome, artifacts, verification, and unresolved. Coding workers must use isolated worktrees and may stop only after commit + Sulla GitHub push + remote draft PR. Non-code workers must update the named authoritative tracker and return its durable ID or URL.`,
+      `${ SAFETY } Original claimed task: {{trigger}} Classifier decision: {{Classify Work}}. Use the Sulla agent catalog to launch every selected worker, up to 10, in parallel only when assignments are independent and sequentially when dependencies require it. Give each worker the original acceptance criteria, its exact assignment, validation evidence required, forbidden actions, and artifact destination. Wait for every worker, reconcile their results without hiding failures, and return JSON only with keys childIds, workers, combinedOutcome, artifacts, verification, and unresolved. Coding workers must use isolated worktrees and may stop only after commit + Sulla GitHub push + remote draft PR. Non-code workers may update the named non-Projects authoritative tracker and return its durable ID or URL. Neither this node nor its child workers may mutate the originating Projects task before controller finalization.`,
       'All selected workers finish or report a concrete failure, with child IDs and durable artifact evidence retained.',
     ),
     AGENT_NODE(
@@ -87,22 +89,22 @@ export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
       'node-todo-repair',
       'Repair or Replan',
       620,
-      `${ SAFETY } Original claimed task: {{trigger}} Worker results: {{Dynamic Worker Fan-out}}. Independent verdict: {{Independent Acceptance Review}}. Apply that verdict. On pass, make no changes. On repairable, launch only the targeted repair worker(s), wait, inspect the repair, and re-run the acceptance checks once. On a wrong plan or failed repair, add the evidence to the Projects task and move it to planning with assignee=dispatcher so core routine ${ 'core-routine-plan-project-task' } (#667) owns recovery. On a genuine external gate, add the exact dependency and move it to blocked. Return JSON only with route (pass|repaired|replan|blocked), childIds, actions, evidence, and remainingRisk.`,
+      `${ SAFETY } Original claimed task: {{trigger}} Worker results: {{Dynamic Worker Fan-out}}. Independent verdict: {{Independent Acceptance Review}}. Apply that verdict. On pass, make no changes. On repairable, launch only the targeted repair worker(s), wait, inspect the repair, and re-run the acceptance checks once. On a wrong plan or failed repair, propose planning with assignee=dispatcher so core routine ${ 'core-routine-plan-project-task' } (#667) owns recovery after controller finalization. On a genuine external gate, propose blocked with the exact dependency. Return JSON only with route (pass|repaired|replan|blocked), childIds, actions, evidence, proposedDisposition, proposedComment, and remainingRisk. Do not call any project write tool.`,
       'Failed review cannot silently pass: it is repaired and rechecked, routed to planning, or blocked on a real external gate.',
     ),
     AGENT_NODE(
       'node-todo-custody',
       'Artifact Custody',
       780,
-      `${ SAFETY } Original claimed task: {{trigger}} Worker results: {{Dynamic Worker Fan-out}}. Review: {{Independent Acceptance Review}}. Repair route: {{Repair or Replan}}. Perform final custody verification after review/repair. Coding work requires a clean scoped diff, successful relevant validation, a local commit, pushed remote branch, remote draft PR, exact head SHA, and URL. Non-code work requires a readable artifact in the authoritative tracker plus its stable ID/URL/path and a Projects comment linking the outcome and evidence. Inspect the remote/tracker directly. Return JSON only with verdict (pass|replan|blocked), artifactType, artifactLocation, artifactUrl, artifactRef, contentHash, headSha, verificationEvidence, reviewerVerdict, and terminalReason. If any required proof is absent, verdict cannot be pass; route reversible gaps to replan and genuine external gates to blocked.`,
+      `${ SAFETY } Original claimed task: {{trigger}} Worker results: {{Dynamic Worker Fan-out}}. Review: {{Independent Acceptance Review}}. Repair route: {{Repair or Replan}}. Perform final custody verification after review/repair. Coding work requires a clean scoped diff, successful relevant validation, a local commit, pushed remote branch, remote draft PR, exact head SHA, and URL. Non-code work requires a readable artifact in the authoritative tracker plus its stable ID/URL/path and proposed Projects comment evidence for the controller to persist. Inspect the remote/tracker directly, but do not mutate Projects. Return JSON only with verdict (pass|replan|blocked), artifactType, artifactLocation, artifactUrl, artifactRef, contentHash, headSha, verificationEvidence, reviewerVerdict, and terminalReason. If any required proof is absent, verdict cannot be pass; route reversible gaps to replan and genuine external gates to blocked.`,
       'Every successful run ends with independently verified durable custody; local-only artifacts are rejected.',
     ),
     AGENT_NODE(
       'node-todo-record',
       'Record Projects Handoff',
       940,
-      `${ SAFETY } Original claimed task: {{trigger}} Classifier: {{Classify Work}}. Workers: {{Dynamic Worker Fan-out}}. Review: {{Independent Acceptance Review}}. Repair route: {{Repair or Replan}}. Custody: {{Artifact Custody}}. Write one concise Projects task comment containing the classifier choice, child IDs, reviewer verdict, durable artifact reference, exact SHA/hash when applicable, validation evidence, and next state. Do not mark the task done. A custody pass returns it for independent verifier-pool review; replan and blocked routes must already be recorded by the repair node. Return JSON only with recorded=true, taskId, commentId if available, and nextState (in_review|planning|blocked).`,
-      'The authoritative Projects row contains enough evidence to recover the work after restart.',
+      `${ SAFETY } Original claimed task: {{trigger}} Classifier: {{Classify Work}}. Workers: {{Dynamic Worker Fan-out}}. Review: {{Independent Acceptance Review}}. Repair route: {{Repair or Replan}}. Custody: {{Artifact Custody}}. Propose one concise Projects task comment containing the classifier choice, child IDs, reviewer verdict, durable artifact reference, exact SHA/hash when applicable, validation evidence, and next state. Do not call any project write tool. The dispatcher controller will validate the originating task and live canonical artifact, then atomically persist this evidence with the final task state. Return JSON only with taskId, proposedComment, and nextState (in_review|planning|blocked).`,
+      'The proposed disposition and comment contain enough evidence for controller-owned atomic finalization.',
     ),
     {
       id:       'node-todo-done',

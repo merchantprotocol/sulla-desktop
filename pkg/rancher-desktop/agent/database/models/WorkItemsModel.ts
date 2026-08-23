@@ -346,18 +346,28 @@ function isClosedStatus(status: string | undefined): boolean {
   return status === 'done' || status === 'cancelled' || status === 'parked';
 }
 
-/** Wake the sole todo owner only after the task transition is committed. */
-async function notifyTodoStatusCommitted(task: WorkTaskRecord, previousStatus: string): Promise<void> {
-  if (task.status !== 'todo' || previousStatus === 'todo') return;
+/**
+ * Bridge committed Projects status writes into the sole matching routine.
+ * Dynamic import keeps the Projects model free of main-process/workflow cycles.
+ * The task write is already durable when this runs, so bridge failures do not
+ * misreport the Projects mutation to its caller.
+ */
+async function notifyTaskStatusCommitted(
+  task: WorkTaskRecord,
+  previousStatus: string,
+  actor?: string,
+): Promise<void> {
   try {
-    // Dynamic import prevents the database model from creating a static cycle
-    // through TaskDispatcherService -> WorkItemsModel.
-    const { getTaskDispatcherService } = await import('../../services/TaskDispatcherService');
-    await getTaskDispatcherService().forceCheck();
+    if (['blocked', 'planning'].includes(task.status) || ['blocked', 'planning'].includes(previousStatus)) {
+      const { PlanningCouncilService } = await import('../../services/PlanningCouncilService');
+      await PlanningCouncilService.handleTaskStatusTransition(task, previousStatus, actor);
+    }
+    if (task.status === 'todo' && previousStatus !== 'todo') {
+      const { getTaskDispatcherService } = await import('../../services/TaskDispatcherService');
+      await getTaskDispatcherService().forceCheck();
+    }
   } catch (err) {
-    // The minute scan and boot recovery remain the durable fallback. The task
-    // write already committed, so do not misreport the Projects mutation.
-    console.error(`[WorkItemsModel] Todo dispatch bridge failed for task ${ task.id }:`, err);
+    console.error(`[WorkItemsModel] Post-commit status bridge failed for task ${ task.id }:`, err);
   }
 }
 
@@ -869,7 +879,9 @@ export class WorkItemsModel {
       ],
     );
     const created = rows[0];
-    await notifyTodoStatusCommitted(created, '');
+    if (created && ['todo', 'blocked', 'planning'].includes(created.status)) {
+      await notifyTaskStatusCommitted(created, '', input.actor);
+    }
     return created;
   }
 
@@ -959,7 +971,7 @@ export class WorkItemsModel {
     );
     const updated = rows[0] ?? null;
     if (updated && changes.status !== undefined) {
-      await notifyTodoStatusCommitted(updated, existing.status);
+      await notifyTaskStatusCommitted(updated, existing.status, changes.actor);
     }
     return updated;
   }

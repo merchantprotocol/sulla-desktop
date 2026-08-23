@@ -4,11 +4,13 @@ const settingsGetMock: any = jest.fn();
 const recoverStaleMock: any = jest.fn(() => Promise.resolve([]));
 const countRunningMock: any = jest.fn(() => Promise.resolve(0));
 const claimNextMock: any = jest.fn(() => Promise.resolve(null));
-const finalizeMock: any = jest.fn(() => Promise.resolve());
+const finalizeMock: any = jest.fn();
 const touchMock: any = jest.fn(() => Promise.resolve());
 const recordEvidenceMock: any = jest.fn(() => Promise.resolve());
 const addCommentMock: any = jest.fn(() => Promise.resolve());
 const updateTaskMock: any = jest.fn(() => Promise.resolve());
+const planningTransitionMock: any = jest.fn(() => Promise.resolve());
+const canonicalVerifyMock: any = jest.fn();
 const executeMock: any = jest.fn();
 const graphDeleteMock: any = jest.fn();
 const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({ attributes: { enabled: true } }));
@@ -27,7 +29,17 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
   },
 }));
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
-  WorkItemsModel: { addComment: addCommentMock, updateTask: updateTaskMock, listComments: jest.fn(() => Promise.resolve([])) },
+  WorkItemsModel: {
+    addComment:   addCommentMock,
+    updateTask:   updateTaskMock,
+    listComments: jest.fn(() => Promise.resolve([])),
+  },
+}));
+jest.unstable_mockModule('../PlanningCouncilService', () => ({
+  PlanningCouncilService: { handleTaskStatusTransition: planningTransitionMock },
+}));
+jest.unstable_mockModule('../CanonicalArtifactCustodyService', () => ({
+  CanonicalArtifactCustodyService: { verify: canonicalVerifyMock },
 }));
 jest.unstable_mockModule('../../database/models/WorkflowModel', () => ({
   WorkflowModel: { findById: workflowFindByIdMock },
@@ -57,7 +69,23 @@ describe('TaskDispatcherService', () => {
     recoverStaleMock.mockResolvedValue([]);
     countRunningMock.mockResolvedValue(0);
     claimNextMock.mockResolvedValue(null);
+    finalizeMock.mockImplementation((_dispatchId: string, taskId: string, finalization: any) => Promise.resolve({
+      id:         taskId,
+      project_id: 'project-1',
+      epic_id:    'epic-1',
+      title:      'Task',
+      priority:   'high',
+      status:     finalization.taskStatus,
+      assignee:   finalization.taskAssignee,
+    }));
     workflowFindByIdMock.mockResolvedValue({ attributes: { enabled: true } });
+    canonicalVerifyMock.mockResolvedValue({
+      valid:             true,
+      artifactLocation: 'o/r',
+      artifactUrl:      'https://github.com/o/r/pull/1',
+      artifactRef:      'feature/x',
+      contentHash:      '1234567890123456789012345678901234567890',
+    });
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
       if (key === 'taskDispatcherExecutionOwner') return Promise.resolve('core-routine');
@@ -104,8 +132,8 @@ describe('TaskDispatcherService', () => {
             'node-todo-workers':  { result: '{"childIds":["child-1"]}' },
             'node-todo-review':   { result: '{"verdict":"pass","evidence":["inspected remote PR"]}' },
             'node-todo-repair':   { result: '{"route":"pass"}' },
-            'node-todo-custody':  { result: '{"verdict":"pass","artifactType":"code","artifactUrl":"https://github.com/o/r/pull/1","artifactRef":"feature/x","headSha":"1234567","contentHash":"1234567","verificationEvidence":["tests passed"],"reviewerVerdict":"pass"}' },
-            'node-todo-record':   { result: '{"recorded":true,"taskId":"task-1","commentId":"comment-1","nextState":"in_review"}' },
+            'node-todo-custody':  { result: '{"verdict":"pass","artifactType":"code","artifactUrl":"https://github.com/o/r/pull/1","artifactRef":"feature/x","headSha":"1234567890123456789012345678901234567890","contentHash":"1234567890123456789012345678901234567890","verificationEvidence":["tests passed"],"reviewerVerdict":"pass"}' },
+            'node-todo-record':   { result: '{"taskId":"task-1","proposedComment":"Verified remote draft PR and tests.","nextState":"in_review"}' },
           },
         },
       },
@@ -124,6 +152,13 @@ describe('TaskDispatcherService', () => {
     expect(finalizeMock).toHaveBeenCalledWith('dispatch-1', 'task-1', expect.objectContaining({
       dispatchStatus: 'completed', taskStatus: 'in_review', taskAssignee: 'heartbeat',
     }));
+    expect(canonicalVerifyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-1' }),
+      expect.objectContaining({ artifactType: 'code' }),
+      expect.objectContaining({ taskId: 'task-1', nextState: 'in_review' }),
+    );
+    expect(addCommentMock).not.toHaveBeenCalled();
+    expect(updateTaskMock).not.toHaveBeenCalled();
   });
 
   it('uses the legacy executor only when the explicit fallback owner is configured', async() => {
@@ -181,6 +216,15 @@ describe('TaskDispatcherService', () => {
       },
     };
     claimNextMock.mockResolvedValueOnce(claim).mockResolvedValue(null);
+    const finalizationOrder: string[] = [];
+    finalizeMock.mockImplementationOnce(() => {
+      finalizationOrder.push('atomic-finalize');
+      return Promise.resolve({ ...claim.task, status: 'planning', assignee: 'dispatcher' });
+    });
+    planningTransitionMock.mockImplementationOnce(() => {
+      finalizationOrder.push('planning-claim');
+      return Promise.resolve();
+    });
     executeMock.mockResolvedValue({
       metadata: {
         agent:          { status: 'completed' },
@@ -213,6 +257,15 @@ describe('TaskDispatcherService', () => {
         terminalReason:  'missing remote PR',
       }),
     }));
+    expect(planningTransitionMock).toHaveBeenCalledTimes(1);
+    expect(planningTransitionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'task-2', status: 'planning' }),
+      'in_progress',
+      'dispatcher',
+    );
+    expect(finalizationOrder).toEqual(['atomic-finalize', 'planning-claim']);
+    expect(addCommentMock).not.toHaveBeenCalled();
+    expect(updateTaskMock).not.toHaveBeenCalled();
   });
 
   it('routes a bare completion without custody proof to planning as a failed contract', async() => {
