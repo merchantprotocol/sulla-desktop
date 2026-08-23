@@ -28,6 +28,7 @@ export interface KnowledgeLinkRecord {
   note:              string | null;
   source:            string | null;
   created_by:        string | null;
+  updated_by:        string | null;
   created_at:        string;
   updated_at:        string;
   archived:          boolean;
@@ -119,6 +120,16 @@ export class WorkItemKnowledgeModel {
     return rows[0];
   }
 
+  private static async assertItem(kind: KnowledgeWorkItemKind, id: string, includeArchived: boolean): Promise<void> {
+    const target = this.target(kind);
+    const row = await postgresClient.queryOne<{ archived: boolean }>(
+      `SELECT archived FROM ${ target.table } WHERE id = $1`,
+      [id],
+    );
+    if (!row) throw new Error(`${ kind } not found: ${ id }`);
+    if (row.archived && !includeArchived) throw new Error(`${ kind } is archived: ${ id }`);
+  }
+
   static async link(input: KnowledgeLinkInput): Promise<KnowledgeLinkRecord> {
     const target = this.target(input.itemKind);
     const relation = cleanRelation(input.relationType);
@@ -144,7 +155,8 @@ export class WorkItemKnowledgeModel {
       if (existing[0]) {
         const { rows } = await client.query<KnowledgeLinkRecord>(
           `UPDATE ${ this.TABLE }
-           SET archived = false, note = $2, source = $3, created_by = $4, updated_at = now()
+           SET archived = false, note = $2, source = $3,
+               created_by = COALESCE(created_by, $4), updated_by = $4, updated_at = now()
            WHERE id = $1 RETURNING *`,
           [existing[0].id, input.note ?? existing[0].note, input.source ?? existing[0].source,
             input.actor ?? existing[0].created_by],
@@ -152,10 +164,10 @@ export class WorkItemKnowledgeModel {
         return rows[0];
       }
 
-      const columns = ['id', 'knowledge_node_id', target.column, 'relation_type', 'note', 'source', 'created_by'];
+      const columns = ['id', 'knowledge_node_id', target.column, 'relation_type', 'note', 'source', 'created_by', 'updated_by'];
       const { rows } = await client.query<KnowledgeLinkRecord>(
         `INSERT INTO ${ this.TABLE } (${ columns.join(', ') })
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING *`,
         [randomUUID(), node.id, input.itemId, relation, input.note ?? null,
           input.source ?? 'agent', input.actor ?? null],
       );
@@ -179,7 +191,7 @@ export class WorkItemKnowledgeModel {
     const result = await postgresClient.queryWithResult(
       `UPDATE ${ this.TABLE }
        SET archived = true, updated_at = now(),
-           created_by = COALESCE($4, created_by), source = COALESCE($5, source)
+           updated_by = COALESCE($4, updated_by), source = COALESCE($5, source)
        WHERE knowledge_node_id = $1 AND ${ target.column } = $2
          AND relation_type = $3 AND archived = false`,
       [node.id, input.itemId, relation, input.actor ?? null, input.source ?? null],
@@ -195,15 +207,16 @@ export class WorkItemKnowledgeModel {
     this.target(kind);
     const limit = boundedLimit(opts.limit);
     const relation = opts.relationType?.trim() || null;
+    await this.assertItem(kind, itemId, opts.includeArchived ?? false);
 
     const scopes = kind === 'project'
-      ? `SELECT p.id, 'project'::text kind, p.title, 0 ord FROM work_projects p WHERE p.id = $1`
+      ? `SELECT p.id, 'project'::text kind, p.title, p.archived, 0 ord FROM work_projects p WHERE p.id = $1`
       : kind === 'epic'
-        ? `SELECT e.id, 'epic'::text kind, e.title, 0 ord FROM work_epics e WHERE e.id = $1
-           UNION ALL SELECT p.id, 'project', p.title, 1 FROM work_epics e JOIN work_projects p ON p.id = e.project_id WHERE e.id = $1`
-        : `SELECT t.id, 'task'::text kind, t.title, 0 ord FROM work_tasks t WHERE t.id = $1
-           UNION ALL SELECT e.id, 'epic', e.title, 1 FROM work_tasks t JOIN work_epics e ON e.id = t.epic_id WHERE t.id = $1
-           UNION ALL SELECT p.id, 'project', p.title, 2 FROM work_tasks t JOIN work_projects p ON p.id = t.project_id WHERE t.id = $1`;
+        ? `SELECT e.id, 'epic'::text kind, e.title, e.archived, 0 ord FROM work_epics e WHERE e.id = $1
+           UNION ALL SELECT p.id, 'project', p.title, p.archived, 1 FROM work_epics e JOIN work_projects p ON p.id = e.project_id WHERE e.id = $1`
+        : `SELECT t.id, 'task'::text kind, t.title, t.archived, 0 ord FROM work_tasks t WHERE t.id = $1
+           UNION ALL SELECT e.id, 'epic', e.title, e.archived, 1 FROM work_tasks t JOIN work_epics e ON e.id = t.epic_id WHERE t.id = $1
+           UNION ALL SELECT p.id, 'project', p.title, p.archived, 2 FROM work_tasks t JOIN work_projects p ON p.id = t.project_id WHERE t.id = $1`;
 
     return postgresClient.query<LinkedKnowledgeRecord>(
       `WITH scopes AS (${ scopes }), links AS (
@@ -213,7 +226,7 @@ export class WorkItemKnowledgeModel {
            (s.kind = 'project' AND l.project_id = s.id) OR
            (s.kind = 'epic' AND l.epic_id = s.id) OR
            (s.kind = 'task' AND l.task_id = s.id)
-         WHERE ($2::boolean OR s.ord = 0)
+         WHERE ($2::boolean OR s.ord = 0) AND ($3::boolean OR s.archived = false)
        )
        SELECT l.*, n.id node_id, n.node_type, n.title, n.summary, n.detail,
               n.source node_source, n.archived node_archived,
@@ -233,6 +246,17 @@ export class WorkItemKnowledgeModel {
   ): Promise<LinkedWorkItemRecord[]> {
     const limit = boundedLimit(opts.limit);
     const relation = opts.relationType?.trim() || null;
+    const node = await postgresClient.queryOne<{ id: string; archived: boolean }>(
+      `WITH RECURSIVE chain AS (
+         SELECT id, merged_into, archived, ARRAY[id] path FROM knowledge_nodes WHERE id = $1
+         UNION ALL SELECT n.id, n.merged_into, n.archived, chain.path || n.id
+         FROM chain JOIN knowledge_nodes n ON n.id = chain.merged_into
+         WHERE NOT n.id = ANY(chain.path)
+       ) SELECT id, archived FROM chain WHERE merged_into IS NULL LIMIT 1`,
+      [knowledgeNodeId],
+    );
+    if (!node) throw new Error(`Knowledge node not found: ${ knowledgeNodeId }`);
+    if (node.archived && !opts.includeArchived) throw new Error(`Knowledge node is archived: ${ node.id }`);
 
     return postgresClient.query<LinkedWorkItemRecord>(
       `WITH RECURSIVE chain AS (

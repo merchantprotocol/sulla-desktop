@@ -1,3 +1,4 @@
+import { WorkItemKnowledgeModel, type KnowledgeWorkItemKind } from '../../database/models/WorkItemKnowledgeModel';
 import { WorkItemsModel } from '../../database/models/WorkItemsModel';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -20,6 +21,16 @@ function block(label: string, rec: Record<string, any>, extra: string[] = []): s
   return lines.join('\n');
 }
 
+async function knowledgeSummary(kind: KnowledgeWorkItemKind, id: string, enabled: boolean): Promise<string[]> {
+  if (!enabled) return [];
+  const rows = await WorkItemKnowledgeModel.listForItem(kind, id, { includeInherited: true, limit: 20 });
+  const lines = ['', `${ rows.length } linked knowledge item(s):`];
+  for (const row of rows) {
+    lines.push(`- [${ row.node_id }] ${ row.scope } ${ row.relation_type }: ${ row.title } (from ${ row.linked_item_kind } ${ row.linked_item_id })`);
+  }
+  return lines;
+}
+
 /**
  * Fetch one project item + its children / comments.
  */
@@ -31,6 +42,7 @@ export class GetProjectItemWorker extends BaseTool {
     const id = typeof input.id === 'string' ? input.id.trim() : '';
     if (!id) return { successBoolean: false, responseString: 'id is required.' };
     const hint = typeof input.kind === 'string' ? input.kind.trim().toLowerCase() : '';
+    const includeKnowledge = Boolean(input.include_knowledge ?? false);
 
     try {
       await WorkItemsModel.ensureTables();
@@ -46,6 +58,7 @@ export class GetProjectItemWorker extends BaseTool {
           for (const e of epics) {
             parts.push(`- [${ e.id }] ${ e.priority } ${ e.status } ${ e.title }`);
           }
+          parts.push(...await knowledgeSummary('project', p.id, includeKnowledge));
           return { successBoolean: true, responseString: parts.join('\n') };
         }
         if (kind === 'epic') {
@@ -58,6 +71,7 @@ export class GetProjectItemWorker extends BaseTool {
             const nest = t.parent_id ? ` └ ${ t.parent_id }` : '';
             parts.push(`- [${ t.id }] ${ t.priority } ${ t.status } ${ t.title }${ nest }`);
           }
+          parts.push(...await knowledgeSummary('epic', e.id, includeKnowledge));
           return { successBoolean: true, responseString: parts.join('\n') };
         }
         if (kind === 'task') {
@@ -73,10 +87,11 @@ export class GetProjectItemWorker extends BaseTool {
           if (comments.length) {
             parts.push('', `${ comments.length } comment(s):`);
             for (const c of comments) {
-              parts.push(`- [${ c.id }] ${ c.author } @ ${ c.created_at}`);
+              parts.push(`- [${ c.id }] ${ c.author } @ ${ c.created_at }`);
               parts.push(`  ${ c.body.replace(/\n/g, '\n  ') }`);
             }
           }
+          parts.push(...await knowledgeSummary('task', t.id, includeKnowledge));
           return { successBoolean: true, responseString: parts.join('\n') };
         }
       }

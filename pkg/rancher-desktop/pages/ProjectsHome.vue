@@ -31,7 +31,7 @@
               @click="select(p.id)"
             >
               <span class="ph-pn"><span class="ph-st" :class="dotClass(p)" />{{ shortName(p) }}</span>
-              <span class="ph-pc">{{ p.status === 'done' ? 'Closed' : `${ p.openCount } open · ${ p.doneCount } done` }}</span>
+              <span class="ph-pc">{{ p.status === 'done' ? 'Closed' : `${p.openCount} open · ${p.doneCount} done` }}</span>
             </button>
           </template>
         </div>
@@ -48,6 +48,7 @@
             <button type="button" class="ph-tab" :class="{ on: tab === 'board' }" @click="tab = 'board'">Board</button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'activity' }" @click="tab = 'activity'">Activity</button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'projects' }" @click="tab = 'projects'">Projects</button>
+            <button type="button" class="ph-tab" :class="{ on: tab === 'knowledge' }" @click="tab = 'knowledge'">Knowledge</button>
           </div>
           <div class="ph-sp" />
           <button type="button" class="ph-btn ghost" @click="refresh" :disabled="isLoading">
@@ -85,8 +86,15 @@
                   <span class="ph-pill">{{ sel.priority }}</span>
                   <span v-if="sel.owner" class="ph-pill">owner: {{ sel.owner }}</span>
                   <span v-if="sel.github_repo" class="ph-pill">{{ sel.github_repo }}</span>
+                  <span v-if="sel.knowledge_count" class="ph-pill">{{ sel.knowledge_count }} knowledge</span>
                 </div>
               </div>
+
+              <KnowledgeLinksPanel
+                item-kind="project"
+                :item-id="sel.id"
+                @open-node="openKnowledgeNode"
+              />
 
               <div
                 v-for="epic in sel.epics"
@@ -107,6 +115,7 @@
                   >⠿</span>
                   <h3>{{ epic.title }}</h3>
                   <span class="ph-cnt">{{ epicSummary(epic) }}</span>
+                  <span v-if="epic.knowledge_count" class="ph-cnt">{{ epic.knowledge_count }} knowledge</span>
                   <div class="ph-sp" />
                   <div class="ph-actions">
                     <button type="button" class="ph-btn ghost xs" @click="openNewTask(epic.id)">＋ Issue</button>
@@ -114,6 +123,11 @@
                     <button type="button" class="ph-btn ghost xs danger" @click="confirmArchiveEpic(epic)">Archive</button>
                   </div>
                 </div>
+                <KnowledgeLinksPanel
+                  item-kind="epic"
+                  :item-id="epic.id"
+                  @open-node="openKnowledgeNode"
+                />
                 <div v-if="!epic.tasks.length" class="ph-muted ph-dropzone">Drop an issue here, or ＋ Issue to add one.</div>
                 <div
                   v-for="t in epic.tasks"
@@ -133,6 +147,7 @@
                   <div class="ph-rbody">
                     <div class="ph-t" v-html="cleanTitle(t.title)" />
                     <div v-if="showPriority(t.priority)" class="ph-m"><span>{{ t.priority }}</span></div>
+                    <div v-if="t.knowledge_count" class="ph-m"><span>{{ t.knowledge_count }} knowledge</span></div>
                   </div>
                   <span class="ph-tag" :class="{ wait: t.status === 'blocked' }">{{ statusLabel(t.status) }}</span>
                 </div>
@@ -167,6 +182,7 @@
                   >
                     <div class="ph-ct" v-html="cleanTitle(t.title)" />
                     <div v-if="showPriority(t.priority)" class="ph-cm">{{ t.priority }}</div>
+                    <div v-if="t.knowledge_count" class="ph-cm">{{ t.knowledge_count }} knowledge</div>
                   </div>
                 </div>
               </div>
@@ -228,6 +244,15 @@
                 </div>
               </div>
             </div>
+
+            <!-- KNOWLEDGE BASE -->
+            <div v-show="tab === 'knowledge'">
+              <KnowledgeBrowserPanel
+                :projects="projects"
+                :selected-node-id="selectedKnowledgeNodeId"
+                @open-work="openLinkedWork"
+              />
+            </div>
           </template>
         </div>
       </section>
@@ -237,7 +262,7 @@
     <div v-if="openTask" class="ph-scrim" @click="closeTask" />
     <aside v-if="openTask" class="ph-drawer">
       <div class="ph-dh">
-        <div class="ph-dh-id">{{ taskMode === 'create' ? 'NEW ISSUE' : `ISSUE · ${ openTask.id }` }}</div>
+        <div class="ph-dh-id">{{ taskMode === 'create' ? 'NEW ISSUE' : `ISSUE · ${openTask.id}` }}</div>
         <button type="button" class="ph-x" @click="closeTask">✕</button>
       </div>
       <div class="ph-db">
@@ -298,6 +323,13 @@
           </button>
           <button v-if="taskMode === 'edit'" type="button" class="ph-btn ghost danger" :disabled="saving" @click="confirmArchiveTask">Archive</button>
         </div>
+
+        <KnowledgeLinksPanel
+          v-if="taskMode === 'edit' && openTask?.id"
+          item-kind="task"
+          :item-id="openTask.id"
+          @open-node="openKnowledgeNode"
+        />
 
         <!-- comments -->
         <template v-if="taskMode === 'edit'">
@@ -394,6 +426,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 
+import type { LinkedWorkItemRecord } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
+import KnowledgeBrowserPanel from '@pkg/components/KnowledgeBrowserPanel.vue';
+import KnowledgeLinksPanel from '@pkg/components/KnowledgeLinksPanel.vue';
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
@@ -407,7 +442,8 @@ const {
   createTask, updateTask, archiveTask, addComment, reorder,
 } = useProjects();
 
-const tab = ref<'today' | 'board' | 'activity' | 'projects'>('today');
+const tab = ref<'today' | 'board' | 'activity' | 'projects' | 'knowledge'>('today');
+const selectedKnowledgeNodeId = ref('');
 const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
@@ -455,6 +491,22 @@ async function refreshActivity(): Promise<void> {
     activity.value = await loadActivity(selectedId.value, 80);
   } finally {
     activityLoading.value = false;
+  }
+}
+
+function openKnowledgeNode(id: string): void {
+  selectedKnowledgeNodeId.value = id;
+  tab.value = 'knowledge';
+  closeTask();
+}
+
+async function openLinkedWork(item: LinkedWorkItemRecord): Promise<void> {
+  select(item.project_id_resolved);
+  tab.value = 'today';
+  if (item.item_kind === 'task') {
+    const task = projects.value.flatMap(project => project.epics.flatMap(epic => epic.tasks))
+      .find(candidate => candidate.id === item.item_id);
+    if (task) await openTaskDrawer(task);
   }
 }
 
@@ -666,7 +718,7 @@ const newComment = ref('');
 
 const taskDueYmd = computed<string>({
   get: () => ymd(taskDraft.due_at),
-  set: (v: string) => { taskDraft.due_at = isoFromYmd(v); },
+  set: (v: string) => { taskDraft.due_at = isoFromYmd(v) },
 });
 
 function fillTaskDraft(t: Partial<WorkTaskRecord> & { epic_id?: string | null }): void {
@@ -844,8 +896,14 @@ function openNewProject(): void {
 function openEditProject(p: ProjectView): void {
   projectModal.mode = 'edit';
   Object.assign(projectDraft, {
-    id: p.id, title: p.title, description: p.description, status: p.status, priority: p.priority,
-    owner: p.owner ?? '', github_repo: p.github_repo ?? '', outcome_metric: p.outcome_metric ?? '',
+    id:             p.id,
+    title:          p.title,
+    description:    p.description,
+    status:         p.status,
+    priority:       p.priority,
+    owner:          p.owner ?? '',
+    github_repo:    p.github_repo ?? '',
+    outcome_metric: p.outcome_metric ?? '',
   });
   projectModal.open = true;
 }
@@ -855,15 +913,23 @@ async function saveProject(): Promise<void> {
   try {
     if (projectModal.mode === 'create') {
       await createProject({
-        title: projectDraft.title, description: projectDraft.description, status: projectDraft.status,
-        priority: projectDraft.priority, owner: projectDraft.owner || null,
-        github_repo: projectDraft.github_repo || null, outcome_metric: projectDraft.outcome_metric || null,
+        title:          projectDraft.title,
+        description:    projectDraft.description,
+        status:         projectDraft.status,
+        priority:       projectDraft.priority,
+        owner:          projectDraft.owner || null,
+        github_repo:    projectDraft.github_repo || null,
+        outcome_metric: projectDraft.outcome_metric || null,
       });
     } else if (projectDraft.id) {
       await updateProject(projectDraft.id, {
-        title: projectDraft.title, description: projectDraft.description, status: projectDraft.status,
-        priority: projectDraft.priority, owner: projectDraft.owner || null,
-        github_repo: projectDraft.github_repo || null, outcome_metric: projectDraft.outcome_metric || null,
+        title:          projectDraft.title,
+        description:    projectDraft.description,
+        status:         projectDraft.status,
+        priority:       projectDraft.priority,
+        owner:          projectDraft.owner || null,
+        github_repo:    projectDraft.github_repo || null,
+        outcome_metric: projectDraft.outcome_metric || null,
       });
     }
     projectModal.open = false;
@@ -902,8 +968,11 @@ async function saveEpic(): Promise<void> {
   try {
     if (epicModal.mode === 'create') {
       await createEpic({
-        project_id: epicDraft.project_id, title: epicDraft.title, description: epicDraft.description,
-        status: epicDraft.status, priority: epicDraft.priority,
+        project_id:  epicDraft.project_id,
+        title:       epicDraft.title,
+        description: epicDraft.description,
+        status:      epicDraft.status,
+        priority:    epicDraft.priority,
       });
     } else if (epicDraft.id) {
       await updateEpic(epicDraft.id, {

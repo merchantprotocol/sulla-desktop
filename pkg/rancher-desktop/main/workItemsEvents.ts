@@ -23,6 +23,7 @@
  * DUAL-STORE NOTE: reads/writes ONLY Postgres via WorkItemsModel — never Redis.
  */
 
+import type { KnowledgeLinkInput, KnowledgeWorkItemKind } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
 import type {
   UpsertProjectInput, UpdateProjectInput,
   UpsertEpicInput, UpdateEpicInput,
@@ -39,6 +40,14 @@ async function importWorkItemsModel() {
   const mod = await import('@pkg/agent/database/models/WorkItemsModel');
 
   return mod.WorkItemsModel;
+}
+
+async function importKnowledgeModels() {
+  const [associations, graph] = await Promise.all([
+    import('@pkg/agent/database/models/WorkItemKnowledgeModel'),
+    import('@pkg/agent/database/models/KnowledgeGraphModel'),
+  ]);
+  return { WorkItemKnowledgeModel: associations.WorkItemKnowledgeModel, KnowledgeGraphModel: graph.KnowledgeGraphModel };
 }
 
 /** Local slugify — mirrors the model's private one (kebab, ≤80 chars). */
@@ -58,13 +67,24 @@ export function initWorkItemsEvents(): void {
   // Do NOT swallow errors — a thrown query surfaces in useProjects.error.
   ipcMainProxy.handle('work-items:board', async() => {
     const WorkItemsModel = await importWorkItemsModel();
+    const { WorkItemKnowledgeModel } = await importKnowledgeModels();
     const [projects, epics, tasks] = await Promise.all([
       WorkItemsModel.listProjects({ includeDone: true, limit: 500 }),
       WorkItemsModel.listEpics({ includeDone: true, limit: 1000 }),
       WorkItemsModel.listTasks({ includeDone: true, limit: 3000 }),
     ]);
 
-    return { projects, epics, tasks };
+    const [projectCounts, epicCounts, taskCounts] = await Promise.all([
+      WorkItemKnowledgeModel.countForItems('project', projects.map(item => item.id)),
+      WorkItemKnowledgeModel.countForItems('epic', epics.map(item => item.id)),
+      WorkItemKnowledgeModel.countForItems('task', tasks.map(item => item.id)),
+    ]);
+
+    return {
+      projects: projects.map(item => ({ ...item, knowledge_count: projectCounts[item.id] ?? 0 })),
+      epics:    epics.map(item => ({ ...item, knowledge_count: epicCounts[item.id] ?? 0 })),
+      tasks:    tasks.map(item => ({ ...item, knowledge_count: taskCounts[item.id] ?? 0 })),
+    };
   });
 
   ipcMainProxy.handle('work-items:comments', async(_event: unknown, taskId: string) => {
@@ -78,6 +98,37 @@ export function initWorkItemsEvents(): void {
     const WorkItemsModel = await importWorkItemsModel();
 
     return WorkItemsModel.listRecentActivity(opts);
+  });
+
+  ipcMainProxy.handle('work-items:knowledge-list', async(_event: unknown, input: {
+    itemKind: KnowledgeWorkItemKind; itemId: string; includeInherited?: boolean; includeArchived?: boolean; limit?: number;
+  }) => {
+    const { WorkItemKnowledgeModel } = await importKnowledgeModels();
+    return WorkItemKnowledgeModel.listForItem(input.itemKind, input.itemId, {
+      includeInherited: input.includeInherited ?? true,
+      includeArchived:  input.includeArchived ?? false,
+      limit:            input.limit,
+    });
+  });
+
+  ipcMainProxy.handle('work-items:knowledge-link', async(_event: unknown, input: KnowledgeLinkInput) => {
+    const { WorkItemKnowledgeModel } = await importKnowledgeModels();
+    return WorkItemKnowledgeModel.link({ ...input, source: input.source ?? 'ui', actor: input.actor ?? 'human' });
+  });
+
+  ipcMainProxy.handle('work-items:knowledge-unlink', async(_event: unknown, input: KnowledgeLinkInput) => {
+    const { WorkItemKnowledgeModel } = await importKnowledgeModels();
+    return WorkItemKnowledgeModel.unlink({ ...input, source: input.source ?? 'ui', actor: input.actor ?? 'human' });
+  });
+
+  ipcMainProxy.handle('knowledge:nodes-search', async(_event: unknown, input: { query?: string; includeArchived?: boolean; limit?: number } = {}) => {
+    const { KnowledgeGraphModel } = await importKnowledgeModels();
+    return KnowledgeGraphModel.searchNodes(input);
+  });
+
+  ipcMainProxy.handle('knowledge:work-list', async(_event: unknown, input: { knowledgeNodeId: string; includeArchived?: boolean; limit?: number }) => {
+    const { WorkItemKnowledgeModel } = await importKnowledgeModels();
+    return WorkItemKnowledgeModel.listForNode(input.knowledgeNodeId, input);
   });
 
   // ── projects ─────────────────────────────────────────────────────────
@@ -186,10 +237,10 @@ export function initWorkItemsEvents(): void {
 }
 
 interface ReorderUpdate {
-  kind:     'epic' | 'task';
-  id:       string;
+  kind:      'epic' | 'task';
+  id:        string;
   position?: number;
-  status?:  string;
-  epic_id?: string;
-  actor?:   string;
+  status?:   string;
+  epic_id?:  string;
+  actor?:    string;
 }
