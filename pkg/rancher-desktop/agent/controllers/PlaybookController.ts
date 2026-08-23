@@ -2182,6 +2182,18 @@ export class PlaybookController<TState = any> {
       console.warn('[PlaybookController] Failed to update workflow execution status:', e);
     }
 
+    // The Projects planning ledger is task-scoped (unlike the generic
+    // workflow ledger). Reconcile a workflow that stopped before its
+    // recordkeeper moved the task out of planning, so no task is stranded.
+    if (playbook.workflowId === 'core-routine-plan-project-task') {
+      try {
+        const { PlanningCouncilService } = await import('../services/PlanningCouncilService');
+        await PlanningCouncilService.handleWorkflowFinished(playbook.executionId, outcome, error);
+      } catch (e) {
+        console.warn('[PlaybookController] Failed to reconcile planning council:', e);
+      }
+    }
+
     const nodeLines = nodeSummaries
       .filter(n => n.category !== 'trigger')
       .map(n => `  • ${ n.label } (${ n.subtype }): ${ (n.result || '').substring(0, 200) }${ (n.result || '').length > 200 ? '...' : '' }`)
