@@ -4,12 +4,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
-import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
+import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { redisClient } from '../database/RedisClient';
-import Logging from '@pkg/utils/logging';
-import paths from '@pkg/utils/paths';
+import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
+import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
+import Logging from '@pkg/utils/logging';
+import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
 
@@ -23,6 +25,7 @@ const PREWARM_IDLE_REAP_MS = 60_000;
  */
 interface CodexPrewarmRecord {
   proc:            childProcess.ChildProcessWithoutNullStreams;
+  mcpSession:      RegisteredSession | null;
   model:           string;
   existingSession: string | undefined;
   createdAt:       number;
@@ -39,7 +42,8 @@ interface CodexPrewarmRecord {
  * loop, tool execution, and context management inside the CLI process, so
  * from Sulla's perspective it behaves as a "one-shot completion" peer. Tool
  * work happens internally (shell, file edits, and the `sulla` CLI which is
- * on PATH in the VM — no MCP wiring needed for native tool access).
+ * on PATH in the VM). State-mutating Sulla tools are supplied through the
+ * same short-lived, graph-bound MCP bridge used by Claude Code.
  *
  * Auth: ~/.codex/auth.json, written by CodexOAuth on sign-in and on every
  * scheduled token refresh. The host home is mounted into the Lima VM, and
@@ -151,7 +155,7 @@ export class CodexService extends BaseLanguageModel {
    * process before the turn's prompt exists — runCodex and prewarm both
    * write the prompt to stdin themselves, at different times.
    */
-  private buildSpawnArgs(p: { existingSession?: string }): string[] {
+  private buildSpawnArgs(p: { existingSession?: string; mcpSession?: RegisteredSession | null }): string[] {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const codexArgs = ['codex', 'exec'];
@@ -163,6 +167,11 @@ export class CodexService extends BaseLanguageModel {
       '--dangerously-bypass-approvals-and-sandbox',
       '--skip-git-repo-check',
     );
+    if (p.mcpSession) {
+      for (const override of buildCodexMcpOverrides(p.mcpSession)) {
+        codexArgs.push('-c', shq(override));
+      }
+    }
     if (this.model && this.model !== 'codex') {
       codexArgs.push('--model', shq(this.model));
     }
@@ -178,7 +187,10 @@ export class CodexService extends BaseLanguageModel {
     // `exec` replaces the inner sh with codex so there's no shell layer
     // between the SSH session and the CLI — best chance of signal
     // propagation when we kill limactl on the host side.
-    const innerCmd = `export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }; exec ${ codexArgs.join(' ') }`;
+    const mcpTokenExport = p.mcpSession
+      ? ` ${ CODEX_MCP_TOKEN_ENV }=${ shq(p.mcpSession.id) }`
+      : '';
+    const innerCmd = `export CODEX_HOME=${ hostCodexHome } HOME=${ hostHome }${ mcpTokenExport }; exec ${ codexArgs.join(' ') }`;
     return ['shell', '0', '--', 'sh', '-c', innerCmd];
   }
 
@@ -209,15 +221,22 @@ export class CodexService extends BaseLanguageModel {
 
       const existingSession = await this.getSession(convId);
 
+      let mcpSession: RegisteredSession | null = null;
+      try {
+        const host = getMCPServerHost();
+        if (host.running) mcpSession = host.registerSession(state);
+      } catch { /* continue without sulla-native tools */ }
+
       const limactlPath = paths.limactl;
       const limaHome = paths.lima;
-      const args = this.buildSpawnArgs({ existingSession });
+      const args = this.buildSpawnArgs({ existingSession, mcpSession });
       const proc = childProcess.spawn(limactlPath, args, {
         env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
       });
 
       const record: CodexPrewarmRecord = {
         proc,
+        mcpSession,
         model:     this.model || 'codex',
         existingSession,
         createdAt: Date.now(),
@@ -275,6 +294,7 @@ export class CodexService extends BaseLanguageModel {
   private killPrewarmRecord(rec: CodexPrewarmRecord): void {
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
     try { rec.proc.kill('SIGTERM'); } catch { /* already dead */ }
+    try { rec.mcpSession?.revoke() } catch { /* already revoked */ }
   }
 
   override getContextWindow(): number {
@@ -640,9 +660,29 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // multiplexing channel (same failure mode ClaudeCodeService hit).
     const speculative = await this.speculativeBootEnabled();
     const adopted = speculative ? this.claimPrewarm(convId, this.model || 'codex', existingSession) : null;
-    const args = this.buildSpawnArgs({ existingSession });
+
+    let mcpSession: RegisteredSession | null = adopted?.mcpSession ?? null;
+    if (options.state) {
+      try {
+        const host = getMCPServerHost();
+        const boundSession = bindCodexMcpSession(host, options.state, mcpSession);
+        if (boundSession !== mcpSession) {
+          mcpSession = boundSession;
+          if (mcpSession) log.log(`[CodexService] MCP session minted — url=${ mcpSession.url }`);
+        }
+      } catch (err) {
+        log.log(`[CodexService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
+      }
+    }
+    const args = this.buildSpawnArgs({ existingSession, mcpSession });
 
     return await new Promise((resolve, reject) => {
+      let mcpCleaned = false;
+      const cleanupMcp = () => {
+        if (mcpCleaned) return;
+        mcpCleaned = true;
+        try { mcpSession?.revoke() } catch { /* already revoked */ }
+      };
       let proc: childProcess.ChildProcessWithoutNullStreams;
       let adoptedSpawned = false;
       if (adopted) {
@@ -875,11 +915,13 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 
       proc.on('error', (err) => {
         options.signal?.removeEventListener('abort', onAbort);
+        cleanupMcp();
         reject(err);
       });
 
       proc.on('close', (code) => {
         options.signal?.removeEventListener('abort', onAbort);
+        cleanupMcp();
         if (stdoutBuffer.trim()) processLine(stdoutBuffer);
 
         // Binary missing — checked BEFORE the resume heuristic: sh's
