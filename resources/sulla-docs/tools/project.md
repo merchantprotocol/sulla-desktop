@@ -96,9 +96,9 @@ Lane definitions:
 | `sulla project/reorder_lanes` | Reorder one scope atomically. Reordering an inherited project lane creates an override. |
 | `sulla project/reset_lane_override` | Return a project override to global inheritance while retaining the old row as audit history. |
 
-Schema-only migrations `0044_create_work_items_tables` and
-`0065_create_work_task_waits` and `0069_create_work_lane_definitions`. No user data is embedded in these
-migration. A runtime seeder (`WorkItemsImportSeeder`) may import this
+Schema-only migrations `0044_create_work_items_tables`,
+`0065_create_work_task_waits`, and `0069_create_work_lane_definitions` contain no user data.
+A runtime seeder (`WorkItemsImportSeeder`) may import this
 install's leftover `~/sulla/ledger/goals/*.md` on first boot by stable
 slug. `WorkLaneDefinitionSeeder` runs on every boot, reasserts missing built-in
 definitions, and adds every unknown task status as a visible manual lane using
