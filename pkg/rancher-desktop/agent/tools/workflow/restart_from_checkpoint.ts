@@ -62,6 +62,17 @@ export class RestartFromCheckpointWorker extends BaseTool {
       };
     }
 
+    // Restart is stateful: the rebuilt playbook must be attached to a graph
+    // that will actually execute it. CLI callers are bound to a detached
+    // graph by chatCompletionsServer; fail closed if another caller forgets
+    // to provide one instead of returning a fabricated restart id.
+    if (!this.state) {
+      return {
+        successBoolean: false,
+        responseString: 'No agent state available. Restart must run through an agent loop or the stateful Sulla CLI dispatcher.',
+      };
+    }
+
     // Restart from a specific node — load the checkpoint BEFORE that node
     const beforeCheckpoint = await WorkflowCheckpointModel.findCheckpointBefore(executionId, nodeId);
 
@@ -119,10 +130,27 @@ export class RestartFromCheckpointWorker extends BaseTool {
       }
     }
 
-    // Load the rebuilt state into the agent's metadata
-    if (this.state) {
-      (this.state).metadata.activeWorkflow = rebuiltState;
+    // Persist before claiming success. PlaybookController updates an existing
+    // execution row; without this insert a restart can run yet remain absent
+    // from workflow history and the concurrent-run guard.
+    try {
+      const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+      await WorkflowExecutionModel.markRunning({
+        executionId:  rebuiltState.executionId,
+        workflowId:   savedState.workflowId,
+        workflowName: savedState.definition.name,
+        workflowSlug: savedState.workflowId,
+      });
+    } catch (err) {
+      return {
+        successBoolean: false,
+        responseString: `Failed to persist restarted execution: ${ err instanceof Error ? err.message : String(err) }`,
+      };
     }
+
+    // Load the rebuilt state into the agent's metadata.
+    this.state.metadata = this.state.metadata ?? {};
+    this.state.metadata.activeWorkflow = rebuiltState;
 
     const nodeLabel = checkpointToUse.attributes.node_label || nodeId;
     console.log(`[RestartFromCheckpoint] Restarting workflow "${ savedState.definition.name }" from node "${ nodeLabel }" — new executionId=${ rebuiltState.executionId }`);
