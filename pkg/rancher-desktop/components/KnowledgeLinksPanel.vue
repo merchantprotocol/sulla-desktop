@@ -124,7 +124,9 @@ import { ref, watch } from 'vue';
 
 import type { KnowledgeNodeRecord } from '@pkg/agent/database/models/KnowledgeGraphModel';
 import type { KnowledgeWorkItemKind, LinkedKnowledgeRecord } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import {
+  linkKnowledgeItem, listKnowledgeForItem, searchKnowledgeNodes, unlinkKnowledgeItem,
+} from '@pkg/composables/knowledgeAssociationRuntime';
 
 const props = defineProps<{ itemKind: KnowledgeWorkItemKind; itemId: string }>();
 defineEmits<(event: 'open-node', id: string) => void>();
@@ -148,7 +150,7 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    links.value = await ipcRenderer.invoke('work-items:knowledge-list', {
+    links.value = await listKnowledgeForItem({
       itemKind: props.itemKind, itemId: props.itemId, includeInherited: true, limit: 100,
     });
   } catch (err: any) {
@@ -174,7 +176,7 @@ function search(): void {
   searching.value = true;
   searchTimer = setTimeout(async() => {
     try {
-      results.value = await ipcRenderer.invoke('knowledge:nodes-search', { query: term, limit: 8 });
+      results.value = await searchKnowledgeNodes({ query: term, limit: 8 });
     } finally {
       searching.value = false;
     }
@@ -185,7 +187,7 @@ async function attach(): Promise<void> {
   if (!chosen.value) return;
   saving.value = true;
   try {
-    await ipcRenderer.invoke('work-items:knowledge-link', {
+    await linkKnowledgeItem({
       itemKind:        props.itemKind,
       itemId:          props.itemId,
       knowledgeNodeId: chosen.value.id,
@@ -202,7 +204,7 @@ async function attach(): Promise<void> {
 }
 
 async function unlink(link: LinkedKnowledgeRecord): Promise<void> {
-  await ipcRenderer.invoke('work-items:knowledge-unlink', {
+  await unlinkKnowledgeItem({
     itemKind:        props.itemKind,
     itemId:          props.itemId,
     knowledgeNodeId: link.node_id,

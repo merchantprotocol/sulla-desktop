@@ -31,7 +31,7 @@ export class EpisodicRecallWorker extends BaseTool {
       const query = String(input.query ?? input.query_text ?? '').trim();
       const terms = Array.isArray(input.terms) ? input.terms.map(String) : [];
       const fallback = terms.length
-        ? await KnowledgeGraphModel.resolveAliases(terms)
+        ? await KnowledgeGraphModel.resolveAliasNodes(terms)
         : await KnowledgeGraphModel.searchNodes({ query, limit });
 
       const seen = new Set<string>();

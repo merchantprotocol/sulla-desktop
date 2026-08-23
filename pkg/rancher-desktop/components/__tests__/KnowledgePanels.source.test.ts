@@ -19,8 +19,8 @@ describe('Knowledge Base and Projects UI contracts', () => {
     const source = load('KnowledgeLinksPanel.vue');
     expect(source).toContain("link.scope === 'direct'");
     expect(source).toContain('from {{ link.linked_item_kind }} {{ link.linked_item_title }}');
-    expect(source).toContain("'work-items:knowledge-list'");
-    expect(source).toContain("'work-items:knowledge-unlink'");
+    expect(source).toContain('listKnowledgeForItem');
+    expect(source).toContain('unlinkKnowledgeItem');
   });
 
   it('compiles the reverse panel with ancestry, attribution, attach, and navigation', () => {
@@ -29,6 +29,6 @@ describe('Knowledge Base and Projects UI contracts', () => {
     expect(source).toContain('project_title');
     expect(source).toContain('created_by');
     expect(source).toContain("$emit('open-work', item)");
-    expect(source).toContain("'work-items:knowledge-link'");
+    expect(source).toContain('linkKnowledgeItem');
   });
 });
