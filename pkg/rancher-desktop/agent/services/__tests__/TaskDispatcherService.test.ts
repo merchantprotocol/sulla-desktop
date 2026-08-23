@@ -13,6 +13,7 @@ const addCommentMock: any = jest.fn(() => Promise.resolve());
 const updateTaskMock: any = jest.fn(() => Promise.resolve());
 const executeMock: any = jest.fn();
 const graphDeleteMock: any = jest.fn();
+const resolvePullRequestHeadMock: any = jest.fn();
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
@@ -48,6 +49,9 @@ jest.unstable_mockModule('../GraphRegistry', () => ({
 jest.unstable_mockModule('../HeartbeatService', () => ({
   isInsideWindow: jest.fn(() => true),
 }));
+jest.unstable_mockModule('../GitHubPullRequestHeadService', () => ({
+  resolvePullRequestHead: resolvePullRequestHeadMock,
+}));
 jest.unstable_mockModule('../../utils/sullaPaths', () => ({
   findAgentDir: jest.fn(() => '/agents/opus-worker'),
 }));
@@ -66,6 +70,9 @@ describe('TaskDispatcherService', () => {
     countRunningMock.mockResolvedValue(0);
     claimNextMock.mockResolvedValue(null);
     claimNextReviewMock.mockResolvedValue(null);
+    resolvePullRequestHeadMock.mockResolvedValue({
+      owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 123, sha: 'a'.repeat(40),
+    });
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
       return Promise.resolve(fallback);
@@ -178,8 +185,9 @@ describe('TaskDispatcherService', () => {
     expect(executeMock).toHaveBeenCalledTimes(3);
     expect(finalizeVerificationMock).toHaveBeenCalledTimes(3);
     expect(finalizeVerificationMock).toHaveBeenCalledWith(
-      'verify-1', 'APPROVE', 'a'.repeat(40), 'All criteria and focused tests passed.',
+      'verify-1', 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'All criteria and focused tests passed.',
     );
+    expect(resolvePullRequestHeadMock).toHaveBeenCalledTimes(3);
     const verifierState = executeMock.mock.calls[0][0];
     expect(verifierState.metadata.allowedToolNames).toContain('git_diff');
     expect(verifierState.metadata.allowedToolNames).not.toContain('exec');
@@ -189,6 +197,55 @@ describe('TaskDispatcherService', () => {
     expect(verifierState.metadata.verifierReadOnly).toBe(true);
     expect(verifierState.messages[0].content).toContain('Re-check the remote head immediately before your verdict');
     expect(verifierState.messages[0].content).toContain('matching local worktree');
+  });
+
+  it('invalidates approval when the live PR head changed after review', async() => {
+    claimNextReviewMock
+      .mockResolvedValueOnce({
+        task: {
+          id:           'task-5',
+          title:        'Review',
+          description:  '',
+          project_id:   'p',
+          epic_id:      'e',
+          priority:     'p0',
+          github_issue: 'merchantprotocol/sulla-desktop#660',
+        },
+        dispatch: {
+          id:        'verify-5',
+          task_id:   'task-5',
+          agent_id:  'codex-test',
+          thread_id: 'v5',
+          kind:      'verification',
+          attempt:   1,
+        },
+      })
+      .mockResolvedValue(null);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled') return Promise.resolve(true);
+      return Promise.resolve(fallback);
+    });
+    resolvePullRequestHeadMock.mockResolvedValue({
+      owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 665, sha: 'c'.repeat(40),
+    });
+    executeMock.mockResolvedValue({
+      metadata: {
+        agent: { status: 'completed' },
+        finalSummary: `<VERIFIER_RESULT>{"verdict":"APPROVE","artifact_sha":"${ 'b'.repeat(40) }","summary":"Reviewed old head."}</VERIFIER_RESULT>`,
+      },
+      messages: [],
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    service.destroy();
+
+    expect(failVerificationMock).toHaveBeenCalledWith(
+      'verify-5', `artifact_head_changed:${ 'b'.repeat(40) }:${ 'c'.repeat(40) }`,
+    );
+    expect(finalizeVerificationMock).not.toHaveBeenCalled();
   });
 
   it.each(['APPROVE', 'REWORK', 'BLOCKED'] as const)('strictly parses %s with a full exact head', async(verdict) => {

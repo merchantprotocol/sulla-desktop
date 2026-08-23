@@ -118,9 +118,12 @@ export class WorkTaskDispatchModel {
         SELECT t.*
           FROM work_tasks t
           JOIN work_epics e ON e.id = t.epic_id
+          JOIN work_projects p ON p.id = e.project_id
          WHERE t.archived = false
            AND t.status = 'in_review'
            AND e.archived = false
+           AND p.archived = false
+           AND NOT (p.status = ANY($1::text[]))
            AND NOT (e.status = ANY($1::text[]))
            AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
            AND NOT EXISTS (
@@ -144,6 +147,13 @@ export class WorkTaskDispatchModel {
               ORDER BY d.started_at DESC LIMIT 1
            ), '') <> $3
          ORDER BY
+           CASE p.priority
+             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
+             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
+             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
+             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
+             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
+             ELSE 5 END,
            CASE e.priority
              WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
              WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
@@ -163,7 +173,7 @@ export class WorkTaskDispatchModel {
            t.position ASC
          FOR UPDATE OF t SKIP LOCKED
          LIMIT 1
-      `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_LABELS, agentId]);
+      `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, agentId]);
 
       const task = candidate.rows[0];
       if (!task) return null;
@@ -262,6 +272,7 @@ export class WorkTaskDispatchModel {
     id: string,
     verdict: VerificationVerdict,
     artifactSha: string,
+    currentArtifactSha: string | null,
     summary: string,
   ): Promise<VerificationVerdict | null> {
     return postgresClient.transaction(async(client: PoolClient) => {
@@ -272,6 +283,7 @@ export class WorkTaskDispatchModel {
       `, [id]);
       const taskId = current.rows[0]?.task_id;
       if (!taskId) return null;
+      if (verdict === 'APPROVE' && currentArtifactSha !== artifactSha) return null;
 
       let finalVerdict = verdict;
       if (verdict === 'REWORK') {
