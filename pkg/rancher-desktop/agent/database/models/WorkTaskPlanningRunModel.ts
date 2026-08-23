@@ -94,6 +94,15 @@ export class WorkTaskPlanningRunModel {
     `, [id, executionId]);
   }
 
+  /** Refresh the task-scoped lease after each durable workflow checkpoint. */
+  static async touchByExecution(executionId: string): Promise<void> {
+    await postgresClient.query(`
+      UPDATE work_task_planning_runs
+         SET heartbeat_at = now()
+       WHERE execution_id = $1 AND status = 'active'
+    `, [executionId]);
+  }
+
   static async settleForTask(
     taskId: string,
     status: Exclude<WorkTaskPlanningRunStatus, 'active' | 'stale'>,
