@@ -31,12 +31,25 @@ export class UpdateTaskWorker extends BaseTool {
       const current = await WorkItemsModel.getTask(id);
       if (!current) return { successBoolean: false, responseString: `No task found with id: ${ id }` };
       if (input.status !== undefined || input.assignee !== undefined) {
-        const protectedStatus = typeof input.status === 'string' ? input.status : current.status;
+        // A move must be authorized by the owner of the stage being left, not
+        // only by the destination owner. Otherwise Heartbeat could bypass a
+        // healthy protected routine by moving its task to an unprotected
+        // status (for example in_review -> done).
         await LifecycleCapabilityModel.assertActorCanManageTask(
-          protectedStatus,
+          current.status,
           current.labels,
           actor,
         );
+
+        const destinationStatus = typeof input.status === 'string' ? input.status : current.status;
+        const destinationLabels = labels ?? current.labels;
+        if (destinationStatus !== current.status || destinationLabels !== current.labels) {
+          await LifecycleCapabilityModel.assertActorCanManageTask(
+            destinationStatus,
+            destinationLabels,
+            actor,
+          );
+        }
       }
       const updated = await WorkItemsModel.updateTask(id, {
         epic_id:      typeof input.epic_id === 'string' && input.epic_id.trim() ? input.epic_id.trim() : undefined,
