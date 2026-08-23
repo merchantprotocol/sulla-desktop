@@ -27,13 +27,18 @@ The heartbeat is an **autonomous background agent** that wakes up on a schedule 
 
 ## Projects dispatch and task rotation
 
-The injected project report is a portfolio queue, not a one-task assignment:
+Ordinary task scheduling is deterministic and separate from the Heartbeat LLM:
 
-- **Actionable now** is ordered by priority, then oldest `last_activity_at`. Heartbeat hydrates and dispatches multiple independent tasks per wake, up to available agent capacity, with one task per work agent.
-- Any task update or task comment advances `last_activity_at`, rotating that task behind untouched peers in the same priority block. This prevents unchanged work from monopolizing consecutive wakes.
-- **Blocked tasks — recovery planning** is a separate queue. Heartbeat moves the selected task to `planning`, launches independent high-reasoning planners, cross-checks their proposals, chooses the strongest reversible path itself, and returns executable work to `in_progress`.
-- **Planning in flight** is excluded from fresh dispatch so another wake cannot launch a duplicate council.
-- Human escalation is reserved for a genuine irreversible or high-blast boundary after reversible work is staged. An unchanged gate is not repeatedly notified.
+- `TaskDispatcherService` runs while Heartbeat is enabled and inside the same configured time window. It fills `taskDispatcherConcurrency` slots (default 3, bounded 1–10).
+- PostgreSQL selects the next eligible `todo` by epic priority, task priority, due date, then oldest `last_activity_at`. `FOR UPDATE ... SKIP LOCKED` plus a partial unique index on `work_task_dispatches(task_id) WHERE status = 'running'` make one-live-worker-per-task a database invariant.
+- Tasks assigned to a human or labeled `gated`, `decision`, `human`, `manual`, or `no-auto-dispatch` are excluded.
+- A claim moves the task to `planning` with assignee `dispatcher`. Completion returns it to `in_review`/`heartbeat`; blocked or failed work returns to `blocked`/`heartbeat` with the worker result in a task comment.
+- Dispatcher leases are durable. On service/app restart, orphaned `planning` work is returned to `todo` before new claims are taken.
+- The worker persona defaults to `opus-worker` and is configurable through `taskDispatcherAgentId`.
+
+Heartbeat is the supervisor: it verifies `in_review` artifacts, investigates failures, resolves reversible blockers, requeues incomplete work, and preserves merge/deploy/money/external-communication gates. The LLM does not choose or launch ordinary `todo` work.
+
+**Blocked tasks — recovery planning** remains the reasoning exception. Heartbeat moves a blocked task to `planning`, launches independent high-reasoning planners, cross-checks their proposals, chooses the strongest reversible path itself, and returns executable work to `todo` for mechanical dispatch. Human escalation is reserved for a genuine irreversible or high-blast boundary after reversible work is staged.
 
 ## Channel & messaging
 
@@ -112,6 +117,8 @@ The heartbeat is for **proactive ambient work**, not as a generic cron.
 ## Reference
 
 - Service: `pkg/rancher-desktop/agent/services/HeartbeatService.ts`
+- Mechanical dispatcher: `pkg/rancher-desktop/agent/services/TaskDispatcherService.ts`
+- Dispatch ledger/model: `pkg/rancher-desktop/agent/database/models/WorkTaskDispatchModel.ts`
 - Node: `pkg/rancher-desktop/agent/nodes/HeartbeatNode.ts`
 - Notification window: `pkg/rancher-desktop/main/heartbeatNotification.ts`
 - Settings model: `pkg/rancher-desktop/agent/database/models/SullaSettingsModel.ts`

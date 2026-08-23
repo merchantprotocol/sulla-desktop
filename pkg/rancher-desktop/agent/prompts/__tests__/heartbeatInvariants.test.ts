@@ -58,11 +58,12 @@ describe('checkHeartbeatPromptInvariants', () => {
     expect(heartbeatPrompt).toContain('unchanged gates get no repeated notification');
   });
 
-  it('requires portfolio fan-out instead of one-task-per-wake behavior', () => {
-    expect(heartbeatPrompt).toContain('multiple tasks per wake');
-    expect(heartbeatPrompt).toContain('Do not stop after one dispatch');
-    expect(heartbeatPrompt).toContain('one task per work agent');
-    expect(heartbeatPrompt).toContain('Fill available slots with independent queue work');
+  it('requires mechanical ordinary dispatch and heartbeat supervision', () => {
+    expect(heartbeatPrompt).toContain('Mechanical Dispatch');
+    expect(heartbeatPrompt).toContain('PostgreSQL Decides');
+    expect(heartbeatPrompt).toContain('one live dispatch per task');
+    expect(heartbeatPrompt).toContain('Heartbeat does not select or launch ordinary queue work');
+    expect(heartbeatPrompt).toContain('Supervisor Loop');
   });
 });
 
@@ -123,7 +124,7 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
 
     expect(built.includedSections).toContain('heartbeat');
     expect(built.includedSections).not.toContain('agent_prompt');
-    expect(built.text).toContain('## Orchestrator Mode — Fan Out, Then Verify');
+    expect(built.text).toContain('## Mechanical Dispatch — Heartbeat Supervises, PostgreSQL Decides');
     expect(built.text).not.toContain('STALE LOCAL HEARTBEAT OVERRIDE');
     expect(built.text).not.toContain('STALE LOCAL PLAYBOOK CONTENT');
     expect(built.heartbeatInvariants?.ok).toBe(true);
