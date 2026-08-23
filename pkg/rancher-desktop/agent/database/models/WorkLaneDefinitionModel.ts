@@ -221,11 +221,13 @@ export class WorkLaneDefinitionModel {
   static async update(id: string, changes: UpdateWorkLaneInput): Promise<WorkLaneDefinitionRecord | null> {
     const existing = await WorkLaneDefinitionModel.get(id);
     if (!existing || existing.reset_at) return null;
+    if (changes.enabled === false) {
+      throw new Error('Lanes cannot be disabled directly; use archive_lane so populated lanes are moved atomically.');
+    }
     if (changes.display_name !== undefined && !changes.display_name.trim()) {
       throw new Error('display_name cannot be empty.');
     }
     if (existing.system_required) {
-      if (changes.enabled === false) throw new Error(`Required lane ${ existing.lane_key } cannot be disabled.`);
       if (changes.semantic_role && changes.semantic_role !== existing.semantic_role) {
         throw new Error(`Required lane ${ existing.lane_key } cannot change semantic role.`);
       }
@@ -413,14 +415,23 @@ export class WorkLaneDefinitionModel {
     let position = DEFAULT_WORK_LANES.length;
     for (const { status } of statuses) {
       if (keys.has(status)) continue;
-      await WorkLaneDefinitionModel.create({
-        lane_key:      status,
-        scope:         'global_default',
-        display_name:  titleFromKey(status),
-        semantic_role: 'manual',
-        position:      position++,
-        actor,
-      });
+      const legacyDisplayName = titleFromKey(status);
+      // Legacy task statuses are unconstrained TEXT. Do not route these values
+      // through the user-created key validator: trimming here would orphan
+      // tasks whose status contains leading/trailing whitespace, and would
+      // reject a valid whitespace-only status. The task rows themselves are
+      // intentionally never rewritten.
+      await postgresClient.query<WorkLaneDefinitionRecord>(`
+        INSERT INTO work_lane_definitions (
+          id, lane_key, scope, project_id, base_lane_key, display_name, description,
+          color, icon, position, semantic_role, enabled, system_required, created_by
+        ) VALUES ($1, $2, 'global_default', NULL, NULL, $3, '', NULL, NULL, $4, 'manual', true, false, $5)
+        RETURNING *
+      `, [
+        generateId(), status,
+        legacyDisplayName.trim() ? legacyDisplayName : 'Whitespace-only status',
+        position++, actor,
+      ]);
       keys.add(status);
       legacy++;
     }

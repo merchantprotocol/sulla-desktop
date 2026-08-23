@@ -72,6 +72,15 @@ describe('WorkLaneDefinitionModel', () => {
     expect(sql).not.toContain('lane_key =');
   });
 
+  it('rejects direct disabling before any lane update can hide populated tasks', async() => {
+    (postgresClient as any).queryOne = jest.fn(() => Promise.resolve(lane({ lane_key: 'parked' })));
+    (postgresClient as any).query = jest.fn();
+
+    await expect(WorkLaneDefinitionModel.update('lane-1', { enabled: false, actor: 'human' }))
+      .rejects.toThrow('use archive_lane');
+    expect(postgresClient.query).not.toHaveBeenCalled();
+  });
+
   it('carries required-role locks into a project override', async() => {
     (postgresClient as any).queryOne = jest.fn(() => Promise.resolve(lane({ system_required: true })));
     await expect(WorkLaneDefinitionModel.create({
@@ -112,18 +121,24 @@ describe('WorkLaneDefinitionModel', () => {
     expect(client.query.mock.calls[5][0]).toContain('SET archived = true');
   });
 
-  it('boot-seeds defaults and preserves an unknown status as its exact manual key', async() => {
+  it.each([
+    ' Awaiting Vendor ',
+    '   ',
+  ])('boot-seeds legacy status %p byte-for-byte through the insert boundary', async(status) => {
     (postgresClient as any).query = (jest.fn() as any)
       .mockResolvedValueOnce(DEFAULT_WORK_LANES.map(item => ({ lane_key: item.lane_key })))
-      .mockResolvedValueOnce([{ status: 'Awaiting Vendor' }]);
-    const create = jest.spyOn(WorkLaneDefinitionModel, 'create').mockResolvedValue(lane());
+      .mockResolvedValueOnce([{ status }])
+      .mockResolvedValueOnce([lane({ lane_key: status })]);
 
     const result = await WorkLaneDefinitionModel.seedDefaultsAndLegacyStatuses();
 
     expect(result).toEqual({ defaults: 0, legacy: 1 });
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({
-      lane_key: 'Awaiting Vendor', display_name: 'Awaiting Vendor', semantic_role: 'manual',
-    }));
+    const insert = (postgresClient.query as any).mock.calls[2];
+    expect(insert[0]).toContain('INSERT INTO work_lane_definitions');
+    expect(insert[1][1]).toBe(status);
+    expect(insert[1][2]).toBe(status.trim() ? status : 'Whitespace-only status');
+    expect((postgresClient.query as any).mock.calls.some(([sql]: [string]) =>
+      sql.includes('UPDATE work_tasks'))).toBe(false);
   });
 
   it('resets a project override as an audit tombstone', async() => {

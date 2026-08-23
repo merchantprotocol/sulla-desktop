@@ -285,7 +285,7 @@ export const projectToolManifests: ToolManifest[] = [
   },
   {
     name: 'update_lane',
-    description: 'Update lane presentation, order, role, or enabled state without changing its stable key.',
+    description: 'Update lane presentation, order, role, or re-enable it without changing its stable key. Use archive_lane to disable or remove a lane safely.',
     category: 'project',
     schemaDef: {
       id: { type: 'string', description: 'Lane definition id.' },
@@ -295,7 +295,7 @@ export const projectToolManifests: ToolManifest[] = [
       icon: { type: 'string', optional: true, description: 'New icon token; empty clears.' },
       position: { type: 'number', optional: true, description: 'New sort position.' },
       semantic_role: { type: 'enum', enum: ['backlog', 'planning', 'execution', 'review', 'blocked', 'terminal', 'manual'], optional: true, description: 'New semantic role.' },
-      enabled: { type: 'boolean', optional: true, description: 'Enable or disable the lane.' },
+      enabled: { type: 'boolean', optional: true, description: 'Set true to enable the lane. Direct disabling is rejected; use archive_lane so populated lanes require an atomic destination move.' },
       actor: { type: 'string', optional: true, description: 'Audit actor.' },
     },
     operationTypes: ['update'],
