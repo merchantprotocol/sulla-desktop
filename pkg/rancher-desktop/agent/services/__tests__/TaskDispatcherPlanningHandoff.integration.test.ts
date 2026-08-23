@@ -76,6 +76,7 @@ describe('TaskDispatcherService planning handoff', () => {
   });
 
   it('passes the complete row returned by the real atomic finalizer to the planning council', async() => {
+    const events: string[] = [];
     const task = {
       id:          'task-1',
       project_id:  'project-1',
@@ -87,18 +88,47 @@ describe('TaskDispatcherService planning handoff', () => {
       assignee:    'dispatcher',
       labels:      [],
     } as any;
-    const committedTask = {
-      ...task,
-      status:        'planning',
-      updated_at:    '2026-08-23T20:52:00.000Z',
-      last_moved_at: '2026-08-23T20:52:00.000Z',
-    };
-    const query = (jest.fn() as any)
-      .mockResolvedValueOnce({ rows: [{ status: 'running' }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [committedTask] });
-    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    let storedTask = { ...task };
+    let storedDispatchStatus = 'running';
+    const query = jest.fn((sql: string, params: any[] = []) => {
+      if (sql.includes('SELECT status FROM work_task_dispatches')) {
+        return Promise.resolve({ rows: [{ status: storedDispatchStatus }] });
+      }
+      if (sql.includes('UPDATE work_task_dispatches')) {
+        storedDispatchStatus = params[2];
+        return Promise.resolve({ rows: [] });
+      }
+      if (sql.includes('INSERT INTO work_task_comments')) {
+        return Promise.resolve({ rows: [] });
+      }
+      if (sql.includes('UPDATE work_tasks')) {
+        expect(sql).toContain('RETURNING *');
+        expect(storedTask).toMatchObject({
+          id:       params[0],
+          status:   'in_progress',
+          assignee: 'dispatcher',
+        });
+        storedTask = {
+          ...storedTask,
+          status:        params[1],
+          assignee:      params[2],
+          updated_at:    '2026-08-23T20:52:00.000Z',
+          last_moved_at: '2026-08-23T20:52:00.000Z',
+        };
+        events.push('task-row-returned');
+        return Promise.resolve({ rows: [{ ...storedTask }] });
+      }
+      throw new Error(`Unexpected finalizer query: ${ sql }`);
+    });
+    (postgresClient as any).transaction = jest.fn(async(callback: any) => {
+      const result = await callback({ query });
+      events.push('transaction-committed');
+      return result;
+    });
+    planningTransitionMock.mockImplementationOnce(() => {
+      events.push('planning-claimed');
+      return Promise.resolve();
+    });
 
     const { TaskDispatcherService } = await import('../TaskDispatcherService');
     const service = new TaskDispatcherService();
@@ -114,7 +144,7 @@ describe('TaskDispatcherService planning handoff', () => {
       },
     }, 'failed', 'worker transport failed', 'core-routine');
 
-    expect(query.mock.calls[3][0]).toContain('RETURNING *');
+    expect(planningTransitionMock).toHaveBeenCalledTimes(1);
     expect(planningTransitionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         id:         'task-1',
@@ -125,5 +155,10 @@ describe('TaskDispatcherService planning handoff', () => {
       'in_progress',
       'dispatcher',
     );
+    expect(events).toEqual([
+      'task-row-returned',
+      'transaction-committed',
+      'planning-claimed',
+    ]);
   });
 });
