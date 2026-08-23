@@ -47,6 +47,18 @@ describe('WorkTaskPlanningRunModel', () => {
     expect(query).toHaveBeenCalledTimes(2);
   });
 
+  it('refreshes the active task-scoped lease by workflow execution id', async() => {
+    const query = jest.spyOn(postgresClient, 'query').mockResolvedValue([] as any);
+
+    await WorkTaskPlanningRunModel.touchByExecution('workflow-execution-1');
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('SET heartbeat_at = now()'),
+      ['workflow-execution-1'],
+    );
+    expect(query.mock.calls[0][0]).toContain("status = 'active'");
+  });
+
   it('expires stale active claims and returns only tasks that still need planning', async() => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ task_id: 'task-1' }, { task_id: 'task-done' }] })
