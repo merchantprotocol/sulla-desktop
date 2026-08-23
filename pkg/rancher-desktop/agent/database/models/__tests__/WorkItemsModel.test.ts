@@ -3,6 +3,12 @@ import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals'
 import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
 
+const forceDispatcherCheckMock: any = jest.fn(() => Promise.resolve());
+
+jest.unstable_mockModule('../../../services/TaskDispatcherService', () => ({
+  getTaskDispatcherService: () => ({ forceCheck: forceDispatcherCheckMock }),
+}));
+
 describe('WorkItemsModel', () => {
   let originalQuery: any;
 
@@ -12,6 +18,7 @@ describe('WorkItemsModel', () => {
 
   afterEach(() => {
     (postgresClient as any).query = originalQuery;
+    forceDispatcherCheckMock.mockClear();
     jest.restoreAllMocks();
   });
 
@@ -120,6 +127,16 @@ describe('WorkItemsModel', () => {
     expect(sql).toContain('updated_at = now()');
     expect(sql).toContain('last_activity_at = now()');
     expect(sql).not.toContain('last_moved_at = now()');
+  });
+
+  it('wakes the sole dispatcher after a committed transition into todo', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'task-1', status: 'planning', priority: 'high' }])
+      .mockResolvedValueOnce([{ id: 'task-1', status: 'todo', priority: 'high' }]);
+
+    await WorkItemsModel.updateTask('task-1', { status: 'todo', actor: 'planner' });
+
+    expect(forceDispatcherCheckMock).toHaveBeenCalledTimes(1);
   });
 
   it('inserts a comment and touches its task in one SQL statement', async() => {

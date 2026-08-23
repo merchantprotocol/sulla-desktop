@@ -40,7 +40,7 @@ describe('WorkTaskDispatchModel', () => {
 
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
-    const claimed = await WorkTaskDispatchModel.claimNext('opus-worker');
+    const claimed = await WorkTaskDispatchModel.claimNext('opus-worker', 'core-todo');
 
     expect(claimed).toMatchObject({ task: { id: 'task-1' }, dispatch: { task_id: 'task-1' } });
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
@@ -50,7 +50,10 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[0][0]).toContain('child.parent_id = t.id');
     expect(query.mock.calls[0][0]).toContain('t.due_at ASC NULLS LAST');
     expect(query.mock.calls[1][0]).toContain('INSERT INTO work_task_dispatches');
-    expect(query.mock.calls[2][0]).toContain("status = 'planning'");
+    expect(query.mock.calls[1][0]).toContain('run_kind');
+    expect(query.mock.calls[1][0]).toContain('MAX(attempt_count)');
+    expect(query.mock.calls[1][1][4]).toBe('core-todo');
+    expect(query.mock.calls[2][0]).toContain("status = 'in_progress'");
     expect(query.mock.calls[2][0]).toContain("assignee = 'dispatcher'");
   });
 
@@ -62,7 +65,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
-  it('releases stale planning leases back to todo in one transaction', async() => {
+  it('recovers stale leases without duplicating work that already has verified custody', async() => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ id: 'dispatch-1', task_id: 'task-1' }] })
       .mockResolvedValueOnce({ rows: [] });
@@ -71,8 +74,9 @@ describe('WorkTaskDispatchModel', () => {
     await expect(WorkTaskDispatchModel.recoverStale(45)).resolves.toEqual(['task-1']);
     expect(query.mock.calls[0][0]).toContain("status = 'stale'");
     expect(query.mock.calls[0][0]).toContain("interval '1 minute'");
-    expect(query.mock.calls[1][0]).toContain("status = 'todo'");
-    expect(query.mock.calls[1][0]).toContain("status = 'planning'");
+    expect(query.mock.calls[1][0]).toContain("THEN 'in_review' ELSE 'todo'");
+    expect(query.mock.calls[1][0]).toContain("reviewer_verdict = 'pass'");
+    expect(query.mock.calls[1][0]).toContain("status = 'in_progress'");
     expect(query.mock.calls[1][0]).toContain("assignee = 'dispatcher'");
   });
 });

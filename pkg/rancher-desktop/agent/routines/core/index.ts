@@ -12,7 +12,9 @@
  */
 
 import { DREAM_ABOUT_HUMAN_DEFINITION } from './dreamAboutHuman';
+import { EXECUTE_PROJECT_TODO_DEFINITION } from './executeProjectTodo';
 
 export const CORE_ROUTINES: ReadonlyArray<Record<string, any>> = [
   DREAM_ABOUT_HUMAN_DEFINITION,
+  EXECUTE_PROJECT_TODO_DEFINITION,
 ];

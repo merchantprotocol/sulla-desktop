@@ -346,6 +346,21 @@ function isClosedStatus(status: string | undefined): boolean {
   return status === 'done' || status === 'cancelled' || status === 'parked';
 }
 
+/** Wake the sole todo owner only after the task transition is committed. */
+async function notifyTodoStatusCommitted(task: WorkTaskRecord, previousStatus: string): Promise<void> {
+  if (task.status !== 'todo' || previousStatus === 'todo') return;
+  try {
+    // Dynamic import prevents the database model from creating a static cycle
+    // through TaskDispatcherService -> WorkItemsModel.
+    const { getTaskDispatcherService } = await import('../../services/TaskDispatcherService');
+    await getTaskDispatcherService().forceCheck();
+  } catch (err) {
+    // The minute scan and boot recovery remain the durable fallback. The task
+    // write already committed, so do not misreport the Projects mutation.
+    console.error(`[WorkItemsModel] Todo dispatch bridge failed for task ${ task.id }:`, err);
+  }
+}
+
 // ── Model ──────────────────────────────────────────────────────────────
 
 export class WorkItemsModel {
@@ -853,7 +868,9 @@ export class WorkItemsModel {
         isClosedStatus(status) ? new Date().toISOString() : null,
       ],
     );
-    return rows[0];
+    const created = rows[0];
+    await notifyTodoStatusCommitted(created, '');
+    return created;
   }
 
   static async upsertTask(input: UpsertTaskInput): Promise<WorkTaskRecord> {
@@ -940,7 +957,11 @@ export class WorkItemsModel {
         WHERE id = $${ idx } RETURNING *`,
       values,
     );
-    return rows[0] ?? null;
+    const updated = rows[0] ?? null;
+    if (updated && changes.status !== undefined) {
+      await notifyTodoStatusCommitted(updated, existing.status);
+    }
+    return updated;
   }
 
   static async listTasks(opts: ListTasksOpts = {}): Promise<WorkTaskRecord[]> {

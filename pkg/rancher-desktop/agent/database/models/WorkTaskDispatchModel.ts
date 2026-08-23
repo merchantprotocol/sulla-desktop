@@ -8,16 +8,46 @@ import type { PoolClient } from 'pg';
 export type WorkTaskDispatchStatus = 'running' | 'completed' | 'blocked' | 'failed' | 'stale';
 
 export interface WorkTaskDispatchRecord {
-  id:           string;
-  task_id:      string;
-  agent_id:     string;
-  thread_id:    string;
-  status:       WorkTaskDispatchStatus;
-  result:       string | null;
-  error:        string | null;
-  started_at:   string;
-  heartbeat_at: string;
-  finished_at:  string | null;
+  id:                     string;
+  task_id:                string;
+  agent_id:               string;
+  thread_id:              string;
+  status:                 WorkTaskDispatchStatus;
+  result:                 string | null;
+  error:                  string | null;
+  started_at:             string;
+  heartbeat_at:           string;
+  finished_at:            string | null;
+  run_kind?:              string;
+  workflow_execution_id?: string | null;
+  classifier_decision?:   unknown;
+  selected_agents?:       unknown[];
+  worker_child_ids?:      string[];
+  artifact_type?:         string | null;
+  artifact_location?:     string | null;
+  artifact_url?:          string | null;
+  artifact_ref?:          string | null;
+  content_hash?:          string | null;
+  reviewer_verdict?:      string | null;
+  review_evidence?:       unknown;
+  terminal_reason?:       string | null;
+}
+
+export interface WorkTaskDispatchEvidence {
+  workflowExecutionId?: string;
+  classifierDecision?:  unknown;
+  selectedAgents?:      unknown[];
+  workerChildIds?:      string[];
+  reviewCount?:         number;
+  repairCount?:         number;
+  artifactType?:        string;
+  artifactLocation?:    string;
+  artifactUrl?:         string;
+  artifactRef?:         string;
+  contentHash?:         string;
+  reviewerVerdict?:     string;
+  reviewEvidence?:      unknown;
+  terminalReason?:      string;
 }
 
 export interface ClaimedDispatch {
@@ -29,7 +59,7 @@ const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
 const NON_AUTONOMOUS_LABELS = ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'];
 
 export class WorkTaskDispatchModel {
-  static async claimNext(agentId: string): Promise<ClaimedDispatch | null> {
+  static async claimNext(agentId: string, runKind = 'core-todo'): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
       const candidate = await client.query<WorkTaskRecord>(`
         SELECT t.*
@@ -83,14 +113,17 @@ export class WorkTaskDispatchModel {
       const id = `dispatch-${ randomUUID() }`;
       const threadId = `task-dispatch-${ task.id }-${ Date.now() }`;
       const inserted = await client.query<WorkTaskDispatchRecord>(`
-        INSERT INTO work_task_dispatches (id, task_id, agent_id, thread_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO work_task_dispatches (id, task_id, agent_id, thread_id, run_kind, attempt_count)
+        VALUES (
+          $1, $2, $3, $4, $5,
+          (SELECT COALESCE(MAX(attempt_count), 0) + 1 FROM work_task_dispatches WHERE task_id = $2)
+        )
         RETURNING *
-      `, [id, task.id, agentId, threadId]);
+      `, [id, task.id, agentId, threadId, runKind]);
 
       await client.query(`
         UPDATE work_tasks
-           SET status = 'planning',
+           SET status = 'in_progress',
                assignee = 'dispatcher',
                updated_at = now(),
                last_moved_at = now(),
@@ -115,6 +148,44 @@ export class WorkTaskDispatchModel {
       `UPDATE work_task_dispatches SET heartbeat_at = now() WHERE id = $1 AND status = 'running'`,
       [id],
     );
+  }
+
+  static async recordEvidence(id: string, evidence: WorkTaskDispatchEvidence): Promise<void> {
+    await postgresClient.query(`
+      UPDATE work_task_dispatches
+         SET workflow_execution_id = COALESCE($2, workflow_execution_id),
+             classifier_decision = COALESCE($3::jsonb, classifier_decision),
+             selected_agents = COALESCE($4::jsonb, selected_agents),
+             worker_child_ids = COALESCE($5::text[], worker_child_ids),
+             review_count = GREATEST(review_count, COALESCE($6, review_count)),
+             repair_count = GREATEST(repair_count, COALESCE($7, repair_count)),
+             artifact_type = COALESCE($8, artifact_type),
+             artifact_location = COALESCE($9, artifact_location),
+             artifact_url = COALESCE($10, artifact_url),
+             artifact_ref = COALESCE($11, artifact_ref),
+             content_hash = COALESCE($12, content_hash),
+             reviewer_verdict = COALESCE($13, reviewer_verdict),
+             review_evidence = COALESCE($14::jsonb, review_evidence),
+             terminal_reason = COALESCE($15, terminal_reason),
+             heartbeat_at = now()
+       WHERE id = $1 AND status = 'running'
+    `, [
+      id,
+      evidence.workflowExecutionId ?? null,
+      evidence.classifierDecision === undefined ? null : JSON.stringify(evidence.classifierDecision),
+      evidence.selectedAgents === undefined ? null : JSON.stringify(evidence.selectedAgents),
+      evidence.workerChildIds ?? null,
+      evidence.reviewCount ?? null,
+      evidence.repairCount ?? null,
+      evidence.artifactType ?? null,
+      evidence.artifactLocation ?? null,
+      evidence.artifactUrl ?? null,
+      evidence.artifactRef ?? null,
+      evidence.contentHash ?? null,
+      evidence.reviewerVerdict ?? null,
+      evidence.reviewEvidence === undefined ? null : JSON.stringify(evidence.reviewEvidence),
+      evidence.terminalReason ?? null,
+    ]);
   }
 
   static async settle(
@@ -146,11 +217,26 @@ export class WorkTaskDispatchModel {
       const taskIds = stale.rows.map(row => row.task_id);
       if (taskIds.length > 0) {
         await client.query(`
-          UPDATE work_tasks
-             SET status = 'todo', assignee = NULL,
+          WITH latest AS (
+            SELECT DISTINCT ON (task_id)
+                   task_id,
+                   artifact_url IS NOT NULL
+                     AND content_hash IS NOT NULL
+                     AND reviewer_verdict = 'pass' AS custody_complete
+              FROM work_task_dispatches
+             WHERE task_id = ANY($1::text[])
+               AND status = 'stale'
+             ORDER BY task_id, started_at DESC
+          )
+          UPDATE work_tasks t
+             SET status = CASE WHEN latest.custody_complete THEN 'in_review' ELSE 'todo' END,
+                 assignee = CASE WHEN latest.custody_complete THEN 'heartbeat' ELSE NULL END,
                  updated_at = now(), last_moved_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
-           WHERE id = ANY($1::text[]) AND status = 'planning' AND assignee = 'dispatcher'
+            FROM latest
+           WHERE t.id = latest.task_id
+             AND t.status = 'in_progress'
+             AND t.assignee = 'dispatcher'
         `, [taskIds]);
       }
       return taskIds;
