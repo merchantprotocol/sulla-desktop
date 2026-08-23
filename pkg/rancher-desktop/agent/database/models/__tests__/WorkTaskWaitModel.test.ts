@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { up as migration } from '../../migrations/0063_create_work_task_waits';
+import { up as migration } from '../../migrations/0065_create_work_task_waits';
 import { WorkTaskWaitModel } from '../WorkTaskWaitModel';
 
 describe('WorkTaskWaitModel', () => {

@@ -81,7 +81,7 @@ Writes — explicit create / update, **no upsert**:
 | `sulla project/archive_project_item` | Soft-archive. Cascades to children. |
 
 Schema-only migrations `0044_create_work_items_tables` and
-`0063_create_work_task_waits`. No user data in the migrations. A runtime seeder (`WorkItemsImportSeeder`) may import this
+`0065_create_work_task_waits`. No user data in the migrations. A runtime seeder (`WorkItemsImportSeeder`) may import this
 install's leftover `~/sulla/ledger/goals/*.md` on first boot by stable
 slug. Safe to re-run. After that, **only** the project tools.
 
