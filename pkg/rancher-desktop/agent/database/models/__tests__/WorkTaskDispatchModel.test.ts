@@ -654,6 +654,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
     expect(query.mock.calls[3][0]).toContain('UPDATE work_tasks');
     expect(query.mock.calls[3][0]).toContain("status = 'in_progress'");
+    expect(query.mock.calls[3][0]).toContain('RETURNING *');
     expect(committed).toEqual(expect.objectContaining({ id: 'task-1', status: 'in_review' }));
   });
 });

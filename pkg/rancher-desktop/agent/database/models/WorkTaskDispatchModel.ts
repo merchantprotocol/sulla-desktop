@@ -750,7 +750,7 @@ export class WorkTaskDispatchModel {
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'dispatcher', completed_at = NULL
          WHERE id = $1 AND status = 'in_progress' AND assignee = 'dispatcher'
-         RETURNING id
+         RETURNING *
       `, [taskId, finalization.taskStatus, finalization.taskAssignee]);
       if (!moved.rows[0]) {
         throw new Error(`Task ${ taskId } is no longer owned by dispatch ${ id }`);
