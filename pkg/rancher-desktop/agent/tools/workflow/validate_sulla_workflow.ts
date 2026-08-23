@@ -71,6 +71,7 @@ const REQUIRED_CONFIG_FIELDS: Record<WorkflowNodeSubtype, string[]> = {
 // ── Optional config fields per subtype (allowed but not required) ──
 
 const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
+  agent:          ['inheritParentToolPolicy'],
   schedule:       ['frequency', 'intervalMinutes', 'hour', 'minute', 'dayOfWeek', 'dayOfMonth', 'timezone'],
   function:       ['inputs', 'integrationAccounts', 'timeoutOverride'],
   'sub-workflow': ['agentId', 'orchestratorPrompt'],
