@@ -1,6 +1,6 @@
 # Tool Inventory
 
-Master list of every tool the agent can call. **Regenerated from the source manifests (`pkg/rancher-desktop/agent/tools/<category>/manifests.ts`) on 2026-08-23 — 263 tools across 30 categories.** Each line is `sulla <category>/<tool> — purpose`.
+Master list of every tool the agent can call. **Regenerated from the source manifests (`pkg/rancher-desktop/agent/tools/<category>/manifests.ts`) on 2026-08-23 — 265 tools across 30 categories.** Each line is `sulla <category>/<tool> — purpose`.
 
 > The `rules` category (user-created guardrail rules) and its **Security Conscience** enforcement were **retired 2026-08-19** and are intentionally omitted here. Some `rules/*` tool code may still linger in a given build; treat it as vestigial and don't re-add it to this doc.
 
@@ -199,7 +199,7 @@ sulla <category> --help          # what THIS install exposes right now
 
 Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`. → See [`mobile/overview.md`](../mobile/overview.md)
 
-## project — Projects project-state (the ONE work-state store) (13 tools)
+## project — Projects project-state (the ONE work-state store) (16 tools)
 - `sulla project/list_project_items` — List projects / epics / tasks (filter by kind / status / priority / project / epic / parent / assignee).
 - `sulla project/get_project_item` — One item + children + comments.
 - `sulla project/search_project_items` — Title + description search (dedupe before create).
@@ -209,6 +209,9 @@ Hits sulla-workers with the mobile JWT from vault `sulla-cloud/api_token`. → S
 - `sulla project/create_task` / `update_task` — Task CRUD (`parent_id` for a subtask).
 - `sulla project/add_task_comment` — Append a note (author defaults `sulla`; Heartbeat passes `heartbeat`; UI stamps `human`).
 - `sulla project/list_task_comments` — Comment thread, oldest first.
+- `sulla project/list_task_waits` — Inspect durable external waits and monitor ownership.
+- `sulla project/register_task_wait` — Idempotently register one structured external wait and initial comment.
+- `sulla project/cancel_task_wait` — Cancel an obsolete active wait; terminal tasks cancel automatically.
 - `sulla project/archive_project_item` — Soft-archive a project / epic / task (cascades).
 
 The ONE project-state store — not CRM, distinct from the `~/sulla/projects/<slug>/PROJECT.md` PRDs. → See [`tools/project.md`](project.md)

@@ -87,6 +87,47 @@ export const projectToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./project_report'),
   },
+  {
+    name:        'list_task_waits',
+    description: 'Inspect durable external waits. Active unchanged waits are monitor-owned and should not be polled or commented on by Heartbeat.',
+    category:    'project',
+    schemaDef:   {
+      task_id: { type: 'string', optional: true, description: 'Limit waits to one Projects task id.' },
+      status:  { type: 'string', optional: true, description: 'active | changed | satisfied | cancelled | failed.' },
+      limit:   { type: 'number', optional: true, description: 'Maximum rows (default 100).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_task_waits'),
+  },
+  {
+    name:        'register_task_wait',
+    description: 'Register one durable external wait. Duplicate active task/kind/target registrations are idempotent. The monitor owns subsequent checks; register once and continue across the portfolio.',
+    category:    'project',
+    schemaDef:   {
+      task_id:       { type: 'string', description: 'Projects task id.' },
+      wait_kind:     { type: 'string', description: 'github_checks | human_gate | scheduled_time | external_job.' },
+      target_key:    { type: 'string', description: 'Stable exact target identity, e.g. owner/repo#123 or gate:merge.' },
+      target:        { type: 'object', description: 'Structured target. GitHub checks use owner, repo, and pullNumber or ref.' },
+      fingerprint:   { type: 'string', optional: true, description: 'Exact already-observed fingerprint, when known.' },
+      next_check_at: { type: 'string', optional: true, description: 'ISO time for the first monitor check.' },
+      due_at:        { type: 'string', optional: true, description: 'Optional ISO threshold for event-driven gates/times.' },
+      owner:         { type: 'string', optional: true, description: 'Monitor owner label.' },
+      actor:         { type: 'string', optional: true, description: 'Comment attribution for the one initial registration comment.' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./register_task_wait'),
+  },
+  {
+    name:        'cancel_task_wait',
+    description: 'Cancel one active durable task wait by wait id. Terminal task states cancel waits automatically.',
+    category:    'project',
+    schemaDef:   {
+      id:     { type: 'string', description: 'Wait id from list_task_waits.' },
+      reason: { type: 'string', optional: true, description: 'Concise cancellation reason.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./cancel_task_wait'),
+  },
 
   // ── projects ─────────────────────────────────────────────────────────
   {
