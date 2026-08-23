@@ -49,6 +49,11 @@ export const up = `
              completed_at = now()
        WHERE task_id = NEW.task_id
          AND status = 'active';
+      UPDATE work_tasks
+         SET status = 'in_review', assignee = 'heartbeat', updated_at = now(),
+             last_moved_at = now(), last_activity_at = now(),
+             last_moved_by = 'external-wait-monitor'
+       WHERE id = NEW.task_id AND status = 'blocked';
     END IF;
     RETURN NEW;
   END;
@@ -71,6 +76,11 @@ export const up = `
              completed_at = now()
        WHERE task_id = NEW.id
          AND status = 'active';
+      UPDATE work_tasks
+         SET status = 'in_review', assignee = 'heartbeat', updated_at = now(),
+             last_moved_at = now(), last_activity_at = now(),
+             last_moved_by = 'external-wait-monitor'
+       WHERE id = NEW.id AND status = 'blocked';
     END IF;
     RETURN NEW;
   END;

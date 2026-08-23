@@ -12,6 +12,12 @@ export const up = `
     ADD COLUMN IF NOT EXISTS origin_evidence JSONB,
     ADD COLUMN IF NOT EXISTS workflow_execution_id TEXT,
     ADD COLUMN IF NOT EXISTS reviewer_agent_ids TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS worker_agent_ids TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS custodian_agent_ids TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS excluded_agent_ids TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS review_generation_hash TEXT,
+    ADD COLUMN IF NOT EXISTS review_artifact_types TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS review_artifacts JSONB NOT NULL DEFAULT '[]'::jsonb,
     ADD COLUMN IF NOT EXISTS review_artifact_type TEXT,
     ADD COLUMN IF NOT EXISTS review_artifact_ref TEXT,
     ADD COLUMN IF NOT EXISTS review_artifact_url TEXT,
@@ -30,7 +36,7 @@ export const up = `
         ('PASS', 'REPAIRABLE', 'REPLAN', 'EXTERNAL_WAIT', 'BLOCKED'));
 
   CREATE INDEX IF NOT EXISTS idx_work_task_dispatches_review_generation
-    ON work_task_dispatches (task_id, review_artifact_hash, started_at DESC)
+    ON work_task_dispatches (task_id, review_generation_hash, started_at DESC)
     WHERE kind = 'verification';
 
   CREATE INDEX IF NOT EXISTS idx_work_task_dispatches_review_fingerprint
@@ -51,6 +57,12 @@ export const down = `
     DROP COLUMN IF EXISTS review_artifact_url,
     DROP COLUMN IF EXISTS review_artifact_ref,
     DROP COLUMN IF EXISTS review_artifact_type,
+    DROP COLUMN IF EXISTS review_artifacts,
+    DROP COLUMN IF EXISTS review_artifact_types,
+    DROP COLUMN IF EXISTS review_generation_hash,
+    DROP COLUMN IF EXISTS excluded_agent_ids,
+    DROP COLUMN IF EXISTS custodian_agent_ids,
+    DROP COLUMN IF EXISTS worker_agent_ids,
     DROP COLUMN IF EXISTS reviewer_agent_ids,
     DROP COLUMN IF EXISTS workflow_execution_id,
     DROP COLUMN IF EXISTS origin_agent_id,

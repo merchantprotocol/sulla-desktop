@@ -7,6 +7,12 @@ describe('0067_add_review_disposition_evidence', () => {
     expect(up).toContain('origin_dispatch_id');
     expect(up).toContain('reviewer_agent_ids');
     expect(up).toContain('review_artifact_hash');
+    expect(up).toContain('review_generation_hash');
+    expect(up).toContain('review_artifact_types');
+    expect(up).toContain('review_artifacts');
+    expect(up).toContain('excluded_agent_ids');
+    expect(up).toContain('worker_agent_ids');
+    expect(up).toContain('custodian_agent_ids');
     expect(up).toContain('findings_fingerprint');
     expect(up).toContain("'PASS', 'REPAIRABLE', 'REPLAN', 'EXTERNAL_WAIT', 'BLOCKED'");
     expect(up).not.toContain('DROP INDEX IF EXISTS idx_work_task_dispatches_one_live');

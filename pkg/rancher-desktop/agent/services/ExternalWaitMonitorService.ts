@@ -146,12 +146,6 @@ export class ExternalWaitMonitorService {
         author:  'external-wait-monitor',
         body:    `External wait ${ result.wait?.status ?? observation.outcome }: ${ observation.summary }`,
       });
-      const nextStatus = result.wait?.status === 'failed' ? 'planning' : 'in_review';
-      await WorkItemsModel.updateTask(wait.task_id, {
-        status:   nextStatus,
-        assignee: nextStatus === 'planning' ? 'dispatcher' : 'heartbeat',
-        actor:    'external-wait-monitor',
-      });
       console.log(`[ExternalWaitMonitor] Material delta for task ${ wait.task_id }: ${ observation.summary }`);
     } catch (err) {
       this.metrics.failures += 1;
@@ -167,9 +161,6 @@ export class ExternalWaitMonitorService {
           task_id: wait.task_id,
           author:  'external-wait-monitor',
           body:    `External wait monitor failed after ${ MAX_FAILURES } attempts: ${ message }. The task was reactivated for recovery; it was not marked blocked.`,
-        });
-        await WorkItemsModel.updateTask(wait.task_id, {
-          status: 'planning', assignee: 'dispatcher', actor: 'external-wait-monitor',
         });
       }
     }

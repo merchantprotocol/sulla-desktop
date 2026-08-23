@@ -87,9 +87,7 @@ describe('ExternalWaitMonitorService', () => {
     expect(poller).toHaveBeenCalledTimes(11);
     expect(addCommentMock).toHaveBeenCalledTimes(1);
     expect(addCommentMock.mock.calls[0][0].body).toContain('External wait satisfied: 1 success');
-    expect(updateTaskMock).toHaveBeenCalledWith('task-1', {
-      status: 'in_review', assignee: 'heartbeat', actor: 'external-wait-monitor',
-    });
+    expect(updateTaskMock).not.toHaveBeenCalled();
     const metrics = await service.getMetrics();
     expect(metrics.unchangedSuppressions).toBe(10);
     expect(metrics.deltasEmitted).toBe(1);

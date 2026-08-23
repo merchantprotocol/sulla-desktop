@@ -198,13 +198,23 @@ export class WorkTaskWaitModel {
          WHERE id = $1
          RETURNING *
       `, [id, observation.fingerprint, nextStatus, observation.nextCheckAt, changed, terminal]);
+      if (changed || terminal) {
+        await client.query(`
+          UPDATE work_tasks
+             SET status = $2, assignee = $3, updated_at = now(),
+                 last_moved_at = now(), last_activity_at = now(),
+                 last_moved_by = 'external-wait-monitor'
+           WHERE id = $1 AND status = 'blocked'
+        `, [current.task_id, nextStatus === 'failed' ? 'planning' : 'in_review', nextStatus === 'failed' ? 'dispatcher' : 'heartbeat']);
+      }
       return { changed: changed || terminal, wait: updated.rows[0] ?? null };
     });
   }
 
   static async recordFailure(id: string, message: string, nextCheckAt: Date, terminalAfter = 5): Promise<{ terminal: boolean; wait: WorkTaskWaitRecord | null }> {
-    const wait = await postgresClient.queryOne<WorkTaskWaitRecord>(`
-      UPDATE work_task_waits
+    return postgresClient.transaction(async(client) => {
+      const result = await client.query<WorkTaskWaitRecord>(`
+        UPDATE work_task_waits
          SET consecutive_failure_count = consecutive_failure_count + 1,
              last_error = $2, last_checked_at = now(),
              first_checked_at = COALESCE(first_checked_at, now()),
@@ -213,8 +223,18 @@ export class WorkTaskWaitModel {
              completed_at = CASE WHEN consecutive_failure_count + 1 >= $4 THEN now() ELSE completed_at END
        WHERE id = $1 AND status = 'active'
        RETURNING *
-    `, [id, message.slice(0, 2000), nextCheckAt, terminalAfter]);
-    return { terminal: wait?.status === 'failed', wait };
+      `, [id, message.slice(0, 2000), nextCheckAt, terminalAfter]);
+      const wait = result.rows[0] ?? null;
+      if (wait?.status === 'failed') {
+        await client.query(`
+          UPDATE work_tasks SET status = 'planning', assignee = 'dispatcher',
+            updated_at = now(), last_moved_at = now(), last_activity_at = now(),
+            last_moved_by = 'external-wait-monitor'
+          WHERE id = $1 AND status = 'blocked'
+        `, [wait.task_id]);
+      }
+      return { terminal: wait?.status === 'failed', wait };
+    });
   }
 
   static async cancel(id: string, reason: string): Promise<WorkTaskWaitRecord | null> {
