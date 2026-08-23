@@ -64,6 +64,10 @@ import {
   type PlaybookStepResult,
 } from '../workflow/WorkflowPlaybook';
 import { detectAgentNodeError } from '../workflow/agentNodeError';
+import {
+  lockedCoreBlockedError,
+  resolveAgentTaskForDispatch,
+} from '../workflow/lockedCoreRoutineExecution';
 
 import type { WorkflowPlaybookState, PlaybookNodeOutput } from '../workflow/types';
 
@@ -508,6 +512,37 @@ export class PlaybookController<TState = any> {
       const esc = this.pendingEscalations[0];
       const msgs = (state as any).messages;
 
+      // Locked core routines run unattended and their baked task text is the
+      // trusted execution contract. A blocked child cannot be resolved by a
+      // human chat turn, so leaving it in the normal escalation path creates a
+      // permanently-running scheduled execution. Fail closed and let the
+      // routine health surfaces report the exact blocker instead.
+      const blockedCoreError = lockedCoreBlockedError(
+        await this.isLockedCoreRoutine(playbook.workflowId),
+        esc.nodeLabel,
+        esc.question,
+      );
+
+      if (blockedCoreError) {
+        const error = blockedCoreError;
+
+        this.pendingEscalations.shift();
+        this.pendingSubAgents.delete(esc.nodeId);
+        playbookLog('core_routine_agent_blocked', {
+          workflowId: playbook.workflowId,
+          executionId: playbook.executionId,
+          nodeId:       esc.nodeId,
+          label:        esc.nodeLabel,
+          errorPreview: error.slice(0, 500),
+        });
+        this.emitPlaybookEvent(state, 'node_failed', { nodeId: esc.nodeId, nodeLabel: esc.nodeLabel, error });
+        const failedPlaybook = { ...playbook, status: 'failed' as const, error };
+
+        this.emitPlaybookEvent(state, 'workflow_failed', { error });
+        state = await this.releaseWorkflow(state, failedPlaybook, 'failed', error);
+        return state;
+      }
+
       if (!esc.orchestratorAttempted) {
         console.log(`[PlaybookController] Sub-agent "${ esc.nodeLabel }" blocked — asking orchestrator to answer: ${ esc.question.slice(0, 200) }`);
 
@@ -939,48 +974,67 @@ export class PlaybookController<TState = any> {
             const completionContract = (step.config.completionContract as string) || '';
             const successCriteria = (step.config.successCriteria as string) || '';
 
-            // Phase 1: Ask orchestrator to formulate the sub-agent's message
-            let formationMsg = `[Workflow: Deploying Agent — ${ subNodeLabel }]\n` +
-            `Agent type: ${ agentName }\n\n`;
+            // Phase 1: Ask the orchestrator to formulate the sub-agent's
+            // message for ordinary workflows. Locked core routines are baked,
+            // hashed task definitions; sending their trusted instructions
+            // through another LLM turn can silently replace the task (including
+            // with a refusal). Execute that configured task verbatim instead.
+            const isLockedCoreRoutine = await this.isLockedCoreRoutine(currentPlaybook.workflowId);
+            let orchestratorResponse = '';
 
-            if (step.prompt.trim()) {
-              formationMsg += `Here are your instructions for deploying this sub-agent:\n${ step.prompt }\n\n`;
+            if (!isLockedCoreRoutine) {
+              let formationMsg = `[Workflow: Deploying Agent — ${ subNodeLabel }]\n` +
+              `Agent type: ${ agentName }\n\n`;
+
+              if (step.prompt.trim()) {
+                formationMsg += `Here are your instructions for deploying this sub-agent:\n${ step.prompt }\n\n`;
+              }
+
+              formationMsg += `Formulate the complete task message that will be sent to this sub-agent. Be specific about:\n` +
+              `1. What the sub-agent needs to accomplish\n` +
+              `2. What completion contract to follow — describe the exact format and content for its final deliverable\n\n`;
+
+              if (completionContract.trim()) {
+                formationMsg += `The workflow expects this completion structure:\n${ completionContract }\n\n`;
+              }
+
+              formationMsg += `The sub-agent's final response MUST be wrapped in <completion-contract> XML tags.\n` +
+              `Include these requirements in your message to the sub-agent.\n\n` +
+              `## Delegation\n` +
+              `You may delegate work to multiple agents by wrapping each task in a <PROMPT> tag.\n` +
+              `Each <PROMPT> spawns one agent in parallel. Attributes:\n` +
+              `  agentId="name" (optional — defaults to "${ agentName }")\n` +
+              `  label="description" (optional — names the result for downstream reference)\n\n` +
+              `Example:\n` +
+              `<PROMPT agentId="observer" label="Financial">Watch for financial signals...</PROMPT>\n` +
+              `<PROMPT agentId="observer" label="Emotional">Watch for emotional patterns...</PROMPT>\n\n` +
+              `If you don't use <PROMPT> tags, your entire response is sent as a single task to the configured agent.\n\n` +
+              `Respond with the message(s) to send to the sub-agent(s).`;
+
+              this.injectWorkflowMessage(state, formationMsg);
+              (state as any).metadata._muteWsChat = true;
+              state = await this.raceWithParentTurnTimeout(
+                `Agent dispatch "${ subNodeLabel }" — formulate sub-agent task`,
+                () => this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true }),
+              );
+              (state as any).metadata._muteWsChat = false;
+
+              const lastMsg = (state as any).messages?.[(state as any).messages.length - 1];
+
+              orchestratorResponse = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
+
+              const abortFormState = await this.handleAbortIfSignalled(state, orchestratorResponse);
+              if (abortFormState) return abortFormState;
+            } else {
+              orchestratorResponse = resolveAgentTaskForDispatch(true, step.prompt, '');
+              playbookLog('core_routine_task_direct', {
+                workflowId: currentPlaybook.workflowId,
+                executionId: currentPlaybook.executionId,
+                nodeId:       step.nodeId,
+                label:        subNodeLabel,
+                promptLength: orchestratorResponse.length,
+              });
             }
-
-            formationMsg += `Formulate the complete task message that will be sent to this sub-agent. Be specific about:\n` +
-            `1. What the sub-agent needs to accomplish\n` +
-            `2. What completion contract to follow — describe the exact format and content for its final deliverable\n\n`;
-
-            if (completionContract.trim()) {
-              formationMsg += `The workflow expects this completion structure:\n${ completionContract }\n\n`;
-            }
-
-            formationMsg += `The sub-agent's final response MUST be wrapped in <completion-contract> XML tags.\n` +
-            `Include these requirements in your message to the sub-agent.\n\n` +
-            `## Delegation\n` +
-            `You may delegate work to multiple agents by wrapping each task in a <PROMPT> tag.\n` +
-            `Each <PROMPT> spawns one agent in parallel. Attributes:\n` +
-            `  agentId="name" (optional — defaults to "${ agentName }")\n` +
-            `  label="description" (optional — names the result for downstream reference)\n\n` +
-            `Example:\n` +
-            `<PROMPT agentId="observer" label="Financial">Watch for financial signals...</PROMPT>\n` +
-            `<PROMPT agentId="observer" label="Emotional">Watch for emotional patterns...</PROMPT>\n\n` +
-            `If you don't use <PROMPT> tags, your entire response is sent as a single task to the configured agent.\n\n` +
-            `Respond with the message(s) to send to the sub-agent(s).`;
-
-            this.injectWorkflowMessage(state, formationMsg);
-            (state as any).metadata._muteWsChat = true;
-            state = await this.raceWithParentTurnTimeout(
-              `Agent dispatch "${ subNodeLabel }" — formulate sub-agent task`,
-              () => this.graph.execute(state, this.graph.getEntryPoint() || undefined, { maxIterations: 1000000, _isPlaybookReentry: true }),
-            );
-            (state as any).metadata._muteWsChat = false;
-
-            const lastMsg = (state as any).messages?.[(state as any).messages.length - 1];
-            const orchestratorResponse = typeof lastMsg?.content === 'string' ? lastMsg.content : '';
-
-            const abortFormState = await this.handleAbortIfSignalled(state, orchestratorResponse);
-            if (abortFormState) return abortFormState;
 
             const parsedPrompts = parsePromptTags(orchestratorResponse);
             const cleanedMessage = orchestratorResponse
@@ -1989,6 +2043,22 @@ export class PlaybookController<TState = any> {
   private getPlaybookNodeSubtype(playbook: WorkflowPlaybookState, nodeId: string): string {
     const node = playbook.definition.nodes.find((n: any) => n.id === nodeId);
     return node?.data?.subtype || 'unknown';
+  }
+
+  private async isLockedCoreRoutine(workflowId: string): Promise<boolean> {
+    try {
+      const { WorkflowModel } = await import('../database/models/WorkflowModel');
+
+      return await WorkflowModel.isSystem(workflowId);
+    } catch (error) {
+      // Core IDs are reserved by the bundled seeder. If the DB lookup is
+      // temporarily unavailable, fail safe for those known IDs rather than
+      // re-introducing LLM task rewriting or an immortal scheduled pause.
+      const reservedCoreId = workflowId.startsWith('core-routine-');
+
+      console.warn(`[PlaybookController] Failed to resolve locked-core status for "${ workflowId }"; reserved-id fallback=${ reservedCoreId }:`, error);
+      return reservedCoreId;
+    }
   }
 
   private injectWorkflowMessage(state: TState, content: string, _silent?: boolean): void {
