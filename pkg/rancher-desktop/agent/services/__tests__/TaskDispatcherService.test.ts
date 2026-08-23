@@ -16,11 +16,18 @@ const touchMock: any = jest.fn(() => Promise.resolve());
 const addCommentMock: any = jest.fn(() => Promise.resolve());
 const updateTaskMock: any = jest.fn(() => Promise.resolve());
 const executeMock: any = jest.fn();
+const graphGetMock: any = jest.fn(() => Promise.resolve({
+  graph: { execute: executeMock },
+  state: { messages: [], metadata: {} },
+}));
 const graphDeleteMock: any = jest.fn();
 const recoverPreviousRuntimeMock: any = jest.fn(() => Promise.resolve([]));
 const reportCapabilityMock: any = jest.fn(() => Promise.resolve({}));
 const releaseStageMock: any = jest.fn(() => Promise.resolve());
 const resolvePullRequestHeadMock: any = jest.fn();
+const resolvePullRequestHeadsMock: any = jest.fn();
+const bindReviewGenerationMock: any = jest.fn();
+const generationHashMock: any = jest.fn(() => 'f'.repeat(64));
 const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({ attributesSnapshot: { enabled: true } }));
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
@@ -45,6 +52,9 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
     finalizeVerification:    finalizeVerificationMock,
     finalizeProtectedReview: finalizeProtectedReviewMock,
     recordReviewLaunch:      recordReviewLaunchMock,
+    bindReviewGeneration:    bindReviewGenerationMock,
+    reviewGenerationHash:    generationHashMock,
+    reviewFingerprint:       jest.fn(() => 'e'.repeat(64)),
     failVerification:        failVerificationMock,
     touch:                   touchMock,
   },
@@ -64,18 +74,16 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
 }));
 jest.unstable_mockModule('../GraphRegistry', () => ({
   GraphRegistry: {
-    getOrCreateAgentGraph: jest.fn(() => Promise.resolve({
-      graph: { execute: executeMock },
-      state: { messages: [], metadata: {} },
-    })),
-    delete: graphDeleteMock,
+    getOrCreateAgentGraph: graphGetMock,
+    delete:                graphDeleteMock,
   },
 }));
 jest.unstable_mockModule('../HeartbeatService', () => ({
   isInsideWindow: jest.fn(() => true),
 }));
 jest.unstable_mockModule('../GitHubPullRequestHeadService', () => ({
-  resolvePullRequestHead: resolvePullRequestHeadMock,
+  resolvePullRequestHead:  resolvePullRequestHeadMock,
+  resolvePullRequestHeads: resolvePullRequestHeadsMock,
 }));
 jest.unstable_mockModule('../../utils/sullaPaths', () => ({
   findAgentDir: jest.fn(() => '/agents/opus-worker'),
@@ -97,8 +105,15 @@ describe('TaskDispatcherService', () => {
     countRunningMock.mockResolvedValue(0);
     claimNextMock.mockResolvedValue(null);
     claimNextReviewMock.mockResolvedValue(null);
+    workflowFindByIdMock.mockResolvedValue({ attributesSnapshot: { enabled: true } });
     resolvePullRequestHeadMock.mockResolvedValue({
       owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 123, sha: 'a'.repeat(40),
+    });
+    resolvePullRequestHeadsMock.mockResolvedValue([{
+      owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 123, sha: 'a'.repeat(40),
+    }]);
+    bindReviewGenerationMock.mockResolvedValue({
+      generationHash: 'f'.repeat(64), excludedAgentIds: ['technical-architect'], suppressed: false,
     });
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
@@ -117,6 +132,50 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(claimNextReviewMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves in_review visible and unclaimed when the protected routine is disabled', async() => {
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled' || key === 'taskReviewCoreRoutineEnabled') return Promise.resolve(true);
+      if (key === 'taskVerifierOwner') return Promise.resolve('core-routine');
+      return Promise.resolve(fallback);
+    });
+    workflowFindByIdMock.mockResolvedValue({ attributesSnapshot: { enabled: false } });
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+    expect(claimNextReviewMock).not.toHaveBeenCalled();
+  });
+
+  it('suppresses an identical terminal generation before graph or workflow side effects', async() => {
+    bindReviewGenerationMock.mockResolvedValue({
+      generationHash: 'f'.repeat(64), excludedAgentIds: ['opus-worker'], suppressed: true,
+    });
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService() as any;
+    await service.runClaim({
+      task: {
+        id:           'task-suppressed',
+        title:        'Already reviewed',
+        description:  '',
+        project_id:   'p',
+        epic_id:      'e',
+        priority:     'p0',
+        github_issue: 'org/repo#1',
+      },
+      dispatch: {
+        id:        'review-suppressed',
+        task_id:   'task-suppressed',
+        agent_id:  'codex-test',
+        thread_id: 'thread-suppressed',
+        kind:      'verification',
+        attempt:   2,
+      },
+    }, 'core-routine');
+    expect(graphGetMock).not.toHaveBeenCalled();
+    expect(recordReviewLaunchMock).not.toHaveBeenCalled();
+    expect(executeMock).not.toHaveBeenCalled();
   });
 
   it('recovers orphaned leases before filling worker capacity', async() => {
@@ -250,7 +309,7 @@ describe('TaskDispatcherService', () => {
       .mockResolvedValueOnce(claims[2])
       .mockResolvedValue(null);
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
-      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled') return Promise.resolve(true);
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled' || key === 'taskReviewCoreRoutineEnabled') return Promise.resolve(true);
       if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
       return Promise.resolve(fallback);
     });
@@ -364,13 +423,16 @@ describe('TaskDispatcherService', () => {
       })
       .mockResolvedValue(null);
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
-      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled') return Promise.resolve(true);
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled' || key === 'taskReviewCoreRoutineEnabled') return Promise.resolve(true);
       if (key === 'taskVerifierOwner') return Promise.resolve('core-routine');
       return Promise.resolve(fallback);
     });
     resolvePullRequestHeadMock.mockResolvedValue({
       owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 671, sha: hash,
     });
+    resolvePullRequestHeadsMock.mockResolvedValue([{
+      owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 671, sha: hash,
+    }]);
     executeMock.mockResolvedValue({
       metadata: {
         agent:                 { status: 'completed' },
@@ -382,7 +444,13 @@ describe('TaskDispatcherService', () => {
           nodeResults: [{
             nodeId: 'node-review-synthesize',
             result: JSON.stringify({
-              disposition:  'PASS',
+              disposition:    'PASS',
+              generationHash: 'f'.repeat(64),
+              artifactTypes:  ['code_pr', 'projects_evidence'],
+              artifacts:      [
+                { type: 'code_pr', canonicalRef: 'merchantprotocol/sulla-desktop#671', hash, adapter: 'github-pr', code: true },
+                { type: 'projects_evidence', canonicalRef: 'projects-task:task-core', hash: 'e'.repeat(64), adapter: 'projects-read', code: false },
+              ],
               artifactType: 'code_pr',
               artifactRef:  hash,
               artifactUrl:  'https://github.com/merchantprotocol/sulla-desktop/pull/671',
@@ -417,7 +485,7 @@ describe('TaskDispatcherService', () => {
         workflowExecutionId: 'wfp-review-1',
         reviewerAgentIds:    ['code-researcher', 'thinking-worker'],
         artifactHash:        hash,
-      }), hash,
+      }), expect.any(Array),
     );
   });
 
@@ -430,6 +498,38 @@ describe('TaskDispatcherService', () => {
     expect(service.parseVerification(
       `<VERIFIER_RESULT>{"verdict":"${ verdict }","artifact_sha":"deadbeef","summary":"Evidence."}</VERIFIER_RESULT>`,
     )).toBeNull();
+  });
+
+  it('parses a mixed code and non-code generation with structural adapters', async() => {
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService() as any;
+    const parsed = service.parseProtectedReview({
+      workflowId:  'core-routine-review-project-artifact',
+      executionId: 'wfp-mixed',
+      outcome:     'completed',
+      nodeResults: [{
+        nodeId: 'node-review-synthesize',
+        result: JSON.stringify({
+          disposition:    'PASS',
+          generationHash: 'f'.repeat(64),
+          artifactTypes:  ['code_pr', 'documentation'],
+          artifacts:      [
+            { type: 'code_pr', canonicalRef: 'org/repo#7', hash: 'a'.repeat(40), adapter: 'github-pr', code: true },
+            { type: 'documentation', canonicalRef: 'docs/plan.md', hash: 'b'.repeat(64), adapter: 'document-read', code: false },
+          ],
+          artifactType: 'mixed',
+          artifactRef:  'org/repo#7 + docs/plan.md',
+          artifactHash: 'f'.repeat(64),
+          summary:      'Both artifacts verified.',
+          checks:       ['code', 'document'],
+          findings:     [],
+          wait:         null,
+        }),
+      }],
+    });
+    expect(parsed.artifactTypes).toEqual(['code_pr', 'documentation']);
+    expect(parsed.artifacts).toHaveLength(2);
+    expect(parsed.artifacts[1].adapter).toBe('document-read');
   });
 
   it('rejects malformed verifier output without changing the task to blocked', async() => {

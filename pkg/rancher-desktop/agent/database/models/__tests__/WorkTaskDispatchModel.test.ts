@@ -345,7 +345,8 @@ describe('WorkTaskDispatchModel', () => {
 
   it('audits verifier crashes while leaving the task retryable in_review', async() => {
     const query = (jest.fn() as any)
-      .mockResolvedValueOnce({ rows: [{ task_id: 'task-2' }] })
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-2', review_generation_hash: 'g1' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -353,8 +354,67 @@ describe('WorkTaskDispatchModel', () => {
 
     await expect(WorkTaskDispatchModel.failVerification('dispatch-2', 'boom')).resolves.toBe(true);
     expect(query.mock.calls[0][0]).toContain("status = 'failed'");
-    expect(query.mock.calls[2][1][2]).toContain('released for retry');
-    expect(query.mock.calls[3][0]).toContain("status = 'in_review'");
+    expect(query.mock.calls[3][1][2]).toContain('released for retry');
+    expect(query.mock.calls[4][1]).toEqual(['task-2', 'in_review', 'heartbeat']);
+  });
+
+  it('escalates the third equivalent verifier infrastructure failure to planning', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-fail', review_generation_hash: 'g1' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '3' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'older' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).resolves.toBe(true);
+    expect(query.mock.calls[2][0]).toContain("'terminal:' || $2");
+    expect(query.mock.calls[4][1][2]).toContain('escalated to planning');
+    expect(query.mock.calls[5][1]).toEqual(['task-fail', 'planning', 'dispatcher']);
+  });
+
+  it('binds one immutable generation and durably excludes every worker and custodian', async() => {
+    const artifacts: any[] = [{
+      type: 'code_pr', canonicalRef: 'org/repo#1', hash: 'a'.repeat(40), adapter: 'github-pr', code: true,
+    }];
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-bind' }] })
+      .mockResolvedValueOnce({
+        rows: [
+          { agent_id: 'worker-a', origin_evidence: { custodianAgentIds: ['custodian-a'] } },
+          { agent_id: 'worker-b', origin_evidence: null },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    const bound = await WorkTaskDispatchModel.bindReviewGeneration('review-bind', artifacts);
+    expect(bound.suppressed).toBe(false);
+    expect(bound.excludedAgentIds.sort()).toEqual(['custodian-a', 'worker-a', 'worker-b']);
+    expect(query.mock.calls[3][0]).toContain('review_generation_hash');
+    expect(query.mock.calls[3][0]).toContain('excluded_agent_ids');
+    expect(query.mock.calls[3][0]).toContain('worker_agent_ids');
+    expect(query.mock.calls[3][0]).toContain('custodian_agent_ids');
+  });
+
+  it('suppresses an identical terminal generation before reviewer side effects', async() => {
+    const artifacts: any[] = [{
+      type: 'projects_evidence', canonicalRef: 'projects-task:t1', hash: 'b'.repeat(64), adapter: 'projects-read', code: false,
+    }];
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-bind' }] })
+      .mockResolvedValueOnce({ rows: [{ agent_id: 'worker-a', origin_evidence: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'review-old', status: 'completed', disposition: 'PASS' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    const bound = await WorkTaskDispatchModel.bindReviewGeneration('review-new', artifacts);
+    expect(bound.suppressed).toBe(true);
+    expect(query.mock.calls[3][1][1]).toContain('suppressed identical terminal generation review-old');
+    expect(query.mock.calls[4][1]).toEqual(['task-bind', 'done', null]);
   });
 
   it('returns concrete rework to the dispatcher', async() => {
@@ -481,8 +541,16 @@ describe('WorkTaskDispatchModel', () => {
   });
 
   it('atomically records protected review evidence and routes REPLAN to the planning council', async() => {
+    const artifacts: any[] = [{
+      type:         'code_pr',
+      canonicalRef: 'merchantprotocol/sulla-desktop#671',
+      hash:         'a'.repeat(40),
+      adapter:      'github-pr',
+      code:         true,
+    }];
+    const generationHash = WorkTaskDispatchModel.reviewGenerationHash(artifacts);
     const query = (jest.fn() as any)
-      .mockResolvedValueOnce({ rows: [{ task_id: 'task-3' }] })
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-3', review_generation_hash: generationHash }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -495,6 +563,10 @@ describe('WorkTaskDispatchModel', () => {
       {
         workflowExecutionId: 'wfp-3',
         reviewerAgentIds:    ['code-researcher', 'thinking-worker'],
+        excludedAgentIds:    ['opus-worker'],
+        generationHash,
+        artifactTypes:       ['code_pr'],
+        artifacts,
         artifactType:        'code_pr',
         artifactRef:         'a'.repeat(40),
         artifactHash:        'a'.repeat(40),
@@ -502,7 +574,7 @@ describe('WorkTaskDispatchModel', () => {
         checks:              ['diff'],
         findings:            [{ severity: 'high', message: 'missing consumer' }],
       },
-      'a'.repeat(40),
+      artifacts,
     )).resolves.toBe('REPLAN');
 
     expect(query.mock.calls[2][0]).toContain('reviewer_agent_ids = $12::text[]');
@@ -511,8 +583,16 @@ describe('WorkTaskDispatchModel', () => {
   });
 
   it('registers EXTERNAL_WAIT in the durable monitor ledger in the settlement transaction', async() => {
+    const artifacts: any[] = [{
+      type:         'code_pr',
+      canonicalRef: 'merchantprotocol/sulla-desktop#671',
+      hash:         'b'.repeat(40),
+      adapter:      'github-pr',
+      code:         true,
+    }];
+    const generationHash = WorkTaskDispatchModel.reviewGenerationHash(artifacts);
     const query = (jest.fn() as any)
-      .mockResolvedValueOnce({ rows: [{ task_id: 'task-4' }] })
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-4', review_generation_hash: generationHash }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -527,6 +607,10 @@ describe('WorkTaskDispatchModel', () => {
       {
         workflowExecutionId: 'wfp-4',
         reviewerAgentIds:    ['code-researcher'],
+        excludedAgentIds:    ['opus-worker'],
+        generationHash,
+        artifactTypes:       ['code_pr'],
+        artifacts,
         artifactType:        'code_pr',
         artifactRef:         'b'.repeat(40),
         artifactHash:        'b'.repeat(40),
@@ -539,7 +623,7 @@ describe('WorkTaskDispatchModel', () => {
           target:    { owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 671 },
         },
       },
-      'b'.repeat(40),
+      artifacts,
     )).resolves.toBe('EXTERNAL_WAIT');
 
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_waits');

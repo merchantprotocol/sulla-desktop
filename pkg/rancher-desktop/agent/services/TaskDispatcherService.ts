@@ -1,7 +1,7 @@
 import { Octokit } from '@octokit/rest';
 
 import { AbortService } from './AbortService';
-import { resolvePullRequestHead } from './GitHubPullRequestHeadService';
+import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullRequestHeadService';
 import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
@@ -12,6 +12,8 @@ import {
   WorkTaskDispatchModel,
   type ClaimedDispatch,
   type ProtectedReviewEvidence,
+  type ReviewArtifactComponent,
+  type ReviewArtifactType,
   type ReviewDisposition,
   type VerificationVerdict,
 } from '../database/models/WorkTaskDispatchModel';
@@ -19,6 +21,7 @@ import { WorkflowModel } from '../database/models/WorkflowModel';
 import {
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
   REVIEW_PROJECT_ARTIFACT_ID,
+  ARTIFACT_VERIFICATION_ADAPTERS,
   REVIEWER_AGENT_IDS,
   REVIEWER_NODE_IDS,
 } from '../routines/core/reviewProjectArtifact';
@@ -37,11 +40,14 @@ const DEFAULT_VERIFIER_TIMEOUT_MINUTES = 45;
 const DEFAULT_IN_PROGRESS_STALE_MINUTES = 360;
 const DEFAULT_RECOVERY_BATCH_SIZE = 1;
 const DEFAULT_RECOVERY_RETRY_CEILING = 3;
-const VERIFIER_TOOLS = [
+const LEGACY_VERIFIER_TOOLS = [
   'file_search', 'read_file',
   'git_status', 'git_diff', 'git_log', 'git_blame',
   'github_get_issue', 'github_get_pr', 'github_get_pr_files', 'github_check_runs',
 ] as const;
+const PROTECTED_REVIEW_TOOLS = [...new Set([
+  ...Object.values(ARTIFACT_VERIFICATION_ADAPTERS).flatMap(adapter => [...adapter.tools]),
+])] as string[];
 
 interface ParsedVerification {
   verdict:     VerificationVerdict;
@@ -49,7 +55,7 @@ interface ParsedVerification {
   summary:     string;
 }
 
-interface ParsedProtectedReview extends Omit<ProtectedReviewEvidence, 'workflowExecutionId' | 'reviewerAgentIds'> {
+interface ParsedProtectedReview extends Omit<ProtectedReviewEvidence, 'workflowExecutionId' | 'reviewerAgentIds' | 'excludedAgentIds'> {
   disposition: ReviewDisposition;
 }
 
@@ -73,6 +79,7 @@ export class TaskDispatcherService {
   private initialized = false;
   private checking = false;
   private schedulerId: ReturnType<typeof setInterval> | null = null;
+  private recoveredOnStart = false;
   private active = new Map<string, AbortService>();
 
   async initialize(): Promise<void> {
@@ -81,14 +88,6 @@ export class TaskDispatcherService {
 
     await LifecycleCapabilityModel.recoverPreviousRuntime('todo-execution', RUNTIME_INSTANCE_ID);
     await LifecycleCapabilityModel.recoverPreviousRuntime('in-review-verification', RUNTIME_INSTANCE_ID);
-
-    // No graph promise survives a process/service restart. Release every live
-    // database lease before taking new work so a crash cannot strand a task.
-    const recovered = await WorkTaskDispatchModel.recoverStale(0);
-    if (recovered.length > 0) {
-      console.warn(`[TaskDispatcher] Recovered ${ recovered.length } orphaned dispatch(es)`);
-    }
-
     await this.checkAndDispatch();
     this.schedulerId = setInterval(() => {
       this.checkAndDispatch().catch(err => console.error('[TaskDispatcher] Scheduled check failed:', err));
@@ -102,6 +101,7 @@ export class TaskDispatcherService {
 
   destroy(): void {
     this.initialized = false;
+    this.recoveredOnStart = false;
     if (this.schedulerId) {
       clearInterval(this.schedulerId);
       this.schedulerId = null;
@@ -130,6 +130,12 @@ export class TaskDispatcherService {
 
       const window = await SullaSettingsModel.get('heartbeatWindow', null);
       if (window && !isInsideWindow(window)) return;
+
+      if (!this.recoveredOnStart) {
+        const recovered = await WorkTaskDispatchModel.recoverStale(0);
+        this.recoveredOnStart = true;
+        if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } orphaned dispatch(es)`);
+      }
 
       await this.checkInProgressRecovery();
       await this.fillExecutionPool();
@@ -308,8 +314,10 @@ export class TaskDispatcherService {
 
   /** One service and one claim path own in_review. Disabling the core routine pauses it. */
   private async resolveVerificationOwner(): Promise<VerificationOwner | null> {
-    const configured = String(await SullaSettingsModel.get('taskVerifierOwner', 'core-routine'));
+    const configured = String(await SullaSettingsModel.get('taskVerifierOwner', 'legacy'));
     if (configured === 'legacy') return 'legacy';
+    const rolloutEnabled = await SullaSettingsModel.get('taskReviewCoreRoutineEnabled', false);
+    if (!rolloutEnabled) return null;
     const routine = await WorkflowModel.findById(REVIEW_PROJECT_ARTIFACT_ID);
     if (!routine || routine.attributesSnapshot.enabled === false) return null;
     return 'core-routine';
@@ -339,28 +347,46 @@ export class TaskDispatcherService {
         }).catch(err => console.error(`[TaskDispatcher] Could not write start comment for ${ dispatch.id }:`, err));
       }
 
+      const comments = isVerification ? await WorkItemsModel.listComments(task.id) : [];
+      let claimedArtifacts: ReviewArtifactComponent[] = [];
+      let excludedAgentIds: string[] = [];
+      let selectedReviewerAgentIds: string[] = [];
+      let generationHash = '';
+      if (isVerification && verificationOwner === 'core-routine') {
+        claimedArtifacts = await this.resolveReviewArtifacts(task, comments, dispatch.origin_evidence);
+        const binding = await WorkTaskDispatchModel.bindReviewGeneration(dispatch.id, claimedArtifacts);
+        if (binding.suppressed) return;
+        excludedAgentIds = binding.excludedAgentIds;
+        selectedReviewerAgentIds = REVIEWER_AGENT_IDS.filter(id => !excludedAgentIds.includes(id));
+        if (selectedReviewerAgentIds.length === 0) {
+          await WorkTaskDispatchModel.failVerification(dispatch.id, 'no_independent_reviewer_available');
+          return;
+        }
+        generationHash = binding.generationHash;
+      }
+
       const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(
         dispatch.agent_id,
         dispatch.thread_id,
         { isTrustedUser: 'trusted' },
       ) as { graph: any; state: any };
-      const comments = isVerification ? await WorkItemsModel.listComments(task.id) : [];
 
       if (isVerification) {
         const reviewPrompt = verificationOwner === 'core-routine'
-          ? this.buildProtectedReviewPrompt(task, dispatch, comments)
+          ? this.buildProtectedReviewPrompt(task, dispatch, comments, claimedArtifacts, generationHash, excludedAgentIds)
           : this.buildVerifierPrompt(task, dispatch.id, comments);
         state.messages.push({ role: 'user', content: reviewPrompt });
-        const llmTools = await Promise.all(VERIFIER_TOOLS.map(name => toolRegistry.convertToolToLLM(name)));
+        const verifierTools = verificationOwner === 'core-routine' ? PROTECTED_REVIEW_TOOLS : [...LEGACY_VERIFIER_TOOLS];
+        const llmTools = await Promise.all(verifierTools.map(name => toolRegistry.convertToolToLLM(name)));
         state.llmTools = llmTools;
-        state.metadata.allowedToolNames = [...VERIFIER_TOOLS];
+        state.metadata.allowedToolNames = verifierTools;
         state.metadata.verifierReadOnly = true;
         if (verificationOwner === 'core-routine') {
-          const reviewerAgentIds = REVIEWER_AGENT_IDS.filter(id => id !== dispatch.origin_agent_id);
-          const definition = this.buildReviewDefinition(dispatch.origin_agent_id ?? null);
+          const definition = this.buildReviewDefinition(excludedAgentIds);
           const playbook = createPlaybookState(definition as any, reviewPrompt);
           state.metadata.activeWorkflow = playbook;
-          await WorkTaskDispatchModel.recordReviewLaunch(dispatch.id, playbook.executionId, reviewerAgentIds);
+          state.metadata.verificationAdapters = ARTIFACT_VERIFICATION_ADAPTERS;
+          await WorkTaskDispatchModel.recordReviewLaunch(dispatch.id, playbook.executionId, selectedReviewerAgentIds);
           try {
             const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
             await WorkflowExecutionModel.markRunning({
@@ -405,20 +431,28 @@ export class TaskDispatcherService {
           if (!parsed) {
             await WorkTaskDispatchModel.failVerification(dispatch.id, 'malformed_protected_review_output');
           } else {
-            const codeArtifact = /code|pull|pr/i.test(parsed.artifactType);
-            const currentHead = codeArtifact ? await resolvePullRequestHead(task.github_issue, comments) : null;
-            if (codeArtifact && !currentHead) {
+            const currentArtifacts = await this.resolveReviewArtifacts(task, comments, dispatch.origin_evidence);
+            const currentGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);
+            const parsedCode = parsed.artifacts.filter(artifact => artifact.code || artifact.type === 'code_pr');
+            const currentCode = currentArtifacts.filter(artifact => artifact.code || artifact.type === 'code_pr');
+            const codeHeadsMatch = parsedCode.length === currentCode.length && currentCode.every(current =>
+              parsedCode.some(parsedArtifact => parsedArtifact.canonicalRef === current.canonicalRef && parsedArtifact.hash === current.hash),
+            );
+            if (currentCode.length > 0 && !codeHeadsMatch) {
               await WorkTaskDispatchModel.failVerification(dispatch.id, 'pull_request_artifact_unresolved');
-            } else if (currentHead && currentHead.sha !== parsed.artifactHash) {
+            } else if (parsed.generationHash !== generationHash || currentGenerationHash !== generationHash) {
               await WorkTaskDispatchModel.failVerification(
                 dispatch.id,
-                `artifact_head_changed:${ parsed.artifactHash }:${ currentHead.sha }`,
+                `artifact_generation_changed:${ generationHash }:${ currentGenerationHash }`,
               );
             } else {
-              const reviewerAgentIds = REVIEWER_AGENT_IDS.filter(id => id !== dispatch.origin_agent_id);
               const evidence: ProtectedReviewEvidence = {
                 workflowExecutionId: finalState.metadata.lastCompletedWorkflow.executionId,
-                reviewerAgentIds,
+                reviewerAgentIds:    selectedReviewerAgentIds,
+                excludedAgentIds,
+                generationHash,
+                artifactTypes:       parsed.artifactTypes,
+                artifacts:           parsed.artifacts,
                 artifactType:        parsed.artifactType,
                 artifactRef:         parsed.artifactRef,
                 artifactUrl:         parsed.artifactUrl,
@@ -432,7 +466,7 @@ export class TaskDispatcherService {
                 dispatch.id,
                 parsed.disposition,
                 evidence,
-                currentHead?.sha ?? parsed.artifactHash,
+                currentArtifacts,
               );
               if (!settled) {
                 await WorkTaskDispatchModel.failVerification(dispatch.id, 'protected_review_settlement_rejected');
@@ -525,6 +559,17 @@ export class TaskDispatcherService {
     const parsed = this.parseJsonObject(synthesis?.result);
     if (!parsed || !['PASS', 'REPAIRABLE', 'REPLAN', 'EXTERNAL_WAIT', 'BLOCKED'].includes(parsed.disposition)) return null;
     if (typeof parsed.artifactType !== 'string' || !parsed.artifactType.trim()) return null;
+    if (typeof parsed.generationHash !== 'string' || !/^[a-f0-9]{64}$/i.test(parsed.generationHash)) return null;
+    const artifactTypes = Array.isArray(parsed.artifactTypes) ? parsed.artifactTypes : [];
+    const allowedTypes = new Set(Object.keys(ARTIFACT_VERIFICATION_ADAPTERS));
+    if (artifactTypes.length === 0 || artifactTypes.some((value: unknown) => typeof value !== 'string' || !allowedTypes.has(value))) return null;
+    if (!Array.isArray(parsed.artifacts) || parsed.artifacts.length === 0) return null;
+    const artifacts = parsed.artifacts.filter((artifact: any) => artifact && typeof artifact === 'object');
+    if (artifacts.length !== parsed.artifacts.length || artifacts.some((artifact: any) =>
+      !allowedTypes.has(artifact.type) || typeof artifact.canonicalRef !== 'string' ||
+      typeof artifact.adapter !== 'string' || typeof artifact.code !== 'boolean' ||
+      artifact.adapter !== ARTIFACT_VERIFICATION_ADAPTERS[artifact.type as ReviewArtifactType].adapter ||
+      typeof artifact.hash !== 'string' || !/^[a-f0-9]{40,64}$/i.test(artifact.hash))) return null;
     if (typeof parsed.artifactRef !== 'string' || !parsed.artifactRef.trim()) return null;
     if (typeof parsed.artifactHash !== 'string' || !/^[a-f0-9]{40,64}$/i.test(parsed.artifactHash)) return null;
     if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) return null;
@@ -536,7 +581,17 @@ export class TaskDispatcherService {
       if (!wait.target || typeof wait.target !== 'object' || Array.isArray(wait.target)) return null;
     }
     return {
-      disposition:  parsed.disposition,
+      disposition:    parsed.disposition,
+      generationHash: parsed.generationHash.toLowerCase(),
+      artifactTypes:  artifactTypes as ReviewArtifactType[],
+      artifacts:      artifacts.map((artifact: any) => ({
+        type:         artifact.type,
+        canonicalRef: artifact.canonicalRef.trim(),
+        url:          typeof artifact.url === 'string' ? artifact.url.trim() : null,
+        hash:         artifact.hash.toLowerCase(),
+        adapter:      artifact.adapter.trim(),
+        code:         artifact.code,
+      })),
       artifactType: parsed.artifactType.trim(),
       artifactRef:  parsed.artifactRef.trim(),
       artifactUrl:  typeof parsed.artifactUrl === 'string' ? parsed.artifactUrl.trim() : null,
@@ -548,12 +603,12 @@ export class TaskDispatcherService {
     };
   }
 
-  private buildReviewDefinition(originAgentId: string | null): Record<string, any> {
+  private buildReviewDefinition(excludedAgentIds: string[]): Record<string, any> {
     const definition = JSON.parse(JSON.stringify(REVIEW_PROJECT_ARTIFACT_DEFINITION));
-    if (!originAgentId) return definition;
+    if (excludedAgentIds.length === 0) return definition;
     const excluded = new Set(
       definition.nodes
-        .filter((node: any) => (REVIEWER_NODE_IDS as readonly string[]).includes(node.id) && node.data?.config?.agentId === originAgentId)
+        .filter((node: any) => (REVIEWER_NODE_IDS as readonly string[]).includes(node.id) && excludedAgentIds.includes(node.data?.config?.agentId))
         .map((node: any) => node.id),
     );
     if (excluded.size === 0) return definition;
@@ -637,7 +692,30 @@ Your final response must contain exactly one machine block in this shape (the no
 Any missing block, unknown verdict, abbreviated/non-hex SHA, or malformed JSON is treated as a verifier failure and leaves the task in_review for retry.`;
   }
 
-  private buildProtectedReviewPrompt(task: WorkTaskRecord, dispatch: ClaimedDispatch['dispatch'], comments: { author: string | null; body: string }[]): string {
+  private async resolveReviewArtifacts(task: WorkTaskRecord, comments: { body: string }[], originEvidence?: Record<string, unknown> | null): Promise<ReviewArtifactComponent[]> {
+    const heads = await resolvePullRequestHeads(task.github_issue, comments);
+    const code = heads.map(head => ({
+      type:         'code_pr' as const,
+      canonicalRef: `${ head.owner.toLowerCase() }/${ head.repo.toLowerCase() }#${ head.pullNumber }`,
+      url:          `https://github.com/${ head.owner }/${ head.repo }/pull/${ head.pullNumber }`,
+      hash:         head.sha.toLowerCase(),
+      adapter:      'github-pr',
+      code:         true,
+    }));
+    const custodyHash = WorkTaskDispatchModel.reviewFingerprint([{
+      task:      { id: task.id, title: task.title, description: task.description, githubIssue: task.github_issue },
+      execution: originEvidence ?? null,
+    }]);
+    return [...code, {
+      type:         'projects_evidence',
+      canonicalRef: `projects-task:${ task.id }`,
+      hash:         custodyHash,
+      adapter:      'projects-read',
+      code:         false,
+    }];
+  }
+
+  private buildProtectedReviewPrompt(task: WorkTaskRecord, dispatch: ClaimedDispatch['dispatch'], comments: { author: string | null; body: string }[], artifacts: ReviewArtifactComponent[], generationHash: string, excludedAgentIds: string[]): string {
     const history = comments.slice(-50).map(comment => ({
       author: comment.author || 'unknown',
       body:   comment.body.slice(0, 4_000),
@@ -654,6 +732,10 @@ Originating worker: ${ dispatch.origin_agent_id ?? '(unknown)' }
 Originating execution ledger snapshot:
 ${ JSON.stringify(dispatch.origin_evidence ?? {}) }
 Artifact hint: ${ task.github_issue ?? '(resolve from custody evidence)' }
+Bound review generation: ${ generationHash }
+Structured artifact components: ${ JSON.stringify(artifacts) }
+Durably excluded worker/custodian identities: ${ JSON.stringify(excludedAgentIds) }
+Read-only adapter catalog: ${ JSON.stringify(ARTIFACT_VERIFICATION_ADAPTERS) }
 
 Acceptance contract:
 ${ task.description || '(no description)' }

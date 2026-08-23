@@ -21,6 +21,17 @@ export const REVIEWER_AGENT_IDS = [
   'technical-architect',
 ] as const;
 
+export const ARTIFACT_VERIFICATION_ADAPTERS = {
+  code_pr:                  { adapter: 'github-pr', tools: ['github_get_pr', 'github_get_pr_files', 'github_check_runs', 'git_status', 'git_diff', 'git_log', 'git_blame'] },
+  documentation:            { adapter: 'document-read', tools: ['read_file', 'file_search', 'list', 'snapshot', 'text', 'screenshot'] },
+  marketing_campaign:       { adapter: 'system-record-read', tools: ['get_project_item', 'list_task_comments', 'list', 'snapshot', 'text', 'screenshot'] },
+  research:                 { adapter: 'source-read', tools: ['read_file', 'file_search', 'list', 'snapshot', 'text', 'screenshot'] },
+  data_spreadsheet:         { adapter: 'spreadsheet-read', tools: ['read_file', 'file_search', 'list', 'snapshot', 'text', 'screenshot'] },
+  design_media:             { adapter: 'media-read', tools: ['read_file', 'file_search', 'list', 'snapshot', 'screenshot'] },
+  operations_configuration: { adapter: 'configuration-read', tools: ['read_file', 'file_search', 'get_project_item', 'list_task_comments', 'calendar_get', 'calendar_list'] },
+  projects_evidence:        { adapter: 'projects-read', tools: ['get_project_item', 'list_task_comments', 'list_task_waits'] },
+} as const;
+
 const READ_ONLY = [
   'You are an independent read-only reviewer. Inspect canonical evidence; summaries are only leads.',
   'Never edit files or records, change Projects state, commit, push, merge, deploy, spend money,',
@@ -90,9 +101,20 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
           additionalPrompt:         READ_ONLY,
           inheritParentToolPolicy:  true,
           successCriteria:          'Artifact types, immutable reference, acceptance criteria, dependencies, and risk lenses are identified from source evidence.',
-          completionContract:       'Return JSON with artifactTypes, canonicalRef, artifactHash, acceptanceCriteria, dependencies, risk, and requiredReviewLenses.',
-          orchestratorInstructions: `${ READ_ONLY } Inspect the claimed Projects task, bounded comments, originating execution evidence, and canonical artifact. Classify one or more of code_pr, documentation, marketing_campaign, research, data_spreadsheet, design_media, operations_configuration, or mixed. Identify the immutable SHA/content hash, stable URL/path/record ID, acceptance criteria, dependencies, and required review lenses. For code, resolve the remote draft PR, base, full head SHA, diff, and claimed checks. For non-code, identify the authoritative system of record and stable reference. Return JSON only with keys artifactTypes, canonicalRef, artifactUrl, artifactHash, acceptanceCriteria, dependencies, risk, and requiredReviewLenses.`,
+          completionContract:       'Return JSON with generationHash, artifactTypes, artifacts, acceptanceCriteria, dependencies, risk, and requiredReviewLenses.',
+          orchestratorInstructions: `${ READ_ONLY } Inspect the claimed Projects task, bounded comments, originating execution evidence, and canonical artifacts. The trigger contains the already-bound generation and structured artifact components; never replace or omit them. Classify one or more of code_pr, documentation, marketing_campaign, research, data_spreadsheet, design_media, operations_configuration, or projects_evidence. For each component return type, canonicalRef, url, immutable hash, adapter, and code boolean. Use the named read-only adapter for each non-code system of record. For every code component, resolve the remote draft PR, base, full head SHA, diff, and claimed checks. Return JSON only with keys generationHash, artifactTypes, artifacts, acceptanceCriteria, dependencies, risk, and requiredReviewLenses.`,
         },
+      },
+    },
+    {
+      id:       'node-review-fanout',
+      type:     'workflow',
+      position: { x: 500, y: 245 },
+      data:     {
+        label:    'Fan Out Independent Reviewers',
+        category: 'flow-control',
+        subtype:  'parallel',
+        config:   {},
       },
     },
     reviewerNode(
@@ -142,7 +164,7 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
           inheritParentToolPolicy:  true,
           successCriteria:          'One conservative verdict is tied to the current immutable artifact and every material finding.',
           completionContract:       'Return one JSON object matching the protected disposition schema.',
-          orchestratorInstructions: `${ READ_ONLY } Original evidence: {{trigger}} Classification: {{Classify Artifact and Risk}} Code review: {{Code and PR Reviewer}} Deliverable review: {{Authoritative Deliverable Reviewer}} Risk review: {{Regression and Authority Reviewer}} Reconcile conflicts conservatively. PASS requires applicable reviewers to prove every criterion against the same current artifact generation. REPAIRABLE means a precise reversible defect can return to todo/#668. REPLAN means the plan or architecture must go to planning/#667, including the third equivalent repair finding. EXTERNAL_WAIT requires a stable monitorable target such as pending checks, scheduled time, or external job. BLOCKED is only a true non-reversible human/authority gate. Return JSON only: {"disposition":"PASS|REPAIRABLE|REPLAN|EXTERNAL_WAIT|BLOCKED","artifactType":"...","artifactRef":"stable ref or full SHA","artifactUrl":"...","artifactHash":"40-64 hex SHA/hash","summary":"...","checks":[...],"findings":[...],"wait":{"kind":"github_checks|human_gate|scheduled_time|external_job","targetKey":"stable key","target":{},"fingerprint":"optional hex","nextCheckAt":"optional ISO","dueAt":"optional ISO"}|null}.`,
+          orchestratorInstructions: `${ READ_ONLY } Original evidence: {{trigger}} Classification: {{Classify Artifact and Risk}} Code review: {{Code and PR Reviewer}} Deliverable review: {{Authoritative Deliverable Reviewer}} Risk review: {{Regression and Authority Reviewer}} Reconcile conflicts conservatively. Echo the trigger generationHash exactly and return every structured artifact component. PASS requires applicable reviewers to prove every criterion against the same current artifact generation; every code component must carry its freshly resolved exact PR head. REPAIRABLE means a precise reversible defect can return to todo/#668. REPLAN means the plan or architecture must go to planning/#667, including repeated equivalent repair or verifier-infrastructure failures. EXTERNAL_WAIT requires a stable monitorable target such as pending checks, scheduled time, or external job. BLOCKED is only a true non-reversible human/authority gate. Return JSON only: {"disposition":"PASS|REPAIRABLE|REPLAN|EXTERNAL_WAIT|BLOCKED","generationHash":"64 hex","artifactTypes":["code_pr"],"artifacts":[{"type":"code_pr","canonicalRef":"owner/repo#1","url":"...","hash":"40-64 hex","adapter":"github-pr","code":true}],"artifactType":"compatibility summary","artifactRef":"stable ref or full SHA","artifactUrl":"...","artifactHash":"40-64 hex SHA/hash","summary":"...","checks":[...],"findings":[...],"wait":{"kind":"github_checks|human_gate|scheduled_time|external_job","targetKey":"stable key","target":{},"fingerprint":"optional hex","nextCheckAt":"optional ISO","dueAt":"optional ISO"}|null}.`,
         },
       },
     },
@@ -160,9 +182,10 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
   ],
   edges: [
     { id: 'e-review-trigger-classify', source: 'node-review-trigger', target: 'node-review-classify', animated: true },
-    { id: 'e-review-classify-code', source: 'node-review-classify', target: 'node-review-code', animated: true },
-    { id: 'e-review-classify-deliverable', source: 'node-review-classify', target: 'node-review-deliverable', animated: true },
-    { id: 'e-review-classify-risk', source: 'node-review-classify', target: 'node-review-risk', animated: true },
+    { id: 'e-review-classify-fanout', source: 'node-review-classify', target: 'node-review-fanout', animated: true },
+    { id: 'e-review-fanout-code', source: 'node-review-fanout', target: 'node-review-code', animated: true },
+    { id: 'e-review-fanout-deliverable', source: 'node-review-fanout', target: 'node-review-deliverable', animated: true },
+    { id: 'e-review-fanout-risk', source: 'node-review-fanout', target: 'node-review-risk', animated: true },
     { id: 'e-review-code-merge', source: 'node-review-code', target: 'node-review-merge', animated: true },
     { id: 'e-review-deliverable-merge', source: 'node-review-deliverable', target: 'node-review-merge', animated: true },
     { id: 'e-review-risk-merge', source: 'node-review-risk', target: 'node-review-merge', animated: true },

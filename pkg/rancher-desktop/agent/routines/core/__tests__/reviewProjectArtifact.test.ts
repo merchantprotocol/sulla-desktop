@@ -5,6 +5,7 @@ import { CORE_ROUTINES } from '../index';
 import {
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
   REVIEW_PROJECT_ARTIFACT_ID,
+  ARTIFACT_VERIFICATION_ADAPTERS,
   REVIEWER_AGENT_IDS,
   REVIEWER_NODE_IDS,
 } from '../reviewProjectArtifact';
@@ -38,5 +39,15 @@ describe('protected review core routine', () => {
   it('passes the canonical workflow graph validator', () => {
     const issues = validateWorkflowDefinition(REVIEW_PROJECT_ARTIFACT_DEFINITION);
     expect(issues.filter(issue => issue.severity === 'error')).toEqual([]);
+  });
+
+  it('selects explicit read-only adapters for every non-code artifact class', () => {
+    for (const type of ['documentation', 'marketing_campaign', 'research', 'data_spreadsheet', 'design_media', 'operations_configuration', 'projects_evidence'] as const) {
+      expect(ARTIFACT_VERIFICATION_ADAPTERS[type].adapter).toBeTruthy();
+      expect(ARTIFACT_VERIFICATION_ADAPTERS[type].tools.length).toBeGreaterThan(0);
+    }
+    expect(ARTIFACT_VERIFICATION_ADAPTERS.marketing_campaign.tools).toContain('get_project_item');
+    expect(ARTIFACT_VERIFICATION_ADAPTERS.data_spreadsheet.tools).toContain('snapshot');
+    expect(ARTIFACT_VERIFICATION_ADAPTERS.operations_configuration.tools).toContain('calendar_get');
   });
 });
