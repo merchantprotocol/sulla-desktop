@@ -1,4 +1,5 @@
 import { AbortService } from './AbortService';
+import { resolvePullRequestHead } from './GitHubPullRequestHeadService';
 import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
@@ -233,9 +234,9 @@ export class TaskDispatcherService {
         dispatch.thread_id,
         { isTrustedUser: 'trusted' },
       ) as { graph: any; state: any };
+      const comments = isVerification ? await WorkItemsModel.listComments(task.id) : [];
 
       if (isVerification) {
-        const comments = await WorkItemsModel.listComments(task.id);
         state.messages.push({ role: 'user', content: this.buildVerifierPrompt(task, dispatch.id, comments) });
         const llmTools = await Promise.all(VERIFIER_TOOLS.map(name => toolRegistry.convertToolToLLM(name)));
         state.llmTools = llmTools;
@@ -272,9 +273,21 @@ export class TaskDispatcherService {
           if (!parsed) {
             await WorkTaskDispatchModel.failVerification(dispatch.id, 'malformed_verifier_output');
           } else {
-            await WorkTaskDispatchModel.finalizeVerification(
-              dispatch.id, parsed.verdict, parsed.artifactSha, parsed.summary,
-            );
+            const currentHead = parsed.verdict === 'APPROVE'
+              ? await resolvePullRequestHead(task.github_issue, comments)
+              : null;
+            if (parsed.verdict === 'APPROVE' && !currentHead) {
+              await WorkTaskDispatchModel.failVerification(dispatch.id, 'pull_request_artifact_unresolved');
+            } else if (currentHead && currentHead.sha !== parsed.artifactSha) {
+              await WorkTaskDispatchModel.failVerification(
+                dispatch.id,
+                `artifact_head_changed:${ parsed.artifactSha }:${ currentHead.sha }`,
+              );
+            } else {
+              await WorkTaskDispatchModel.finalizeVerification(
+                dispatch.id, parsed.verdict, parsed.artifactSha, currentHead?.sha ?? null, parsed.summary,
+              );
+            }
           }
         }
       } else {
