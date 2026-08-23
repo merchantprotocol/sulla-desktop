@@ -114,9 +114,34 @@ describe('WorkTaskDispatchModel', () => {
     expect(clientQuery.mock.calls[2][1]).toEqual(['task-new', 'dispatcher']);
   });
 
+  it('claims review work under the same cross-kind lease and excludes the execution agent', async() => {
+    const task = { id: 'task-2', status: 'in_review', labels: [] } as any;
+    const dispatch = {
+      id: 'dispatch-review-1', task_id: 'task-2', kind: 'verification', attempt: 1,
+    } as any;
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [task] })
+      .mockResolvedValueOnce({ rows: [dispatch] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.claimNextReview('codex-test')).resolves.toMatchObject({
+      task: { id: 'task-2' }, dispatch: { kind: 'verification' },
+    });
+    expect(query.mock.calls[0][0]).toContain("t.status = 'in_review'");
+    expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
+    expect(query.mock.calls[0][0]).toContain("d.status = 'running'");
+    expect(query.mock.calls[0][0]).toContain("d.status IN ('failed', 'stale')");
+    expect(query.mock.calls[0][0]).toContain("interval '5 minutes'");
+    expect(query.mock.calls[0][0]).toContain("d.kind = 'execution'");
+    expect(query.mock.calls[0][0]).toContain("<> $3");
+    expect(query.mock.calls[1][0]).toContain("'verification'");
+    expect(query.mock.calls[2][0]).toContain("assignee = 'verifier'");
+  });
+
   it('releases stale planning leases back to todo in one transaction', async() => {
     const query = (jest.fn() as any)
-      .mockResolvedValueOnce({ rows: [{ id: 'dispatch-1', task_id: 'task-1' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'dispatch-1', task_id: 'task-1', kind: 'execution' }] })
       .mockResolvedValueOnce({ rows: [] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
@@ -126,5 +151,77 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[1][0]).toContain("status = 'todo'");
     expect(query.mock.calls[1][0]).toContain("status = 'planning'");
     expect(query.mock.calls[1][0]).toContain("assignee = 'dispatcher'");
+  });
+
+  it('returns stale verification leases to in_review instead of blocking them', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ id: 'dispatch-2', task_id: 'task-2', kind: 'verification' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.recoverStale(45)).resolves.toEqual(['task-2']);
+    expect(query.mock.calls[1][0]).toContain("status = 'in_review'");
+    expect(query.mock.calls[1][0]).toContain("assignee = 'verifier'");
+  });
+
+  it('settles the verifier verdict, exact head, comment, and task transition in one transaction', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-2' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.finalizeVerification(
+      'dispatch-2', 'APPROVE', 'a'.repeat(40), 'All criteria verified.',
+    )).resolves.toBe('APPROVE');
+    expect(query.mock.calls[1][0]).toContain('artifact_sha = $3');
+    expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
+    expect(query.mock.calls[3][0]).toContain("completed_at = CASE WHEN $2 = 'done'");
+    expect(query.mock.calls[3][1]).toEqual(['task-2', 'done', null]);
+  });
+
+  it('audits verifier crashes while leaving the task retryable in_review', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-2' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.failVerification('dispatch-2', 'boom')).resolves.toBe(true);
+    expect(query.mock.calls[0][0]).toContain("status = 'failed'");
+    expect(query.mock.calls[1][1][2]).toContain('released for retry');
+    expect(query.mock.calls[2][0]).toContain("status = 'in_review'");
+  });
+
+  it('returns concrete rework to the dispatcher', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-2' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.finalizeVerification(
+      'dispatch-2', 'REWORK', 'c'.repeat(40), 'Missing regression test.',
+    )).resolves.toBe('REWORK');
+    expect(query.mock.calls[4][1]).toEqual(['task-2', 'todo', 'dispatcher']);
+  });
+
+  it('routes a third identical rework to Heartbeat recovery', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-2' }] })
+      .mockResolvedValueOnce({ rows: [{ count: '2' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.finalizeVerification(
+      'dispatch-2', 'REWORK', 'd'.repeat(40), 'Same defect.',
+    )).resolves.toBe('BLOCKED');
+    expect(query.mock.calls[4][1]).toEqual(['task-2', 'blocked', 'heartbeat']);
+    expect(query.mock.calls[3][1][2]).toContain('retry ceiling');
   });
 });

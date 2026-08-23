@@ -29,6 +29,8 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'Heartbeat does not select or launch ordinary queue work',
   'Supervisor Loop',
   'TaskDispatcherService',
+  'separately bounded independent verifier pool',
+  'Never duplicate a live verification lease',
   'The Prospector',
   'Artifact-per-Cycle',
   // Blocked recovery (aQLP/haNi): independent high-reasoning planners,
