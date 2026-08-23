@@ -11,18 +11,17 @@ Useful for: gathering data from multiple sources, batch operations, anything you
 | `sulla meta/spawn_agent` | meta | Launch one or more sub-agents (fire-and-forget or blocking) |
 | `sulla agents/check_agent_jobs` | agents | Fallback/history read of async jobs (results normally arrive via parent-graph wake) |
 | `sulla agents/stop_agent_job` | agents | Kill switch — cancel a running async job |
-| `sulla agents/start_agent_conversation` | agents | Open a persistent, multi-turn conversation with a sub-agent |
-| `sulla agents/send_agent_message` | agents | Send a follow-up to an open conversation, get the reply |
-| `sulla agents/read_agent_conversation` | agents | Read a conversation transcript, or list open conversations |
-| `sulla agents/close_agent_conversation` | agents | Close a conversation and free its graph + state |
+| `sulla agents/start_agent_conversation` | agents | Deprecated compatibility shim; launches one async `spawn_agent` job |
+| `sulla agents/send_agent_message` | agents | Deprecated; returns guidance to use `spawn_agent` / `check_agent_jobs` |
+| `sulla agents/read_agent_conversation` | agents | Temporary read compatibility for pre-migration conversations |
+| `sulla agents/close_agent_conversation` | agents | Temporary close compatibility for pre-migration conversations |
 | `sulla agents/list_agents` | agents | Directory of live named agents you can `<channel:>`-message |
 
 **Important:** the tool registry resolves tools by **name only** — `sulla agents/spawn_agent` and `sulla anything/spawn_agent` also work because the backend ignores the category segment in the URL. But the canonical surfacing in `sulla meta --help` lists `spawn_agent` under `meta`. Use that form for clarity.
 
 **Pattern hierarchy (use the first that fits):**
 1. **`spawn_agent`** — THE delegation primitive. Fire one or many tasks; async results wake your graph automatically with the output injected. Prefer this for everything delegable.
-2. **`start_agent_conversation`** — legacy multi-turn wrapper: keeps a sub-agent alive for back-and-forth clarification. Use only when you genuinely need iterative dialogue with the same worker; for everything else prefer `spawn_agent`.
-3. **`<channel:NAME>` tags** — inter-agent MESSAGING (not delegation) to already-running named agents (heartbeat, workbench, mobile-relay); `list_agents` shows who's addressable. Add `wake` to trigger a turn.
+2. **`<channel:NAME>` tags** — inter-agent MESSAGING (not delegation) to already-running named agents (heartbeat, workbench, mobile-relay); `list_agents` shows who's addressable. Add `wake` to trigger a turn.
 
 ## `spawn_agent`
 
@@ -95,30 +94,21 @@ sulla agents/stop_agent_job '{"jobId":"agent-job-..."}'
 
 Cancels a running async job (misfired, duplicated, or no longer needed). Fires the job's abort signal, which cascades to every sub-agent it spawned — the same signal the user's stop button uses. **Cooperative, not preemptive:** jobs run in-process (not child processes), so a sub-agent mid-LLM/tool-call finishes that call, then unwinds on its next step. The job settles as `status: "stopped"`; `check_agent_jobs` is the fallback/history read to confirm. Returns `already-finished` if the job isn't running, `not-found` if it expired.
 
-## Conversations — talk back-and-forth with a sub-agent
+## Deprecated conversation compatibility
 
-**Legacy wrapper.** Prefer `spawn_agent` unless you genuinely need iterative back-and-forth with the same worker. A conversation keeps the sub-agent's thread alive so you can send follow-ups with full context retained. Conversations do **not** wake the parent graph — they block and return the reply.
+`conversationRunner` and the synchronous multi-turn lifecycle are retired. `start_agent_conversation` remains for compatibility but now launches one async `spawn_agent` job and returns `jobId` plus a `conversationId` alias. Results wake the parent graph normally.
 
 ```bash
-# Open — runs the first turn, returns the reply + a conversationId
+# Compatibility launch — returns jobId + conversationId alias immediately
 sulla agents/start_agent_conversation '{"prompt":"Draft a migration plan for X","agentId":"code-researcher","label":"migration"}'
-# → { "conversationId":"conv-...", "status":"completed", "reply":"..." }
+# → { "conversationId":"agent-job-...", "jobId":"agent-job-...", "status":"running", "deprecated":true }
 
-# Continue — the sub-agent still has the whole prior context
+# Follow-ups intentionally fail with migration guidance
 sulla agents/send_agent_message '{"conversationId":"conv-...","message":"Now account for the FK on table Y"}'
-# → { "status":"completed", "reply":"..." }
-
-# Catch up / list
-sulla agents/read_agent_conversation '{"conversationId":"conv-..."}'   # transcript + status
-sulla agents/read_agent_conversation '{}'                              # list all open conversations
-
-# Done — frees the sub-agent's graph + state
-sulla agents/close_agent_conversation '{"conversationId":"conv-..."}'
+# → error directing the caller to spawn_agent / check_agent_jobs
 ```
 
-- `start`/`send` **block** for the sub-agent's turn and return its reply. A sub-agent that emits `<AGENT_BLOCKED>` returns `status: "blocked"` with the requirement in `reply`.
-- Soft cap **20 open conversations**; idle ones pruned after **1 hour**. `close_agent_conversation` frees one eagerly.
-- Depth-guarded (max 3) like `spawn_agent`. In-memory only — does not survive a restart.
+`read_agent_conversation` and `close_agent_conversation` remain temporarily so an already-open pre-migration conversation can be inspected or released during a rolling upgrade. New work does not create conversation-registry entries. If iterative worker dialogue is needed later, it requires a separate `continue_agent_job` lifecycle rather than pretending async jobs retain live conversation state.
 
 ## `list_agents` — directory of live named agents
 
@@ -126,7 +116,7 @@ sulla agents/close_agent_conversation '{"conversationId":"conv-..."}'
 sulla agents/list_agents '{}'
 ```
 
-Returns the live named agents (heartbeat, workbench, mobile-relay, frontends) with channel, status, and uptime — the same roster that appears in turn context, queryable on demand. To message one, emit a channel tag in your reply: `<channel:heartbeat>your message</channel:heartbeat>` (fire-and-forget; the reply arrives on a later turn). This is different from conversations: `list_agents` + channel tags reach the *already-running long-lived* agents; `start_agent_conversation` spins up a *fresh delegated* sub-agent for synchronous back-and-forth.
+Returns the live named agents (heartbeat, workbench, mobile-relay, frontends) with channel, status, and uptime — the same roster that appears in turn context, queryable on demand. To message one, emit a channel tag in your reply: `<channel:heartbeat>your message</channel:heartbeat>` (fire-and-forget; the reply arrives on a later turn). This differs from delegation: channel tags reach *already-running long-lived* agents; `spawn_agent` launches fresh bounded work.
 
 ## Limits
 
@@ -134,7 +124,7 @@ Returns the live named agents (heartbeat, workbench, mobile-relay, frontends) wi
 - **Depth max 3** — a sub-agent that spawns sub-agents that spawn sub-agents will hit the depth guard at level 3.
 - **Job TTL: 1 hour** — auto-expire whether they finished or not. Cleaned up on retrieval.
 - **Jobs persist across restarts** — `agent_jobs` (Postgres, migration 0043) is the write-through store. A restart marks leftover `running` rows `failed` with `"app restarted mid-job"` so `check_agent_jobs` answers honestly. AbortControllers stay in-memory (a signal cannot survive a restart).
-- **Conversations are still in-memory only** — they do not survive a restart. Close them when done.
+- **Pre-migration conversations are in-memory only** — temporary read/close compatibility disappears naturally on restart.
 
 ## When to use what — sub-agent vs channel vs workflow
 

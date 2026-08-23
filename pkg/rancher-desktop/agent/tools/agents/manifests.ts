@@ -55,7 +55,7 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'start_agent_conversation',
-    description: 'LEGACY multi-turn wrapper. Prefer spawn_agent for delegation. Use only when you genuinely need iterative back-and-forth with the same worker. Runs the first turn and returns a conversationId. Continue with send_agent_message; end with close_agent_conversation.',
+    description: 'DEPRECATED compatibility wrapper over spawn_agent. Launches one async job and returns jobId plus a conversationId alias. Results wake the parent graph; use check_agent_jobs only as fallback/history. Multi-turn follow-ups are not supported.',
     category:    'agents',
     schemaDef:   {
       prompt:  { type: 'string', description: 'The opening message/instruction to the sub-agent.' },
@@ -67,7 +67,7 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'send_agent_message',
-    description: 'Send a follow-up message to an open sub-agent conversation and get its reply. The sub-agent retains its full prior context (same thread), so you can clarify, correct course, or ask it to continue. Blocks for the sub-agent\'s turn.',
+    description: 'DEPRECATED compatibility surface. Returns a clear error directing callers to spawn_agent and check_agent_jobs; async jobs do not preserve a multi-turn conversation.',
     category:    'agents',
     schemaDef:   {
       conversationId: { type: 'string', description: 'The conversationId from start_agent_conversation.' },
@@ -98,7 +98,7 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:           'list_agents',
-    description:    'List the live named agents you can message (heartbeat, workbench, mobile-relay, other frontends) with their channel, status, and uptime — the roster from turn context, queryable on demand. Message any with a <channel:CHANNEL>text</channel:CHANNEL> tag (fire-and-forget; the reply arrives on a later turn). For a synchronous back-and-forth with a freshly delegated sub-agent, use start_agent_conversation instead.',
+    description:    'List the live named agents you can message (heartbeat, workbench, mobile-relay, other frontends) with their channel, status, and uptime — the roster from turn context, queryable on demand. Message any with a <channel:CHANNEL>text</channel:CHANNEL> tag (fire-and-forget; the reply arrives on a later turn). Use spawn_agent for bounded delegated work.',
     category:       'agents',
     schemaDef:      {},
     operationTypes: ['read'],

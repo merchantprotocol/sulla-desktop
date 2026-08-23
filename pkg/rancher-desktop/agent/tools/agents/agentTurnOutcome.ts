@@ -1,18 +1,13 @@
 /**
  * Canonical reader for a finished sub-agent graph state.
  *
- * After `graph.execute(subState)` returns, both delegation paths derived the
- * same reply the same way — a blocked-status branch, then a
- * finalSummary → last-message → '(no output)' fallback chain. That logic lived
- * in two places (`conversationRunner.runConversationTurn` for persistent
- * multi-turn conversations, `spawn_agent.executeSingle` for fire-and-forget
- * jobs) and had to be kept byte-identical by hand. This is the single source of
- * truth both call.
+ * After `graph.execute(subState)` returns, delegation derives the reply through
+ * a blocked-status branch and finalSummary → last-message → '(no output)'
+ * fallback chain. This is the single source of truth for spawned jobs.
  *
  * Pure function of `finalState` — it does not touch the graph, the abort
- * service, or the synchronous multi-turn contract. It only turns a settled
- * state into `{ status, text }`; each caller maps that onto its own result
- * shape (TurnResult vs AgentJobResult).
+ * service, or job lifecycle. It only turns a settled state into
+ * `{ status, text }` for AgentJobResult.
  */
 
 export interface AgentTurnOutcome {
