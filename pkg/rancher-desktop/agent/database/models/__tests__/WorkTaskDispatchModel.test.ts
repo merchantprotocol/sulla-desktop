@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals'
 
 import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
-import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
+import { classifyInProgressRow, WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
 describe('WorkTaskDispatchModel', () => {
   let originalTransaction: any;
@@ -94,7 +94,7 @@ describe('WorkTaskDispatchModel', () => {
   });
 
   it('returns null without mutating when no eligible task exists', async() => {
-    const query = jest.fn(() => Promise.resolve({ rows: [] }));
+    const query = jest.fn(() => Promise.resolve({ rows: [] })) as any;
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
     await expect(WorkTaskDispatchModel.claimNext('opus-worker', 'runtime-1')).resolves.toBeNull();
@@ -385,6 +385,98 @@ describe('WorkTaskDispatchModel', () => {
     )).resolves.toBe('BLOCKED');
     expect(query.mock.calls[4][1]).toEqual(['task-2', 'blocked', 'heartbeat']);
     expect(query.mock.calls[3][1][2]).toContain('retry ceiling');
+  });
+
+  it('classifies the full in-progress safety matrix', () => {
+    const eligible = {
+      id:                   'task-1',
+      archived:             false,
+      epic_open:            true,
+      autonomous_owner:     true,
+      autonomous_labels:    true,
+      has_live_dispatch:    false,
+      has_active_child:     false,
+      stale_activity:       true,
+      has_active_agent_job: false,
+    } as any;
+    expect(classifyInProgressRow(eligible)).toEqual([]);
+    expect(classifyInProgressRow({
+      ...eligible,
+      archived:             true,
+      epic_open:            false,
+      autonomous_owner:     false,
+      autonomous_labels:    false,
+      has_live_dispatch:    true,
+      has_active_child:     true,
+      stale_activity:       false,
+      has_active_agent_job: true,
+    })).toEqual([
+      'archived', 'epic_closed', 'human_or_unknown_owner', 'non_autonomous_label',
+      'live_dispatch', 'active_child', 'recent_activity', 'active_agent_job',
+    ]);
+  });
+
+  it('uses the configured stale boundary and includes durable operation checks in report-only classification', async() => {
+    const originalQuery = postgresClient.query;
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
+    try {
+      await WorkTaskDispatchModel.findRecoverableInProgress(360, 25);
+      const [sql, values] = (postgresClient.query as any).mock.calls[0];
+      expect(sql).toContain("last_activity_at <= now() - ($4 * interval '1 minute')");
+      expect(sql).toContain("j.status = 'running'");
+      expect(sql).toContain("d.status = 'running'");
+      expect(values).toEqual(expect.arrayContaining([360, 25]));
+    } finally {
+      (postgresClient as any).query = originalQuery;
+    }
+  });
+
+  it('treats a concurrent activity change as a CAS miss without auditing or moving the task', async() => {
+    const query: any = jest.fn(() => Promise.resolve({ rows: [] }));
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    const candidate = {
+      task: { id: 'task-1' }, fingerprint: '2026-08-23T10:00:00.000Z', attemptCount: 0, exclusionReasons: [],
+    } as any;
+
+    await expect(WorkTaskDispatchModel.recoverOrphanedInProgress([candidate], 1, 3))
+      .resolves.toEqual([{ taskId: 'task-1', outcome: 'cas_miss' }]);
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][0]).toContain('t.last_activity_at = $5::timestamptz');
+    expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
+  });
+
+  it('audits and requeues an orphan, then blocks at the retry ceiling', async() => {
+    const task = {
+      id:               'task-1',
+      status:           'in_progress',
+      assignee:         'dispatcher',
+      last_activity_at: '2026-08-23T10:00:00.000Z',
+    } as any;
+    const candidate = {
+      task, fingerprint: task.last_activity_at, attemptCount: 1, exclusionReasons: [],
+    } as any;
+
+    const recoveredQuery = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [task] })
+      .mockResolvedValueOnce({ rows: [{ count: '1' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query: recoveredQuery }));
+    await expect(WorkTaskDispatchModel.recoverOrphanedInProgress([candidate], 1, 3))
+      .resolves.toEqual([{ taskId: 'task-1', outcome: 'recovered', attemptNumber: 2 }]);
+    expect(recoveredQuery.mock.calls[2][0]).toContain('work_task_recovery_attempts');
+    expect(recoveredQuery.mock.calls[3][0]).toContain('INSERT INTO work_task_comments');
+    expect(recoveredQuery.mock.calls[3][1]).toEqual(expect.arrayContaining(['todo', 'dispatcher']));
+
+    const ceilingQuery = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [task] })
+      .mockResolvedValueOnce({ rows: [{ count: '2' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query: ceilingQuery }));
+    await expect(WorkTaskDispatchModel.recoverOrphanedInProgress([candidate], 1, 3))
+      .resolves.toEqual([{ taskId: 'task-1', outcome: 'blocked_ceiling', attemptNumber: 3 }]);
+    expect(ceilingQuery.mock.calls[3][1]).toEqual(expect.arrayContaining(['blocked', 'heartbeat']));
   });
 });
 

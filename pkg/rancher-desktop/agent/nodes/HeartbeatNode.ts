@@ -5,7 +5,9 @@
 
 import { BaseNode } from './BaseNode';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
+import { WorkTaskDispatchModel } from '../database/models/WorkTaskDispatchModel';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 import { throwIfAborted } from '../services/AbortService';
 import { buildRoutinesDigest } from '../tools/workflow/routines_digest';
@@ -173,8 +175,8 @@ export class HeartbeatNode extends BaseNode {
     if (!isToolCallLoop) {
       let laneHealth = '';
       try {
-        const reportOpts = (state.metadata as any).heartbeatReportOpts
-          ?? await this.resolveHeartbeatProjectReportOpts();
+        const reportOpts = (state.metadata as any).heartbeatReportOpts ??
+          await this.resolveHeartbeatProjectReportOpts();
         laneHealth = await this.buildLaneHealthDigest(reportOpts);
       } catch (err) {
         console.warn(`[HeartbeatNode] Lane-health digest skipped: ${ (err as Error).message }`);
@@ -813,11 +815,24 @@ export class HeartbeatNode extends BaseNode {
     const latestCommentAt = await WorkItemsModel.latestCommentAtByTask(
       leafInProgress.map(task => task.id),
     );
+    const recoveryEnabled = await SullaSettingsModel.get('taskDispatcherInProgressRecoveryEnabled', false);
+    const deterministicRecoveryIds = new Set<string>();
+    if (recoveryEnabled === true || recoveryEnabled === 'true') {
+      const candidates = await WorkTaskDispatchModel.findRecoverableInProgress(STALE_IN_PROGRESS_HOURS * 60, 100);
+      for (const candidate of candidates) {
+        // An exact GitHub reference needs the dispatcher's remote activity
+        // check. Keep it visible here until that check classifies it.
+        if (candidate.exclusionReasons.length === 0 && !candidate.task.github_issue) {
+          deterministicRecoveryIds.add(candidate.task.id);
+        }
+      }
+    }
     for (const task of leafInProgress) {
-      const movedMs   = Date.parse(task.last_moved_at);
+      if (deterministicRecoveryIds.has(task.id)) continue;
+      const movedMs = Date.parse(task.last_moved_at);
       const commentMs = Date.parse(latestCommentAt.get(task.id) ?? '');
       const lastActivityMs = Math.max(
-        Number.isFinite(movedMs)   ? movedMs   : -Infinity,
+        Number.isFinite(movedMs) ? movedMs : -Infinity,
         Number.isFinite(commentMs) ? commentMs : -Infinity,
       );
       if (!Number.isFinite(lastActivityMs)) continue;

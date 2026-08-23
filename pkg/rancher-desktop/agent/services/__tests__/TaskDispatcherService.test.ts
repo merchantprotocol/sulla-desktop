@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const settingsGetMock: any = jest.fn();
 const recoverStaleMock: any = jest.fn(() => Promise.resolve([]));
+const findRecoverableInProgressMock: any = jest.fn(() => Promise.resolve([]));
+const recoverOrphanedInProgressMock: any = jest.fn(() => Promise.resolve([]));
 const countRunningMock: any = jest.fn(() => Promise.resolve(0));
 const claimNextMock: any = jest.fn(() => Promise.resolve(null));
 const claimNextReviewMock: any = jest.fn(() => Promise.resolve(null));
@@ -31,6 +33,8 @@ jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () =>
 jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
   WorkTaskDispatchModel: {
     recoverStale: recoverStaleMock,
+    findRecoverableInProgress: findRecoverableInProgressMock,
+    recoverOrphanedInProgress: recoverOrphanedInProgressMock,
     countRunning: countRunningMock,
     claimNext:    claimNextMock,
     claimNextReview: claimNextReviewMock,
@@ -77,6 +81,8 @@ describe('TaskDispatcherService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     recoverStaleMock.mockResolvedValue([]);
+    findRecoverableInProgressMock.mockResolvedValue([]);
+    recoverOrphanedInProgressMock.mockResolvedValue([]);
     countRunningMock.mockResolvedValue(0);
     claimNextMock.mockResolvedValue(null);
     claimNextReviewMock.mockResolvedValue(null);
@@ -111,6 +117,38 @@ describe('TaskDispatcherService', () => {
     expect(recoverStaleMock).toHaveBeenCalledWith(0);
     expect(recoverPreviousRuntimeMock).toHaveBeenCalledWith('todo-execution', expect.stringContaining('task-dispatcher-'));
     expect(countRunningMock).toHaveBeenCalled();
+  });
+
+  it('reports in-progress candidates without mutating while rollout is disabled', async() => {
+    findRecoverableInProgressMock.mockResolvedValue([{ task: { id: 'task-1' }, exclusionReasons: [] }]);
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+
+    await service.initialize();
+    service.destroy();
+
+    expect(findRecoverableInProgressMock).toHaveBeenCalledWith(360, 100);
+    expect(recoverOrphanedInProgressMock).not.toHaveBeenCalled();
+  });
+
+  it('recovers before normal refill when explicitly enabled and honors the batch and retry caps', async() => {
+    const candidate = { task: { id: 'task-1', github_issue: null }, exclusionReasons: [] };
+    findRecoverableInProgressMock.mockResolvedValue([candidate]);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskDispatcherInProgressRecoveryEnabled') return Promise.resolve(true);
+      if (key === 'taskDispatcherRecoveryBatchSize') return Promise.resolve(2);
+      if (key === 'taskDispatcherRecoveryRetryCeiling') return Promise.resolve(4);
+      return Promise.resolve(fallback);
+    });
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+
+    await service.initialize();
+    service.destroy();
+
+    expect(recoverOrphanedInProgressMock).toHaveBeenCalledWith([candidate], 2, 4);
+    expect(recoverOrphanedInProgressMock.mock.invocationCallOrder[0])
+      .toBeLessThan(countRunningMock.mock.invocationCallOrder[0]);
   });
 
   it('claims mechanically, executes the assigned worker, and returns completed work for review', async() => {

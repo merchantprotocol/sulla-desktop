@@ -10,6 +10,8 @@ const getTaskMock: any = jest.fn();
 const listCommentsMock: any = jest.fn();
 const latestCommentAtByTaskMock: any = jest.fn();
 const filterHeartbeatEligibleMock: any = jest.fn((tasks: any[]) => Promise.resolve(tasks));
+const settingsGetMock: any = jest.fn();
+const findRecoverableInProgressMock: any = jest.fn();
 
 jest.unstable_mockModule('../BaseNode', () => ({
   BaseNode: class MockBaseNode {
@@ -22,13 +24,13 @@ jest.unstable_mockModule('../BaseNode', () => ({
 
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
   WorkItemsModel: {
-    ensureTables: ensureTablesMock,
-    listProjects: listProjectsMock,
-    listTasks:    listTasksMock,
-    getProject:   getProjectMock,
-    getEpic:      getEpicMock,
-    getTask:      getTaskMock,
-    listComments: listCommentsMock,
+    ensureTables:          ensureTablesMock,
+    listProjects:          listProjectsMock,
+    listTasks:             listTasksMock,
+    getProject:            getProjectMock,
+    getEpic:               getEpicMock,
+    getTask:               getTaskMock,
+    listComments:          listCommentsMock,
     latestCommentAtByTask: latestCommentAtByTaskMock,
   },
 }));
@@ -38,6 +40,14 @@ jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () =>
     buildDigest:             jest.fn(() => Promise.resolve('LIFECYCLE: test')),
     filterHeartbeatEligible: filterHeartbeatEligibleMock,
   },
+}));
+
+jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
+  SullaSettingsModel: { get: settingsGetMock },
+}));
+
+jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
+  WorkTaskDispatchModel: { findRecoverableInProgress: findRecoverableInProgressMock },
 }));
 
 jest.unstable_mockModule('../../prompts/projectReport', () => ({
@@ -80,8 +90,12 @@ describe('HeartbeatNode Projects context injection', () => {
     getTaskMock.mockReset();
     listCommentsMock.mockReset();
     latestCommentAtByTaskMock.mockReset();
+    settingsGetMock.mockReset();
+    findRecoverableInProgressMock.mockReset();
     latestCommentAtByTaskMock.mockResolvedValue(new Map());
     filterHeartbeatEligibleMock.mockImplementation((tasks: any[]) => Promise.resolve(tasks));
+    settingsGetMock.mockImplementation((_key: string, fallback: unknown) => Promise.resolve(fallback));
+    findRecoverableInProgressMock.mockResolvedValue([]);
 
     ensureTablesMock.mockResolvedValue(undefined);
     buildProjectReportMock.mockResolvedValue('# Project report\n\n## Next up\n- [critical] Hydrate me (id task1)');
@@ -170,19 +184,46 @@ describe('HeartbeatNode Projects context injection', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
-          id: 'blocked1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
-          title: 'Blocked first', description: 'Needs recovery.', status: 'blocked',
-          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+          id:           'blocked1',
+          project_id:   'proj1',
+          epic_id:      'epic1',
+          parent_id:    null,
+          title:        'Blocked first',
+          description:  'Needs recovery.',
+          status:       'blocked',
+          priority:     'critical',
+          assignee:     'heartbeat',
+          labels:       [],
+          due_at:       null,
+          github_issue: null,
         },
         {
-          id: 'planning1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
-          title: 'Planning active', description: 'Council running.', status: 'planning',
-          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+          id:           'planning1',
+          project_id:   'proj1',
+          epic_id:      'epic1',
+          parent_id:    null,
+          title:        'Planning active',
+          description:  'Council running.',
+          status:       'planning',
+          priority:     'critical',
+          assignee:     'heartbeat',
+          labels:       [],
+          due_at:       null,
+          github_issue: null,
         },
         {
-          id: 'action1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
-          title: 'Actionable peer', description: 'Ship this.', status: 'todo',
-          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+          id:           'action1',
+          project_id:   'proj1',
+          epic_id:      'epic1',
+          parent_id:    null,
+          title:        'Actionable peer',
+          description:  'Ship this.',
+          status:       'todo',
+          priority:     'critical',
+          assignee:     'heartbeat',
+          labels:       [],
+          due_at:       null,
+          github_issue: null,
         },
       ])
       .mockResolvedValueOnce([]);
@@ -206,14 +247,32 @@ describe('HeartbeatNode Projects context injection', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
-          id: 'planning1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
-          title: 'Planning active', description: 'Council running.', status: 'planning',
-          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+          id:           'planning1',
+          project_id:   'proj1',
+          epic_id:      'epic1',
+          parent_id:    null,
+          title:        'Planning active',
+          description:  'Council running.',
+          status:       'planning',
+          priority:     'critical',
+          assignee:     'heartbeat',
+          labels:       [],
+          due_at:       null,
+          github_issue: null,
         },
         {
-          id: 'blocked1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
-          title: 'Blocked recovery', description: 'Needs council.', status: 'blocked',
-          priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+          id:           'blocked1',
+          project_id:   'proj1',
+          epic_id:      'epic1',
+          parent_id:    null,
+          title:        'Blocked recovery',
+          description:  'Needs council.',
+          status:       'blocked',
+          priority:     'critical',
+          assignee:     'heartbeat',
+          labels:       [],
+          due_at:       null,
+          github_issue: null,
         },
       ])
       .mockResolvedValueOnce([]);
@@ -558,6 +617,10 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     listTasksMock.mockReset();
     latestCommentAtByTaskMock.mockReset();
     latestCommentAtByTaskMock.mockResolvedValue(new Map());
+    settingsGetMock.mockReset();
+    settingsGetMock.mockImplementation((_key: string, fallback: unknown) => Promise.resolve(fallback));
+    findRecoverableInProgressMock.mockReset();
+    findRecoverableInProgressMock.mockResolvedValue([]);
   });
 
   it('returns empty when the lane is healthy (single fresh in_progress, nothing off-lane)', async() => {
@@ -617,6 +680,25 @@ describe('HeartbeatNode lane-health digest (Sw8c)', () => {
     expect(digest).not.toContain('LANE DRIFT');
     // Only two queries — no third heartbeat-assignee probe.
     expect(listTasksMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves deterministic stale recovery to the dispatcher when recovery is enabled', async() => {
+    listTasksMock
+      .mockResolvedValueOnce([
+        { id: 'task1', project_id: 'proj1', title: 'Recoverable orphan', last_moved_at: staleIso },
+      ])
+      .mockResolvedValueOnce([]);
+    settingsGetMock.mockResolvedValue(true);
+    findRecoverableInProgressMock.mockResolvedValue([{
+      task: { id: 'task1', github_issue: null }, exclusionReasons: [],
+    }]);
+
+    const node = await makeNode();
+    const digest = await node.buildLaneHealthDigest({ assignee: 'heartbeat' });
+
+    expect(findRecoverableInProgressMock).toHaveBeenCalledWith(360, 100);
+    expect(digest).not.toContain('STALE');
+    expect(digest).toBe('');
   });
 
   it('excludes a parent task from DUPLICATE ACTIVE and STALE (parent + one subtask is healthy)', async() => {
@@ -717,8 +799,8 @@ describe('HeartbeatNode next-action digest (S75N)', () => {
       comment('c2', 'Made progress on hydration.'),
       comment('c3', 'Shipped the guard.'),
       comment('c4',
-        'Landed the audit trail. Remaining P1s under o8SF: Di0x (playbooks) and grbz (cycle budget). '
-        + 'Next step: implement next-action extraction. PR #579 still open; #577 already merged.',
+        'Landed the audit trail. Remaining P1s under o8SF: Di0x (playbooks) and grbz (cycle budget). ' +
+        'Next step: implement next-action extraction. PR #579 still open; #577 already merged.',
         'sulla', '2026-08-17T13:03:00.000Z'),
     ];
     const digest = node.buildNextActionDigest(comments, ['Di0x', 'grbz', 'S75N']);

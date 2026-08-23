@@ -1,8 +1,11 @@
+import { Octokit } from '@octokit/rest';
+
 import { AbortService } from './AbortService';
 import { resolvePullRequestHead } from './GitHubPullRequestHeadService';
 import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
+import { getIntegrationService } from './IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import { WorkTaskDispatchModel, type ClaimedDispatch, type VerificationVerdict } from '../database/models/WorkTaskDispatchModel';
@@ -17,6 +20,9 @@ const DEFAULT_AGENT_ID = 'opus-worker';
 const RUNTIME_INSTANCE_ID = `task-dispatcher-${ process.pid }-${ Date.now() }`;
 const DEFAULT_VERIFIER_AGENT_ID = 'codex-test';
 const DEFAULT_VERIFIER_TIMEOUT_MINUTES = 45;
+const DEFAULT_IN_PROGRESS_STALE_MINUTES = 360;
+const DEFAULT_RECOVERY_BATCH_SIZE = 1;
+const DEFAULT_RECOVERY_RETRY_CEILING = 3;
 const VERIFIER_TOOLS = [
   'file_search', 'read_file',
   'git_status', 'git_diff', 'git_log', 'git_blame',
@@ -105,6 +111,7 @@ export class TaskDispatcherService {
       const window = await SullaSettingsModel.get('heartbeatWindow', null);
       if (window && !isInsideWindow(window)) return;
 
+      await this.checkInProgressRecovery();
       await this.fillExecutionPool();
       await this.fillVerificationPool();
     } catch (err) {
@@ -120,6 +127,72 @@ export class TaskDispatcherService {
       }).catch(reportErr => console.error('[TaskDispatcher] Capability report failed:', reportErr));
     } finally {
       this.checking = false;
+    }
+  }
+
+  private async checkInProgressRecovery(): Promise<void> {
+    const enabledSetting = await SullaSettingsModel.get('taskDispatcherInProgressRecoveryEnabled', false);
+    const enabled = enabledSetting === true || enabledSetting === 'true';
+    const staleConfigured = Number(await SullaSettingsModel.get(
+      'taskDispatcherInProgressStaleMinutes', DEFAULT_IN_PROGRESS_STALE_MINUTES,
+    ));
+    const batchConfigured = Number(await SullaSettingsModel.get(
+      'taskDispatcherRecoveryBatchSize', DEFAULT_RECOVERY_BATCH_SIZE,
+    ));
+    const ceilingConfigured = Number(await SullaSettingsModel.get(
+      'taskDispatcherRecoveryRetryCeiling', DEFAULT_RECOVERY_RETRY_CEILING,
+    ));
+    const staleMinutes = Math.max(15, staleConfigured || DEFAULT_IN_PROGRESS_STALE_MINUTES);
+    const batchSize = Math.max(1, Math.min(25, batchConfigured || DEFAULT_RECOVERY_BATCH_SIZE));
+    const retryCeiling = Math.max(1, Math.min(10, ceilingConfigured || DEFAULT_RECOVERY_RETRY_CEILING));
+    const candidates = await WorkTaskDispatchModel.findRecoverableInProgress(staleMinutes, 100);
+
+    for (const candidate of candidates.filter(item => item.exclusionReasons.length === 0 && item.task.github_issue)) {
+      if (await this.hasActiveLinkedPullRequest(candidate.task.github_issue!)) {
+        candidate.exclusionReasons.push('linked_external_operation');
+      }
+    }
+
+    const eligible = candidates.filter(candidate => candidate.exclusionReasons.length === 0);
+    const excludedCounts = candidates.flatMap(candidate => candidate.exclusionReasons)
+      .reduce<Record<string, number>>((counts, reason) => {
+        counts[reason] = (counts[reason] || 0) + 1;
+        return counts;
+      }, {});
+    console.log('[TaskDispatcher] In-progress recovery report', {
+      mode:     enabled ? 'enabled' : 'report-only',
+      scanned:  candidates.length,
+      eligible: eligible.length,
+      excluded: excludedCounts,
+      staleMinutes,
+      batchSize,
+      retryCeiling,
+    });
+
+    if (!enabled || eligible.length === 0) return;
+    const recovered = await WorkTaskDispatchModel.recoverOrphanedInProgress(eligible, batchSize, retryCeiling);
+    const counts = recovered.reduce<Record<string, number>>((outcomes, result) => {
+      outcomes[result.outcome] = (outcomes[result.outcome] || 0) + 1;
+      return outcomes;
+    }, {});
+    console.warn('[TaskDispatcher] In-progress recovery outcomes', counts);
+  }
+
+  private async hasActiveLinkedPullRequest(reference: string): Promise<boolean> {
+    const match = /^(?:https?:\/\/github\.com\/)?([^/\s]+)\/([^/#\s]+?)(?:\/pull\/|#)(\d+)$/i.exec(reference.trim());
+    if (!match) return false;
+    try {
+      const token = await getIntegrationService().getIntegrationValue('github', 'token');
+      if (!token) return true;
+      const octokit = new Octokit({ auth: token.value });
+      const { data } = await octokit.pulls.get({
+        owner: match[1], repo: match[2], pull_number: Number(match[3]),
+      });
+      return data.state === 'open';
+    } catch (err: any) {
+      if (err?.status === 404) return false;
+      console.warn(`[TaskDispatcher] Linked PR check failed for ${ reference }; excluding candidate`, err);
+      return true;
     }
   }
 
