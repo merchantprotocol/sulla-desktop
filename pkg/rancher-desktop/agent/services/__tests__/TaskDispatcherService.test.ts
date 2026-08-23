@@ -4,7 +4,7 @@ const settingsGetMock: any = jest.fn();
 const recoverStaleMock: any = jest.fn(() => Promise.resolve([]));
 const countRunningMock: any = jest.fn(() => Promise.resolve(0));
 const claimNextMock: any = jest.fn(() => Promise.resolve(null));
-const settleMock: any = jest.fn(() => Promise.resolve());
+const finalizeMock: any = jest.fn(() => Promise.resolve());
 const touchMock: any = jest.fn(() => Promise.resolve());
 const recordEvidenceMock: any = jest.fn(() => Promise.resolve());
 const addCommentMock: any = jest.fn(() => Promise.resolve());
@@ -21,7 +21,7 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
     recoverStale:   recoverStaleMock,
     countRunning:   countRunningMock,
     claimNext:      claimNextMock,
-    settle:         settleMock,
+    finalize:       finalizeMock,
     touch:          touchMock,
     recordEvidence: recordEvidenceMock,
   },
@@ -60,6 +60,7 @@ describe('TaskDispatcherService', () => {
     workflowFindByIdMock.mockResolvedValue({ attributes: { enabled: true } });
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
+      if (key === 'taskDispatcherExecutionOwner') return Promise.resolve('core-routine');
       return Promise.resolve(fallback);
     });
   });
@@ -93,7 +94,21 @@ describe('TaskDispatcherService', () => {
       .mockResolvedValueOnce(claim)
       .mockResolvedValue(null);
     executeMock.mockResolvedValue({
-      metadata: { agent: { status: 'completed' }, finalSummary: 'Draft PR opened and tests passed.' },
+      metadata: {
+        agent:          { status: 'completed' },
+        finalSummary:   'Draft PR opened and tests passed.',
+        activeWorkflow: {
+          executionId: 'wfp-1',
+          nodeOutputs: {
+            'node-todo-classify': { result: '{"workType":"coding/repository","selectedAgents":[{"agentId":"opus-worker"}]}' },
+            'node-todo-workers':  { result: '{"childIds":["child-1"]}' },
+            'node-todo-review':   { result: '{"verdict":"pass","evidence":["inspected remote PR"]}' },
+            'node-todo-repair':   { result: '{"route":"pass"}' },
+            'node-todo-custody':  { result: '{"verdict":"pass","artifactType":"code","artifactUrl":"https://github.com/o/r/pull/1","artifactRef":"feature/x","headSha":"1234567","contentHash":"1234567","verificationEvidence":["tests passed"],"reviewerVerdict":"pass"}' },
+            'node-todo-record':   { result: '{"recorded":true,"taskId":"task-1","commentId":"comment-1","nextState":"in_review"}' },
+          },
+        },
+      },
       messages: [],
     });
 
@@ -106,18 +121,29 @@ describe('TaskDispatcherService', () => {
 
     expect(claimNextMock).toHaveBeenCalledWith('opus-worker', 'core-todo');
     expect(executeMock).toHaveBeenCalled();
-    expect(settleMock).toHaveBeenCalledWith(
-      'dispatch-1', 'completed', 'Draft PR opened and tests passed.', undefined,
-    );
-    expect(updateTaskMock).toHaveBeenCalledWith('task-1', {
-      status: 'in_review', assignee: 'heartbeat', actor: 'dispatcher',
-    });
+    expect(finalizeMock).toHaveBeenCalledWith('dispatch-1', 'task-1', expect.objectContaining({
+      dispatchStatus: 'completed', taskStatus: 'in_review', taskAssignee: 'heartbeat',
+    }));
   });
 
   it('uses the legacy executor only when the explicit fallback owner is configured', async() => {
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
       if (key === 'taskDispatcherExecutionOwner') return Promise.resolve('legacy');
+      return Promise.resolve(fallback);
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+
+    expect(claimNextMock).toHaveBeenCalledWith('opus-worker', 'legacy-worker');
+  });
+
+  it('ships dark by leaving legacy as the default execution owner', async() => {
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled') return Promise.resolve(true);
       return Promise.resolve(fallback);
     });
 
@@ -179,12 +205,105 @@ describe('TaskDispatcherService', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     service.destroy();
 
-    expect(recordEvidenceMock).toHaveBeenCalledWith('dispatch-2', expect.objectContaining({
-      reviewerVerdict: 'replan',
-      terminalReason:  'missing remote PR',
+    expect(finalizeMock).toHaveBeenCalledWith('dispatch-2', 'task-2', expect.objectContaining({
+      taskStatus:   'planning',
+      taskAssignee: 'dispatcher',
+      evidence:     expect.objectContaining({
+        reviewerVerdict: 'replan',
+        terminalReason:  'missing remote PR',
+      }),
     }));
-    expect(updateTaskMock).toHaveBeenCalledWith('task-2', {
-      status: 'planning', assignee: 'dispatcher', actor: 'dispatcher',
+  });
+
+  it('routes a bare completion without custody proof to planning as a failed contract', async() => {
+    const claim = {
+      task: {
+        id: 'task-3', title: 'Unsafe summary', description: '', project_id: 'project-1', epic_id: 'epic-1', priority: 'high',
+      },
+      dispatch: {
+        id: 'dispatch-3', task_id: 'task-3', agent_id: 'opus-worker', thread_id: 'thread-3',
+      },
+    };
+    claimNextMock.mockResolvedValueOnce(claim).mockResolvedValue(null);
+    executeMock.mockResolvedValue({
+      metadata: { agent: { status: 'completed' }, finalSummary: 'Looks good.' },
+      messages: [],
     });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    service.destroy();
+
+    expect(finalizeMock).toHaveBeenCalledWith('dispatch-3', 'task-3', expect.objectContaining({
+      dispatchStatus: 'failed',
+      taskStatus:     'planning',
+      error:          'core routine returned without structured acceptance and custody evidence',
+    }));
+  });
+
+  it('rejects a pass verdict that lacks verifiable remote custody evidence', async() => {
+    const claim = {
+      task: {
+        id: 'task-5', title: 'Prove it', description: '', project_id: 'project-1', epic_id: 'epic-1', priority: 'high',
+      },
+      dispatch: {
+        id: 'dispatch-5', task_id: 'task-5', agent_id: 'opus-worker', thread_id: 'thread-5',
+      },
+    };
+    claimNextMock.mockResolvedValueOnce(claim).mockResolvedValue(null);
+    executeMock.mockResolvedValue({
+      metadata: {
+        agent:          { status: 'completed' },
+        finalSummary:   'Pass.',
+        activeWorkflow: {
+          executionId: 'wfp-5',
+          nodeOutputs: {
+            'node-todo-classify': { result: '{"workType":"coding/repository"}' },
+            'node-todo-review':   { result: '{"verdict":"pass","evidence":["summary only"]}' },
+            'node-todo-repair':   { result: '{"route":"pass"}' },
+            'node-todo-custody':  { result: '{"verdict":"pass","reviewerVerdict":"pass"}' },
+            'node-todo-record':   { result: '{"recorded":true}' },
+          },
+        },
+      },
+      messages: [],
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    service.destroy();
+
+    expect(finalizeMock).toHaveBeenCalledWith('dispatch-5', 'task-5', expect.objectContaining({
+      dispatchStatus: 'failed',
+      taskStatus:     'planning',
+      error:          'structured review or durable artifact custody evidence is incomplete',
+    }));
+  });
+
+  it('routes internal execution errors to planning instead of blocked', async() => {
+    const claim = {
+      task: {
+        id: 'task-4', title: 'Retry me', description: '', project_id: 'project-1', epic_id: 'epic-1', priority: 'high',
+      },
+      dispatch: {
+        id: 'dispatch-4', task_id: 'task-4', agent_id: 'opus-worker', thread_id: 'thread-4',
+      },
+    };
+    claimNextMock.mockResolvedValueOnce(claim).mockResolvedValue(null);
+    executeMock.mockRejectedValue(new Error('worker transport failed'));
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    service.destroy();
+
+    expect(finalizeMock).toHaveBeenCalledWith('dispatch-4', 'task-4', expect.objectContaining({
+      dispatchStatus: 'failed', taskStatus: 'planning', taskAssignee: 'dispatcher',
+    }));
   });
 });

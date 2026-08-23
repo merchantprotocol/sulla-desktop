@@ -107,12 +107,12 @@ export class TaskDispatcherService {
 
   /**
    * One scheduler and one database claim path own todo. The core routine is
-   * the default; `taskDispatcherExecutionOwner=legacy` is the explicit,
-   * reversible rollout fallback. Disabling the locked routine pauses new
-   * claims rather than silently starting the legacy implementation beside it.
+   * activated only by `taskDispatcherExecutionOwner=core-routine`; legacy is
+   * the dark-rollout default. Once core owns dispatch, disabling the locked
+   * routine pauses claims instead of starting a second owner beside it.
    */
   private async resolveExecutionOwner(): Promise<ExecutionOwner | null> {
-    const configured = String(await SullaSettingsModel.get('taskDispatcherExecutionOwner', 'core-routine'));
+    const configured = String(await SullaSettingsModel.get('taskDispatcherExecutionOwner', 'legacy'));
     if (configured === 'legacy') return 'legacy';
 
     const routine = await WorkflowModel.findById(EXECUTE_PROJECT_TODO_ID);
@@ -175,10 +175,10 @@ export class TaskDispatcherService {
       const outcome = extractAgentTurnOutcome(finalState);
       const summary = outcome.text.slice(0, 8_000);
 
-      await this.finalizeClaim(claim, outcome.status, summary, finalState.metadata?.activeWorkflow);
+      await this.finalizeClaim(claim, outcome.status, summary, executionOwner, finalState.metadata?.activeWorkflow);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await this.finalizeClaim(claim, 'failed', message);
+      await this.finalizeClaim(claim, 'failed', message, executionOwner);
     } finally {
       clearInterval(leaseTimer);
       this.active.delete(dispatch.id);
@@ -193,35 +193,39 @@ export class TaskDispatcherService {
     claim: ClaimedDispatch,
     status: 'completed' | 'blocked' | 'failed',
     summary: string,
+    executionOwner: ExecutionOwner,
     playbook?: WorkflowPlaybookState,
   ): Promise<void> {
     const { dispatch, task } = claim;
     const evidence = playbook ? this.extractWorkflowEvidence(playbook) : null;
-    if (evidence) {
-      await WorkTaskDispatchModel.recordEvidence(dispatch.id, evidence.ledger);
-    }
-
-    const taskStatus = status === 'completed'
-      ? evidence?.nextState ?? 'in_review'
-      : 'blocked';
+    const coreContractMissing = executionOwner === 'core-routine' && !evidence;
+    const taskStatus = status === 'failed' || coreContractMissing
+      ? 'planning'
+      : status === 'completed'
+        ? evidence?.nextState ?? 'in_review'
+        : evidence?.nextState === 'blocked' ? 'blocked' : 'planning';
     const assignee = taskStatus === 'planning' ? 'dispatcher' : 'heartbeat';
-    const result = status === 'failed' ? undefined : summary;
-    const error = status === 'failed' ? summary : undefined;
-    const comment = status === 'failed'
-      ? `Dispatch ${ dispatch.id } failed: ${ summary }`
+    const dispatchStatus = status === 'failed' || coreContractMissing || evidence?.contractValid === false
+      ? 'failed'
+      : taskStatus === 'blocked' ? 'blocked' : 'completed';
+    const contractError = coreContractMissing
+      ? 'core routine returned without structured acceptance and custody evidence'
+      : evidence?.contractError;
+    const result = dispatchStatus === 'failed' ? undefined : summary;
+    const error = dispatchStatus === 'failed' ? contractError || summary : undefined;
+    const comment = dispatchStatus === 'failed'
+      ? `Dispatch ${ dispatch.id } requires replanning: ${ error }`
       : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }.\n\n${ summary }`;
 
-    const settled = await Promise.allSettled([
-      WorkTaskDispatchModel.settle(dispatch.id, status, result, error),
-      WorkItemsModel.addComment({ task_id: task.id, author: 'dispatcher', body: comment }),
-      WorkItemsModel.updateTask(task.id, { status: taskStatus, assignee, actor: 'dispatcher' }),
-    ]);
-
-    for (const outcome of settled) {
-      if (outcome.status === 'rejected') {
-        console.error(`[TaskDispatcher] Could not finalize ${ dispatch.id }:`, outcome.reason);
-      }
-    }
+    await WorkTaskDispatchModel.finalize(dispatch.id, task.id, {
+      dispatchStatus,
+      taskStatus,
+      taskAssignee: assignee,
+      comment,
+      result,
+      error,
+      evidence:     evidence?.ledger,
+    });
   }
 
   private parseJsonResult(value: unknown): Record<string, any> | null {
@@ -238,8 +242,10 @@ export class TaskDispatcherService {
   }
 
   private extractWorkflowEvidence(playbook: WorkflowPlaybookState): {
-    ledger:    WorkTaskDispatchEvidence;
-    nextState: 'in_review' | 'planning' | 'blocked';
+    ledger:         WorkTaskDispatchEvidence;
+    nextState:      'in_review' | 'planning' | 'blocked';
+    contractValid:  boolean;
+    contractError?: string;
   } {
     const output = (id: string) => this.parseJsonResult(playbook.nodeOutputs[id]?.result);
     const classifier = output('node-todo-classify');
@@ -247,16 +253,46 @@ export class TaskDispatcherService {
     const review = output('node-todo-review');
     const repair = output('node-todo-repair');
     const custody = output('node-todo-custody');
+    const record = output('node-todo-record');
     const custodyVerdict = String(custody?.verdict || '').toLowerCase();
     const repairRoute = String(repair?.route || '').toLowerCase();
-    const nextState = custodyVerdict === 'pass' && ['pass', 'repaired'].includes(repairRoute)
+    const reviewerVerdict = String(custody?.reviewerVerdict || review?.verdict || '').toLowerCase();
+    const workType = String(classifier?.workType || '').toLowerCase();
+    const isCode = workType.includes('coding') || workType.includes('repository') || String(custody?.artifactType || '').toLowerCase() === 'code';
+    const hasReviewEvidence = review?.evidence !== undefined && review?.evidence !== null && JSON.stringify(review.evidence).length > 2;
+    const hasVerification = custody?.verificationEvidence !== undefined && custody?.verificationEvidence !== null && JSON.stringify(custody.verificationEvidence).length > 2;
+    const hasStableArtifact = Boolean(custody?.artifactUrl || custody?.artifactLocation || custody?.artifactRef);
+    const headSha = String(custody?.headSha || '');
+    const hasCodeCustody = !isCode || (
+      /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(String(custody?.artifactUrl || '')) &&
+      Boolean(custody?.artifactRef) &&
+      /^[0-9a-f]{7,40}$/i.test(headSha) &&
+      String(custody?.contentHash || '') === headSha
+    );
+    const passContract = custodyVerdict === 'pass' &&
+      ['pass', 'repaired'].includes(repairRoute) &&
+      reviewerVerdict === 'pass' &&
+      hasReviewEvidence &&
+      hasVerification &&
+      hasStableArtifact &&
+      hasCodeCustody &&
+      record?.recorded === true;
+    const explicitExternalBlock = custodyVerdict === 'blocked' &&
+      repairRoute === 'blocked' &&
+      Boolean(custody?.terminalReason) &&
+      hasReviewEvidence;
+    const contractValid = passContract || explicitExternalBlock || repairRoute === 'replan';
+    const contractError = contractValid ? undefined : 'structured review or durable artifact custody evidence is incomplete';
+    const nextState = passContract
       ? 'in_review'
-      : custodyVerdict === 'blocked' || repairRoute === 'blocked'
+      : explicitExternalBlock
         ? 'blocked'
         : 'planning';
 
     return {
       nextState,
+      contractValid,
+      contractError,
       ledger: {
         workflowExecutionId: playbook.executionId,
         classifierDecision:  classifier ?? undefined,
@@ -269,9 +305,9 @@ export class TaskDispatcherService {
         artifactUrl:         custody?.artifactUrl,
         artifactRef:         custody?.artifactRef || custody?.headSha,
         contentHash:         custody?.contentHash || custody?.headSha,
-        reviewerVerdict:     custody?.reviewerVerdict || review?.verdict,
+        reviewerVerdict,
         reviewEvidence:      review?.evidence ?? review ?? undefined,
-        terminalReason:      custody?.terminalReason || (nextState === 'planning' ? 'acceptance_or_custody_incomplete' : undefined),
+        terminalReason:      custody?.terminalReason || contractError || (nextState === 'planning' ? 'acceptance_or_custody_incomplete' : undefined),
       },
     };
   }

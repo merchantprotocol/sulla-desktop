@@ -10,6 +10,7 @@ describe('Execute Projects Todo core routine', () => {
     const incoming = new Set(EXECUTE_PROJECT_TODO_DEFINITION.edges.map((edge: any) => edge.target));
 
     expect(EXECUTE_PROJECT_TODO_DEFINITION.id).toBe(EXECUTE_PROJECT_TODO_ID);
+    expect(EXECUTE_PROJECT_TODO_DEFINITION.enabled).toBe(false);
     expect(labels).toEqual(expect.arrayContaining([
       'Claimed Todo',
       'Classify Work',
