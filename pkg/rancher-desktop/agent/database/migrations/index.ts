@@ -51,6 +51,7 @@ import { up as up_0060, down as down_0060 } from './0060_add_skill_slug_to_ident
 import { up as up_0061, down as down_0061 } from './0061_add_work_task_activity';
 import { up as up_0062, down as down_0062 } from './0062_create_work_task_dispatches';
 import { up as up_0063, down as down_0063 } from './0063_normalize_autonomous_task_ownership';
+import { up as up_0064, down as down_0064 } from './0064_add_verification_dispatches';
 import { up as up_0068, down as down_0068 } from './0068_create_lifecycle_capabilities';
 import { up as up_0069, down as down_0069 } from './0069_create_work_lane_definitions';
 import { up as up_0070, down as down_0070 } from './0070_create_lane_workflow_bindings';
@@ -107,6 +108,7 @@ export const migrationsRegistry = [
   { name: '0061_add_work_task_activity',                           up: up_0061, down: down_0061 },
   { name: '0062_create_work_task_dispatches',                      up: up_0062, down: down_0062 },
   { name: '0063_normalize_autonomous_task_ownership',              up: up_0063, down: down_0063 },
+  { name: '0064_add_verification_dispatches',                       up: up_0064, down: down_0064 },
   { name: '0068_create_lifecycle_capabilities',                    up: up_0068, down: down_0068 },
   { name: '0069_create_work_lane_definitions',                     up: up_0069, down: down_0069 },
   { name: '0070_create_lane_workflow_bindings',                    up: up_0070, down: down_0070 },

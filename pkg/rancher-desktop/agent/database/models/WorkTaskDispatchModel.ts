@@ -8,6 +8,8 @@ import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
 
 export type WorkTaskDispatchStatus = 'running' | 'completed' | 'blocked' | 'failed' | 'stale';
+export type WorkTaskDispatchKind = 'execution' | 'verification';
+export type VerificationVerdict = 'APPROVE' | 'REWORK' | 'BLOCKED';
 
 export interface WorkTaskDispatchRecord {
   id:           string;
@@ -15,6 +17,11 @@ export interface WorkTaskDispatchRecord {
   agent_id:     string;
   thread_id:    string;
   status:       WorkTaskDispatchStatus;
+  kind:         WorkTaskDispatchKind;
+  attempt:      number;
+  verdict:      VerificationVerdict | null;
+  artifact_sha: string | null;
+  failure_reason: string | null;
   result:       string | null;
   error:        string | null;
   started_at:   string;
@@ -98,8 +105,11 @@ export class WorkTaskDispatchModel {
       const id = `dispatch-${ randomUUID() }`;
       const threadId = `task-dispatch-${ task.id }-${ Date.now() }`;
       const inserted = await client.query<WorkTaskDispatchRecord>(`
-        INSERT INTO work_task_dispatches (id, task_id, agent_id, thread_id)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO work_task_dispatches (id, task_id, agent_id, thread_id, kind, attempt)
+        VALUES ($1, $2, $3, $4, 'execution', COALESCE((
+          SELECT MAX(attempt) + 1 FROM work_task_dispatches
+           WHERE task_id = $2 AND kind = 'execution'
+        ), 1))
         RETURNING *
       `, [id, task.id, agentId, threadId]);
 
@@ -122,9 +132,99 @@ export class WorkTaskDispatchModel {
     });
   }
 
-  static async countRunning(): Promise<number> {
+  static async claimNextReview(agentId: string, runtimeInstanceId: string): Promise<ClaimedDispatch | null> {
+    return postgresClient.transaction(async(client) => {
+      const candidate = await client.query<WorkTaskRecord>(`
+        SELECT t.*
+          FROM work_tasks t
+          JOIN work_epics e ON e.id = t.epic_id
+         WHERE t.archived = false
+           AND t.status = 'in_review'
+           AND e.archived = false
+           AND NOT (e.status = ANY($1::text[]))
+           AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+           AND NOT EXISTS (
+             SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
+              WHERE LOWER(label) = ANY($2::text[])
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM work_task_dispatches d
+              WHERE d.task_id = t.id AND d.status = 'running'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM work_task_dispatches d
+              WHERE d.task_id = t.id AND d.kind = 'verification'
+                AND d.status IN ('failed', 'stale')
+                AND d.finished_at > now() - interval '5 minutes'
+           )
+           AND COALESCE((
+             SELECT d.agent_id
+               FROM work_task_dispatches d
+              WHERE d.task_id = t.id AND d.kind = 'execution'
+              ORDER BY d.started_at DESC LIMIT 1
+           ), '') <> $3
+         ORDER BY
+           CASE e.priority
+             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
+             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
+             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
+             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
+             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
+             ELSE 5 END,
+           CASE t.priority
+             WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
+             WHEN 'high' THEN 1 WHEN 'p1' THEN 1 WHEN 'P1' THEN 1
+             WHEN 'medium' THEN 2 WHEN 'p2' THEN 2 WHEN 'P2' THEN 2 WHEN '🟡' THEN 2
+             WHEN 'p3' THEN 3 WHEN 'P3' THEN 3
+             WHEN 'low' THEN 4 WHEN 'p4' THEN 4 WHEN 'P4' THEN 4 WHEN '⚪' THEN 4
+             ELSE 5 END,
+           t.due_at ASC NULLS LAST,
+           t.last_activity_at ASC,
+           t.position ASC
+         FOR UPDATE OF t SKIP LOCKED
+         LIMIT 1
+      `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, agentId]);
+
+      const task = candidate.rows[0];
+      if (!task) return null;
+
+      const stageClaim = await LifecycleCapabilityModel.claimStageWithClient(
+        client,
+        task.id,
+        'in-review-verification',
+        'in_review',
+        'dispatcher',
+        runtimeInstanceId,
+      );
+      if (!stageClaim.claimed || !stageClaim.claim) return null;
+
+      const id = `dispatch-${ randomUUID() }`;
+      const threadId = `task-verification-${ task.id }-${ Date.now() }`;
+      const inserted = await client.query<WorkTaskDispatchRecord>(`
+        INSERT INTO work_task_dispatches (id, task_id, agent_id, thread_id, kind, attempt)
+        VALUES ($1, $2, $3, $4, 'verification', COALESCE((
+          SELECT MAX(attempt) + 1 FROM work_task_dispatches
+           WHERE task_id = $2 AND kind = 'verification'
+        ), 1))
+        RETURNING *
+      `, [id, task.id, agentId, threadId]);
+
+      await client.query(`
+        UPDATE work_tasks
+           SET assignee = 'verifier', updated_at = now(), last_activity_at = now(),
+               last_moved_at = now(), last_moved_by = 'dispatcher'
+         WHERE id = $1 AND status = 'in_review'
+      `, [task.id]);
+
+      return { dispatch: inserted.rows[0], task, stage_claim: stageClaim.claim };
+    });
+  }
+
+  static async countRunning(kind?: WorkTaskDispatchKind): Promise<number> {
     const row = await postgresClient.queryOne<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM work_task_dispatches WHERE status = 'running'`,
+      `SELECT COUNT(*)::text AS count FROM work_task_dispatches
+        WHERE status = 'running' AND ($1::text IS NULL OR kind = $1)`,
+      [kind ?? null],
     );
     return Number(row?.count || 0);
   }
@@ -152,18 +252,20 @@ export class WorkTaskDispatchModel {
 
   static async recoverStale(staleMinutes = 45): Promise<string[]> {
     return postgresClient.transaction(async(client: PoolClient) => {
-      const stale = await client.query<{ id: string; task_id: string }>(`
+      const stale = await client.query<{ id: string; task_id: string; kind: WorkTaskDispatchKind }>(`
         UPDATE work_task_dispatches
            SET status = 'stale',
                error = 'dispatcher lease expired or app restarted',
+               failure_reason = 'lease_expired',
                finished_at = now()
          WHERE status = 'running'
            AND heartbeat_at < now() - ($1 * interval '1 minute')
-        RETURNING id, task_id
+        RETURNING id, task_id, kind
       `, [staleMinutes]);
 
-      const taskIds = stale.rows.map(row => row.task_id);
-      if (taskIds.length > 0) {
+      const executionTaskIds = stale.rows.filter(row => row.kind === 'execution').map(row => row.task_id);
+      const verificationTaskIds = stale.rows.filter(row => row.kind === 'verification').map(row => row.task_id);
+      if (executionTaskIds.length > 0) {
         await client.query(`
           UPDATE work_task_stage_claims
              SET status = 'recovered', released_at = now(), heartbeat_at = now()
@@ -171,7 +273,7 @@ export class WorkTaskDispatchModel {
              AND capability_key = 'todo-execution'
              AND stage = 'in_progress'
              AND status = 'active'
-        `, [taskIds]);
+        `, [executionTaskIds]);
 
         await client.query(`
           UPDATE work_tasks
@@ -179,9 +281,113 @@ export class WorkTaskDispatchModel {
                  updated_at = now(), last_moved_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
            WHERE id = ANY($1::text[]) AND status = 'in_progress' AND assignee = 'dispatcher'
-        `, [taskIds]);
+        `, [executionTaskIds]);
       }
-      return taskIds;
+      if (verificationTaskIds.length > 0) {
+        await client.query(`
+          UPDATE work_task_stage_claims
+             SET status = 'recovered', released_at = now(), heartbeat_at = now()
+           WHERE task_id = ANY($1::text[])
+             AND capability_key = 'in-review-verification'
+             AND stage = 'in_review'
+             AND status = 'active'
+        `, [verificationTaskIds]);
+
+        await client.query(`
+          UPDATE work_tasks
+             SET status = 'in_review', assignee = 'heartbeat',
+                 updated_at = now(), last_moved_at = now(),
+                 last_activity_at = now(), last_moved_by = 'dispatcher'
+           WHERE id = ANY($1::text[]) AND status = 'in_review' AND assignee = 'verifier'
+        `, [verificationTaskIds]);
+      }
+      return stale.rows.map(row => row.task_id);
+    });
+  }
+
+  /** Settle a parsed verifier verdict and its Projects transition atomically. */
+  static async finalizeVerification(
+    id: string,
+    verdict: VerificationVerdict,
+    artifactSha: string,
+    summary: string,
+  ): Promise<VerificationVerdict | null> {
+    return postgresClient.transaction(async(client: PoolClient) => {
+      const current = await client.query<{ task_id: string }>(`
+        SELECT task_id FROM work_task_dispatches
+         WHERE id = $1 AND kind = 'verification' AND status = 'running'
+         FOR UPDATE
+      `, [id]);
+      const taskId = current.rows[0]?.task_id;
+      if (!taskId) return null;
+
+      let finalVerdict = verdict;
+      if (verdict === 'REWORK') {
+        const repeated = await client.query<{ count: string }>(`
+          SELECT COUNT(*)::text AS count FROM work_task_dispatches
+           WHERE task_id = $1 AND kind = 'verification' AND verdict = 'REWORK'
+             AND failure_reason = $2
+        `, [taskId, summary]);
+        if (Number(repeated.rows[0]?.count || 0) >= 2) finalVerdict = 'BLOCKED';
+      }
+
+      const transition = finalVerdict === 'APPROVE'
+        ? { status: 'done', assignee: null }
+        : finalVerdict === 'REWORK'
+          ? { status: 'todo', assignee: 'dispatcher' }
+          : { status: 'blocked', assignee: 'heartbeat' };
+      const repeatedSuffix = finalVerdict !== verdict
+        ? '\n\nRepeated identical rework reached the retry ceiling; routed to Heartbeat recovery.'
+        : '';
+
+      await client.query(`
+        UPDATE work_task_dispatches
+           SET status = 'completed', verdict = $2, artifact_sha = $3,
+               result = $4, failure_reason = $5,
+               heartbeat_at = now(), finished_at = now()
+         WHERE id = $1 AND status = 'running'
+      `, [id, finalVerdict, artifactSha, summary, verdict === 'REWORK' ? summary : null]);
+      await client.query(`
+        INSERT INTO work_task_comments (id, task_id, body, author)
+        VALUES ($1, $2, $3, 'verifier')
+      `, [randomUUID().slice(0, 12), taskId,
+        `Verification ${ id }: ${ finalVerdict } at ${ artifactSha }.\n\n${ summary }${ repeatedSuffix }`]);
+      await client.query(`
+        UPDATE work_tasks
+           SET status = $2, assignee = $3, updated_at = now(),
+               last_moved_at = now(), last_activity_at = now(),
+               last_moved_by = 'verifier',
+               completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
+         WHERE id = $1 AND status = 'in_review'
+      `, [taskId, transition.status, transition.assignee]);
+      return finalVerdict;
+    });
+  }
+
+  /** Audit an infrastructure/output failure without turning it into a task blocker. */
+  static async failVerification(id: string, reason: string): Promise<boolean> {
+    return postgresClient.transaction(async(client: PoolClient) => {
+      const settled = await client.query<{ task_id: string }>(`
+        UPDATE work_task_dispatches
+           SET status = 'failed', error = $2, failure_reason = $2,
+               heartbeat_at = now(), finished_at = now()
+         WHERE id = $1 AND kind = 'verification' AND status = 'running'
+        RETURNING task_id
+      `, [id, reason]);
+      const taskId = settled.rows[0]?.task_id;
+      if (!taskId) return false;
+      await client.query(`
+        INSERT INTO work_task_comments (id, task_id, body, author)
+        VALUES ($1, $2, $3, 'verifier')
+      `, [randomUUID().slice(0, 12), taskId,
+        `Verification ${ id } failed and was released for retry: ${ reason }`]);
+      await client.query(`
+        UPDATE work_tasks
+           SET status = 'in_review', assignee = 'heartbeat', updated_at = now(),
+               last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier'
+         WHERE id = $1 AND status = 'in_review'
+      `, [taskId]);
+      return true;
     });
   }
 }
