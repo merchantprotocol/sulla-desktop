@@ -254,7 +254,7 @@ describe('WorkTaskDispatchModel', () => {
       .mockResolvedValueOnce({ rows: [] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
-    await expect(WorkTaskDispatchModel.claimNextReview('codex-test', 'runtime-1')).resolves.toMatchObject({
+    await expect(WorkTaskDispatchModel.claimNextReview('codex-test', [], 'runtime-1')).resolves.toMatchObject({
       task: { id: 'task-2' }, dispatch: { kind: 'verification' }, stage_claim: { id: 'stage-review-1' },
     });
     expect(query.mock.calls[0][0]).toContain("t.status = 'in_review'");
@@ -347,13 +347,14 @@ describe('WorkTaskDispatchModel', () => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ task_id: 'task-2' }] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
     await expect(WorkTaskDispatchModel.failVerification('dispatch-2', 'boom')).resolves.toBe(true);
     expect(query.mock.calls[0][0]).toContain("status = 'failed'");
-    expect(query.mock.calls[1][1][2]).toContain('released for retry');
-    expect(query.mock.calls[2][0]).toContain("status = 'in_review'");
+    expect(query.mock.calls[2][1][2]).toContain('released for retry');
+    expect(query.mock.calls[3][0]).toContain("status = 'in_review'");
   });
 
   it('returns concrete rework to the dispatcher', async() => {
@@ -477,6 +478,73 @@ describe('WorkTaskDispatchModel', () => {
     await expect(WorkTaskDispatchModel.recoverOrphanedInProgress([candidate], 1, 3))
       .resolves.toEqual([{ taskId: 'task-1', outcome: 'blocked_ceiling', attemptNumber: 3 }]);
     expect(ceilingQuery.mock.calls[3][1]).toEqual(expect.arrayContaining(['blocked', 'heartbeat']));
+  });
+
+  it('atomically records protected review evidence and routes REPLAN to the planning council', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-3' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.finalizeProtectedReview(
+      'review-3',
+      'REPLAN',
+      {
+        workflowExecutionId: 'wfp-3',
+        reviewerAgentIds:    ['code-researcher', 'thinking-worker'],
+        artifactType:        'code_pr',
+        artifactRef:         'a'.repeat(40),
+        artifactHash:        'a'.repeat(40),
+        summary:             'The plan misses a required consumer.',
+        checks:              ['diff'],
+        findings:            [{ severity: 'high', message: 'missing consumer' }],
+      },
+      'a'.repeat(40),
+    )).resolves.toBe('REPLAN');
+
+    expect(query.mock.calls[2][0]).toContain('reviewer_agent_ids = $12::text[]');
+    expect(query.mock.calls[3][1][2]).toContain('REPLAN');
+    expect(query.mock.calls[4][1]).toEqual(['task-3', 'planning', 'dispatcher']);
+  });
+
+  it('registers EXTERNAL_WAIT in the durable monitor ledger in the settlement transaction', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ task_id: 'task-4' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.finalizeProtectedReview(
+      'review-4',
+      'EXTERNAL_WAIT',
+      {
+        workflowExecutionId: 'wfp-4',
+        reviewerAgentIds:    ['code-researcher'],
+        artifactType:        'code_pr',
+        artifactRef:         'b'.repeat(40),
+        artifactHash:        'b'.repeat(40),
+        summary:             'Checks are still running.',
+        checks:              ['ci pending'],
+        findings:            [],
+        wait:                {
+          kind:      'github_checks',
+          targetKey: 'merchantprotocol/sulla-desktop#671',
+          target:    { owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 671 },
+        },
+      },
+      'b'.repeat(40),
+    )).resolves.toBe('EXTERNAL_WAIT');
+
+    expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_waits');
+    expect(query.mock.calls[3][1][2]).toBe('github_checks');
+    expect(query.mock.calls[6][1]).toEqual(['task-4', 'blocked', 'heartbeat']);
   });
 });
 
