@@ -2,18 +2,22 @@ import { jest } from '@jest/globals';
 
 const mockFindCheckpointBefore = jest.fn<() => Promise<any>>();
 const mockFindByNode = jest.fn<() => Promise<any>>();
+const mockFindByExecution = jest.fn<() => Promise<any[]>>();
 const mockMarkRunning = jest.fn<() => Promise<void>>();
+const mockMarkSupersededIfActive = jest.fn<() => Promise<void>>();
 
 jest.unstable_mockModule('../../../database/models/WorkflowCheckpointModel', () => ({
   WorkflowCheckpointModel: {
     findCheckpointBefore: mockFindCheckpointBefore,
     findByNode:            mockFindByNode,
+    findByExecution:       mockFindByExecution,
   },
 }));
 
 jest.unstable_mockModule('../../../database/models/WorkflowExecutionModel', () => ({
   WorkflowExecutionModel: {
-    markRunning: mockMarkRunning,
+    markRunning:            mockMarkRunning,
+    markSupersededIfActive: mockMarkSupersededIfActive,
   },
 }));
 
@@ -43,9 +47,11 @@ describe('RestartFromCheckpointWorker', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockFindCheckpointBefore.mockResolvedValue(checkpoint());
+    mockFindCheckpointBefore.mockResolvedValue(null);
     mockFindByNode.mockResolvedValue(null);
+    mockFindByExecution.mockResolvedValue([checkpoint()]);
     mockMarkRunning.mockResolvedValue(undefined);
+    mockMarkSupersededIfActive.mockResolvedValue(undefined);
   });
 
   test('fails closed when a mutating restart has no graph state', async() => {
@@ -58,6 +64,7 @@ describe('RestartFromCheckpointWorker', () => {
     expect(result.successBoolean).toBe(false);
     expect(result.responseString).toContain('No agent state available');
     expect(mockFindCheckpointBefore).not.toHaveBeenCalled();
+    expect(mockFindByExecution).not.toHaveBeenCalled();
     expect(mockMarkRunning).not.toHaveBeenCalled();
   });
 
@@ -73,6 +80,7 @@ describe('RestartFromCheckpointWorker', () => {
     const response = JSON.parse(result.responseString);
 
     expect(result.successBoolean).toBe(true);
+    expect(mockMarkSupersededIfActive).toHaveBeenCalledWith('wfp-original');
     expect(mockMarkRunning).toHaveBeenCalledWith(expect.objectContaining({
       executionId: response.executionId,
       workflowId:  'core-routine-dream-about-human',

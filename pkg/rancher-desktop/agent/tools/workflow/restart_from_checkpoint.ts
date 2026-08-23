@@ -74,7 +74,20 @@ export class RestartFromCheckpointWorker extends BaseTool {
     }
 
     // Restart from a specific node — load the checkpoint BEFORE that node
-    const beforeCheckpoint = await WorkflowCheckpointModel.findCheckpointBefore(executionId, nodeId);
+    let beforeCheckpoint = await WorkflowCheckpointModel.findCheckpointBefore(executionId, nodeId);
+
+    // A failed/unrun frontier node has no checkpoint of its own, so the model
+    // cannot locate a predecessor by target sequence. In that case the latest
+    // saved playbook state is the valid predecessor when it names the target
+    // in currentNodeIds (the exact post-merge core-dreaming recovery shape).
+    if (!beforeCheckpoint) {
+      const checkpoints = await WorkflowCheckpointModel.findByExecution(executionId);
+      const latest = checkpoints[checkpoints.length - 1];
+      const latestState = latest?.attributes.playbook_state as unknown as WorkflowPlaybookState | undefined;
+      if (latest && latestState?.currentNodeIds?.includes(nodeId)) {
+        beforeCheckpoint = latest;
+      }
+    }
 
     // If no checkpoint before (node is first), use the node's own checkpoint but reset it
     let checkpointToUse = beforeCheckpoint;
@@ -135,6 +148,7 @@ export class RestartFromCheckpointWorker extends BaseTool {
     // from workflow history and the concurrent-run guard.
     try {
       const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
+      await WorkflowExecutionModel.markSupersededIfActive(executionId);
       await WorkflowExecutionModel.markRunning({
         executionId:  rebuiltState.executionId,
         workflowId:   savedState.workflowId,

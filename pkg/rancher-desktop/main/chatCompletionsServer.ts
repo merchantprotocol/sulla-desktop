@@ -1202,30 +1202,9 @@ export class ChatCompletionsServer {
         // calls to a fresh detached graph and start that graph only after the
         // tool has attached an active playbook. Read-only checkpoint listing
         // remains stateless and does not create a graph.
-        const needsWorkflowState = toolName === 'execute_workflow' ||
-          (toolName === 'restart_from_checkpoint' && Boolean(params.executionId && params.nodeId));
-        if (needsWorkflowState) {
-          const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
-          const invocationId = `cli-${ toolName }-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
-          const graphResult = await GraphRegistry.getOrCreateAgentGraph('sulla-desktop', invocationId);
-          const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
-          const state = (graphResult as { state: Record<string, any> }).state;
-
-          // Registry workers are cached. Use a fresh instance so state from a
-          // detached CLI run cannot leak into another concurrent tool call.
-          const boundTool = new tool.constructor();
-          boundTool.schemaDef = tool.schemaDef;
-          boundTool.name = tool.name;
-          boundTool.description = tool.description;
-          boundTool.metadata = { ...tool.metadata };
-          boundTool.setState(state);
-
-          const result = await boundTool.call(params);
-          if (result.success && state.metadata?.activeWorkflow) {
-            graph.execute(state).catch((err) => {
-              console.error(`[ChatCompletionsAPI] detached ${ toolName } execution failed:`, err);
-            });
-          }
+        const { callStatefulWorkflowTool, needsStatefulWorkflowDispatch } = await import('./statefulCliWorkflowTool');
+        if (needsStatefulWorkflowDispatch(toolName, params)) {
+          const result = await callStatefulWorkflowTool(tool, toolName, params);
           return res.json({ success: true, result });
         }
 
