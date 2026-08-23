@@ -62,6 +62,7 @@ Reads:
 | `sulla project/get_project_item` | One row + children + comments. |
 | `sulla project/search_project_items` | Title + description search. Use before creating. |
 | `sulla project/list_task_comments` | Comment thread on a task, oldest first. |
+| `sulla project/list_task_waits` | Durable external waits. Active unchanged waits are monitor-owned. |
 | `sulla project/project_report` | Standup: completed work plus separate actionable, blocked-recovery, and planning-in-flight queues. Within each priority block, least-recent activity comes first. Injected as `<project_report>` on first chat turn. |
 
 Writes — explicit create / update, **no upsert**:
@@ -75,14 +76,27 @@ Writes — explicit create / update, **no upsert**:
 | `sulla project/create_task` | Always inserts. `project_id` required; `epic_id` and `parent_id` optional. |
 | `sulla project/update_task` | In-place by id. |
 | `sulla project/add_task_comment` | Append a note. Default author `sulla`; desktop UI stamps `human`. |
+| `sulla project/register_task_wait` | Idempotently register one structured external wait; adds one initial comment. |
+| `sulla project/cancel_task_wait` | Cancel one obsolete active wait; terminal task states cancel automatically. |
 | `sulla project/archive_project_item` | Soft-archive. Cascades to children. |
 
-Schema-only migration `0044_create_work_items_tables`. No user data in the
-migration. A runtime seeder (`WorkItemsImportSeeder`) may import this
+Schema-only migrations `0044_create_work_items_tables` and
+`0063_create_work_task_waits`. No user data in the migrations. A runtime seeder (`WorkItemsImportSeeder`) may import this
 install's leftover `~/sulla/ledger/goals/*.md` on first boot by stable
 slug. Safe to re-run. After that, **only** the project tools.
 
 Optional GitHub mapping on tasks: `github_issue`. Not a live sync.
+
+## External waits
+
+`work_task_waits` is the durable owner for pending GitHub checks, human gates,
+scheduled times, and external jobs. Register a stable structured target once;
+the monitor fingerprints GitHub head SHA plus normalized check state and writes
+only material deltas. Active unchanged waits are summarized in `project_report`
+and, once `externalWaitCommentSuppressionEnabled` is enabled, omitted from the
+actionable queue. `externalWaitMonitorEnabled=false` restores the prior report
+behavior. Human comments/task mutations and terminal task states invalidate or
+cancel waits through database triggers, so human gates do not poll GitHub.
 
 ## Cycle contract
 
