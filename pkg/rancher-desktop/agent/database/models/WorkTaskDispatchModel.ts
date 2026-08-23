@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
@@ -26,8 +27,6 @@ export interface ClaimedDispatch {
 }
 
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
-const NON_AUTONOMOUS_LABELS = ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'];
-
 export class WorkTaskDispatchModel {
   static async claimNext(agentId: string): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
@@ -39,11 +38,11 @@ export class WorkTaskDispatchModel {
            AND t.status = 'todo'
            AND e.archived = false
            AND NOT (e.status = ANY($1::text[]))
-           AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher'))
+           AND (t.assignee IS NULL OR LOWER(t.assignee) = ANY($2::text[]))
            AND NOT EXISTS (
              SELECT 1
                FROM unnest(COALESCE(t.labels, '{}')) AS label
-              WHERE LOWER(label) = ANY($2::text[])
+              WHERE LOWER(label) = ANY($3::text[])
            )
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
@@ -75,7 +74,7 @@ export class WorkTaskDispatchModel {
            t.position ASC
          FOR UPDATE OF t SKIP LOCKED
          LIMIT 1
-      `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_LABELS]);
+      `, [CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS]);
 
       const task = candidate.rows[0];
       if (!task) return null;
@@ -91,13 +90,13 @@ export class WorkTaskDispatchModel {
       await client.query(`
         UPDATE work_tasks
            SET status = 'planning',
-               assignee = 'dispatcher',
+               assignee = $2,
                updated_at = now(),
                last_moved_at = now(),
                last_activity_at = now(),
-               last_moved_by = 'dispatcher'
+               last_moved_by = $2
          WHERE id = $1
-      `, [task.id]);
+      `, [task.id, TASK_ASSIGNEES.dispatcher]);
 
       return { dispatch: inserted.rows[0], task };
     });

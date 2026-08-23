@@ -14,6 +14,7 @@
  */
 
 import { postgresClient } from '../PostgresClient';
+import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -822,8 +823,16 @@ export class WorkItemsModel {
     const epic = await WorkItemsModel.requireEpic(input.epic_id);
     const projectId = input.project_id || epic.project_id;
     const slug = input.slug ? input.slug.slice(0, 80) : null;
-    const status = input.status ?? 'working';
+    const status = input.status ?? 'todo';
     const id = input.id || await WorkItemsModel.uniqueId(WorkItemsModel.TASKS);
+    const actor = input.actor ?? 'sulla';
+    const labels = input.labels ?? [];
+    const assignee = normalizeAutonomousTaskOwnership({
+      status,
+      assignee: input.assignee ?? null,
+      labels,
+      actor,
+    });
 
     const rows = await postgresClient.query<WorkTaskRecord>(
       `INSERT INTO ${ WorkItemsModel.TASKS }
@@ -844,12 +853,12 @@ export class WorkItemsModel {
         input.priority ?? 'p2',
         input.due_at ?? null,
         input.github_issue ?? null,
-        input.assignee ?? null,
-        input.labels ?? [],
+        assignee,
+        labels,
         input.position ?? 0,
         input.source ?? null,
         input.source_ref ?? null,
-        input.actor ?? 'sulla',
+        actor,
         isClosedStatus(status) ? new Date().toISOString() : null,
       ],
     );
@@ -901,6 +910,13 @@ export class WorkItemsModel {
     const values: any[] = [];
     let idx = 1;
     let moved = false;
+    const actor = changes.actor ?? 'sulla';
+    const assignee = normalizeAutonomousTaskOwnership({
+      status:   changes.status ?? existing.status,
+      assignee: changes.assignee !== undefined ? changes.assignee : existing.assignee,
+      labels:   changes.labels ?? existing.labels,
+      actor,
+    });
 
     const assign = (col: string, val: any) => {
       setClauses.push(`${ col } = $${ idx++ }`);
@@ -915,7 +931,10 @@ export class WorkItemsModel {
     if (changes.description  !== undefined) assign('description', changes.description);
     if (changes.status       !== undefined) { assign('status', changes.status); moved = true; }
     if (changes.priority     !== undefined) { assign('priority', changes.priority); moved = true; }
-    if (changes.assignee     !== undefined) { assign('assignee', changes.assignee); moved = true; }
+    if (changes.assignee !== undefined || assignee !== existing.assignee) {
+      assign('assignee', assignee);
+      moved = true;
+    }
     if (changes.due_at       !== undefined) { assign('due_at', changes.due_at); moved = true; }
     if (changes.labels       !== undefined) assign('labels', changes.labels);
     if (changes.github_issue !== undefined) assign('github_issue', changes.github_issue);
@@ -929,7 +948,7 @@ export class WorkItemsModel {
 
     if (moved) {
       setClauses.push('last_moved_at = now()');
-      assign('last_moved_by', changes.actor ?? 'sulla');
+      assign('last_moved_by', actor);
     }
     if (setClauses.length === 1) return existing;
     setClauses.push('last_activity_at = now()');
