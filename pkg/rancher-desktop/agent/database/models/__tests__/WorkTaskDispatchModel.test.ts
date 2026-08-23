@@ -1,17 +1,21 @@
 import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
+import { WorkItemsModel } from '../WorkItemsModel';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
 describe('WorkTaskDispatchModel', () => {
   let originalTransaction: any;
+  let originalQuery: any;
 
   beforeAll(() => {
     originalTransaction = postgresClient.transaction;
+    originalQuery = postgresClient.query;
   });
 
   afterEach(() => {
     (postgresClient as any).transaction = originalTransaction;
+    (postgresClient as any).query = originalQuery;
     jest.restoreAllMocks();
   });
 
@@ -71,6 +75,12 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[0][0]).toContain("t.status = 'todo'");
     expect(query.mock.calls[0][0]).toContain('work_task_dispatches');
     expect(query.mock.calls[0][0]).toContain("FROM unnest(COALESCE(t.labels, '{}')) AS label");
+    expect(query.mock.calls[0][0]).toContain('LOWER(t.assignee) = ANY($2::text[])');
+    expect(query.mock.calls[0][1]).toEqual([
+      ['done', 'cancelled', 'parked', 'blocked'],
+      ['heartbeat', 'dispatcher'],
+      ['gated', 'decision', 'human', 'manual', 'no-auto-dispatch'],
+    ]);
     expect(query.mock.calls[0][0]).toContain('child.parent_id = t.id');
     expect(query.mock.calls[0][0]).toContain('t.due_at ASC NULLS LAST');
     expect(query.mock.calls[0][0]).toContain("c.stage = 'in_progress'");
@@ -78,7 +88,8 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_stage_claims');
     expect(query.mock.calls[4][0]).toContain('INSERT INTO work_task_dispatches');
     expect(query.mock.calls[5][0]).toContain("status = 'in_progress'");
-    expect(query.mock.calls[5][0]).toContain("assignee = 'dispatcher'");
+    expect(query.mock.calls[5][0]).toContain('assignee = $2');
+    expect(query.mock.calls[5][1]).toEqual(['task-1', 'dispatcher']);
     expect(query.mock.calls[5][0]).toContain('RETURNING *');
   });
 
@@ -157,6 +168,68 @@ describe('WorkTaskDispatchModel', () => {
     expect(query).toHaveBeenCalledTimes(3);
     expect(query.mock.calls.some(([sql]: [string]) => sql.includes('INSERT INTO work_task_dispatches'))).toBe(false);
     expect(query.mock.calls.some(([sql]: [string]) => sql.includes('UPDATE work_tasks'))).toBe(false);
+  });
+
+  it('flows a normalized create through lifecycle claim into a dispatcher execution lease', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id:          params[0],
+        project_id:  params[1],
+        epic_id:     params[2],
+        title:       params[5],
+        status:      params[7],
+        priority:    params[8],
+        assignee:    params[11],
+        labels:      params[12],
+        archived:    false,
+      }]));
+
+    const created = await WorkItemsModel.insertTask({
+      id:       'task-new',
+      epic_id:  'epic-1',
+      title:    'Claim me',
+      status:   'todo',
+      assignee: 'sulla',
+      actor:    'sulla',
+      labels:   ['projects'],
+    });
+    expect(created.assignee).toBe('dispatcher');
+
+    const capability = {
+      capability_key: 'todo-execution',
+      enabled:        true,
+      health:         'healthy',
+      active_owner:   'dispatcher',
+      fallback_mode:  'heartbeat',
+    } as any;
+    const stageClaim = {
+      id:                  'stage-new',
+      task_id:             created.id,
+      capability_key:      'todo-execution',
+      stage:               'in_progress',
+      owner:               'dispatcher',
+      runtime_instance_id: 'runtime-1',
+      status:              'active',
+    } as any;
+    const executingTask = { ...created, status: 'in_progress', assignee: 'dispatcher' };
+    const clientQuery = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [created] })
+      .mockResolvedValueOnce({ rows: [capability] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [stageClaim] })
+      .mockResolvedValueOnce({ rows: [{
+        id: 'dispatch-1', task_id: created.id, agent_id: 'opus-worker', status: 'running',
+      }] })
+      .mockResolvedValueOnce({ rows: [executingTask] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query: clientQuery }));
+
+    const claim = await WorkTaskDispatchModel.claimNext('opus-worker', 'runtime-1');
+
+    expect(claim?.task).toMatchObject({ id: 'task-new', status: 'in_progress', assignee: 'dispatcher' });
+    expect(claim?.stage_claim).toMatchObject({ id: 'stage-new', stage: 'in_progress' });
+    expect(clientQuery.mock.calls[5][0]).toContain("status = 'in_progress'");
+    expect(clientQuery.mock.calls[5][1]).toEqual(['task-new', 'dispatcher']);
   });
 
   it('releases stale dispatch and stage ownership before making the task reclaimable', async() => {

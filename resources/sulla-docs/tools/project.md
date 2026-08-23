@@ -41,6 +41,20 @@ round-robin cursor inside each priority block.
 Defaults from `WorkItemsModel`: projects + epics `status='working'`
 `priority='p2'`; tasks `status='todo'` `priority='p2'`.
 
+## Task ownership contract
+
+Task authorship and queue ownership are separate. Use `dispatcher` for
+autonomous executable work, `heartbeat` for supervisory/review work, and
+`human` for explicit human ownership. A null assignee is unowned work that the
+dispatcher may claim unless a non-autonomous label excludes it. `sulla` is the
+legacy/direct-chat actor identity, not a durable queue owner; ordinary `todo`
+tasks written by Sulla, Heartbeat, or the dispatcher with `assignee='sulla'`
+are stored as `dispatcher`.
+
+Labels `gated`, `decision`, `human`, `manual`, and `no-auto-dispatch` always
+exclude a task from mechanical dispatch. Their ownership is never normalized,
+and an explicit `assignee='human'` is never rewritten.
+
 ## Tools (bare names — slash paths misroute)
 
 Reads:
