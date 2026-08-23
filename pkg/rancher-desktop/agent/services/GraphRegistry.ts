@@ -1,21 +1,22 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { knowledgeAssociationToolsFor, type KnowledgeAssociationRole } from './KnowledgeAssociationPolicies';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel } from '../languagemodels';
 import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
 import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
-import { toolRegistry } from '../tools/registry';
-import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
-import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
-export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
-import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
-export { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
-import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
-export { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
-
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
+import { toolRegistry } from '../tools/registry';
+import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
+import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
+import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
+
+export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+export { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
+export { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 // Back-compat re-export
 export type { AgentGraphState as OverlordThreadState } from '../nodes/Graph';
 
@@ -33,6 +34,13 @@ const SUMMARIZER_TOOLS: string[] = [];
 
 /** Tool-Result Digester: no tools — pure text analysis and XML output */
 const TOOL_RESULT_DIGESTER_TOOLS: string[] = [];
+
+const KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS: Record<KnowledgeAssociationRole, string> = {
+  project_reader: `You are the Project Reader. Read Projects items and their linked Knowledge Base context. You are strictly read-only: never create, update, archive, link, or unlink anything.`,
+  project_writer: `You are the Project Writer for Knowledge Base associations. You may search Knowledge Base nodes and link or unlink those nodes from Projects items. You may not mutate Knowledge Base content or any Projects status, priority, assignment, description, or comment.`,
+  knowledge_reader: `You are the Knowledge Base Reader. Recall Knowledge Base nodes and inspect their linked Projects context. You are strictly read-only: never create, update, archive, link, or unlink anything.`,
+  knowledge_writer: `You are the Knowledge Base Writer for Projects associations. You may search Projects and link or unlink Knowledge Base nodes. You may not mutate Projects status, priority, assignment, description, comments, or unrelated Knowledge Base content.`,
+};
 
 /** Observation Writer: write/archive observations and update identity files */
 const OBSERVATION_AGENT_TOOLS: string[] = [
@@ -1496,6 +1504,34 @@ export const GraphRegistry = {
       parentWsChannel:        String(parentState.metadata.wsChannel || ''),
       parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       deferParentThinkingComplete: true,
+      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
+      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
+    });
+    return { graph, state, threadId: state.metadata.threadId };
+  },
+
+  /**
+   * Construct one of the four association roles through the same strict
+   * allowedToolNames path used by live subconscious agents. This is the
+   * runtime policy boundary: callers choose a role, never an ad-hoc tool list.
+   */
+  createKnowledgeAssociationRole: async function(
+    parentState: BaseThreadState,
+    role: KnowledgeAssociationRole,
+    instruction: string,
+  ): Promise<{ graph: Graph<BaseThreadState>; state: BaseThreadState; threadId: string }> {
+    const tools = knowledgeAssociationToolsFor(role);
+    const graph = createSubconsciousGraph();
+    const state = await buildSubconsciousState({
+      systemPrompt:           KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS[role],
+      tools,
+      userMessage:            instruction,
+      messages:               [...parentState.messages],
+      contextWindow:          20,
+      parentAbortSignal:      (parentState.metadata as any).options?.abort,
+      agentLabel:             role.replaceAll('_', '-'),
+      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
+      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
       workflowNodeId:         (parentState.metadata as any).workflowNodeId,
       workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
     });

@@ -135,8 +135,10 @@ import { computed, onMounted, ref, watch } from 'vue';
 
 import type { KnowledgeNodeRecord } from '@pkg/agent/database/models/KnowledgeGraphModel';
 import type { LinkedWorkItemRecord, KnowledgeWorkItemKind } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
+import {
+  linkKnowledgeItem, listWorkForKnowledge, searchKnowledgeNodes, unlinkKnowledgeItem,
+} from '@pkg/composables/knowledgeAssociationRuntime';
 import type { ProjectView } from '@pkg/composables/useProjects';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const props = defineProps<{ projects: ProjectView[]; selectedNodeId?: string }>();
 defineEmits<(event: 'open-work', item: LinkedWorkItemRecord) => void>();
@@ -158,7 +160,7 @@ const workOptions = computed(() => props.projects.flatMap(project => [
 async function fetchNodes(): Promise<void> {
   loading.value = true; error.value = '';
   try {
-    nodes.value = await ipcRenderer.invoke('knowledge:nodes-search', { query: query.value.trim(), limit: 100 });
+    nodes.value = await searchKnowledgeNodes({ query: query.value.trim(), limit: 100 });
     const requested = props.selectedNodeId && nodes.value.find(node => node.id === props.selectedNodeId);
     if (requested) await selectNode(requested);
     else if (!selected.value && nodes.value[0]) await selectNode(nodes.value[0]);
@@ -172,7 +174,7 @@ function loadNodes(): void {
 
 async function selectNode(node: KnowledgeNodeRecord): Promise<void> {
   selected.value = node; workLoading.value = true;
-  try { work.value = await ipcRenderer.invoke('knowledge:work-list', { knowledgeNodeId: node.id, limit: 200 }) } finally { workLoading.value = false }
+  try { work.value = await listWorkForKnowledge({ knowledgeNodeId: node.id, limit: 200 }) } finally { workLoading.value = false }
 }
 
 function breadcrumb(item: LinkedWorkItemRecord): string {
@@ -188,14 +190,14 @@ async function attach(): Promise<void> {
   const target = parsedTarget(); if (!target || !selected.value) return;
   saving.value = true;
   try {
-    await ipcRenderer.invoke('work-items:knowledge-link', { ...target, knowledgeNodeId: selected.value.id, relationType: relation.value, note: note.value || null, source: 'ui', actor: 'human' });
+    await linkKnowledgeItem({ ...target, knowledgeNodeId: selected.value.id, relationType: relation.value, note: note.value || null, source: 'ui', actor: 'human' });
     targetKey.value = ''; note.value = ''; await selectNode(selected.value);
   } finally { saving.value = false }
 }
 
 async function unlink(item: LinkedWorkItemRecord): Promise<void> {
   if (!selected.value) return;
-  await ipcRenderer.invoke('work-items:knowledge-unlink', { itemKind: item.item_kind, itemId: item.item_id, knowledgeNodeId: selected.value.id, relationType: item.relation_type, source: 'ui', actor: 'human' });
+  await unlinkKnowledgeItem({ itemKind: item.item_kind, itemId: item.item_id, knowledgeNodeId: selected.value.id, relationType: item.relation_type, source: 'ui', actor: 'human' });
   await selectNode(selected.value);
 }
 

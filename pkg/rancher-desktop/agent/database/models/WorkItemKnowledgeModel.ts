@@ -178,6 +178,9 @@ export class WorkItemKnowledgeModel {
   static async unlink(input: KnowledgeLinkInput): Promise<boolean> {
     const target = this.target(input.itemKind);
     const relation = cleanRelation(input.relationType);
+    // Unlink is a mutation and must fail closed just like link/list: a stale,
+    // archived, or fabricated work target must never turn into a silent no-op.
+    await this.assertItem(input.itemKind, input.itemId, false);
     const node = await postgresClient.queryOne<{ id: string }>(
       `WITH RECURSIVE chain AS (
          SELECT id, merged_into, ARRAY[id] path FROM knowledge_nodes WHERE id = $1

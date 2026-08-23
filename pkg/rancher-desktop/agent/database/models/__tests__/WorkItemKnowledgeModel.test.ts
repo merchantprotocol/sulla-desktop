@@ -76,6 +76,20 @@ describe('work item knowledge associations', () => {
     await expect(WorkItemKnowledgeModel.listForNode('missing')).rejects.toThrow('Knowledge node not found');
   });
 
+  it('fails unlink closed for missing and archived targets before touching links', async() => {
+    const lookup = jest.spyOn(postgresClient, 'queryOne');
+    lookup.mockResolvedValueOnce(null);
+    await expect(WorkItemKnowledgeModel.unlink({
+      itemKind: 'task', itemId: 'missing', knowledgeNodeId: 'node-1',
+    })).rejects.toThrow('task not found: missing');
+
+    lookup.mockResolvedValueOnce({ archived: true });
+    await expect(WorkItemKnowledgeModel.unlink({
+      itemKind: 'epic', itemId: 'archived', knowledgeNodeId: 'node-1',
+    })).rejects.toThrow('epic is archived: archived');
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
   it('canonicalizes and deduplicates work links during a node merge', async() => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({
