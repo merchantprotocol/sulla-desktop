@@ -687,9 +687,9 @@ export class WorkTaskDispatchModel {
    * unit. A crash cannot leave a terminal dispatch attached to an in-progress
    * task (or move the task without retaining the evidence that justified it).
    */
-  static async finalize(id: string, taskId: string, finalization: WorkTaskDispatchFinalization): Promise<void> {
+  static async finalize(id: string, taskId: string, finalization: WorkTaskDispatchFinalization): Promise<WorkTaskRecord> {
     const evidence = finalization.evidence ?? {};
-    await postgresClient.transaction(async(client: PoolClient) => {
+    return postgresClient.transaction(async(client: PoolClient) => {
       const locked = await client.query<{ status: WorkTaskDispatchStatus }>(
         'SELECT status FROM work_task_dispatches WHERE id = $1 AND task_id = $2 FOR UPDATE',
         [id, taskId],
@@ -744,7 +744,7 @@ export class WorkTaskDispatchModel {
         VALUES ($1, $2, $3, 'dispatcher')
       `, [`dispatch-comment-${ randomUUID() }`, taskId, finalization.comment]);
 
-      const moved = await client.query<{ id: string }>(`
+      const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
@@ -755,6 +755,7 @@ export class WorkTaskDispatchModel {
       if (!moved.rows[0]) {
         throw new Error(`Task ${ taskId } is no longer owned by dispatch ${ id }`);
       }
+      return moved.rows[0];
     });
   }
 

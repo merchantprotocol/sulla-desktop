@@ -33,5 +33,9 @@ describe('Execute Projects Todo core routine', () => {
     expect(text).toContain('remote draft PR');
     expect(text).toContain('authoritative tracker');
     expect(text).toContain('Never merge or deploy');
+    expect(text).toContain('Graph nodes are proposal-only');
+    expect(text).toContain('Do not call any project write tool');
+    expect(text).toContain('dispatcher controller will validate the originating task and live canonical artifact');
+    expect(text).not.toContain('recorded=true');
   });
 });
