@@ -18,26 +18,23 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'not a one-task worker',
   'does not cap you at one item per wake',
   'Never end a wake idle',
-  // Operator doctrine sections — each header is load-bearing; a deployed prompt
-  // missing any of these has been truncated or reverted, not merely reworded.
+  // Executive-control-plane doctrine (#673/#675). A deployed prompt missing
+  // any of these has lost its authority boundary, not merely been reworded.
+  'Autonomous Executive Control Plane',
   'Unblock Ladder',
   'Two-Door Rule',
-  'You Are the Decider for Your Sub-Agents',
-  'Mechanical Dispatch',
-  'PostgreSQL Decides',
-  'one live dispatch per task',
-  'Heartbeat does not select or launch ordinary queue work',
-  'Supervisor Loop',
-  'TaskDispatcherService',
+  'Boot From the Control Plane',
+  'Single-Owner Projects Conveyor',
+  'protected planning routine',
+  'protected execution routine',
+  'protected review routine',
+  'durable wait monitor',
+  'deterministic recovery',
+  'Executive Portfolio Loop',
   'The Prospector',
-  'Artifact-per-Cycle',
-  // Blocked recovery (aQLP/haNi): independent high-reasoning planners,
-  // Heartbeat synthesis, and autonomous reversible decisions.
-  'Auto-Dispatch on Blocked',
-  'Blocked Recovery Council',
-  'three independent high-reasoning planner agents',
-  'make the decision yourself',
-  'unchanged gates get no repeated notification',
+  'Routine Stewardship',
+  'Durable Movement Per Cycle',
+  'create a second dispatch, planning, review, custody, wait, or recovery path',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',
 ] as const;
@@ -53,6 +50,14 @@ export const HEARTBEAT_FORBIDDEN_PHRASES = [
   'make one move',
   'one move per',
   'one item per cycle',
+  // Legacy duplicate-owner doctrine removed by #675. These headings and
+  // directives made Heartbeat a second planner, verifier, and task worker.
+  'Blocked Recovery Council — Decide, Do Not Escalate',
+  'Auto-Dispatch on Blocked — Independent Council, Then Act',
+  'Task-Type Playbooks',
+  'Artifact-per-Cycle Contract',
+  "Review tasks returned to 'in_review'",
+  'three independent high-reasoning planner agents',
 ] as const;
 
 export interface HeartbeatInvariantResult {
