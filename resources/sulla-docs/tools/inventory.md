@@ -150,7 +150,7 @@ sulla <category> --help          # what THIS install exposes right now
 - `sulla vault/vault_set_credential` — Create / update a credential.
 - `sulla vault/vault_set_active_account` — Set the default account for an integration.
 - `sulla vault/vault_list` — List saved website credentials (no passwords).
-- `sulla vault/vault_autofill` — Inject saved credentials into the active browser tab.
+- `sulla vault/vault_autofill` — Inject saved credentials into the active or explicitly targeted background browser tab, with origin and non-empty-field verification.
 - `sulla vault/vault_delete_credential` — Delete a credential property (requires `confirm:true`).
 
 → See [`tools/vault.md`](vault.md)
