@@ -9,13 +9,15 @@
  * round-robin rotation whenever an agent edits or comments on a task.
  */
 
+import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
 
 export interface ProjectReportOpts {
-  hours?:     number;
-  nextLimit?: number;
-  projectId?: string;
-  assignee?:  string;
+  hours?:          number;
+  nextLimit?:      number;
+  projectId?:      string;
+  assignee?:       string;
+  lifecycleAware?: boolean;
 }
 
 function shorten(s: string): string {
@@ -65,7 +67,10 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
 
   // OPEN QUEUES — WorkItemsModel already orders by epic priority → task
   // priority → oldest activity. Preserve that order while separating states.
-  const openRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
+  const listedOpenRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
+  const openRows = opts.lifecycleAware
+    ? await LifecycleCapabilityModel.filterHeartbeatEligible(listedOpenRows)
+    : listedOpenRows;
   const actionableRows = openRows.filter(t => t.status !== 'blocked' && t.status !== 'planning');
   const blockedRows = openRows.filter(t => t.status === 'blocked');
   const planningRows = openRows.filter(t => t.status === 'planning');

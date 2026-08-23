@@ -1,3 +1,4 @@
+import { LifecycleCapabilityModel } from '../../database/models/LifecycleCapabilityModel';
 import { WorkItemsModel } from '../../database/models/WorkItemsModel';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -17,7 +18,8 @@ export class UpdateTaskWorker extends BaseTool {
     if (!id) return { successBoolean: false, responseString: 'id is required to update a task.' };
 
     const parentRaw = input.parent_id;
-    const parentId = parentRaw === '' ? null
+    const parentId = parentRaw === ''
+      ? null
       : (typeof parentRaw === 'string' ? parentRaw.trim() : undefined);
     const labels = Array.isArray(input.labels)
       ? input.labels.map((l: any) => String(l)).filter(Boolean)
@@ -25,6 +27,17 @@ export class UpdateTaskWorker extends BaseTool {
 
     try {
       await WorkItemsModel.ensureTables();
+      const actor = input.actor || 'sulla';
+      const current = await WorkItemsModel.getTask(id);
+      if (!current) return { successBoolean: false, responseString: `No task found with id: ${ id }` };
+      if (input.status !== undefined || input.assignee !== undefined) {
+        const protectedStatus = typeof input.status === 'string' ? input.status : current.status;
+        await LifecycleCapabilityModel.assertActorCanManageTask(
+          protectedStatus,
+          current.labels,
+          actor,
+        );
+      }
       const updated = await WorkItemsModel.updateTask(id, {
         epic_id:      typeof input.epic_id === 'string' && input.epic_id.trim() ? input.epic_id.trim() : undefined,
         parent_id:    parentId,
@@ -38,7 +51,7 @@ export class UpdateTaskWorker extends BaseTool {
         github_issue: input.github_issue === '' ? null : input.github_issue,
         position:     typeof input.position === 'number' ? input.position : undefined,
         source:       input.source,
-        actor:        input.actor || 'sulla',
+        actor,
       });
       if (!updated) return { successBoolean: false, responseString: `No task found with id: ${ id }` };
 

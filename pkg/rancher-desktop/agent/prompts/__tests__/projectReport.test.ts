@@ -4,6 +4,7 @@ const ensureTablesMock: any = jest.fn();
 const listProjectsMock: any = jest.fn();
 const listEpicsMock: any = jest.fn();
 const listTasksMock: any = jest.fn();
+const filterHeartbeatEligibleMock: any = jest.fn((tasks: any[]) => Promise.resolve(tasks));
 
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
   WorkItemsModel: {
@@ -12,6 +13,10 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
     listEpics: listEpicsMock,
     listTasks: listTasksMock,
   },
+}));
+
+jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({
+  LifecycleCapabilityModel: { filterHeartbeatEligible: filterHeartbeatEligibleMock },
 }));
 
 describe('buildProjectReport activity rotation queues', () => {
@@ -27,6 +32,7 @@ describe('buildProjectReport activity rotation queues', () => {
         { id: 'planning', project_id: 'project-1', epic_id: 'epic-1', title: 'Council active', status: 'planning', priority: 'critical', assignee: 'heartbeat' },
         { id: 'action-new', project_id: 'project-1', epic_id: 'epic-1', title: 'Action newer', status: 'in_progress', priority: 'critical', assignee: 'heartbeat' },
       ]);
+    filterHeartbeatEligibleMock.mockImplementation((tasks: any[]) => Promise.resolve(tasks));
   });
 
   it('separates actionable, blocked recovery, and planning-in-flight work', async() => {
@@ -48,5 +54,18 @@ describe('buildProjectReport activity rotation queues', () => {
     expect(actionableSection).toContain('Action newer');
     expect(actionableSection).not.toContain('Blocked oldest');
     expect(actionableSection).not.toContain('Council active');
+  });
+
+  it('mechanically removes stages owned by healthy protected services from Heartbeat context', async() => {
+    filterHeartbeatEligibleMock.mockImplementation((tasks: any[]) => Promise.resolve(
+      tasks.filter(task => task.id === 'action-new'),
+    ));
+    const { buildProjectReport } = await import('../projectReport');
+    const report = await buildProjectReport({ assignee: 'heartbeat', lifecycleAware: true });
+
+    expect(report).toContain('Action newer');
+    expect(report).not.toContain('Action oldest');
+    expect(report).not.toContain('Blocked oldest');
+    expect(filterHeartbeatEligibleMock).toHaveBeenCalled();
   });
 });

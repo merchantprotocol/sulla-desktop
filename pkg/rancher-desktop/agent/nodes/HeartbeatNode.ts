@@ -4,6 +4,7 @@
 // and shows desktop notifications instead of WebSocket chat messages.
 
 import { BaseNode } from './BaseNode';
+import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 import { throwIfAborted } from '../services/AbortService';
@@ -141,6 +142,17 @@ export class HeartbeatNode extends BaseNode {
     // tool-call loop), and failure here (e.g. views not yet migrated) must never
     // break the cycle — skip silently.
     if (!isToolCallLoop) {
+      let lifecycleDigest = '';
+      try {
+        lifecycleDigest = await LifecycleCapabilityModel.buildDigest();
+      } catch (err) {
+        console.warn(`[HeartbeatNode] Lifecycle digest skipped: ${ (err as Error).message }`);
+      }
+      if (lifecycleDigest) {
+        const lifecycleBlock = `\n\n<lifecycle_capabilities>\n${ lifecycleDigest }\n</lifecycle_capabilities>`;
+        this.mergeHeartbeatContextBlock(state, lifecycleBlock, 'lifecycle_capabilities');
+      }
+
       let routineDigest = '';
       try {
         routineDigest = await buildRoutinesDigest();
@@ -502,7 +514,7 @@ export class HeartbeatNode extends BaseNode {
       const { buildProjectReport } = await import('../prompts/projectReport');
       const reportOpts = await this.resolveHeartbeatProjectReportOpts();
       (state.metadata as any).heartbeatReportOpts = reportOpts;
-      const report = await buildProjectReport({ ...reportOpts, nextLimit: 12 });
+      const report = await buildProjectReport({ ...reportOpts, nextLimit: 12, lifecycleAware: true });
       if (!report) return;
 
       const scope = reportOpts.projectId
@@ -525,7 +537,8 @@ export class HeartbeatNode extends BaseNode {
   }
 
   private async buildSelectedHeartbeatWorkItemContext(state: BaseThreadState, reportOpts: { projectId?: string; assignee?: string }): Promise<string> {
-    const candidates = await WorkItemsModel.listTasks({ ...reportOpts, limit: 500 });
+    const listedCandidates = await WorkItemsModel.listTasks({ ...reportOpts, limit: 500 });
+    const candidates = await LifecycleCapabilityModel.filterHeartbeatEligible(listedCandidates);
     // Match projectReport's section order: hydrate executable work first. If
     // the lane is fully blocked, hydrate the top recovery-planning candidate.
     // A task already in planning is never selected for duplicate dispatch.
