@@ -166,6 +166,15 @@ export class WorkTaskDispatchModel {
       const taskIds = stale.rows.map(row => row.task_id);
       if (taskIds.length > 0) {
         await client.query(`
+          UPDATE work_task_stage_claims
+             SET status = 'recovered', released_at = now(), heartbeat_at = now()
+           WHERE task_id = ANY($1::text[])
+             AND capability_key = 'todo-execution'
+             AND stage = 'in_progress'
+             AND status = 'active'
+        `, [taskIds]);
+
+        await client.query(`
           UPDATE work_tasks
              SET status = 'todo', assignee = NULL,
                  updated_at = now(), last_moved_at = now(),
