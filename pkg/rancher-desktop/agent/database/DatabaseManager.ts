@@ -55,6 +55,16 @@ export class DatabaseManager {
     // Settings are ready to be used in seeding
     await this.runSeeders();
 
+    // Lane definitions are reasserted at every boot. This is deliberately
+    // outside the one-shot seeder registry: newly encountered legacy task
+    // statuses must become visible lanes without rewriting task rows.
+    try {
+      const { initialize } = await import('@pkg/agent/database/seeders/WorkLaneDefinitionSeeder');
+      await initialize();
+    } catch (error) {
+      console.warn('[DB] WorkLaneDefinitionSeeder failed:', error);
+    }
+
     // Seed the editable system-prompt sections from their baked native
     // fallbacks (write-only-if-absent; honors is_customized). Non-fatal —
     // the section factories remain the runtime fallback if this fails.

@@ -29,6 +29,9 @@ import type {
   UpsertTaskInput, UpdateTaskInput,
   AddCommentInput,
 } from '@pkg/agent/database/models/WorkItemsModel';
+import type {
+  CreateWorkLaneInput, UpdateWorkLaneInput, WorkLaneScope,
+} from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -39,6 +42,12 @@ async function importWorkItemsModel() {
   const mod = await import('@pkg/agent/database/models/WorkItemsModel');
 
   return mod.WorkItemsModel;
+}
+
+async function importWorkLaneDefinitionModel() {
+  const mod = await import('@pkg/agent/database/models/WorkLaneDefinitionModel');
+
+  return mod.WorkLaneDefinitionModel;
 }
 
 /** Local slugify — mirrors the model's private one (kebab, ≤80 chars). */
@@ -78,6 +87,50 @@ export function initWorkItemsEvents(): void {
     const WorkItemsModel = await importWorkItemsModel();
 
     return WorkItemsModel.listRecentActivity(opts);
+  });
+
+  // ── lane definitions ─────────────────────────────────────────────────
+
+  ipcMainProxy.handle('work-items:lanes-list', async(_event: unknown, opts: {
+    scope?: WorkLaneScope; projectId?: string; includeArchived?: boolean; includeReset?: boolean;
+  } = {}) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.list(opts);
+  });
+
+  ipcMainProxy.handle('work-items:lanes-resolve', async(_event: unknown, projectId: string, includeArchived = false) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.resolveEffective(projectId, includeArchived);
+  });
+
+  ipcMainProxy.handle('work-items:lane-create', async(_event: unknown, input: CreateWorkLaneInput) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.create({ ...input, actor: input.actor ?? 'human' });
+  });
+
+  ipcMainProxy.handle('work-items:lane-update', async(_event: unknown, id: string, changes: UpdateWorkLaneInput) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.update(id, { ...changes, actor: changes.actor ?? 'human' });
+  });
+
+  ipcMainProxy.handle('work-items:lane-archive', async(_event: unknown, id: string, destinationLaneKey?: string) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.archive(id, destinationLaneKey, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:lane-restore', async(_event: unknown, id: string) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.restore(id, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:lanes-reorder', async(_event: unknown, scope: WorkLaneScope, orderedKeys: string[], projectId?: string) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.reorder(scope, orderedKeys, projectId, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:lane-reset-override', async(_event: unknown, projectId: string, laneKey: string) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.resetProjectOverride(projectId, laneKey, 'human');
   });
 
   // ── projects ─────────────────────────────────────────────────────────
