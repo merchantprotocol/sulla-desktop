@@ -33,7 +33,56 @@ export interface ClaimedDispatch {
   task:     WorkTaskRecord;
 }
 
+export type InProgressExclusionReason =
+  | 'archived'
+  | 'epic_closed'
+  | 'human_or_unknown_owner'
+  | 'non_autonomous_label'
+  | 'live_dispatch'
+  | 'active_child'
+  | 'recent_activity'
+  | 'active_agent_job'
+  | 'linked_external_operation';
+
+export interface InProgressClassificationRow extends WorkTaskRecord {
+  epic_open:            boolean;
+  autonomous_owner:     boolean;
+  autonomous_labels:    boolean;
+  has_live_dispatch:    boolean;
+  has_active_child:     boolean;
+  stale_activity:       boolean;
+  has_active_agent_job: boolean;
+  recovery_attempts:    string | number;
+}
+
+export interface RecoverableInProgressCandidate {
+  task:             WorkTaskRecord;
+  fingerprint:      string;
+  attemptCount:     number;
+  exclusionReasons: InProgressExclusionReason[];
+}
+
+export interface OrphanRecoveryResult {
+  taskId:         string;
+  outcome:        'recovered' | 'blocked_ceiling' | 'cas_miss';
+  attemptNumber?: number;
+}
+
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
+
+export function classifyInProgressRow(row: InProgressClassificationRow): InProgressExclusionReason[] {
+  const reasons: InProgressExclusionReason[] = [];
+  if (row.archived) reasons.push('archived');
+  if (!row.epic_open) reasons.push('epic_closed');
+  if (!row.autonomous_owner) reasons.push('human_or_unknown_owner');
+  if (!row.autonomous_labels) reasons.push('non_autonomous_label');
+  if (row.has_live_dispatch) reasons.push('live_dispatch');
+  if (row.has_active_child) reasons.push('active_child');
+  if (!row.stale_activity) reasons.push('recent_activity');
+  if (row.has_active_agent_job) reasons.push('active_agent_job');
+  return reasons;
+}
+
 export class WorkTaskDispatchModel {
   static async claimNext(agentId: string): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
@@ -207,6 +256,164 @@ export class WorkTaskDispatchModel {
       [kind ?? null],
     );
     return Number(row?.count || 0);
+  }
+
+  /**
+   * Classify in-progress tasks without changing them. This is deliberately the
+   * same eligibility surface used by recovery, so the default report-only
+   * rollout measures what an enabled pass would do.
+   */
+  static async findRecoverableInProgress(staleMinutes = 360, limit = 100): Promise<RecoverableInProgressCandidate[]> {
+    const rows = await postgresClient.query<InProgressClassificationRow>(`
+      SELECT t.*,
+             (e.id IS NOT NULL AND e.archived = false AND NOT (e.status = ANY($1::text[]))) AS epic_open,
+             (t.assignee IS NULL OR LOWER(t.assignee) = ANY($2::text[])) AS autonomous_owner,
+             NOT EXISTS (
+               SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
+                WHERE LOWER(label) = ANY($3::text[])
+             ) AS autonomous_labels,
+             EXISTS (
+               SELECT 1 FROM work_task_dispatches d
+                WHERE d.task_id = t.id AND d.status = 'running'
+             ) AS has_live_dispatch,
+             EXISTS (
+               SELECT 1 FROM work_tasks child
+                WHERE child.parent_id = t.id
+                  AND child.archived = false
+                  AND child.status NOT IN ('done', 'cancelled', 'parked')
+             ) AS has_active_child,
+             (t.last_activity_at <= now() - ($4 * interval '1 minute')) AS stale_activity,
+             EXISTS (
+               SELECT 1 FROM agent_jobs j
+                WHERE j.status = 'running'
+                  AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
+             ) AS has_active_agent_job,
+             (SELECT COUNT(*)::text FROM work_task_recovery_attempts a WHERE a.task_id = t.id) AS recovery_attempts
+        FROM work_tasks t
+        LEFT JOIN work_epics e ON e.id = t.epic_id
+       WHERE t.status = 'in_progress'
+       ORDER BY t.last_activity_at ASC, t.id ASC
+       LIMIT $5
+    `, [CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, staleMinutes, Math.max(1, limit)]);
+
+    return rows.map((row) => {
+      const {
+        epic_open: _epicOpen,
+        autonomous_owner: _autonomousOwner,
+        autonomous_labels: _autonomousLabels,
+        has_live_dispatch: _hasLiveDispatch,
+        has_active_child: _hasActiveChild,
+        stale_activity: _staleActivity,
+        has_active_agent_job: _hasActiveAgentJob,
+        recovery_attempts: recoveryAttempts,
+        ...task
+      } = row;
+      return {
+        task:             task as WorkTaskRecord,
+        fingerprint:      row.last_activity_at,
+        attemptCount:     Number(recoveryAttempts || 0),
+        exclusionReasons: classifyInProgressRow(row),
+      };
+    });
+  }
+
+  /**
+   * Recover snapshots under row locks. Every eligibility predicate and the
+   * activity fingerprint is re-checked after locking; any concurrent edit or
+   * comment therefore wins and produces a harmless CAS miss.
+   */
+  static async recoverOrphanedInProgress(
+    candidates: RecoverableInProgressCandidate[],
+    batchSize = 1,
+    retryCeiling = 3,
+  ): Promise<OrphanRecoveryResult[]> {
+    const eligible = candidates.filter(candidate => candidate.exclusionReasons.length === 0).slice(0, Math.max(0, batchSize));
+    if (eligible.length === 0) return [];
+
+    return postgresClient.transaction(async(client: PoolClient) => {
+      const results: OrphanRecoveryResult[] = [];
+      for (const candidate of eligible) {
+        const locked = await client.query<WorkTaskRecord>(`
+          SELECT t.*
+            FROM work_tasks t
+            JOIN work_epics e ON e.id = t.epic_id
+           WHERE t.id = $1
+             AND t.status = 'in_progress'
+             AND t.archived = false
+             AND e.archived = false
+             AND NOT (e.status = ANY($2::text[]))
+             AND (t.assignee IS NULL OR LOWER(t.assignee) = ANY($3::text[]))
+             AND NOT EXISTS (
+               SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
+                WHERE LOWER(label) = ANY($4::text[])
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM work_task_dispatches d
+                WHERE d.task_id = t.id AND d.status = 'running'
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM work_tasks child
+                WHERE child.parent_id = t.id
+                  AND child.archived = false
+                  AND child.status NOT IN ('done', 'cancelled', 'parked')
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM agent_jobs j
+                WHERE j.status = 'running'
+                  AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
+             )
+             AND t.last_activity_at = $5::timestamptz
+           FOR UPDATE OF t SKIP LOCKED
+        `, [candidate.task.id, CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, candidate.fingerprint]);
+
+        const task = locked.rows[0];
+        if (!task) {
+          results.push({ taskId: candidate.task.id, outcome: 'cas_miss' });
+          continue;
+        }
+
+        const count = await client.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count FROM work_task_recovery_attempts WHERE task_id = $1`,
+          [task.id],
+        );
+        const attemptNumber = Number(count.rows[0]?.count || 0) + 1;
+        const outcome = attemptNumber >= Math.max(1, retryCeiling) ? 'blocked_ceiling' : 'recovered';
+        const nextStatus = outcome === 'recovered' ? 'todo' : 'blocked';
+        const nextAssignee = outcome === 'recovered' ? TASK_ASSIGNEES.dispatcher : TASK_ASSIGNEES.heartbeat;
+        const reason = outcome === 'recovered'
+          ? 'stale autonomous in_progress task had no live owner or operation'
+          : `recovery retry ceiling reached (${ retryCeiling })`;
+        const auditId = `recovery-${ randomUUID() }`;
+        const undo = `restore status=in_progress, assignee=${ task.assignee ?? 'unassigned' }, and review activity at ${ task.last_activity_at }`;
+
+        await client.query(`
+          INSERT INTO work_task_recovery_attempts
+            (id, task_id, attempt_number, outcome, reason, previous_status, previous_assignee, previous_activity_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [auditId, task.id, attemptNumber, outcome, reason, task.status, task.assignee, task.last_activity_at]);
+
+        await client.query(`
+          WITH inserted AS (
+            INSERT INTO work_task_comments (id, task_id, body, author)
+            VALUES ($1, $2, $3, 'dispatcher')
+          )
+          UPDATE work_tasks
+             SET status = $4,
+                 assignee = $5,
+                 updated_at = now(),
+                 last_moved_at = now(),
+                 last_activity_at = now(),
+                 last_moved_by = 'dispatcher'
+           WHERE id = $2
+        `, [
+          `comment-${ randomUUID() }`, task.id,
+          `Orphan recovery attempt ${ attemptNumber }: ${ reason }. Prior owner: ${ task.assignee ?? 'unassigned' }. Prior activity: ${ task.last_activity_at }. Outcome: ${ nextStatus }/${ nextAssignee }. Undo path: ${ undo }.`,
+          nextStatus, nextAssignee,
+        ]);
+        results.push({ taskId: task.id, outcome, attemptNumber });
+      }
+      return results;
+    });
   }
 
   static async touch(id: string): Promise<void> {
