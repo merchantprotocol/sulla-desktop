@@ -82,7 +82,6 @@ export default defineComponent({
       remoteTimeoutSeconds:  60, // Remote API timeout limit in seconds
       // Automated Project Management (protected routine concurrency + custody)
       automatedProjectManagementEnabled: false,
-      automatedProjectManagementEnforceCustody: false,
       routineConcurrencyPlanning:  1,
       routineConcurrencyExecution: 3,
       routineConcurrencyReview:    3,
@@ -227,7 +226,6 @@ export default defineComponent({
     this.subconsciousProvider = await SullaSettingsModel.get('subconsciousProvider', 'default');
     this.heartbeatDelayMinutes = await SullaSettingsModel.get('heartbeatDelayMinutes', 15);
     this.automatedProjectManagementEnabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', false));
-    this.automatedProjectManagementEnforceCustody = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnforceCustody', false));
     this.routineConcurrencyPlanning  = Number(await SullaSettingsModel.get('routineConcurrency_planning', 1));
     this.routineConcurrencyExecution = Number(await SullaSettingsModel.get('routineConcurrency_execution', 3));
     this.routineConcurrencyReview    = Number(await SullaSettingsModel.get('routineConcurrency_review', 3));
@@ -745,7 +743,6 @@ export default defineComponent({
           heartbeatEnabled:      Boolean(this.heartbeatEnabled),
           heartbeatDelayMinutes: Number(this.heartbeatDelayMinutes) || 15,
           automatedProjectManagementEnabled:        Boolean(this.automatedProjectManagementEnabled),
-          automatedProjectManagementEnforceCustody: Boolean(this.automatedProjectManagementEnforceCustody),
           routineConcurrency_planning:  Number(this.routineConcurrencyPlanning),
           routineConcurrency_execution: Number(this.routineConcurrencyExecution),
           routineConcurrency_review:    Number(this.routineConcurrencyReview),
@@ -766,7 +763,6 @@ export default defineComponent({
           heartbeatDelayMinutes: 'number',
           heartbeatEnabled:      'boolean',
           automatedProjectManagementEnabled:        'boolean',
-          automatedProjectManagementEnforceCustody: 'boolean',
           routineConcurrency_planning:  'number',
           routineConcurrency_execution: 'number',
           routineConcurrency_review:    'number',
@@ -1748,31 +1744,11 @@ export default defineComponent({
 
           >
 
-            <label class="setting-label">Require artifact-evidence custody</label>
-
-            <div class="toggle-switch">
-
-              <label class="switch">
-
-                <input
-
-                  v-model="automatedProjectManagementEnforceCustody"
-
-                  type="checkbox"
-
-                >
-
-                <span class="slider" />
-
-              </label>
-
-              <span class="toggle-label">{{ automatedProjectManagementEnforceCustody ? 'Fail closed' : 'Off' }}</span>
-
-            </div>
+            <label class="setting-label">Artifact-evidence custody</label>
 
             <p class="setting-description">
 
-              When on, a task cannot enter review or done unless coding work records branch, commit SHA, PR URL, head SHA, validation evidence, and provenance (or non-code work records an authoritative artifact id/URL and evidence).
+              Always enforced. A task cannot enter review unless coding work records branch, commit SHA, PR URL, head SHA, validation evidence, and provenance (or non-code work records an authoritative artifact id/URL and evidence).
 
             </p>
 
