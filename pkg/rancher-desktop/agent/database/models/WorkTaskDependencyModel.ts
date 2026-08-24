@@ -77,6 +77,10 @@ export interface UnresolvedDependency {
   reason: string;
 }
 
+export interface TaskDependencyHold extends UnresolvedDependency {
+  taskId: string;
+}
+
 export interface DependencyChainEntry {
   taskId: string;
   status: string | null;
@@ -163,6 +167,7 @@ export class WorkTaskDependencyModel {
       if (byId.get(dependsOnId)!.archived) throw new Error(`Depended-on task is archived: ${ dependsOnId }`);
 
       await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`wtd:${ lo }:${ hi }`]);
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', ['work-task-dependency-graph']);
 
       const cycle = await client.query(
         `WITH RECURSIVE reach AS (
@@ -278,6 +283,39 @@ export class WorkTaskDependencyModel {
         dependsOnTaskId: r.depends_on_task_id,
         dependsOnStatus: status,
         dependsOnTitle:  r.dep_title ?? null,
+        policy,
+        reason,
+      };
+    });
+  }
+
+  /** One bounded query for report/UI separation of dependency-held work. */
+  static async listUnresolvedForTasks(taskIds: string[]): Promise<TaskDependencyHold[]> {
+    if (taskIds.length === 0) return [];
+    const rows = await postgresClient.query<any>(`
+      SELECT d.*, t.id AS dep_exists, t.status AS dep_status, t.title AS dep_title
+        FROM ${ this.TABLE } d
+        LEFT JOIN work_tasks t ON t.id = d.depends_on_task_id
+       WHERE d.dependent_task_id = ANY($1::text[])
+         AND d.archived_at IS NULL
+         AND (t.id IS NULL OR t.status IS DISTINCT FROM 'done')
+       ORDER BY d.dependent_task_id, d.created_at ASC`, [taskIds]);
+    return rows.map((r: any) => {
+      const status: string | null = r.dep_status ?? null;
+      const missing = !r.dep_exists;
+      const failed = !!status && FAILED_TERMINAL_STATES.includes(status);
+      const policy: UnresolvedPolicy = missing ? 'missing' : failed ? 'failed_terminal' : 'pending';
+      const reason = missing
+        ? `prerequisite ${ r.depends_on_task_id } is missing or archived; stays blocked pending explicit override`
+        : failed
+          ? `prerequisite ${ r.depends_on_task_id } reached terminal state '${ status }' without completing; stays blocked pending explicit override`
+          : `prerequisite ${ r.depends_on_task_id } is '${ status ?? 'unknown' }', not yet done`;
+      return {
+        taskId: r.dependent_task_id,
+        dependency: this.mapRow(r),
+        dependsOnTaskId: r.depends_on_task_id,
+        dependsOnStatus: status,
+        dependsOnTitle: r.dep_title ?? null,
         policy,
         reason,
       };

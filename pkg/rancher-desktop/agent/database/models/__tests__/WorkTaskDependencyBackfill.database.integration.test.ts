@@ -4,7 +4,8 @@ import { Pool } from 'pg';
 
 import { postgresClient } from '../../PostgresClient';
 import { up as workItemsMigration } from '../../migrations/0044_create_work_items_tables';
-import { up as dependencyMigration } from '../../migrations/0078_create_work_task_dependencies';
+import { up as schedulingMigration } from '../../migrations/0075_add_project_views_and_scheduling';
+import { up as dependencyMigration } from '../../migrations/0083_create_work_task_dependencies';
 import { applyTaskDependencyBackfill, planTaskDependencyBackfill } from '../WorkTaskDependencyBackfill';
 
 import mockModules from '@pkg/utils/testUtils/mockModules';
@@ -46,7 +47,8 @@ describeDatabase('WorkTaskDependencyBackfill on a migrated PostgreSQL database',
     pool = new Pool({ connectionString: databaseUrl, max: 8 });
     await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
     await pool.query(workItemsMigration);
-    await pool.query(dependencyMigration);
+    await schedulingMigration(pool as any);
+    await dependencyMigration(pool as any);
     routeModelToTestDatabase();
   });
 
