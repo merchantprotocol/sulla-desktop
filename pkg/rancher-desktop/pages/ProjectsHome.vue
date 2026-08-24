@@ -673,12 +673,18 @@ function fillTaskDraft(t: Partial<WorkTaskRecord> & { epic_id?: string | null })
   taskDraft.id = (t as WorkTaskRecord).id;
   taskDraft.title = t.title ?? '';
   taskDraft.description = t.description ?? '';
-  taskDraft.status = t.status ?? 'todo';
+  taskDraft.status = t.status ?? defaultTaskStatus();
   taskDraft.priority = t.priority ?? 'medium';
   taskDraft.epic_id = t.epic_id ?? (sel.value?.epics[0]?.id ?? null);
   taskDraft.assignee = t.assignee ?? '';
   taskDraft.due_at = t.due_at ?? null;
   taskDraft.github_issue = t.github_issue ?? '';
+}
+
+function defaultTaskStatus(): string | undefined {
+  if (!laneCapability.value?.ready) return 'todo';
+
+  return selectedLanes.value.find(lane => lane.semantic_role === 'execution')?.lane_key;
 }
 
 async function openTaskDrawer(t: WorkTaskRecord): Promise<void> {
@@ -761,7 +767,7 @@ function activityText(item: WorkActivityRecord): string {
 function openNewTask(epicId: string): void {
   taskMode.value = 'create';
   openTask.value = { id: '' } as WorkTaskRecord;
-  fillTaskDraft({ epic_id: epicId, status: 'todo', priority: 'medium' });
+  fillTaskDraft({ epic_id: epicId, priority: 'medium' });
   taskComments.value = [];
 }
 

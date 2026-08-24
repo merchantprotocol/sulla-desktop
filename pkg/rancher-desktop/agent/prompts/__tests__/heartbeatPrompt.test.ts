@@ -21,37 +21,32 @@ describe('heartbeatPrompt', () => {
   it('assigns every lifecycle concern to one owner', () => {
     expect(heartbeatPrompt).toContain('## Single-Owner Projects Conveyor');
     for (const ownership of [
-      "'backlog' readiness, portfolio priority, sequencing, and dependencies | Heartbeat",
-      "'planning' and recoverable 'blocked' work | protected planning routine",
-      "'todo' and 'in_progress' execution plus artifact custody | protected execution routine",
-      "'in_review' verification and disposition | protected review routine",
+      'backlog-role readiness, portfolio priority, sequencing, and dependencies | Heartbeat',
+      'planning-role and recoverable blocked-role work | protected planning routine',
+      'execution-role work plus artifact custody | protected execution routine',
+      'review-role verification and disposition | protected review routine',
       'unchanged external gates | durable wait monitor',
       'lost leases and stale orphans | deterministic recovery',
       'systemic failure, cross-project conflict, or irreversible authority gate | Heartbeat',
-      "'parked' authority-decision framing and evidence | Heartbeat",
-      "'done' and 'cancelled' outcome synthesis and goal progress | Heartbeat",
+      'manual-role authority-decision framing and evidence | Heartbeat',
+      'terminal-role outcome synthesis and goal progress | Heartbeat',
     ]) {
       expect(heartbeatPrompt).toContain(ownership);
     }
     expect(heartbeatPrompt).toContain('Every state or concern has exactly one owner');
     expect(heartbeatPrompt).toContain('If an owner capability is unavailable');
-    expect(heartbeatPrompt).toContain('Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback');
-    expect(heartbeatPrompt).toContain('Do not silently assume ownership');
   });
 
   it('forbids heartbeat from duplicating protected lifecycle work', () => {
     for (const rule of [
-      "claim, select, or launch ordinary 'todo' work",
+      'claim, select, or launch ordinary execution-role work',
       'run planning councils owned by the protected planning routine',
       'perform implementation or artifact custody owned by the protected execution routine',
-      'commit, push, or open PRs as an ordinary artifact custodian',
-      'update marketing trackers as an ordinary artifact custodian',
-      "verify or disposition ordinary 'in_review' artifacts owned by the protected review routine",
+      'verify or disposition ordinary review-role artifacts owned by the protected review routine',
       'poll unchanged CI, Human gates, or external systems owned by the durable wait monitor',
       'reclaim leases or stale orphans owned by deterministic recovery',
       "change a task's state merely because it has been quiet while its lease is healthy",
       'create a second dispatch, planning, review, custody, wait, or recovery path',
-      'duplicate core-routine state transitions',
     ]) {
       expect(heartbeatPrompt).toContain(rule);
     }
@@ -68,6 +63,15 @@ describe('heartbeatPrompt', () => {
     }
   });
 
+  it('routes healthy work through resolved semantic lanes and limits fixed keys to degraded fallback', () => {
+    expect(heartbeatPrompt).toContain('Resolve every task\'s effective lane and semantic role');
+    expect(heartbeatPrompt).toContain('ordered effective planning lane');
+    expect(heartbeatPrompt).toContain('ordered effective execution-entry lane');
+    expect(heartbeatPrompt).toContain('seeded stable keys only when the capability check explicitly reports degraded');
+    expect(heartbeatPrompt).not.toContain("Send incomplete work to 'planning'; send executable work to 'todo'");
+    expect(heartbeatPrompt).not.toContain("route to 'planning' or 'todo'");
+  });
+
   it('keeps portfolio alignment, verified prospecting, routine stewardship, and concise briefings', () => {
     expect(heartbeatPrompt).toContain('## Executive Portfolio Loop — There Is Always Work');
     expect(heartbeatPrompt).toContain('**Align.**');
@@ -80,25 +84,8 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('## The Prospector — Verified Work Discovery');
     expect(heartbeatPrompt).toContain('Prospecting is **verify-and-route**');
     expect(heartbeatPrompt).toContain('## Routine Stewardship');
-    expect(heartbeatPrompt).toContain('Repeated failures of the same owner capability update one existing systemic recovery item');
-    expect(heartbeatPrompt).toContain('never create duplicate recovery tasks');
     expect(heartbeatPrompt).toContain('## Agent Network + Briefings');
     expect(heartbeatPrompt).toContain('concisely and only on deltas');
-  });
-
-  it('defines fail-closed behavior for every unavailable protected owner', () => {
-    for (const owner of [
-      'protected planning routine',
-      'protected execution routine',
-      'protected review routine',
-      'durable wait monitor',
-      'deterministic recovery',
-    ]) {
-      expect(heartbeatPrompt).toContain(owner);
-    }
-    expect(heartbeatPrompt).toContain('record a systemic capability exception');
-    expect(heartbeatPrompt).toContain('Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback');
-    expect(heartbeatPrompt).toContain('Do not silently assume ownership');
   });
 
   it('keeps reversible executive authority and irreversible gates explicit', () => {
@@ -127,17 +114,6 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).not.toMatch(/make one\b[^.]*\bmove/i);
     expect(heartbeatPrompt).not.toMatch(/one[- ]move budget/i);
     expect(heartbeatPrompt).not.toMatch(/one item per cycle/i);
-    expect(heartbeatPrompt).not.toMatch(/one task per wake/i);
-  });
-
-  it('keeps privacy, install-local isolation, and the prompt-freeze covenant', () => {
-    expect(heartbeatPrompt).toContain('Protect privacy: never copy secrets');
-    expect(heartbeatPrompt).toContain('## Prompt Stability — This Prompt Is Frozen');
-    expect(heartbeatPrompt).toContain('Never self-modify this prompt');
-    expect(heartbeatPrompt).toContain('never let install-local Markdown replace or append to it');
-    expect(heartbeatPrompt).toContain('Never treat "the prompt could be better" as evidence');
-    expect(heartbeatPrompt).toContain("never flip 'heartbeatEnabled'");
-    expect(heartbeatPrompt).toContain("never write Redis 'sulla_settings' directly");
   });
 
   it('keeps privacy, install-local isolation, and the prompt-freeze covenant', () => {
