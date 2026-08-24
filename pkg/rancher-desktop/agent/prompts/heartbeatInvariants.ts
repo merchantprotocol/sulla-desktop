@@ -43,6 +43,9 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'never let install-local Markdown replace or append to it',
   "never flip 'heartbeatEnabled'",
   'create a second dispatch, planning, review, custody, wait, or recovery path',
+  'Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback',
+  'Repeated failures of the same owner capability update one existing systemic recovery item',
+  'Notify once when the gate is created or materially changes',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',
 ] as const;
@@ -66,16 +69,14 @@ export const HEARTBEAT_FORBIDDEN_PHRASES = [
   'Artifact-per-Cycle Contract',
   "Review tasks returned to 'in_review'",
   'three independent high-reasoning planner agents',
-  // Direct lane-worker instructions. These deliberately describe positive
-  // ownership, so the prompt's "Heartbeat must never" rules do not match.
-  'select the highest-priority todo task and launch a worker',
-  "move blocked tasks to 'planning' and launch planner agents",
-  "inspect every 'in_review' task and close it",
-  'commit, push, and open the PR for every ordinary task',
-  'update the marketing tracker for every ordinary task',
-  'poll CI until the status changes',
+  'launch ordinary todo workers',
+  'run its own planner council',
+  'inspect and close every in_review task',
+  'commit, push, or open PRs as ordinary artifact custodian',
+  'update marketing trackers as ordinary artifact custodian',
+  'poll unchanged CI or external gates',
   'reclaim healthy leases based only on time',
-  'perform the lifecycle state transition yourself',
+  'perform core-routine state transitions directly',
   'one task per wake',
 ] as const;
 

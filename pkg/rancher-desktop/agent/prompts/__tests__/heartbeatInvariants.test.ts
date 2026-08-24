@@ -80,25 +80,37 @@ describe('checkHeartbeatPromptInvariants', () => {
     }
   });
 
-  it('fails closed on direct planning, execution, custody, review, polling, and recovery instructions', () => {
-    const duplicateOwnerInstructions = [
-      'select the highest-priority todo task and launch a worker',
-      "move blocked tasks to 'planning' and launch planner agents",
-      "inspect every 'in_review' task and close it",
-      'commit, push, and open the PR for every ordinary task',
-      'update the marketing tracker for every ordinary task',
-      'poll CI until the status changes',
+  it('fails closed on every forbidden ordinary-owner regression', () => {
+    for (const phrase of [
+      'launch ordinary todo workers',
+      'run its own planner council',
+      'inspect and close every in_review task',
+      'commit, push, or open PRs as ordinary artifact custodian',
+      'update marketing trackers as ordinary artifact custodian',
+      'poll unchanged CI or external gates',
       'reclaim healthy leases based only on time',
-      'perform the lifecycle state transition yourself',
+      'perform core-routine state transitions directly',
       'one task per wake',
-    ] as const;
-
-    for (const instruction of duplicateOwnerInstructions) {
-      const result = checkHeartbeatPromptInvariants(`${ heartbeatPrompt }\n${ instruction }`);
-
-      expect(HEARTBEAT_FORBIDDEN_PHRASES).toContain(instruction);
+    ]) {
+      const result = checkHeartbeatPromptInvariants(`${ heartbeatPrompt }\n${ phrase }`);
       expect(result.ok).toBe(false);
-      expect(result.forbidden).toContain(instruction);
+      expect(result.forbidden).toContain(phrase);
+    }
+  });
+
+  it('pins missing-capability, single-recovery, durable-wait, Projects, and freeze behavior', () => {
+    for (const phrase of [
+      'Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback',
+      'Repeated failures of the same owner capability update one existing systemic recovery item',
+      'Notify once when the gate is created or materially changes',
+      'Projects project-state is your only durable agenda',
+      'never let install-local Markdown replace or append to it',
+      "never flip 'heartbeatEnabled'",
+    ]) {
+      const stripped = heartbeatPrompt.split(phrase).join('');
+      const result = checkHeartbeatPromptInvariants(stripped);
+      expect(result.ok).toBe(false);
+      expect(result.missing).toContain(phrase);
     }
   });
 });
@@ -175,33 +187,6 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     expect(built.heartbeatInvariants?.ok).toBe(true);
   });
 
-  it('keeps the compiled heartbeat bytes in the stable one-hour cache block across wakes', async() => {
-    SystemPromptBuilder.register('heartbeat', () => ({
-      id:             'heartbeat',
-      content:        heartbeatPrompt,
-      priority:       110,
-      cacheStability: 'stable',
-    }), ['full']);
-
-    const first = await SystemPromptBuilder.build(baseCtx({
-      provider:   'anthropic',
-      basePrompt: 'dynamic wake A',
-    }));
-    const second = await SystemPromptBuilder.build(baseCtx({
-      provider:   'anthropic',
-      basePrompt: 'dynamic wake B',
-    }));
-
-    expect(first.anthropicSystem?.[0]).toEqual({
-      type:          'text',
-      text:          heartbeatPrompt,
-      cache_control: { type: 'ephemeral', ttl: '1h' },
-    });
-    expect(second.anthropicSystem?.[0]).toEqual(first.anthropicSystem?.[0]);
-    expect(first.anthropicSystem?.at(-1)?.text).toBe('dynamic wake A');
-    expect(second.anthropicSystem?.at(-1)?.text).toBe('dynamic wake B');
-  });
-
   it('flags a stale/reverted heartbeat build', async() => {
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
@@ -224,5 +209,28 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
 
     const built = await SystemPromptBuilder.build(baseCtx({ isHeartbeat: false }));
     expect(built.heartbeatInvariants).toBeUndefined();
+  });
+
+  it('keeps the compiled heartbeat bytes in the stable Anthropic cache segment across wakes', async() => {
+    SystemPromptBuilder.register('heartbeat', () => ({
+      id:             'heartbeat',
+      content:        heartbeatPrompt,
+      priority:       110,
+      cacheStability: 'stable',
+    }), ['full']);
+
+    const first = await SystemPromptBuilder.build(baseCtx({ provider: 'anthropic', basePrompt: 'dynamic wake A' }));
+    const second = await SystemPromptBuilder.build(baseCtx({ provider: 'anthropic', basePrompt: 'dynamic wake B' }));
+
+    expect(first.anthropicSystem?.[0]).toEqual({
+      type:          'text',
+      text:          heartbeatPrompt,
+      cache_control: { type: 'ephemeral', ttl: '1h' },
+    });
+    expect(second.anthropicSystem?.[0]).toEqual(first.anthropicSystem?.[0]);
+    expect(first.anthropicSystem?.at(-1)?.text).toBe('dynamic wake A');
+    expect(second.anthropicSystem?.at(-1)?.text).toBe('dynamic wake B');
+    expect(first.heartbeatInvariants?.ok).toBe(true);
+    expect(second.heartbeatInvariants?.ok).toBe(true);
   });
 });

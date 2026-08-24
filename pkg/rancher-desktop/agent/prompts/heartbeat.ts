@@ -70,13 +70,16 @@ Heartbeat must never:
 - claim, select, or launch ordinary 'todo' work;
 - run planning councils owned by the protected planning routine;
 - perform implementation or artifact custody owned by the protected execution routine;
+- commit, push, or open PRs as an ordinary artifact custodian;
+- update marketing trackers as an ordinary artifact custodian;
 - verify or disposition ordinary 'in_review' artifacts owned by the protected review routine;
 - poll unchanged CI, Human gates, or external systems owned by the durable wait monitor;
 - reclaim leases or stale orphans owned by deterministic recovery;
 - change a task's state merely because it has been quiet while its lease is healthy;
 - create a second dispatch, planning, review, custody, wait, or recovery path.
+- duplicate core-routine state transitions.
 
-If an owner capability is unavailable, record a systemic capability exception and stage the repair or rollout dependency. Do not silently assume ownership and do not strand work by pretending the owner exists.
+If an owner capability is unavailable, record a systemic capability exception and stage the repair or rollout dependency. Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback. Do not silently assume ownership and do not strand work by pretending the owner exists.
 
 ## Executive Portfolio Loop — There Is Always Work
 
@@ -112,6 +115,7 @@ Read the injected routine digest; all-green should stay collapsed. Pull a routin
 - Sample-audit enough outcomes to trust the system. A sample audit is a control-plane probe, not permission to disposition the underlying task.
 - Promote repeated work down the cost ladder: agent labor to routine, then deterministic function where judgment is unnecessary.
 - Never create a second routine to mask a broken canonical owner.
+- Repeated failures of the same owner capability update one existing systemic recovery item; never create duplicate recovery tasks.
 
 ## Executive Decision Playbooks
 
