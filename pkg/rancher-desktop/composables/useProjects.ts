@@ -23,6 +23,14 @@ import type {
   UpsertTaskInput,
   UpdateTaskInput,
 } from '@pkg/agent/database/models/WorkItemsModel';
+import type {
+  CreateWorkLaneInput, EffectiveWorkLane, ListWorkLaneOpts, UpdateWorkLaneInput,
+  WorkLaneDefinitionRecord, WorkLaneScope,
+} from '@pkg/agent/database/models/WorkLaneDefinitionModel';
+import type {
+  LaneBindingResolution, LaneEntryAutomationRecord, LaneWorkflowBindingRecord,
+  ListLaneBindingsInput, SetLaneBindingInput,
+} from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export type {
@@ -30,6 +38,8 @@ export type {
   WorkActivityRecord,
   UpsertProjectInput, UpdateProjectInput, UpsertEpicInput, UpdateEpicInput,
   UpsertTaskInput, UpdateTaskInput,
+  CreateWorkLaneInput, EffectiveWorkLane, ListWorkLaneOpts, UpdateWorkLaneInput,
+  WorkLaneDefinitionRecord, WorkLaneScope,
 };
 
 /** An epic with its tasks attached, ready to render. */
@@ -39,7 +49,7 @@ export interface EpicWithTasks extends WorkEpicRecord {
 
 /** A project with its epics (each carrying tasks) and roll-up counts. */
 export interface ProjectView extends WorkProjectRecord {
-  epics:    EpicWithTasks[];
+  epics:     EpicWithTasks[];
   openCount: number;
   doneCount: number;
 }
@@ -219,6 +229,60 @@ export function useProjects() {
     await load();
   }
 
+  async function listLanes(opts: ListWorkLaneOpts = {}): Promise<WorkLaneDefinitionRecord[]> {
+    return ipcRenderer.invoke('work-items:lanes-list', opts);
+  }
+
+  async function resolveLanes(projectId: string, includeArchived = false): Promise<EffectiveWorkLane[]> {
+    return ipcRenderer.invoke('work-items:lanes-resolve', projectId, includeArchived);
+  }
+
+  async function createLane(input: CreateWorkLaneInput): Promise<WorkLaneDefinitionRecord> {
+    return ipcRenderer.invoke('work-items:lane-create', input);
+  }
+
+  async function updateLane(id: string, changes: UpdateWorkLaneInput): Promise<WorkLaneDefinitionRecord | null> {
+    return ipcRenderer.invoke('work-items:lane-update', id, changes);
+  }
+
+  async function archiveLane(id: string, destinationLaneKey?: string) {
+    const result = await ipcRenderer.invoke('work-items:lane-archive', id, destinationLaneKey);
+    await load();
+    return result;
+  }
+
+  async function restoreLane(id: string): Promise<WorkLaneDefinitionRecord | null> {
+    return ipcRenderer.invoke('work-items:lane-restore', id);
+  }
+
+  async function reorderLanes(scope: WorkLaneScope, orderedKeys: string[], projectId?: string): Promise<number> {
+    return ipcRenderer.invoke('work-items:lanes-reorder', scope, orderedKeys, projectId);
+  }
+
+  async function resetLaneOverride(projectId: string, laneKey: string): Promise<boolean> {
+    return ipcRenderer.invoke('work-items:lane-reset-override', projectId, laneKey);
+  }
+
+  async function listLaneWorkflowBindings(input: ListLaneBindingsInput = {}): Promise<LaneWorkflowBindingRecord[]> {
+    return ipcRenderer.invoke('work-items:lane-bindings-list', input);
+  }
+
+  async function setLaneWorkflowBinding(input: SetLaneBindingInput): Promise<LaneWorkflowBindingRecord> {
+    return ipcRenderer.invoke('work-items:lane-binding-set', input);
+  }
+
+  async function removeLaneWorkflowBinding(id: string): Promise<LaneWorkflowBindingRecord | null> {
+    return ipcRenderer.invoke('work-items:lane-binding-remove', id);
+  }
+
+  async function resolveLaneWorkflow(taskId: string, laneKey: string, profileId = 'default'): Promise<LaneBindingResolution> {
+    return ipcRenderer.invoke('work-items:lane-workflow-resolve', taskId, laneKey, profileId);
+  }
+
+  async function inspectLaneEntryAutomation(taskId: string): Promise<LaneEntryAutomationRecord[]> {
+    return ipcRenderer.invoke('work-items:lane-entry-automations', taskId);
+  }
+
   return {
     projects,
     selected,
@@ -241,5 +305,18 @@ export function useProjects() {
     archiveTask,
     addComment,
     reorder,
+    listLanes,
+    resolveLanes,
+    createLane,
+    updateLane,
+    archiveLane,
+    restoreLane,
+    reorderLanes,
+    resetLaneOverride,
+    listLaneWorkflowBindings,
+    setLaneWorkflowBinding,
+    removeLaneWorkflowBinding,
+    resolveLaneWorkflow,
+    inspectLaneEntryAutomation,
   };
 }

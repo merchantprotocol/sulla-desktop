@@ -15,6 +15,7 @@ import { parseJson } from '../services/JsonParseService';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { toolRegistry } from '../tools/registry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
+import { sanitizeConversationContext } from '../utils/conversationContext';
 import { stripProtocolTags, stripProtocolTagsStreaming } from '../utils/stripProtocolTags';
 import { resolveSullaProjectsDir, resolveSullaSkillsDir, resolveSullaAgentsDir, resolveSullaCodebaseDir, findAgentDir, resolveSullaHomeDir, resolveSullaDocsDir } from '../utils/sullaPaths';
 
@@ -895,7 +896,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['conversation_context', 'conversationContext'],
     ];
     const blocks = fields.flatMap(([tag, key]) => {
-      const value = metadata[key];
+      const value = key === 'conversationContext'
+        ? sanitizeConversationContext(metadata[key])
+        : metadata[key];
       return typeof value === 'string' && value.trim()
         ? [`<${ tag }>\n${ value.trim() }\n</${ tag }>`]
         : [];

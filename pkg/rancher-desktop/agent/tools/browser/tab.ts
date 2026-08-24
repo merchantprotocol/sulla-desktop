@@ -5,13 +5,19 @@
 // state machine. After opening, reads the page state off the same
 // WebContents via GuestBridge.
 
-import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
-
 import { BaseTool, ToolResponse } from '../base';
+
+import { tabRegistry, type TabOwner } from '@pkg/main/browserTabs/TabRegistry';
 
 export class BrowserTabWorker extends BaseTool {
   name = '';
   description = '';
+  private owner: TabOwner | undefined;
+
+  /** Internal controller-only binding; never exposed in the public tool schema. */
+  setTabOwner(owner: TabOwner): void {
+    this.owner = { ...owner };
+  }
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const action = String(input.action || 'upsert').trim().toLowerCase();
@@ -27,6 +33,7 @@ export class BrowserTabWorker extends BaseTool {
       if (!removeId) {
         return { successBoolean: false, responseString: 'assetId is required when action is remove.' };
       }
+      if (this.owner) tabRegistry.assertOwner(removeId, this.owner);
       const closed = tabRegistry.close(removeId);
       return {
         successBoolean: true,
@@ -64,7 +71,7 @@ export class BrowserTabWorker extends BaseTool {
 
     const title = typeof input.title === 'string' && input.title.trim().length > 0 ? input.title.trim() : 'Website';
 
-    tabRegistry.open({ assetId, url, title, origin: 'agent' });
+    tabRegistry.open({ assetId, url, title, origin: 'agent', owner: this.owner });
 
     return await this.readPageState(assetId, title, url);
   }

@@ -1197,6 +1197,17 @@ export class ChatCompletionsServer {
           }
         }
 
+        // Workflow activation tools mutate live graph state. The CLI endpoint
+        // normally invokes stateless cached workers, so bind mutating workflow
+        // calls to a fresh detached graph and start that graph only after the
+        // tool has attached an active playbook. Read-only checkpoint listing
+        // remains stateless and does not create a graph.
+        const { callStatefulWorkflowTool, needsStatefulWorkflowDispatch } = await import('./statefulCliWorkflowTool');
+        if (needsStatefulWorkflowDispatch(toolName, params)) {
+          const result = await callStatefulWorkflowTool(tool, toolName, params);
+          return res.json({ success: true, result });
+        }
+
         const result = await tool.call(params);
         return res.json({ success: true, result });
       }

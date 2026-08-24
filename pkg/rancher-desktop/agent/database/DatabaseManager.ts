@@ -55,6 +55,16 @@ export class DatabaseManager {
     // Settings are ready to be used in seeding
     await this.runSeeders();
 
+    // Lane definitions are reasserted at every boot. This is deliberately
+    // outside the one-shot seeder registry: newly encountered legacy task
+    // statuses must become visible lanes without rewriting task rows.
+    try {
+      const { initialize } = await import('@pkg/agent/database/seeders/WorkLaneDefinitionSeeder');
+      await initialize();
+    } catch (error) {
+      console.warn('[DB] WorkLaneDefinitionSeeder failed:', error);
+    }
+
     // Seed the editable system-prompt sections from their baked native
     // fallbacks (write-only-if-absent; honors is_customized). Non-fatal —
     // the section factories remain the runtime fallback if this fails.
@@ -73,6 +83,17 @@ export class DatabaseManager {
       await seedCoreRoutines();
     } catch (error) {
       console.warn('[DB] seedCoreRoutines() failed:', error);
+    }
+
+    // A workflow graph cannot survive a process restart. Close any durable
+    // planning claims left active by the prior process and launch one fresh
+    // council per still-planning task. Non-fatal; the next status event also
+    // retries through the same collision-safe ledger.
+    try {
+      const { PlanningCouncilService } = await import('@pkg/agent/services/PlanningCouncilService');
+      await PlanningCouncilService.recoverOnStartup();
+    } catch (error) {
+      console.warn('[DB] PlanningCouncilService.recoverOnStartup() failed:', error);
     }
 
     // Warm skills registry cache

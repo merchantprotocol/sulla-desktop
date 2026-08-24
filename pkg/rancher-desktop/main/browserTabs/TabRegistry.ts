@@ -16,9 +16,9 @@
 
 import { EventEmitter } from 'node:events';
 
-import { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
-
 import { GuestBridge } from './GuestBridge';
+
+import { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
 
 export interface TabRecord {
   assetId:        string;
@@ -26,9 +26,16 @@ export interface TabRecord {
   url:            string;
   isLoading:      boolean;
   origin:         'user' | 'agent';
+  /** Scheduled-graph session that exclusively owns this tab, when applicable. */
+  owner?:         TabOwner;
   /** ms since epoch — used only for sorting display. No eviction, no idle sweep. */
   createdAt:      number;
   lastAccessedAt: number;
+}
+
+export interface TabOwner {
+  kind:      'graph';
+  sessionId: string;
 }
 
 type TabsListener = (tabs: TabRecord[]) => void;
@@ -43,6 +50,8 @@ const MAX_AGENT_TABS = 10;
 
 class TabRegistryImpl {
   private readonly records = new Map<string, TabRecord>();
+  /** Includes pre-open reservations so ownership checks remain atomic across delegation. */
+  private readonly owners = new Map<string, TabOwner>();
   private readonly emitter = new EventEmitter();
   private activeAssetId: string | null = null;
 
@@ -59,10 +68,61 @@ class TabRegistryImpl {
     }
   }
 
+  private sameOwner(left?: TabOwner, right?: TabOwner): boolean {
+    return left?.kind === right?.kind && left?.sessionId === right?.sessionId;
+  }
+
+  private ownershipError(assetId: string): Error {
+    return new Error(`Browser tab "${ assetId }" is owned by a different browser session.`);
+  }
+
+  /**
+   * Atomically reserve an asset ID for a scheduled graph before its browser
+   * worker is loaded. Existing user/unowned tabs and other graph sessions fail
+   * closed, so delegation can never navigate a colliding tab.
+   */
+  claimOwner(assetId: string, owner: TabOwner): void {
+    const existing = this.records.get(assetId);
+    if (existing && !this.sameOwner(existing.owner, owner)) {
+      throw this.ownershipError(assetId);
+    }
+
+    const reserved = this.owners.get(assetId);
+    if (reserved && !this.sameOwner(reserved, owner)) {
+      throw this.ownershipError(assetId);
+    }
+
+    this.owners.set(assetId, { ...owner });
+  }
+
+  /** Verify a tab belongs to this exact graph session before any delegation. */
+  assertOwner(assetId: string, owner: TabOwner): void {
+    const existing = this.records.get(assetId);
+    const reserved = this.owners.get(assetId);
+    if (!existing || !this.sameOwner(existing.owner, owner) || !this.sameOwner(reserved, owner)) {
+      throw this.ownershipError(assetId);
+    }
+  }
+
+  /** Release a failed pre-open reservation; live tab ownership is never released here. */
+  releaseOwnerReservation(assetId: string, owner: TabOwner): void {
+    if (this.records.has(assetId)) return;
+    const reserved = this.owners.get(assetId);
+    if (this.sameOwner(reserved, owner)) this.owners.delete(assetId);
+  }
+
   /** Open or update a tab. Re-entrant: same assetId + URL is a no-op. */
-  open(input: { assetId: string; url: string; title?: string; origin?: 'user' | 'agent' }): TabRecord {
+  open(input: { assetId: string; url: string; title?: string; origin?: 'user' | 'agent'; owner?: TabOwner }): TabRecord {
+    const reserved = this.owners.get(input.assetId);
+    if (reserved && !this.sameOwner(reserved, input.owner)) {
+      throw this.ownershipError(input.assetId);
+    }
+
     const existing = this.records.get(input.assetId);
     if (existing) {
+      if (!this.sameOwner(existing.owner, input.owner)) {
+        throw this.ownershipError(input.assetId);
+      }
       const sameUrl = existing.url === input.url;
       existing.title = input.title ?? existing.title;
       existing.url = input.url;
@@ -89,9 +149,11 @@ class TabRegistryImpl {
       url:            input.url,
       isLoading:      true,
       origin:         input.origin ?? 'agent',
+      ...(input.owner ? { owner: { ...input.owner } } : {}),
       createdAt:      Date.now(),
       lastAccessedAt: Date.now(),
     };
+    if (input.owner) this.owners.set(input.assetId, { ...input.owner });
     this.records.set(input.assetId, record);
     this.activeAssetId = input.assetId;
     if (record.origin === 'agent') this.enforceCap();
@@ -103,6 +165,7 @@ class TabRegistryImpl {
     if (!this.records.has(assetId)) return false;
     BrowserTabViewManager.getInstance().destroyView(assetId);
     this.records.delete(assetId);
+    this.owners.delete(assetId);
     if (this.activeAssetId === assetId) {
       this.activeAssetId = this.records.size > 0 ? [...this.records.keys()][0] : null;
     }

@@ -29,6 +29,10 @@ import type {
   UpsertTaskInput, UpdateTaskInput,
   AddCommentInput,
 } from '@pkg/agent/database/models/WorkItemsModel';
+import type {
+  CreateWorkLaneInput, UpdateWorkLaneInput, WorkLaneScope,
+} from '@pkg/agent/database/models/WorkLaneDefinitionModel';
+import type { ListLaneBindingsInput, SetLaneBindingInput } from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -39,6 +43,17 @@ async function importWorkItemsModel() {
   const mod = await import('@pkg/agent/database/models/WorkItemsModel');
 
   return mod.WorkItemsModel;
+}
+
+async function importWorkLaneDefinitionModel() {
+  const mod = await import('@pkg/agent/database/models/WorkLaneDefinitionModel');
+
+  return mod.WorkLaneDefinitionModel;
+}
+
+async function importWorkLaneWorkflowBindingModel() {
+  const mod = await import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel');
+  return mod.WorkLaneWorkflowBindingModel;
 }
 
 /** Local slugify — mirrors the model's private one (kebab, ≤80 chars). */
@@ -78,6 +93,77 @@ export function initWorkItemsEvents(): void {
     const WorkItemsModel = await importWorkItemsModel();
 
     return WorkItemsModel.listRecentActivity(opts);
+  });
+
+  // ── lane definitions ─────────────────────────────────────────────────
+
+  ipcMainProxy.handle('work-items:lanes-list', async(_event: unknown, opts: {
+    scope?: WorkLaneScope; projectId?: string; includeArchived?: boolean; includeReset?: boolean;
+  } = {}) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.list(opts);
+  });
+
+  ipcMainProxy.handle('work-items:lanes-resolve', async(_event: unknown, projectId: string, includeArchived = false) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.resolveEffective(projectId, includeArchived);
+  });
+
+  ipcMainProxy.handle('work-items:lane-create', async(_event: unknown, input: CreateWorkLaneInput) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.create({ ...input, actor: input.actor ?? 'human' });
+  });
+
+  ipcMainProxy.handle('work-items:lane-update', async(_event: unknown, id: string, changes: UpdateWorkLaneInput) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.update(id, { ...changes, actor: changes.actor ?? 'human' });
+  });
+
+  ipcMainProxy.handle('work-items:lane-archive', async(_event: unknown, id: string, destinationLaneKey?: string) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.archive(id, destinationLaneKey, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:lane-restore', async(_event: unknown, id: string) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.restore(id, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:lanes-reorder', async(_event: unknown, scope: WorkLaneScope, orderedKeys: string[], projectId?: string) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.reorder(scope, orderedKeys, projectId, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:lane-reset-override', async(_event: unknown, projectId: string, laneKey: string) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.resetProjectOverride(projectId, laneKey, 'human');
+  });
+
+  // ── lane workflow bindings + entry audit ─────────────────────────────
+
+  ipcMainProxy.handle('work-items:lane-bindings-list', async(_event: unknown, input: ListLaneBindingsInput = {}) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.list(input);
+  });
+
+  ipcMainProxy.handle('work-items:lane-binding-set', async(_event: unknown, input: SetLaneBindingInput) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.set({ ...input, actor: input.actor ?? 'human' });
+  });
+
+  ipcMainProxy.handle('work-items:lane-binding-remove', async(_event: unknown, id: string) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.remove(id, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:lane-workflow-resolve', async(_event: unknown, taskId: string, laneKey: string, profileId = 'default') => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.resolve(taskId, laneKey, profileId);
+  });
+
+  ipcMainProxy.handle('work-items:lane-entry-automations', async(_event: unknown, taskId: string) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.listLaneEntries(taskId);
   });
 
   // ── projects ─────────────────────────────────────────────────────────
@@ -183,6 +269,12 @@ export function initWorkItemsEvents(): void {
 
     return true;
   });
+
+  // Lane claims are committed outbox rows. Drain them after handler setup so
+  // a crash between task commit and dispatch cannot silently strand work.
+  import('@pkg/agent/services/LaneEntryAutomationService')
+    .then(({ LaneEntryAutomationService }) => LaneEntryAutomationService.drainRecoverable(50, true))
+    .catch(error => console.warn('[WorkItems] Lane-entry recovery failed:', error));
 }
 
 interface ReorderUpdate {

@@ -42,6 +42,7 @@ import { z } from 'zod';
 import { ApprovalService } from '@pkg/agent/services/ApprovalService';
 import { toolRegistry } from '@pkg/agent/tools/registry';
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
+import { registerGraphBrowserControllerMcp } from '@pkg/agent/utils/graphBrowserControllerMcp';
 import {
   clampTimeout,
   emitQuestionCardViaWs,
@@ -474,6 +475,12 @@ export class MCPServerHost {
         };
       },
     );
+
+    // Scheduled providers run inside Lima and cannot launch host-app-specific
+    // controller binaries. Capability-enabled graphs receive this narrow
+    // delegation to Sulla's real in-app WebContents browser. Ordinary chat,
+    // API, Slack, and explicitly headless graphs do not see the tool at all.
+    registerGraphBrowserControllerMcp(server, session.state);
 
     return server;
   }

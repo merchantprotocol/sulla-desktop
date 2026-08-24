@@ -9,13 +9,17 @@
  * round-robin rotation whenever an agent edits or comments on a task.
  */
 
+import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
+import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
+import { WorkTaskWaitModel } from '../database/models/WorkTaskWaitModel';
 
 export interface ProjectReportOpts {
-  hours?:     number;
-  nextLimit?: number;
-  projectId?: string;
-  assignee?:  string;
+  hours?:          number;
+  nextLimit?:      number;
+  projectId?:      string;
+  assignee?:       string;
+  lifecycleAware?: boolean;
 }
 
 function shorten(s: string): string {
@@ -59,14 +63,28 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   const doneRows = await WorkItemsModel.listTasks({ projectId, assignee, includeDone: true, limit: 3000 });
   const completed = doneRows
     .filter(t => (t.status === 'done' || t.status === 'cancelled') && t.completed_at && Date.parse(t.completed_at) >= cutoffMs)
-    .sort((a, b) => Date.parse(b.completed_at as string) - Date.parse(a.completed_at as string));
+    .sort((a, b) => Date.parse(b.completed_at!) - Date.parse(a.completed_at!));
   const doneEpics = epics.filter(e => e.status === 'done' && Date.parse(e.last_moved_at) >= cutoffMs);
   const doneProjects = projects.filter(p => p.status === 'done' && Date.parse(p.last_moved_at) >= cutoffMs);
 
   // OPEN QUEUES — WorkItemsModel already orders by epic priority → task
   // priority → oldest activity. Preserve that order while separating states.
-  const openRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
-  const actionableRows = openRows.filter(t => t.status !== 'blocked' && t.status !== 'planning');
+  const listedOpenRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
+  const openRows = opts.lifecycleAware
+    ? await LifecycleCapabilityModel.filterHeartbeatEligible(listedOpenRows)
+    : listedOpenRows;
+  const [activeWaitIds, activeWaits, suppressionConfigured, monitorEnabled] = await Promise.all([
+    WorkTaskWaitModel.activeTaskIds(),
+    WorkTaskWaitModel.list({ status: 'active', limit: 500 }),
+    SullaSettingsModel.get('externalWaitCommentSuppressionEnabled', false),
+    SullaSettingsModel.get('externalWaitMonitorEnabled', true),
+  ]);
+  const suppressionEnabled = monitorEnabled && suppressionConfigured;
+  const scopedTaskIds = new Set(openRows.map(task => task.id));
+  const scopedActiveWaits = activeWaits.filter(wait => scopedTaskIds.has(wait.task_id));
+  const actionableRows = openRows.filter(t =>
+    t.status !== 'blocked' && t.status !== 'planning' && (!suppressionEnabled || !activeWaitIds.has(t.id)),
+  );
   const blockedRows = openRows.filter(t => t.status === 'blocked');
   const planningRows = openRows.filter(t => t.status === 'planning');
   const next = actionableRows.slice(0, nextLimit);
@@ -104,8 +122,17 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   }
 
   lines.push('');
+  lines.push(`## ⏳ Monitor-owned external waits (${ scopedActiveWaits.length })`);
+  lines.push(suppressionEnabled
+    ? '_These waits are omitted from actionable work until a material delta reactivates them. Heartbeat must not poll or comment on unchanged waits._'
+    : '_Shadow mode: monitor decisions are recorded, but actionable filtering/comment suppression is not enabled yet._');
+  for (const wait of scopedActiveWaits.slice(0, nextLimit)) {
+    lines.push(`- **${ wait.wait_kind }** ${ wait.target_key } · task ${ wait.task_id } · next ${ fmt(wait.next_check_at) } · unchanged ${ wait.consecutive_unchanged_count }`);
+  }
+
+  lines.push('');
   lines.push(`## 🧭 Blocked tasks — recovery planning (${ blocked.length } of ${ blockedRows.length })`);
-  lines.push('_These are recovery-planning work, not a human review queue. After dispatching across actionable tasks, Heartbeat should use remaining capacity on the oldest blocked task in the highest priority block: move it to `planning` and dispatch a council of independent high-reasoning planners. Cross-check their proposals, choose the strongest reversible path, record the decision, move the task to `in_progress`, and execute it. Escalate only a genuinely irreversible/high-blast action after staging the reversible work. If no execution path exists, return it to `blocked`; the new activity rotates it to the bottom of its priority block._');
+  lines.push('_These are recovery-planning work, not a human review queue. A committed transition to `blocked` or `planning` triggers the locked core planning routine, which owns the independent council, synthesis, final-plan comment, and return to `todo/dispatcher`. Heartbeat must not launch a second council; supervise failed/stale runs and verify the persisted plan._');
   if (!blocked.length) {
     lines.push('_No blocked tasks in scope._');
   } else {
@@ -118,7 +145,7 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   if (planningRows.length) {
     lines.push('');
     lines.push(`## 🛠 Planning in flight (${ planning.length } of ${ planningRows.length })`);
-    lines.push('_Do not dispatch these again. A planning agent already owns the recovery pass._');
+    lines.push('_Do not dispatch these again. The locked core routine already owns the task-scoped planning council._');
     for (const t of planning) {
       const who = t.assignee ? ` · ${ t.assignee }` : '';
       lines.push(`- [${ t.priority }] **${ t.title }** — ${ context(t) }${ who } (id ${ t.id })`);

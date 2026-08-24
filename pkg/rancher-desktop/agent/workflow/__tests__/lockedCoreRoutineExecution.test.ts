@@ -1,4 +1,5 @@
 import {
+  inheritSubAgentToolPolicy,
   lockedCoreBlockedError,
   resolveAgentTaskForDispatch,
 } from '../lockedCoreRoutineExecution';
@@ -21,5 +22,30 @@ describe('locked core routine execution policy', () => {
     expect(lockedCoreBlockedError(true, 'Prune Stale Observations', 'tools unavailable'))
       .toBe('Locked core routine node "Prune Stale Observations" blocked: tools unavailable');
     expect(lockedCoreBlockedError(false, 'Interactive Step', 'need user choice')).toBeNull();
+  });
+
+  it('keeps protected reviewer children inside the parent read-only tool policy', () => {
+    const parent = {
+      llmTools: [{ function: { name: 'read_file' } }],
+      metadata: { allowedToolNames: ['read_file'], verifierReadOnly: true },
+    };
+    const child = { metadata: {} } as any;
+
+    inheritSubAgentToolPolicy(parent, child, { inheritParentToolPolicy: true });
+
+    expect(child.metadata.allowedToolNames).toEqual(['read_file']);
+    expect(child.metadata.verifierReadOnly).toBe(true);
+    expect(child.llmTools).toEqual(parent.llmTools);
+  });
+
+  it('does not change ordinary workflow child tool policy', () => {
+    const child = { metadata: { allowedToolNames: ['git_push'] } } as any;
+    inheritSubAgentToolPolicy(
+      { metadata: { allowedToolNames: ['read_file'], verifierReadOnly: true } },
+      child,
+      {},
+    );
+    expect(child.metadata.allowedToolNames).toEqual(['git_push']);
+    expect(child.metadata.verifierReadOnly).toBeUndefined();
   });
 });

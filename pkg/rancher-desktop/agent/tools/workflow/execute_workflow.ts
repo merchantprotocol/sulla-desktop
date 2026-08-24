@@ -9,6 +9,12 @@ import type { PlaybookNodeOutput, WorkflowPlaybookState } from '../../workflow/t
 export interface ActivateWorkflowInput {
   workflowId: string;
   message?:   string;
+  /** Trusted immutable definition captured when a lane entry was claimed. */
+  definitionSnapshot?: WorkflowDefinition;
+  /** Durable lane-entry identity; absent for ordinary workflow executions. */
+  executionScope?: { taskId: string; generation: number };
+  /** Deterministic execution identity supplied by a trusted dispatcher. */
+  executionId?: string;
   /**
    * True = resume the most recent checkpoint for this workflow. Mutually
    * exclusive with `resumeExecutionId` (which targets a specific prior run).
@@ -32,6 +38,11 @@ export interface ActivateWorkflowInput {
    * Used by the "Start Fresh" choice in the UI and by boot-time recovery.
    */
   force?: boolean;
+  /**
+   * Internal task-scoped routines may own concurrency in a separate durable
+   * ledger. Never exposed by ExecuteWorkflowWorker's public manifest.
+   */
+  allowConcurrent?: boolean;
 }
 
 export interface ActivateWorkflowResult {
@@ -54,6 +65,7 @@ export async function activateWorkflowOnState(
   input: ActivateWorkflowInput,
 ): Promise<ActivateWorkflowResult> {
   const { workflowId } = input;
+  const executionScope = input.executionScope;
 
   if (!workflowId) {
     return {
@@ -69,9 +81,13 @@ export async function activateWorkflowOnState(
   if (scopedWorkflowId && workflowId !== scopedWorkflowId) {
     let matches = false;
     try {
-      const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
-      const resolved = await getWorkflowRegistry().loadWorkflow(workflowId);
-      matches = resolved?.id === scopedWorkflowId;
+      if (input.definitionSnapshot) {
+        matches = input.definitionSnapshot.id === scopedWorkflowId;
+      } else {
+        const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
+        const resolved = await getWorkflowRegistry().loadWorkflow(workflowId);
+        matches = resolved?.id === scopedWorkflowId;
+      }
     } catch { /* not found — doesn't match */ }
     if (!matches) {
       return {
@@ -100,17 +116,19 @@ export async function activateWorkflowOnState(
   }
 
   // Load the workflow definition via the registry (DB-backed).
-  let definition: WorkflowDefinition | null = null;
+  let definition: WorkflowDefinition | null = input.definitionSnapshot ?? null;
 
-  try {
-    const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
-    const registry = getWorkflowRegistry();
-    definition = await registry.loadWorkflow(workflowId);
-  } catch (err) {
-    return {
-      ok:             false,
-      responseString: `Workflow "${ workflowId }" could not be loaded: ${ err instanceof Error ? err.message : String(err) }`,
-    };
+  if (!definition) {
+    try {
+      const { getWorkflowRegistry } = await import('../../workflow/WorkflowRegistry');
+      const registry = getWorkflowRegistry();
+      definition = await registry.loadWorkflow(workflowId);
+    } catch (err) {
+      return {
+        ok:             false,
+        responseString: `Workflow "${ workflowId }" could not be loaded: ${ err instanceof Error ? err.message : String(err) }`,
+      };
+    }
   }
 
   if (!definition) {
@@ -136,6 +154,13 @@ export async function activateWorkflowOnState(
     };
   }
 
+  if (input.definitionSnapshot && definition.id !== workflowId) {
+    return {
+      ok:             false,
+      responseString: `Immutable workflow snapshot id ${ definition.id } does not match claimed workflow ${ workflowId }.`,
+    };
+  }
+
   // Enforce trigger-type gating: if the caller has a wsChannel that maps to a
   // specific trigger type, only allow workflows that have a matching trigger node.
   // This prevents heartbeat agents from executing schedule-only workflows, etc.
@@ -158,10 +183,13 @@ export async function activateWorkflowOnState(
   // choice, boot recovery). When forcing, flip the stale row to failed so
   // we don't leave two concurrent "running" rows behind.
   const force = (input as any).force === true;
+  const allowConcurrent = input.allowConcurrent === true;
   try {
     const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
-    const active = await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
-    if (active) {
+    const active = executionScope
+      ? await WorkflowExecutionModel.findActiveByLaneScope(definition.id, executionScope.taskId, executionScope.generation)
+      : await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
+    if (active && !allowConcurrent) {
       const a = active.attributes as any;
       if (!force) {
         return {
@@ -176,6 +204,12 @@ export async function activateWorkflowOnState(
       }
     }
   } catch (err) {
+    if (executionScope) {
+      return {
+        ok:             false,
+        responseString: `Lane-scoped workflow guard failed closed: ${ err instanceof Error ? err.message : String(err) }`,
+      };
+    }
     console.warn('[ExecuteWorkflow] Concurrent-run guard check failed (continuing):', err);
   }
 
@@ -382,6 +416,7 @@ export async function activateWorkflowOnState(
   // Create the playbook state and load it into the agent's metadata
   try {
     const playbook = createPlaybookState(definition, message);
+    if (input.executionId) playbook.executionId = input.executionId;
 
     state.metadata.activeWorkflow = playbook;
 
@@ -399,8 +434,19 @@ export async function activateWorkflowOnState(
         workflowSlug: workflowId,
         autoRestart,
         triggerInput: input.message,
+        scopeTaskId: input.executionScope?.taskId,
+        scopeGeneration: input.executionScope?.generation,
       });
-    } catch (e) { console.warn('[ExecuteWorkflow] markRunning failed:', e); }
+    } catch (e) {
+      if (executionScope) {
+        state.metadata.activeWorkflow = undefined;
+        return {
+          ok:             false,
+          responseString: `Lane-scoped workflow activation failed closed: ${ e instanceof Error ? e.message : String(e) }`,
+        };
+      }
+      console.warn('[ExecuteWorkflow] markRunning failed:', e);
+    }
 
     return {
       ok:             true,
