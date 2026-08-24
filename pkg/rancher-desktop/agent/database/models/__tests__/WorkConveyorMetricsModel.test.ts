@@ -35,18 +35,21 @@ describe('WorkConveyorMetricsModel', () => {
 
   it('verifier throughput excludes duplicate and suppressed generations (AC#5)', async () => {
     mock([{ completed_reviews: '4', active_verification_leases: '1' }]);
-    const v = await WorkConveyorMetricsModel.verifierThroughput({ windowHours: 24 });
+    const v = await WorkConveyorMetricsModel.verifierThroughput({ windowHours: 24, reviewLimit: 2 });
     expect(sqls[0]).toContain('DISTINCT');
     expect(sqls[0]).toContain('review_generation_hash');
     expect(sqls[0].toLowerCase()).toContain('suppress');
+    expect(sqls[0]).toContain("d.status = 'completed'");
     expect(v.completedReviews).toBe(4);
     expect(v.perDay).toBeCloseTo(4);
+    expect(v).toMatchObject({ capacity: 2, utilization: 0.5 });
   });
 
   it('custody completeness distinguishes structured/legacy/missing/invalid incl migrated data (AC#3)', async () => {
     mock([{ artifact_type: 'pull_request', total: '5', structured: '3', legacy: '1', missing: '1', invalid: '0' }]);
     const rows = await WorkConveyorMetricsModel.custodyCompleteness({});
     expect(sqls[0]).toContain("'legacy-worker'");
+    expect(sqls[0]).toContain('DISTINCT ON (d.task_id)');
     expect(rows[0]).toMatchObject({ artifactType: 'pull_request', total: 5, structured: 3, legacy: 1, missing: 1, invalid: 0 });
   });
 
@@ -55,14 +58,25 @@ describe('WorkConveyorMetricsModel', () => {
     const w = await WorkConveyorMetricsModel.waitAdoption({});
     expect(sqls[0]).toContain('resolve_work_task_lane_role');
     expect(sqls[0]).toContain("status = 'active'");
+    expect(sqls[0]).toContain("event_type = 'external_wait'");
     expect(w).toEqual({ blockedTotal: 2, blockedWithActiveWait: 1, adoptionRate: 0.5 });
   });
 
   it('separates independent shipments from integration-train closures via artifact custody (AC#6)', async () => {
-    mock([{ independent_shipments: '3', integration_train_closures: '2' }]);
+    mock([{ independent_shipments: '3', integration_train_closures: '2', missing_evidence: '1' }]);
     const s = await WorkConveyorMetricsModel.shipments({ windowHours: 168 });
     expect(sqls[0]).toContain('content_hash');
-    expect(s).toEqual({ independentShipments: 3, integrationTrainClosures: 2 });
+    expect(sqls[0]).toContain('key_uses > 1');
+    expect(s).toEqual({ independentShipments: 3, integrationTrainClosures: 2, missingEvidence: 1 });
+  });
+
+  it('dependency-held uses the first-class active-edge schema and only done resolves a gate', async () => {
+    mock([{ dependency_held: '2' }]);
+    const result = await WorkConveyorMetricsModel.dependencyHeld({});
+    expect(sqls[0]).toContain('dep.dependent_task_id');
+    expect(sqls[0]).toContain('dep.archived_at IS NULL');
+    expect(sqls[0]).toContain("dt.status IS DISTINCT FROM 'done'");
+    expect(result.dependencyHeld).toBe(2);
   });
 
   it('drill-down queries are bounded with LIMIT for query performance (AC#7)', async () => {

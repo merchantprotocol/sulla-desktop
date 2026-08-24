@@ -444,6 +444,11 @@ export interface IpcMainInvokeEvents {
     decision: import('@pkg/agent/services/ProjectAutomationWipLimits').BackpressureDecision;
     at: string;
   };
+  'work-items:conveyor-health': (opts?: { projectId?: string | null; windowHours?: number }) => Awaited<ReturnType<typeof import('@pkg/agent/database/models/WorkConveyorMetricsModel').WorkConveyorMetricsModel.snapshot>>;
+  'work-items:conveyor-oldest': (opts: {
+    projectId?: string | null;
+    stage: import('@pkg/agent/database/models/WorkConveyorMetricsModel').SemanticStage;
+  }) => Awaited<ReturnType<typeof import('@pkg/agent/database/models/WorkConveyorMetricsModel').WorkConveyorMetricsModel.oldestItems>>;
   'work-items:knowledge-list':  (input: { itemKind: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeWorkItemKind; itemId: string; includeInherited?: boolean; includeArchived?: boolean; limit?: number }) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').LinkedKnowledgeRecord[];
   'work-items:knowledge-link':  (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkRecord;
   'work-items:knowledge-unlink': (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => boolean;

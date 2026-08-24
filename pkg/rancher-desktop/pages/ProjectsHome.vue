@@ -206,6 +206,49 @@
                 </span>
               </div>
             </div>
+            <section v-if="conveyorHealth" class="ph-health" aria-label="Projects conveyor health">
+              <header class="ph-health-head">
+                <div>
+                  <b>Conveyor health</b>
+                  <span> · {{ conveyorWindow }}h · {{ healthScopeProject ? 'current project' : 'portfolio' }}</span>
+                </div>
+                <div class="ph-health-controls">
+                  <label><input v-model="healthScopeProject" type="checkbox"> Project only</label>
+                  <select v-model.number="conveyorWindow" aria-label="Metrics window">
+                    <option :value="24">24 hours</option>
+                    <option :value="168">7 days</option>
+                    <option :value="720">30 days</option>
+                  </select>
+                  <button type="button" class="ph-btn ghost sm" @click="loadConveyorHealth">Refresh</button>
+                </div>
+              </header>
+              <div class="ph-health-grid">
+                <button
+                  v-for="stage in conveyorHealth.stages"
+                  :key="stage.stage"
+                  type="button"
+                  class="ph-health-stat stage"
+                  :class="{ on: healthStage === stage.stage }"
+                  @click="loadHealthStage(stage.stage)"
+                >
+                  <span>{{ stage.stage }}</span><b>{{ stage.count }}</b><small>oldest {{ duration(stage.oldestAgeSeconds) }}</small>
+                </button>
+                <div class="ph-health-stat"><span>Throughput</span><b>{{ conveyorHealth.throughput.reachedDone }}</b><small>done · {{ conveyorHealth.throughput.reviewsCompleted }} reviews</small></div>
+                <div class="ph-health-stat"><span>Verifier</span><b>{{ percent(conveyorHealth.verifier.utilization) }}</b><small>{{ conveyorHealth.verifier.activeVerificationLeases }}/{{ conveyorHealth.verifier.capacity ?? '∞' }} active</small></div>
+                <div class="ph-health-stat"><span>Rework</span><b>{{ percent(conveyorHealth.rework.reworkRate) }}</b><small>{{ conveyorHealth.rework.avgRepairLoops.toFixed(1) }} loops avg</small></div>
+                <div class="ph-health-stat"><span>Wait adoption</span><b>{{ percent(conveyorHealth.waits.adoptionRate) }}</b><small>{{ conveyorHealth.waits.blockedWithActiveWait }}/{{ conveyorHealth.waits.blockedTotal }} external gates</small></div>
+                <div class="ph-health-stat"><span>Custody</span><b>{{ custodyPercent }}</b><small>latest completed artifacts</small></div>
+                <div class="ph-health-stat"><span>Stale leases</span><b>{{ conveyorHealth.leases.staleLeases }}</b><small>{{ conveyorHealth.leases.activeLeases }} active total</small></div>
+                <div class="ph-health-stat"><span>Dependency held</span><b>{{ conveyorHealth.deps.dependencyHeld }}</b><small>claim-gated tasks</small></div>
+                <div class="ph-health-stat"><span>Shipments</span><b>{{ conveyorHealth.shipments.independentShipments }}</b><small>{{ conveyorHealth.shipments.integrationTrainClosures }} train · {{ conveyorHealth.shipments.missingEvidence }} missing</small></div>
+              </div>
+              <div v-if="healthItems.length" class="ph-health-drill">
+                <b>Oldest {{ healthStage }} work</b>
+                <button v-for="item in healthItems" :key="item.id" type="button" @click="openHealthTask(item.id)">
+                  <span>{{ item.title }}</span><small>{{ duration(item.ageSeconds) }}</small>
+                </button>
+              </div>
+            </section>
             <!-- TODAY -->
             <div
               v-show="tab === 'list'"
@@ -1353,6 +1396,7 @@ import type { LinkedWorkItemRecord } from '@pkg/agent/database/models/WorkItemKn
 import KnowledgeBrowserPanel from '@pkg/components/KnowledgeBrowserPanel.vue';
 import KnowledgeLinksPanel from '@pkg/components/KnowledgeLinksPanel.vue';
 import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
+import type { SemanticStage, WorkConveyorMetricsModel } from '@pkg/agent/database/models/WorkConveyorMetricsModel';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import {
   useProjects,
@@ -1399,6 +1443,19 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null;
 const laneSettings = ref<InstanceType<typeof LaneSettings> | null>(null);
 const automationRoles = ['terminal', 'review', 'blocked', 'execution', 'planning', 'backlog', 'manual'] as const;
 const automationStatus = ref<{ limits: WipLimits; counts: RoleCounts; decision: BackpressureDecision; at: string } | null>(null);
+type ConveyorSnapshot = Awaited<ReturnType<typeof WorkConveyorMetricsModel.snapshot>>;
+type HealthItem = Awaited<ReturnType<typeof WorkConveyorMetricsModel.oldestItems>>[number];
+const conveyorHealth = ref<ConveyorSnapshot | null>(null);
+const conveyorWindow = ref(168);
+const healthScopeProject = ref(true);
+const healthStage = ref<SemanticStage | null>(null);
+const healthItems = ref<HealthItem[]>([]);
+const custodyPercent = computed(() => {
+  const rows = conveyorHealth.value?.custody ?? [];
+  const total = rows.reduce((sum, row) => sum + row.total, 0);
+  const complete = rows.reduce((sum, row) => sum + row.structured, 0);
+  return percent(total ? complete / total : 0);
+});
 
 const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[selectedId.value] ?? []) : []);
 const COMPATIBILITY_LANE_KEYS = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
@@ -1429,14 +1486,52 @@ onMounted(async() => {
   await loadAvailableViews();
   await restoreProjectView();
   automationStatus.value = await ipcRenderer.invoke('work-items:automation-status').catch(() => null);
+  await loadConveyorHealth();
   refreshTimer = setInterval(() => {
     if (!document.hidden && !saving.value) {
       load().catch(() => undefined);
       ipcRenderer.invoke('work-items:automation-status')
         .then(status => { automationStatus.value = status; })
         .catch(() => undefined);
+      loadConveyorHealth().catch(() => undefined);
     }
   }, 15_000);
+});
+
+function healthProjectId(): string | null {
+  return healthScopeProject.value ? (selectedId.value || null) : null;
+}
+
+async function loadConveyorHealth(): Promise<void> {
+  conveyorHealth.value = await ipcRenderer.invoke('work-items:conveyor-health', {
+    projectId: healthProjectId(), windowHours: conveyorWindow.value,
+  }).catch(() => null);
+  if (healthStage.value) await loadHealthStage(healthStage.value);
+}
+
+async function loadHealthStage(stage: SemanticStage): Promise<void> {
+  healthStage.value = stage;
+  healthItems.value = await ipcRenderer.invoke('work-items:conveyor-oldest', {
+    projectId: healthProjectId(), stage,
+  }).catch(() => []);
+}
+
+function duration(seconds: number | null): string {
+  if (seconds == null) return '-';
+  if (seconds < 3600) return `${ Math.max(1, Math.round(seconds / 60)) }m`;
+  if (seconds < 86_400) return `${ Math.round(seconds / 3600) }h`;
+  return `${ Math.round(seconds / 86_400) }d`;
+}
+
+function percent(value: number | null): string { return value == null ? 'unlimited' : `${ Math.round(value * 100) }%`; }
+
+async function openHealthTask(taskId: string): Promise<void> {
+  const row = allTasks.value.find(entry => entry.task.id === taskId);
+  if (row) await openTaskDrawer(row.task);
+}
+
+watch([conveyorWindow, healthScopeProject, selectedId], () => {
+  loadConveyorHealth().catch(() => undefined);
 });
 
 onBeforeUnmount(() => {
@@ -2355,6 +2450,24 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-automation-health { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--pacc-line); border-radius: 9px; background: var(--pacc-soft); color: var(--ptext2); font-size: 12px; }
 .ph-automation-health.held { border-color: color-mix(in srgb, var(--pamber) 55%, transparent); background: color-mix(in srgb, var(--pamber) 10%, transparent); }
 .ph-automation-stages { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ph-health { margin: 0 0 20px; padding: 13px; border: 1px solid var(--pborder); border-radius: 11px; background: var(--psurface); }
+.ph-health-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--ptext2); font-size: 12px; }
+.ph-health-head b { color: var(--ptext); }
+.ph-health-controls { display: flex; align-items: center; gap: 8px; font-size: 10px; color: var(--ptext3); }
+.ph-health-controls label { display: inline-flex; align-items: center; gap: 4px; }
+.ph-health-controls select { border: 1px solid var(--pborder); border-radius: 5px; background: var(--psurface2); color: var(--ptext2); padding: 4px 6px; font-size: 10px; }
+.ph-health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 7px; margin-top: 11px; }
+.ph-health-stat { min-width: 0; padding: 8px 9px; border: 1px solid var(--pborder-soft); border-radius: 7px; background: var(--psurface2); color: var(--ptext2); text-align: left; }
+button.ph-health-stat { cursor: pointer; }
+button.ph-health-stat:hover, button.ph-health-stat.on { border-color: var(--pacc-line); background: var(--pacc-soft); }
+.ph-health-stat span, .ph-health-stat small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 9px var(--pmono); color: var(--ptext3); text-transform: uppercase; }
+.ph-health-stat b { display: block; margin: 4px 0 2px; color: var(--ptext); font: 600 17px var(--pmono); }
+.ph-health-stat small { text-transform: none; }
+.ph-health-drill { display: grid; gap: 4px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--pborder-soft); }
+.ph-health-drill > b { color: var(--ptext2); font-size: 11px; }
+.ph-health-drill button { display: flex; justify-content: space-between; gap: 12px; border: 0; background: transparent; color: var(--ptext2); padding: 4px 2px; text-align: left; cursor: pointer; }
+.ph-health-drill button:hover { color: var(--pacc); }
+.ph-health-drill small { color: var(--ptext3); font-family: var(--pmono); }
 
 /* shared data projections */
 .ph-data-view { min-width: 0; }

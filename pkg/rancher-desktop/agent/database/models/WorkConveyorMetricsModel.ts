@@ -27,7 +27,9 @@ export interface ConveyorMetricsOptions {
   /** Rolling window for rate/throughput metrics (hours). Default 168 (7d). */
   windowHours?: number;
   /** Soft WIP ceiling for active execution leases. Default 6. */
-  wipLimit?: number;
+  wipLimit?: number | null;
+  /** Configured verification capacity. Default 3. */
+  reviewLimit?: number | null;
   /** Lease is stale/zombie when its heartbeat is older than this (minutes). Default 20. */
   staleMinutes?: number;
   /** Drill-down row cap. Default 20, hard-capped at 100. */
@@ -36,6 +38,7 @@ export interface ConveyorMetricsOptions {
 
 const DEFAULT_WINDOW_HOURS = 168;
 const DEFAULT_WIP_LIMIT = 6;
+const DEFAULT_REVIEW_LIMIT = 3;
 const DEFAULT_STALE_MINUTES = 20;
 const DEFAULT_DRILL_LIMIT = 20;
 const MAX_DRILL_LIMIT = 100;
@@ -52,8 +55,13 @@ function drill(o: ConveyorMetricsOptions): number {
   const d = o.drillLimit ?? DEFAULT_DRILL_LIMIT;
   return Math.max(1, Math.min(MAX_DRILL_LIMIT, Math.floor(d)));
 }
-function wipLimit(o: ConveyorMetricsOptions): number {
+function wipLimit(o: ConveyorMetricsOptions): number | null {
+  if (o.wipLimit === null) return null;
   return o.wipLimit && o.wipLimit > 0 ? Math.floor(o.wipLimit) : DEFAULT_WIP_LIMIT;
+}
+function reviewLimit(o: ConveyorMetricsOptions): number | null {
+  if (o.reviewLimit === null) return null;
+  return o.reviewLimit && o.reviewLimit > 0 ? Math.floor(o.reviewLimit) : DEFAULT_REVIEW_LIMIT;
 }
 
 export interface StageCount {
@@ -66,7 +74,10 @@ export interface StageAge {
   p50AgeSeconds: number; p90AgeSeconds: number;
 }
 export interface Throughput { enteredReview: number; reviewsCompleted: number; reachedDone: number; }
-export interface VerifierThroughput { completedReviews: number; perDay: number; activeVerificationLeases: number; }
+export interface VerifierThroughput {
+  completedReviews: number; perDay: number; activeVerificationLeases: number;
+  capacity: number | null; utilization: number | null;
+}
 export interface Rework { reviewed: number; reworked: number; reworkRate: number; avgRepairLoops: number; }
 export interface CustodyRow {
   artifactType: string; total: number;
@@ -76,9 +87,9 @@ export interface WaitAdoption { blockedTotal: number; blockedWithActiveWait: num
 export interface StaleLeases { staleLeases: number; activeLeases: number; }
 export interface WipPressure {
   activeExecutionWip: number; activeVerificationWip: number; staleWip: number;
-  wipLimit: number; over: boolean; backpressureReason: string | null;
+  wipLimit: number | null; over: boolean; backpressureReason: string | null;
 }
-export interface Shipments { independentShipments: number; integrationTrainClosures: number; }
+export interface Shipments { independentShipments: number; integrationTrainClosures: number; missingEvidence: number; }
 
 export class WorkConveyorMetricsModel {
   /**
@@ -164,7 +175,9 @@ export class WorkConveyorMetricsModel {
               SELECT DISTINCT d.task_id, d.review_generation_hash
               FROM work_task_dispatches d JOIN work_tasks t ON t.id = d.task_id
               WHERE d.kind = 'verification' AND d.finished_at >= now() - make_interval(hours => $2)
-                AND d.status <> 'cancelled' AND d.review_generation_hash IS NOT NULL
+                AND d.status = 'completed'
+                AND COALESCE(d.result, '') NOT ILIKE 'suppressed identical terminal generation%'
+                AND d.review_generation_hash IS NOT NULL
                 AND ($1::text IS NULL OR t.project_id = $1)
            ) g) AS reviews_completed,
         (SELECT COUNT(*) FROM work_tasks t
@@ -182,12 +195,11 @@ export class WorkConveyorMetricsModel {
    * AC#5 — verifier throughput + utilization, EXCLUDING duplicate/suppressed
    * generations. Duplicates are collapsed by DISTINCT (task_id,
    * review_generation_hash) — the same dedup key WorkTaskDispatchModel uses to
-   * detect duplicate review generations. Suppressed generations
-   * (terminal_reason ILIKE 'suppress%') and cancelled leases are excluded.
+   * detect duplicate review generations. Suppressed generations are completed
+   * rows whose result starts with the dispatcher suppression marker.
    * Denominator: distinct completed review generations in window.
    * perDay is completed_reviews normalised to a 24h rate.
-   * Utilization is expressed as the count of currently-running verification
-   * leases (no capacity value is stored in the schema).
+   * Utilization = running verification leases / configured review capacity.
    */
   static async verifierThroughput(opts: ConveyorMetricsOptions = {}): Promise<VerifierThroughput> {
     const hours = win(opts);
@@ -197,8 +209,8 @@ export class WorkConveyorMetricsModel {
            SELECT DISTINCT d.task_id, d.review_generation_hash
            FROM work_task_dispatches d JOIN work_tasks t ON t.id = d.task_id
            WHERE d.kind = 'verification' AND d.finished_at >= now() - make_interval(hours => $2)
-             AND d.status <> 'cancelled'
-             AND COALESCE(d.terminal_reason, '') NOT ILIKE 'suppress%'
+             AND d.status = 'completed'
+             AND COALESCE(d.result, '') NOT ILIKE 'suppressed identical terminal generation%'
              AND d.review_generation_hash IS NOT NULL
              AND ($1::text IS NULL OR t.project_id = $1)
          ) g) AS completed_reviews,
@@ -207,10 +219,14 @@ export class WorkConveyorMetricsModel {
              AND ($1::text IS NULL OR t.project_id = $1)) AS active_verification_leases
     `, [pid(opts), hours]))[0] || {};
     const completed = num(r.completed_reviews);
+    const active = num(r.active_verification_leases);
+    const capacity = reviewLimit(opts);
     return {
       completedReviews: completed,
       perDay: hours > 0 ? completed / (hours / 24) : 0,
-      activeVerificationLeases: num(r.active_verification_leases),
+      activeVerificationLeases: active,
+      capacity,
+      utilization: capacity === null ? null : Math.min(1, active / capacity),
     };
   }
 
@@ -237,7 +253,8 @@ export class WorkConveyorMetricsModel {
 
   /**
    * AC#3 — structured custody completeness by artifact type. Denominator:
-   * terminal (status='done') execution dispatches. Four disjoint classes:
+   * terminal (status='done') tasks, using only each task's latest execution
+   * dispatch so retries cannot inflate the denominator. Four disjoint classes:
    *   structured = real run + artifact_type + (content_hash OR artifact_ref)
    *   legacy     = run_kind='legacy-worker' (pre-custody rows; not penalised)
    *   missing    = real run, no artifact_type at all
@@ -245,6 +262,13 @@ export class WorkConveyorMetricsModel {
    */
   static async custodyCompleteness(opts: ConveyorMetricsOptions = {}): Promise<CustodyRow[]> {
     const rows = await postgresClient.query(`
+      WITH latest AS (
+        SELECT DISTINCT ON (d.task_id) d.*
+        FROM work_task_dispatches d JOIN work_tasks t ON t.id = d.task_id
+        WHERE d.kind = 'execution' AND t.status = 'done'
+          AND ($1::text IS NULL OR t.project_id = $1)
+        ORDER BY d.task_id, COALESCE(d.finished_at, d.started_at) DESC, d.id DESC
+      )
       SELECT
         COALESCE(d.artifact_type, '(none)') AS artifact_type,
         COUNT(*) AS total,
@@ -254,9 +278,7 @@ export class WorkConveyorMetricsModel {
         COUNT(*) FILTER (WHERE d.run_kind <> 'legacy-worker' AND d.artifact_type IS NULL) AS missing,
         COUNT(*) FILTER (WHERE d.run_kind <> 'legacy-worker' AND d.artifact_type IS NOT NULL
                            AND d.content_hash IS NULL AND d.artifact_ref IS NULL AND d.artifact_url IS NULL) AS invalid
-      FROM work_task_dispatches d JOIN work_tasks t ON t.id = d.task_id
-      WHERE d.kind = 'execution' AND t.status = 'done'
-        AND ($1::text IS NULL OR t.project_id = $1)
+      FROM latest d
       GROUP BY COALESCE(d.artifact_type, '(none)')
       ORDER BY total DESC
       LIMIT 50
@@ -269,8 +291,9 @@ export class WorkConveyorMetricsModel {
   }
 
   /**
-   * AC#4 — durable-wait adoption for blocked external gates. Denominator:
-   * non-archived tasks whose semantic stage is 'blocked'. A blocked task counts
+   * AC#4 — durable-wait adoption for blocked external/human gates. Denominator:
+   * non-archived blocked tasks carrying wait history, an external/human-gate
+   * label, or an external_wait receipt. A candidate counts
    * as adopted only when it has a work_task_waits row with status='active'.
    */
   static async waitAdoption(opts: ConveyorMetricsOptions = {}): Promise<WaitAdoption> {
@@ -280,6 +303,12 @@ export class WorkConveyorMetricsModel {
         WHERE t.archived = false
           AND resolve_work_task_lane_role(t.id, t.status) = 'blocked'
           AND ($1::text IS NULL OR t.project_id = $1)
+          AND (
+            EXISTS (SELECT 1 FROM work_task_waits wh WHERE wh.task_id = t.id)
+            OR COALESCE(t.labels, '{}'::text[]) && ARRAY['durable-wait', 'waiting-external', 'human-gate']
+            OR EXISTS (SELECT 1 FROM work_artifact_receipts ar
+                       WHERE ar.task_id = t.id AND ar.event_type = 'external_wait')
+          )
       )
       SELECT
         (SELECT COUNT(*) FROM blocked) AS blocked_total,
@@ -309,17 +338,18 @@ export class WorkConveyorMetricsModel {
 
   /**
    * Dependency-held count. Denominator: non-archived, non-terminal tasks that
-   * have a non-archived dependency on another non-terminal task.
+   * have an active dependency whose prerequisite is not done. Cancelled and
+   * parked prerequisites remain blocking per the claim-gate contract.
    */
   static async dependencyHeld(opts: ConveyorMetricsOptions = {}): Promise<{ dependencyHeld: number }> {
     const r = (await postgresClient.query(`
       SELECT COUNT(DISTINCT t.id) AS dependency_held
       FROM work_tasks t
-      JOIN work_task_dependencies dep ON dep.task_id = t.id AND dep.archived = false
+      JOIN work_task_dependencies dep ON dep.dependent_task_id = t.id AND dep.archived_at IS NULL
       JOIN work_tasks dt ON dt.id = dep.depends_on_task_id
       WHERE t.archived = false
         AND resolve_work_task_lane_role(t.id, t.status) <> 'terminal'
-        AND resolve_work_task_lane_role(dt.id, dt.status) <> 'terminal'
+        AND dt.status IS DISTINCT FROM 'done'
         AND ($1::text IS NULL OR t.project_id = $1)
     `, [pid(opts)]))[0] || {};
     return { dependencyHeld: num(r.dependency_held) };
@@ -343,7 +373,7 @@ export class WorkConveyorMetricsModel {
     const activeExec = num(r.active_execution_wip);
     const staleWip = num(r.stale_wip);
     const limit = wipLimit(opts);
-    const over = activeExec >= limit;
+    const over = limit !== null && activeExec >= limit;
     let reason: string | null = null;
     if (staleWip > 0) reason = 'stale_leases_holding_slots';
     else if (over) reason = 'wip_limit_reached';
@@ -358,32 +388,39 @@ export class WorkConveyorMetricsModel {
   /**
    * AC#6 — completed independent shipments separated from integration-train
    * closures. Denominator: tasks with status='done' and completed_at in window.
-   * A done task is an INDEPENDENT shipment when it carries its own artifact
-   * custody (an execution dispatch with content_hash or artifact_ref). Done
-   * tasks closed WITHOUT their own custody are integration-train closures
-   * (rolled up with another shipment) and are reported separately, never as
-   * independent shipments. (No explicit integration-train marker exists in the
-   * schema; artifact custody is the authoritative available signal.)
+   * A done task is independent when its latest custody key is unique, and is
+   * an integration-train closure only when two or more done tasks share that
+   * exact key. Missing custody is reported separately; absence of evidence is
+   * never promoted into evidence of an integration train.
    */
   static async shipments(opts: ConveyorMetricsOptions = {}): Promise<Shipments> {
     const r = (await postgresClient.query(`
       WITH done AS (
-        SELECT t.id,
-          EXISTS (SELECT 1 FROM work_task_dispatches d
-                  WHERE d.task_id = t.id AND d.kind = 'execution'
-                    AND (d.content_hash IS NOT NULL OR d.artifact_ref IS NOT NULL)) AS has_custody
+        SELECT t.id, custody.custody_key
         FROM work_tasks t
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(d.content_hash, d.artifact_ref, d.artifact_url) AS custody_key
+          FROM work_task_dispatches d
+          WHERE d.task_id = t.id AND d.kind = 'execution'
+          ORDER BY COALESCE(d.finished_at, d.started_at) DESC, d.id DESC
+          LIMIT 1
+        ) custody ON true
         WHERE t.status = 'done' AND t.completed_at >= now() - make_interval(hours => $2)
           AND ($1::text IS NULL OR t.project_id = $1)
+      ), classified AS (
+        SELECT d.*, COUNT(*) OVER (PARTITION BY d.custody_key) AS key_uses
+        FROM done d
       )
       SELECT
-        COUNT(*) FILTER (WHERE has_custody) AS independent_shipments,
-        COUNT(*) FILTER (WHERE NOT has_custody) AS integration_train_closures
-      FROM done
+        COUNT(*) FILTER (WHERE custody_key IS NOT NULL AND key_uses = 1) AS independent_shipments,
+        COUNT(*) FILTER (WHERE custody_key IS NOT NULL AND key_uses > 1) AS integration_train_closures,
+        COUNT(*) FILTER (WHERE custody_key IS NULL) AS missing_evidence
+      FROM classified
     `, [pid(opts), win(opts)]))[0] || {};
     return {
       independentShipments: num(r.independent_shipments),
       integrationTrainClosures: num(r.integration_train_closures),
+      missingEvidence: num(r.missing_evidence),
     };
   }
 
