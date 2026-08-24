@@ -35,7 +35,8 @@ describe('Execute Projects Todo core routine', () => {
     expect(text).toContain('Never merge or deploy');
     expect(text).toContain('Graph nodes are proposal-only');
     expect(text).toContain('Do not call any project write tool');
-    expect(text).toContain('dispatcher controller will validate the originating task and live canonical artifact');
+    expect(text).toContain('dispatcher controller will resolve the originating project');
+    expect(text).toContain('active lane key');
     expect(text).not.toContain('recorded=true');
   });
 });

@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
 import {
   CanonicalArtifactCustodyService,
   type CanonicalArtifactReader,
@@ -18,6 +19,14 @@ const origin = {
 } as any;
 
 describe('CanonicalArtifactCustodyService', () => {
+  beforeEach(() => {
+    jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
+      ready: true, catalogPresent: true, missingRoles: [], degradedReason: null,
+    });
+    jest.spyOn(WorkLaneDefinitionModel, 'resolveStatus').mockResolvedValue({ semantic_role: 'review' } as any);
+    jest.spyOn(WorkLaneDefinitionModel, 'semanticRoleForStatus').mockResolvedValue('execution');
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
   });

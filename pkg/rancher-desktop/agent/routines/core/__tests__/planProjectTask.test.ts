@@ -92,9 +92,11 @@ describe('locked Projects planning routine', () => {
     const prompt = String(persist?.data.config.orchestratorInstructions);
 
     expect(prompt).toContain('sulla project/add_task_comment');
-    expect(prompt).toContain('sulla project/update_task');
-    expect(prompt).toContain('status `todo`, assignee `dispatcher`');
-    expect(prompt).toContain('status `blocked`, assignee `heartbeat`');
+    expect(prompt).toContain('sulla project/resolve_lanes');
+    expect(prompt).toContain('semantic_role `execution`');
+    expect(prompt).toContain('semantic_role `blocked`');
+    expect(prompt).toContain('assignee `dispatcher`');
+    expect(prompt).toContain('assignee `heartbeat`');
     expect(prompt).toContain('Never merge or deploy');
   });
 });

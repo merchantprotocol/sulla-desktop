@@ -80,7 +80,7 @@ const OPTIONAL_CONFIG_FIELDS: Partial<Record<WorkflowNodeSubtype, string[]>> = {
 
 const VALID_TOP_LEVEL_KEYS = new Set([
   'id', 'name', 'description', 'version', 'enabled',
-  'createdAt', 'updatedAt', 'nodes', 'edges', 'viewport',
+  'createdAt', 'updatedAt', 'laneContract', 'nodes', 'edges', 'viewport',
 ]);
 
 const VALID_NODE_KEYS = new Set(['id', 'type', 'position', 'data']);
