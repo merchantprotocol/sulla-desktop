@@ -446,6 +446,14 @@ export interface IpcMainInvokeEvents {
   'work-items:task-archive':    (id: string) => boolean;
   'work-items:comment-add':     (input: import('@pkg/agent/database/models/WorkItemsModel').AddCommentInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord;
   'work-items:reorder':         (updates: { kind: 'epic' | 'task'; id: string; position?: number; status?: string; epic_id?: string; actor?: string }[]) => boolean;
+  'work-items:lanes-list':      (opts?: import('@pkg/agent/database/models/WorkLaneDefinitionModel').ListWorkLaneOpts) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord[];
+  'work-items:lanes-resolve':   (projectId: string, includeArchived?: boolean) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').EffectiveWorkLane[];
+  'work-items:lane-create':     (input: import('@pkg/agent/database/models/WorkLaneDefinitionModel').CreateWorkLaneInput) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord;
+  'work-items:lane-update':     (id: string, changes: import('@pkg/agent/database/models/WorkLaneDefinitionModel').UpdateWorkLaneInput) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord | null;
+  'work-items:lane-archive':    (id: string, destinationLaneKey?: string) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').ArchiveWorkLaneResult;
+  'work-items:lane-restore':    (id: string) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord | null;
+  'work-items:lanes-reorder':   (scope: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneScope, orderedKeys: string[], projectId?: string) => number;
+  'work-items:lane-reset-override': (projectId: string, laneKey: string) => boolean;
 
   // User-defined project catalog (scanned from ~/sulla/projects/ + DB)
   'projects-list': () => {

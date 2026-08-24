@@ -18,14 +18,17 @@ those are product specs. Do not invent a parallel markdown task list.
 `~/sulla/ledger/` is a historical archive. Do not open `LEDGER.md` to pick
 work. Do not write `OUTCOMES.md` / `AUDIT.md` as bookkeeping.
 
-## Status / priority
+## Lanes / priority
 
-Free-text columns. Use these consistently:
+`work_tasks.status` remains the stable lane key. The built-in keys below are
+seeded as global defaults, but lane display names, presentation, and order live
+in `work_lane_definitions`. Projects inherit the global set and may add or
+override definitions without changing another project.
 
 | Field | Allowed values |
 |---|---|
 | `status` (projects + epics) | `working` (default) · `backlog` · `blocked` · `done` · `cancelled` · `parked` |
-| `status` (tasks) | `todo` (default) · `backlog` · `planning` · `in_progress` · `in_review` · `blocked` · `done` · `cancelled` · `parked` |
+| built-in task lane keys | `todo` (default) · `backlog` · `planning` · `in_progress` · `in_review` · `blocked` · `done` · `cancelled` · `parked` |
 | `priority` | `p0`/`critical` · `p1`/`high` · `p2`/`medium` (default) · `p3`/`low` · `p4` |
 
 There is **no `bucket` column**. Closed = `done` / `cancelled` / `parked`.
@@ -63,10 +66,26 @@ Writes — explicit create / update, **no upsert**:
 | `sulla project/add_task_comment` | Append a note. Default author `sulla`; desktop UI stamps `human`. |
 | `sulla project/archive_project_item` | Soft-archive. Cascades to children. |
 
-Schema-only migration `0044_create_work_items_tables`. No user data in the
+Lane definitions:
+
+| Tool | Use |
+|---|---|
+| `sulla project/list_lanes` | List global or project definition rows, including archived/reset audit rows when requested. |
+| `sulla project/resolve_lanes` | Resolve one project's ordered effective set with `global`, `project_override`, or `project_only` provenance. |
+| `sulla project/create_lane` | Add a global default, project override, or project-only lane. The key becomes immutable. |
+| `sulla project/update_lane` | Rename, restyle, reorder, or change non-required behavior without changing the key. |
+| `sulla project/archive_lane` | Archive a lane. If tasks occupy it, `destination_lane_key` is required and the move is atomic. |
+| `sulla project/restore_lane` | Restore an archived definition. |
+| `sulla project/reorder_lanes` | Reorder one scope atomically. Reordering an inherited project lane creates an override. |
+| `sulla project/reset_lane_override` | Return a project override to global inheritance while retaining the old row as audit history. |
+
+Schema-only migrations `0044_create_work_items_tables` and
+`0069_create_work_lane_definitions`. No user data is embedded in either
 migration. A runtime seeder (`WorkItemsImportSeeder`) may import this
 install's leftover `~/sulla/ledger/goals/*.md` on first boot by stable
-slug. Safe to re-run. After that, **only** the project tools.
+slug. `WorkLaneDefinitionSeeder` runs on every boot, reasserts missing built-in
+definitions, and adds every unknown task status as a visible manual lane using
+the exact existing status value. Neither seeder remaps task status.
 
 Optional GitHub mapping on tasks: `github_issue`. Not a live sync.
 
