@@ -16,12 +16,22 @@
       <!-- project list -->
       <aside class="ph-side">
         <div class="ph-side-h">
-          <div class="ph-eyebrow">Outcome ledger</div>
+          <div class="ph-eyebrow">
+            Outcome ledger
+          </div>
           <h1>Projects</h1>
         </div>
         <div class="ph-list">
-          <template v-for="group in groups" :key="group.label">
-            <div v-if="group.items.length" class="ph-grp">{{ group.label }}</div>
+          <template
+            v-for="group in groups"
+            :key="group.label"
+          >
+            <div
+              v-if="group.items.length"
+              class="ph-grp"
+            >
+              {{ group.label }}
+            </div>
             <button
               v-for="p in group.items"
               :key="p.id"
@@ -30,13 +40,22 @@
               :class="{ on: p.id === selectedId }"
               @click="select(p.id)"
             >
-              <span class="ph-pn"><span class="ph-st" :class="dotClass(p)" />{{ shortName(p) }}</span>
-              <span class="ph-pc">{{ p.status === 'done' ? 'Closed' : `${ p.openCount } open · ${ p.doneCount } done` }}</span>
+              <span class="ph-pn"><span
+                class="ph-st"
+                :class="dotClass(p)"
+              />{{ shortName(p) }}</span>
+              <span class="ph-pc">{{ p.status === 'done' ? 'Closed' : `${p.openCount} open · ${p.doneCount} done` }}</span>
             </button>
           </template>
         </div>
         <div class="ph-side-f">
-          <button type="button" class="ph-btn block" @click="openNewProject">＋ New project</button>
+          <button
+            type="button"
+            class="ph-btn block"
+            @click="openNewProject"
+          >
+            ＋ New project
+          </button>
         </div>
       </aside>
 
@@ -44,47 +63,186 @@
       <section class="ph-main">
         <div class="ph-top">
           <div class="ph-tabs">
-            <button type="button" class="ph-tab" :class="{ on: tab === 'today' }" @click="tab = 'today'">Today</button>
-            <button type="button" class="ph-tab" :class="{ on: tab === 'board' }" @click="tab = 'board'">Board</button>
-            <button type="button" class="ph-tab" :class="{ on: tab === 'activity' }" @click="tab = 'activity'">Activity</button>
-            <button type="button" class="ph-tab" :class="{ on: tab === 'projects' }" @click="tab = 'projects'">Projects</button>
+            <button
+              v-for="view in PROJECT_VIEWS"
+              :key="view.key"
+              type="button"
+              class="ph-tab ph-view-tab"
+              :class="{ on: tab === view.key }"
+              :aria-pressed="tab === view.key"
+              :aria-label="`${view.label} view`"
+              @click="setProjectView(view.key)"
+            >
+              <span aria-hidden="true">{{ view.icon }}</span>{{ view.label }}
+            </button>
+            <button
+              type="button"
+              class="ph-tab"
+              :class="{ on: tab === 'activity' }"
+              @click="tab = 'activity'"
+            >
+              Activity
+            </button>
+            <button
+              type="button"
+              class="ph-tab"
+              :class="{ on: tab === 'projects' }"
+              @click="tab = 'projects'"
+            >
+              Projects
+            </button>
           </div>
           <div class="ph-sp" />
-          <button type="button" class="ph-btn ghost" @click="refresh" :disabled="isLoading">
+          <label
+            v-if="isDataView"
+            class="ph-search"
+          ><span class="sr-only">Search visible work</span><input
+            v-model="viewSearch"
+            placeholder="Search this project…"
+          ></label>
+          <div
+            v-if="isDataView"
+            class="ph-view-presets"
+          >
+            <label><span class="sr-only">Saved view</span><select
+              v-model="activeViewId"
+              aria-label="Saved view"
+              @change="applySavedView"
+            >
+              <option value="">
+                Current view
+              </option>
+              <option
+                v-for="view in savedViews"
+                :key="view.id"
+                :value="view.id"
+              >
+                {{ view.project_id ? 'Project' : 'Global' }} · {{ view.name }}
+              </option>
+            </select></label>
+            <label><span class="sr-only">New saved view name</span><input
+              v-model="viewName"
+              aria-label="New saved view name"
+              placeholder="View name"
+              @keydown.enter.prevent="saveNamedView"
+            ></label>
+            <label class="ph-check"><input
+              v-model="saveViewGlobally"
+              type="checkbox"
+            > Global</label>
+            <button
+              type="button"
+              class="ph-btn ghost sm"
+              :disabled="!viewName.trim()"
+              @click="saveNamedView"
+            >
+              Save view
+            </button>
+          </div>
+          <button
+            type="button"
+            class="ph-btn ghost"
+            :disabled="isLoading"
+            @click="refresh"
+          >
             {{ isLoading ? 'Loading…' : '↻ Refresh' }}
           </button>
         </div>
 
         <div class="ph-canvas">
           <!-- states -->
-          <div v-if="error" class="ph-state ph-err">
+          <div
+            v-if="error"
+            class="ph-state ph-err"
+          >
             <b>Couldn't load Projects.</b>
             <p>{{ error }}</p>
-            <button type="button" class="ph-btn" @click="refresh">Try again</button>
+            <button
+              type="button"
+              class="ph-btn"
+              @click="refresh"
+            >
+              Try again
+            </button>
           </div>
-          <div v-else-if="isLoading && !loaded" class="ph-state">Loading the ledger…</div>
-          <div v-else-if="!projects.length" class="ph-state">
-            No projects yet. <button type="button" class="ph-btn" @click="openNewProject">Create the first one</button>
+          <div
+            v-else-if="isLoading && !loaded"
+            class="ph-state"
+          >
+            Loading the ledger…
+          </div>
+          <div
+            v-else-if="!projects.length"
+            class="ph-state"
+          >
+            No projects yet. <button
+              type="button"
+              class="ph-btn"
+              @click="openNewProject"
+            >
+              Create the first one
+            </button>
           </div>
 
           <template v-else>
+            <div
+              v-if="laneCapability && !laneCapability.ready"
+              class="ph-state ph-err"
+            >
+              <b>Lane automation is in compatibility mode.</b>
+              <p>{{ laneCapability.degradedReason }}</p>
+            </div>
             <!-- TODAY -->
-            <div v-show="tab === 'today'" v-if="sel">
+            <div
+              v-show="tab === 'list'"
+              v-if="sel"
+              role="tree"
+              aria-label="Project work list"
+            >
               <div class="ph-lead">
                 <div class="ph-lead-row">
                   <h2>{{ shortName(sel) }}</h2>
                   <div class="ph-actions">
-                    <button type="button" class="ph-btn ghost sm" @click="openEditProject(sel)">Edit</button>
-                    <button type="button" class="ph-btn ghost sm" @click="openNewEpic(sel.id)">＋ Epic</button>
-                    <button type="button" class="ph-btn ghost sm danger" @click="confirmArchiveProject(sel)">Archive</button>
+                    <button
+                      type="button"
+                      class="ph-btn ghost sm"
+                      @click="openEditProject(sel)"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      class="ph-btn ghost sm"
+                      @click="openNewEpic(sel.id)"
+                    >
+                      ＋ Epic
+                    </button>
+                    <button
+                      type="button"
+                      class="ph-btn ghost sm danger"
+                      @click="confirmArchiveProject(sel)"
+                    >
+                      Archive
+                    </button>
                   </div>
                 </div>
-                <p v-if="sel.description">{{ sel.description }}</p>
+                <p v-if="sel.description">
+                  {{ sel.description }}
+                </p>
                 <div class="ph-lead-meta">
-                  <span class="ph-pill" :class="{ hb: isHeartbeat(sel) }">{{ sel.status }}</span>
+                  <span
+                    class="ph-pill"
+                    :class="{ hb: isHeartbeat(sel) }"
+                  >{{ sel.status }}</span>
                   <span class="ph-pill">{{ sel.priority }}</span>
-                  <span v-if="sel.owner" class="ph-pill">owner: {{ sel.owner }}</span>
-                  <span v-if="sel.github_repo" class="ph-pill">{{ sel.github_repo }}</span>
+                  <span
+                    v-if="sel.owner"
+                    class="ph-pill"
+                  >owner: {{ sel.owner }}</span>
+                  <span
+                    v-if="sel.github_repo"
+                    class="ph-pill"
+                  >{{ sel.github_repo }}</span>
                 </div>
               </div>
 
@@ -92,6 +250,9 @@
                 v-for="epic in sel.epics"
                 :key="epic.id"
                 class="ph-sec"
+                role="treeitem"
+                :aria-expanded="!collapsedEpics.has(epic.id)"
+                tabindex="0"
                 :class="{ 'drop-epic': dnd.kind === 'epic' && dragOverEpicId === epic.id }"
                 @dragover.prevent="dragOverEpicId = epic.id"
                 @dragleave="dragOverEpicId = ''"
@@ -105,23 +266,59 @@
                     @dragstart="onDragStartEpic(epic, $event)"
                     @dragend="onDragEnd"
                   >⠿</span>
+                  <button
+                    type="button"
+                    class="ph-collapse"
+                    :aria-label="`${collapsedEpics.has(epic.id) ? 'Expand' : 'Collapse'} ${epic.title}`"
+                    @click="toggleEpic(epic.id)"
+                  >
+                    {{ collapsedEpics.has(epic.id) ? '▸' : '▾' }}
+                  </button>
                   <h3>{{ epic.title }}</h3>
                   <span class="ph-cnt">{{ epicSummary(epic) }}</span>
                   <div class="ph-sp" />
                   <div class="ph-actions">
-                    <button type="button" class="ph-btn ghost xs" @click="openNewTask(epic.id)">＋ Issue</button>
-                    <button type="button" class="ph-btn ghost xs" @click="openEditEpic(epic)">Edit</button>
-                    <button type="button" class="ph-btn ghost xs danger" @click="confirmArchiveEpic(epic)">Archive</button>
+                    <button
+                      type="button"
+                      class="ph-btn ghost xs"
+                      @click="openNewTask(epic.id)"
+                    >
+                      ＋ Issue
+                    </button>
+                    <button
+                      type="button"
+                      class="ph-btn ghost xs"
+                      @click="openEditEpic(epic)"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      class="ph-btn ghost xs danger"
+                      @click="confirmArchiveEpic(epic)"
+                    >
+                      Archive
+                    </button>
                   </div>
                 </div>
-                <div v-if="!epic.tasks.length" class="ph-muted ph-dropzone">Drop an issue here, or ＋ Issue to add one.</div>
                 <div
-                  v-for="t in epic.tasks"
+                  v-if="!collapsedEpics.has(epic.id) && !filteredEpicTasks(epic).length"
+                  class="ph-muted ph-dropzone"
+                >
+                  No matching work. Drop an issue here, or ＋ Issue to add one.
+                </div>
+                <div
+                  v-for="t in (collapsedEpics.has(epic.id) ? [] : filteredEpicTasks(epic))"
                   :key="t.id"
                   class="ph-row"
-                  :class="{ sel: openTask?.id === t.id, drop: dnd.kind === 'task' && dragOverTaskId === t.id }"
+                  :class="{ sel: openTask?.id === t.id, subtask: Boolean(t.parent_id), drop: dnd.kind === 'task' && dragOverTaskId === t.id }"
                   draggable="true"
+                  role="treeitem"
+                  tabindex="0"
+                  :aria-label="`${t.title}, ${statusLabel(t.status)}`"
                   @click="openTaskDrawer(t)"
+                  @keydown.enter="openTaskDrawer(t)"
+                  @keydown.space.prevent="toggleSelection(t.id)"
                   @dragstart.stop="onDragStartTask(t, epic.id, $event)"
                   @dragend="onDragEnd"
                   @dragover.prevent.stop="dragOverTaskId = t.id"
@@ -129,21 +326,52 @@
                   @drop.stop="onRowDrop(t, epic)"
                 >
                   <span class="ph-grip">⠿</span>
-                  <span class="ph-mark" :class="markClass(t.status)" />
+                  <span
+                    v-if="t.parent_id"
+                    class="ph-subtask-mark"
+                    aria-label="Subtask"
+                  >↳</span>
+                  <span
+                    class="ph-mark"
+                    :class="markClass(t.status)"
+                  />
                   <div class="ph-rbody">
-                    <div class="ph-t" v-html="cleanTitle(t.title)" />
-                    <div v-if="showPriority(t.priority)" class="ph-m"><span>{{ t.priority }}</span></div>
+                    <div
+                      class="ph-t"
+                      v-html="cleanTitle(t.title)"
+                    />
+                    <div
+                      v-if="showPriority(t.priority)"
+                      class="ph-m"
+                    >
+                      <span>{{ t.priority }}</span>
+                    </div>
                   </div>
-                  <span class="ph-tag" :class="{ wait: t.status === 'blocked' }">{{ statusLabel(t.status) }}</span>
+                  <span
+                    class="ph-tag"
+                    :class="{ wait: isBlockedStatus(t.status) }"
+                  >{{ statusLabel(t.status) }}</span>
                 </div>
               </div>
-              <div v-if="!sel.epics.length" class="ph-muted">
-                No epics yet. <button type="button" class="ph-btn xs" @click="openNewEpic(sel.id)">＋ Add an epic</button>
+              <div
+                v-if="!sel.epics.length"
+                class="ph-muted"
+              >
+                No epics yet. <button
+                  type="button"
+                  class="ph-btn xs"
+                  @click="openNewEpic(sel.id)"
+                >
+                  ＋ Add an epic
+                </button>
               </div>
             </div>
 
             <!-- BOARD -->
-            <div v-show="tab === 'board'" v-if="sel">
+            <div
+              v-show="tab === 'board'"
+              v-if="sel"
+            >
               <div class="ph-cols">
                 <div
                   v-for="col in boardColumns"
@@ -154,40 +382,392 @@
                   @dragleave="dragOverCol = ''"
                   @drop="onColumnDrop(col.key)"
                 >
-                  <div class="ph-colh"><span class="ph-cd" :style="{ background: col.color }" />{{ col.label }} <span class="ph-n">{{ col.items.length }}</span></div>
-                  <div v-if="!col.items.length" class="ph-card ghost"><div class="ph-ct">Drop here</div></div>
+                  <div class="ph-colh">
+                    <span
+                      class="ph-cd"
+                      :style="{ background: col.color }"
+                    />{{ col.label }} <span class="ph-n">{{ col.items.length }}</span>
+                  </div>
+                  <div
+                    v-if="!col.items.length"
+                    class="ph-card ghost"
+                  >
+                    <div class="ph-ct">
+                      Drop here
+                    </div>
+                  </div>
                   <div
                     v-for="t in col.items"
                     :key="t.id"
                     class="ph-card"
                     draggable="true"
+                    role="button"
+                    tabindex="0"
                     @click="openTaskDrawer(t)"
+                    @keydown.enter="openTaskDrawer(t)"
+                    @keydown.space.prevent="openTaskDrawer(t)"
                     @dragstart="onDragStartTask(t, t.epic_id, $event)"
                     @dragend="onDragEnd"
                   >
-                    <div class="ph-ct" v-html="cleanTitle(t.title)" />
-                    <div v-if="showPriority(t.priority)" class="ph-cm">{{ t.priority }}</div>
+                    <div
+                      class="ph-ct"
+                      v-html="cleanTitle(t.title)"
+                    />
+                    <div
+                      v-if="showPriority(t.priority)"
+                      class="ph-cm"
+                    >
+                      {{ t.priority }}
+                    </div>
+                    <select
+                      :value="t.status"
+                      :aria-label="`Move ${t.title} to lane`"
+                      @click.stop
+                      @change.stop="inlineTaskField(t, 'status', inputValue($event))"
+                    >
+                      <option
+                        v-for="status in STATUSES"
+                        :key="status"
+                        :value="status"
+                      >
+                        {{ statusLabel(status) }}
+                      </option>
+                    </select>
                   </div>
                 </div>
               </div>
             </div>
 
+            <!-- TABLE: bounded rows, canonical inline edits -->
+            <div
+              v-show="tab === 'table'"
+              v-if="sel"
+              class="ph-data-view"
+            >
+              <div class="ph-view-meta">
+                <span
+                  class="sr-only"
+                  role="status"
+                  aria-live="polite"
+                >Showing {{ Math.min(visibleTasks.length, TABLE_RENDER_LIMIT) }} of {{ visibleTasks.length }} matching tasks</span>
+                <b>{{ visibleTasks.length }}</b> matching tasks <span v-if="allTasks.length > TABLE_RENDER_LIMIT">· rendering first {{ TABLE_RENDER_LIMIT }} of {{ allTasks.length }}</span>
+              </div>
+              <div
+                class="ph-table-wrap"
+                role="region"
+                aria-label="Projects table"
+                tabindex="0"
+              >
+                <table class="ph-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">
+                        Select
+                      </th><th scope="col">
+                        Title
+                      </th><th scope="col">
+                        Epic
+                      </th><th scope="col">
+                        Status
+                      </th><th scope="col">
+                        Priority
+                      </th><th scope="col">
+                        Assignee
+                      </th><th scope="col">
+                        Start
+                      </th><th scope="col">
+                        Due
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="row in visibleTasks.slice(0, TABLE_RENDER_LIMIT)"
+                      :key="row.task.id"
+                      :class="{ selected: selectedTasks.has(row.task.id) }"
+                    >
+                      <td>
+                        <input
+                          type="checkbox"
+                          :checked="selectedTasks.has(row.task.id)"
+                          :aria-label="`Select ${row.task.title}`"
+                          @change="toggleSelection(row.task.id)"
+                        >
+                      </td>
+                      <td>
+                        <button
+                          class="ph-link"
+                          type="button"
+                          @click="openTaskDrawer(row.task)"
+                        >
+                          {{ row.task.title }}
+                        </button>
+                      </td>
+                      <td>{{ row.epic.title }}</td>
+                      <td>
+                        <select
+                          :value="row.task.status"
+                          :aria-label="`Status for ${row.task.title}`"
+                          @change="inlineTaskField(row.task, 'status', inputValue($event))"
+                        >
+                          <option
+                            v-for="s in STATUSES"
+                            :key="s"
+                            :value="s"
+                          >
+                            {{ statusLabel(s) }}
+                          </option>
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          :value="row.task.priority"
+                          :aria-label="`Priority for ${row.task.title}`"
+                          @change="inlineTaskField(row.task, 'priority', inputValue($event))"
+                        >
+                          <option
+                            v-for="p in PRIORITIES"
+                            :key="p"
+                            :value="p"
+                          >
+                            {{ p }}
+                          </option>
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          :value="row.task.assignee || ''"
+                          :aria-label="`Assignee for ${row.task.title}`"
+                          @change="inlineTaskField(row.task, 'assignee', inputValue($event) || null)"
+                        >
+                      </td>
+                      <td>
+                        <input
+                          type="date"
+                          :value="ymd(row.task.start_at)"
+                          :aria-label="`Start date for ${row.task.title}`"
+                          @change="inlineTaskField(row.task, 'start_at', isoFromYmd(inputValue($event)))"
+                        >
+                      </td>
+                      <td>
+                        <input
+                          type="date"
+                          :value="ymd(row.task.due_at)"
+                          :aria-label="`Due date for ${row.task.title}`"
+                          @change="inlineTaskField(row.task, 'due_at', isoFromYmd(inputValue($event)))"
+                        >
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- GANTT: real spans only; no fabricated dates -->
+            <div
+              v-show="tab === 'gantt'"
+              v-if="sel"
+              class="ph-data-view"
+            >
+              <div class="ph-view-tools">
+                <button
+                  v-for="z in ['day', 'week', 'month']"
+                  :key="z"
+                  type="button"
+                  class="ph-btn xs"
+                  :class="{ primary: ganttZoom === z }"
+                  @click="setZoom(z as GanttZoom)"
+                >
+                  {{ z }}
+                </button><button
+                  type="button"
+                  class="ph-btn xs"
+                  @click="dateAnchor = todayYmd"
+                >
+                  Today
+                </button>
+              </div>
+              <div
+                class="ph-gantt"
+                :class="`zoom-${ganttZoom}`"
+                role="region"
+                aria-label="Project schedule"
+              >
+                <div
+                  class="ph-today-line"
+                  :style="{ left: ganttTodayOffset + '%' }"
+                >
+                  <span>Today</span>
+                </div>
+                <div
+                  v-for="row in scheduledTasks"
+                  :key="row.task.id"
+                  class="ph-gantt-row"
+                >
+                  <div class="ph-gantt-label-wrap">
+                    <button
+                      type="button"
+                      class="ph-gantt-label"
+                      @click="openTaskDrawer(row.task)"
+                    >
+                      {{ row.task.title }}
+                    </button>
+                    <div class="ph-gantt-dates">
+                      <input
+                        type="date"
+                        :value="ymd(row.task.start_at)"
+                        :aria-label="`Start date for ${row.task.title}`"
+                        @change="inlineTaskField(row.task, 'start_at', isoFromYmd(inputValue($event)))"
+                      >
+                      <input
+                        type="date"
+                        :value="ymd(row.task.due_at)"
+                        :aria-label="`Due date for ${row.task.title}`"
+                        @change="inlineTaskField(row.task, 'due_at', isoFromYmd(inputValue($event)))"
+                      >
+                    </div>
+                  </div>
+                  <div class="ph-gantt-track">
+                    <button
+                      type="button"
+                      class="ph-gantt-bar"
+                      :style="ganttStyle(row.task)"
+                      :aria-label="`${row.task.title}, ${ymd(row.task.start_at || row.task.due_at)} to ${ymd(row.task.due_at || row.task.start_at)}`"
+                      @click="openTaskDrawer(row.task)"
+                    >
+                      <span
+                        v-if="row.task.milestone_at"
+                        class="ph-milestone"
+                        aria-label="Milestone"
+                      >◆</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="ph-unscheduled">
+                <h3>Unscheduled work <span>{{ unscheduledTasks.length }}</span></h3><button
+                  v-for="row in unscheduledTasks"
+                  :key="row.task.id"
+                  type="button"
+                  @click="openTaskDrawer(row.task)"
+                >
+                  {{ row.task.title }}
+                </button>
+              </div>
+            </div>
+
+            <!-- CALENDAR: dragging commits due_at through WorkItemsModel -->
+            <div
+              v-show="tab === 'calendar'"
+              v-if="sel"
+              class="ph-data-view"
+            >
+              <div class="ph-view-tools">
+                <button
+                  type="button"
+                  class="ph-btn xs"
+                  aria-label="Previous month"
+                  @click="shiftMonth(-1)"
+                >
+                  ←
+                </button><b>{{ calendarTitle }}</b><button
+                  type="button"
+                  class="ph-btn xs"
+                  aria-label="Next month"
+                  @click="shiftMonth(1)"
+                >
+                  →
+                </button><button
+                  type="button"
+                  class="ph-btn xs"
+                  @click="calendarAnchor = todayYmd"
+                >
+                  Today
+                </button>
+              </div>
+              <div
+                class="ph-calendar"
+                role="grid"
+                :aria-label="calendarTitle"
+              >
+                <div
+                  v-for="name in WEEKDAYS"
+                  :key="name"
+                  role="columnheader"
+                  class="ph-calendar-head"
+                >
+                  {{ name }}
+                </div><div
+                  v-for="day in calendarDays"
+                  :key="day.ymd"
+                  role="gridcell"
+                  class="ph-day"
+                  :class="{ muted: !day.inMonth, today: day.ymd === todayYmd }"
+                  @dragover.prevent
+                  @drop="dropOnDate(day.ymd)"
+                >
+                  <span>{{ day.day }}</span><button
+                    v-for="row in tasksForDate(day.ymd)"
+                    :key="row.task.id"
+                    type="button"
+                    draggable="true"
+                    @dragstart="calendarDragId = row.task.id"
+                    @click="openTaskDrawer(row.task)"
+                  >
+                    {{ row.task.milestone_at ? '◆ ' : '' }}{{ row.task.title }}
+                  </button>
+                </div>
+              </div>
+              <div class="ph-unscheduled">
+                <h3>Unscheduled work <span>{{ unscheduledTasks.length }}</span></h3><button
+                  v-for="row in unscheduledTasks"
+                  :key="row.task.id"
+                  type="button"
+                  draggable="true"
+                  @dragstart="calendarDragId = row.task.id"
+                >
+                  {{ row.task.title }}
+                </button>
+              </div>
+            </div>
+
             <!-- ACTIVITY -->
-            <div v-show="tab === 'activity'" v-if="sel">
+            <div
+              v-show="tab === 'activity'"
+              v-if="sel"
+            >
               <div class="ph-lead ph-activity-lead">
                 <div class="ph-lead-row">
                   <h2>Recent activity</h2>
                   <div class="ph-actions">
-                    <button type="button" class="ph-btn ghost sm" @click="refreshActivity" :disabled="activityLoading">
+                    <button
+                      type="button"
+                      class="ph-btn ghost sm"
+                      :disabled="activityLoading"
+                      @click="refreshActivity"
+                    >
                       {{ activityLoading ? 'Loading…' : '↻ Refresh' }}
                     </button>
                   </div>
                 </div>
                 <p>{{ shortName(sel) }} · newest first — comments, new tasks &amp; epics, status and metadata changes.</p>
               </div>
-              <div v-if="activityLoading && !activity.length" class="ph-state">Loading recent activity…</div>
-              <div v-else-if="!activity.length" class="ph-state">No activity has been recorded for this project yet.</div>
-              <div v-else class="ph-timeline">
+              <div
+                v-if="activityLoading && !activity.length"
+                class="ph-state"
+              >
+                Loading recent activity…
+              </div>
+              <div
+                v-else-if="!activity.length"
+                class="ph-state"
+              >
+                No activity has been recorded for this project yet.
+              </div>
+              <div
+                v-else
+                class="ph-timeline"
+              >
                 <button
                   v-for="item in activity"
                   :key="item.id"
@@ -196,18 +776,33 @@
                   :class="{ 'is-event': item.kind !== 'comment' }"
                   @click="openActivityTask(item)"
                 >
-                  <span class="ph-activity-dot" :class="[activityActorClass(item), { event: item.kind !== 'comment' }]" />
+                  <span
+                    class="ph-activity-dot"
+                    :class="[activityActorClass(item), { event: item.kind !== 'comment' }]"
+                  />
                   <span class="ph-activity-body">
                     <span class="ph-activity-meta">
-                      <span class="ph-activity-kind" :class="'k-' + item.kind">{{ activityKindLabel(item.kind) }}</span>
-                      <span class="ph-activity-actor" :class="activityActorClass(item)">{{ activityActorLabel(item) }}</span>
+                      <span
+                        class="ph-activity-kind"
+                        :class="'k-' + item.kind"
+                      >{{ activityKindLabel(item.kind) }}</span>
+                      <span
+                        class="ph-activity-actor"
+                        :class="activityActorClass(item)"
+                      >{{ activityActorLabel(item) }}</span>
                       <span>{{ shortDate(item.activity_at) }}</span>
                       <span v-if="item.epic_title">{{ item.epic_title }}</span>
                     </span>
-                    <span class="ph-activity-task" v-html="cleanTitle(activityTitle(item))" />
+                    <span
+                      class="ph-activity-task"
+                      v-html="cleanTitle(activityTitle(item))"
+                    />
                     <span class="ph-activity-text">{{ activityText(item) }}</span>
                   </span>
-                  <span class="ph-tag" :class="{ wait: item.task_status === 'blocked' }">{{ statusLabel(item.task_status) }}</span>
+                  <span
+                    class="ph-tag"
+                    :class="{ wait: isBlockedStatus(item.task_status) }"
+                  >{{ statusLabel(item.task_status) }}</span>
                 </button>
               </div>
             </div>
@@ -215,11 +810,28 @@
             <!-- PROJECTS -->
             <div v-show="tab === 'projects'">
               <div class="ph-grid">
-                <div v-for="p in projects" :key="p.id" class="ph-pcard" @click="select(p.id); tab = 'today'">
-                  <div class="ph-lane" :class="{ hb: isHeartbeat(p) }">{{ laneLabel(p) }}</div>
+                <div
+                  v-for="p in projects"
+                  :key="p.id"
+                  class="ph-pcard"
+                  @click="select(p.id); tab = 'list'"
+                >
+                  <div
+                    class="ph-lane"
+                    :class="{ hb: isHeartbeat(p) }"
+                  >
+                    {{ laneLabel(p) }}
+                  </div>
                   <h3>{{ shortName(p) }}</h3>
-                  <p v-if="p.description">{{ p.description }}</p>
-                  <div class="ph-prog" :class="progClass(p)"><i :style="{ width: pct(p) + '%' }" /></div>
+                  <p v-if="p.description">
+                    {{ p.description }}
+                  </p>
+                  <div
+                    class="ph-prog"
+                    :class="progClass(p)"
+                  >
+                    <i :style="{ width: pct(p) + '%' }" />
+                  </div>
                   <div class="ph-nums">
                     <span><b>{{ p.openCount }}</b> open</span>
                     <span><b>{{ p.doneCount }}</b> done</span>
@@ -234,27 +846,65 @@
     </div>
 
     <!-- ══════════ TASK DETAIL DRAWER ══════════ -->
-    <div v-if="openTask" class="ph-scrim" @click="closeTask" />
-    <aside v-if="openTask" class="ph-drawer">
+    <div
+      v-if="openTask"
+      class="ph-scrim"
+      @click="closeTask"
+    />
+    <aside
+      v-if="openTask"
+      class="ph-drawer"
+    >
       <div class="ph-dh">
-        <div class="ph-dh-id">{{ taskMode === 'create' ? 'NEW ISSUE' : `ISSUE · ${ openTask.id }` }}</div>
-        <button type="button" class="ph-x" @click="closeTask">✕</button>
+        <div class="ph-dh-id">
+          {{ taskMode === 'create' ? 'NEW ISSUE' : `ISSUE · ${openTask.id}` }}
+        </div>
+        <button
+          type="button"
+          class="ph-x"
+          @click="closeTask"
+        >
+          ✕
+        </button>
       </div>
       <div class="ph-db">
         <label class="ph-fl">Title</label>
-        <textarea v-model="taskDraft.title" class="ph-in ph-ta" rows="2" placeholder="What needs doing?" />
+        <textarea
+          v-model="taskDraft.title"
+          class="ph-in ph-ta"
+          rows="2"
+          placeholder="What needs doing?"
+        />
 
         <div class="ph-frow">
           <div>
             <label class="ph-fl">Status</label>
-            <select v-model="taskDraft.status" class="ph-in">
-              <option v-for="s in STATUSES" :key="s" :value="s">{{ statusLabel(s) }}</option>
+            <select
+              v-model="taskDraft.status"
+              class="ph-in"
+            >
+              <option
+                v-for="s in STATUSES"
+                :key="s"
+                :value="s"
+              >
+                {{ statusLabel(s) }}
+              </option>
             </select>
           </div>
           <div>
             <label class="ph-fl">Priority</label>
-            <select v-model="taskDraft.priority" class="ph-in">
-              <option v-for="p in PRIORITIES" :key="p" :value="p">{{ p }}</option>
+            <select
+              v-model="taskDraft.priority"
+              class="ph-in"
+            >
+              <option
+                v-for="p in PRIORITIES"
+                :key="p"
+                :value="p"
+              >
+                {{ p }}
+              </option>
             </select>
           </div>
         </div>
@@ -262,16 +912,39 @@
         <div class="ph-frow">
           <div>
             <label class="ph-fl">Epic</label>
-            <select v-model="taskDraft.epic_id" class="ph-in">
-              <option v-for="e in (sel?.epics ?? [])" :key="e.id" :value="e.id">{{ e.title }}</option>
+            <select
+              v-model="taskDraft.epic_id"
+              class="ph-in"
+            >
+              <option
+                v-for="e in (sel?.epics ?? [])"
+                :key="e.id"
+                :value="e.id"
+              >
+                {{ e.title }}
+              </option>
             </select>
           </div>
           <div>
             <label class="ph-fl">Assignee</label>
-            <select v-model="taskDraft.assignee" class="ph-in">
-              <option value="">unassigned</option>
-              <option v-for="a in ASSIGNEES" :key="a.value" :value="a.value">{{ a.label }}</option>
-              <option v-if="taskDraft.assignee && !isKnownAssignee(taskDraft.assignee)" :value="taskDraft.assignee">
+            <select
+              v-model="taskDraft.assignee"
+              class="ph-in"
+            >
+              <option value="">
+                unassigned
+              </option>
+              <option
+                v-for="a in ASSIGNEES"
+                :key="a.value"
+                :value="a.value"
+              >
+                {{ a.label }}
+              </option>
+              <option
+                v-if="taskDraft.assignee && !isKnownAssignee(taskDraft.assignee)"
+                :value="taskDraft.assignee"
+              >
                 {{ taskDraft.assignee }}
               </option>
             </select>
@@ -280,111 +953,332 @@
 
         <div class="ph-frow">
           <div>
+            <label class="ph-fl">Start</label>
+            <input
+              v-model="taskStartYmd"
+              type="date"
+              class="ph-in"
+            >
+          </div>
+          <div>
             <label class="ph-fl">Due</label>
-            <input v-model="taskDueYmd" type="date" class="ph-in">
+            <input
+              v-model="taskDueYmd"
+              type="date"
+              class="ph-in"
+            >
+          </div>
+        </div>
+        <div class="ph-frow">
+          <div>
+            <label class="ph-fl">Milestone</label>
+            <input
+              v-model="taskMilestoneYmd"
+              type="date"
+              class="ph-in"
+            >
           </div>
           <div>
             <label class="ph-fl">GitHub issue</label>
-            <input v-model="taskDraft.github_issue" class="ph-in" placeholder="owner/repo#123">
+            <input
+              v-model="taskDraft.github_issue"
+              class="ph-in"
+              placeholder="owner/repo#123"
+            >
           </div>
         </div>
 
+        <template v-if="taskMode === 'edit'">
+          <label class="ph-fl">Dependencies</label>
+          <div
+            v-if="currentDependencies.length"
+            class="ph-dependencies"
+          >
+            <div
+              v-for="dependency in currentDependencies"
+              :key="dependency.depends_on_task_id"
+              class="ph-dependency"
+            >
+              <span>Blocked by {{ taskTitle(dependency.depends_on_task_id) }}</span>
+              <button
+                type="button"
+                class="ph-btn ghost xs"
+                :aria-label="`Remove dependency ${taskTitle(dependency.depends_on_task_id)}`"
+                @click="removeDependency(dependency.depends_on_task_id)"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+          <div class="ph-frow">
+            <select
+              v-model="dependencyCandidate"
+              class="ph-in"
+              aria-label="Task dependency"
+            >
+              <option value="">
+                Choose prerequisite…
+              </option>
+              <option
+                v-for="task in dependencyCandidates"
+                :key="task.id"
+                :value="task.id"
+              >
+                {{ task.title }}
+              </option>
+            </select>
+            <button
+              type="button"
+              class="ph-btn ghost"
+              :disabled="!dependencyCandidate"
+              @click="addDependency"
+            >
+              Add dependency
+            </button>
+          </div>
+        </template>
+
         <label class="ph-fl">Description</label>
-        <textarea v-model="taskDraft.description" class="ph-in ph-ta" rows="4" placeholder="Details, context, next action…" />
+        <textarea
+          v-model="taskDraft.description"
+          class="ph-in ph-ta"
+          rows="4"
+          placeholder="Details, context, next action…"
+        />
 
         <div class="ph-dactions">
-          <button type="button" class="ph-btn primary" :disabled="saving || !taskDraft.title" @click="saveTask">
+          <button
+            type="button"
+            class="ph-btn primary"
+            :disabled="saving || !taskDraft.title"
+            @click="saveTask"
+          >
             {{ saving ? 'Saving…' : (taskMode === 'create' ? 'Create issue' : 'Save changes') }}
           </button>
-          <button v-if="taskMode === 'edit'" type="button" class="ph-btn ghost danger" :disabled="saving" @click="confirmArchiveTask">Archive</button>
+          <button
+            v-if="taskMode === 'edit'"
+            type="button"
+            class="ph-btn ghost danger"
+            :disabled="saving"
+            @click="confirmArchiveTask"
+          >
+            Archive
+          </button>
         </div>
 
         <!-- comments -->
         <template v-if="taskMode === 'edit'">
-          <div class="ph-cmt-h">Comments <span>{{ taskComments.length }}</span></div>
-          <div v-for="c in taskComments" :key="c.id" class="ph-cmt">
-            <div class="ph-cmt-who">{{ c.author || 'agent' }} · {{ shortDate(c.created_at) }}</div>
-            <div class="ph-cmt-b">{{ c.body }}</div>
+          <div class="ph-cmt-h">
+            Comments <span>{{ taskComments.length }}</span>
           </div>
-          <div v-if="!taskComments.length" class="ph-muted">No comments yet.</div>
+          <div
+            v-for="c in taskComments"
+            :key="c.id"
+            class="ph-cmt"
+          >
+            <div class="ph-cmt-who">
+              {{ c.author || 'agent' }} · {{ shortDate(c.created_at) }}
+            </div>
+            <div class="ph-cmt-b">
+              {{ c.body }}
+            </div>
+          </div>
+          <div
+            v-if="!taskComments.length"
+            class="ph-muted"
+          >
+            No comments yet.
+          </div>
           <div class="ph-cmt-add">
-            <textarea v-model="newComment" class="ph-in ph-ta" rows="2" placeholder="Add a comment…" />
-            <button type="button" class="ph-btn" :disabled="saving || !newComment.trim()" @click="postComment">Comment</button>
+            <textarea
+              v-model="newComment"
+              class="ph-in ph-ta"
+              rows="2"
+              placeholder="Add a comment…"
+            />
+            <button
+              type="button"
+              class="ph-btn"
+              :disabled="saving || !newComment.trim()"
+              @click="postComment"
+            >
+              Comment
+            </button>
           </div>
         </template>
       </div>
     </aside>
 
     <!-- ══════════ PROJECT MODAL ══════════ -->
-    <div v-if="projectModal.open" class="ph-scrim center" @click="projectModal.open = false">
-      <div class="ph-modal" @click.stop>
+    <div
+      v-if="projectModal.open"
+      class="ph-scrim center"
+      @click="projectModal.open = false"
+    >
+      <div
+        class="ph-modal"
+        @click.stop
+      >
         <h2>{{ projectModal.mode === 'create' ? 'New project' : 'Edit project' }}</h2>
         <label class="ph-fl">Title</label>
-        <input v-model="projectDraft.title" class="ph-in" placeholder="Project name">
+        <input
+          v-model="projectDraft.title"
+          class="ph-in"
+          placeholder="Project name"
+        >
         <label class="ph-fl">Description</label>
-        <textarea v-model="projectDraft.description" class="ph-in ph-ta" rows="3" />
+        <textarea
+          v-model="projectDraft.description"
+          class="ph-in ph-ta"
+          rows="3"
+        />
         <div class="ph-frow">
           <div>
             <label class="ph-fl">Status</label>
-            <select v-model="projectDraft.status" class="ph-in">
-              <option v-for="s in STATUSES" :key="s" :value="s">{{ statusLabel(s) }}</option>
+            <select
+              v-model="projectDraft.status"
+              class="ph-in"
+            >
+              <option
+                v-for="s in STATUSES"
+                :key="s"
+                :value="s"
+              >
+                {{ statusLabel(s) }}
+              </option>
             </select>
           </div>
           <div>
             <label class="ph-fl">Priority</label>
-            <select v-model="projectDraft.priority" class="ph-in">
-              <option v-for="p in PRIORITIES" :key="p" :value="p">{{ p }}</option>
+            <select
+              v-model="projectDraft.priority"
+              class="ph-in"
+            >
+              <option
+                v-for="p in PRIORITIES"
+                :key="p"
+                :value="p"
+              >
+                {{ p }}
+              </option>
             </select>
           </div>
         </div>
         <div class="ph-frow">
           <div>
             <label class="ph-fl">Owner</label>
-            <input v-model="projectDraft.owner" class="ph-in" placeholder="who owns it">
+            <input
+              v-model="projectDraft.owner"
+              class="ph-in"
+              placeholder="who owns it"
+            >
           </div>
           <div>
             <label class="ph-fl">GitHub repo</label>
-            <input v-model="projectDraft.github_repo" class="ph-in" placeholder="owner/repo">
+            <input
+              v-model="projectDraft.github_repo"
+              class="ph-in"
+              placeholder="owner/repo"
+            >
           </div>
         </div>
         <label class="ph-fl">Outcome metric</label>
-        <input v-model="projectDraft.outcome_metric" class="ph-in" placeholder="how you know it's done">
+        <input
+          v-model="projectDraft.outcome_metric"
+          class="ph-in"
+          placeholder="how you know it's done"
+        >
         <div class="ph-dactions">
-          <button type="button" class="ph-btn primary" :disabled="saving || !projectDraft.title" @click="saveProject">
+          <button
+            type="button"
+            class="ph-btn primary"
+            :disabled="saving || !projectDraft.title"
+            @click="saveProject"
+          >
             {{ saving ? 'Saving…' : (projectModal.mode === 'create' ? 'Create' : 'Save') }}
           </button>
-          <button type="button" class="ph-btn ghost" @click="projectModal.open = false">Cancel</button>
+          <button
+            type="button"
+            class="ph-btn ghost"
+            @click="projectModal.open = false"
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>
 
     <!-- ══════════ EPIC MODAL ══════════ -->
-    <div v-if="epicModal.open" class="ph-scrim center" @click="epicModal.open = false">
-      <div class="ph-modal" @click.stop>
+    <div
+      v-if="epicModal.open"
+      class="ph-scrim center"
+      @click="epicModal.open = false"
+    >
+      <div
+        class="ph-modal"
+        @click.stop
+      >
         <h2>{{ epicModal.mode === 'create' ? 'New epic' : 'Edit epic' }}</h2>
         <label class="ph-fl">Title</label>
-        <input v-model="epicDraft.title" class="ph-in" placeholder="Epic name">
+        <input
+          v-model="epicDraft.title"
+          class="ph-in"
+          placeholder="Epic name"
+        >
         <label class="ph-fl">Description</label>
-        <textarea v-model="epicDraft.description" class="ph-in ph-ta" rows="3" />
+        <textarea
+          v-model="epicDraft.description"
+          class="ph-in ph-ta"
+          rows="3"
+        />
         <div class="ph-frow">
           <div>
             <label class="ph-fl">Status</label>
-            <select v-model="epicDraft.status" class="ph-in">
-              <option v-for="s in STATUSES" :key="s" :value="s">{{ statusLabel(s) }}</option>
+            <select
+              v-model="epicDraft.status"
+              class="ph-in"
+            >
+              <option
+                v-for="s in STATUSES"
+                :key="s"
+                :value="s"
+              >
+                {{ statusLabel(s) }}
+              </option>
             </select>
           </div>
           <div>
             <label class="ph-fl">Priority</label>
-            <select v-model="epicDraft.priority" class="ph-in">
-              <option v-for="p in PRIORITIES" :key="p" :value="p">{{ p }}</option>
+            <select
+              v-model="epicDraft.priority"
+              class="ph-in"
+            >
+              <option
+                v-for="p in PRIORITIES"
+                :key="p"
+                :value="p"
+              >
+                {{ p }}
+              </option>
             </select>
           </div>
         </div>
         <div class="ph-dactions">
-          <button type="button" class="ph-btn primary" :disabled="saving || !epicDraft.title" @click="saveEpic">
+          <button
+            type="button"
+            class="ph-btn primary"
+            :disabled="saving || !epicDraft.title"
+            @click="saveEpic"
+          >
             {{ saving ? 'Saving…' : (epicModal.mode === 'create' ? 'Create' : 'Save') }}
           </button>
-          <button type="button" class="ph-btn ghost" @click="epicModal.open = false">Cancel</button>
+          <button
+            type="button"
+            class="ph-btn ghost"
+            @click="epicModal.open = false"
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -392,12 +1286,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import {
   useProjects,
-  type ProjectView, type EpicWithTasks, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
+  type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
+  type WorkTaskDependencyRecord,
   type UpsertProjectInput, type UpsertEpicInput, type UpsertTaskInput, type ReorderUpdate,
+  type ProjectViewType, type WorkProjectViewRecord,
 } from '@pkg/composables/useProjects';
 
 const {
@@ -405,14 +1301,40 @@ const {
   loadComments, loadActivity, createProject, updateProject, archiveProject,
   createEpic, updateEpic, archiveEpic,
   createTask, updateTask, archiveTask, addComment, reorder,
+  lanesByProject, laneCapability,
+  listViews, resolveView, saveView,
+  listTaskDependencies, setTaskDependency, removeTaskDependency,
 } = useProjects();
 
-const tab = ref<'today' | 'board' | 'activity' | 'projects'>('today');
+const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
+  { key: 'board', label: 'Board', icon: '▦' },
+  { key: 'table', label: 'Table', icon: '▤' },
+  { key: 'gantt', label: 'Gantt', icon: '↔' },
+  { key: 'calendar', label: 'Calendar', icon: '□' },
+  { key: 'list', label: 'List', icon: '☷' },
+];
+type ProjectsTab = ProjectViewType | 'activity' | 'projects';
+const tab = ref<ProjectsTab>('board');
 const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
+const viewSearch = ref('');
+const collapsedEpics = ref(new Set<string>());
+const selectedTasks = ref(new Set<string>());
+const savedViews = ref<WorkProjectViewRecord[]>([]);
+const activeViewId = ref('');
+const viewName = ref('');
+const saveViewGlobally = ref(false);
+const TABLE_RENDER_LIMIT = 500;
+const PROJECTION_RENDER_LIMIT = 500;
+const isDataView = computed(() => PROJECT_VIEWS.some(view => view.key === tab.value));
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
-const STATUSES = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
+const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[selectedId.value] ?? []) : []);
+const COMPATIBILITY_LANE_KEYS = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
+const STATUSES = computed(() => selectedLanes.value.length
+  ? selectedLanes.value.map(lane => lane.lane_key)
+  : COMPATIBILITY_LANE_KEYS);
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
 // Canonical assignees. Values are the exact lowercase tokens the Projects tools and
 // the Heartbeat lane filter match on — 'heartbeat' is what routes work into the
@@ -426,11 +1348,99 @@ function isKnownAssignee(a: string): boolean {
   return ASSIGNEES.some(x => x.value === a);
 }
 
-onMounted(() => {
-  load().catch((err) => {
+onMounted(async() => {
+  await load().catch((err) => {
     console.error('[ProjectsHome] initial load failed:', err);
   });
+  const globalViews = await listViews(null).catch(() => []);
+  if (!globalViews.some(view => view.project_id === null && view.is_default)) {
+    await saveView({ view_type: 'board', name: 'Default', is_default: true, configuration: {} }).catch(() => undefined);
+  }
+  await loadAvailableViews();
+  await restoreProjectView();
+  refreshTimer = setInterval(() => {
+    if (!document.hidden && !saving.value) load().catch(() => undefined);
+  }, 15_000);
 });
+
+onBeforeUnmount(() => {
+  if (refreshTimer) clearInterval(refreshTimer);
+});
+
+async function restoreProjectView(): Promise<void> {
+  const saved = await resolveView(selectedId.value).catch(() => null);
+  if (!saved) return;
+  tab.value = saved.view_type;
+  viewSearch.value = saved.configuration.search ?? '';
+  collapsedEpics.value = new Set(saved.configuration.collapsedIds ?? []);
+  ganttZoom.value = saved.configuration.zoom ?? 'week';
+  if (saved.configuration.dateAnchor) {
+    dateAnchor.value = saved.configuration.dateAnchor;
+    calendarAnchor.value = saved.configuration.dateAnchor;
+  }
+}
+
+async function loadAvailableViews(): Promise<void> {
+  savedViews.value = await listViews(selectedId.value).catch(() => []);
+}
+
+function applyViewRecord(saved: WorkProjectViewRecord): void {
+  tab.value = saved.view_type;
+  viewSearch.value = saved.configuration.search ?? '';
+  collapsedEpics.value = new Set(saved.configuration.collapsedIds ?? []);
+  ganttZoom.value = saved.configuration.zoom ?? 'week';
+  if (saved.configuration.dateAnchor) {
+    dateAnchor.value = saved.configuration.dateAnchor;
+    calendarAnchor.value = saved.configuration.dateAnchor;
+  }
+}
+
+function applySavedView(): void {
+  const saved = savedViews.value.find(view => view.id === activeViewId.value);
+  if (saved) applyViewRecord(saved);
+}
+
+async function saveNamedView(): Promise<void> {
+  const name = viewName.value.trim();
+  if (!name || !isDataView.value) return;
+  const saved = await saveView({
+    project_id:    saveViewGlobally.value ? null : selectedId.value,
+    name,
+    view_type:     tab.value as ProjectViewType,
+    is_default:    false,
+    configuration: {
+      search:       viewSearch.value,
+      zoom:         ganttZoom.value,
+      dateAnchor:   tab.value === 'calendar' ? calendarAnchor.value : dateAnchor.value,
+      collapsedIds: [...collapsedEpics.value],
+    },
+  });
+  viewName.value = '';
+  await loadAvailableViews();
+  activeViewId.value = saved.id;
+}
+
+async function setProjectView(view: ProjectViewType): Promise<void> {
+  tab.value = view;
+  await persistProjectView();
+}
+
+async function persistProjectView(): Promise<void> {
+  if (!isDataView.value) return;
+  await saveView({
+    project_id:    selectedId.value,
+    name:          'Last used',
+    view_type:     tab.value as ProjectViewType,
+    is_default:    true,
+    configuration: {
+      search:        viewSearch.value,
+      zoom:          ganttZoom.value,
+      dateAnchor:    tab.value === 'calendar' ? calendarAnchor.value : dateAnchor.value,
+      collapsedIds:  [...collapsedEpics.value],
+      visibleFields: ['title', 'epic', 'status', 'priority', 'assignee', 'start_at', 'due_at'],
+    },
+  });
+}
 
 watch([tab, selectedId], () => {
   if (tab.value === 'activity') {
@@ -439,6 +1449,12 @@ watch([tab, selectedId], () => {
     });
   }
 });
+
+watch(selectedId, () => {
+  activeViewId.value = '';
+  Promise.all([loadAvailableViews(), restoreProjectView()]).catch(() => undefined);
+});
+watch(viewSearch, () => persistProjectView().catch(() => undefined));
 
 async function refresh(): Promise<void> {
   await load();
@@ -507,16 +1523,24 @@ function cleanTitle(raw: string): string {
   return s;
 }
 
-const MARK: Record<string, string> = { planning: 'hi', in_progress: 'hi', in_review: 'hi', todo: 'hi', backlog: 'hi', blocked: 'wait', done: 'gray' };
+function laneForStatus(status: string) {
+  return selectedLanes.value.find(lane => lane.lane_key === status);
+}
+function semanticRole(status: string): string {
+  return laneForStatus(status)?.semantic_role ?? 'manual';
+}
+function isBlockedStatus(status: string): boolean {
+  return semanticRole(status) === 'blocked';
+}
 function markClass(status: string): string {
-  return MARK[status] ?? 'gray';
+  const role = semanticRole(status);
+  if (role === 'blocked') return 'wait';
+  if (role === 'terminal' || role === 'manual') return 'gray';
+  return 'hi';
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  planning: 'Planning', in_progress: 'In progress', in_review: 'In review', todo: 'To do', backlog: 'Backlog', blocked: 'Blocked', done: 'Done', cancelled: 'Cancelled', parked: 'Parked',
-};
 function statusLabel(status: string): string {
-  return STATUS_LABEL[status] ?? status;
+  return laneForStatus(status)?.display_name ?? status;
 }
 function showPriority(pr: string): boolean {
   return pr === 'high' || pr === 'critical' || pr === 'p0' || pr === 'p1';
@@ -525,8 +1549,8 @@ function epicSummary(epic: EpicWithTasks): string {
   let open = 0;
   let done = 0;
   for (const t of epic.tasks) {
-    if (t.status === 'done') done++;
-    else if (t.status !== 'cancelled' && t.status !== 'parked') open++;
+    if (t.lane?.semantic_role === 'terminal') done++;
+    else open++;
   }
   const parts: string[] = [];
   if (open) parts.push(`${ open } open`);
@@ -553,27 +1577,97 @@ function shortDate(iso: string): string {
 }
 
 // ── board columns for the selected project ────────────────────────────
-type Task = WorkTaskRecord;
+type Task = TaskView;
 const boardColumns = computed(() => {
-  const cols = { todo: [] as Task[], inprogress: [] as Task[], waiting: [] as Task[], done: [] as Task[] };
-  if (sel.value) {
-    for (const epic of sel.value.epics) {
-      for (const t of epic.tasks) {
-        if (t.status === 'planning' || t.status === 'in_progress' || t.status === 'in_review') cols.inprogress.push(t);
-        else if (t.status === 'blocked') cols.waiting.push(t);
-        else if (t.status === 'done' || t.status === 'cancelled' || t.status === 'parked') cols.done.push(t);
-        else cols.todo.push(t);
-      }
-    }
+  const tasks: Task[] = boundedVisibleTasks.value.map(row => row.task);
+  const known = new Set(selectedLanes.value.map(lane => lane.lane_key));
+  const columns = selectedLanes.value.map(lane => ({
+    key:   lane.lane_key,
+    label: lane.display_name,
+    color: lane.color || (lane.semantic_role === 'blocked' ? 'var(--pamber)' : lane.semantic_role === 'terminal' ? 'var(--ptext3)' : 'var(--pacc)'),
+    items: tasks.filter(task => task.status === lane.lane_key),
+  }));
+  for (const status of new Set(tasks.filter(task => !known.has(task.status)).map(task => task.status))) {
+    columns.push({ key: status, label: status, color: 'var(--ptext3)', items: tasks.filter(task => task.status === status) });
   }
-
-  return [
-    { key: 'todo', label: 'To do', color: 'var(--pacc)', items: cols.todo },
-    { key: 'inprogress', label: 'In progress', color: 'var(--pgreen)', items: cols.inprogress },
-    { key: 'waiting', label: 'Waiting', color: 'var(--pamber)', items: cols.waiting },
-    { key: 'done', label: 'Done', color: 'var(--ptext3)', items: cols.done },
-  ];
+  return columns;
 });
+
+interface ProjectTaskRow { task: TaskView; epic: EpicWithTasks }
+const allTasks = computed<ProjectTaskRow[]>(() => (sel.value?.epics ?? []).flatMap(epic => epic.tasks.map(task => ({ task, epic }))));
+const visibleTasks = computed(() => {
+  const needle = viewSearch.value.trim().toLowerCase();
+  return needle
+    ? allTasks.value.filter(({ task, epic }) =>
+      `${ task.title } ${ task.description } ${ task.status } ${ task.priority } ${ task.assignee ?? '' } ${ epic.title }`.toLowerCase().includes(needle))
+    : allTasks.value;
+});
+const boundedVisibleTasks = computed(() => visibleTasks.value.slice(0, PROJECTION_RENDER_LIMIT));
+function filteredEpicTasks(epic: EpicWithTasks): TaskView[] {
+  return boundedVisibleTasks.value.filter(row => row.epic.id === epic.id).map(row => row.task);
+}
+function toggleEpic(id: string): void {
+  const next = new Set(collapsedEpics.value);
+  next.has(id) ? next.delete(id) : next.add(id);
+  collapsedEpics.value = next;
+  persistProjectView().catch(() => undefined);
+}
+function toggleSelection(id: string): void {
+  const next = new Set(selectedTasks.value);
+  next.has(id) ? next.delete(id) : next.add(id);
+  selectedTasks.value = next;
+}
+function inputValue(event: Event): string { return (event.target as HTMLInputElement).value }
+async function inlineTaskField(task: TaskView, field: 'status' | 'priority' | 'assignee' | 'start_at' | 'due_at' | 'milestone_at', value: string | null): Promise<void> {
+  await updateTask(task.id, { [field]: value, actor: 'human' });
+}
+
+type GanttZoom = 'day' | 'week' | 'month';
+const todayYmd = new Date().toISOString().slice(0, 10);
+const ganttZoom = ref<GanttZoom>('week');
+const dateAnchor = ref(todayYmd);
+const scheduledTasks = computed(() => boundedVisibleTasks.value.filter(({ task }) => task.start_at || task.due_at || task.milestone_at));
+const unscheduledTasks = computed(() => boundedVisibleTasks.value.filter(({ task }) => !task.start_at && !task.due_at && !task.milestone_at));
+const ganttRange = computed(() => {
+  const dates = scheduledTasks.value.flatMap(({ task }) => [task.start_at, task.due_at, task.milestone_at].filter(Boolean).map(v => new Date(v!).getTime()));
+  const today = new Date(todayYmd).getTime();
+  const pad = ganttZoom.value === 'day' ? 3 : ganttZoom.value === 'week' ? 14 : 45;
+  const day = 86_400_000;
+  return { min: Math.min(today, ...dates) - pad * day, max: Math.max(today, ...dates) + pad * day };
+});
+const ganttTodayOffset = computed(() => 100 * (new Date(todayYmd).getTime() - ganttRange.value.min) / (ganttRange.value.max - ganttRange.value.min));
+function ganttStyle(task: TaskView): Record<string, string> {
+  const start = new Date(task.start_at || task.milestone_at || task.due_at!).getTime();
+  const end = new Date(task.due_at || task.milestone_at || task.start_at!).getTime();
+  const span = ganttRange.value.max - ganttRange.value.min;
+  return { left: `${ 100 * (Math.min(start, end) - ganttRange.value.min) / span }%`, width: `${ Math.max(0.8, 100 * Math.max(86_400_000, Math.abs(end - start)) / span) }%` };
+}
+function setZoom(zoom: string): void { ganttZoom.value = zoom as GanttZoom; persistProjectView().catch(() => undefined) }
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const calendarAnchor = ref(todayYmd);
+const calendarDragId = ref('');
+const calendarTitle = computed(() => new Date(`${ calendarAnchor.value }T12:00:00`).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }));
+const calendarDays = computed(() => {
+  const anchor = new Date(`${ calendarAnchor.value }T12:00:00`);
+  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const start = new Date(first); start.setDate(first.getDate() - first.getDay());
+  return Array.from({ length: 42 }, (_, offset) => {
+    const date = new Date(start); date.setDate(start.getDate() + offset);
+    return { ymd: date.toISOString().slice(0, 10), day: date.getDate(), inMonth: date.getMonth() === anchor.getMonth() };
+  });
+});
+function tasksForDate(date: string): ProjectTaskRow[] {
+  return boundedVisibleTasks.value.filter(({ task }) => ymd(task.milestone_at || task.due_at || task.start_at) === date);
+}
+function shiftMonth(delta: number): void {
+  const date = new Date(`${ calendarAnchor.value }T12:00:00`); date.setMonth(date.getMonth() + delta); calendarAnchor.value = date.toISOString().slice(0, 10); persistProjectView().catch(() => undefined);
+}
+async function dropOnDate(date: string): Promise<void> {
+  const task = allTasks.value.find(row => row.task.id === calendarDragId.value)?.task;
+  calendarDragId.value = '';
+  if (task) await inlineTaskField(task, task.milestone_at ? 'milestone_at' : 'due_at', isoFromYmd(date));
+}
 
 // ══════════ DRAG TO REORDER ══════════
 // Native HTML5 DnD. A drag carries { kind, id, fromEpicId }; on drop we rebuild
@@ -583,8 +1677,6 @@ const dnd = reactive<{ kind: 'task' | 'epic' | null; id: string; fromEpicId: str
 const dragOverTaskId = ref('');
 const dragOverEpicId = ref('');
 const dragOverCol = ref('');
-
-const BOARD_STATUS: Record<string, string> = { todo: 'todo', inprogress: 'in_progress', waiting: 'blocked', done: 'done' };
 
 function onDragStartTask(t: WorkTaskRecord, epicId: string | null, ev: DragEvent): void {
   dnd.kind = 'task';
@@ -642,10 +1734,9 @@ async function onSectionDrop(epic: EpicWithTasks): Promise<void> {
 
 async function onColumnDrop(colKey: string): Promise<void> {
   if (dnd.kind !== 'task') return;
-  const status = BOARD_STATUS[colKey];
   const id = dnd.id;
   onDragEnd();
-  if (status) await reorder([{ kind: 'task', id, status }]);
+  if (colKey) await reorder([{ kind: 'task', id, status: colKey }]);
 }
 
 // ══ date helpers ══
@@ -662,36 +1753,63 @@ const openTask = ref<WorkTaskRecord | null>(null);
 const taskMode = ref<'edit' | 'create'>('edit');
 const taskDraft = reactive<TaskDraft>({ title: '' });
 const taskComments = ref<WorkCommentRecord[]>([]);
+const taskDependencies = ref<WorkTaskDependencyRecord[]>([]);
+const dependencyCandidate = ref('');
 const newComment = ref('');
 
 const taskDueYmd = computed<string>({
   get: () => ymd(taskDraft.due_at),
-  set: (v: string) => { taskDraft.due_at = isoFromYmd(v); },
+  set: (v: string) => { taskDraft.due_at = isoFromYmd(v) },
 });
+const taskStartYmd = computed<string>({ get: () => ymd(taskDraft.start_at), set: v => { taskDraft.start_at = isoFromYmd(v) } });
+const taskMilestoneYmd = computed<string>({ get: () => ymd(taskDraft.milestone_at), set: v => { taskDraft.milestone_at = isoFromYmd(v) } });
 
 function fillTaskDraft(t: Partial<WorkTaskRecord> & { epic_id?: string | null }): void {
   taskDraft.id = (t as WorkTaskRecord).id;
   taskDraft.title = t.title ?? '';
   taskDraft.description = t.description ?? '';
-  taskDraft.status = t.status ?? defaultTaskStatus();
+  taskDraft.status = t.status ?? 'todo';
   taskDraft.priority = t.priority ?? 'medium';
   taskDraft.epic_id = t.epic_id ?? (sel.value?.epics[0]?.id ?? null);
   taskDraft.assignee = t.assignee ?? '';
   taskDraft.due_at = t.due_at ?? null;
+  taskDraft.start_at = t.start_at ?? null;
+  taskDraft.milestone_at = t.milestone_at ?? null;
   taskDraft.github_issue = t.github_issue ?? '';
-}
-
-function defaultTaskStatus(): string | undefined {
-  if (!laneCapability.value?.ready) return 'todo';
-
-  return selectedLanes.value.find(lane => lane.semantic_role === 'execution')?.lane_key;
 }
 
 async function openTaskDrawer(t: WorkTaskRecord): Promise<void> {
   taskMode.value = 'edit';
   openTask.value = t;
   fillTaskDraft(t);
-  taskComments.value = await loadComments(t.id);
+  [taskComments.value, taskDependencies.value] = await Promise.all([
+    loadComments(t.id),
+    listTaskDependencies(t.project_id),
+  ]);
+  dependencyCandidate.value = '';
+}
+
+const currentDependencies = computed(() => taskDependencies.value
+  .filter(dependency => dependency.task_id === taskDraft.id));
+const dependencyCandidates = computed(() => {
+  const existing = new Set(currentDependencies.value.map(dependency => dependency.depends_on_task_id));
+  return allTasks.value
+    .map(row => row.task)
+    .filter(task => task.id !== taskDraft.id && !existing.has(task.id));
+});
+function taskTitle(id: string): string {
+  return allTasks.value.find(row => row.task.id === id)?.task.title ?? id;
+}
+async function addDependency(): Promise<void> {
+  if (!taskDraft.id || !dependencyCandidate.value || !selectedId.value) return;
+  await setTaskDependency(taskDraft.id, dependencyCandidate.value);
+  taskDependencies.value = await listTaskDependencies(selectedId.value);
+  dependencyCandidate.value = '';
+}
+async function removeDependency(dependsOnTaskId: string): Promise<void> {
+  if (!taskDraft.id || !selectedId.value) return;
+  await removeTaskDependency(taskDraft.id, dependsOnTaskId);
+  taskDependencies.value = await listTaskDependencies(selectedId.value);
 }
 
 async function openActivityTask(item: WorkActivityRecord): Promise<void> {
@@ -767,8 +1885,10 @@ function activityText(item: WorkActivityRecord): string {
 function openNewTask(epicId: string): void {
   taskMode.value = 'create';
   openTask.value = { id: '' } as WorkTaskRecord;
-  fillTaskDraft({ epic_id: epicId, priority: 'medium' });
+  fillTaskDraft({ epic_id: epicId, status: 'todo', priority: 'medium' });
   taskComments.value = [];
+  taskDependencies.value = [];
+  dependencyCandidate.value = '';
 }
 
 function closeTask(): void {
@@ -789,6 +1909,8 @@ async function saveTask(): Promise<void> {
         priority:     taskDraft.priority,
         assignee:     taskDraft.assignee || null,
         due_at:       taskDraft.due_at ?? null,
+        start_at:     taskDraft.start_at ?? null,
+        milestone_at: taskDraft.milestone_at ?? null,
         github_issue: taskDraft.github_issue || null,
       });
     } else if (taskDraft.id) {
@@ -800,6 +1922,8 @@ async function saveTask(): Promise<void> {
         priority:     taskDraft.priority,
         assignee:     taskDraft.assignee || null,
         due_at:       taskDraft.due_at ?? null,
+        start_at:     taskDraft.start_at ?? null,
+        milestone_at: taskDraft.milestone_at ?? null,
         github_issue: taskDraft.github_issue || null,
       });
     }
@@ -850,8 +1974,14 @@ function openNewProject(): void {
 function openEditProject(p: ProjectView): void {
   projectModal.mode = 'edit';
   Object.assign(projectDraft, {
-    id: p.id, title: p.title, description: p.description, status: p.status, priority: p.priority,
-    owner: p.owner ?? '', github_repo: p.github_repo ?? '', outcome_metric: p.outcome_metric ?? '',
+    id:             p.id,
+    title:          p.title,
+    description:    p.description,
+    status:         p.status,
+    priority:       p.priority,
+    owner:          p.owner ?? '',
+    github_repo:    p.github_repo ?? '',
+    outcome_metric: p.outcome_metric ?? '',
   });
   projectModal.open = true;
 }
@@ -861,15 +1991,23 @@ async function saveProject(): Promise<void> {
   try {
     if (projectModal.mode === 'create') {
       await createProject({
-        title: projectDraft.title, description: projectDraft.description, status: projectDraft.status,
-        priority: projectDraft.priority, owner: projectDraft.owner || null,
-        github_repo: projectDraft.github_repo || null, outcome_metric: projectDraft.outcome_metric || null,
+        title:          projectDraft.title,
+        description:    projectDraft.description,
+        status:         projectDraft.status,
+        priority:       projectDraft.priority,
+        owner:          projectDraft.owner || null,
+        github_repo:    projectDraft.github_repo || null,
+        outcome_metric: projectDraft.outcome_metric || null,
       });
     } else if (projectDraft.id) {
       await updateProject(projectDraft.id, {
-        title: projectDraft.title, description: projectDraft.description, status: projectDraft.status,
-        priority: projectDraft.priority, owner: projectDraft.owner || null,
-        github_repo: projectDraft.github_repo || null, outcome_metric: projectDraft.outcome_metric || null,
+        title:          projectDraft.title,
+        description:    projectDraft.description,
+        status:         projectDraft.status,
+        priority:       projectDraft.priority,
+        owner:          projectDraft.owner || null,
+        github_repo:    projectDraft.github_repo || null,
+        outcome_metric: projectDraft.outcome_metric || null,
       });
     }
     projectModal.open = false;
@@ -908,8 +2046,11 @@ async function saveEpic(): Promise<void> {
   try {
     if (epicModal.mode === 'create') {
       await createEpic({
-        project_id: epicDraft.project_id, title: epicDraft.title, description: epicDraft.description,
-        status: epicDraft.status, priority: epicDraft.priority,
+        project_id:  epicDraft.project_id,
+        title:       epicDraft.title,
+        description: epicDraft.description,
+        status:      epicDraft.status,
+        priority:    epicDraft.priority,
       });
     } else if (epicDraft.id) {
       await updateEpic(epicDraft.id, {
@@ -945,7 +2086,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
   --pborder-soft: #1a212d;
   --ptext:        var(--text, #eef2f8);
   --ptext2:       #9aa7b8;
-  --ptext3:       #5f6b7c;
+  --ptext3:       #7f8da0;
   --pacc:         var(--steel-400, #5096b3);
   --pacc-soft:    rgba(80, 150, 179, 0.14);
   --pacc-line:    rgba(80, 150, 179, 0.40);
@@ -963,7 +2104,15 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
   color: var(--ptext);
   font-family: var(--psans);
 }
+:global(html.light) .projects-home, :global(body.light) .projects-home {
+  --pbg: #f5f7fa; --psurface: #ffffff; --psurface2: #edf1f5;
+  --pborder: #c5ced8; --pborder-soft: #dce2e8;
+  --ptext: #17212b; --ptext2: #4d5e6f; --ptext3: #5b6d7e;
+  --pacc-soft: rgba(46, 111, 140, 0.12); --pacc-line: rgba(46, 111, 140, 0.48); --pacc: #2e6f8c;
+  --pgreen: #347558; --pamber: #8b611f; --pred: #a34641;
+}
 .projects-home * { box-sizing: border-box; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .projects-home code { font-family: var(--pmono); font-size: 0.85em; color: #b9d3df; }
 
 .ph-body { display: flex; height: 100%; min-height: 0; }
@@ -1007,10 +2156,17 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 /* main */
 .ph-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .ph-top { display: flex; align-items: center; gap: 16px; padding: 18px 26px; border-bottom: 1px solid var(--pborder); }
-.ph-tabs { display: flex; gap: 26px; }
+.ph-tabs { display: flex; gap: 18px; overflow-x: auto; }
 .ph-tab { font-family: var(--psans); font-size: 14px; color: var(--ptext3); padding: 0 0 4px; cursor: pointer; border: none; background: transparent; border-bottom: 2px solid transparent; }
 .ph-tab:hover { color: var(--ptext2); }
 .ph-tab.on { color: var(--ptext); border-bottom-color: var(--pacc); }
+.ph-view-tab { display: inline-flex; gap: 5px; align-items: center; }
+.ph-search input { width: 190px; background: var(--psurface2); border: 1px solid var(--pborder); color: var(--ptext); border-radius: 7px; padding: 7px 10px; font-size: 12px; }
+.ph-view-presets { display: flex; align-items: center; gap: 6px; }
+.ph-view-presets select, .ph-view-presets input { max-width: 150px; background: var(--psurface2); border: 1px solid var(--pborder); color: var(--ptext); border-radius: 7px; padding: 7px 8px; font-size: 11px; }
+.ph-check { display: inline-flex; align-items: center; gap: 4px; color: var(--ptext2); font-size: 11px; }
+.ph-search input:focus, .ph-view-presets input:focus, .ph-view-presets select:focus, .ph-tab:focus-visible, .ph-btn:focus-visible, .ph-link:focus-visible { outline: 2px solid var(--pacc); outline-offset: 2px; }
+.ph-card:focus-visible, .ph-row:focus-visible, .ph-gantt-label:focus-visible, .ph-gantt-dates input:focus-visible, .ph-calendar button:focus-visible { outline: 2px solid var(--pacc); outline-offset: 2px; }
 .ph-sp { flex: 1; }
 
 .ph-canvas { flex: 1; overflow: auto; padding: 26px 28px 36px; min-height: 0; }
@@ -1031,10 +2187,13 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-sec { margin-bottom: 30px; }
 .ph-sec-h { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
 .ph-sec-h h3 { font-size: 13px; font-weight: 600; letter-spacing: 0.02em; margin: 0; color: var(--ptext); }
+.ph-collapse { width: 22px; height: 22px; border: 0; background: transparent; color: var(--ptext2); cursor: pointer; }
 .ph-cnt { font-family: var(--pmono); font-size: 11px; color: var(--ptext3); }
 .ph-row { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; border: 1px solid var(--pborder-soft); border-radius: 11px; background: var(--psurface); margin-bottom: 8px; cursor: pointer; }
 .ph-row:hover { border-color: var(--pborder); }
 .ph-row.sel { border-color: var(--pacc-line); background: var(--pacc-soft); }
+.ph-row.subtask { margin-left: 28px; border-left: 2px solid var(--pacc-line); }
+.ph-subtask-mark { color: var(--ptext3); font-size: 13px; }
 .ph-mark { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
 .ph-mark.hi { background: var(--pacc); }
 .ph-mark.wait { background: var(--pamber); }
@@ -1067,10 +2226,57 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-n { font-family: var(--pmono); font-size: 11px; color: var(--ptext3); }
 .ph-card { background: var(--psurface); border: 1px solid var(--pborder-soft); border-radius: 10px; padding: 12px 13px; margin-bottom: 9px; cursor: pointer; }
 .ph-card:hover { border-color: var(--pborder); }
+.ph-card select { width: 100%; margin-top: 8px; border: 1px solid var(--pborder-soft); border-radius: 5px; background: var(--psurface2); color: var(--ptext2); font-size: 10px; padding: 4px 5px; }
 .ph-card.ghost { border-style: dashed; background: transparent; cursor: default; }
 .ph-ct { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--ptext); }
 .ph-card.ghost .ph-ct { color: var(--ptext3); font-weight: 400; font-size: 12.5px; }
 .ph-cm { font-family: var(--pmono); font-size: 10.5px; color: var(--ptext3); margin-top: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* shared data projections */
+.ph-data-view { min-width: 0; }
+.ph-view-meta { color: var(--ptext3); font-family: var(--pmono); font-size: 11px; margin-bottom: 10px; }
+.ph-view-meta b { color: var(--ptext); }
+.ph-view-tools { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; }
+.ph-table-wrap { max-height: calc(100vh - 180px); overflow: auto; border: 1px solid var(--pborder); border-radius: 10px; background: var(--psurface); }
+.ph-table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 900px; font-size: 12px; }
+.ph-table th { position: sticky; top: 0; z-index: 2; text-align: left; background: var(--psurface2); color: var(--ptext2); font: 600 10px var(--pmono); letter-spacing: .06em; text-transform: uppercase; }
+.ph-table th, .ph-table td { padding: 8px 10px; border-right: 1px solid var(--pborder-soft); border-bottom: 1px solid var(--pborder-soft); }
+.ph-table tr.selected td { background: var(--pacc-soft); }
+.ph-table select, .ph-table input { max-width: 130px; border: 1px solid transparent; background: transparent; color: var(--ptext); padding: 4px; border-radius: 4px; }
+.ph-table select:focus, .ph-table input:focus { border-color: var(--pacc-line); outline: none; background: var(--psurface2); }
+.ph-link { border: 0; background: none; color: var(--ptext); font-weight: 600; text-align: left; cursor: pointer; }
+.ph-link:hover { color: var(--pacc); }
+
+.ph-gantt { position: relative; min-width: 760px; border: 1px solid var(--pborder); border-radius: 10px; overflow: hidden; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), var(--pborder-soft) 10%); }
+.ph-gantt-row { display: grid; grid-template-columns: 280px 1fr; min-height: 52px; border-bottom: 1px solid var(--pborder-soft); }
+.ph-gantt-label-wrap { position: relative; z-index: 2; border-right: 1px solid var(--pborder); background: var(--psurface); padding: 5px 8px; overflow: hidden; }
+.ph-gantt-label { width: 100%; text-align: left; border: 0; background: transparent; color: var(--ptext); padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.ph-gantt-dates { display: flex; gap: 5px; margin-top: 4px; }
+.ph-gantt-dates input { min-width: 0; width: 118px; border: 1px solid var(--pborder-soft); border-radius: 4px; background: var(--psurface2); color: var(--ptext2); font-size: 10px; }
+.ph-gantt-track { position: relative; }
+.ph-gantt-bar { position: absolute; top: 9px; height: 20px; min-width: 6px; border: 1px solid var(--pacc-line); border-radius: 5px; background: var(--pacc); cursor: pointer; }
+.ph-milestone { position: absolute; right: -8px; top: -1px; color: var(--ptext); }
+.ph-today-line { position: absolute; z-index: 3; top: 0; bottom: 0; width: 1px; background: var(--pred); pointer-events: none; }
+.ph-today-line span { position: absolute; top: 2px; left: 3px; color: var(--pred); font: 9px var(--pmono); }
+.ph-unscheduled { margin-top: 16px; border: 1px dashed var(--pborder); border-radius: 9px; padding: 10px; }
+.ph-unscheduled h3 { margin: 0 0 8px; font-size: 12px; color: var(--ptext2); }
+.ph-unscheduled h3 span { color: var(--ptext3); }
+.ph-unscheduled button { margin: 3px; border: 1px solid var(--pborder); border-radius: 6px; background: var(--psurface); color: var(--ptext2); padding: 5px 8px; cursor: pointer; }
+
+.ph-calendar { display: grid; grid-template-columns: repeat(7, minmax(100px, 1fr)); border: 1px solid var(--pborder); border-radius: 10px; overflow: auto; background: var(--psurface); }
+.ph-calendar-head { padding: 7px; border-right: 1px solid var(--pborder-soft); background: var(--psurface2); color: var(--ptext2); text-align: center; font: 10px var(--pmono); text-transform: uppercase; }
+.ph-day { min-height: 110px; padding: 6px; border-right: 1px solid var(--pborder-soft); border-top: 1px solid var(--pborder-soft); color: var(--ptext2); }
+.ph-day.muted { background: color-mix(in srgb, var(--psurface2) 45%, transparent); color: var(--ptext3); }
+.ph-day.today { box-shadow: inset 0 0 0 2px var(--pacc); }
+.ph-day > span { display: block; margin-bottom: 4px; font: 10px var(--pmono); }
+.ph-day button { width: 100%; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 3px 0; padding: 4px 5px; border: 1px solid var(--pacc-line); border-radius: 5px; background: var(--pacc-soft); color: var(--ptext); text-align: left; font-size: 10px; cursor: grab; }
+
+@media (max-width: 1100px) {
+  .ph-side { width: 210px; }
+  .ph-top { padding-inline: 16px; }
+  .ph-search, .ph-view-presets { display: none; }
+  .ph-canvas { padding-inline: 16px; }
+}
 
 /* activity */
 .ph-activity-lead { margin-bottom: 18px; }
@@ -1124,6 +2330,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-scrim { position: absolute; inset: 0; background: rgba(4, 7, 12, 0.55); z-index: 20; }
 .ph-scrim.center { display: flex; align-items: center; justify-content: center; }
 .ph-drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 380px; background: var(--psurface); border-left: 1px solid var(--pborder); z-index: 21; display: flex; flex-direction: column; box-shadow: -20px 0 50px rgba(0, 0, 0, 0.4); }
+.ph-dependencies { display: grid; gap: 6px; margin-bottom: 8px; }
+.ph-dependency { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--pborder); border-radius: 7px; background: var(--psurface2); color: var(--ptext2); padding: 7px 8px; font-size: 11px; }
 .ph-dh { display: flex; align-items: center; padding: 16px 18px 12px; border-bottom: 1px solid var(--pborder-soft); }
 .ph-dh-id { font-family: var(--pmono); font-size: 10px; letter-spacing: 0.12em; color: var(--ptext3); flex: 1; }
 .ph-x { background: transparent; border: none; color: var(--ptext3); font-size: 15px; cursor: pointer; }

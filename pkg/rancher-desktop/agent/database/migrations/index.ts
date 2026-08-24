@@ -61,6 +61,7 @@ import { up as up_0070, down as down_0070 } from './0070_create_lane_workflow_bi
 import { up as up_0071, down as down_0071 } from './0071_scope_lane_workflow_executions';
 import { up as up_0072, down as down_0072 } from './0072_create_work_task_planning_runs';
 import { up as up_0074, down as down_0074 } from './0074_semantic_lane_runtime_helpers';
+import { up as up_0075, down as down_0075 } from './0075_add_project_views_and_scheduling';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -123,4 +124,5 @@ export const migrationsRegistry = [
   { name: '0071_scope_lane_workflow_executions',                    up: up_0071, down: down_0071 },
   { name: '0072_create_work_task_planning_runs',                   up: up_0072, down: down_0072 },
   { name: '0074_semantic_lane_runtime_helpers',                    up: up_0074, down: down_0074 },
+  { name: '0075_add_project_views_and_scheduling',                 up: up_0075, down: down_0075 },
 ] as const;

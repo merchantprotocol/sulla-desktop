@@ -33,6 +33,7 @@ import type {
   CreateWorkLaneInput, UpdateWorkLaneInput, WorkLaneScope,
 } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import type { ListLaneBindingsInput, SetLaneBindingInput } from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
+import type { SaveProjectViewInput } from '@pkg/agent/database/models/WorkProjectViewModel';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -54,6 +55,11 @@ async function importWorkLaneDefinitionModel() {
 async function importWorkLaneWorkflowBindingModel() {
   const mod = await import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel');
   return mod.WorkLaneWorkflowBindingModel;
+}
+
+async function importWorkProjectViewModel() {
+  const mod = await import('@pkg/agent/database/models/WorkProjectViewModel');
+  return mod.WorkProjectViewModel;
 }
 
 /** Local slugify — mirrors the model's private one (kebab, ≤80 chars). */
@@ -93,6 +99,36 @@ export function initWorkItemsEvents(): void {
     const WorkItemsModel = await importWorkItemsModel();
 
     return WorkItemsModel.listRecentActivity(opts);
+  });
+
+  ipcMainProxy.handle('work-items:views-list', async(_event: unknown, projectId?: string | null) => {
+    const Model = await importWorkProjectViewModel();
+    return Model.list(projectId);
+  });
+
+  ipcMainProxy.handle('work-items:view-resolve', async(_event: unknown, projectId?: string | null) => {
+    const Model = await importWorkProjectViewModel();
+    return Model.resolve(projectId);
+  });
+
+  ipcMainProxy.handle('work-items:view-save', async(_event: unknown, input: SaveProjectViewInput) => {
+    const Model = await importWorkProjectViewModel();
+    return Model.save({ ...input, actor: input.actor ?? 'human' });
+  });
+
+  ipcMainProxy.handle('work-items:dependencies-list', async(_event: unknown, projectId: string) => {
+    const WorkItemsModel = await importWorkItemsModel();
+    return WorkItemsModel.listTaskDependencies(projectId);
+  });
+
+  ipcMainProxy.handle('work-items:dependency-set', async(_event: unknown, taskId: string, dependsOnTaskId: string) => {
+    const WorkItemsModel = await importWorkItemsModel();
+    return WorkItemsModel.setTaskDependency(taskId, dependsOnTaskId, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:dependency-remove', async(_event: unknown, taskId: string, dependsOnTaskId: string) => {
+    const WorkItemsModel = await importWorkItemsModel();
+    return WorkItemsModel.removeTaskDependency(taskId, dependsOnTaskId);
   });
 
   // ── lane definitions ─────────────────────────────────────────────────
@@ -278,10 +314,10 @@ export function initWorkItemsEvents(): void {
 }
 
 interface ReorderUpdate {
-  kind:     'epic' | 'task';
-  id:       string;
+  kind:      'epic' | 'task';
+  id:        string;
   position?: number;
-  status?:  string;
-  epic_id?: string;
-  actor?:   string;
+  status?:   string;
+  epic_id?:  string;
+  actor?:    string;
 }
