@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 
 import { postgresClient } from '../../PostgresClient';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
+import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 
 describe('LifecycleCapabilityModel', () => {
   const originalQuery = postgresClient.query;
@@ -10,6 +11,15 @@ describe('LifecycleCapabilityModel', () => {
 
   beforeEach(() => {
     jest.restoreAllMocks();
+    jest.spyOn(WorkLaneDefinitionModel, 'semanticRoleForStatus').mockImplementation((_projectId, status) => {
+      const role = status === 'planning' ? 'planning'
+        : status === 'blocked' ? 'blocked'
+          : status === 'in_review' ? 'review'
+            : status === 'todo' || status === 'in_progress' ? 'execution'
+              : status === 'done' || status === 'cancelled' ? 'terminal'
+                : status === 'backlog' ? 'backlog' : 'manual';
+      return Promise.resolve(role);
+    });
   });
 
   afterEach(() => {
@@ -27,14 +37,14 @@ describe('LifecycleCapabilityModel', () => {
       fallback_mode:  'heartbeat',
     }));
 
-    await expect(LifecycleCapabilityModel.assertActorCanManageTask('planning', [], 'heartbeat'))
+    await expect(LifecycleCapabilityModel.assertActorCanManageTask('task-1', 'project-1', 'planning', 'heartbeat'))
       .rejects.toThrow('owned by planning-council');
   });
 
   it('keeps the legacy Heartbeat owner during incomplete rollout', async() => {
     (postgresClient as any).queryOne = jest.fn(() => Promise.resolve(null));
 
-    await expect(LifecycleCapabilityModel.assertActorCanManageTask('in_review', [], 'heartbeat'))
+    await expect(LifecycleCapabilityModel.assertActorCanManageTask('task-1', 'project-1', 'in_review', 'heartbeat'))
       .resolves.toBeUndefined();
   });
 
@@ -169,10 +179,10 @@ describe('LifecycleCapabilityModel', () => {
       },
     ]));
     const tasks = [
-      { id: 'plan', status: 'planning' },
-      { id: 'todo', status: 'todo' },
-      { id: 'review', status: 'in_review' },
-      { id: 'backlog', status: 'backlog' },
+      { id: 'plan', project_id: 'project-1', status: 'planning' },
+      { id: 'todo', project_id: 'project-1', status: 'todo' },
+      { id: 'review', project_id: 'project-1', status: 'in_review' },
+      { id: 'backlog', project_id: 'project-1', status: 'backlog' },
     ];
 
     await expect(LifecycleCapabilityModel.filterHeartbeatEligible(tasks))
@@ -245,7 +255,8 @@ describe('LifecycleCapabilityModel', () => {
       fallbackMode:      'heartbeat',
     });
 
-    expect(query.mock.calls[0][0]).toContain("SET status = 'done'");
+    expect(query.mock.calls[0][0]).toContain("resolve_project_lane_key(project_id, 'terminal', 'done')");
+    expect(query.mock.calls[0][0]).toContain("resolve_work_task_lane_role(id, status) <> 'terminal'");
     expect(query.mock.calls[0][1]).toEqual(['caprec-durable-waits']);
     expect(query.mock.calls[1][0]).toContain('SET recovery_task_id = NULL');
   });

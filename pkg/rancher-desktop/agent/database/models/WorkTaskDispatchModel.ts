@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
 import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
+import { WorkLaneDefinitionModel } from './WorkLaneDefinitionModel';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
@@ -50,38 +51,37 @@ export interface ProtectedReviewEvidence {
 }
 
 export interface WorkTaskDispatchRecord {
-  id:             string;
-  task_id:        string;
-  agent_id:       string;
-  thread_id:      string;
-  status:         WorkTaskDispatchStatus;
-  kind:           WorkTaskDispatchKind;
-  attempt:        number;
-  verdict:        VerificationVerdict | null;
-  artifact_sha:   string | null;
-  failure_reason: string | null;
-  result:                 string | null;
-  error:                  string | null;
-  started_at:             string;
-  heartbeat_at:           string;
-  finished_at:            string | null;
-  run_kind?:              string;
-  workflow_execution_id?: string | null;
-  classifier_decision?:   unknown;
-  selected_agents?:       unknown[];
-  worker_child_ids?:      string[];
-  artifact_type?:         string | null;
-  artifact_location?:     string | null;
-  artifact_url?:          string | null;
-  artifact_ref?:          string | null;
-  content_hash?:          string | null;
-  reviewer_verdict?:      string | null;
-  review_evidence?:       unknown;
-  terminal_reason?:       string | null;
+  id:                      string;
+  task_id:                 string;
+  agent_id:                string;
+  thread_id:               string;
+  status:                  WorkTaskDispatchStatus;
+  kind:                    WorkTaskDispatchKind;
+  attempt:                 number;
+  verdict:                 VerificationVerdict | null;
+  artifact_sha:            string | null;
+  failure_reason:          string | null;
+  result:                  string | null;
+  error:                   string | null;
+  started_at:              string;
+  heartbeat_at:            string;
+  finished_at:             string | null;
+  run_kind?:               string;
+  workflow_execution_id?:  string | null;
+  classifier_decision?:    unknown;
+  selected_agents?:        unknown[];
+  worker_child_ids?:       string[];
+  artifact_type?:          string | null;
+  artifact_location?:      string | null;
+  artifact_url?:           string | null;
+  artifact_ref?:           string | null;
+  content_hash?:           string | null;
+  reviewer_verdict?:       string | null;
+  review_evidence?:        unknown;
+  terminal_reason?:        string | null;
   origin_dispatch_id?:     string | null;
   origin_agent_id?:        string | null;
   origin_evidence?:        Record<string, unknown> | null;
-  workflow_execution_id?:  string | null;
   reviewer_agent_ids?:     string[];
   worker_agent_ids?:       string[];
   custodian_agent_ids?:    string[];
@@ -143,6 +143,26 @@ export interface InProgressClassificationRow extends WorkTaskRecord {
   recovery_attempts:    string | number;
 }
 
+interface LaneDestinationColumns {
+  terminal_lane_key?:  string;
+  execution_lane_key?: string;
+  planning_lane_key?:  string;
+  review_lane_key?:    string;
+  blocked_lane_key?:   string;
+}
+
+function laneDestinations(row: LaneDestinationColumns): {
+  terminal: string; execution: string; planning: string; review: string; blocked: string;
+} {
+  return {
+    terminal:  row.terminal_lane_key ?? 'done',
+    execution: row.execution_lane_key ?? 'todo',
+    planning:  row.planning_lane_key ?? 'planning',
+    review:    row.review_lane_key ?? 'in_review',
+    blocked:   row.blocked_lane_key ?? 'blocked',
+  };
+}
+
 export interface RecoverableInProgressCandidate {
   task:             WorkTaskRecord;
   fingerprint:      string;
@@ -158,7 +178,7 @@ export interface OrphanRecoveryResult {
 
 export interface WorkTaskDispatchFinalization {
   dispatchStatus: Exclude<WorkTaskDispatchStatus, 'running' | 'stale'>;
-  taskStatus:     'in_review' | 'planning' | 'blocked';
+  taskStatus:     string;
   taskAssignee:   'heartbeat' | 'dispatcher';
   comment:        string;
   result?:        string;
@@ -197,12 +217,13 @@ export class WorkTaskDispatchModel {
 
   static async claimNext(agentId: string, runKind = 'core-todo'): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
-      const candidate = await client.query<WorkTaskRecord>(`
-        SELECT t.*
+      const candidate = await client.query<WorkTaskRecord & { active_lane_key: string }>(`
+        SELECT t.*, resolve_project_lane_key(t.project_id, 'execution', 'in_progress', true) AS active_lane_key
           FROM work_tasks t
           JOIN work_epics e ON e.id = t.epic_id
          WHERE t.archived = false
-           AND t.status = 'todo'
+           AND resolve_work_task_lane_role(t.id, t.status) = 'execution'
+           AND t.status <> resolve_project_lane_key(t.project_id, 'execution', 'in_progress', true)
            AND e.archived = false
            AND NOT (e.status = ANY($1::text[]))
            AND (t.assignee IS NULL OR LOWER(t.assignee) = ANY($2::text[]))
@@ -216,10 +237,17 @@ export class WorkTaskDispatchModel {
               WHERE d.task_id = t.id AND d.status = 'running'
            )
            AND NOT EXISTS (
+             SELECT 1 FROM work_lane_entry_automations lane_entry
+              WHERE lane_entry.task_id = t.id
+                AND lane_entry.lane_key = t.status
+                AND lane_entry.workflow_id IS NOT NULL
+                AND lane_entry.status IN ('pending', 'running')
+           )
+           AND NOT EXISTS (
              SELECT 1 FROM work_tasks child
               WHERE child.parent_id = t.id
                 AND child.archived = false
-                AND child.status NOT IN ('done', 'cancelled', 'parked')
+                AND resolve_work_task_lane_role(child.id, child.status) <> 'terminal'
            )
          ORDER BY
            CASE e.priority
@@ -261,14 +289,14 @@ export class WorkTaskDispatchModel {
 
       await client.query(`
         UPDATE work_tasks
-           SET status = 'in_progress',
-               assignee = $2,
+           SET status = $2,
+               assignee = $3,
                updated_at = now(),
                last_moved_at = now(),
                last_activity_at = now(),
-               last_moved_by = $2
-         WHERE id = $1
-      `, [task.id, TASK_ASSIGNEES.dispatcher]);
+               last_moved_by = $3
+         WHERE id = $1 AND status = $4
+      `, [task.id, task.active_lane_key, TASK_ASSIGNEES.dispatcher, task.status]);
 
       return { dispatch: inserted.rows[0], task };
     });
@@ -282,7 +310,7 @@ export class WorkTaskDispatchModel {
           JOIN work_epics e ON e.id = t.epic_id
           JOIN work_projects p ON p.id = e.project_id
          WHERE t.archived = false
-           AND t.status = 'in_review'
+           AND resolve_work_task_lane_role(t.id, t.status) = 'review'
            AND e.archived = false
            AND p.archived = false
            AND NOT (p.status = ANY($1::text[]))
@@ -295,6 +323,13 @@ export class WorkTaskDispatchModel {
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
               WHERE d.task_id = t.id AND d.status = 'running'
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM work_lane_entry_automations lane_entry
+              WHERE lane_entry.task_id = t.id
+                AND lane_entry.lane_key = t.status
+                AND lane_entry.workflow_id IS NOT NULL
+                AND lane_entry.status IN ('pending', 'running')
            )
            AND NOT EXISTS (
              SELECT 1 FROM work_task_dispatches d
@@ -368,8 +403,8 @@ export class WorkTaskDispatchModel {
         UPDATE work_tasks
            SET assignee = 'verifier', updated_at = now(), last_activity_at = now(),
                last_moved_at = now(), last_moved_by = 'dispatcher'
-         WHERE id = $1 AND status = 'in_review'
-      `, [task.id]);
+         WHERE id = $1 AND status = $2
+      `, [task.id, task.status]);
 
       return { dispatch: inserted.rows[0], task };
     });
@@ -406,7 +441,7 @@ export class WorkTaskDispatchModel {
                SELECT 1 FROM work_tasks child
                 WHERE child.parent_id = t.id
                   AND child.archived = false
-                  AND child.status NOT IN ('done', 'cancelled', 'parked')
+                  AND resolve_work_task_lane_role(child.id, child.status) <> 'terminal'
              ) AS has_active_child,
              (t.last_activity_at <= now() - ($4 * interval '1 minute')) AS stale_activity,
              EXISTS (
@@ -417,10 +452,12 @@ export class WorkTaskDispatchModel {
              (SELECT COUNT(*)::text FROM work_task_recovery_attempts a WHERE a.task_id = t.id) AS recovery_attempts
         FROM work_tasks t
         LEFT JOIN work_epics e ON e.id = t.epic_id
-       WHERE t.status = 'in_progress'
+       WHERE resolve_work_task_lane_role(t.id, t.status) = 'execution'
+         AND t.status = resolve_project_lane_key(t.project_id, 'execution', 'in_progress', true)
        ORDER BY t.last_activity_at ASC, t.id ASC
        LIMIT $5
-    `, [CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, staleMinutes, Math.max(1, limit)]);
+    `, [CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS,
+      staleMinutes, Math.max(1, limit)]);
 
     return rows.map((row) => {
       const {
@@ -464,7 +501,7 @@ export class WorkTaskDispatchModel {
             FROM work_tasks t
             JOIN work_epics e ON e.id = t.epic_id
            WHERE t.id = $1
-             AND t.status = 'in_progress'
+             AND t.status = $6
              AND t.archived = false
              AND e.archived = false
              AND NOT (e.status = ANY($2::text[]))
@@ -481,7 +518,7 @@ export class WorkTaskDispatchModel {
                SELECT 1 FROM work_tasks child
                 WHERE child.parent_id = t.id
                   AND child.archived = false
-                  AND child.status NOT IN ('done', 'cancelled', 'parked')
+                  AND resolve_work_task_lane_role(child.id, child.status) <> 'terminal'
              )
              AND NOT EXISTS (
                SELECT 1 FROM agent_jobs j
@@ -490,7 +527,8 @@ export class WorkTaskDispatchModel {
              )
              AND t.last_activity_at = $5::timestamptz
            FOR UPDATE OF t SKIP LOCKED
-        `, [candidate.task.id, CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, candidate.fingerprint]);
+        `, [candidate.task.id, CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES,
+          NON_AUTONOMOUS_TASK_LABELS, candidate.fingerprint, candidate.task.status]);
 
         const task = locked.rows[0];
         if (!task) {
@@ -504,13 +542,15 @@ export class WorkTaskDispatchModel {
         );
         const attemptNumber = Number(count.rows[0]?.count || 0) + 1;
         const outcome = attemptNumber >= Math.max(1, retryCeiling) ? 'blocked_ceiling' : 'recovered';
-        const nextStatus = outcome === 'recovered' ? 'todo' : 'blocked';
+        const nextStatus = outcome === 'recovered'
+          ? await WorkLaneDefinitionModel.preferredLaneKey(task.project_id, 'execution', 'todo', 'first')
+          : await WorkLaneDefinitionModel.preferredLaneKey(task.project_id, 'blocked', 'blocked');
         const nextAssignee = outcome === 'recovered' ? TASK_ASSIGNEES.dispatcher : TASK_ASSIGNEES.heartbeat;
         const reason = outcome === 'recovered'
           ? 'stale autonomous in_progress task had no live owner or operation'
           : `recovery retry ceiling reached (${ retryCeiling })`;
         const auditId = `recovery-${ randomUUID() }`;
-        const undo = `restore status=in_progress, assignee=${ task.assignee ?? 'unassigned' }, and review activity at ${ task.last_activity_at }`;
+        const undo = `restore status=${ task.status }, assignee=${ task.assignee ?? 'unassigned' }, and review activity at ${ task.last_activity_at }`;
 
         await client.query(`
           INSERT INTO work_task_recovery_attempts
@@ -627,15 +667,22 @@ export class WorkTaskDispatchModel {
     }
     const generationHash = WorkTaskDispatchModel.reviewGenerationHash(artifacts);
     return postgresClient.transaction(async(client: PoolClient) => {
-      const current = await client.query<{ task_id: string }>(`
-        SELECT d.task_id FROM work_task_dispatches d
+      const current = await client.query<{ task_id: string; project_id: string; task_status: string } & LaneDestinationColumns>(`
+        SELECT d.task_id, t.project_id, t.status AS task_status,
+               resolve_project_lane_key(t.project_id, 'terminal', 'done') AS terminal_lane_key,
+               resolve_project_lane_key(t.project_id, 'execution', 'todo') AS execution_lane_key,
+               resolve_project_lane_key(t.project_id, 'planning', 'planning') AS planning_lane_key,
+               resolve_project_lane_key(t.project_id, 'review', 'in_review') AS review_lane_key,
+               resolve_project_lane_key(t.project_id, 'blocked', 'blocked') AS blocked_lane_key
+          FROM work_task_dispatches d
         JOIN work_tasks t ON t.id = d.task_id
         WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
-          AND t.status = 'in_review'
+          AND resolve_work_task_lane_role(t.id, t.status) = 'review'
         FOR UPDATE OF d, t
       `, [id]);
       const taskId = current.rows[0]?.task_id;
       if (!taskId) throw new Error('review_lease_not_live');
+      const destinations = laneDestinations(current.rows[0]);
 
       const identities = await client.query<{ agent_id: string; origin_evidence: Record<string, any> | null }>(`
         SELECT agent_id, origin_evidence FROM work_task_dispatches
@@ -665,14 +712,14 @@ export class WorkTaskDispatchModel {
       if (terminal.rows[0]) {
         const priorDisposition = terminal.rows[0].disposition;
         const transition = priorDisposition === 'PASS'
-          ? { status: 'done', assignee: null }
+          ? { status: destinations.terminal, assignee: null }
           : priorDisposition === 'REPAIRABLE'
-            ? { status: 'todo', assignee: 'dispatcher' }
+            ? { status: destinations.execution, assignee: 'dispatcher' }
             : priorDisposition === 'REPLAN'
-              ? { status: 'planning', assignee: 'dispatcher' }
+              ? { status: destinations.planning, assignee: 'dispatcher' }
               : priorDisposition
-                ? { status: 'blocked', assignee: 'heartbeat' }
-                : { status: 'planning', assignee: 'dispatcher' };
+                ? { status: destinations.blocked, assignee: 'heartbeat' }
+                : { status: destinations.planning, assignee: 'dispatcher' };
         await client.query(`
           UPDATE work_task_dispatches SET status = 'completed', result = $2, disposition = $7,
             review_generation_hash = $3, review_artifact_types = $4::text[],
@@ -686,9 +733,9 @@ export class WorkTaskDispatchModel {
         await client.query(`
           UPDATE work_tasks SET status = $2, assignee = $3, updated_at = now(),
             last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier',
-            completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
-          WHERE id = $1 AND status = 'in_review'
-        `, [taskId, transition.status, transition.assignee]);
+            completed_at = CASE WHEN resolve_work_task_lane_role($1, $2) = 'terminal' THEN now() ELSE NULL END
+          WHERE id = $1 AND status = $4
+        `, [taskId, transition.status, transition.assignee, current.rows[0].task_status]);
         return { generationHash, excludedAgentIds: [...excluded], suppressed: true };
       }
 
@@ -785,7 +832,7 @@ export class WorkTaskDispatchModel {
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'dispatcher', completed_at = NULL
-         WHERE id = $1 AND status = 'in_progress' AND assignee = 'dispatcher'
+         WHERE id = $1 AND resolve_work_task_lane_role(id, status) = 'execution' AND assignee = 'dispatcher'
          RETURNING *
       `, [taskId, finalization.taskStatus, finalization.taskAssignee]);
       if (!moved.rows[0]) {
@@ -824,23 +871,26 @@ export class WorkTaskDispatchModel {
              ORDER BY task_id, started_at DESC
           )
           UPDATE work_tasks t
-             SET status = CASE WHEN latest.custody_complete THEN 'in_review' ELSE 'todo' END,
+             SET status = CASE WHEN latest.custody_complete
+                   THEN resolve_project_lane_key(t.project_id, 'review', 'in_review')
+                   ELSE resolve_project_lane_key(t.project_id, 'execution', 'todo') END,
                  assignee = CASE WHEN latest.custody_complete THEN 'heartbeat' ELSE NULL END,
                  updated_at = now(), last_moved_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
             FROM latest
            WHERE t.id = latest.task_id
-             AND t.status = 'in_progress'
+             AND resolve_work_task_lane_role(t.id, t.status) = 'execution'
              AND t.assignee = 'dispatcher'
         `, [executionTaskIds]);
       }
       if (verificationTaskIds.length > 0) {
         await client.query(`
           UPDATE work_tasks
-             SET status = 'in_review', assignee = 'heartbeat',
+             SET assignee = 'heartbeat',
                  updated_at = now(), last_moved_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
-           WHERE id = ANY($1::text[]) AND status = 'in_review' AND assignee = 'verifier'
+           WHERE id = ANY($1::text[])
+             AND resolve_work_task_lane_role(id, status) = 'review' AND assignee = 'verifier'
         `, [verificationTaskIds]);
       }
       return stale.rows.map(row => row.task_id);
@@ -856,16 +906,22 @@ export class WorkTaskDispatchModel {
     summary: string,
   ): Promise<VerificationVerdict | null> {
     return postgresClient.transaction(async(client: PoolClient) => {
-      const current = await client.query<{ task_id: string }>(`
-        SELECT d.task_id
+      const current = await client.query<{ task_id: string; project_id: string; task_status: string } & LaneDestinationColumns>(`
+        SELECT d.task_id, t.project_id, t.status AS task_status,
+               resolve_project_lane_key(t.project_id, 'terminal', 'done') AS terminal_lane_key,
+               resolve_project_lane_key(t.project_id, 'execution', 'todo') AS execution_lane_key,
+               resolve_project_lane_key(t.project_id, 'planning', 'planning') AS planning_lane_key,
+               resolve_project_lane_key(t.project_id, 'review', 'in_review') AS review_lane_key,
+               resolve_project_lane_key(t.project_id, 'blocked', 'blocked') AS blocked_lane_key
           FROM work_task_dispatches d
           JOIN work_tasks t ON t.id = d.task_id
          WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
-           AND t.status = 'in_review'
+           AND resolve_work_task_lane_role(t.id, t.status) = 'review'
          FOR UPDATE OF d, t
       `, [id]);
       const taskId = current.rows[0]?.task_id;
       if (!taskId) return null;
+      const destinations = laneDestinations(current.rows[0]);
       if (verdict === 'APPROVE' && currentArtifactSha !== artifactSha) return null;
 
       let finalVerdict = verdict;
@@ -879,10 +935,10 @@ export class WorkTaskDispatchModel {
       }
 
       const transition = finalVerdict === 'APPROVE'
-        ? { status: 'done', assignee: null }
+        ? { status: destinations.terminal, assignee: null }
         : finalVerdict === 'REWORK'
-          ? { status: 'todo', assignee: 'dispatcher' }
-          : { status: 'blocked', assignee: 'heartbeat' };
+          ? { status: destinations.execution, assignee: 'dispatcher' }
+          : { status: destinations.blocked, assignee: 'heartbeat' };
       const repeatedSuffix = finalVerdict !== verdict
         ? '\n\nRepeated identical rework reached the retry ceiling; routed to Heartbeat recovery.'
         : '';
@@ -904,9 +960,9 @@ export class WorkTaskDispatchModel {
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
-               completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
-         WHERE id = $1 AND status = 'in_review'
-      `, [taskId, transition.status, transition.assignee]);
+               completed_at = CASE WHEN resolve_work_task_lane_role($1, $2) = 'terminal' THEN now() ELSE NULL END
+         WHERE id = $1 AND status = $4
+      `, [taskId, transition.status, transition.assignee, current.rows[0].task_status]);
       return finalVerdict;
     });
   }
@@ -922,16 +978,24 @@ export class WorkTaskDispatchModel {
     currentArtifacts: ReviewArtifactComponent[],
   ): Promise<ReviewDisposition | null> {
     return postgresClient.transaction(async(client: PoolClient) => {
-      const current = await client.query<{ task_id: string; review_generation_hash: string | null }>(`
-        SELECT d.task_id, d.review_generation_hash
+      const current = await client.query<{
+        task_id: string; project_id: string; task_status: string; review_generation_hash: string | null;
+      } & LaneDestinationColumns>(`
+        SELECT d.task_id, t.project_id, t.status AS task_status, d.review_generation_hash,
+               resolve_project_lane_key(t.project_id, 'terminal', 'done') AS terminal_lane_key,
+               resolve_project_lane_key(t.project_id, 'execution', 'todo') AS execution_lane_key,
+               resolve_project_lane_key(t.project_id, 'planning', 'planning') AS planning_lane_key,
+               resolve_project_lane_key(t.project_id, 'review', 'in_review') AS review_lane_key,
+               resolve_project_lane_key(t.project_id, 'blocked', 'blocked') AS blocked_lane_key
           FROM work_task_dispatches d
           JOIN work_tasks t ON t.id = d.task_id
          WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
-           AND t.status = 'in_review'
+           AND resolve_work_task_lane_role(t.id, t.status) = 'review'
          FOR UPDATE OF d, t
       `, [id]);
       const taskId = current.rows[0]?.task_id;
       if (!taskId) return null;
+      const destinations = laneDestinations(current.rows[0]);
       const liveGenerationHash = WorkTaskDispatchModel.reviewGenerationHash(currentArtifacts);
       if (current.rows[0].review_generation_hash !== evidence.generationHash ||
           liveGenerationHash !== evidence.generationHash) return null;
@@ -959,12 +1023,12 @@ export class WorkTaskDispatchModel {
       `, [taskId, id, finalDisposition, evidence.generationHash, fingerprint]);
 
       const transition = finalDisposition === 'PASS'
-        ? { status: 'done', assignee: null }
+        ? { status: destinations.terminal, assignee: null }
         : finalDisposition === 'REPAIRABLE'
-          ? { status: 'todo', assignee: 'dispatcher' }
+          ? { status: destinations.execution, assignee: 'dispatcher' }
           : finalDisposition === 'REPLAN'
-            ? { status: 'planning', assignee: 'dispatcher' }
-            : { status: 'blocked', assignee: 'heartbeat' };
+            ? { status: destinations.planning, assignee: 'dispatcher' }
+            : { status: destinations.blocked, assignee: 'heartbeat' };
 
       if (finalDisposition === 'EXTERNAL_WAIT') {
         const wait = evidence.wait;
@@ -1043,9 +1107,9 @@ export class WorkTaskDispatchModel {
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
-               completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
-         WHERE id = $1 AND status = 'in_review'
-      `, [taskId, transition.status, transition.assignee]);
+               completed_at = CASE WHEN resolve_work_task_lane_role($1, $2) = 'terminal' THEN now() ELSE NULL END
+         WHERE id = $1 AND status = $4
+      `, [taskId, transition.status, transition.assignee, current.rows[0].task_status]);
       return finalDisposition;
     });
   }
@@ -1053,15 +1117,22 @@ export class WorkTaskDispatchModel {
   /** Audit an infrastructure/output failure without turning it into a task blocker. */
   static async failVerification(id: string, reason: string): Promise<boolean> {
     return postgresClient.transaction(async(client: PoolClient) => {
-      const settled = await client.query<{ task_id: string; review_generation_hash: string | null }>(`
-        UPDATE work_task_dispatches
+      const settled = await client.query<{
+        task_id: string; review_generation_hash: string | null; task_status: string;
+      } & LaneDestinationColumns>(`
+        UPDATE work_task_dispatches d
            SET status = 'failed', error = $2, failure_reason = $2,
                heartbeat_at = now(), finished_at = now()
-         WHERE id = $1 AND kind = 'verification' AND status = 'running'
-        RETURNING task_id, review_generation_hash
+          FROM work_tasks t
+         WHERE d.id = $1 AND d.kind = 'verification' AND d.status = 'running'
+           AND t.id = d.task_id
+           AND resolve_work_task_lane_role(t.id, t.status) = 'review'
+        RETURNING d.task_id, d.review_generation_hash, t.status AS task_status,
+          resolve_project_lane_key(t.project_id, 'planning', 'planning') AS planning_lane_key
       `, [id, reason]);
       const taskId = settled.rows[0]?.task_id;
       if (!taskId) return false;
+      const destinations = laneDestinations(settled.rows[0]);
       const generationHash = settled.rows[0].review_generation_hash;
       const equivalent = await client.query<{ count: string }>(`
         SELECT COUNT(*)::text AS count FROM work_task_dispatches
@@ -1092,8 +1163,9 @@ export class WorkTaskDispatchModel {
         UPDATE work_tasks
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier'
-         WHERE id = $1 AND status = 'in_review'
-      `, [taskId, terminal ? 'planning' : 'in_review', terminal ? 'dispatcher' : 'heartbeat']);
+         WHERE id = $1 AND status = $4
+      `, [taskId, terminal ? destinations.planning : settled.rows[0].task_status,
+        terminal ? 'dispatcher' : 'heartbeat', settled.rows[0].task_status]);
       return true;
     });
   }

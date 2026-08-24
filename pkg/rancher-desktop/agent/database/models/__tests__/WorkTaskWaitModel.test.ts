@@ -1,7 +1,9 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
-import { up as migration } from '../../migrations/0065_create_work_task_waits';
+import { up as waitMigration } from '../../migrations/0065_create_work_task_waits';
+import { up as migration } from '../../migrations/0074_semantic_lane_runtime_helpers';
+import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { WorkTaskWaitModel } from '../WorkTaskWaitModel';
 
 describe('WorkTaskWaitModel', () => {
@@ -45,15 +47,15 @@ describe('WorkTaskWaitModel', () => {
   });
 
   it('persists active uniqueness and event-driven invalidation in the migration', () => {
-    expect(migration).toContain('idx_work_task_waits_one_active_target');
-    expect(migration).toContain("WHERE status = 'active'");
+    expect(waitMigration).toContain('idx_work_task_waits_one_active_target');
+    expect(waitMigration).toContain("WHERE status = 'active'");
     expect(migration).toContain('invalidate_work_task_waits_from_human_comment');
     expect(migration).toContain("LOWER(COALESCE(NEW.author, '')) = 'human'");
     expect(migration).toContain('cancel_work_task_waits_from_terminal_task');
     expect(migration).toContain('invalidate_work_task_waits_from_human_task_mutation');
-    expect(migration).toContain("NEW.status IN ('done', 'cancelled', 'parked')");
-    expect(migration).toContain("SET status = 'in_review', assignee = 'heartbeat'");
-    expect(migration).toContain("WHERE id = NEW.task_id AND status = 'blocked'");
+    expect(migration).toContain("resolve_work_task_lane_role(NEW.id, NEW.status) <> 'terminal'");
+    expect(migration).toContain("resolve_project_lane_key(task_project_id, 'review', 'in_review')");
+    expect(migration).toContain("resolve_work_task_lane_role(NEW.task_id, task_status) = 'blocked'");
   });
 
   it('reactivates a blocked task in the same transaction as an event delta', async() => {
@@ -68,15 +70,18 @@ describe('WorkTaskWaitModel', () => {
         }],
       })
       .mockResolvedValueOnce({ rows: [{ id: 'wait-1', task_id: 'task-1', status: 'changed' }] })
+      .mockResolvedValueOnce({ rows: [{ project_id: 'project-1', status: 'blocked-custom' }] })
       .mockResolvedValueOnce({ rows: [] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+    jest.spyOn(WorkLaneDefinitionModel, 'semanticRoleForStatus').mockResolvedValue('blocked');
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('review-custom');
     try {
       const result = await WorkTaskWaitModel.observe('wait-1', {
         fingerprint: 'new', outcome: 'pending', summary: 'event changed', nextCheckAt: new Date(),
       });
       expect(result.changed).toBe(true);
-      expect(query.mock.calls[2][0]).toContain("WHERE id = $1 AND status = 'blocked'");
-      expect(query.mock.calls[2][1]).toEqual(['task-1', 'in_review', 'heartbeat']);
+      expect(query.mock.calls[3][0]).toContain('WHERE id = $1 AND status = $4');
+      expect(query.mock.calls[3][1]).toEqual(['task-1', 'review-custom', 'heartbeat', 'blocked-custom', true]);
     } finally {
       (postgresClient as any).transaction = original;
     }

@@ -56,10 +56,15 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
     'Automatically runs an independent three-planner council for a Projects task in blocked/planning, ' +
     'synthesizes one executable plan, persists it, and returns reversible work to the dispatcher. ' +
     'Locked core routine; visible and disable-able, but not editable, archivable, or deletable.',
-  version:   1,
-  enabled:   true,
-  createdAt: '2026-08-23T00:00:00.000Z',
-  updatedAt: '2026-08-23T00:00:00.000Z',
+  version:      1,
+  enabled:      true,
+  createdAt:    '2026-08-23T00:00:00.000Z',
+  updatedAt:    '2026-08-23T00:00:00.000Z',
+  laneContract: {
+    semanticRoles: ['blocked', 'planning'],
+    input:         'project.lane-entry.v1',
+    output:        'project.lane-outcome.v1',
+  },
 
   edges: [
     { id: 'e-plan-trigger-fanout', source: 'node-plan-trigger', target: 'node-plan-fanout', animated: true },
@@ -171,9 +176,10 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
             `${ SAFETY }\n\nPersist the final synthesized plan from upstream to the originating task. ` +
             'Extract task.id from the bounded JSON snapshot below. First call `sulla project/add_task_comment` via exec ' +
             'with author `planning-council`; the body must contain `Final planning council plan` plus the complete synthesis. ' +
-            'If the synthesis disposition is TODO, create well-bounded subtasks only when the plan genuinely requires independent ' +
-            'units, then call `sulla project/update_task` with status `todo`, assignee `dispatcher`, actor `planning-council`. ' +
-            'If and only if disposition is BLOCKED, update status `blocked`, assignee `heartbeat`, actor `planning-council`, ' +
+            'Resolve the project lane catalog with `sulla project/resolve_lanes` before moving anything. If the synthesis disposition ' +
+            'is TODO, create well-bounded subtasks only when the plan genuinely requires independent units, then update the task to ' +
+            'the first active lane with semantic_role `execution`, assignee `dispatcher`, actor `planning-council`. If and only if ' +
+            'disposition is BLOCKED, update it to the active lane with semantic_role `blocked`, assignee `heartbeat`, actor `planning-council`, ' +
             'and ensure the comment names the exact irreversible gate. Re-read the task with `sulla project/get_project_item` ' +
             'and return a terse persistence receipt. Never merge or deploy.\n\nBounded task snapshot:\n{{trigger}}',
         },

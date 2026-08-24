@@ -1,3 +1,4 @@
+import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from '../database/models/WorkLaneDefinitionModel';
 import {
@@ -27,12 +28,31 @@ async function taskRole(task: WorkTaskRecord): Promise<WorkLaneSemanticRole> {
 }
 
 export class PlanningCouncilService {
+  private static readonly runtimeInstanceId = `planning-council-${ process.pid }-${ Date.now() }`;
+
+  private static async reportCapability(projectId?: string): Promise<boolean> {
+    const lanes = await WorkLaneDefinitionModel.runtimeCapability(projectId);
+    await LifecycleCapabilityModel.report({
+      key:               'planning-council',
+      enabled:           true,
+      health:            lanes.ready ? 'healthy' : 'degraded',
+      owner:             'planning-council',
+      runtimeInstanceId: PlanningCouncilService.runtimeInstanceId,
+      fallbackMode:      'keep_current',
+      error:             lanes.ready ? null : lanes.degradedReason,
+    }).catch(reportError => console.warn(
+      '[PlanningCouncil] Lifecycle capability ledger unavailable; preserving current ownership:', reportError,
+    ));
+    return lanes.ready;
+  }
+
   /** Called after a Projects task update has committed. */
   static async handleTaskStatusTransition(
     task: WorkTaskRecord,
     previousStatus: string,
     actor?: string,
   ): Promise<void> {
+    await PlanningCouncilService.reportCapability(task.project_id);
     const currentRole = await taskRole(task);
     if (currentRole !== 'blocked' && currentRole !== 'planning') {
       const settled = await WorkTaskPlanningRunModel.settleForTask(

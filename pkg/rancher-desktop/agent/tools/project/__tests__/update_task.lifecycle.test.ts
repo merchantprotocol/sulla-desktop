@@ -8,6 +8,7 @@ describe('update_task lifecycle ownership', () => {
   const call = (input: any) => (new UpdateTaskWorker() as any)._validatedCall(input);
   const task = (status: string) => ({
     id:               'task-1',
+    project_id:       'project-1',
     epic_id:          'epic-1',
     title:            'Protected work',
     status,
@@ -35,7 +36,7 @@ describe('update_task lifecycle ownership', () => {
     expect(result.successBoolean).toBe(false);
     expect(result.responseString).toContain('Lifecycle handoff denied');
     expect(guard).toHaveBeenCalledTimes(1);
-    expect(guard).toHaveBeenCalledWith(source, [], 'heartbeat');
+    expect(guard).toHaveBeenCalledWith('task-1', 'project-1', source, 'heartbeat');
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -51,8 +52,8 @@ describe('update_task lifecycle ownership', () => {
 
     expect(result.successBoolean).toBe(false);
     expect(guard.mock.calls).toEqual([
-      ['todo', [], 'heartbeat'],
-      ['in_review', [], 'heartbeat'],
+      ['task-1', 'project-1', 'todo', 'heartbeat'],
+      ['task-1', 'project-1', 'in_review', 'heartbeat'],
     ]);
     expect(update).not.toHaveBeenCalled();
   });
@@ -69,8 +70,8 @@ describe('update_task lifecycle ownership', () => {
 
     expect(result.successBoolean).toBe(true);
     expect(guard.mock.calls).toEqual([
-      ['planning', [], 'heartbeat'],
-      ['backlog', [], 'heartbeat'],
+      ['task-1', 'project-1', 'planning', 'heartbeat'],
+      ['task-1', 'project-1', 'backlog', 'heartbeat'],
     ]);
     expect(update).toHaveBeenCalledTimes(1);
   });

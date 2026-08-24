@@ -10,6 +10,18 @@ export const REQUIRED_WORK_LANE_ROLES: readonly WorkLaneSemanticRole[] = [
   'backlog', 'planning', 'execution', 'review', 'blocked', 'terminal',
 ] as const;
 
+const COMPATIBILITY_ROLE_BY_KEY: Readonly<Record<string, WorkLaneSemanticRole>> = {
+  backlog:     'backlog',
+  planning:    'planning',
+  todo:        'execution',
+  in_progress: 'execution',
+  in_review:   'review',
+  blocked:     'blocked',
+  done:        'terminal',
+  cancelled:   'terminal',
+  parked:      'manual',
+};
+
 export interface WorkLaneRuntimeCapability {
   ready:          boolean;
   catalogPresent: boolean;
@@ -304,7 +316,9 @@ export class WorkLaneDefinitionModel {
       );
       if (!catalog?.present) {
         return {
-          ready: false, catalogPresent: false, missingRoles: [...REQUIRED_WORK_LANE_ROLES],
+          ready:          false,
+          catalogPresent: false,
+          missingRoles:   [...REQUIRED_WORK_LANE_ROLES],
           degradedReason: 'work_lane_definitions is unavailable; stable-key compatibility mode is active.',
         };
       }
@@ -316,7 +330,7 @@ export class WorkLaneDefinitionModel {
       const roles = new Set(lanes.map(lane => lane.semantic_role));
       const missingRoles = REQUIRED_WORK_LANE_ROLES.filter(role => !roles.has(role));
       return {
-        ready: missingRoles.length === 0,
+        ready:          missingRoles.length === 0,
         catalogPresent: true,
         missingRoles,
         degradedReason: missingRoles.length
@@ -326,7 +340,9 @@ export class WorkLaneDefinitionModel {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {
-        ready: false, catalogPresent: false, missingRoles: [...REQUIRED_WORK_LANE_ROLES],
+        ready:          false,
+        catalogPresent: false,
+        missingRoles:   [...REQUIRED_WORK_LANE_ROLES],
         degradedReason: `Semantic lane capability check failed: ${ message }`,
       };
     }
@@ -335,6 +351,14 @@ export class WorkLaneDefinitionModel {
   static async resolveStatus(projectId: string, laneKey: string): Promise<EffectiveWorkLane | null> {
     const lanes = await WorkLaneDefinitionModel.resolveEffective(projectId);
     return lanes.find(lane => lane.lane_key === laneKey) ?? null;
+  }
+
+  static async semanticRoleForStatus(projectId: string, laneKey: string): Promise<WorkLaneSemanticRole> {
+    const capability = await WorkLaneDefinitionModel.runtimeCapability(projectId);
+    if (capability.ready) {
+      return (await WorkLaneDefinitionModel.resolveStatus(projectId, laneKey))?.semantic_role ?? 'manual';
+    }
+    return COMPATIBILITY_ROLE_BY_KEY[laneKey] ?? 'manual';
   }
 
   static async laneKeysForRoles(projectId: string, roles: WorkLaneSemanticRole[]): Promise<string[]> {
@@ -370,9 +394,16 @@ export class WorkLaneDefinitionModel {
     if (!capability.ready) return compatibilityKey;
     const lanes = (await WorkLaneDefinitionModel.resolveEffective(projectId))
       .filter(lane => lane.semantic_role === role);
-    const compatible = lanes.find(lane => lane.lane_key === compatibilityKey);
-    if (compatible) return compatible.lane_key;
-    const selected = preference === 'last' ? lanes.at(-1) : lanes[0];
+    const ordered = [...lanes].sort((left, right) => {
+      const position = preference === 'last'
+        ? right.position - left.position
+        : left.position - right.position;
+      if (position !== 0) return position;
+      if (left.lane_key === compatibilityKey) return -1;
+      if (right.lane_key === compatibilityKey) return 1;
+      return left.lane_key.localeCompare(right.lane_key);
+    });
+    const selected = ordered[0];
     if (!selected) throw new Error(`Project ${ projectId } has no active ${ role } lane.`);
     return selected.lane_key;
   }

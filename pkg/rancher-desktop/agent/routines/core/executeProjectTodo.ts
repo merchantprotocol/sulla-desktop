@@ -40,15 +40,20 @@ const AGENT_NODE = (id: string, label: string, y: number, instructions: string, 
 });
 
 export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
-  id:          EXECUTE_PROJECT_TODO_ID,
-  name:        'Execute Projects Todo',
-  description: 'Locked core routine for atomic todo execution, capability-based worker fan-out, independent acceptance review, repair/replan routing, and durable artifact custody.',
-  version:     1,
+  id:           EXECUTE_PROJECT_TODO_ID,
+  name:         'Execute Projects Todo',
+  description:  'Locked core routine for atomic todo execution, capability-based worker fan-out, independent acceptance review, repair/replan routing, and durable artifact custody.',
+  version:      1,
   // Ship dark. The human enables the protected routine only after shadow and
   // low-risk acceptance passes; the legacy owner remains the default meanwhile.
-  enabled:     false,
-  createdAt:   '2026-08-23T19:00:00.000Z',
-  updatedAt:   '2026-08-23T19:00:00.000Z',
+  enabled:      false,
+  createdAt:    '2026-08-23T19:00:00.000Z',
+  updatedAt:    '2026-08-23T19:00:00.000Z',
+  laneContract: {
+    semanticRoles: ['execution'],
+    input:         'project.lane-entry.v1',
+    output:        'project.lane-outcome.v1',
+  },
   nodes:       [
     {
       id:       'node-todo-trigger',
@@ -103,7 +108,7 @@ export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
       'node-todo-record',
       'Record Projects Handoff',
       940,
-      `${ SAFETY } Original claimed task: {{trigger}} Classifier: {{Classify Work}}. Workers: {{Dynamic Worker Fan-out}}. Review: {{Independent Acceptance Review}}. Repair route: {{Repair or Replan}}. Custody: {{Artifact Custody}}. Propose one concise Projects task comment containing the classifier choice, child IDs, reviewer verdict, durable artifact reference, exact SHA/hash when applicable, validation evidence, and next state. Do not call any project write tool. The dispatcher controller will validate the originating task and live canonical artifact, then atomically persist this evidence with the final task state. Return JSON only with taskId, proposedComment, and nextState (in_review|planning|blocked).`,
+      `${ SAFETY } Original claimed task: {{trigger}} Classifier: {{Classify Work}}. Workers: {{Dynamic Worker Fan-out}}. Review: {{Independent Acceptance Review}}. Repair route: {{Repair or Replan}}. Custody: {{Artifact Custody}}. Propose one concise Projects task comment containing the classifier choice, child IDs, reviewer verdict, durable artifact reference, exact SHA/hash when applicable, validation evidence, and next semantic role. Do not call any project write tool. The dispatcher controller will resolve the originating project's active lane key and atomically persist the evidence with the final task state. Return JSON only with taskId, proposedComment, and nextRole (review|planning|blocked).`,
       'The proposed disposition and comment contain enough evidence for controller-owned atomic finalization.',
     ),
     {

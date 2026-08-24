@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
 import type { PoolClient } from 'pg';
 
@@ -62,12 +63,11 @@ export interface ClaimResult {
   claim?:  LifecycleStageClaim;
 }
 
-const STATUS_CAPABILITY: Record<string, LifecycleCapabilityKey> = {
-  blocked:     'planning-council',
-  planning:    'planning-council',
-  todo:        'todo-execution',
-  in_progress: 'todo-execution',
-  in_review:   'in-review-verification',
+const ROLE_CAPABILITY: Partial<Record<WorkLaneSemanticRole, LifecycleCapabilityKey>> = {
+  blocked:   'planning-council',
+  planning:  'planning-council',
+  execution: 'todo-execution',
+  review:    'in-review-verification',
 };
 
 function effectiveOwner(capability: LifecycleCapabilityRecord): string | null {
@@ -82,11 +82,23 @@ function effectiveOwner(capability: LifecycleCapabilityRecord): string | null {
 }
 
 export class LifecycleCapabilityModel {
-  static capabilityForStatus(status: string, labels: string[] = []): LifecycleCapabilityKey | null {
-    if (labels.some(label => ['durable-wait', 'waiting-external'].includes(label.toLowerCase()))) {
-      return 'durable-waits';
-    }
-    return STATUS_CAPABILITY[status] ?? null;
+  private static compatibilityCapability(status: string): LifecycleCapabilityKey | null {
+    if (status === 'planning' || status === 'blocked') return 'planning-council';
+    if (status === 'todo' || status === 'in_progress') return 'todo-execution';
+    if (status === 'in_review') return 'in-review-verification';
+    return null;
+  }
+
+  static capabilityForRole(role: WorkLaneSemanticRole): LifecycleCapabilityKey | null {
+    return ROLE_CAPABILITY[role] ?? null;
+  }
+
+  static async capabilityForTask(
+    projectId: string,
+    status: string,
+  ): Promise<LifecycleCapabilityKey | null> {
+    const role = await WorkLaneDefinitionModel.semanticRoleForStatus(projectId, status);
+    return LifecycleCapabilityModel.capabilityForRole(role);
   }
 
   static async report(report: CapabilityReport): Promise<LifecycleCapabilityRecord> {
@@ -231,13 +243,31 @@ export class LifecycleCapabilityModel {
     `, [claimId, status]);
   }
 
+  static async assertActorCanManageTask(status: string, labels: string[] | null, actor: string): Promise<void>;
+  static async assertActorCanManageTask(taskId: string, projectId: string, status: string, actor: string): Promise<void>;
   static async assertActorCanManageTask(
-    status: string,
-    labels: string[] | null,
-    actor: string,
+    taskOrStatus: string,
+    projectOrLabels: string | string[] | null,
+    statusOrActor: string,
+    maybeActor?: string,
   ): Promise<void> {
+    const compatibilityCall = maybeActor === undefined;
+    const taskId = compatibilityCall ? '' : taskOrStatus;
+    const projectId = compatibilityCall ? '' : projectOrLabels as string;
+    const status = compatibilityCall ? taskOrStatus : statusOrActor;
+    const actor = compatibilityCall ? statusOrActor : maybeActor;
     if (actor !== 'heartbeat') return;
-    const key = LifecycleCapabilityModel.capabilityForStatus(status, labels ?? []);
+    const activeWait = taskId
+      ? await postgresClient.queryOne<{ present: boolean }>(
+        `SELECT EXISTS(SELECT 1 FROM work_task_waits WHERE task_id = $1 AND status = 'active') AS present`,
+        [taskId],
+      ).catch(() => null)
+      : null;
+    const key = activeWait?.present
+      ? 'durable-waits'
+      : compatibilityCall
+        ? LifecycleCapabilityModel.compatibilityCapability(status)
+        : await LifecycleCapabilityModel.capabilityForTask(projectId, status);
     if (!key) return;
     const capability = await postgresClient.queryOne<LifecycleCapabilityRecord>(
       'SELECT * FROM lifecycle_capabilities WHERE capability_key = $1',
@@ -252,7 +282,7 @@ export class LifecycleCapabilityModel {
   }
 
   /** Remove stages owned by healthy protected services from Heartbeat's queue. */
-  static async filterHeartbeatEligible<T extends { status: string; labels?: string[] | null }>(tasks: T[]): Promise<T[]> {
+  static async filterHeartbeatEligible<T extends { id: string; project_id?: string; status: string }>(tasks: T[]): Promise<T[]> {
     if (tasks.length === 0) return tasks;
     const rows = await postgresClient.query<LifecycleCapabilityRecord>(`
       SELECT * FROM lifecycle_capabilities
@@ -260,13 +290,18 @@ export class LifecycleCapabilityModel {
     `, [[...LIFECYCLE_CAPABILITY_KEYS]]);
     const byKey = new Map(rows.map(row => [row.capability_key, row]));
 
-    return tasks.filter((task) => {
-      const key = LifecycleCapabilityModel.capabilityForStatus(task.status, task.labels ?? []);
+    const keyed = await Promise.all(tasks.map(async task => ({
+      task,
+      key: task.project_id
+        ? await LifecycleCapabilityModel.capabilityForTask(task.project_id, task.status)
+        : LifecycleCapabilityModel.compatibilityCapability(task.status),
+    })));
+    return keyed.filter(({ key }) => {
       if (!key) return true;
       const capability = byKey.get(key);
       // Incomplete rollout preserves the current working Heartbeat owner.
       return !capability || effectiveOwner(capability) === 'heartbeat';
-    });
+    }).map(({ task }) => task);
   }
 
   static async buildDigest(): Promise<string> {
@@ -310,12 +345,16 @@ export class LifecycleCapabilityModel {
         INSERT INTO work_tasks (
           id, project_id, epic_id, title, description, status, priority,
           assignee, labels, source, source_ref, created_by, last_moved_by
-        ) VALUES ($1, $2, $3, $4, $5, 'todo', 'critical', 'dispatcher',
+        ) VALUES ($1, $2, $3, $4, $5,
+          resolve_project_lane_key($2, 'execution', 'todo'), 'critical', 'dispatcher',
           ARRAY['systemic-recovery', 'lifecycle-capability'], 'system', $6,
           'lifecycle-control-plane', 'lifecycle-control-plane')
         ON CONFLICT (id) DO UPDATE SET
           description = EXCLUDED.description,
-          status = CASE WHEN work_tasks.status IN ('done', 'cancelled', 'parked') THEN 'todo' ELSE work_tasks.status END,
+          status = CASE
+            WHEN resolve_work_task_lane_role(work_tasks.id, work_tasks.status) = 'terminal'
+              THEN EXCLUDED.status
+            ELSE work_tasks.status END,
           priority = 'critical', archived = false, updated_at = now(), last_activity_at = now()
       `, [
         id,
@@ -336,10 +375,11 @@ export class LifecycleCapabilityModel {
     await postgresClient.transaction(async(client) => {
       await client.query(`
         UPDATE work_tasks
-           SET status = 'done', completed_at = now(), updated_at = now(),
+           SET status = resolve_project_lane_key(project_id, 'terminal', 'done'),
+               completed_at = now(), updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'lifecycle-control-plane'
-         WHERE id = $1 AND status NOT IN ('done', 'cancelled', 'parked')
+         WHERE id = $1 AND resolve_work_task_lane_role(id, status) <> 'terminal'
       `, [capability.recovery_task_id]);
       await client.query(
         'UPDATE lifecycle_capabilities SET recovery_task_id = NULL WHERE capability_key = $1',

@@ -42,6 +42,24 @@ jest.unstable_mockModule('../../database/models/WorkflowModel', () => ({
   WorkflowModel: { findById: findWorkflowMock },
 }));
 
+jest.unstable_mockModule('../../database/models/WorkLaneDefinitionModel', () => ({
+  WorkLaneDefinitionModel: {
+    runtimeCapability:     jest.fn(() => Promise.resolve({ ready: false, degradedReason: 'test fallback' })),
+    semanticRoleForStatus: jest.fn((_projectId: string, status: string) => Promise.resolve(
+      status === 'blocked' ? 'blocked' : status === 'planning' ? 'planning' : status === 'todo' ? 'execution' : 'manual',
+    )),
+    resolveStatus: jest.fn((_projectId: string, status: string) => Promise.resolve({
+      lane_key:      status,
+      semantic_role: status === 'blocked' ? 'blocked' : status === 'planning' ? 'planning' : status === 'todo' ? 'execution' : 'manual',
+    })),
+    preferredLaneKey: jest.fn((_projectId: string, _role: string, compatibilityKey: string) => Promise.resolve(compatibilityKey)),
+  },
+}));
+
+jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({
+  LifecycleCapabilityModel: { report: jest.fn(() => Promise.resolve({})) },
+}));
+
 jest.unstable_mockModule('../../../main/sullaRoutineTemplateEvents', () => ({
   executeRoutine: executeRoutineMock,
 }));

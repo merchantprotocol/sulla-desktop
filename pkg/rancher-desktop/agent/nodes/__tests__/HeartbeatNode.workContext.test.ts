@@ -42,6 +42,22 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
   WorkTaskDispatchModel: { findRecoverableInProgress: findRecoverableInProgressMock },
 }));
 
+jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({
+  LifecycleCapabilityModel: {
+    buildDigest:             jest.fn(() => Promise.resolve('')),
+    filterHeartbeatEligible: jest.fn((tasks: any[]) => Promise.resolve(tasks)),
+  },
+}));
+
+jest.unstable_mockModule('../../database/models/WorkLaneDefinitionModel', () => ({
+  WorkLaneDefinitionModel: {
+    runtimeCapability: jest.fn(() => Promise.resolve({
+      ready: true, catalogPresent: true, missingRoles: [], degradedReason: null,
+    })),
+    preferredLaneKey: jest.fn((_projectId: string, _role: string, compatibilityKey: string) => Promise.resolve(compatibilityKey)),
+  },
+}));
+
 jest.unstable_mockModule('../../prompts/projectReport', () => ({
   buildProjectReport: buildProjectReportMock,
 }));
@@ -111,6 +127,7 @@ describe('HeartbeatNode Projects context injection', () => {
           github_issue: null,
         },
       ])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
           id:       'child1',
@@ -174,34 +191,6 @@ describe('HeartbeatNode Projects context injection', () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
-          id:           'blocked1',
-          project_id:   'proj1',
-          epic_id:      'epic1',
-          parent_id:    null,
-          title:        'Blocked first',
-          description:  'Needs recovery.',
-          status:       'blocked',
-          priority:     'critical',
-          assignee:     'heartbeat',
-          labels:       [],
-          due_at:       null,
-          github_issue: null,
-        },
-        {
-          id:           'planning1',
-          project_id:   'proj1',
-          epic_id:      'epic1',
-          parent_id:    null,
-          title:        'Planning active',
-          description:  'Council running.',
-          status:       'planning',
-          priority:     'critical',
-          assignee:     'heartbeat',
-          labels:       [],
-          due_at:       null,
-          github_issue: null,
-        },
-        {
           id:           'action1',
           project_id:   'proj1',
           epic_id:      'epic1',
@@ -216,6 +205,11 @@ describe('HeartbeatNode Projects context injection', () => {
           github_issue: null,
         },
       ])
+      .mockResolvedValueOnce([{
+        id: 'blocked1', project_id: 'proj1', epic_id: 'epic1', parent_id: null,
+        title: 'Blocked first', description: 'Needs recovery.', status: 'blocked',
+        priority: 'critical', assignee: 'heartbeat', labels: [], due_at: null, github_issue: null,
+      }])
       .mockResolvedValueOnce([]);
 
     const node = await makeNode();
@@ -235,21 +229,8 @@ describe('HeartbeatNode Projects context injection', () => {
     listTasksMock
       .mockReset()
       .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
-        {
-          id:           'planning1',
-          project_id:   'proj1',
-          epic_id:      'epic1',
-          parent_id:    null,
-          title:        'Planning active',
-          description:  'Council running.',
-          status:       'planning',
-          priority:     'critical',
-          assignee:     'heartbeat',
-          labels:       [],
-          due_at:       null,
-          github_issue: null,
-        },
         {
           id:           'blocked1',
           project_id:   'proj1',
@@ -276,7 +257,7 @@ describe('HeartbeatNode Projects context injection', () => {
     await node.injectHeartbeatProjectReport(state);
 
     expect(state.messages[0].content).toContain('id="blocked1"');
-    expect(state.messages[0].content).toContain('independent planner council');
+    expect(state.messages[0].content).toContain('locked planning routine');
     expect(state.metadata.heartbeatSelectedTaskId).toBe('blocked1');
   });
 
@@ -509,6 +490,7 @@ describe('HeartbeatNode Projects context injection', () => {
       ])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
           id:            'task1',
@@ -526,6 +508,7 @@ describe('HeartbeatNode Projects context injection', () => {
           last_moved_at: '2026-08-17T11:16:00.000Z',
         },
       ])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
     listCommentsMock
       .mockReset()

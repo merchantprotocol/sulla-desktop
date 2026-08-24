@@ -2,6 +2,7 @@ import { Octokit } from '@octokit/rest';
 
 import { getIntegrationService } from './IntegrationService';
 import { type WorkTaskRecord, WorkItemsModel } from '../database/models/WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 
 export interface ProposedCustody {
   artifactType?:         unknown;
@@ -108,8 +109,10 @@ export class CanonicalArtifactCustodyService {
     if (String(disposition.taskId || '') !== origin.id) {
       return invalid('proposed disposition is not bound to the originating task');
     }
-    if (disposition.nextState !== 'in_review') {
-      return invalid('successful custody must propose in_review');
+    const proposedLane = await WorkLaneDefinitionModel.resolveStatus(origin.project_id, String(disposition.nextState || ''));
+    const capability = await WorkLaneDefinitionModel.runtimeCapability(origin.project_id);
+    if (capability.ready ? proposedLane?.semantic_role !== 'review' : disposition.nextState !== 'in_review') {
+      return invalid('successful custody must propose a resolved review lane');
     }
     if (!String(disposition.proposedComment || '').trim()) {
       return invalid('successful custody requires proposed comment evidence');
@@ -119,7 +122,8 @@ export class CanonicalArtifactCustodyService {
     if (live?.project_id !== origin.project_id || live.epic_id !== origin.epic_id) {
       return invalid('originating Projects task no longer matches the claimed task');
     }
-    if (live.status !== 'in_progress' || live.assignee !== 'dispatcher') {
+    const liveRole = await WorkLaneDefinitionModel.semanticRoleForStatus(live.project_id, live.status);
+    if (liveRole !== 'execution' || live.assignee !== 'dispatcher') {
       return invalid('originating Projects task is no longer owned by this dispatcher');
     }
 

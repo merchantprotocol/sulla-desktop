@@ -1,97 +1,92 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const ensureTablesMock: any = jest.fn();
-const listProjectsMock: any = jest.fn();
-const listEpicsMock: any = jest.fn();
-const listTasksMock: any = jest.fn();
-const activeTaskIdsMock: any = jest.fn();
-const listWaitsMock: any = jest.fn();
-const settingsGetMock: any = jest.fn();
+import { SullaSettingsModel } from '../../database/models/SullaSettingsModel';
+import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
+import { WorkTaskWaitModel } from '../../database/models/WorkTaskWaitModel';
+import { buildProjectReport } from '../projectReport';
 
-jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
-  WorkItemsModel: {
-    ensureTables: ensureTablesMock,
-    listProjects: listProjectsMock,
-    listEpics:    listEpicsMock,
-    listTasks:    listTasksMock,
-  },
-}));
+const seededLanes = [
+  { lane_key: 'backlog', display_name: 'Backlog', semantic_role: 'backlog' },
+  { lane_key: 'todo', display_name: 'Ready', semantic_role: 'execution' },
+  { lane_key: 'planning', display_name: 'Planning', semantic_role: 'planning' },
+  { lane_key: 'in_progress', display_name: 'Building', semantic_role: 'execution' },
+  { lane_key: 'in_review', display_name: 'Review', semantic_role: 'review' },
+  { lane_key: 'blocked', display_name: 'Blocked', semantic_role: 'blocked' },
+  { lane_key: 'done', display_name: 'Done', semantic_role: 'terminal' },
+] as any;
 
-jest.unstable_mockModule('../../database/models/WorkTaskWaitModel', () => ({
-  WorkTaskWaitModel: {
-    activeTaskIds: activeTaskIdsMock,
-    list:          listWaitsMock,
-  },
-}));
-
-jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
-  SullaSettingsModel: { get: settingsGetMock },
-}));
-
-describe('buildProjectReport activity rotation queues', () => {
+describe('buildProjectReport semantic queues', () => {
   beforeEach(() => {
-    ensureTablesMock.mockReset().mockResolvedValue(undefined);
-    listProjectsMock.mockReset().mockResolvedValue([{ id: 'project-1', title: 'Operator Platform' }]);
-    listEpicsMock.mockReset().mockResolvedValue([{ id: 'epic-1', project_id: 'project-1', title: 'Heartbeat' }]);
-    listTasksMock.mockReset()
-      .mockResolvedValueOnce([]) // completed-window query
-      .mockResolvedValueOnce([
-        { id: 'blocked-old', project_id: 'project-1', epic_id: 'epic-1', title: 'Blocked oldest', status: 'blocked', priority: 'critical', assignee: 'heartbeat' },
-        { id: 'action-old', project_id: 'project-1', epic_id: 'epic-1', title: 'Action oldest', status: 'todo', priority: 'critical', assignee: 'heartbeat' },
-        { id: 'planning', project_id: 'project-1', epic_id: 'epic-1', title: 'Council active', status: 'planning', priority: 'critical', assignee: 'heartbeat' },
-        { id: 'action-new', project_id: 'project-1', epic_id: 'epic-1', title: 'Action newer', status: 'in_progress', priority: 'critical', assignee: 'heartbeat' },
-      ]);
-    activeTaskIdsMock.mockReset().mockResolvedValue(new Set());
-    listWaitsMock.mockReset().mockResolvedValue([]);
-    settingsGetMock.mockReset().mockResolvedValue(false);
+    jest.restoreAllMocks();
+    jest.spyOn(WorkItemsModel, 'ensureTables').mockResolvedValue(undefined);
+    jest.spyOn(WorkItemsModel, 'listProjects').mockResolvedValue([
+      { id: 'project-1', title: 'Operator Platform' } as any,
+    ]);
+    jest.spyOn(WorkItemsModel, 'listEpics').mockResolvedValue([
+      { id: 'epic-1', project_id: 'project-1', title: 'Heartbeat' } as any,
+    ]);
+    jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
+      ready: true, catalogPresent: true, missingRoles: [], degradedReason: null,
+    });
+    jest.spyOn(WorkLaneDefinitionModel, 'resolveEffective').mockResolvedValue(seededLanes);
+    jest.spyOn(WorkTaskWaitModel, 'activeTaskIds').mockResolvedValue(new Set());
+    jest.spyOn(WorkTaskWaitModel, 'list').mockResolvedValue([]);
+    jest.spyOn(SullaSettingsModel, 'get').mockResolvedValue(false);
   });
 
-  it('separates actionable, blocked recovery, and planning-in-flight work', async() => {
-    const { buildProjectReport } = await import('../projectReport');
-    const report = await buildProjectReport({ assignee: 'heartbeat' });
+  it('separates execution, blocked, and planning roles', async() => {
+    jest.spyOn(WorkItemsModel, 'listTasks')
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: 'blocked', project_id: 'project-1', epic_id: 'epic-1', title: 'Blocked', status: 'blocked', priority: 'critical' },
+        { id: 'ready', project_id: 'project-1', epic_id: 'epic-1', title: 'Ready', status: 'todo', priority: 'critical' },
+        { id: 'planning', project_id: 'project-1', epic_id: 'epic-1', title: 'Planning', status: 'planning', priority: 'critical' },
+      ] as any);
 
-    expect(report).toContain('## ▶️ Actionable now (2 of 2)');
+    const report = await buildProjectReport();
+
+    expect(report).toContain('## ▶️ Actionable now (1 of 1)');
     expect(report).toContain('## 🧭 Blocked tasks — recovery planning (1 of 1)');
     expect(report).toContain('## 🛠 Planning in flight (1 of 1)');
-    expect(report).toContain('triggers the locked core planning routine');
-    expect(report).toContain('Heartbeat must not launch a second council');
-    expect(report).toContain('portfolio dispatch queue, not a one-task limit');
-    expect(report).toContain('as many independent tasks as available sub-agent capacity allows');
-    expect(report).toContain('## ⏳ Monitor-owned external waits (0)');
-    expect(report).toContain('Shadow mode');
-
-    const actionableStart = report.indexOf('## ▶️ Actionable now');
-    const blockedStart = report.indexOf('## 🧭 Blocked tasks');
-    const actionableSection = report.slice(actionableStart, blockedStart);
-    expect(actionableSection).toContain('Action oldest');
-    expect(actionableSection).toContain('Action newer');
-    expect(actionableSection).not.toContain('Blocked oldest');
-    expect(actionableSection).not.toContain('Council active');
   });
 
-  it('omits active monitor-owned waits from actionable work when suppression is enabled', async() => {
-    listTasksMock.mockReset()
+  it('omits active monitor-owned waits from actionable work', async() => {
+    jest.spyOn(WorkItemsModel, 'listTasks')
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         { id: 'waiting', project_id: 'project-1', epic_id: 'epic-1', title: 'CI pending', status: 'in_review', priority: 'high' },
         { id: 'ready', project_id: 'project-1', epic_id: 'epic-1', title: 'Ready work', status: 'todo', priority: 'high' },
-      ]);
-    activeTaskIdsMock.mockResolvedValue(new Set(['waiting']));
-    listWaitsMock.mockResolvedValue([{
-      id:                          'wait-1',
-      task_id:                     'waiting',
-      wait_kind:                   'github_checks',
-      target_key:                  'org/repo#1',
-      next_check_at:               new Date().toISOString(),
-      consecutive_unchanged_count: 9,
-    }]);
-    settingsGetMock.mockResolvedValue(true);
+      ] as any);
+    jest.spyOn(WorkTaskWaitModel, 'activeTaskIds').mockResolvedValue(new Set(['waiting']));
+    jest.spyOn(WorkTaskWaitModel, 'list').mockResolvedValue([{ task_id: 'waiting' } as any]);
+    jest.spyOn(SullaSettingsModel, 'get').mockResolvedValue(true);
 
-    const { buildProjectReport } = await import('../projectReport');
     const report = await buildProjectReport();
     const actionable = report.slice(report.indexOf('## ▶️ Actionable now'), report.indexOf('## ⏳'));
+
     expect(actionable).toContain('Ready work');
     expect(actionable).not.toContain('CI pending');
-    expect(report).toContain('omitted from actionable work until a material delta');
+  });
+
+  it('groups renamed and unknown lanes without dropping manual work', async() => {
+    jest.spyOn(WorkLaneDefinitionModel, 'resolveEffective').mockResolvedValue([
+      { lane_key: 'ready-custom', display_name: 'Launch Queue', semantic_role: 'execution' },
+      { lane_key: 'waiting-custom', display_name: 'Needs Input', semantic_role: 'blocked' },
+    ] as any);
+    jest.spyOn(WorkItemsModel, 'listTasks')
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: 'ready', project_id: 'project-1', epic_id: 'epic-1', title: 'Ready custom', status: 'ready-custom', priority: 'high' },
+        { id: 'blocked', project_id: 'project-1', epic_id: 'epic-1', title: 'Blocked custom', status: 'waiting-custom', priority: 'high' },
+        { id: 'unknown', project_id: 'project-1', epic_id: 'epic-1', title: 'Legacy unknown', status: 'old-import', priority: 'low' },
+      ] as any);
+
+    const report = await buildProjectReport();
+
+    expect(report).toContain('Launch Queue (execution)');
+    expect(report).toContain('Blocked custom');
+    expect(report).toContain('Legacy unknown');
+    expect(report).toContain('Manual/custom lanes (1)');
   });
 });

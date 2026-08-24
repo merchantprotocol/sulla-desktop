@@ -6,8 +6,10 @@ import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullReq
 import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
 import { getIntegrationService } from './IntegrationService';
+import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 import {
   WorkTaskDispatchModel,
   type ClaimedDispatch,
@@ -43,6 +45,7 @@ const DEFAULT_VERIFIER_TIMEOUT_MINUTES = 45;
 const DEFAULT_IN_PROGRESS_STALE_MINUTES = 360;
 const DEFAULT_RECOVERY_BATCH_SIZE = 1;
 const DEFAULT_RECOVERY_RETRY_CEILING = 3;
+const RUNTIME_INSTANCE_ID = `task-dispatcher-${ process.pid }-${ Date.now() }`;
 const LEGACY_VERIFIER_TOOLS = [
   'file_search', 'read_file',
   'git_status', 'git_diff', 'git_log', 'git_blame',
@@ -90,6 +93,17 @@ export class TaskDispatcherService {
     if (this.initialized) return;
     this.initialized = true;
 
+    const lanes = await WorkLaneDefinitionModel.runtimeCapability();
+    const health = lanes.ready ? 'healthy' : 'degraded';
+    const error = lanes.ready ? null : lanes.degradedReason;
+    await Promise.all([
+      LifecycleCapabilityModel.report({ key: 'todo-execution', enabled: true, health, owner: 'dispatcher', runtimeInstanceId: RUNTIME_INSTANCE_ID, fallbackMode: 'keep_current', error }),
+      LifecycleCapabilityModel.report({ key: 'in-review-verification', enabled: true, health, owner: 'dispatcher', runtimeInstanceId: RUNTIME_INSTANCE_ID, fallbackMode: 'keep_current', error }),
+      LifecycleCapabilityModel.report({ key: 'stale-recovery', enabled: true, health, owner: 'dispatcher', runtimeInstanceId: RUNTIME_INSTANCE_ID, fallbackMode: 'keep_current', error }),
+    ]).catch(reportError => console.warn(
+      '[TaskDispatcher] Lifecycle capability ledger unavailable; preserving current ownership:', reportError,
+    ));
+
     await this.checkAndDispatch();
     this.schedulerId = setInterval(() => {
       this.checkAndDispatch().catch(err => console.error('[TaskDispatcher] Scheduled check failed:', err));
@@ -132,6 +146,18 @@ export class TaskDispatcherService {
       await this.fillVerificationPool();
     } catch (err) {
       console.error('[TaskDispatcher] Dispatch check failed:', err);
+      const error = err instanceof Error ? err.message : String(err);
+      await Promise.all(['todo-execution', 'in-review-verification', 'stale-recovery'].map(key =>
+        LifecycleCapabilityModel.report({
+          key:               key as 'todo-execution' | 'in-review-verification' | 'stale-recovery',
+          enabled:           true,
+          health:            'degraded',
+          owner:             'dispatcher',
+          runtimeInstanceId: RUNTIME_INSTANCE_ID,
+          fallbackMode:      'keep_current',
+          error,
+        }).catch(reportError => console.error('[TaskDispatcher] Capability report failed:', reportError)),
+      ));
     } finally {
       this.checking = false;
     }
@@ -269,7 +295,7 @@ export class TaskDispatcherService {
     const rolloutEnabled = await SullaSettingsModel.get('taskReviewCoreRoutineEnabled', false);
     if (!rolloutEnabled) return null;
     const routine = await WorkflowModel.findById(REVIEW_PROJECT_ARTIFACT_ID);
-    if (!routine || routine.attributesSnapshot.enabled === false) return null;
+    if (!routine || routine.attributesSnapshot?.enabled === false || routine.attributes?.enabled === false) return null;
     return 'core-routine';
   }
 
@@ -592,15 +618,24 @@ export class TaskDispatcherService {
     const { dispatch, task } = claim;
     const evidence = playbook ? await this.extractWorkflowEvidence(playbook, task) : null;
     const coreContractMissing = executionOwner === 'core-routine' && !evidence;
-    const taskStatus = status === 'failed' || coreContractMissing
+    const requestedRole = status === 'failed' || coreContractMissing || evidence?.contractValid === false
       ? 'planning'
-      : status === 'completed'
-        ? evidence?.nextState ?? 'in_review'
-        : evidence?.nextState === 'blocked' ? 'blocked' : 'planning';
-    const assignee = taskStatus === 'planning' ? 'dispatcher' : 'heartbeat';
+      : evidence?.nextState
+        ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, evidence.nextState))?.semantic_role ?? 'planning'
+        : status === 'completed' ? 'review' : 'planning';
+    const compatibilityKey = requestedRole === 'review'
+      ? 'in_review'
+      : requestedRole === 'blocked' ? 'blocked' : 'planning';
+    const requestedLane = evidence?.nextState
+      ? await WorkLaneDefinitionModel.resolveStatus(task.project_id, evidence.nextState)
+      : null;
+    const taskStatus = requestedLane?.semantic_role === requestedRole
+      ? requestedLane.lane_key
+      : await WorkLaneDefinitionModel.preferredLaneKey(task.project_id, requestedRole, compatibilityKey);
+    const assignee = requestedRole === 'planning' ? 'dispatcher' : 'heartbeat';
     const dispatchStatus = status === 'failed' || coreContractMissing || evidence?.contractValid === false
       ? 'failed'
-      : taskStatus === 'blocked' ? 'blocked' : 'completed';
+      : requestedRole === 'blocked' ? 'blocked' : 'completed';
     const contractError = coreContractMissing
       ? 'core routine returned without structured acceptance and custody evidence'
       : evidence?.contractError;
@@ -627,9 +662,9 @@ export class TaskDispatcherService {
       evidence:     evidence?.ledger,
     });
 
-    if (taskStatus === 'planning') {
+    if (requestedRole === 'planning') {
       const { PlanningCouncilService } = await import('./PlanningCouncilService');
-      await PlanningCouncilService.handleTaskStatusTransition(committed, 'in_progress', 'dispatcher');
+      await PlanningCouncilService.handleTaskStatusTransition(committed, task.status, 'dispatcher');
     }
   }
 

@@ -3,6 +3,7 @@ import { Octokit } from '@octokit/rest';
 import { isInsideWindow } from './HeartbeatService';
 import { getIntegrationService } from './IntegrationService';
 import { postgresClient } from '../database/PostgresClient';
+import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
 import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
@@ -16,6 +17,7 @@ const CHECK_INTERVAL_MS = 60_000;
 const DEFAULT_CONCURRENCY = 4;
 const MAX_FAILURES = 5;
 const FAR_FUTURE_MS = 365 * 24 * 60 * 60 * 1000;
+const RUNTIME_INSTANCE_ID = `external-wait-monitor-${ process.pid }-${ Date.now() }`;
 
 export interface ExternalWaitMonitorMetrics {
   activeWaits:           number;
@@ -60,6 +62,18 @@ export class ExternalWaitMonitorService {
   async initialize(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
+    const lanes = await WorkLaneDefinitionModel.runtimeCapability();
+    await LifecycleCapabilityModel.report({
+      key:               'durable-waits',
+      enabled:           true,
+      health:            lanes.ready ? 'healthy' : 'degraded',
+      owner:             'external-wait-monitor',
+      runtimeInstanceId: RUNTIME_INSTANCE_ID,
+      fallbackMode:      'keep_current',
+      error:             lanes.ready ? null : lanes.degradedReason,
+    }).catch(reportError => console.warn(
+      '[ExternalWaitMonitor] Lifecycle capability ledger unavailable; preserving current ownership:', reportError,
+    ));
     await this.bootstrapKnownGithubWaits();
     await this.checkDueWaits();
     this.schedulerId = setInterval(() => {

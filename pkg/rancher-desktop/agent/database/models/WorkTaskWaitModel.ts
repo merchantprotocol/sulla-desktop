@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
 export type WorkTaskWaitKind = 'github_checks' | 'human_gate' | 'scheduled_time' | 'external_job';
 export type WorkTaskWaitStatus = 'active' | 'changed' | 'satisfied' | 'cancelled' | 'failed';
@@ -75,12 +76,13 @@ export class WorkTaskWaitModel {
 
   static async register(input: RegisterWaitInput): Promise<WaitRegistration> {
     return postgresClient.transaction(async(client) => {
-      const task = await client.query<{ id: string; status: string }>(
-        `SELECT id, status FROM work_tasks WHERE id = $1 AND archived = false FOR UPDATE`,
+      const task = await client.query<{ id: string; project_id: string; status: string }>(
+        `SELECT id, project_id, status FROM work_tasks WHERE id = $1 AND archived = false FOR UPDATE`,
         [input.taskId],
       );
       if (!task.rows[0]) throw new Error(`Task not found: ${ input.taskId }`);
-      if (['done', 'cancelled', 'parked'].includes(task.rows[0].status)) {
+      const role = await WorkLaneDefinitionModel.semanticRoleForStatus(task.rows[0].project_id, task.rows[0].status);
+      if (role === 'terminal') {
         throw new Error(`Cannot register a wait for terminal task ${ input.taskId }`);
       }
 
@@ -142,19 +144,30 @@ export class WorkTaskWaitModel {
   }
 
   static async claimDue(limit: number): Promise<WorkTaskWaitRecord[]> {
+    const capability = await WorkLaneDefinitionModel.runtimeCapability();
     return postgresClient.transaction(async(client) => {
       const result = await client.query<WorkTaskWaitRecord>(`
         SELECT w.*
           FROM work_task_waits w
           JOIN work_tasks t ON t.id = w.task_id
+          LEFT JOIN LATERAL (
+            SELECT lane.semantic_role FROM work_lane_definitions lane
+             WHERE lane.reset_at IS NULL AND lane.archived = false AND lane.enabled = true
+               AND lane.lane_key = t.status
+               AND (lane.scope = 'global_default' OR (lane.scope = 'project' AND lane.project_id = t.project_id))
+             ORDER BY CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END LIMIT 1
+          ) effective_lane ON $2::boolean
          WHERE w.status = 'active'
            AND w.next_check_at <= now()
            AND t.archived = false
-           AND t.status NOT IN ('done', 'cancelled', 'parked')
+           AND CASE WHEN $2::boolean
+             THEN COALESCE(effective_lane.semantic_role, 'manual') <> 'terminal'
+             ELSE t.status NOT IN ('done', 'cancelled', 'parked')
+           END
          ORDER BY w.next_check_at ASC
          FOR UPDATE OF w SKIP LOCKED
          LIMIT $1
-      `, [Math.max(1, Math.min(25, limit))]);
+      `, [Math.max(1, Math.min(25, limit)), capability.ready]);
 
       if (result.rows.length > 0) {
         await client.query(`
@@ -199,13 +212,26 @@ export class WorkTaskWaitModel {
          RETURNING *
       `, [id, observation.fingerprint, nextStatus, observation.nextCheckAt, changed, terminal]);
       if (changed || terminal) {
+        const task = await client.query<{ project_id: string; status: string }>(
+          'SELECT project_id, status FROM work_tasks WHERE id = $1 AND archived = false FOR UPDATE',
+          [current.task_id],
+        );
+        const currentRole = task.rows[0]
+          ? await WorkLaneDefinitionModel.semanticRoleForStatus(task.rows[0].project_id, task.rows[0].status)
+          : 'manual';
+        const targetRole: WorkLaneSemanticRole = nextStatus === 'failed' ? 'planning' : 'review';
+        const targetKey = task.rows[0]
+          ? await WorkLaneDefinitionModel.preferredLaneKey(
+            task.rows[0].project_id, targetRole, nextStatus === 'failed' ? 'planning' : 'in_review',
+          )
+          : null;
         await client.query(`
           UPDATE work_tasks
              SET status = $2, assignee = $3, updated_at = now(),
                  last_moved_at = now(), last_activity_at = now(),
                  last_moved_by = 'external-wait-monitor'
-           WHERE id = $1 AND status = 'blocked'
-        `, [current.task_id, nextStatus === 'failed' ? 'planning' : 'in_review', nextStatus === 'failed' ? 'dispatcher' : 'heartbeat']);
+           WHERE id = $1 AND status = $4 AND $5::boolean
+        `, [current.task_id, targetKey, nextStatus === 'failed' ? 'dispatcher' : 'heartbeat', task.rows[0]?.status ?? '', currentRole === 'blocked']);
       }
       return { changed: changed || terminal, wait: updated.rows[0] ?? null };
     });
@@ -226,12 +252,21 @@ export class WorkTaskWaitModel {
       `, [id, message.slice(0, 2000), nextCheckAt, terminalAfter]);
       const wait = result.rows[0] ?? null;
       if (wait?.status === 'failed') {
+        const task = await client.query<{ project_id: string; status: string }>(
+          'SELECT project_id, status FROM work_tasks WHERE id = $1 AND archived = false FOR UPDATE', [wait.task_id],
+        );
+        const currentRole = task.rows[0]
+          ? await WorkLaneDefinitionModel.semanticRoleForStatus(task.rows[0].project_id, task.rows[0].status)
+          : 'manual';
+        const planningKey = task.rows[0]
+          ? await WorkLaneDefinitionModel.preferredLaneKey(task.rows[0].project_id, 'planning', 'planning')
+          : null;
         await client.query(`
-          UPDATE work_tasks SET status = 'planning', assignee = 'dispatcher',
+          UPDATE work_tasks SET status = $2, assignee = 'dispatcher',
             updated_at = now(), last_moved_at = now(), last_activity_at = now(),
             last_moved_by = 'external-wait-monitor'
-          WHERE id = $1 AND status = 'blocked'
-        `, [wait.task_id]);
+          WHERE id = $1 AND status = $3 AND $4::boolean
+        `, [wait.task_id, planningKey, task.rows[0]?.status ?? '', currentRole === 'blocked']);
       }
       return { terminal: wait?.status === 'failed', wait };
     });

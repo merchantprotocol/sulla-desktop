@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
+import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { WorkTaskPlanningRunModel } from '../WorkTaskPlanningRunModel';
 
 describe('WorkTaskPlanningRunModel', () => {
@@ -16,7 +17,12 @@ describe('WorkTaskPlanningRunModel', () => {
   });
 
   it('claims and moves blocked work to planning in one locked transaction', async() => {
-    const blocked = { id: 'task-1', status: 'blocked', archived: false } as any;
+    jest.spyOn(postgresClient, 'queryOne').mockResolvedValue({ project_id: 'project-1' } as any);
+    jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
+      ready: false, catalogPresent: false, missingRoles: ['planning'], degradedReason: 'compatibility',
+    });
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('planning');
+    const blocked = { id: 'task-1', project_id: 'project-1', status: 'blocked', archived: false } as any;
     const planning = { ...blocked, status: 'planning', assignee: 'planning-council' };
     const run = { id: 'planning-1', task_id: 'task-1', status: 'active', attempt: 1 } as any;
     const query = (jest.fn() as any)
@@ -33,11 +39,17 @@ describe('WorkTaskPlanningRunModel', () => {
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE');
     expect(query.mock.calls[1][0]).toContain("status = 'active'");
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_planning_runs');
-    expect(query.mock.calls[4][0]).toContain("status = 'planning'");
+    expect(query.mock.calls[4][0]).toContain('status = $2');
+    expect(query.mock.calls[4][1]).toEqual(['task-1', 'planning']);
   });
 
   it('does not launch a duplicate when a task already has an active council', async() => {
-    const task = { id: 'task-1', status: 'planning', archived: false } as any;
+    jest.spyOn(postgresClient, 'queryOne').mockResolvedValue({ project_id: 'project-1' } as any);
+    jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
+      ready: false, catalogPresent: false, missingRoles: ['planning'], degradedReason: 'compatibility',
+    });
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('planning');
+    const task = { id: 'task-1', project_id: 'project-1', status: 'planning', archived: false } as any;
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [task] })
       .mockResolvedValueOnce({ rows: [{ id: 'planning-existing' }] });
@@ -68,7 +80,7 @@ describe('WorkTaskPlanningRunModel', () => {
     await expect(WorkTaskPlanningRunModel.recoverStale(45)).resolves.toEqual(['task-1']);
     expect(query.mock.calls[0][0]).toContain("status = 'stale'");
     expect(query.mock.calls[0][0]).toContain("interval '1 minute'");
-    expect(query.mock.calls[1][0]).toContain("status IN ('planning', 'blocked')");
+    expect(query.mock.calls[1][0]).toContain("effective.semantic_role IN ('planning', 'blocked')");
   });
 
   it('expires one abandoned claim on the task next status event', async() => {

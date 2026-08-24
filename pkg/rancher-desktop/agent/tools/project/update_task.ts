@@ -36,17 +36,18 @@ export class UpdateTaskWorker extends BaseTool {
         // healthy protected routine by moving its task to an unprotected
         // status (for example in_review -> done).
         await LifecycleCapabilityModel.assertActorCanManageTask(
+          current.id,
+          current.project_id,
           current.status,
-          current.labels,
           actor,
         );
 
         const destinationStatus = typeof input.status === 'string' ? input.status : current.status;
-        const destinationLabels = labels ?? current.labels;
-        if (destinationStatus !== current.status || destinationLabels !== current.labels) {
+        if (destinationStatus !== current.status) {
           await LifecycleCapabilityModel.assertActorCanManageTask(
+            current.id,
+            current.project_id,
             destinationStatus,
-            destinationLabels,
             actor,
           );
         }

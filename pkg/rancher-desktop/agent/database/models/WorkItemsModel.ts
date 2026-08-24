@@ -22,22 +22,22 @@ import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDe
 export type WorkItemKind = 'project' | 'epic' | 'task';
 
 export interface WorkProjectRecord {
-  id:              string;
-  slug:            string;
-  title:           string;
-  description:     string;
-  outcome_metric:  string | null;
-  status:          string;
-  priority:        string;
-  owner:           string | null;
-  source:          string | null;
-  source_path:     string | null;
-  github_repo:     string | null;
-  due_at:          string | null;
-  created_at:      string;
-  updated_at:      string | null;
-  last_moved_at:   string;
-  archived:        boolean;
+  id:             string;
+  slug:           string;
+  title:          string;
+  description:    string;
+  outcome_metric: string | null;
+  status:         string;
+  priority:       string;
+  owner:          string | null;
+  source:         string | null;
+  source_path:    string | null;
+  github_repo:    string | null;
+  due_at:         string | null;
+  created_at:     string;
+  updated_at:     string | null;
+  last_moved_at:  string;
+  archived:       boolean;
 }
 
 export interface WorkEpicRecord {
@@ -59,30 +59,30 @@ export interface WorkEpicRecord {
 }
 
 export interface WorkTaskRecord {
-  id:            string;
-  project_id:    string;
-  epic_id:       string | null;
-  parent_id:     string | null;
-  slug:          string | null;
-  title:         string;
-  description:   string;
-  status:        string;
-  priority:      string;
-  due_at:        string | null;
-  github_issue:  string | null;
-  assignee:      string | null;
-  labels:        string[] | null;
-  position:      number;
-  source:        string | null;
-  source_ref:    string | null;
-  created_at:    string;
-  updated_at:    string | null;
-  last_moved_at: string;
+  id:               string;
+  project_id:       string;
+  epic_id:          string | null;
+  parent_id:        string | null;
+  slug:             string | null;
+  title:            string;
+  description:      string;
+  status:           string;
+  priority:         string;
+  due_at:           string | null;
+  github_issue:     string | null;
+  assignee:         string | null;
+  labels:           string[] | null;
+  position:         number;
+  source:           string | null;
+  source_ref:       string | null;
+  created_at:       string;
+  updated_at:       string | null;
+  last_moved_at:    string;
   last_activity_at: string;
-  created_by:    string | null;
-  last_moved_by: string | null;
-  completed_at:  string | null;
-  archived:      boolean;
+  created_by:       string | null;
+  last_moved_by:    string | null;
+  completed_at:     string | null;
+  archived:         boolean;
 }
 
 export interface WorkCommentRecord {
@@ -139,106 +139,106 @@ export interface SearchHit {
 }
 
 export interface UpsertProjectInput {
-  id?:              string;
-  slug?:            string;
-  title:            string;
-  description?:     string;
-  outcome_metric?:  string | null;
-  status?:          string;
-  priority?:        string;
-  owner?:           string | null;
-  due_at?:          string | null;
-  source?:          string | null;
-  source_ref?:      string | null;
-  source_path?:     string | null;
-  github_repo?:     string | null;
+  id?:             string;
+  slug?:           string;
+  title:           string;
+  description?:    string;
+  outcome_metric?: string | null;
+  status?:         string;
+  priority?:       string;
+  owner?:          string | null;
+  due_at?:         string | null;
+  source?:         string | null;
+  source_ref?:     string | null;
+  source_path?:    string | null;
+  github_repo?:    string | null;
 }
 
 export interface UpdateProjectInput {
-  slug?:            string;
-  title?:           string;
-  description?:     string;
-  outcome_metric?:  string | null;
-  status?:          string;
-  priority?:        string;
-  owner?:           string | null;
-  due_at?:          string | null;
-  source?:          string | null;
-  source_path?:     string | null;
-  github_repo?:     string | null;
+  slug?:           string;
+  title?:          string;
+  description?:    string;
+  outcome_metric?: string | null;
+  status?:         string;
+  priority?:       string;
+  owner?:          string | null;
+  due_at?:         string | null;
+  source?:         string | null;
+  source_path?:    string | null;
+  github_repo?:    string | null;
 }
 
 export interface UpsertEpicInput {
+  id?:          string;
+  project_id:   string;
+  slug?:        string;
+  title:        string;
+  description?: string;
+  status?:      string;
+  priority?:    string;
+  position?:    number;
+  due_at?:      string | null;
+  source?:      string | null;
+  source_ref?:  string | null;
+}
+
+export interface UpdateEpicInput {
+  project_id?:  string;
+  slug?:        string;
+  title?:       string;
+  description?: string;
+  status?:      string;
+  priority?:    string;
+  position?:    number;
+  due_at?:      string | null;
+  source?:      string | null;
+  source_ref?:  string | null;
+}
+
+export interface UpsertTaskInput {
   id?:           string;
-  project_id:    string;
+  project_id?:   string;
+  epic_id?:      string | null;
+  parent_id?:    string | null;
   slug?:         string;
   title:         string;
   description?:  string;
   status?:       string;
   priority?:     string;
-  position?:     number;
+  assignee?:     string | null;
   due_at?:       string | null;
+  labels?:       string[];
+  github_issue?: string | null;
+  position?:     number;
   source?:       string | null;
   source_ref?:   string | null;
+  actor?:        string;
 }
 
-export interface UpdateEpicInput {
-  project_id?:   string;
-  slug?:         string;
+export interface UpdateTaskInput {
+  epic_id?:      string | null;
+  parent_id?:    string | null;
+  slug?:         string | null;
   title?:        string;
   description?:  string;
   status?:       string;
   priority?:     string;
-  position?:     number;
+  assignee?:     string | null;
   due_at?:       string | null;
+  labels?:       string[];
+  github_issue?: string | null;
+  position?:     number;
   source?:       string | null;
   source_ref?:   string | null;
-}
-
-export interface UpsertTaskInput {
-  id?:            string;
-  project_id?:    string;
-  epic_id?:       string | null;
-  parent_id?:     string | null;
-  slug?:          string;
-  title:          string;
-  description?:   string;
-  status?:        string;
-  priority?:      string;
-  assignee?:      string | null;
-  due_at?:        string | null;
-  labels?:        string[];
-  github_issue?:  string | null;
-  position?:      number;
-  source?:        string | null;
-  source_ref?:    string | null;
-  actor?:         string;
-}
-
-export interface UpdateTaskInput {
-  epic_id?:       string | null;
-  parent_id?:     string | null;
-  slug?:          string | null;
-  title?:         string;
-  description?:   string;
-  status?:        string;
-  priority?:      string;
-  assignee?:      string | null;
-  due_at?:        string | null;
-  labels?:        string[];
-  github_issue?:  string | null;
-  position?:      number;
-  source?:        string | null;
-  source_ref?:    string | null;
-  actor?:         string;
+  actor?:        string;
 }
 
 export interface AddCommentInput {
-  id?:      string;
-  task_id:  string;
-  body:     string;
-  author?:  string;
-  actor?:   string;
+  id?:     string;
+  task_id: string;
+  body:    string;
+  author?: string;
+  actor?:  string;
 }
 
 export interface ListOpts {
@@ -259,20 +259,20 @@ export interface ListEpicsOpts extends ListOpts {
 }
 
 export interface ListTasksOpts extends ListOpts {
-  projectId?: string;
-  epicId?:    string;
-  parentId?:  string;
-  assignee?:  string;
+  projectId?:            string;
+  epicId?:               string;
+  parentId?:             string;
+  assignee?:             string;
   semanticRoles?:        WorkLaneSemanticRole[];
   excludeSemanticRoles?: WorkLaneSemanticRole[];
   fallbackStatuses?:     string[];
 }
 
 export interface SearchOpts {
-  query:             string;
-  kind?:             WorkItemKind | string;
-  includeArchived?:  boolean;
-  limit?:            number;
+  query:            string;
+  kind?:            WorkItemKind | string;
+  includeArchived?: boolean;
+  limit?:           number;
 }
 
 // ── Tiny-ID generator (4-char) — same alphabet as observations/rules ──
@@ -377,11 +377,26 @@ async function notifyTaskStatusCommitted(
   actor?: string,
 ): Promise<void> {
   try {
-    if (['blocked', 'planning'].includes(task.status) || ['blocked', 'planning'].includes(previousStatus)) {
+    const capability = await WorkLaneDefinitionModel.runtimeCapability(task.project_id);
+    const currentRole = capability.ready
+      ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, task.status))?.semantic_role ?? 'manual'
+      : (FALLBACK_ROLE_KEYS.planning.includes(task.status)
+        ? 'planning'
+        : FALLBACK_ROLE_KEYS.blocked.includes(task.status)
+          ? 'blocked'
+          : FALLBACK_ROLE_KEYS.execution.includes(task.status) ? 'execution' : 'manual');
+    const previousRole = capability.ready
+      ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, previousStatus))?.semantic_role ?? 'manual'
+      : (FALLBACK_ROLE_KEYS.planning.includes(previousStatus)
+        ? 'planning'
+        : FALLBACK_ROLE_KEYS.blocked.includes(previousStatus)
+          ? 'blocked'
+          : FALLBACK_ROLE_KEYS.execution.includes(previousStatus) ? 'execution' : 'manual');
+    if ([currentRole, previousRole].some(role => role === 'blocked' || role === 'planning')) {
       const { PlanningCouncilService } = await import('../../services/PlanningCouncilService');
       await PlanningCouncilService.handleTaskStatusTransition(task, previousStatus, actor);
     }
-    if (task.status === 'todo' && previousStatus !== 'todo') {
+    if (currentRole === 'execution' && previousRole !== 'execution') {
       const { getTaskDispatcherService } = await import('../../services/TaskDispatcherService');
       await getTaskDispatcherService().forceCheck();
     }
@@ -394,8 +409,8 @@ async function notifyTaskStatusCommitted(
 
 export class WorkItemsModel {
   private static readonly PROJECTS = 'work_projects';
-  private static readonly EPICS    = 'work_epics';
-  private static readonly TASKS    = 'work_tasks';
+  private static readonly EPICS = 'work_epics';
+  private static readonly TASKS = 'work_tasks';
   private static readonly COMMENTS = 'work_task_comments';
 
   // ──────────────────────────────────────────────
@@ -684,17 +699,17 @@ export class WorkItemsModel {
       values.push(val);
     };
 
-    if (changes.slug           !== undefined) assign('slug', changes.slug);
-    if (changes.title          !== undefined) assign('title', changes.title);
-    if (changes.description    !== undefined) assign('description', changes.description);
+    if (changes.slug !== undefined) assign('slug', changes.slug);
+    if (changes.title !== undefined) assign('title', changes.title);
+    if (changes.description !== undefined) assign('description', changes.description);
     if (changes.outcome_metric !== undefined) assign('outcome_metric', changes.outcome_metric);
-    if (changes.status         !== undefined) { assign('status', changes.status); moved = true; }
-    if (changes.priority       !== undefined) { assign('priority', changes.priority); moved = true; }
-    if (changes.owner          !== undefined) assign('owner', changes.owner);
-    if (changes.due_at         !== undefined) { assign('due_at', changes.due_at); moved = true; }
-    if (changes.source         !== undefined) assign('source', changes.source);
-    if (changes.source_path    !== undefined) assign('source_path', changes.source_path);
-    if (changes.github_repo    !== undefined) assign('github_repo', changes.github_repo);
+    if (changes.status !== undefined) { assign('status', changes.status); moved = true }
+    if (changes.priority !== undefined) { assign('priority', changes.priority); moved = true }
+    if (changes.owner !== undefined) assign('owner', changes.owner);
+    if (changes.due_at !== undefined) { assign('due_at', changes.due_at); moved = true }
+    if (changes.source !== undefined) assign('source', changes.source);
+    if (changes.source_path !== undefined) assign('source_path', changes.source_path);
+    if (changes.github_repo !== undefined) assign('github_repo', changes.github_repo);
 
     if (moved) setClauses.push('last_moved_at = now()');
     if (setClauses.length === 1) return existing;
@@ -713,8 +728,8 @@ export class WorkItemsModel {
     const values: any[] = [];
     let idx = 1;
     WorkItemsModel.pushClosedFilter(conds, opts);
-    if (opts.status)   { conds.push(`status = $${ idx++ }`);   values.push(opts.status); }
-    if (opts.priority) { conds.push(`priority = $${ idx++ }`); values.push(opts.priority); }
+    if (opts.status) { conds.push(`status = $${ idx++ }`); values.push(opts.status) }
+    if (opts.priority) { conds.push(`priority = $${ idx++ }`); values.push(opts.priority) }
     const limit = opts.limit ?? 50;
     values.push(limit);
     return postgresClient.query<WorkProjectRecord>(
@@ -807,16 +822,16 @@ export class WorkItemsModel {
       values.push(val);
     };
 
-    if (changes.project_id  !== undefined) { assign('project_id', changes.project_id); moved = true; }
-    if (changes.slug        !== undefined) assign('slug', changes.slug);
-    if (changes.title       !== undefined) assign('title', changes.title);
+    if (changes.project_id !== undefined) { assign('project_id', changes.project_id); moved = true }
+    if (changes.slug !== undefined) assign('slug', changes.slug);
+    if (changes.title !== undefined) assign('title', changes.title);
     if (changes.description !== undefined) assign('description', changes.description);
-    if (changes.status      !== undefined) { assign('status', changes.status); moved = true; }
-    if (changes.priority    !== undefined) { assign('priority', changes.priority); moved = true; }
-    if (changes.position    !== undefined) assign('position', changes.position);
-    if (changes.due_at      !== undefined) { assign('due_at', changes.due_at); moved = true; }
-    if (changes.source      !== undefined) assign('source', changes.source);
-    if (changes.source_ref  !== undefined) assign('source_ref', changes.source_ref);
+    if (changes.status !== undefined) { assign('status', changes.status); moved = true }
+    if (changes.priority !== undefined) { assign('priority', changes.priority); moved = true }
+    if (changes.position !== undefined) assign('position', changes.position);
+    if (changes.due_at !== undefined) { assign('due_at', changes.due_at); moved = true }
+    if (changes.source !== undefined) assign('source', changes.source);
+    if (changes.source_ref !== undefined) assign('source_ref', changes.source_ref);
 
     if (moved) setClauses.push('last_moved_at = now()');
     if (setClauses.length === 1) return existing;
@@ -835,9 +850,9 @@ export class WorkItemsModel {
     const values: any[] = [];
     let idx = 1;
     WorkItemsModel.pushClosedFilter(conds, opts);
-    if (opts.projectId) { conds.push(`project_id = $${ idx++ }`); values.push(opts.projectId); }
-    if (opts.status)    { conds.push(`status = $${ idx++ }`);     values.push(opts.status); }
-    if (opts.priority)  { conds.push(`priority = $${ idx++ }`);   values.push(opts.priority); }
+    if (opts.projectId) { conds.push(`project_id = $${ idx++ }`); values.push(opts.projectId) }
+    if (opts.status) { conds.push(`status = $${ idx++ }`); values.push(opts.status) }
+    if (opts.priority) { conds.push(`priority = $${ idx++ }`); values.push(opts.priority) }
     const limit = opts.limit ?? 50;
     values.push(limit);
     return postgresClient.query<WorkEpicRecord>(
@@ -907,7 +922,7 @@ export class WorkItemsModel {
       ],
     );
     const created = rows[0];
-    if (created && ['todo', 'blocked', 'planning'].includes(created.status)) {
+    if (created) {
       await notifyTaskStatusCommitted(created, '', input.actor);
     }
     return created;
@@ -974,24 +989,24 @@ export class WorkItemsModel {
       values.push(val);
     };
 
-    if (changes.epic_id      !== undefined) { assign('epic_id', changes.epic_id); moved = true; }
-    if (nextProjectId        !== undefined) assign('project_id', nextProjectId);
-    if (changes.parent_id    !== undefined) { assign('parent_id', changes.parent_id); moved = true; }
-    if (changes.slug         !== undefined) assign('slug', changes.slug);
-    if (changes.title        !== undefined) assign('title', changes.title);
-    if (changes.description  !== undefined) assign('description', changes.description);
-    if (changes.status       !== undefined) { assign('status', changes.status); moved = true; }
-    if (changes.priority     !== undefined) { assign('priority', changes.priority); moved = true; }
+    if (changes.epic_id !== undefined) { assign('epic_id', changes.epic_id); moved = true }
+    if (nextProjectId !== undefined) assign('project_id', nextProjectId);
+    if (changes.parent_id !== undefined) { assign('parent_id', changes.parent_id); moved = true }
+    if (changes.slug !== undefined) assign('slug', changes.slug);
+    if (changes.title !== undefined) assign('title', changes.title);
+    if (changes.description !== undefined) assign('description', changes.description);
+    if (changes.status !== undefined) { assign('status', changes.status); moved = true }
+    if (changes.priority !== undefined) { assign('priority', changes.priority); moved = true }
     if (changes.assignee !== undefined || assignee !== existing.assignee) {
       assign('assignee', assignee);
       moved = true;
     }
-    if (changes.due_at       !== undefined) { assign('due_at', changes.due_at); moved = true; }
-    if (changes.labels       !== undefined) assign('labels', changes.labels);
+    if (changes.due_at !== undefined) { assign('due_at', changes.due_at); moved = true }
+    if (changes.labels !== undefined) assign('labels', changes.labels);
     if (changes.github_issue !== undefined) assign('github_issue', changes.github_issue);
-    if (changes.position     !== undefined) assign('position', changes.position);
-    if (changes.source       !== undefined) assign('source', changes.source);
-    if (changes.source_ref   !== undefined) assign('source_ref', changes.source_ref);
+    if (changes.position !== undefined) assign('position', changes.position);
+    if (changes.source !== undefined) assign('source', changes.source);
+    if (changes.source_ref !== undefined) assign('source_ref', changes.source_ref);
 
     if (changes.status !== undefined) {
       const terminal = targetLane
@@ -1083,12 +1098,12 @@ export class WorkItemsModel {
         ? `NOT (COALESCE(${ effectiveRole }, 'manual') = ANY($${ idx++ }::text[]))`
         : `NOT (status = ANY($${ idx++ }::text[]))`);
     }
-    if (opts.projectId) { conds.push(`project_id = $${ idx++ }`); values.push(opts.projectId); }
-    if (opts.epicId)    { conds.push(`epic_id = $${ idx++ }`);    values.push(opts.epicId); }
-    if (opts.parentId)  { conds.push(`parent_id = $${ idx++ }`);  values.push(opts.parentId); }
-    if (opts.status)    { conds.push(`status = $${ idx++ }`);     values.push(opts.status); }
-    if (opts.priority)  { conds.push(`priority = $${ idx++ }`);   values.push(opts.priority); }
-    if (opts.assignee)  { conds.push(`assignee = $${ idx++ }`);   values.push(opts.assignee); }
+    if (opts.projectId) { conds.push(`project_id = $${ idx++ }`); values.push(opts.projectId) }
+    if (opts.epicId) { conds.push(`epic_id = $${ idx++ }`); values.push(opts.epicId) }
+    if (opts.parentId) { conds.push(`parent_id = $${ idx++ }`); values.push(opts.parentId) }
+    if (opts.status) { conds.push(`status = $${ idx++ }`); values.push(opts.status) }
+    if (opts.priority) { conds.push(`priority = $${ idx++ }`); values.push(opts.priority) }
+    if (opts.assignee) { conds.push(`assignee = $${ idx++ }`); values.push(opts.assignee) }
     const limit = opts.limit ?? 50;
     values.push(limit);
     return postgresClient.query<WorkTaskRecord>(
@@ -1373,8 +1388,10 @@ export class WorkItemsModel {
     for (const kind of kinds) {
       const remaining = limit - hits.length;
       if (remaining <= 0) break;
-      const table = kind === 'project' ? WorkItemsModel.PROJECTS
-        : kind === 'epic' ? WorkItemsModel.EPICS
+      const table = kind === 'project'
+        ? WorkItemsModel.PROJECTS
+        : kind === 'epic'
+          ? WorkItemsModel.EPICS
           : WorkItemsModel.TASKS;
       const conds: string[] = [];
       const values: any[] = [];

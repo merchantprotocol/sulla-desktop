@@ -32,30 +32,51 @@ const generationHashMock: any = jest.fn(() => 'f'.repeat(64));
 const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({
   attributes: { enabled: true }, attributesSnapshot: { enabled: true },
 }));
+const laneRole = (status: string) => status === 'in_review'
+  ? 'review'
+  : status === 'blocked'
+    ? 'blocked'
+    : status === 'planning'
+      ? 'planning'
+      : ['todo', 'in_progress'].includes(status)
+        ? 'execution'
+        : ['done', 'cancelled'].includes(status) ? 'terminal' : 'manual';
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
 }));
 jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
   WorkTaskDispatchModel: {
-    recoverStale: recoverStaleMock,
+    recoverStale:              recoverStaleMock,
     findRecoverableInProgress: findRecoverableInProgressMock,
     recoverOrphanedInProgress: recoverOrphanedInProgressMock,
-    countRunning: countRunningMock,
-    claimNext:    claimNextMock,
-    claimNextReview: claimNextReviewMock,
-    settle:       settleMock,
-    finalizeVerification: finalizeVerificationMock,
-    failVerification: failVerificationMock,
-    touch:        touchMock,
-    finalize:       finalizeMock,
-    recordEvidence: recordEvidenceMock,
-    finalizeProtectedReview: finalizeProtectedReviewMock,
-    recordReviewLaunch:      recordReviewLaunchMock,
-    bindReviewGeneration:    bindReviewGenerationMock,
-    reviewGenerationHash:    generationHashMock,
-    reviewFingerprint:       jest.fn(() => 'e'.repeat(64)),
+    countRunning:              countRunningMock,
+    claimNext:                 claimNextMock,
+    claimNextReview:           claimNextReviewMock,
+    settle:                    settleMock,
+    finalizeVerification:      finalizeVerificationMock,
+    failVerification:          failVerificationMock,
+    touch:                     touchMock,
+    finalize:                  finalizeMock,
+    recordEvidence:            recordEvidenceMock,
+    finalizeProtectedReview:   finalizeProtectedReviewMock,
+    recordReviewLaunch:        recordReviewLaunchMock,
+    bindReviewGeneration:      bindReviewGenerationMock,
+    reviewGenerationHash:      generationHashMock,
+    reviewFingerprint:         jest.fn(() => 'e'.repeat(64)),
   },
+}));
+jest.unstable_mockModule('../../database/models/WorkLaneDefinitionModel', () => ({
+  WorkLaneDefinitionModel: {
+    runtimeCapability: jest.fn(() => Promise.resolve({ ready: false, degradedReason: 'test fallback' })),
+    resolveStatus:     jest.fn((_projectId: string, status: string) => Promise.resolve({
+      lane_key: status, semantic_role: laneRole(status),
+    })),
+    preferredLaneKey: jest.fn((_projectId: string, _role: string, compatibilityKey: string) => Promise.resolve(compatibilityKey)),
+  },
+}));
+jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({
+  LifecycleCapabilityModel: { report: jest.fn(() => Promise.resolve({})) },
 }));
 jest.unstable_mockModule('../../database/models/WorkflowModel', () => ({
   WorkflowModel: { findById: workflowFindByIdMock },
@@ -293,7 +314,9 @@ describe('TaskDispatcherService', () => {
       expect.objectContaining({ artifactType: 'code' }),
       expect.objectContaining({ taskId: 'task-1', nextState: 'in_review' }),
     );
-    expect(addCommentMock).not.toHaveBeenCalled();
+    expect(addCommentMock).toHaveBeenCalledWith(expect.objectContaining({
+      task_id: 'task-1', author: 'dispatcher',
+    }));
     expect(updateTaskMock).not.toHaveBeenCalled();
   });
 
@@ -346,6 +369,7 @@ describe('TaskDispatcherService', () => {
         project_id:  'project-1',
         epic_id:     'epic-1',
         priority:    'critical',
+        status:      'in_progress',
       },
       dispatch: {
         id: 'dispatch-2', task_id: 'task-2', agent_id: 'opus-worker', thread_id: 'thread-2',
@@ -400,7 +424,9 @@ describe('TaskDispatcherService', () => {
       'dispatcher',
     );
     expect(finalizationOrder).toEqual(['atomic-finalize', 'planning-claim']);
-    expect(addCommentMock).not.toHaveBeenCalled();
+    expect(addCommentMock).toHaveBeenCalledWith(expect.objectContaining({
+      task_id: 'task-2', author: 'dispatcher',
+    }));
     expect(updateTaskMock).not.toHaveBeenCalled();
   });
 
