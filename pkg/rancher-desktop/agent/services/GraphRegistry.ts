@@ -744,6 +744,7 @@ const HEARTBEAT_TOOLS: string[] = [
   'exec',
   'read_file',
   'write_file',
+  'browser_controller',
 ];
 
 const SUBCONSCIOUS_ENVIRONMENT_ANCHOR = `## Sulla Desktop environment
@@ -1725,6 +1726,12 @@ async function buildHeartbeatState(wsChannel: string, prompt: string): Promise<A
 
       agent:          agentConfig,
       agentLoopCount: 0,
+
+      // Heartbeat is an autonomous scheduled graph, but its browser tabs are
+      // still scoped to this fresh graph thread. The MCP bridge uses that same
+      // identity when exposing the supported in-app Browser delegation.
+      userVisibleBrowser:            true,
+      graphNativeBrowserController: true,
     },
   };
 

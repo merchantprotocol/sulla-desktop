@@ -8,6 +8,7 @@ import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from
 import { emitCodexToolEvent } from './codexToolEvents';
 import { redisClient } from '../database/RedisClient';
 import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
+import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -569,6 +570,9 @@ Every time, in this order:
 
 This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 </environment>`);
+
+    const browserController = graphBrowserControllerContext(state);
+    if (browserController) stableParts.push(browserController);
 
     const parts: string[] = [];
 
