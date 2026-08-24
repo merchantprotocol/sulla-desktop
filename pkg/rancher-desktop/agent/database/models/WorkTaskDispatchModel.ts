@@ -85,6 +85,38 @@ export interface WorkTaskDispatchRecord {
   started_at:              string;
   heartbeat_at:            string;
   finished_at:             string | null;
+  run_kind?:               string;
+  classifier_decision?:    unknown;
+  selected_agents?:        unknown[];
+  worker_child_ids?:       string[];
+  attempt_count?:          number;
+  review_count?:           number;
+  repair_count?:           number;
+  artifact_type?:          string | null;
+  artifact_location?:      string | null;
+  artifact_url?:           string | null;
+  artifact_ref?:           string | null;
+  content_hash?:           string | null;
+  reviewer_verdict?:       string | null;
+  review_evidence?:        unknown;
+  terminal_reason?:        string | null;
+}
+
+export interface WorkTaskDispatchEvidence {
+  workflowExecutionId?: string;
+  classifierDecision?:  unknown;
+  selectedAgents?:      unknown[];
+  workerChildIds?:      string[];
+  reviewCount?:         number;
+  repairCount?:         number;
+  artifactType?:        string;
+  artifactLocation?:    string;
+  artifactUrl?:         string;
+  artifactRef?:         string;
+  contentHash?:         string;
+  reviewerVerdict?:     string;
+  reviewEvidence?:      unknown;
+  terminalReason?:      string;
 }
 
 export interface ClaimedDispatch {
