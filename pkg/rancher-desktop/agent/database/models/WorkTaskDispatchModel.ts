@@ -226,6 +226,23 @@ export class WorkTaskDispatchModel {
               WHERE c.task_id = t.id AND c.stage = 'in_progress' AND c.status = 'active'
            )
            AND NOT EXISTS (
+             SELECT 1
+               FROM work_tasks downstream
+               JOIN work_epics downstream_epic ON downstream_epic.id = downstream.epic_id
+               JOIN work_projects downstream_project ON downstream_project.id = downstream_epic.project_id
+              WHERE downstream.archived = false
+                AND downstream.status = 'in_review'
+                AND downstream_epic.archived = false
+                AND downstream_project.archived = false
+                AND NOT (downstream_project.status = ANY($1::text[]))
+                AND NOT (downstream_epic.status = ANY($1::text[]))
+                AND (downstream.assignee IS NULL OR LOWER(downstream.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+                AND NOT EXISTS (
+                  SELECT 1 FROM unnest(COALESCE(downstream.labels, '{}')) AS downstream_label
+                   WHERE LOWER(downstream_label) = ANY($3::text[])
+                )
+           )
+           AND NOT EXISTS (
              SELECT 1 FROM work_tasks child
               WHERE child.parent_id = t.id
                 AND child.archived = false
@@ -411,6 +428,33 @@ export class WorkTaskDispatchModel {
         WHERE status = 'running' AND ($1::text IS NULL OR kind = $1)`,
       [kind ?? null],
     );
+    return Number(row?.count || 0);
+  }
+
+  /**
+   * Count autonomous work already at the review stage, including work with an
+   * active verification lease. Any such row is farther down the conveyor than
+   * todo, so the dispatcher uses this as a hard backpressure gate before
+   * claiming fresh execution work.
+   */
+  static async countReviewBacklog(): Promise<number> {
+    const row = await postgresClient.queryOne<{ count: string }>(`
+      SELECT COUNT(*)::text AS count
+        FROM work_tasks t
+        JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = e.project_id
+       WHERE t.archived = false
+         AND t.status = 'in_review'
+         AND e.archived = false
+         AND p.archived = false
+         AND NOT (p.status = ANY($1::text[]))
+         AND NOT (e.status = ANY($1::text[]))
+         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+         AND NOT EXISTS (
+           SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
+            WHERE LOWER(label) = ANY($2::text[])
+         )
+    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
     return Number(row?.count || 0);
   }
 
