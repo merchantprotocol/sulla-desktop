@@ -8,6 +8,7 @@
  */
 
 import { PROJECT_TASK_PLANNING_WORKFLOW_ID } from '../../database/models/WorkTaskPlanningRunModel';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from './defaultCoreAgent';
 
 export const PLAN_PROJECT_TASK_ID = PROJECT_TASK_PLANNING_WORKFLOW_ID;
 
@@ -32,7 +33,7 @@ function plannerNode(
       category: 'agent',
       subtype:  'agent',
       config:   {
-        agentId:            'opus-worker',
+        agentId:            DEFAULT_CORE_ROUTINE_AGENT_ID,
         agentName:          label,
         additionalPrompt:   SAFETY,
         successCriteria:    'A grounded, executable planning recommendation with evidence, risks, verification, and exact gates.',
@@ -56,10 +57,10 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
     'Automatically runs an independent three-planner council for a Projects task in blocked/planning, ' +
     'synthesizes one executable plan, persists it, and returns reversible work to the dispatcher. ' +
     'Locked core routine; visible and disable-able, but not editable, archivable, or deletable.',
-  version:   1,
+  version:   2,
   enabled:   true,
   createdAt: '2026-08-23T00:00:00.000Z',
-  updatedAt: '2026-08-23T00:00:00.000Z',
+  updatedAt: '2026-08-24T20:32:00.000Z',
 
   edges: [
     { id: 'e-plan-trigger-fanout', source: 'node-plan-trigger', target: 'node-plan-fanout', animated: true },
@@ -138,7 +139,7 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
         category: 'agent',
         subtype:  'agent',
         config:   {
-          agentId:            'opus-worker',
+          agentId:            DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:          'Independent Planning Synthesizer',
           additionalPrompt:   SAFETY,
           successCriteria:    'One evidence-grounded final plan with an explicit TODO or BLOCKED disposition.',
@@ -162,7 +163,7 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
         category: 'agent',
         subtype:  'agent',
         config:   {
-          agentId:            'opus-worker',
+          agentId:            DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:          'Planning Council Recordkeeper',
           additionalPrompt:   SAFETY,
           successCriteria:    'The final plan is appended once and the task is moved to the correct Projects lane.',

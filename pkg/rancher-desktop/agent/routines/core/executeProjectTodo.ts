@@ -9,6 +9,8 @@
  * the human's name.
  */
 
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from './defaultCoreAgent';
+
 export const EXECUTE_PROJECT_TODO_ID = 'core-routine-execute-project-todo';
 
 const SAFETY = [
@@ -29,7 +31,7 @@ const AGENT_NODE = (id: string, label: string, y: number, instructions: string, 
     category: 'agent',
     subtype:  'agent',
     config:   {
-      agentId:                  'opus-worker',
+      agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
       agentName:                label,
       additionalPrompt:         SAFETY,
       successCriteria:          success,
@@ -43,12 +45,12 @@ export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
   id:          EXECUTE_PROJECT_TODO_ID,
   name:        'Execute Projects Todo',
   description: 'Locked core routine for atomic todo execution, capability-based worker fan-out, independent acceptance review, repair/replan routing, and durable artifact custody.',
-  version:     1,
+  version:     2,
   // Ship dark. The human enables the protected routine only after shadow and
   // low-risk acceptance passes; the legacy owner remains the default meanwhile.
   enabled:     false,
   createdAt:   '2026-08-23T19:00:00.000Z',
-  updatedAt:   '2026-08-23T19:00:00.000Z',
+  updatedAt:   '2026-08-24T20:32:00.000Z',
   nodes:       [
     {
       id:       'node-todo-trigger',
@@ -68,14 +70,14 @@ export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
       'node-todo-classify',
       'Classify Work',
       140,
-      `${ SAFETY } Inspect the bounded Projects task snapshot and available configured agents. Classify it as coding/repository, research/analysis, marketing/content, operations/administration, design/media, data/spreadsheet, or mixed/decomposable. Choose 1-10 existing agent IDs based on their real capabilities. Split only independent work; record dependencies where ordering is required. Return JSON only with keys workType, selectedAgents (array of {agentId,reason,assignment,dependsOn}), expectedArtifacts, validation, forbiddenActions, and authoritativeDestination.`,
-      'A valid dispatch strategy names capability-matched agents, dependencies, artifacts, validation, gates, and destination.',
+      `${ SAFETY } Inspect the bounded Projects task snapshot. Classify it as coding/repository, research/analysis, marketing/content, operations/administration, design/media, data/spreadsheet, or mixed/decomposable. Choose 1-10 independent worker assignments based on the work itself; every assignment must use agentId ${ DEFAULT_CORE_ROUTINE_AGENT_ID } so role instructions cannot replace the default Sulla Desktop prompt or tools. Split only independent work; record dependencies where ordering is required. Return JSON only with keys workType, selectedAgents (array of {agentId,reason,assignment,dependsOn}), expectedArtifacts, validation, forbiddenActions, and authoritativeDestination.`,
+      'A valid dispatch strategy uses only the default Sulla Desktop agent profile and names dependencies, artifacts, validation, gates, and destination.',
     ),
     AGENT_NODE(
       'node-todo-workers',
       'Dynamic Worker Fan-out',
       300,
-      `${ SAFETY } Original claimed task: {{trigger}} Classifier decision: {{Classify Work}}. Use the Sulla agent catalog to launch every selected worker, up to 10, in parallel only when assignments are independent and sequentially when dependencies require it. Give each worker the original acceptance criteria, its exact assignment, validation evidence required, forbidden actions, and artifact destination. Wait for every worker, reconcile their results without hiding failures, and return JSON only with keys childIds, workers, combinedOutcome, artifacts, verification, and unresolved. Coding workers must use isolated worktrees and may stop only after commit + Sulla GitHub push + remote draft PR. Non-code workers may update the named non-Projects authoritative tracker and return its durable ID or URL. Neither this node nor its child workers may mutate the originating Projects task before controller finalization.`,
+      `${ SAFETY } Original claimed task: {{trigger}} Classifier decision: {{Classify Work}}. Launch every selected assignment as a separate ${ DEFAULT_CORE_ROUTINE_AGENT_ID } worker instance, up to 10, in parallel only when assignments are independent and sequentially when dependencies require it. Never select or name a custom agent profile. Give each worker the original acceptance criteria, its exact assignment, validation evidence required, forbidden actions, and artifact destination. Wait for every worker, reconcile their results without hiding failures, and return JSON only with keys childIds, workers, combinedOutcome, artifacts, verification, and unresolved. Coding workers must use isolated worktrees and may stop only after commit + Sulla GitHub push + remote draft PR. Non-code workers may update the named non-Projects authoritative tracker and return its durable ID or URL. Neither this node nor its child workers may mutate the originating Projects task before controller finalization.`,
       'All selected workers finish or report a concrete failure, with child IDs and durable artifact evidence retained.',
     ),
     AGENT_NODE(

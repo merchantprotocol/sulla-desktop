@@ -1,7 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 
 import { createPlaybookState } from '../../../workflow/WorkflowPlaybook';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../defaultCoreAgent';
 import { EXECUTE_PROJECT_TODO_DEFINITION, EXECUTE_PROJECT_TODO_ID } from '../executeProjectTodo';
+import { CORE_ROUTINES } from '../index';
 
 describe('Execute Projects Todo core routine', () => {
   it('is a connected locked-core-compatible graph with the complete custody lifecycle', () => {
@@ -27,7 +29,8 @@ describe('Execute Projects Todo core routine', () => {
   it('requires capability selection, independent inspection, #667 replan, and durable remote evidence', () => {
     const text = JSON.stringify(EXECUTE_PROJECT_TODO_DEFINITION);
 
-    expect(text).toContain('Choose 1-10 existing agent IDs based on their real capabilities');
+    expect(text).toContain(`every assignment must use agentId ${ DEFAULT_CORE_ROUTINE_AGENT_ID }`);
+    expect(text).toContain('Never select or name a custom agent profile');
     expect(text).toContain('You did not execute the work');
     expect(text).toContain('core-routine-plan-project-task');
     expect(text).toContain('remote draft PR');
@@ -37,5 +40,15 @@ describe('Execute Projects Todo core routine', () => {
     expect(text).toContain('Do not call any project write tool');
     expect(text).toContain('dispatcher controller will validate the originating task and live canonical artifact');
     expect(text).not.toContain('recorded=true');
+  });
+
+  it('pins every baked-in core routine agent node to the default Sulla Desktop profile', () => {
+    for (const routine of CORE_ROUTINES) {
+      const agentNodes = routine.nodes.filter((node: any) => node.data?.subtype === 'agent');
+      expect(agentNodes.length).toBeGreaterThan(0);
+      expect(agentNodes.every((node: any) =>
+        node.data.config.agentId === DEFAULT_CORE_ROUTINE_AGENT_ID,
+      )).toBe(true);
+    }
   });
 });

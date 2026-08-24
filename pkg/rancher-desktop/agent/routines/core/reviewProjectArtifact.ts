@@ -7,18 +7,14 @@
  * evidence and state transition in one transaction.
  */
 
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from './defaultCoreAgent';
+
 export const REVIEW_PROJECT_ARTIFACT_ID = 'core-routine-review-project-artifact';
 
 export const REVIEWER_NODE_IDS = [
   'node-review-code',
   'node-review-deliverable',
   'node-review-risk',
-] as const;
-
-export const REVIEWER_AGENT_IDS = [
-  'code-researcher',
-  'thinking-worker',
-  'technical-architect',
 ] as const;
 
 export const ARTIFACT_VERIFICATION_ADAPTERS = {
@@ -41,7 +37,6 @@ const READ_ONLY = [
 const reviewerNode = (
   id: string,
   label: string,
-  agentId: string,
   x: number,
   instructions: string,
 ) => ({
@@ -53,7 +48,7 @@ const reviewerNode = (
     category: 'agent',
     subtype:  'agent',
     config:   {
-      agentId,
+      agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
       agentName:                label,
       additionalPrompt:         READ_ONLY,
       inheritParentToolPolicy:  true,
@@ -68,10 +63,10 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
   id:          REVIEW_PROJECT_ARTIFACT_ID,
   name:        'Review Projects Artifact',
   description: 'Locked core routine that owns in_review: generation-safe claims, independent artifact-aware review, one synthesized verdict, durable evidence, and deterministic disposition.',
-  version:     1,
+  version:     2,
   enabled:     true,
   createdAt:   '2026-08-23T19:30:00.000Z',
-  updatedAt:   '2026-08-23T19:30:00.000Z',
+  updatedAt:   '2026-08-24T20:32:00.000Z',
   nodes:       [
     {
       id:       'node-review-trigger',
@@ -96,7 +91,7 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
         category: 'agent',
         subtype:  'agent',
         config:   {
-          agentId:                  'codex-test',
+          agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:                'Review Classifier',
           additionalPrompt:         READ_ONLY,
           inheritParentToolPolicy:  true,
@@ -120,21 +115,18 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
     reviewerNode(
       'node-review-code',
       'Code and PR Reviewer',
-      'code-researcher',
       160,
       'For code or mixed work, inspect the remote PR state, draft flag, base, exact head SHA, diff, commits, callers and consumers, focused test/typecheck/lint/build evidence, migrations, backward compatibility, unrelated changes, and tenant/security boundaries. Re-resolve the remote head before returning. For non-code work, mark this lens not applicable.',
     ),
     reviewerNode(
       'node-review-deliverable',
       'Authoritative Deliverable Reviewer',
-      'thinking-worker',
       500,
       'For documentation, research, marketing, data, design, operations, or mixed work, open the authoritative artifact and verify readability, completeness, stable identity, provenance, and every acceptance criterion. Never treat unpublished outbound work as sent. For pure code work, still verify PR description and Projects custody, then limit findings to that lens.',
     ),
     reviewerNode(
       'node-review-risk',
       'Regression and Authority Reviewer',
-      'technical-architect',
       840,
       'Independently challenge the plan and artifact for missed consumers, hidden coupling, security/privacy/tenant boundaries, destructive behavior, authority violations, rollout/rollback gaps, and tests that do not prove the claim. Distinguish reversible defects, wrong-plan failures, genuine external waits, and irreversible human-only gates.',
     ),
@@ -158,7 +150,7 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
         category: 'agent',
         subtype:  'agent',
         config:   {
-          agentId:                  'codex-test',
+          agentId:                  DEFAULT_CORE_ROUTINE_AGENT_ID,
           agentName:                'Review Verdict Synthesizer',
           additionalPrompt:         READ_ONLY,
           inheritParentToolPolicy:  true,

@@ -29,7 +29,6 @@ const resolvePullRequestHeadsMock: any = jest.fn();
 const bindReviewGenerationMock: any = jest.fn();
 const generationHashMock: any = jest.fn(() => 'f'.repeat(64));
 const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({ attributesSnapshot: { enabled: true } }));
-const findAgentDirMock: any = jest.fn(() => '/agents/opus-worker');
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
@@ -86,9 +85,6 @@ jest.unstable_mockModule('../GitHubPullRequestHeadService', () => ({
   resolvePullRequestHead:  resolvePullRequestHeadMock,
   resolvePullRequestHeads: resolvePullRequestHeadsMock,
 }));
-jest.unstable_mockModule('../../utils/sullaPaths', () => ({
-  findAgentDir: findAgentDirMock,
-}));
 jest.unstable_mockModule('../../tools/registry', () => ({
   toolRegistry: {
     convertToolToLLM: jest.fn((name: string) => Promise.resolve({
@@ -116,7 +112,6 @@ describe('TaskDispatcherService', () => {
     bindReviewGenerationMock.mockResolvedValue({
       generationHash: 'f'.repeat(64), excludedAgentIds: ['technical-architect'], suppressed: false,
     });
-    findAgentDirMock.mockReturnValue('/agents/opus-worker');
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
       if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
@@ -225,8 +220,7 @@ describe('TaskDispatcherService', () => {
       .toBeLessThan(countRunningMock.mock.invocationCallOrder[0]);
   });
 
-  it('dispatches canonical Knowledge/Projects role actors without a filesystem persona', async() => {
-    findAgentDirMock.mockReturnValue(null);
+  it('ignores custom dispatcher profile settings and pins work to sulla-desktop', async() => {
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
       if (key === 'taskDispatcherAgentId') return Promise.resolve('project-reader');
@@ -238,7 +232,7 @@ describe('TaskDispatcherService', () => {
     await service.initialize();
     service.destroy();
 
-    expect(claimNextMock).toHaveBeenCalledWith('project-reader');
+    expect(claimNextMock).toHaveBeenCalledWith('sulla-desktop', expect.stringContaining('task-dispatcher-'));
   });
 
   it('claims mechanically, executes the assigned worker, and returns completed work for review', async() => {
@@ -252,7 +246,7 @@ describe('TaskDispatcherService', () => {
         priority:    'high',
       },
       dispatch: {
-        id: 'dispatch-1', task_id: 'task-1', agent_id: 'opus-worker', thread_id: 'thread-1',
+        id: 'dispatch-1', task_id: 'task-1', agent_id: 'sulla-desktop', thread_id: 'thread-1',
       },
       stage_claim: { id: 'stage-claim-1' },
     };
@@ -271,7 +265,7 @@ describe('TaskDispatcherService', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     service.destroy();
 
-    expect(claimNextMock).toHaveBeenCalledWith('opus-worker', expect.stringContaining('task-dispatcher-'));
+    expect(claimNextMock).toHaveBeenCalledWith('sulla-desktop', expect.stringContaining('task-dispatcher-'));
     expect(executeMock).toHaveBeenCalled();
     expect(settleMock).toHaveBeenCalledWith(
       'dispatch-1', 'completed', 'Draft PR opened and tests passed.', undefined,
@@ -315,7 +309,7 @@ describe('TaskDispatcherService', () => {
       dispatch: {
         id:        `verify-${ i }`,
         task_id:   `task-${ i }`,
-        agent_id:  'codex-test',
+        agent_id:  'sulla-desktop',
         thread_id: `verify-thread-${ i }`,
         kind:      'verification',
         attempt:   1,
@@ -347,7 +341,7 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(claimNextReviewMock).toHaveBeenCalledTimes(4);
-    expect(claimNextReviewMock).toHaveBeenCalledWith('codex-test', [], expect.stringContaining('task-dispatcher-'));
+    expect(claimNextReviewMock).toHaveBeenCalledWith('sulla-desktop', [], expect.stringContaining('task-dispatcher-'));
     expect(executeMock).toHaveBeenCalledTimes(3);
     expect(finalizeVerificationMock).toHaveBeenCalledTimes(3);
     expect(finalizeVerificationMock).toHaveBeenCalledWith(
@@ -380,7 +374,7 @@ describe('TaskDispatcherService', () => {
         dispatch: {
           id:        'verify-5',
           task_id:   'task-5',
-          agent_id:  'codex-test',
+          agent_id:  'sulla-desktop',
           thread_id: 'v5',
           kind:      'verification',
           attempt:   1,
@@ -416,7 +410,7 @@ describe('TaskDispatcherService', () => {
     expect(finalizeVerificationMock).not.toHaveBeenCalled();
   });
 
-  it('runs the locked review council, excludes the execution worker, and settles one synthesized verdict', async() => {
+  it('runs separate default-profile reviewer executions and settles one synthesized verdict', async() => {
     const hash = 'd'.repeat(40);
     claimNextReviewMock
       .mockResolvedValueOnce({
@@ -432,11 +426,11 @@ describe('TaskDispatcherService', () => {
         dispatch: {
           id:              'verify-core',
           task_id:         'task-core',
-          agent_id:        'codex-test',
+          agent_id:        'sulla-desktop',
           thread_id:       'core-thread',
           kind:            'verification',
           attempt:         1,
-          origin_agent_id: 'technical-architect',
+          origin_agent_id: 'sulla-desktop',
         },
         stage_claim: { id: 'review-stage-core' },
       })
@@ -492,17 +486,17 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(recordReviewLaunchMock).toHaveBeenCalledWith(
-      'verify-core', expect.stringMatching(/^wfp-/), ['code-researcher', 'thinking-worker'],
+      'verify-core', expect.stringMatching(/^wfp-/), ['sulla-desktop'],
     );
     const state = executeMock.mock.calls[0][0];
-    expect(state.metadata.activeWorkflow.definition.nodes.some(
-      (node: any) => node.data?.config?.agentId === 'technical-architect',
-    )).toBe(false);
+    expect(state.metadata.activeWorkflow.definition.nodes
+      .filter((node: any) => node.data?.subtype === 'agent')
+      .every((node: any) => node.data?.config?.agentId === 'sulla-desktop')).toBe(true);
     expect(state.metadata.verifierReadOnly).toBe(true);
     expect(finalizeProtectedReviewMock).toHaveBeenCalledWith(
       'verify-core', 'PASS', expect.objectContaining({
         workflowExecutionId: 'wfp-review-1',
-        reviewerAgentIds:    ['code-researcher', 'thinking-worker'],
+        reviewerAgentIds:    ['sulla-desktop'],
         artifactHash:        hash,
       }), expect.any(Array),
     );
@@ -555,7 +549,7 @@ describe('TaskDispatcherService', () => {
     claimNextReviewMock
       .mockResolvedValueOnce({
         task:     { id: 'task-4', title: 'Review', description: '', project_id: 'p', epic_id: 'e', priority: 'p0' },
-        dispatch: { id: 'verify-4', task_id: 'task-4', agent_id: 'codex-test', thread_id: 'v4', kind: 'verification', attempt: 1 },
+        dispatch: { id: 'verify-4', task_id: 'task-4', agent_id: 'sulla-desktop', thread_id: 'v4', kind: 'verification', attempt: 1 },
         stage_claim: { id: 'review-stage-4' },
       })
       .mockResolvedValue(null);

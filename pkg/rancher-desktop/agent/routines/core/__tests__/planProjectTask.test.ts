@@ -6,6 +6,7 @@ import {
   createPlaybookState,
   processNextStep,
 } from '../../../workflow/WorkflowPlaybook';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../defaultCoreAgent';
 import { PLAN_PROJECT_TASK_DEFINITION, PLAN_PROJECT_TASK_ID } from '../planProjectTask';
 
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
@@ -29,7 +30,9 @@ describe('locked Projects planning routine', () => {
     expect(nodes.get('node-plan-synthesis')?.data.subtype).toBe('agent');
     expect(nodes.get('node-plan-persist')?.data.subtype).toBe('agent');
     expect(nodes.get('node-plan-done')?.data.subtype).toBe('response');
-    expect(planners.every(id => nodes.get(id)?.data.config.agentId === 'opus-worker')).toBe(true);
+    expect(planners.every(id => nodes.get(id)?.data.config.agentId === DEFAULT_CORE_ROUTINE_AGENT_ID)).toBe(true);
+    expect(nodes.get('node-plan-synthesis')?.data.config.agentId).toBe(DEFAULT_CORE_ROUTINE_AGENT_ID);
+    expect(nodes.get('node-plan-persist')?.data.config.agentId).toBe(DEFAULT_CORE_ROUTINE_AGENT_ID);
 
     for (const plannerId of planners) {
       const prompt = String(nodes.get(plannerId)?.data.config.orchestratorInstructions);

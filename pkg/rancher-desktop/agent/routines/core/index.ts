@@ -15,6 +15,7 @@ import { DREAM_ABOUT_HUMAN_DEFINITION } from './dreamAboutHuman';
 import { REVIEW_PROJECT_ARTIFACT_DEFINITION } from './reviewProjectArtifact';
 import { PLAN_PROJECT_TASK_DEFINITION } from './planProjectTask';
 import { EXECUTE_PROJECT_TODO_DEFINITION } from './executeProjectTodo';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from './defaultCoreAgent';
 
 export const CORE_ROUTINES: readonly Record<string, any>[] = [
   DREAM_ABOUT_HUMAN_DEFINITION,
@@ -22,3 +23,14 @@ export const CORE_ROUTINES: readonly Record<string, any>[] = [
   PLAN_PROJECT_TASK_DEFINITION,
   EXECUTE_PROJECT_TODO_DEFINITION,
 ];
+
+for (const routine of CORE_ROUTINES) {
+  const customAgentNode = routine.nodes?.find((node: any) =>
+    node.data?.subtype === 'agent' && node.data?.config?.agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID,
+  );
+  if (customAgentNode) {
+    throw new Error(
+      `Locked core routine ${ routine.id } node ${ customAgentNode.id } must use ${ DEFAULT_CORE_ROUTINE_AGENT_ID }`,
+    );
+  }
+}
