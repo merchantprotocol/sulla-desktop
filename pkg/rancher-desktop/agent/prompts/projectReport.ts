@@ -132,7 +132,7 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
 
   lines.push('');
   lines.push(`## 🧭 Blocked tasks — recovery planning (${ blocked.length } of ${ blockedRows.length })`);
-  lines.push('_These are recovery-planning work, not a human review queue. After dispatching across actionable tasks, Heartbeat should use remaining capacity on the oldest blocked task in the highest priority block: move it to `planning` and dispatch a council of independent high-reasoning planners. Cross-check their proposals, choose the strongest reversible path, record the decision, move the task to `in_progress`, and execute it. Escalate only a genuinely irreversible/high-blast action after staging the reversible work. If no execution path exists, return it to `blocked`; the new activity rotates it to the bottom of its priority block._');
+  lines.push('_These are recovery-planning work, not a human review queue. A committed transition to `blocked` or `planning` triggers the locked core planning routine, which owns the independent council, synthesis, final-plan comment, and return to `todo/dispatcher`. Heartbeat must not launch a second council; supervise failed/stale runs and verify the persisted plan._');
   if (!blocked.length) {
     lines.push('_No blocked tasks in scope._');
   } else {
@@ -145,7 +145,7 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   if (planningRows.length) {
     lines.push('');
     lines.push(`## 🛠 Planning in flight (${ planning.length } of ${ planningRows.length })`);
-    lines.push('_Do not dispatch these again. A planning agent already owns the recovery pass._');
+    lines.push('_Do not dispatch these again. The locked core routine already owns the task-scoped planning council._');
     for (const t of planning) {
       const who = t.assignee ? ` · ${ t.assignee }` : '';
       lines.push(`- [${ t.priority }] **${ t.title }** — ${ context(t) }${ who } (id ${ t.id })`);

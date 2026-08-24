@@ -2108,6 +2108,15 @@ export class PlaybookController<TState = any> {
         playbookState: slimPlaybook as any,
         nodeOutput,
       });
+
+      // Planning councils use a task-scoped lease instead of the generic
+      // workflow-wide concurrency guard. A durable checkpoint proves the
+      // council is alive, so refresh that lease before stale recovery can
+      // reclaim it and launch a duplicate council for the same task.
+      if (playbook.workflowId === 'core-routine-plan-project-task') {
+        const { WorkTaskPlanningRunModel } = await import('../database/models/WorkTaskPlanningRunModel');
+        await WorkTaskPlanningRunModel.touchByExecution(playbook.executionId);
+      }
     } catch (err) {
       console.warn(`[PlaybookController:Checkpoint] Failed to save checkpoint for "${ nodeLabel }":`, err);
     }
@@ -2180,6 +2189,18 @@ export class PlaybookController<TState = any> {
       }
     } catch (e) {
       console.warn('[PlaybookController] Failed to update workflow execution status:', e);
+    }
+
+    // The Projects planning ledger is task-scoped (unlike the generic
+    // workflow ledger). Reconcile a workflow that stopped before its
+    // recordkeeper moved the task out of planning, so no task is stranded.
+    if (playbook.workflowId === 'core-routine-plan-project-task') {
+      try {
+        const { PlanningCouncilService } = await import('../services/PlanningCouncilService');
+        await PlanningCouncilService.handleWorkflowFinished(playbook.executionId, outcome, error);
+      } catch (e) {
+        console.warn('[PlaybookController] Failed to reconcile planning council:', e);
+      }
     }
 
     const nodeLines = nodeSummaries
