@@ -4,7 +4,8 @@ import { Pool } from 'pg';
 
 import { postgresClient } from '../../PostgresClient';
 import { up as workItemsMigration } from '../../migrations/0044_create_work_items_tables';
-import { down as dependencyMigrationDown, up as dependencyMigration } from '../../migrations/0078_create_work_task_dependencies';
+import { up as schedulingMigration } from '../../migrations/0075_add_project_views_and_scheduling';
+import { down as dependencyMigrationDown, up as dependencyMigration } from '../../migrations/0083_create_work_task_dependencies';
 import { WorkTaskDependencyModel } from '../WorkTaskDependencyModel';
 
 import mockModules from '@pkg/utils/testUtils/mockModules';
@@ -60,7 +61,8 @@ describeDatabase('WorkTaskDependencyModel on a migrated PostgreSQL database', ()
     pool = new Pool({ connectionString: databaseUrl, max: 8 });
     await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
     await pool.query(workItemsMigration);
-    await pool.query(dependencyMigration);
+    await schedulingMigration(pool as any);
+    await dependencyMigration(pool as any);
     routeModelToTestDatabase();
   });
 
@@ -74,18 +76,20 @@ describeDatabase('WorkTaskDependencyModel on a migrated PostgreSQL database', ()
     await seedTasks();
   });
 
-  it('migration up creates the table (idempotent) and down drops it', async() => {
+  it('migration upgrades the 0075 table and down restores its legacy shape', async() => {
     const cols = await pool.query(
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'work_task_dependencies'`);
     expect(cols.rows.map(r => r.column_name)).toEqual(expect.arrayContaining([
       'id', 'dependent_task_id', 'depends_on_task_id', 'relation_type',
       'acceptance_condition', 'created_by', 'created_at', 'updated_at', 'archived_at',
     ]));
-    await pool.query(dependencyMigration); // idempotent
-    await pool.query(dependencyMigrationDown);
-    const gone = await pool.query(`SELECT to_regclass('work_task_dependencies') AS t`);
-    expect(gone.rows[0].t).toBeNull();
-    await pool.query(dependencyMigration); // restore for later tests
+    await dependencyMigrationDown(pool as any);
+    const legacy = await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'work_task_dependencies'`);
+    expect(legacy.rows.map(r => r.column_name)).toEqual(expect.arrayContaining([
+      'task_id', 'depends_on_task_id', 'archived',
+    ]));
+    await dependencyMigration(pool as any); // restore for later tests
   });
 
   it('creates a dependency with each relation type', async() => {
