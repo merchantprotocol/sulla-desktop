@@ -437,6 +437,12 @@ export interface IpcMainInvokeEvents {
   };
   'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
   'work-items:activity':        (opts?: { projectId?: string; author?: string; limit?: number }) => import('@pkg/agent/database/models/WorkItemsModel').WorkActivityRecord[];
+  'work-items:automation-status': () => {
+    limits: import('@pkg/agent/services/ProjectAutomationWipLimits').WipLimits;
+    counts: import('@pkg/agent/services/ProjectAutomationWipLimits').RoleCounts;
+    decision: import('@pkg/agent/services/ProjectAutomationWipLimits').BackpressureDecision;
+    at: string;
+  };
   'work-items:knowledge-list':  (input: { itemKind: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeWorkItemKind; itemId: string; includeInherited?: boolean; includeArchived?: boolean; limit?: number }) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').LinkedKnowledgeRecord[];
   'work-items:knowledge-link':  (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkRecord;
   'work-items:knowledge-unlink': (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => boolean;

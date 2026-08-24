@@ -89,6 +89,13 @@ export default defineComponent({
       routineConcurrencyDreaming:  1,
       routineConcurrencyOther:     2,
       routineConcurrencyTotalLimit: 0,
+      projectWipBacklog:   0,
+      projectWipPlanning:  2,
+      projectWipExecution: 3,
+      projectWipReview:    3,
+      projectWipBlocked:   3,
+      projectWipTerminal:  0,
+      projectWipManual:    0,
       // Heartbeat settings
       heartbeatEnabled:      true,
       heartbeatDelayMinutes: 15,
@@ -233,6 +240,13 @@ export default defineComponent({
     this.routineConcurrencyDreaming  = Number(await SullaSettingsModel.get('routineConcurrency_dreaming', 1));
     this.routineConcurrencyOther     = Number(await SullaSettingsModel.get('routineConcurrency_other', 2));
     this.routineConcurrencyTotalLimit = Number(await SullaSettingsModel.get('routineConcurrencyTotalLimit', 0));
+    this.projectWipBacklog   = Number(await SullaSettingsModel.get('projectAutomation.wip.backlog', 0));
+    this.projectWipPlanning  = Number(await SullaSettingsModel.get('projectAutomation.wip.planning', 2));
+    this.projectWipExecution = Number(await SullaSettingsModel.get('projectAutomation.wip.execution', 3));
+    this.projectWipReview    = Number(await SullaSettingsModel.get('projectAutomation.wip.review', 3));
+    this.projectWipBlocked   = Number(await SullaSettingsModel.get('projectAutomation.wip.blocked', 3));
+    this.projectWipTerminal  = Number(await SullaSettingsModel.get('projectAutomation.wip.terminal', 0));
+    this.projectWipManual    = Number(await SullaSettingsModel.get('projectAutomation.wip.manual', 0));
     this.botName = await SullaSettingsModel.get('botName', 'Sulla');
     this.primaryUserName = await SullaSettingsModel.get('primaryUserName', '');
     // Load provider/model state from ModelProviderService (source of truth)
@@ -750,6 +764,13 @@ export default defineComponent({
           routineConcurrency_dreaming:  Number(this.routineConcurrencyDreaming),
           routineConcurrency_other:     Number(this.routineConcurrencyOther),
           routineConcurrencyTotalLimit: Number(this.routineConcurrencyTotalLimit),
+          'projectAutomation.wip.backlog':   Number(this.projectWipBacklog),
+          'projectAutomation.wip.planning':  Number(this.projectWipPlanning),
+          'projectAutomation.wip.execution': Number(this.projectWipExecution),
+          'projectAutomation.wip.review':    Number(this.projectWipReview),
+          'projectAutomation.wip.blocked':   Number(this.projectWipBlocked),
+          'projectAutomation.wip.terminal':  Number(this.projectWipTerminal),
+          'projectAutomation.wip.manual':    Number(this.projectWipManual),
           heartbeatPrompt:       String(this.heartbeatPrompt || ''),
           heartbeatProvider:     String(this.heartbeatProvider || 'default'),
           subconsciousProvider:  String(this.subconsciousProvider || 'default'),
@@ -770,6 +791,13 @@ export default defineComponent({
           routineConcurrency_dreaming:  'number',
           routineConcurrency_other:     'number',
           routineConcurrencyTotalLimit: 'number',
+          'projectAutomation.wip.backlog':   'number',
+          'projectAutomation.wip.planning':  'number',
+          'projectAutomation.wip.execution': 'number',
+          'projectAutomation.wip.review':    'number',
+          'projectAutomation.wip.blocked':   'number',
+          'projectAutomation.wip.terminal':  'number',
+          'projectAutomation.wip.manual':    'number',
         };
 
         for (const [key, value] of Object.entries(settingsToSave)) {
@@ -1734,6 +1762,39 @@ export default defineComponent({
 
             </p>
 
+          </div>
+
+          <div
+            v-if="automatedProjectManagementEnabled"
+            class="setting-group"
+          >
+            <label class="setting-label">Projects work-in-progress limits by semantic stage</label>
+            <div style="display:flex; flex-wrap:wrap; gap:12px;">
+              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Backlog intake
+                <input v-model.number="projectWipBacklog" type="number" class="text-input" min="0" max="20" style="width:80px;">
+              </label>
+              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Planning
+                <input v-model.number="projectWipPlanning" type="number" class="text-input" min="0" max="20" style="width:80px;">
+              </label>
+              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Execution
+                <input v-model.number="projectWipExecution" type="number" class="text-input" min="0" max="20" style="width:80px;">
+              </label>
+              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Review
+                <input v-model.number="projectWipReview" type="number" class="text-input" min="0" max="20" style="width:80px;">
+              </label>
+              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Blocked recovery
+                <input v-model.number="projectWipBlocked" type="number" class="text-input" min="0" max="20" style="width:80px;">
+              </label>
+              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Terminal handoff
+                <input v-model.number="projectWipTerminal" type="number" class="text-input" min="0" max="20" style="width:80px;">
+              </label>
+              <label class="setting-label" style="display:inline-flex; align-items:center; gap:8px; width:220px;">Custom/manual lanes
+                <input v-model.number="projectWipManual" type="number" class="text-input" min="0" max="20" style="width:80px;">
+              </label>
+            </div>
+            <p class="setting-description">
+              Counts queued and active work after resolving each project lane to its semantic role. Zero means unlimited. Saturated downstream stages pause new upstream claims without moving tasks or adding comments.
+            </p>
           </div>
 
           <div

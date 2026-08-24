@@ -2,8 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
+import { evaluateClaim, type WipLimits } from '../../services/ProjectAutomationWipLimits';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
+import type { WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
@@ -201,8 +203,20 @@ export class WorkTaskDispatchModel {
     return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
   }
 
-  static async claimNext(agentId: string, runtimeInstanceId: string): Promise<ClaimedDispatch | null> {
+  static async claimNext(
+    agentId: string,
+    runtimeInstanceId: string,
+    wipLimits?: WipLimits,
+  ): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
+      // Serialize semantic WIP evaluation with the status mutation. Without the
+      // transaction-scoped lock two dispatcher instances can both observe the
+      // last free slot and oversubscribe the execution stage.
+      if (wipLimits) {
+        await client.query('SELECT pg_advisory_xact_lock($1)', [4823710299]);
+        const counts = await this.countByRoleWithClient(client);
+        if (!evaluateClaim('execution', counts, wipLimits).allowed) return null;
+      }
       const candidate = await client.query<WorkTaskRecord>(`
         SELECT t.*
           FROM work_tasks t
@@ -456,6 +470,83 @@ export class WorkTaskDispatchModel {
          )
     `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
     return Number(row?.count || 0);
+  }
+
+  /**
+   * Count autonomous, non-terminal work in each semantic lane role across the
+   * whole portfolio, honouring custom project lanes via their resolved
+   * semantic_role (issue #711). Queued and active work both count. Closed epics
+   * and non-autonomous or human-gated tasks are excluded, matching the
+   * eligibility surface of countReviewBacklog and the claim paths.
+   */
+  static async countByRole(): Promise<Partial<Record<WorkLaneSemanticRole, number>>> {
+    return postgresClient.transaction(client => this.countByRoleWithClient(client));
+  }
+
+  /** Transaction-local semantic counts used by the race-free claim gate. */
+  static async countByRoleWithClient(
+    client: PoolClient,
+  ): Promise<Partial<Record<WorkLaneSemanticRole, number>>> {
+    const rows = await client.query<{ semantic_role: WorkLaneSemanticRole; count: string }>(`
+      SELECT COALESCE(
+               project_lane.semantic_role,
+               global_lane.semantic_role,
+               CASE t.status
+                 WHEN 'backlog' THEN 'backlog'
+                 WHEN 'todo' THEN 'execution'
+                 WHEN 'planning' THEN 'planning'
+                 WHEN 'in_progress' THEN 'execution'
+                 WHEN 'in_review' THEN 'review'
+                 WHEN 'blocked' THEN 'blocked'
+                 WHEN 'done' THEN 'terminal'
+                 WHEN 'cancelled' THEN 'terminal'
+                 WHEN 'parked' THEN 'manual'
+                 ELSE 'manual'
+               END
+             )::text AS semantic_role,
+             COUNT(*)::text AS count
+        FROM work_tasks t
+        JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = e.project_id
+        LEFT JOIN LATERAL (
+          SELECT semantic_role
+            FROM work_lane_definitions
+           WHERE scope = 'project'
+             AND project_id = p.id
+             AND lane_key = t.status
+             AND reset_at IS NULL
+             AND archived = false
+             AND enabled = true
+           ORDER BY updated_at DESC NULLS LAST, created_at DESC
+           LIMIT 1
+        ) project_lane ON true
+        LEFT JOIN LATERAL (
+          SELECT semantic_role
+            FROM work_lane_definitions
+           WHERE scope = 'global_default'
+             AND lane_key = t.status
+             AND reset_at IS NULL
+             AND archived = false
+             AND enabled = true
+           ORDER BY updated_at DESC NULLS LAST, created_at DESC
+           LIMIT 1
+        ) global_lane ON true
+       WHERE t.archived = false
+         AND e.archived = false
+         AND p.archived = false
+         AND NOT (p.status = ANY($1::text[]))
+         AND NOT (e.status = ANY($1::text[]))
+         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+         AND NOT EXISTS (
+           SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
+            WHERE LOWER(label) = ANY($2::text[])
+         )
+       GROUP BY semantic_role
+    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
+
+    const totals: Partial<Record<WorkLaneSemanticRole, number>> = {};
+    for (const row of rows.rows) totals[row.semantic_role] = Number(row.count || 0);
+    return totals;
   }
 
   /**
