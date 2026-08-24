@@ -106,6 +106,18 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     );
   }
 
+  /** Retire a source run only when it is still active. Restart must not
+   * rewrite completed/failed history, but it also must not leave a zombie
+   * eligible for the concurrent-run guard or boot recovery. */
+  static async markSupersededIfActive(executionId: string): Promise<void> {
+    await postgresClient.query(
+      `UPDATE workflow_executions
+       SET status = 'failed', completed_at = NOW(), error = 'superseded_by_checkpoint_restart', updated_at = NOW()
+       WHERE execution_id = $1 AND status IN ('running', 'suspended')`,
+      [executionId],
+    );
+  }
+
   /** Find all suspended executions, newest first. Used by boot recovery. */
   static async findSuspended(): Promise<WorkflowExecutionModel[]> {
     const rows = await postgresClient.queryAll(
