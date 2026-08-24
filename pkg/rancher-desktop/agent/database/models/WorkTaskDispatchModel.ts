@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
 
@@ -116,6 +117,7 @@ export interface WorkTaskDispatchEvidence {
   contentHash?:         string;
   reviewerVerdict?:     string;
   reviewEvidence?:      unknown;
+  custody?:      ArtifactCustody | null;
   terminalReason?:      string;
 }
 
@@ -715,6 +717,9 @@ export class WorkTaskDispatchModel {
    */
   static async finalize(id: string, taskId: string, finalization: WorkTaskDispatchFinalization): Promise<WorkTaskRecord> {
     const evidence = finalization.evidence ?? {};
+    if (finalization.taskStatus === 'in_review') {
+      await ArtifactCustodyPolicy.assertForTransition('in_review', ArtifactCustodyPolicy.derive(evidence as unknown as Record<string, unknown>));
+    }
     return postgresClient.transaction(async(client: PoolClient) => {
       const locked = await client.query<{ status: WorkTaskDispatchStatus }>(
         'SELECT status FROM work_task_dispatches WHERE id = $1 AND task_id = $2 FOR UPDATE',

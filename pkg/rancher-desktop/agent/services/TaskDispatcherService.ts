@@ -7,6 +7,7 @@ import { isInsideWindow } from './HeartbeatService';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { getIntegrationService } from './IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { RoutineConcurrencyPolicy } from './RoutineConcurrencyPolicy';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import {
   WorkTaskDispatchModel,
@@ -220,7 +221,9 @@ export class TaskDispatcherService {
 
   private async fillExecutionPool(): Promise<void> {
     const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
-    const concurrency = Math.max(1, Math.min(10, configured || DEFAULT_CONCURRENCY));
+    const concurrency = await RoutineConcurrencyPolicy.resolveLimit('execution', configured || DEFAULT_CONCURRENCY);
+    const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
+    if (enforceSlots) await RoutineConcurrencyPolicy.reclaimStale();
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
 
     await LifecycleCapabilityModel.report({
@@ -232,11 +235,26 @@ export class TaskDispatcherService {
       fallbackMode:      'heartbeat',
     });
 
-    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
+        let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
     while (freeSlots > 0 && this.initialized) {
+      let slot: string | null = null;
+      if (enforceSlots) {
+        slot = await RoutineConcurrencyPolicy.acquire('execution', concurrency, { owner: RUNTIME_INSTANCE_ID });
+        if (!slot) break;
+      }
       const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID);
-      if (!claim) break;
-      this.runClaim(claim).catch(err => console.error('[TaskDispatcher] Worker promise failed:', err));
+      if (!claim) {
+        if (slot) await RoutineConcurrencyPolicy.release(slot);
+        break;
+      }
+      const heldSlot = slot;
+      const slotHeartbeat = heldSlot ? setInterval(() => { if (heldSlot) void RoutineConcurrencyPolicy.heartbeat(heldSlot); }, 30000) : null;
+      this.runClaim(claim)
+        .catch(err => console.error('[TaskDispatcher] Worker promise failed:', err))
+        .finally(() => {
+          if (slotHeartbeat) clearInterval(slotHeartbeat);
+          if (heldSlot) void RoutineConcurrencyPolicy.release(heldSlot);
+        });
       freeSlots -= 1;
     }
   }
@@ -257,7 +275,9 @@ export class TaskDispatcherService {
     const owner = await this.resolveVerificationOwner();
     if (!owner) return;
     const configured = Number(await SullaSettingsModel.get('taskVerifierConcurrency', DEFAULT_CONCURRENCY));
-    const concurrency = Math.max(1, Math.min(10, configured || DEFAULT_CONCURRENCY));
+    const concurrency = await RoutineConcurrencyPolicy.resolveLimit('review', configured || DEFAULT_CONCURRENCY);
+    const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
+    if (enforceSlots) await RoutineConcurrencyPolicy.reclaimStale();
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
 
     await LifecycleCapabilityModel.report({
@@ -269,15 +289,30 @@ export class TaskDispatcherService {
       fallbackMode:      'heartbeat',
     });
 
-    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification'));
+        let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification'));
     while (freeSlots > 0 && this.initialized) {
+      let slot: string | null = null;
+      if (enforceSlots) {
+        slot = await RoutineConcurrencyPolicy.acquire('review', concurrency, { owner: RUNTIME_INSTANCE_ID });
+        if (!slot) break;
+      }
       const claim = await WorkTaskDispatchModel.claimNextReview(
         agentId,
         owner === 'core-routine' ? [DEFAULT_CORE_ROUTINE_AGENT_ID] : [],
         RUNTIME_INSTANCE_ID,
       );
-      if (!claim) break;
-      this.runClaim(claim, owner).catch(err => console.error('[TaskDispatcher] Verifier promise failed:', err));
+      if (!claim) {
+        if (slot) await RoutineConcurrencyPolicy.release(slot);
+        break;
+      }
+      const heldSlot = slot;
+      const slotHeartbeat = heldSlot ? setInterval(() => { if (heldSlot) void RoutineConcurrencyPolicy.heartbeat(heldSlot); }, 30000) : null;
+      this.runClaim(claim, owner)
+        .catch(err => console.error('[TaskDispatcher] Verifier promise failed:', err))
+        .finally(() => {
+          if (slotHeartbeat) clearInterval(slotHeartbeat);
+          if (heldSlot) void RoutineConcurrencyPolicy.release(heldSlot);
+        });
       freeSlots -= 1;
     }
   }
