@@ -197,11 +197,16 @@ export class ToolRegistry {
 
   async getTool(name: string): Promise<any> {
     if (this.instances.has(name)) return this.instances.get(name)!;
-    const loader = this.loaders.get(name);
-    if (!loader) throw new Error(`Tool ${ name } not registered`);
-    const tool = await loader();
+    const tool = await this.createTool(name);
     this.instances.set(name, tool);
     return tool;
+  }
+
+  /** Create a fresh worker instance for graph-bound concurrent execution. */
+  async createTool(name: string): Promise<any> {
+    const loader = this.loaders.get(name);
+    if (!loader) throw new Error(`Tool ${ name } not registered`);
+    return await loader();
   }
 
   async getToolsByCategory(category: string): Promise<any[]> {

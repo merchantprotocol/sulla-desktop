@@ -50,6 +50,7 @@ import { up as up_0059, down as down_0059 } from './0059_allow_skills_identity_d
 import { up as up_0060, down as down_0060 } from './0060_add_skill_slug_to_identity_observations';
 import { up as up_0061, down as down_0061 } from './0061_add_work_task_activity';
 import { up as up_0062, down as down_0062 } from './0062_create_work_task_dispatches';
+import { up as up_0068, down as down_0068 } from './0068_create_lifecycle_capabilities';
 import { up as up_0069, down as down_0069 } from './0069_create_work_lane_definitions';
 
 export const migrationsRegistry = [
@@ -102,5 +103,6 @@ export const migrationsRegistry = [
   { name: '0060_add_skill_slug_to_identity_observations',         up: up_0060, down: down_0060 },
   { name: '0061_add_work_task_activity',                           up: up_0061, down: down_0061 },
   { name: '0062_create_work_task_dispatches',                      up: up_0062, down: down_0062 },
+  { name: '0068_create_lifecycle_capabilities',                    up: up_0068, down: down_0068 },
   { name: '0069_create_work_lane_definitions',                     up: up_0069, down: down_0069 },
 ] as const;
