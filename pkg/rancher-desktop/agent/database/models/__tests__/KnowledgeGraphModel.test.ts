@@ -28,6 +28,20 @@ describe('KnowledgeGraphModel #516 compatibility', () => {
     expect(resolved[0]).not.toHaveProperty('id');
   });
 
+  it('forwards every trimmed alias term in caller order without deduplication or truncation', async() => {
+    const query = jest.spyOn(postgresClient, 'query').mockResolvedValue([] as any);
+    const terms = Array.from({ length: 18 }, (_, index) => ` term-${ index } `);
+    terms.splice(5, 0, ' term-2 ', '   ');
+
+    await KnowledgeGraphModel.resolveAliases(terms);
+
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][1]).toEqual([
+      [...Array.from({ length: 5 }, (_, index) => `term-${ index }`), 'term-2',
+        ...Array.from({ length: 13 }, (_, index) => `term-${ index + 5 }`)],
+    ]);
+  });
+
   it('retains #516 getNode behavior without silently filtering archived rows', async() => {
     const queryOne = jest.spyOn(postgresClient, 'queryOne').mockResolvedValue({ id: 'archived', archived: true } as any);
     await expect(KnowledgeGraphModel.getNode('archived')).resolves.toMatchObject({ archived: true });

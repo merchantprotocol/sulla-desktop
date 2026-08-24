@@ -1,7 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { knowledgeAssociationToolsFor, type KnowledgeAssociationRole } from './KnowledgeAssociationPolicies';
+import {
+  knowledgeAssociationRoleForAgentId,
+  knowledgeAssociationToolsFor,
+  type KnowledgeAssociationRole,
+} from './KnowledgeAssociationPolicies';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel } from '../languagemodels';
 import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
@@ -36,8 +40,8 @@ const SUMMARIZER_TOOLS: string[] = [];
 const TOOL_RESULT_DIGESTER_TOOLS: string[] = [];
 
 const KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS: Record<KnowledgeAssociationRole, string> = {
-  project_reader: `You are the Project Reader. Read Projects items and their linked Knowledge Base context. You are strictly read-only: never create, update, archive, link, or unlink anything.`,
-  project_writer: `You are the Project Writer for Knowledge Base associations. You may search Knowledge Base nodes and link or unlink those nodes from Projects items. You may not mutate Knowledge Base content or any Projects status, priority, assignment, description, or comment.`,
+  project_reader:   `You are the Project Reader. Read Projects items and their linked Knowledge Base context. You are strictly read-only: never create, update, archive, link, or unlink anything.`,
+  project_writer:   `You are the Project Writer for Knowledge Base associations. You may search Knowledge Base nodes and link or unlink those nodes from Projects items. You may not mutate Knowledge Base content or any Projects status, priority, assignment, description, or comment.`,
   knowledge_reader: `You are the Knowledge Base Reader. Recall Knowledge Base nodes and inspect their linked Projects context. You are strictly read-only: never create, update, archive, link, or unlink anything.`,
   knowledge_writer: `You are the Knowledge Base Writer for Projects associations. You may search Projects and link or unlink Knowledge Base nodes. You may not mutate Projects status, priority, assignment, description, comments, or unrelated Knowledge Base content.`,
 };
@@ -1509,34 +1513,6 @@ export const GraphRegistry = {
     return { graph, state, threadId: state.metadata.threadId };
   },
 
-  /**
-   * Construct one of the four association roles through the same strict
-   * allowedToolNames path used by live subconscious agents. This is the
-   * runtime policy boundary: callers choose a role, never an ad-hoc tool list.
-   */
-  createKnowledgeAssociationRole: async function(
-    parentState: BaseThreadState,
-    role: KnowledgeAssociationRole,
-    instruction: string,
-  ): Promise<{ graph: Graph<BaseThreadState>; state: BaseThreadState; threadId: string }> {
-    const tools = knowledgeAssociationToolsFor(role);
-    const graph = createSubconsciousGraph();
-    const state = await buildSubconsciousState({
-      systemPrompt:           KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS[role],
-      tools,
-      userMessage:            instruction,
-      messages:               [...parentState.messages],
-      contextWindow:          20,
-      parentAbortSignal:      (parentState.metadata as any).options?.abort,
-      agentLabel:             role.replaceAll('_', '-'),
-      parentWsChannel:        String(parentState.metadata.wsChannel || ''),
-      parentConversationId:   (parentState.metadata as any).threadId || (parentState.metadata as any).conversationId,
-      workflowNodeId:         (parentState.metadata as any).workflowNodeId,
-      workflowParentChannel:  (parentState.metadata as any).workflowParentChannel,
-    });
-    return { graph, state, threadId: state.metadata.threadId };
-  },
-
   delete(threadId: string): void {
     registry.delete(threadId);
   },
@@ -1784,10 +1760,24 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
     : await SullaSettingsModel.get('sullaModel', '');
   const llmLocal = mode === 'local';
 
-  const agentConfig = await loadAgentConfig(wsChannel);
+  const associationRole = knowledgeAssociationRoleForAgentId(wsChannel);
+  const loadedAgentConfig = await loadAgentConfig(wsChannel);
+  const associationTools = associationRole ? knowledgeAssociationToolsFor(associationRole) : null;
+  const agentConfig = associationRole
+    ? {
+      ...loadedAgentConfig,
+      name:                     loadedAgentConfig?.name || wsChannel,
+      description:              loadedAgentConfig?.description || KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS[associationRole],
+      type:                     loadedAgentConfig?.type || (associationRole.endsWith('_reader') ? 'reader' : 'writer'),
+      tools:                    associationTools!,
+      prompt:                   [KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS[associationRole], loadedAgentConfig?.prompt]
+        .filter(Boolean).join('\n\n'),
+      knowledgeAssociationRole: associationRole,
+    }
+    : loadedAgentConfig;
   console.log(`[GraphRegistry] buildAgentState() — agent config for "${ wsChannel }": name="${ agentConfig?.name || '(none)' }", hasPrompt=${ !!agentConfig?.prompt }, type="${ agentConfig?.type || '(none)' }"`);
 
-  return {
+  const state: AgentGraphState = {
     messages: [],
     metadata: {
       action:    'direct_answer',
@@ -1832,6 +1822,15 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
       agentLoopCount: 0,
     },
   };
+
+  if (associationTools) {
+    (state as any).llmTools = await Promise.all(
+      associationTools.map(name => toolRegistry.convertToolToLLM(name)),
+    );
+    (state.metadata as any).allowedToolNames = associationTools;
+  }
+
+  return state;
 }
 
 /**

@@ -1,14 +1,29 @@
-import { readFileSync } from 'node:fs';
-
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
-import { knowledgeAssociationToolsFor, type KnowledgeAssociationRole } from '../KnowledgeAssociationPolicies';
+import {
+  KNOWLEDGE_ASSOCIATION_AGENT_ROLES,
+  knowledgeAssociationToolsFor,
+  type KnowledgeAssociationAgentId,
+  type KnowledgeAssociationRole,
+} from '../KnowledgeAssociationPolicies';
 
 import mockModules from '@pkg/utils/testUtils/mockModules';
 
-mockModules({ electron: undefined });
+mockModules({
+  electron:       undefined,
+  'relaxed-json': { parse: JSON.parse },
+});
+
+jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
+  SullaSettingsModel: {
+    get: jest.fn((key: string, fallback: unknown) => Promise.resolve(
+      key === 'modelMode' ? 'remote' : key === 'remoteModel' ? 'test-model' : fallback,
+    )),
+  },
+}));
 
 const { ToolExecutor } = await import('../../controllers/ToolExecutor');
+const { GraphRegistry } = await import('../GraphRegistry');
 
 describe('live Knowledge/Projects association role construction', () => {
   afterEach(() => { jest.restoreAllMocks() });
@@ -21,14 +36,7 @@ describe('live Knowledge/Projects association role construction', () => {
     expect(new Set(expected).size).toBe(expected.length);
   });
 
-  it('wires the policies into GraphRegistry role construction, not a test-only helper', () => {
-    const source = readFileSync('pkg/rancher-desktop/agent/services/GraphRegistry.ts', 'utf8');
-    expect(source).toContain('createKnowledgeAssociationRole: async function');
-    expect(source).toContain('const tools = knowledgeAssociationToolsFor(role)');
-    expect(source).toContain('allowedToolNames: opts.tools');
-  });
-
-  it('enforces reader no-mutation and writer cross-domain isolation in ToolExecutor', async() => {
+  it('constructs live actors and enforces reader/writer isolation from their production state', async() => {
     const executor = new ToolExecutor({
       nodeId:                'policy-test',
       nodeName:              'policy-test',
@@ -36,19 +44,32 @@ describe('live Knowledge/Projects association role construction', () => {
       wsChatMessage:         () => Promise.resolve(true),
       bumpStateVersion:      () => undefined,
     });
-    const stateFor = (role: KnowledgeAssociationRole) => ({
-      metadata: { __toolAccessPolicy: { allowedCategories: null, allowedToolNames: knowledgeAssociationToolsFor(role) } },
-    }) as any;
+    const stateFor = async(agentId: KnowledgeAssociationAgentId) => {
+      const actor = await GraphRegistry.createNew(agentId);
+      const expectedTools = knowledgeAssociationToolsFor(KNOWLEDGE_ASSOCIATION_AGENT_ROLES[agentId]);
+      expect((actor.state.metadata as any).agent?.knowledgeAssociationRole)
+        .toBe(KNOWLEDGE_ASSOCIATION_AGENT_ROLES[agentId]);
+      expect((actor.state.metadata as any).allowedToolNames)
+        .toEqual(expectedTools);
+      expect((actor.state as any).llmTools.map((tool: any) => tool.function?.name ?? tool.name))
+        .toEqual(expectedTools);
+      return actor.state;
+    };
 
-    await expect(executor.getToolPolicyBlockReason(stateFor('project_reader'), 'link_knowledge_item'))
+    const projectReader = await stateFor('project-reader');
+    const projectWriter = await stateFor('project-writer');
+    const knowledgeReader = await stateFor('knowledge-base-reader');
+    const knowledgeWriter = await stateFor('knowledge-base-writer');
+
+    await expect(executor.getToolPolicyBlockReason(projectReader, 'link_knowledge_item'))
       .resolves.toBe('Tool not allowed by name policy: link_knowledge_item');
-    await expect(executor.getToolPolicyBlockReason(stateFor('knowledge_reader'), 'episodic_unlink_project_item'))
+    await expect(executor.getToolPolicyBlockReason(knowledgeReader, 'episodic_unlink_project_item'))
       .resolves.toBe('Tool not allowed by name policy: episodic_unlink_project_item');
-    await expect(executor.getToolPolicyBlockReason(stateFor('project_writer'), 'episodic_write_episode'))
+    await expect(executor.getToolPolicyBlockReason(projectWriter, 'episodic_write_episode'))
       .resolves.toBe('Tool not allowed by name policy: episodic_write_episode');
-    await expect(executor.getToolPolicyBlockReason(stateFor('knowledge_writer'), 'update_task'))
+    await expect(executor.getToolPolicyBlockReason(knowledgeWriter, 'update_task'))
       .resolves.toBe('Tool not allowed by name policy: update_task');
-    await expect(executor.getToolPolicyBlockReason(stateFor('project_writer'), 'link_knowledge_item')).resolves.toBeNull();
-    await expect(executor.getToolPolicyBlockReason(stateFor('knowledge_writer'), 'episodic_link_project_item')).resolves.toBeNull();
+    await expect(executor.getToolPolicyBlockReason(projectWriter, 'link_knowledge_item')).resolves.toBeNull();
+    await expect(executor.getToolPolicyBlockReason(knowledgeWriter, 'episodic_link_project_item')).resolves.toBeNull();
   });
 });

@@ -10,6 +10,7 @@ const addCommentMock: any = jest.fn(() => Promise.resolve());
 const updateTaskMock: any = jest.fn(() => Promise.resolve());
 const executeMock: any = jest.fn();
 const graphDeleteMock: any = jest.fn();
+const findAgentDirMock: any = jest.fn(() => '/agents/opus-worker');
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
@@ -39,7 +40,7 @@ jest.unstable_mockModule('../HeartbeatService', () => ({
   isInsideWindow: jest.fn(() => true),
 }));
 jest.unstable_mockModule('../../utils/sullaPaths', () => ({
-  findAgentDir: jest.fn(() => '/agents/opus-worker'),
+  findAgentDir: findAgentDirMock,
 }));
 
 describe('TaskDispatcherService', () => {
@@ -48,6 +49,7 @@ describe('TaskDispatcherService', () => {
     recoverStaleMock.mockResolvedValue([]);
     countRunningMock.mockResolvedValue(0);
     claimNextMock.mockResolvedValue(null);
+    findAgentDirMock.mockReturnValue('/agents/opus-worker');
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
       return Promise.resolve(fallback);
@@ -63,6 +65,22 @@ describe('TaskDispatcherService', () => {
 
     expect(recoverStaleMock).toHaveBeenCalledWith(0);
     expect(countRunningMock).toHaveBeenCalled();
+  });
+
+  it('dispatches canonical Knowledge/Projects role actors without a filesystem persona', async() => {
+    findAgentDirMock.mockReturnValue(null);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled') return Promise.resolve(true);
+      if (key === 'taskDispatcherAgentId') return Promise.resolve('project-reader');
+      return Promise.resolve(fallback);
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+
+    expect(claimNextMock).toHaveBeenCalledWith('project-reader');
   });
 
   it('claims mechanically, executes the assigned worker, and returns completed work for review', async() => {

@@ -37,6 +37,24 @@ export const KNOWLEDGE_ASSOCIATION_TOOL_POLICIES = {
 
 export type KnowledgeAssociationRole = keyof typeof KNOWLEDGE_ASSOCIATION_TOOL_POLICIES;
 
+export const KNOWLEDGE_ASSOCIATION_AGENT_ROLES = {
+  'project-reader':        'project_reader',
+  'project-writer':        'project_writer',
+  'knowledge-base-reader': 'knowledge_reader',
+  'knowledge-base-writer': 'knowledge_writer',
+} as const satisfies Record<string, KnowledgeAssociationRole>;
+
+export type KnowledgeAssociationAgentId = keyof typeof KNOWLEDGE_ASSOCIATION_AGENT_ROLES;
+
+export function knowledgeAssociationRoleForAgentId(agentId: string): KnowledgeAssociationRole | null {
+  const normalized = agentId.trim().toLowerCase() as KnowledgeAssociationAgentId;
+  return KNOWLEDGE_ASSOCIATION_AGENT_ROLES[normalized] ?? null;
+}
+
+export function isKnowledgeAssociationAgentId(agentId: string): boolean {
+  return knowledgeAssociationRoleForAgentId(agentId) !== null;
+}
+
 export function knowledgeAssociationToolsFor(role: KnowledgeAssociationRole): string[] {
   return [...KNOWLEDGE_ASSOCIATION_TOOL_POLICIES[role]];
 }
