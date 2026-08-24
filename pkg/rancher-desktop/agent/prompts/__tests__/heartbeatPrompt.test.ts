@@ -37,6 +37,14 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('If an owner capability is unavailable');
   });
 
+  it('makes missing owner capabilities visible without silently taking lane ownership', () => {
+    expect(heartbeatPrompt).toContain('If an owner capability is unavailable');
+    expect(heartbeatPrompt).toContain('record a systemic capability exception');
+    expect(heartbeatPrompt).toContain('stage the repair or rollout dependency');
+    expect(heartbeatPrompt).toContain('Do not silently assume ownership');
+    expect(heartbeatPrompt).toContain('do not strand work by pretending the owner exists');
+  });
+
   it('forbids heartbeat from duplicating protected lifecycle work', () => {
     for (const rule of [
       "claim, select, or launch ordinary 'todo' work",
@@ -105,6 +113,7 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).not.toMatch(/make one\b[^.]*\bmove/i);
     expect(heartbeatPrompt).not.toMatch(/one[- ]move budget/i);
     expect(heartbeatPrompt).not.toMatch(/one item per cycle/i);
+    expect(heartbeatPrompt).not.toMatch(/one task per wake/i);
   });
 
   it('keeps privacy, install-local isolation, and the prompt-freeze covenant', () => {

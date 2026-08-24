@@ -24,16 +24,24 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'Unblock Ladder',
   'Two-Door Rule',
   'Boot From the Control Plane',
+  'Projects project-state is your only durable agenda',
   'Single-Owner Projects Conveyor',
   'protected planning routine',
   'protected execution routine',
   'protected review routine',
   'durable wait monitor',
   'deterministic recovery',
+  'If an owner capability is unavailable',
+  'record a systemic capability exception',
+  'Do not silently assume ownership',
   'Executive Portfolio Loop',
   'The Prospector',
+  'Prospecting is **verify-and-route**',
   'Routine Stewardship',
   'Durable Movement Per Cycle',
+  'Write every material outcome back to Projects',
+  'never let install-local Markdown replace or append to it',
+  "never flip 'heartbeatEnabled'",
   'create a second dispatch, planning, review, custody, wait, or recovery path',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',
@@ -58,6 +66,17 @@ export const HEARTBEAT_FORBIDDEN_PHRASES = [
   'Artifact-per-Cycle Contract',
   "Review tasks returned to 'in_review'",
   'three independent high-reasoning planner agents',
+  // Direct lane-worker instructions. These deliberately describe positive
+  // ownership, so the prompt's "Heartbeat must never" rules do not match.
+  'select the highest-priority todo task and launch a worker',
+  "move blocked tasks to 'planning' and launch planner agents",
+  "inspect every 'in_review' task and close it",
+  'commit, push, and open the PR for every ordinary task',
+  'update the marketing tracker for every ordinary task',
+  'poll CI until the status changes',
+  'reclaim healthy leases based only on time',
+  'perform the lifecycle state transition yourself',
+  'one task per wake',
 ] as const;
 
 export interface HeartbeatInvariantResult {

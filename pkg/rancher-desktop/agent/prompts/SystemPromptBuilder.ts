@@ -12,8 +12,9 @@
  *   (except Heartbeat's frozen operator contract)
  */
 
-import type { ChatMode } from '../controllers/ChatController';
 import { checkHeartbeatPromptInvariants, type HeartbeatInvariantResult } from './heartbeatInvariants';
+
+import type { ChatMode } from '../controllers/ChatController';
 
 // ============================================================================
 // Types
@@ -106,11 +107,11 @@ export interface AgentConfig {
 
 export interface BuiltPrompt {
   /** Full prompt text (joined with \n\n for all providers) */
-  text:             string;
+  text:                     string;
   /** Anthropic cache-optimized content blocks */
-  anthropicSystem?: AnthropicSystemBlock[];
+  anthropicSystem?:         AnthropicSystemBlock[];
   /** Which sections were included in the build */
-  includedSections: string[];
+  includedSections:         string[];
   /**
    * Contextual sections that must be delivered as assistant-role context,
    * never as system instructions. This includes the `observational_memory`
@@ -122,7 +123,7 @@ export interface BuiltPrompt {
    * the deployed continuous-operator wording is present and the #581 STOP-ceiling
    * framing is absent. Undefined for non-heartbeat builds. See heartbeatInvariants.
    */
-  heartbeatInvariants?: HeartbeatInvariantResult;
+  heartbeatInvariants?:     HeartbeatInvariantResult;
 }
 
 export interface AnthropicSystemBlock {
@@ -176,8 +177,8 @@ class SystemPromptBuilderImpl {
     // Mode 'none' — just return the base prompt, no sections
     if (ctx.mode === 'none') {
       return {
-        text:             ctx.basePrompt || 'You are a personal assistant operating inside Sulla Desktop.',
-        includedSections: [],
+        text:                     ctx.basePrompt || 'You are a personal assistant operating inside Sulla Desktop.',
+        includedSections:         [],
         assistantContextSections: [],
       };
     }
@@ -254,7 +255,10 @@ class SystemPromptBuilderImpl {
       // factory's priority/cacheStability. Generated sections (isGenerated) are
       // left as-is — their factory already composed the DB static preamble with
       // the live runtime tail (it reads ctx.dbSections directly).
-      const dbRow = ctx.dbSections?.get(id);
+      // The compiled Heartbeat contract is replace-only from source control.
+      // A DB row is install-local state just like an agent markdown override;
+      // accepting it here would silently bypass the frozen section guard above.
+      const dbRow = isFrozenHeartbeatSection ? undefined : ctx.dbSections?.get(id);
       if (dbRow && !dbRow.isGenerated && dbRow.content?.trim()) {
         builtSections.push({ ...section, content: dbRow.content });
       } else if (section.content?.trim()) {
@@ -376,8 +380,8 @@ class SystemPromptBuilderImpl {
       heartbeatInvariants = checkHeartbeatPromptInvariants(text);
       if (!heartbeatInvariants.ok) {
         console.error(
-          '[SystemPromptBuilder] Heartbeat prompt invariant FAILURE — deployed prompt is stale or reverted. '
-          + 'Rebuild/restart Sulla Desktop to load the continuous-operator prompt.',
+          '[SystemPromptBuilder] Heartbeat prompt invariant FAILURE — deployed prompt is stale or reverted. ' +
+          'Rebuild/restart Sulla Desktop to load the continuous-operator prompt.',
           { missing: heartbeatInvariants.missing, forbidden: heartbeatInvariants.forbidden },
         );
       }

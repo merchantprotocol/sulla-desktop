@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 
 import { SystemPromptBuilder, type PromptBuildContext } from '../SystemPromptBuilder';
 import { heartbeatPrompt } from '../heartbeat';
@@ -24,7 +24,13 @@ describe('checkHeartbeatPromptInvariants', () => {
   });
 
   it('fails when the operator doctrine or freeze covenant is stripped from a deployed prompt', () => {
-    for (const phrase of ['Two-Door Rule', 'The Prospector', 'This Prompt Is Frozen']) {
+    for (const phrase of [
+      'Two-Door Rule',
+      'The Prospector',
+      'If an owner capability is unavailable',
+      'Write every material outcome back to Projects',
+      'This Prompt Is Frozen',
+    ]) {
       const stripped = heartbeatPrompt.split(phrase).join('');
       const result = checkHeartbeatPromptInvariants(stripped);
       expect(result.ok).toBe(false);
@@ -71,6 +77,28 @@ describe('checkHeartbeatPromptInvariants', () => {
     ]) {
       expect(heartbeatPrompt).not.toContain(phrase);
       expect(HEARTBEAT_FORBIDDEN_PHRASES).toContain(phrase);
+    }
+  });
+
+  it('fails closed on direct planning, execution, custody, review, polling, and recovery instructions', () => {
+    const duplicateOwnerInstructions = [
+      'select the highest-priority todo task and launch a worker',
+      "move blocked tasks to 'planning' and launch planner agents",
+      "inspect every 'in_review' task and close it",
+      'commit, push, and open the PR for every ordinary task',
+      'update the marketing tracker for every ordinary task',
+      'poll CI until the status changes',
+      'reclaim healthy leases based only on time',
+      'perform the lifecycle state transition yourself',
+      'one task per wake',
+    ] as const;
+
+    for (const instruction of duplicateOwnerInstructions) {
+      const result = checkHeartbeatPromptInvariants(`${ heartbeatPrompt }\n${ instruction }`);
+
+      expect(HEARTBEAT_FORBIDDEN_PHRASES).toContain(instruction);
+      expect(result.ok).toBe(false);
+      expect(result.forbidden).toContain(instruction);
     }
   });
 });
@@ -128,6 +156,14 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
         ['heartbeat', 'STALE LOCAL HEARTBEAT OVERRIDE'],
       ]),
       excludeSections: new Set(['heartbeat']),
+      dbSections:            new Map([
+        ['heartbeat', {
+          content:        'STALE DB HEARTBEAT OVERRIDE',
+          priority:       1,
+          cacheStability: 'dynamic',
+          isGenerated:    false,
+        }],
+      ]),
     }));
 
     expect(built.includedSections).toContain('heartbeat');
@@ -135,10 +171,40 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     expect(built.text).toContain('## Single-Owner Projects Conveyor');
     expect(built.text).not.toContain('STALE LOCAL HEARTBEAT OVERRIDE');
     expect(built.text).not.toContain('STALE LOCAL PLAYBOOK CONTENT');
+    expect(built.text).not.toContain('STALE DB HEARTBEAT OVERRIDE');
     expect(built.heartbeatInvariants?.ok).toBe(true);
   });
 
+  it('keeps the compiled heartbeat bytes in the stable one-hour cache block across wakes', async() => {
+    SystemPromptBuilder.register('heartbeat', () => ({
+      id:             'heartbeat',
+      content:        heartbeatPrompt,
+      priority:       110,
+      cacheStability: 'stable',
+    }), ['full']);
+
+    const first = await SystemPromptBuilder.build(baseCtx({
+      provider:   'anthropic',
+      basePrompt: 'dynamic wake A',
+    }));
+    const second = await SystemPromptBuilder.build(baseCtx({
+      provider:   'anthropic',
+      basePrompt: 'dynamic wake B',
+    }));
+
+    expect(first.anthropicSystem?.[0]).toEqual({
+      type:          'text',
+      text:          heartbeatPrompt,
+      cache_control: { type: 'ephemeral', ttl: '1h' },
+    });
+    expect(second.anthropicSystem?.[0]).toEqual(first.anthropicSystem?.[0]);
+    expect(first.anthropicSystem?.at(-1)?.text).toBe('dynamic wake A');
+    expect(second.anthropicSystem?.at(-1)?.text).toBe('dynamic wake B');
+  });
+
   it('flags a stale/reverted heartbeat build', async() => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+
     SystemPromptBuilder.register('heartbeat', () => ({
       id:             'heartbeat',
       content:        'stale prompt with a Cycle Budget: pick exactly one task and STOP.',
@@ -149,6 +215,8 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     const built = await SystemPromptBuilder.build(baseCtx({}));
     expect(built.heartbeatInvariants?.ok).toBe(false);
     expect(built.heartbeatInvariants?.forbidden).toContain('Cycle Budget');
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    consoleError.mockRestore();
   });
 
   it('skips the invariant check for non-heartbeat builds', async() => {
