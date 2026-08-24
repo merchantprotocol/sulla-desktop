@@ -16,6 +16,7 @@ import type {
   WorkTaskRecord,
   WorkCommentRecord,
   WorkActivityRecord,
+  WorkTaskDependencyRecord,
   UpsertProjectInput,
   UpdateProjectInput,
   UpsertEpicInput,
@@ -39,6 +40,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 export type {
   WorkProjectRecord, WorkEpicRecord, WorkTaskRecord, WorkCommentRecord,
   WorkActivityRecord,
+  WorkTaskDependencyRecord,
   UpsertProjectInput, UpdateProjectInput, UpsertEpicInput, UpdateEpicInput,
   UpsertTaskInput, UpdateTaskInput,
   CreateWorkLaneInput, EffectiveWorkLane, ListWorkLaneOpts, UpdateWorkLaneInput,
@@ -97,16 +99,19 @@ export function useProjects() {
     ]));
     const tasksByEpic = new Map<string, TaskView[]>();
     for (const t of rawTasks) {
-      // top-level tasks only (subtasks hang off parent_id — not shown here yet)
-      if (t.parent_id) continue;
       const key = t.epic_id ?? '__none__';
       const arr = tasksByEpic.get(key) ?? [];
       arr.push({ ...t, lane: laneMaps.get(t.project_id)?.get(t.status) });
       tasksByEpic.set(key, arr);
     }
     for (const arr of tasksByEpic.values()) {
-      // Manual order (drag-to-reorder writes `position`); created_at breaks ties.
+      // Keep subtasks in the canonical shared dataset. Parent rows sort before
+      // their children, while manual position and creation time remain stable
+      // tie-breakers for every projection.
+      const byId = new Map(arr.map(task => [task.id, task]));
       arr.sort((a, b) =>
+        (a.parent_id === b.id ? 1 : b.parent_id === a.id ? -1 : 0) ||
+        (a.parent_id && byId.has(a.parent_id) ? 1 : 0) - (b.parent_id && byId.has(b.parent_id) ? 1 : 0) ||
         (a.position ?? 0) - (b.position ?? 0) ||
         (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
     }
@@ -248,6 +253,18 @@ export function useProjects() {
     return ipcRenderer.invoke('work-items:view-save', input);
   }
 
+  async function listTaskDependencies(projectId: string): Promise<WorkTaskDependencyRecord[]> {
+    return ipcRenderer.invoke('work-items:dependencies-list', projectId);
+  }
+
+  async function setTaskDependency(taskId: string, dependsOnTaskId: string): Promise<WorkTaskDependencyRecord> {
+    return ipcRenderer.invoke('work-items:dependency-set', taskId, dependsOnTaskId);
+  }
+
+  async function removeTaskDependency(taskId: string, dependsOnTaskId: string): Promise<boolean> {
+    return ipcRenderer.invoke('work-items:dependency-remove', taskId, dependsOnTaskId);
+  }
+
   /** Apply a drag-reorder batch (positions + optional status/epic move), then refresh. */
   async function reorder(updates: ReorderUpdate[]): Promise<void> {
     if (!updates.length) return;
@@ -335,6 +352,9 @@ export function useProjects() {
     listViews,
     resolveView,
     saveView,
+    listTaskDependencies,
+    setTaskDependency,
+    removeTaskDependency,
     reorder,
     listLanes,
     resolveLanes,

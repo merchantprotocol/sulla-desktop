@@ -17,6 +17,8 @@ import { postgresClient } from '../PostgresClient';
 import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
 import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
+import type { PoolClient } from 'pg';
+
 // ── Types ──────────────────────────────────────────────────────────────
 
 export type WorkItemKind = 'project' | 'epic' | 'task';
@@ -87,6 +89,14 @@ export interface WorkTaskRecord {
   last_moved_by:    string | null;
   completed_at:     string | null;
   archived:         boolean;
+}
+
+export interface WorkTaskDependencyRecord {
+  task_id:            string;
+  depends_on_task_id: string;
+  created_at:         string;
+  created_by:         string;
+  archived:           boolean;
 }
 
 export interface WorkCommentRecord {
@@ -628,7 +638,8 @@ export class WorkItemsModel {
     return epic;
   }
 
-  private static async auditScheduleChanges(
+  private static async auditScheduleChangesWithClient(
+    client: Pick<PoolClient, 'query'>,
     kind: 'epic' | 'task', id: string,
     before: Pick<WorkEpicRecord, 'start_at' | 'due_at' | 'milestone_at'>,
     after: Pick<WorkEpicRecord, 'start_at' | 'due_at' | 'milestone_at'>,
@@ -636,7 +647,7 @@ export class WorkItemsModel {
   ): Promise<void> {
     for (const field of ['start_at', 'due_at', 'milestone_at'] as const) {
       if ((before[field] ?? null) === (after[field] ?? null)) continue;
-      await postgresClient.query(`INSERT INTO work_schedule_audit
+      await client.query(`INSERT INTO work_schedule_audit
         (item_kind, item_id, field_name, old_value, new_value, actor)
         VALUES ($1, $2, $3, $4, $5, $6)`,
       [kind, id, field, before[field] ?? null, after[field] ?? null, actor]);
@@ -871,14 +882,26 @@ export class WorkItemsModel {
     if (setClauses.length === 1) return existing;
 
     values.push(id);
-    const rows = await postgresClient.query<WorkEpicRecord>(
-      `UPDATE ${ WorkItemsModel.EPICS } SET ${ setClauses.join(', ') }
-        WHERE id = $${ idx } RETURNING *`,
-      values,
-    );
-    const updated = rows[0] ?? null;
-    if (updated) await WorkItemsModel.auditScheduleChanges('epic', id, existing, updated, changes.actor);
-    return updated;
+    const updateSql = `UPDATE ${ WorkItemsModel.EPICS } SET ${ setClauses.join(', ') }
+      WHERE id = $${ idx } RETURNING *`;
+    const changesSchedule = changes.due_at !== undefined || changes.start_at !== undefined || changes.milestone_at !== undefined;
+    if (!changesSchedule) {
+      const rows = await postgresClient.query<WorkEpicRecord>(updateSql, values);
+      return rows[0] ?? null;
+    }
+
+    return postgresClient.transaction(async(client) => {
+      const current = await client.query<WorkEpicRecord>(
+        `SELECT * FROM ${ WorkItemsModel.EPICS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
+      if (!current.rows[0]) return null;
+      const rows = await client.query<WorkEpicRecord>(updateSql, values);
+      const updated = rows.rows[0] ?? null;
+      if (updated) {
+        await WorkItemsModel.auditScheduleChangesWithClient(
+          client, 'epic', id, current.rows[0], updated, changes.actor);
+      }
+      return updated;
+    });
   }
 
   static async listEpics(opts: ListEpicsOpts = {}): Promise<WorkEpicRecord[]> {
@@ -910,6 +933,58 @@ export class WorkItemsModel {
       [id],
     );
     return rows[0] ?? null;
+  }
+
+  static async listTaskDependencies(projectId: string): Promise<WorkTaskDependencyRecord[]> {
+    return postgresClient.query<WorkTaskDependencyRecord>(`
+      SELECT dependency.*
+      FROM work_task_dependencies dependency
+      JOIN ${ WorkItemsModel.TASKS } task ON task.id = dependency.task_id
+      JOIN ${ WorkItemsModel.TASKS } prerequisite ON prerequisite.id = dependency.depends_on_task_id
+      WHERE dependency.archived = false
+        AND task.archived = false AND prerequisite.archived = false
+        AND task.project_id = $1 AND prerequisite.project_id = $1
+      ORDER BY dependency.created_at ASC`, [projectId]);
+  }
+
+  static async setTaskDependency(taskId: string, dependsOnTaskId: string, actor = 'human'): Promise<WorkTaskDependencyRecord> {
+    if (taskId === dependsOnTaskId) throw new Error('A task cannot depend on itself.');
+    return postgresClient.transaction(async(client) => {
+      const tasks = await client.query<WorkTaskRecord>(`
+        SELECT * FROM ${ WorkItemsModel.TASKS }
+        WHERE id = ANY($1::text[]) AND archived = false
+        FOR UPDATE`, [[taskId, dependsOnTaskId]]);
+      if (tasks.rows.length !== 2) throw new Error('Both dependency tasks must be active.');
+      if (new Set(tasks.rows.map(task => task.project_id)).size !== 1) {
+        throw new Error('Task dependencies must stay within one project.');
+      }
+      const cycle = await client.query<{ found: boolean }>(`
+        WITH RECURSIVE prerequisites(id) AS (
+          SELECT $2::text
+          UNION
+          SELECT dependency.depends_on_task_id
+          FROM work_task_dependencies dependency
+          JOIN prerequisites current ON dependency.task_id = current.id
+          WHERE dependency.archived = false
+        )
+        SELECT EXISTS(SELECT 1 FROM prerequisites WHERE id = $1) AS found`, [taskId, dependsOnTaskId]);
+      if (cycle.rows[0]?.found) throw new Error('This dependency would create a cycle.');
+      const rows = await client.query<WorkTaskDependencyRecord>(`
+        INSERT INTO work_task_dependencies (task_id, depends_on_task_id, created_by, archived)
+        VALUES ($1, $2, $3, false)
+        ON CONFLICT (task_id, depends_on_task_id) DO UPDATE
+          SET archived = false, created_by = EXCLUDED.created_by, created_at = now()
+        RETURNING *`, [taskId, dependsOnTaskId, actor]);
+      return rows.rows[0];
+    });
+  }
+
+  static async removeTaskDependency(taskId: string, dependsOnTaskId: string): Promise<boolean> {
+    const rows = await postgresClient.query<{ task_id: string }>(`
+      UPDATE work_task_dependencies SET archived = true
+      WHERE task_id = $1 AND depends_on_task_id = $2 AND archived = false
+      RETURNING task_id`, [taskId, dependsOnTaskId]);
+    return rows.length > 0;
   }
 
   static async insertTask(input: UpsertTaskInput): Promise<WorkTaskRecord> {
@@ -1090,7 +1165,8 @@ export class WorkItemsModel {
       WHERE id = $${ idx } RETURNING *`;
     let updated: WorkTaskRecord | null;
 
-    if (changes.status !== undefined) {
+    const changesSchedule = changes.due_at !== undefined || changes.start_at !== undefined || changes.milestone_at !== undefined;
+    if (changes.status !== undefined || changesSchedule) {
       updated = await postgresClient.transaction(async(client) => {
         await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ id }`]);
         const current = await client.query<WorkTaskRecord>(
@@ -1103,6 +1179,10 @@ export class WorkItemsModel {
           const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
             client, committed.id, committed.status, changes.actor ?? 'sulla');
           if (claimed.created && claimed.entry.status === 'pending') laneEntryId = claimed.entry.id;
+        }
+        if (committed && changesSchedule) {
+          await WorkItemsModel.auditScheduleChangesWithClient(
+            client, 'task', id, current.rows[0], committed, actor);
         }
         return committed;
       });
@@ -1122,7 +1202,6 @@ export class WorkItemsModel {
     if (updated && changes.status !== undefined) {
       await notifyTaskStatusCommitted(updated, existing.status, changes.actor);
     }
-    if (updated) await WorkItemsModel.auditScheduleChanges('task', id, existing, updated, actor);
     return updated;
   }
 
