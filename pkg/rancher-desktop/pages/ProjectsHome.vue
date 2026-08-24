@@ -100,6 +100,45 @@
             v-model="viewSearch"
             placeholder="Search this project…"
           ></label>
+          <div
+            v-if="isDataView"
+            class="ph-view-presets"
+          >
+            <label><span class="sr-only">Saved view</span><select
+              v-model="activeViewId"
+              aria-label="Saved view"
+              @change="applySavedView"
+            >
+              <option value="">
+                Current view
+              </option>
+              <option
+                v-for="view in savedViews"
+                :key="view.id"
+                :value="view.id"
+              >
+                {{ view.project_id ? 'Project' : 'Global' }} · {{ view.name }}
+              </option>
+            </select></label>
+            <label><span class="sr-only">New saved view name</span><input
+              v-model="viewName"
+              aria-label="New saved view name"
+              placeholder="View name"
+              @keydown.enter.prevent="saveNamedView"
+            ></label>
+            <label class="ph-check"><input
+              v-model="saveViewGlobally"
+              type="checkbox"
+            > Global</label>
+            <button
+              type="button"
+              class="ph-btn ghost sm"
+              :disabled="!viewName.trim()"
+              @click="saveNamedView"
+            >
+              Save view
+            </button>
+          </div>
           <button
             type="button"
             class="ph-btn ghost"
@@ -272,7 +311,7 @@
                   v-for="t in (collapsedEpics.has(epic.id) ? [] : filteredEpicTasks(epic))"
                   :key="t.id"
                   class="ph-row"
-                  :class="{ sel: openTask?.id === t.id, drop: dnd.kind === 'task' && dragOverTaskId === t.id }"
+                  :class="{ sel: openTask?.id === t.id, subtask: Boolean(t.parent_id), drop: dnd.kind === 'task' && dragOverTaskId === t.id }"
                   draggable="true"
                   role="treeitem"
                   tabindex="0"
@@ -287,6 +326,11 @@
                   @drop.stop="onRowDrop(t, epic)"
                 >
                   <span class="ph-grip">⠿</span>
+                  <span
+                    v-if="t.parent_id"
+                    class="ph-subtask-mark"
+                    aria-label="Subtask"
+                  >↳</span>
                   <span
                     class="ph-mark"
                     :class="markClass(t.status)"
@@ -357,7 +401,11 @@
                     :key="t.id"
                     class="ph-card"
                     draggable="true"
+                    role="button"
+                    tabindex="0"
                     @click="openTaskDrawer(t)"
+                    @keydown.enter="openTaskDrawer(t)"
+                    @keydown.space.prevent="openTaskDrawer(t)"
                     @dragstart="onDragStartTask(t, t.epic_id, $event)"
                     @dragend="onDragEnd"
                   >
@@ -371,6 +419,20 @@
                     >
                       {{ t.priority }}
                     </div>
+                    <select
+                      :value="t.status"
+                      :aria-label="`Move ${t.title} to lane`"
+                      @click.stop
+                      @change.stop="inlineTaskField(t, 'status', inputValue($event))"
+                    >
+                      <option
+                        v-for="status in STATUSES"
+                        :key="status"
+                        :value="status"
+                      >
+                        {{ statusLabel(status) }}
+                      </option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -383,6 +445,11 @@
               class="ph-data-view"
             >
               <div class="ph-view-meta">
+                <span
+                  class="sr-only"
+                  role="status"
+                  aria-live="polite"
+                >Showing {{ Math.min(visibleTasks.length, TABLE_RENDER_LIMIT) }} of {{ visibleTasks.length }} matching tasks</span>
                 <b>{{ visibleTasks.length }}</b> matching tasks <span v-if="allTasks.length > TABLE_RENDER_LIMIT">· rendering first {{ TABLE_RENDER_LIMIT }} of {{ allTasks.length }}</span>
               </div>
               <div
@@ -537,13 +604,29 @@
                   :key="row.task.id"
                   class="ph-gantt-row"
                 >
-                  <button
-                    type="button"
-                    class="ph-gantt-label"
-                    @click="openTaskDrawer(row.task)"
-                  >
-                    {{ row.task.title }}
-                  </button>
+                  <div class="ph-gantt-label-wrap">
+                    <button
+                      type="button"
+                      class="ph-gantt-label"
+                      @click="openTaskDrawer(row.task)"
+                    >
+                      {{ row.task.title }}
+                    </button>
+                    <div class="ph-gantt-dates">
+                      <input
+                        type="date"
+                        :value="ymd(row.task.start_at)"
+                        :aria-label="`Start date for ${row.task.title}`"
+                        @change="inlineTaskField(row.task, 'start_at', isoFromYmd(inputValue($event)))"
+                      >
+                      <input
+                        type="date"
+                        :value="ymd(row.task.due_at)"
+                        :aria-label="`Due date for ${row.task.title}`"
+                        @change="inlineTaskField(row.task, 'due_at', isoFromYmd(inputValue($event)))"
+                      >
+                    </div>
+                  </div>
                   <div class="ph-gantt-track">
                     <button
                       type="button"
@@ -905,6 +988,56 @@
           </div>
         </div>
 
+        <template v-if="taskMode === 'edit'">
+          <label class="ph-fl">Dependencies</label>
+          <div
+            v-if="currentDependencies.length"
+            class="ph-dependencies"
+          >
+            <div
+              v-for="dependency in currentDependencies"
+              :key="dependency.depends_on_task_id"
+              class="ph-dependency"
+            >
+              <span>Blocked by {{ taskTitle(dependency.depends_on_task_id) }}</span>
+              <button
+                type="button"
+                class="ph-btn ghost xs"
+                :aria-label="`Remove dependency ${taskTitle(dependency.depends_on_task_id)}`"
+                @click="removeDependency(dependency.depends_on_task_id)"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+          <div class="ph-frow">
+            <select
+              v-model="dependencyCandidate"
+              class="ph-in"
+              aria-label="Task dependency"
+            >
+              <option value="">
+                Choose prerequisite…
+              </option>
+              <option
+                v-for="task in dependencyCandidates"
+                :key="task.id"
+                :value="task.id"
+              >
+                {{ task.title }}
+              </option>
+            </select>
+            <button
+              type="button"
+              class="ph-btn ghost"
+              :disabled="!dependencyCandidate"
+              @click="addDependency"
+            >
+              Add dependency
+            </button>
+          </div>
+        </template>
+
         <label class="ph-fl">Description</label>
         <textarea
           v-model="taskDraft.description"
@@ -1158,8 +1291,9 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
+  type WorkTaskDependencyRecord,
   type UpsertProjectInput, type UpsertEpicInput, type UpsertTaskInput, type ReorderUpdate,
-  type ProjectViewType,
+  type ProjectViewType, type WorkProjectViewRecord,
 } from '@pkg/composables/useProjects';
 
 const {
@@ -1169,6 +1303,7 @@ const {
   createTask, updateTask, archiveTask, addComment, reorder,
   lanesByProject, laneCapability,
   listViews, resolveView, saveView,
+  listTaskDependencies, setTaskDependency, removeTaskDependency,
 } = useProjects();
 
 const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
@@ -1186,7 +1321,12 @@ const activityLoading = ref(false);
 const viewSearch = ref('');
 const collapsedEpics = ref(new Set<string>());
 const selectedTasks = ref(new Set<string>());
+const savedViews = ref<WorkProjectViewRecord[]>([]);
+const activeViewId = ref('');
+const viewName = ref('');
+const saveViewGlobally = ref(false);
 const TABLE_RENDER_LIMIT = 500;
+const PROJECTION_RENDER_LIMIT = 500;
 const isDataView = computed(() => PROJECT_VIEWS.some(view => view.key === tab.value));
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -1216,6 +1356,7 @@ onMounted(async() => {
   if (!globalViews.some(view => view.project_id === null && view.is_default)) {
     await saveView({ view_type: 'board', name: 'Default', is_default: true, configuration: {} }).catch(() => undefined);
   }
+  await loadAvailableViews();
   await restoreProjectView();
   refreshTimer = setInterval(() => {
     if (!document.hidden && !saving.value) load().catch(() => undefined);
@@ -1237,6 +1378,46 @@ async function restoreProjectView(): Promise<void> {
     dateAnchor.value = saved.configuration.dateAnchor;
     calendarAnchor.value = saved.configuration.dateAnchor;
   }
+}
+
+async function loadAvailableViews(): Promise<void> {
+  savedViews.value = await listViews(selectedId.value).catch(() => []);
+}
+
+function applyViewRecord(saved: WorkProjectViewRecord): void {
+  tab.value = saved.view_type;
+  viewSearch.value = saved.configuration.search ?? '';
+  collapsedEpics.value = new Set(saved.configuration.collapsedIds ?? []);
+  ganttZoom.value = saved.configuration.zoom ?? 'week';
+  if (saved.configuration.dateAnchor) {
+    dateAnchor.value = saved.configuration.dateAnchor;
+    calendarAnchor.value = saved.configuration.dateAnchor;
+  }
+}
+
+function applySavedView(): void {
+  const saved = savedViews.value.find(view => view.id === activeViewId.value);
+  if (saved) applyViewRecord(saved);
+}
+
+async function saveNamedView(): Promise<void> {
+  const name = viewName.value.trim();
+  if (!name || !isDataView.value) return;
+  const saved = await saveView({
+    project_id:    saveViewGlobally.value ? null : selectedId.value,
+    name,
+    view_type:     tab.value as ProjectViewType,
+    is_default:    false,
+    configuration: {
+      search:       viewSearch.value,
+      zoom:         ganttZoom.value,
+      dateAnchor:   tab.value === 'calendar' ? calendarAnchor.value : dateAnchor.value,
+      collapsedIds: [...collapsedEpics.value],
+    },
+  });
+  viewName.value = '';
+  await loadAvailableViews();
+  activeViewId.value = saved.id;
 }
 
 async function setProjectView(view: ProjectViewType): Promise<void> {
@@ -1269,7 +1450,10 @@ watch([tab, selectedId], () => {
   }
 });
 
-watch(selectedId, () => restoreProjectView().catch(() => undefined));
+watch(selectedId, () => {
+  activeViewId.value = '';
+  Promise.all([loadAvailableViews(), restoreProjectView()]).catch(() => undefined);
+});
 watch(viewSearch, () => persistProjectView().catch(() => undefined));
 
 async function refresh(): Promise<void> {
@@ -1395,7 +1579,7 @@ function shortDate(iso: string): string {
 // ── board columns for the selected project ────────────────────────────
 type Task = TaskView;
 const boardColumns = computed(() => {
-  const tasks: Task[] = visibleTasks.value.map(row => row.task);
+  const tasks: Task[] = boundedVisibleTasks.value.map(row => row.task);
   const known = new Set(selectedLanes.value.map(lane => lane.lane_key));
   const columns = selectedLanes.value.map(lane => ({
     key:   lane.lane_key,
@@ -1418,8 +1602,9 @@ const visibleTasks = computed(() => {
       `${ task.title } ${ task.description } ${ task.status } ${ task.priority } ${ task.assignee ?? '' } ${ epic.title }`.toLowerCase().includes(needle))
     : allTasks.value;
 });
+const boundedVisibleTasks = computed(() => visibleTasks.value.slice(0, PROJECTION_RENDER_LIMIT));
 function filteredEpicTasks(epic: EpicWithTasks): TaskView[] {
-  return visibleTasks.value.filter(row => row.epic.id === epic.id).map(row => row.task);
+  return boundedVisibleTasks.value.filter(row => row.epic.id === epic.id).map(row => row.task);
 }
 function toggleEpic(id: string): void {
   const next = new Set(collapsedEpics.value);
@@ -1441,8 +1626,8 @@ type GanttZoom = 'day' | 'week' | 'month';
 const todayYmd = new Date().toISOString().slice(0, 10);
 const ganttZoom = ref<GanttZoom>('week');
 const dateAnchor = ref(todayYmd);
-const scheduledTasks = computed(() => visibleTasks.value.filter(({ task }) => task.start_at || task.due_at || task.milestone_at));
-const unscheduledTasks = computed(() => visibleTasks.value.filter(({ task }) => !task.start_at && !task.due_at && !task.milestone_at));
+const scheduledTasks = computed(() => boundedVisibleTasks.value.filter(({ task }) => task.start_at || task.due_at || task.milestone_at));
+const unscheduledTasks = computed(() => boundedVisibleTasks.value.filter(({ task }) => !task.start_at && !task.due_at && !task.milestone_at));
 const ganttRange = computed(() => {
   const dates = scheduledTasks.value.flatMap(({ task }) => [task.start_at, task.due_at, task.milestone_at].filter(Boolean).map(v => new Date(v!).getTime()));
   const today = new Date(todayYmd).getTime();
@@ -1473,7 +1658,7 @@ const calendarDays = computed(() => {
   });
 });
 function tasksForDate(date: string): ProjectTaskRow[] {
-  return visibleTasks.value.filter(({ task }) => ymd(task.milestone_at || task.due_at || task.start_at) === date);
+  return boundedVisibleTasks.value.filter(({ task }) => ymd(task.milestone_at || task.due_at || task.start_at) === date);
 }
 function shiftMonth(delta: number): void {
   const date = new Date(`${ calendarAnchor.value }T12:00:00`); date.setMonth(date.getMonth() + delta); calendarAnchor.value = date.toISOString().slice(0, 10); persistProjectView().catch(() => undefined);
@@ -1568,6 +1753,8 @@ const openTask = ref<WorkTaskRecord | null>(null);
 const taskMode = ref<'edit' | 'create'>('edit');
 const taskDraft = reactive<TaskDraft>({ title: '' });
 const taskComments = ref<WorkCommentRecord[]>([]);
+const taskDependencies = ref<WorkTaskDependencyRecord[]>([]);
+const dependencyCandidate = ref('');
 const newComment = ref('');
 
 const taskDueYmd = computed<string>({
@@ -1595,7 +1782,34 @@ async function openTaskDrawer(t: WorkTaskRecord): Promise<void> {
   taskMode.value = 'edit';
   openTask.value = t;
   fillTaskDraft(t);
-  taskComments.value = await loadComments(t.id);
+  [taskComments.value, taskDependencies.value] = await Promise.all([
+    loadComments(t.id),
+    listTaskDependencies(t.project_id),
+  ]);
+  dependencyCandidate.value = '';
+}
+
+const currentDependencies = computed(() => taskDependencies.value
+  .filter(dependency => dependency.task_id === taskDraft.id));
+const dependencyCandidates = computed(() => {
+  const existing = new Set(currentDependencies.value.map(dependency => dependency.depends_on_task_id));
+  return allTasks.value
+    .map(row => row.task)
+    .filter(task => task.id !== taskDraft.id && !existing.has(task.id));
+});
+function taskTitle(id: string): string {
+  return allTasks.value.find(row => row.task.id === id)?.task.title ?? id;
+}
+async function addDependency(): Promise<void> {
+  if (!taskDraft.id || !dependencyCandidate.value || !selectedId.value) return;
+  await setTaskDependency(taskDraft.id, dependencyCandidate.value);
+  taskDependencies.value = await listTaskDependencies(selectedId.value);
+  dependencyCandidate.value = '';
+}
+async function removeDependency(dependsOnTaskId: string): Promise<void> {
+  if (!taskDraft.id || !selectedId.value) return;
+  await removeTaskDependency(taskDraft.id, dependsOnTaskId);
+  taskDependencies.value = await listTaskDependencies(selectedId.value);
 }
 
 async function openActivityTask(item: WorkActivityRecord): Promise<void> {
@@ -1673,6 +1887,8 @@ function openNewTask(epicId: string): void {
   openTask.value = { id: '' } as WorkTaskRecord;
   fillTaskDraft({ epic_id: epicId, status: 'todo', priority: 'medium' });
   taskComments.value = [];
+  taskDependencies.value = [];
+  dependencyCandidate.value = '';
 }
 
 function closeTask(): void {
@@ -1870,7 +2086,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
   --pborder-soft: #1a212d;
   --ptext:        var(--text, #eef2f8);
   --ptext2:       #9aa7b8;
-  --ptext3:       #5f6b7c;
+  --ptext3:       #7f8da0;
   --pacc:         var(--steel-400, #5096b3);
   --pacc-soft:    rgba(80, 150, 179, 0.14);
   --pacc-line:    rgba(80, 150, 179, 0.40);
@@ -1891,7 +2107,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 :global(html.light) .projects-home, :global(body.light) .projects-home {
   --pbg: #f5f7fa; --psurface: #ffffff; --psurface2: #edf1f5;
   --pborder: #c5ced8; --pborder-soft: #dce2e8;
-  --ptext: #17212b; --ptext2: #4d5e6f; --ptext3: #697b8c;
+  --ptext: #17212b; --ptext2: #4d5e6f; --ptext3: #5b6d7e;
   --pacc-soft: rgba(46, 111, 140, 0.12); --pacc-line: rgba(46, 111, 140, 0.48); --pacc: #2e6f8c;
   --pgreen: #347558; --pamber: #8b611f; --pred: #a34641;
 }
@@ -1946,7 +2162,11 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-tab.on { color: var(--ptext); border-bottom-color: var(--pacc); }
 .ph-view-tab { display: inline-flex; gap: 5px; align-items: center; }
 .ph-search input { width: 190px; background: var(--psurface2); border: 1px solid var(--pborder); color: var(--ptext); border-radius: 7px; padding: 7px 10px; font-size: 12px; }
-.ph-search input:focus, .ph-tab:focus-visible, .ph-btn:focus-visible, .ph-link:focus-visible { outline: 2px solid var(--pacc); outline-offset: 2px; }
+.ph-view-presets { display: flex; align-items: center; gap: 6px; }
+.ph-view-presets select, .ph-view-presets input { max-width: 150px; background: var(--psurface2); border: 1px solid var(--pborder); color: var(--ptext); border-radius: 7px; padding: 7px 8px; font-size: 11px; }
+.ph-check { display: inline-flex; align-items: center; gap: 4px; color: var(--ptext2); font-size: 11px; }
+.ph-search input:focus, .ph-view-presets input:focus, .ph-view-presets select:focus, .ph-tab:focus-visible, .ph-btn:focus-visible, .ph-link:focus-visible { outline: 2px solid var(--pacc); outline-offset: 2px; }
+.ph-card:focus-visible, .ph-row:focus-visible, .ph-gantt-label:focus-visible, .ph-gantt-dates input:focus-visible, .ph-calendar button:focus-visible { outline: 2px solid var(--pacc); outline-offset: 2px; }
 .ph-sp { flex: 1; }
 
 .ph-canvas { flex: 1; overflow: auto; padding: 26px 28px 36px; min-height: 0; }
@@ -1972,6 +2192,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-row { display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px; border: 1px solid var(--pborder-soft); border-radius: 11px; background: var(--psurface); margin-bottom: 8px; cursor: pointer; }
 .ph-row:hover { border-color: var(--pborder); }
 .ph-row.sel { border-color: var(--pacc-line); background: var(--pacc-soft); }
+.ph-row.subtask { margin-left: 28px; border-left: 2px solid var(--pacc-line); }
+.ph-subtask-mark { color: var(--ptext3); font-size: 13px; }
 .ph-mark { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
 .ph-mark.hi { background: var(--pacc); }
 .ph-mark.wait { background: var(--pamber); }
@@ -2004,6 +2226,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-n { font-family: var(--pmono); font-size: 11px; color: var(--ptext3); }
 .ph-card { background: var(--psurface); border: 1px solid var(--pborder-soft); border-radius: 10px; padding: 12px 13px; margin-bottom: 9px; cursor: pointer; }
 .ph-card:hover { border-color: var(--pborder); }
+.ph-card select { width: 100%; margin-top: 8px; border: 1px solid var(--pborder-soft); border-radius: 5px; background: var(--psurface2); color: var(--ptext2); font-size: 10px; padding: 4px 5px; }
 .ph-card.ghost { border-style: dashed; background: transparent; cursor: default; }
 .ph-ct { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--ptext); }
 .ph-card.ghost .ph-ct { color: var(--ptext3); font-weight: 400; font-size: 12.5px; }
@@ -2025,8 +2248,11 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-link:hover { color: var(--pacc); }
 
 .ph-gantt { position: relative; min-width: 760px; border: 1px solid var(--pborder); border-radius: 10px; overflow: hidden; background: repeating-linear-gradient(90deg, transparent 0, transparent calc(10% - 1px), var(--pborder-soft) 10%); }
-.ph-gantt-row { display: grid; grid-template-columns: 220px 1fr; min-height: 38px; border-bottom: 1px solid var(--pborder-soft); }
-.ph-gantt-label { position: relative; z-index: 2; text-align: left; border: 0; border-right: 1px solid var(--pborder); background: var(--psurface); color: var(--ptext); padding: 8px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.ph-gantt-row { display: grid; grid-template-columns: 280px 1fr; min-height: 52px; border-bottom: 1px solid var(--pborder-soft); }
+.ph-gantt-label-wrap { position: relative; z-index: 2; border-right: 1px solid var(--pborder); background: var(--psurface); padding: 5px 8px; overflow: hidden; }
+.ph-gantt-label { width: 100%; text-align: left; border: 0; background: transparent; color: var(--ptext); padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.ph-gantt-dates { display: flex; gap: 5px; margin-top: 4px; }
+.ph-gantt-dates input { min-width: 0; width: 118px; border: 1px solid var(--pborder-soft); border-radius: 4px; background: var(--psurface2); color: var(--ptext2); font-size: 10px; }
 .ph-gantt-track { position: relative; }
 .ph-gantt-bar { position: absolute; top: 9px; height: 20px; min-width: 6px; border: 1px solid var(--pacc-line); border-radius: 5px; background: var(--pacc); cursor: pointer; }
 .ph-milestone { position: absolute; right: -8px; top: -1px; color: var(--ptext); }
@@ -2048,7 +2274,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 @media (max-width: 1100px) {
   .ph-side { width: 210px; }
   .ph-top { padding-inline: 16px; }
-  .ph-search { display: none; }
+  .ph-search, .ph-view-presets { display: none; }
   .ph-canvas { padding-inline: 16px; }
 }
 
@@ -2104,6 +2330,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-scrim { position: absolute; inset: 0; background: rgba(4, 7, 12, 0.55); z-index: 20; }
 .ph-scrim.center { display: flex; align-items: center; justify-content: center; }
 .ph-drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 380px; background: var(--psurface); border-left: 1px solid var(--pborder); z-index: 21; display: flex; flex-direction: column; box-shadow: -20px 0 50px rgba(0, 0, 0, 0.4); }
+.ph-dependencies { display: grid; gap: 6px; margin-bottom: 8px; }
+.ph-dependency { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--pborder); border-radius: 7px; background: var(--psurface2); color: var(--ptext2); padding: 7px 8px; font-size: 11px; }
 .ph-dh { display: flex; align-items: center; padding: 16px 18px 12px; border-bottom: 1px solid var(--pborder-soft); }
 .ph-dh-id { font-family: var(--pmono); font-size: 10px; letter-spacing: 0.12em; color: var(--ptext3); flex: 1; }
 .ph-x { background: transparent; border: none; color: var(--ptext3); font-size: 15px; cursor: pointer; }

@@ -116,6 +116,21 @@ export function initWorkItemsEvents(): void {
     return Model.save({ ...input, actor: input.actor ?? 'human' });
   });
 
+  ipcMainProxy.handle('work-items:dependencies-list', async(_event: unknown, projectId: string) => {
+    const WorkItemsModel = await importWorkItemsModel();
+    return WorkItemsModel.listTaskDependencies(projectId);
+  });
+
+  ipcMainProxy.handle('work-items:dependency-set', async(_event: unknown, taskId: string, dependsOnTaskId: string) => {
+    const WorkItemsModel = await importWorkItemsModel();
+    return WorkItemsModel.setTaskDependency(taskId, dependsOnTaskId, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:dependency-remove', async(_event: unknown, taskId: string, dependsOnTaskId: string) => {
+    const WorkItemsModel = await importWorkItemsModel();
+    return WorkItemsModel.removeTaskDependency(taskId, dependsOnTaskId);
+  });
+
   // ── lane definitions ─────────────────────────────────────────────────
 
   ipcMainProxy.handle('work-items:lanes-list', async(_event: unknown, opts: {

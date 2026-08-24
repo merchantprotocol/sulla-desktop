@@ -1,6 +1,7 @@
 import fs from 'fs';
 
 import { describe, expect, it } from '@jest/globals';
+import { compileScript, compileStyle, compileTemplate, parse } from '@vue/compiler-sfc';
 
 const source = fs.readFileSync('pkg/rancher-desktop/pages/ProjectsHome.vue', 'utf8');
 
@@ -22,11 +23,36 @@ describe('Projects multi-view contract', () => {
     expect(source).toContain('visibleTasks.slice(0, TABLE_RENDER_LIMIT)');
   });
 
-  it('defines deterministic light and dark token palettes and accessible controls', () => {
-    expect(source).toContain(':global(html.light) .projects-home');
-    expect(source).toContain('--pbg:          #0b0f17');
+  it('compiles the real light/dark SFC render and style paths without diagnostics', () => {
+    const { descriptor, errors } = parse(source, { filename: 'ProjectsHome.vue' });
+    expect(errors).toEqual([]);
+    expect(() => compileScript(descriptor, { id: 'projects-home' })).not.toThrow();
+    const template = compileTemplate({
+      id:       'projects-home',
+      filename: 'ProjectsHome.vue',
+      source:   descriptor.template?.content ?? '',
+    });
+    expect(template.errors).toEqual([]);
+    const style = compileStyle({
+      id:             'projects-home',
+      filename:       'ProjectsHome.vue',
+      source:         descriptor.styles[0].content.replace(/^@import[^;]+;$/m, '@mixin routines-theme-vars {}'),
+      scoped:         true,
+      preprocessLang: 'scss',
+    });
+    expect(style.errors).toEqual([]);
+    expect(style.code).toContain('html.light');
+    expect(style.code).toContain('#0b0f17');
     expect(source).toContain('aria-pressed');
     expect(source).toContain('role="grid"');
     expect(source).toContain(':focus-visible');
+  });
+
+  it('bounds every projection and exposes real named views and dependency controls', () => {
+    expect(source).toContain('const PROJECTION_RENDER_LIMIT = 500');
+    expect(source).toContain('boundedVisibleTasks');
+    expect(source).toContain('saveNamedView');
+    expect(source).toContain('addDependency');
+    expect(source).toContain('Move $' + '{t.title} to lane');
   });
 });

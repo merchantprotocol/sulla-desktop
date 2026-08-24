@@ -432,6 +432,8 @@ export interface IpcMainInvokeEvents {
     projects: import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord[];
     epics:    import('@pkg/agent/database/models/WorkItemsModel').WorkEpicRecord[];
     tasks:    import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord[];
+    lanesByProject: Record<string, import('@pkg/agent/database/models/WorkLaneDefinitionModel').EffectiveWorkLane[]>;
+    laneCapability: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneRuntimeCapability;
   };
   'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
   'work-items:activity':        (opts?: { projectId?: string; author?: string; limit?: number }) => import('@pkg/agent/database/models/WorkItemsModel').WorkActivityRecord[];
@@ -446,6 +448,12 @@ export interface IpcMainInvokeEvents {
   'work-items:task-archive':    (id: string) => boolean;
   'work-items:comment-add':     (input: import('@pkg/agent/database/models/WorkItemsModel').AddCommentInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord;
   'work-items:reorder':         (updates: { kind: 'epic' | 'task'; id: string; position?: number; status?: string; epic_id?: string; actor?: string }[]) => boolean;
+  'work-items:views-list':      (projectId?: string | null) => import('@pkg/agent/database/models/WorkProjectViewModel').WorkProjectViewRecord[];
+  'work-items:view-resolve':    (projectId?: string | null) => import('@pkg/agent/database/models/WorkProjectViewModel').WorkProjectViewRecord | null;
+  'work-items:view-save':       (input: import('@pkg/agent/database/models/WorkProjectViewModel').SaveProjectViewInput) => import('@pkg/agent/database/models/WorkProjectViewModel').WorkProjectViewRecord;
+  'work-items:dependencies-list': (projectId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskDependencyRecord[];
+  'work-items:dependency-set':    (taskId: string, dependsOnTaskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskDependencyRecord;
+  'work-items:dependency-remove': (taskId: string, dependsOnTaskId: string) => boolean;
   'work-items:lanes-list':      (opts?: import('@pkg/agent/database/models/WorkLaneDefinitionModel').ListWorkLaneOpts) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord[];
   'work-items:lanes-resolve':   (projectId: string, includeArchived?: boolean) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').EffectiveWorkLane[];
   'work-items:lane-create':     (input: import('@pkg/agent/database/models/WorkLaneDefinitionModel').CreateWorkLaneInput) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord;

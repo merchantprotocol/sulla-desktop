@@ -246,4 +246,75 @@ describe('WorkItemsModel', () => {
     expect(sql).toContain('SET last_activity_at = now()');
     expect(sql).toContain('SELECT inserted.* FROM inserted JOIN touched ON true');
   });
+
+  it('commits a schedule edit and its audit row in the same transaction', async() => {
+    const before = {
+      id:           'task-schedule',
+      project_id:   'project-1',
+      status:       'todo',
+      priority:     'high',
+      assignee:     'human',
+      labels:       [],
+      start_at:     null,
+      due_at:       null,
+      milestone_at: null,
+    };
+    const after = { ...before, due_at: '2026-08-31T00:00:00.000Z' };
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([before]));
+    const client = {
+      query: (jest.fn() as any)
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [before] })
+        .mockResolvedValueOnce({ rows: [after] })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(client));
+
+    const updated = await WorkItemsModel.updateTask('task-schedule', {
+      due_at: '2026-08-31T00:00:00.000Z', actor: 'human',
+    });
+
+    expect(updated?.due_at).toBe('2026-08-31T00:00:00.000Z');
+    expect(client.query.mock.calls[1][0]).toContain('FOR UPDATE');
+    expect(client.query.mock.calls[2][0]).toContain('UPDATE work_tasks');
+    expect(client.query.mock.calls[3][0]).toContain('INSERT INTO work_schedule_audit');
+    expect(postgresClient.transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists active same-project dependencies and rejects dependency cycles', async() => {
+    const successClient = {
+      query: (jest.fn() as any)
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'task-a', project_id: 'project-1' },
+            { id: 'task-b', project_id: 'project-1' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ found: false }] })
+        .mockResolvedValueOnce({ rows: [{ task_id: 'task-a', depends_on_task_id: 'task-b' }] }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(successClient));
+    await expect(WorkItemsModel.setTaskDependency('task-a', 'task-b', 'human')).resolves.toMatchObject(
+      {
+        task_id: 'task-a', depends_on_task_id: 'task-b',
+      },
+    );
+    expect(successClient.query.mock.calls[1][0]).toContain('WITH RECURSIVE prerequisites');
+
+    const cycleClient = {
+      query: (jest.fn() as any)
+        .mockResolvedValueOnce({
+          rows: [
+            { id: 'task-a', project_id: 'project-1' },
+            { id: 'task-b', project_id: 'project-1' },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ found: true }] }),
+    };
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback(cycleClient));
+    await expect(
+      WorkItemsModel.setTaskDependency('task-a', 'task-b', 'human'),
+    )
+      .rejects.toThrow('create a cycle');
+  });
 });
