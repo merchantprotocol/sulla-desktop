@@ -417,6 +417,34 @@ export class WorkTaskDispatchModel {
    * same eligibility surface used by recovery, so the default report-only
    * rollout measures what an enabled pass would do.
    */
+  /**
+   * Count in_review tasks eligible for protected review but not yet claimed —
+   * the review backlog depth surfaced on the lifecycle capability report (#710).
+   */
+  static async countReviewBacklog(): Promise<number> {
+    const row = await postgresClient.queryOne<{ count: number }>(`
+      SELECT COUNT(*)::int AS count
+      FROM work_tasks t
+      JOIN work_epics e ON e.id = t.epic_id
+      JOIN work_projects p ON p.id = e.project_id
+      WHERE t.archived = false
+        AND t.status = 'in_review'
+        AND e.archived = false
+        AND p.archived = false
+        AND NOT (p.status = ANY(  static async findRecoverableInProgress(::text[]))
+        AND NOT (e.status = ANY(  static async findRecoverableInProgress(::text[]))
+        AND NOT EXISTS (
+          SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
+          WHERE LOWER(label) = ANY($2::text[])
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM work_task_dispatches d
+          WHERE d.task_id = t.id AND d.status = 'running'
+        )
+    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
+    return Number(row?.count ?? 0);
+  }
+
   static async findRecoverableInProgress(staleMinutes = 360, limit = 100): Promise<RecoverableInProgressCandidate[]> {
     const rows = await postgresClient.query<InProgressClassificationRow>(`
       SELECT t.*,

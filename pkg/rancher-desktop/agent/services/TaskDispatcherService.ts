@@ -4,7 +4,7 @@ import { AbortService } from './AbortService';
 import { resolvePullRequestHead, resolvePullRequestHeads } from './GitHubPullRequestHeadService';
 import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
-import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
+import { LifecycleCapabilityModel, type LifecycleHealth } from '../database/models/LifecycleCapabilityModel';
 import { getIntegrationService } from './IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
@@ -56,6 +56,12 @@ interface ParsedProtectedReview extends Omit<ProtectedReviewEvidence, 'workflowE
 }
 
 type VerificationOwner = 'core-routine' | 'legacy';
+
+interface ProtectedReviewActivation {
+  active: boolean;
+  health: LifecycleHealth;
+  reason: string | null;
+}
 
 let taskDispatcherServiceInstance: TaskDispatcherService | null = null;
 
@@ -219,6 +225,21 @@ export class TaskDispatcherService {
   }
 
   private async fillExecutionPool(): Promise<void> {
+    // Fail closed (#710 AC5): do not admit new todo execution when in_review
+    // cannot drain, or completed work would grow an unserviceable review queue.
+    const requireReviewDrain = await SullaSettingsModel.get('taskExecutionRequiresReviewDrain', true);
+    if ((requireReviewDrain === true || requireReviewDrain === 'true') && !(await this.reviewDrainAvailable())) {
+      await LifecycleCapabilityModel.report({
+        key:               'todo-execution',
+        enabled:           false,
+        health:            'degraded',
+        owner:             'dispatcher',
+        runtimeInstanceId: RUNTIME_INSTANCE_ID,
+        fallbackMode:      'manual_hold',
+        error:             'Paused new todo execution: protected review is inactive; in_review cannot drain.',
+      });
+      return;
+    }
     const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
     const concurrency = Math.max(1, Math.min(10, configured || DEFAULT_CONCURRENCY));
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
@@ -242,8 +263,12 @@ export class TaskDispatcherService {
   }
 
   private async fillVerificationPool(): Promise<void> {
-    const enabled = await SullaSettingsModel.get('taskVerifierEnabled', false);
-    if (!enabled) {
+    const enabled = await SullaSettingsModel.get('taskVerifierEnabled', true);
+    const owner = enabled === true || enabled === 'true' ? await this.resolveVerificationOwner() : null;
+    if (!owner) {
+      // Fail closed (#710): no healthy reviewer owns in_review this cycle. Report
+      // the waiting backlog so queue depth stays visible while draining is paused.
+      const backlog = await WorkTaskDispatchModel.countReviewBacklog().catch(() => 0);
       await LifecycleCapabilityModel.report({
         key:               'in-review-verification',
         enabled:           false,
@@ -251,11 +276,10 @@ export class TaskDispatcherService {
         owner:             null,
         runtimeInstanceId: RUNTIME_INSTANCE_ID,
         fallbackMode:      'heartbeat',
+        error:             backlog > 0 ? `Protected review inactive with ${ backlog } task(s) waiting in review.` : null,
       });
       return;
     }
-    const owner = await this.resolveVerificationOwner();
-    if (!owner) return;
     const configured = Number(await SullaSettingsModel.get('taskVerifierConcurrency', DEFAULT_CONCURRENCY));
     const concurrency = Math.max(1, Math.min(10, configured || DEFAULT_CONCURRENCY));
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
@@ -282,15 +306,52 @@ export class TaskDispatcherService {
     }
   }
 
-  /** One service and one claim path own in_review. Disabling the core routine pauses it. */
+  /**
+   * One service and one claim path own in_review. Protected review is the
+   * default owner once its capability preflight passes (#710). An operator
+   * setting can pin 'legacy', hard-disable ('disabled'), or opt into a legacy
+   * fallback; absent an override an unhealthy preflight fails closed (null)
+   * rather than silently downgrading the reviewer.
+   */
   private async resolveVerificationOwner(): Promise<VerificationOwner | null> {
-    const configured = String(await SullaSettingsModel.get('taskVerifierOwner', 'legacy'));
+    const configured = String(await SullaSettingsModel.get('taskVerifierOwner', 'auto'));
     if (configured === 'legacy') return 'legacy';
-    const rolloutEnabled = await SullaSettingsModel.get('taskReviewCoreRoutineEnabled', false);
-    if (!rolloutEnabled) return null;
+    if (configured === 'disabled' || configured === 'off') return null;
+
+    const activation = await this.protectedReviewActivation();
+    if (activation.active) return 'core-routine';
+
+    const legacyFallback = await SullaSettingsModel.get('taskVerifierLegacyFallback', false);
+    return legacyFallback === true || legacyFallback === 'true' ? 'legacy' : null;
+  }
+
+  /**
+   * Capability preflight for the protected in_review reviewer. Activation is
+   * health-gated, not manual-flag-gated (#710): the review routine must be
+   * registered and enabled and the human kill-switch (taskReviewCoreRoutineEnabled
+   * === false) must not be set. Returns the health the dispatcher reports so an
+   * unhealthy preflight fails closed and stays visible on the capability surface.
+   */
+  private async protectedReviewActivation(): Promise<ProtectedReviewActivation> {
+    const killSwitch = await SullaSettingsModel.get('taskReviewCoreRoutineEnabled', true);
+    if (killSwitch === false || killSwitch === 'false') {
+      return { active: false, health: 'unavailable', reason: 'Protected review disabled by taskReviewCoreRoutineEnabled=false.' };
+    }
     const routine = await WorkflowModel.findById(REVIEW_PROJECT_ARTIFACT_ID);
-    if (!routine || routine.attributesSnapshot.enabled === false) return null;
-    return 'core-routine';
+    if (!routine) {
+      return { active: false, health: 'unavailable', reason: 'Protected review routine is not registered.' };
+    }
+    if (routine.attributesSnapshot?.enabled === false) {
+      return { active: false, health: 'unavailable', reason: 'Protected review routine is disabled.' };
+    }
+    return { active: true, health: 'healthy', reason: null };
+  }
+
+  /** True when in_review can drain this cycle (a healthy reviewer owner resolves). */
+  private async reviewDrainAvailable(): Promise<boolean> {
+    const enabled = await SullaSettingsModel.get('taskVerifierEnabled', true);
+    if (!(enabled === true || enabled === 'true')) return false;
+    return (await this.resolveVerificationOwner()) !== null;
   }
 
   private async runClaim(claim: ClaimedDispatch, verificationOwner: VerificationOwner = 'legacy'): Promise<void> {
