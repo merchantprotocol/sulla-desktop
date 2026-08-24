@@ -74,6 +74,7 @@ describe('resolveWipLimits', () => {
 
   it('prefers an explicit per-role setting, clamped', async () => {
     jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async (prop: string) => {
+      if (prop === 'automatedProjectManagementEnabled') return true;
       if (prop === 'projectAutomation.wip.execution') return 5;
       return null;
     });
@@ -83,7 +84,8 @@ describe('resolveWipLimits', () => {
 
   it('inherits #706 per-kind concurrency when no explicit WIP key is set', async () => {
     jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async (prop: string) => {
-      if (prop === 'taskVerifierConcurrency') return 6;
+      if (prop === 'automatedProjectManagementEnabled') return true;
+      if (prop === 'routineConcurrency_review') return 6;
       return null;
     });
     const limits = await resolveWipLimits();
@@ -94,9 +96,15 @@ describe('resolveWipLimits', () => {
   });
 
   it('falls back to conservative constants when nothing is configured', async () => {
-    jest.spyOn(SullaSettingsModel, 'get').mockResolvedValue(null as any);
+    jest.spyOn(SullaSettingsModel, 'get').mockImplementation(async (prop: string) =>
+      prop === 'automatedProjectManagementEnabled' ? true : null as any);
     const limits = await resolveWipLimits();
     expect(limits.execution).toBe(3);
     expect(limits.planning).toBe(2);
+  });
+
+  it('is unlimited while automated Projects management is disabled', async () => {
+    jest.spyOn(SullaSettingsModel, 'get').mockResolvedValue(false as any);
+    await expect(resolveWipLimits()).resolves.toEqual(unlimited);
   });
 });

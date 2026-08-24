@@ -42,10 +42,11 @@ const SETTING_PREFIX = 'projectAutomation.wip.';
  * (backlog, terminal, manual) carry no ceiling by default.
  */
 const DEFAULT_SOURCE: Partial<Record<WorkLaneSemanticRole, { key: string; fallback: number }>> = {
-  execution: { key: 'taskDispatcherConcurrency', fallback: 3 },
-  review:    { key: 'taskVerifierConcurrency',   fallback: 3 },
-  planning:  { key: 'taskPlanningConcurrency',   fallback: 2 },
-  blocked:   { key: 'taskDispatcherConcurrency', fallback: 3 },
+  execution: { key: 'routineConcurrency_execution', fallback: 3 },
+  review:    { key: 'routineConcurrency_review',    fallback: 3 },
+  planning:  { key: 'routineConcurrency_planning',  fallback: 2 },
+  blocked:   { key: 'routineConcurrency_repair',    fallback: 2 },
+  manual:    { key: 'routineConcurrency_other',     fallback: 2 },
 };
 
 /**
@@ -77,6 +78,11 @@ async function readRoleLimit(role: WorkLaneSemanticRole): Promise<number | null>
 /** Resolve the effective per-role ceilings from durable settings. */
 export async function resolveWipLimits(): Promise<WipLimits> {
   const out = {} as WipLimits;
+  const enabled = Boolean(await SullaSettingsModel.get('automatedProjectManagementEnabled', false));
+  if (!enabled) {
+    for (const role of ALL_SEMANTIC_ROLES) out[role] = null;
+    return out;
+  }
   for (const role of ALL_SEMANTIC_ROLES) out[role] = await readRoleLimit(role);
   return out;
 }
