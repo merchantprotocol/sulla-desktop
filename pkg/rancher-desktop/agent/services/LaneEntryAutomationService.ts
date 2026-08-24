@@ -37,6 +37,7 @@ export class LaneEntryAutomationService {
         actor:         entry.actor ?? 'sulla',
         laneContract: (entry.binding_snapshot as any).lane_contract ?? {},
       }), {
+        routineKind:        'other',
         definitionSnapshot: entry.workflow_snapshot as unknown as WorkflowDefinition,
         executionScope:     { taskId: entry.task_id, generation: entry.generation },
         executionId,

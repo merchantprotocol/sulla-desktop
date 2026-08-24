@@ -7,6 +7,8 @@ import { isInsideWindow } from './HeartbeatService';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { getIntegrationService } from './IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { RoutineConcurrencyPolicy } from './RoutineConcurrencyPolicy';
+import { ArtifactCustodyPolicy } from './ArtifactCustodyPolicy';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import {
   WorkTaskDispatchModel,
@@ -175,8 +177,10 @@ export class TaskDispatcherService {
           return;
         }
       } catch (wipErr) {
-        // WIP gating is best-effort backpressure; never let it wedge the tick.
-        console.warn('[TaskDispatcher] WIP limit evaluation failed, continuing:', wipErr);
+        // The gate is a safety invariant. If counts/settings cannot be resolved,
+        // fail closed and retry on the next scheduled tick.
+        console.warn('[TaskDispatcher] WIP limit evaluation failed; holding fresh execution:', wipErr);
+        return;
       }
       const reviewBacklog = await WorkTaskDispatchModel.countReviewBacklog();
       if (reviewBacklog > 0) {
@@ -268,8 +272,11 @@ export class TaskDispatcherService {
 
   private async fillExecutionPool(): Promise<void> {
     const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
-    const concurrency = Math.max(1, Math.min(10, configured || DEFAULT_CONCURRENCY));
+    const concurrency = await RoutineConcurrencyPolicy.resolveLimit('execution', configured || DEFAULT_CONCURRENCY);
+    const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
+    if (enforceSlots) await RoutineConcurrencyPolicy.reclaimStale();
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
+    const wipLimits = await resolveWipLimits();
 
     await LifecycleCapabilityModel.report({
       key:               'todo-execution',
@@ -280,11 +287,26 @@ export class TaskDispatcherService {
       fallbackMode:      'heartbeat',
     });
 
-    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
+        let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
     while (freeSlots > 0 && this.initialized) {
-      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID);
-      if (!claim) break;
-      this.runClaim(claim).catch(err => console.error('[TaskDispatcher] Worker promise failed:', err));
+      let slot: string | null = null;
+      if (enforceSlots) {
+        slot = await RoutineConcurrencyPolicy.acquire('execution', concurrency, { owner: RUNTIME_INSTANCE_ID });
+        if (!slot) break;
+      }
+      const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID, wipLimits);
+      if (!claim) {
+        if (slot) await RoutineConcurrencyPolicy.release(slot);
+        break;
+      }
+      const heldSlot = slot;
+      const slotHeartbeat = heldSlot ? setInterval(() => { if (heldSlot) void RoutineConcurrencyPolicy.heartbeat(heldSlot); }, 30000) : null;
+      this.runClaim(claim)
+        .catch(err => console.error('[TaskDispatcher] Worker promise failed:', err))
+        .finally(() => {
+          if (slotHeartbeat) clearInterval(slotHeartbeat);
+          if (heldSlot) void RoutineConcurrencyPolicy.release(heldSlot);
+        });
       freeSlots -= 1;
     }
   }
@@ -305,7 +327,9 @@ export class TaskDispatcherService {
     const owner = await this.resolveVerificationOwner();
     if (!owner) return;
     const configured = Number(await SullaSettingsModel.get('taskVerifierConcurrency', DEFAULT_CONCURRENCY));
-    const concurrency = Math.max(1, Math.min(10, configured || DEFAULT_CONCURRENCY));
+    const concurrency = await RoutineConcurrencyPolicy.resolveLimit('review', configured || DEFAULT_CONCURRENCY);
+    const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
+    if (enforceSlots) await RoutineConcurrencyPolicy.reclaimStale();
     const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
 
     await LifecycleCapabilityModel.report({
@@ -317,15 +341,30 @@ export class TaskDispatcherService {
       fallbackMode:      'heartbeat',
     });
 
-    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification'));
+        let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification'));
     while (freeSlots > 0 && this.initialized) {
+      let slot: string | null = null;
+      if (enforceSlots) {
+        slot = await RoutineConcurrencyPolicy.acquire('review', concurrency, { owner: RUNTIME_INSTANCE_ID });
+        if (!slot) break;
+      }
       const claim = await WorkTaskDispatchModel.claimNextReview(
         agentId,
         owner === 'core-routine' ? [DEFAULT_CORE_ROUTINE_AGENT_ID] : [],
         RUNTIME_INSTANCE_ID,
       );
-      if (!claim) break;
-      this.runClaim(claim, owner).catch(err => console.error('[TaskDispatcher] Verifier promise failed:', err));
+      if (!claim) {
+        if (slot) await RoutineConcurrencyPolicy.release(slot);
+        break;
+      }
+      const heldSlot = slot;
+      const slotHeartbeat = heldSlot ? setInterval(() => { if (heldSlot) void RoutineConcurrencyPolicy.heartbeat(heldSlot); }, 30000) : null;
+      this.runClaim(claim, owner)
+        .catch(err => console.error('[TaskDispatcher] Verifier promise failed:', err))
+        .finally(() => {
+          if (slotHeartbeat) clearInterval(slotHeartbeat);
+          if (heldSlot) void RoutineConcurrencyPolicy.release(heldSlot);
+        });
       freeSlots -= 1;
     }
   }
@@ -625,34 +664,48 @@ export class TaskDispatcherService {
     summary: string,
   ): Promise<void> {
     const { dispatch, task } = claim;
-    const taskStatus = status === 'completed' ? 'in_review' : 'blocked';
-    const result = status === 'failed' ? undefined : summary;
-    const error = status === 'failed' ? summary : undefined;
-    const comment = status === 'failed'
-      ? `Dispatch ${ dispatch.id } failed: ${ summary }`
-      : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }.\n\n${ summary }`;
-
-    // Persist the worker's blocker/result before the status transition. A
-    // blocked transition immediately snapshots the task for the planning
-    // council, so racing the comment and update could omit the original
-    // blocker from every planner's input.
-    const settled = await Promise.allSettled([
-      WorkTaskDispatchModel.settle(dispatch.id, status, result, error),
-      WorkItemsModel.addComment({ task_id: task.id, author: 'dispatcher', body: comment }),
-    ]);
-
-    for (const outcome of settled) {
-      if (outcome.status === 'rejected') {
-        console.error(`[TaskDispatcher] Could not finalize ${ dispatch.id }:`, outcome.reason);
-      }
-    }
-
+    const parsed = status === 'completed' ? this.parseWorkResult(summary) : null;
+    const malformed = status === 'completed' && !parsed;
+    const taskStatus = malformed ? 'planning' : status === 'completed' ? 'in_review' : 'blocked';
+    const dispatchStatus = malformed ? 'failed' : status;
+    const concise = parsed?.summary ?? summary.slice(0, 1_500);
+    const comment = malformed
+      ? `Dispatch ${ dispatch.id } stopped before review: structured artifact custody was missing or malformed.`
+      : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }: ${ concise }`;
     try {
-      await WorkItemsModel.updateTask(task.id, {
-        status: taskStatus, assignee: 'heartbeat', actor: 'dispatcher',
+      await WorkTaskDispatchModel.finalize(dispatch.id, task.id, {
+        dispatchStatus,
+        taskStatus,
+        taskAssignee: taskStatus === 'planning' ? 'dispatcher' : 'heartbeat',
+        comment,
+        result: status === 'failed' ? undefined : summary,
+        error:  status === 'failed' || malformed ? concise : undefined,
+        evidence: parsed ? {
+          artifactType:     parsed.custody.workKind === 'code' ? 'code_pull_request' : 'non_code_artifact',
+          artifactLocation: parsed.custody.branch ?? parsed.custody.artifactId ?? undefined,
+          artifactUrl:      parsed.custody.prUrl ?? parsed.custody.artifactUrl ?? undefined,
+          artifactRef:      parsed.custody.prHeadSha ?? parsed.custody.artifactId ?? undefined,
+          contentHash:      parsed.custody.commitSha ?? undefined,
+          reviewEvidence:   parsed.custody.validation ?? parsed.custody.evidence,
+          custody:          parsed.custody,
+        } : undefined,
       });
     } catch (err) {
-      console.error(`[TaskDispatcher] Could not move task ${ task.id } after ${ dispatch.id }:`, err);
+      console.error(`[TaskDispatcher] Could not atomically finalize ${ dispatch.id }:`, err);
+    }
+  }
+
+  private parseWorkResult(output: string): { summary: string; custody: import('./ArtifactCustodyPolicy').ArtifactCustody } | null {
+    const matches = [...output.matchAll(/<WORK_RESULT>([\s\S]*?)<\/WORK_RESULT>/g)];
+    if (matches.length !== 1) return null;
+    try {
+      const parsed = JSON.parse(matches[0][1].trim());
+      if (typeof parsed?.summary !== 'string' || !parsed.summary.trim()) return null;
+      const custody = parsed.custody;
+      if (!ArtifactCustodyPolicy.validate(custody).ok) return null;
+      return { summary: parsed.summary.trim().slice(0, 1_500), custody };
+    } catch {
+      return null;
     }
   }
 
@@ -668,7 +721,12 @@ Dispatch: ${ dispatchId }
 Description:
 ${ task.description || '(no description)' }
 
-Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR when possible. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. End with a concise artifact-and-verification summary. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.`;
+Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
+
+Completed work MUST end with exactly one machine block. Code custody requires the exact remote PR head and validation/provenance; non-code custody requires an immutable authoritative artifact and evidence:
+<WORK_RESULT>{"summary":"concise receipt","custody":{"workKind":"code","branch":"feat/example","commitSha":"FULL_SHA","prUrl":"https://github.com/owner/repo/pull/123","prHeadSha":"FULL_SHA","validation":{"tests":"exact commands and outcomes"},"provenance":{"agentId":"${ dispatch.agent_id }","dispatchId":"${ dispatchId }"}}}</WORK_RESULT>
+
+Use workKind "non_code" with artifactId or artifactUrl, evidence, and provenance for non-code work. Missing or malformed custody is structurally rejected and the task will not enter review.`;
   }
 
   private buildVerifierPrompt(task: WorkTaskRecord, dispatchId: string, comments: { author: string | null; body: string }[]): string {

@@ -270,6 +270,29 @@ export class PlaybookController<TState = any> {
       return state;
     }
 
+    // Durable execution ownership: claim once, then renew on every frontier
+    // tick. A lost lease fails closed so a second runtime cannot double-run.
+    if (playbook.executionId) {
+      try {
+        const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+        const leaseMeta = playbook as any;
+        const ownerId = leaseMeta._leaseOwner || `runtime-${ process.pid }`;
+        const token = leaseMeta._leaseToken || `${ ownerId }:${ playbook.executionId }`;
+        const lease = leaseMeta._leaseToken
+          ? await WorkflowExecutionModel.renewHeartbeat(playbook.executionId, ownerId, token, 60000)
+          : await WorkflowExecutionModel.acquireLease(playbook.executionId, ownerId, 60000, token);
+        if (!lease) {
+          console.warn(`[PlaybookController] Lease lost for ${ playbook.executionId }; refusing to advance`);
+          return state;
+        }
+        leaseMeta._leaseOwner = ownerId;
+        leaseMeta._leaseToken = token;
+      } catch (err) {
+        console.warn('[PlaybookController] Failed to claim/renew workflow lease; refusing to advance:', err);
+        return state;
+      }
+    }
+
     // External stop/pause request via `sulla meta/stop_workflow` or
     // `sulla meta/pause_workflow`. Cooperative — we read Redis flags
     // keyed by executionId and honor them on each frontier tick.
@@ -2183,9 +2206,9 @@ export class PlaybookController<TState = any> {
     try {
       const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
       if (outcome === 'completed') {
-        await WorkflowExecutionModel.markCompleted(playbook.executionId);
+        await WorkflowExecutionModel.settle(playbook.executionId, 'completed');
       } else {
-        await WorkflowExecutionModel.markFailed(playbook.executionId, error);
+        await WorkflowExecutionModel.settle(playbook.executionId, 'failed', error);
       }
     } catch (e) {
       console.warn('[PlaybookController] Failed to update workflow execution status:', e);

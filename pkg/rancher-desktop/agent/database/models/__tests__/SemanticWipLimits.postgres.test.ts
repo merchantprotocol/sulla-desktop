@@ -11,14 +11,14 @@ import { up as addWorkTaskActivity } from '../../migrations/0061_add_work_task_a
 import { up as createWorkTaskDispatches } from '../../migrations/0062_create_work_task_dispatches';
 import { up as addVerificationDispatches } from '../../migrations/0064_add_verification_dispatches';
 import { up as createWorkTaskWaits } from '../../migrations/0065_create_work_task_waits';
-import { up as createWorkTaskPlanningRuns } from '../../migrations/0067_create_work_task_planning_runs';
-import { up as extendDispatchCustody } from '../../migrations/0068_extend_work_task_dispatch_custody';
+import { up as addReviewDispositionEvidence } from '../../migrations/0067_add_review_disposition_evidence';
+import { up as createLifecycleCapabilities } from '../../migrations/0068_create_lifecycle_capabilities';
 import { up as createLaneDefinitions } from '../../migrations/0069_create_work_lane_definitions';
 import { up as createLaneWorkflowBindings } from '../../migrations/0070_create_lane_workflow_bindings';
 import { up as scopeLaneWorkflowExecutions } from '../../migrations/0071_scope_lane_workflow_executions';
-import { up as addReviewDispositionEvidence } from '../../migrations/0072_add_review_disposition_evidence';
-import { up as createLifecycleCapabilities } from '../../migrations/0073_create_lifecycle_capabilities';
+import { up as createWorkTaskPlanningRuns } from '../../migrations/0072_create_work_task_planning_runs';
 import { up as addSemanticLaneRuntimeHelpers } from '../../migrations/0074_semantic_lane_runtime_helpers';
+import { up as extendDispatchCustody } from '../../migrations/0076_extend_work_task_dispatch_custody';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 import { evaluateClaim, type WipLimits } from '../../../services/ProjectAutomationWipLimits';
 
@@ -48,9 +48,9 @@ describeWithPostgres('SemanticWipLimits (issue #711) — migrated Postgres', () 
     for (const migration of [
       createWorkflows, createWorkflowExecutions, addCoreWorkflowFields, createWorkItems,
       addWorkTaskActor, addWorkTaskActivity, createWorkTaskDispatches, addVerificationDispatches,
-      createWorkTaskWaits, createWorkTaskPlanningRuns, extendDispatchCustody, createLaneDefinitions,
-      createLaneWorkflowBindings, scopeLaneWorkflowExecutions, addReviewDispositionEvidence,
-      createLifecycleCapabilities, addSemanticLaneRuntimeHelpers,
+      createWorkTaskWaits, addReviewDispositionEvidence, createLifecycleCapabilities,
+      createLaneDefinitions, createLaneWorkflowBindings, scopeLaneWorkflowExecutions,
+      createWorkTaskPlanningRuns, addSemanticLaneRuntimeHelpers, extendDispatchCustody,
     ]) await pool.query(migration as any);
 
     (postgresClient as any).query = async (text: string, params: unknown[] = []) =>
