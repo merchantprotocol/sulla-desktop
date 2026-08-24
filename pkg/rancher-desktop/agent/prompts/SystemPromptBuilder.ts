@@ -132,6 +132,25 @@ export interface AnthropicSystemBlock {
   cache_control?: { type: 'ephemeral'; ttl?: '1h' };
 }
 
+/**
+ * Raised before a Heartbeat wake can receive a prompt whose ownership or
+ * continuous-operation contract has drifted from the compiled invariants.
+ */
+export class HeartbeatPromptInvariantError extends Error {
+  constructor(public readonly invariants: HeartbeatInvariantResult) {
+    const details = [
+      invariants.missing.length ? `missing: ${ invariants.missing.join(', ') }` : '',
+      invariants.forbidden.length ? `forbidden: ${ invariants.forbidden.join(', ') }` : '',
+    ].filter(Boolean).join('; ');
+
+    super(
+      'Heartbeat prompt invariant failure; refusing to start the wake' +
+      (details ? ` (${ details })` : ''),
+    );
+    this.name = 'HeartbeatPromptInvariantError';
+  }
+}
+
 /** Factory function that produces a section or null to skip it */
 export type SectionFactory = (ctx: PromptBuildContext) => PromptSection | null | Promise<PromptSection | null>;
 
@@ -374,16 +393,12 @@ class SystemPromptBuilderImpl {
     // binary running reverted prompt code (e.g. PR #581's pick-one/STOP ceiling)
     // passes the source-level tests on main but fails here at runtime — turning
     // the manual "rebuild + eyeball the live prompt" gate into an automatic
-    // signal. Non-throwing: we only surface the failure.
+    // signal. Fail closed before BaseNode can hand a stale prompt to the LLM.
     let heartbeatInvariants: HeartbeatInvariantResult | undefined;
     if (ctx.isHeartbeat) {
       heartbeatInvariants = checkHeartbeatPromptInvariants(text);
       if (!heartbeatInvariants.ok) {
-        console.error(
-          '[SystemPromptBuilder] Heartbeat prompt invariant FAILURE — deployed prompt is stale or reverted. ' +
-          'Rebuild/restart Sulla Desktop to load the continuous-operator prompt.',
-          { missing: heartbeatInvariants.missing, forbidden: heartbeatInvariants.forbidden },
-        );
+        throw new HeartbeatPromptInvariantError(heartbeatInvariants);
       }
     }
 

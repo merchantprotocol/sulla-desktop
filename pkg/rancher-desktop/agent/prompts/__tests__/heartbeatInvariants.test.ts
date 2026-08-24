@@ -1,6 +1,10 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { describe, expect, it } from '@jest/globals';
 
-import { SystemPromptBuilder, type PromptBuildContext } from '../SystemPromptBuilder';
+import {
+  HeartbeatPromptInvariantError,
+  SystemPromptBuilder,
+  type PromptBuildContext,
+} from '../SystemPromptBuilder';
 import { heartbeatPrompt } from '../heartbeat';
 import {
   HEARTBEAT_FORBIDDEN_PHRASES,
@@ -187,9 +191,7 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     expect(built.heartbeatInvariants?.ok).toBe(true);
   });
 
-  it('flags a stale/reverted heartbeat build', async() => {
-    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-
+  it('rejects a stale/reverted prompt before the heartbeat wake can run', async() => {
     SystemPromptBuilder.register('heartbeat', () => ({
       id:             'heartbeat',
       content:        'stale prompt with a Cycle Budget: pick exactly one task and STOP.',
@@ -197,11 +199,32 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
       cacheStability: 'stable',
     }), ['full']);
 
-    const built = await SystemPromptBuilder.build(baseCtx({}));
-    expect(built.heartbeatInvariants?.ok).toBe(false);
-    expect(built.heartbeatInvariants?.forbidden).toContain('Cycle Budget');
-    expect(consoleError).toHaveBeenCalledTimes(1);
-    consoleError.mockRestore();
+    await expect(SystemPromptBuilder.build(baseCtx({}))).rejects.toMatchObject({
+      name:       'HeartbeatPromptInvariantError',
+      invariants: {
+        ok:        false,
+        forbidden: expect.arrayContaining(['Cycle Budget', 'pick exactly one']),
+      },
+    });
+  });
+
+  it('exposes a typed production-boundary error for heartbeat wake handling', async() => {
+    SystemPromptBuilder.register('heartbeat', () => ({
+      id:             'heartbeat',
+      content:        heartbeatPrompt.split('Two-Door Rule').join(''),
+      priority:       110,
+      cacheStability: 'stable',
+    }), ['full']);
+
+    let rejection: unknown;
+    try {
+      await SystemPromptBuilder.build(baseCtx({}));
+    } catch (err) {
+      rejection = err;
+    }
+
+    expect(rejection).toBeInstanceOf(HeartbeatPromptInvariantError);
+    expect((rejection as HeartbeatPromptInvariantError).invariants.missing).toContain('Two-Door Rule');
   });
 
   it('skips the invariant check for non-heartbeat builds', async() => {
