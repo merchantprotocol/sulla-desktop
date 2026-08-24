@@ -149,6 +149,23 @@ export function initWorkItemsEvents(): void {
     return WorkItemsModel.listRecentActivity(opts);
   });
 
+  ipcMainProxy.handle('work-items:automation-status', async() => {
+    const [{ WorkTaskDispatchModel }, limitsModule] = await Promise.all([
+      import('@pkg/agent/database/models/WorkTaskDispatchModel'),
+      import('@pkg/agent/services/ProjectAutomationWipLimits'),
+    ]);
+    const [limits, counts] = await Promise.all([
+      limitsModule.resolveWipLimits(),
+      WorkTaskDispatchModel.countByRole(),
+    ]);
+    return {
+      limits,
+      counts,
+      decision: limitsModule.evaluateClaim('execution', counts, limits),
+      at: new Date().toISOString(),
+    };
+  });
+
   ipcMainProxy.handle('work-items:views-list', async(_event: unknown, projectId?: string | null) => {
     const Model = await importWorkProjectViewModel();
     return Model.list(projectId);
