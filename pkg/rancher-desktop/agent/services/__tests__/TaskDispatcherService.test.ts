@@ -5,6 +5,7 @@ const recoverStaleMock: any = jest.fn(() => Promise.resolve([]));
 const findRecoverableInProgressMock: any = jest.fn(() => Promise.resolve([]));
 const recoverOrphanedInProgressMock: any = jest.fn(() => Promise.resolve([]));
 const countRunningMock: any = jest.fn(() => Promise.resolve(0));
+const countReviewBacklogMock: any = jest.fn(() => Promise.resolve(0));
 const claimNextMock: any = jest.fn(() => Promise.resolve(null));
 const claimNextReviewMock: any = jest.fn(() => Promise.resolve(null));
 const settleMock: any = jest.fn(() => Promise.resolve());
@@ -46,6 +47,7 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
     findRecoverableInProgress: findRecoverableInProgressMock,
     recoverOrphanedInProgress: recoverOrphanedInProgressMock,
     countRunning:            countRunningMock,
+    countReviewBacklog:      countReviewBacklogMock,
     claimNext:               claimNextMock,
     claimNextReview:         claimNextReviewMock,
     settle:                  settleMock,
@@ -100,6 +102,7 @@ describe('TaskDispatcherService', () => {
     findRecoverableInProgressMock.mockResolvedValue([]);
     recoverOrphanedInProgressMock.mockResolvedValue([]);
     countRunningMock.mockResolvedValue(0);
+    countReviewBacklogMock.mockResolvedValue(0);
     claimNextMock.mockResolvedValue(null);
     claimNextReviewMock.mockResolvedValue(null);
     workflowFindByIdMock.mockResolvedValue({ attributesSnapshot: { enabled: true } });
@@ -186,6 +189,43 @@ describe('TaskDispatcherService', () => {
     expect(recoverStaleMock).toHaveBeenCalledWith(0);
     expect(recoverPreviousRuntimeMock).toHaveBeenCalledWith('todo-execution', expect.stringContaining('task-dispatcher-'));
     expect(countRunningMock).toHaveBeenCalled();
+  });
+
+  it('drains downstream review before claiming fresh todo work', async() => {
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled') return Promise.resolve(true);
+      if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
+      return Promise.resolve(fallback);
+    });
+    countReviewBacklogMock.mockResolvedValue(2);
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+
+    expect(claimNextReviewMock).toHaveBeenCalled();
+    expect(countReviewBacklogMock).toHaveBeenCalledTimes(1);
+    expect(claimNextMock).not.toHaveBeenCalled();
+    expect(claimNextReviewMock.mock.invocationCallOrder[0])
+      .toBeLessThan(countReviewBacklogMock.mock.invocationCallOrder[0]);
+  });
+
+  it('starts todo work only after the downstream review backlog is empty', async() => {
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled') return Promise.resolve(true);
+      if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
+      return Promise.resolve(fallback);
+    });
+    countReviewBacklogMock.mockResolvedValue(0);
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+
+    expect(claimNextReviewMock.mock.invocationCallOrder[0])
+      .toBeLessThan(claimNextMock.mock.invocationCallOrder[0]);
   });
 
   it('reports in-progress candidates without mutating while rollout is disabled', async() => {

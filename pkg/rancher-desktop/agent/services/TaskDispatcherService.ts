@@ -134,8 +134,13 @@ export class TaskDispatcherService {
       }
 
       await this.checkInProgressRecovery();
-      await this.fillExecutionPool();
       await this.fillVerificationPool();
+      const reviewBacklog = await WorkTaskDispatchModel.countReviewBacklog();
+      if (reviewBacklog > 0) {
+        console.log(`[TaskDispatcher] Holding fresh todo work until ${ reviewBacklog } downstream review item(s) drain`);
+        return;
+      }
+      await this.fillExecutionPool();
     } catch (err) {
       console.error('[TaskDispatcher] Dispatch check failed:', err);
       await LifecycleCapabilityModel.report({
