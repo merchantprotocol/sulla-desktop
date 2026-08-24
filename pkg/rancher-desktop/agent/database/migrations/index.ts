@@ -71,6 +71,7 @@ import { up as up_0081, down as down_0081 } from './0081_add_workflow_execution_
 import { up as up_0082, down as down_0082 } from './0082_create_artifact_receipts';
 import { up as up_0083, down as down_0083 } from './0083_create_work_task_dependencies';
 import { up as up_0084, down as down_0084 } from './0084_activate_protected_review';
+import { up as up_0085, down as down_0085 } from './0085_add_conveyor_metrics_indexes';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -143,4 +144,5 @@ export const migrationsRegistry = [
   { name: '0082_create_artifact_receipts',                         up: up_0082, down: down_0082 },
   { name: '0083_create_work_task_dependencies',                    up: up_0083, down: down_0083 },
   { name: '0084_activate_protected_review',                        up: up_0084, down: down_0084 },
+  { name: '0085_add_conveyor_metrics_indexes',                     up: up_0085, down: down_0085 },
 ] as const;
