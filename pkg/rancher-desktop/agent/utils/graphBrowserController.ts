@@ -8,6 +8,10 @@ export const GRAPH_BROWSER_TOOLS = [
 
 export type GraphBrowserTool = typeof GRAPH_BROWSER_TOOLS[number];
 
+export function graphBrowserOwnerSessionId(threadId: string): string {
+  return `graph:${ threadId }`;
+}
+
 export function isGraphBrowserControllerEnabled(state?: BaseThreadState): boolean {
   const metadata = state?.metadata as any;
   const allowedToolNames = metadata?.allowedToolNames;

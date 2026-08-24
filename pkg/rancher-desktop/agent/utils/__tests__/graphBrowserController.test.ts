@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   browserAssetId,
+  graphBrowserOwnerSessionId,
   graphBrowserControllerContext,
   isGraphBrowserControllerEnabled,
   normalizeGraphBrowserArgs,
@@ -38,6 +39,7 @@ describe('scheduled graph Browser controller policy', () => {
       .toMatchObject({ assetId: id });
     expect(normalizeGraphBrowserArgs('screenshot', {}, 'heartbeat_123', id))
       .toEqual({ assetId: id });
+    expect(graphBrowserOwnerSessionId('heartbeat_123')).toBe('graph:heartbeat_123');
   });
 
   it('overrides caller-supplied asset ids and rejects use before graph ownership exists', () => {
