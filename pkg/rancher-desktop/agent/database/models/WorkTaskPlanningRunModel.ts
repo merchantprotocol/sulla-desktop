@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
+import { WorkTaskWaitModel } from './WorkTaskWaitModel';
 
 import { postgresClient } from '../PostgresClient';
 import { LifecycleCapabilityModel } from './LifecycleCapabilityModel';
@@ -75,6 +76,13 @@ export class WorkTaskPlanningRunModel {
       const task = taskResult.rows[0];
       if (!task || !planningKeys.includes(task.status)) return null;
       if ((await WorkTaskDependencyModel.listUnresolvedDependencies(taskId, client)).length > 0) return null;
+      // A blocked task with an active monitor-owned durable wait is not eligible
+      // for planning re-entry: its wait monitor moves the task out of 'blocked'
+      // (to in_review, or to planning on failure) once the external state
+      // changes, is satisfied, or is cancelled. Claiming planning while the wait
+      // is still 'active' spuriously burns a council attempt on an unchanged gate
+      // (regression: KEfo planning attempt 5 fired against an active external_job wait).
+      if (triggerStatus === 'blocked' && await WorkTaskWaitModel.hasActiveWait(taskId, client)) return null;
 
       const active = await client.query<{ id: string }>(`
         SELECT id FROM work_task_planning_runs

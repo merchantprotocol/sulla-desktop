@@ -4,12 +4,17 @@ import { postgresClient } from '../../PostgresClient';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { WorkTaskPlanningRunModel } from '../WorkTaskPlanningRunModel';
+import { WorkTaskWaitModel } from '../WorkTaskWaitModel';
 
 describe('WorkTaskPlanningRunModel', () => {
   let originalTransaction: any;
 
   beforeAll(() => {
     originalTransaction = postgresClient.transaction;
+  });
+
+  beforeEach(() => {
+    jest.spyOn(WorkTaskWaitModel, 'hasActiveWait').mockResolvedValue(false);
   });
 
   afterEach(() => {

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import type { PoolClient } from 'pg';
 
 export type WorkTaskWaitKind = 'github_checks' | 'human_gate' | 'scheduled_time' | 'external_job';
 export type WorkTaskWaitStatus = 'active' | 'changed' | 'satisfied' | 'cancelled' | 'failed';
@@ -56,6 +57,18 @@ export interface GithubCheckFingerprintInput {
 }
 
 export class WorkTaskWaitModel {
+  /**
+   * True when the task still has a monitor-owned durable wait in the 'active'
+   * state. A wait that has moved to 'changed', 'satisfied', 'cancelled', or
+   * 'failed' no longer suppresses downstream transitions. Callers inside a
+   * claim transaction pass their PoolClient so the check reads the live row
+   * atomically with the FOR UPDATE task lock.
+   */
+  static async hasActiveWait(taskId: string, client?: PoolClient): Promise<boolean> {
+    const sql = `SELECT id FROM work_task_waits WHERE task_id = $1 AND status = 'active' LIMIT 1`;
+    const rows = client ? (await client.query(sql, [taskId])).rows : await postgresClient.query<{ id: string }>(sql, [taskId]);
+    return rows.length > 0;
+  }
   static fingerprintGithubChecks(input: GithubCheckFingerprintInput): string {
     const normalized = {
       headSha: input.headSha.trim().toLowerCase(),
