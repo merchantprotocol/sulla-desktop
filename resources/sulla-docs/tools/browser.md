@@ -1,6 +1,6 @@
 # Browser Tools
 
-The richest tool surface in Sulla. **23 tools** for tabs, page reading, interaction, JS evaluation, cookies, history, network monitoring, and persistent agent storage. **All tools target Sulla's built-in WebContentsViews — not the user's external browser.**
+The richest tool surface in Sulla. **24 tools** for tabs, page reading, interaction, JS evaluation, cookies, history, network monitoring, persistent agent storage, and scheduled-graph delegation. **All tools target Sulla's built-in WebContentsViews — not the user's external browser.**
 
 ## Two paradigms — pick the right one
 
@@ -8,6 +8,34 @@ The richest tool surface in Sulla. **23 tools** for tabs, page reading, interact
 2. **Coordinate-based** (fallback): when handles fail (shadow DOM, iframes, custom canvas widgets), use `screenshot` to see pixel coords, then `click_at` / `type_at` / `hover` at (x, y). Trusted CDP events.
 
 Default to handle-based. Drop to coordinates only when the snapshot can't see the element.
+
+## Scheduled graph controller
+
+Heartbeat and other explicitly browser-capable scheduled graphs receive the
+graph-bound MCP tool `mcp__sulla_native__browser_controller`. This is the
+supported delegation path when the installed Codex Browser skill is present
+but its host-app-specific `node_repl` controller cannot run inside Sulla's Lima
+model process.
+
+Read the installed Browser skill first and keep its confirmation, transmission,
+CAPTCHA, credential, and untrusted-page rules. Then call the controller with a
+Sulla browser operation and the arguments documented on this page:
+
+```json
+{
+  "tool": "tab",
+  "args": { "action": "upsert", "url": "http://127.0.0.1:5173" }
+}
+```
+
+The controller derives an `iab_<graph>_<target>` assetId from the scheduled
+graph's thread and forces every later operation onto that graph-owned tab,
+ignoring caller-supplied asset IDs. Global tab listing is intentionally not
+available through this controller. This keeps concurrent Heartbeat/browser work isolated. The controller is
+not registered for ordinary chat graphs or any graph with
+`userVisibleBrowser=false`; attempting to use it there fails closed as an
+unknown MCP tool. Do not use standalone Playwright or another browser server as
+a fallback.
 
 ## Asset IDs and tab scoping
 

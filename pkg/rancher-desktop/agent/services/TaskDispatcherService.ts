@@ -620,18 +620,17 @@ export class TaskDispatcherService {
     const coreContractMissing = executionOwner === 'core-routine' && !evidence;
     const requestedRole = status === 'failed' || coreContractMissing || evidence?.contractValid === false
       ? 'planning'
-      : evidence?.nextState
-        ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, evidence.nextState))?.semantic_role ?? 'planning'
+      : evidence?.nextRole
+        ? evidence.nextRole
         : status === 'completed' ? 'review' : 'planning';
     const compatibilityKey = requestedRole === 'review'
       ? 'in_review'
       : requestedRole === 'blocked' ? 'blocked' : 'planning';
-    const requestedLane = evidence?.nextState
-      ? await WorkLaneDefinitionModel.resolveStatus(task.project_id, evidence.nextState)
-      : null;
-    const taskStatus = requestedLane?.semantic_role === requestedRole
-      ? requestedLane.lane_key
-      : await WorkLaneDefinitionModel.preferredLaneKey(task.project_id, requestedRole, compatibilityKey);
+    const taskStatus = await WorkLaneDefinitionModel.preferredLaneKey(
+      task.project_id,
+      requestedRole,
+      compatibilityKey,
+    );
     const assignee = requestedRole === 'planning' ? 'dispatcher' : 'heartbeat';
     const dispatchStatus = status === 'failed' || coreContractMissing || evidence?.contractValid === false
       ? 'failed'
@@ -683,7 +682,7 @@ export class TaskDispatcherService {
 
   private async extractWorkflowEvidence(playbook: WorkflowPlaybookState, task: WorkTaskRecord): Promise<{
     ledger:           WorkTaskDispatchEvidence;
-    nextState:        'in_review' | 'planning' | 'blocked';
+    nextRole:         'review' | 'planning' | 'blocked';
     contractValid:    boolean;
     contractError?:   string;
     proposedComment?: string;
@@ -707,7 +706,7 @@ export class TaskDispatcherService {
       hasReviewEvidence &&
       hasVerification &&
       record?.taskId === task.id &&
-      record?.nextState === 'in_review' &&
+      record?.nextRole === 'review' &&
       proposedComment.length > 0;
     const explicitExternalBlock = custodyVerdict === 'blocked' &&
       repairRoute === 'blocked' &&
@@ -728,14 +727,14 @@ export class TaskDispatcherService {
     const contractError = contractValid
       ? undefined
       : canonicalError || 'structured review or durable artifact custody evidence is incomplete';
-    const nextState = passContract
-      ? 'in_review'
+    const nextRole = passContract
+      ? 'review'
       : explicitExternalBlock
         ? 'blocked'
         : 'planning';
 
     return {
-      nextState,
+      nextRole,
       contractValid,
       contractError,
       proposedComment: passContract ? proposedComment : undefined,
@@ -753,7 +752,7 @@ export class TaskDispatcherService {
         contentHash:         canonical?.contentHash || custody?.contentHash || custody?.headSha,
         reviewerVerdict,
         reviewEvidence:      review?.evidence ?? review ?? undefined,
-        terminalReason:      custody?.terminalReason || contractError || (nextState === 'planning' ? 'acceptance_or_custody_incomplete' : undefined),
+        terminalReason:      custody?.terminalReason || contractError || (nextRole === 'planning' ? 'acceptance_or_custody_incomplete' : undefined),
       },
     };
   }

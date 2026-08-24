@@ -33,15 +33,19 @@
     TtsMessage + sets voice.phase='playing', queueEmpty clears.
 */
 
-import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { newMessageId, type MessageId } from '../types/chat';
 
-import { TTSPlayerService, createVoiceTurnAccumulator } from '@pkg/composables/voice';
+import {
+  TTSPlayerService,
+  createVoiceBargeInDetector,
+  createVoiceTurnAccumulator,
+} from '@pkg/composables/voice';
+import { logBargeIn } from '@pkg/composables/voice/VoiceLogger';
+import { ipcRenderer as _ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ChatController } from '../controller/ChatController';
 import type { InterimMessage, TtsMessage } from '../models/Message';
-import { newMessageId, type MessageId } from '../types/chat';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ipcRenderer = _ipcRenderer as any;
 
 /** Window-level TTS suppression toggle mirrored from the old path. */
@@ -55,7 +59,7 @@ export interface VoiceSessionAdapterOptions {
   /** Channel this adapter reports speak events against. */
   channelId?: string;
   /** Surfaces recoverable errors (missing whisper model, mic permission, …). */
-  onError?: (message: string) => void;
+  onError?:   (message: string) => void;
 }
 
 // Fallback commit delay (ms). PRIMARY end-of-turn trigger is the main-process
@@ -66,15 +70,20 @@ const UTTERANCE_FALLBACK_MS = 8000;
 
 export class VoiceSessionAdapter {
   private readonly controller: ChatController;
-  private readonly onError?: (message: string) => void;
+  private readonly onError?:   (message: string) => void;
 
   private readonly tts: TTSPlayerService;
 
-  private unsubs: Array<() => void> = [];
+  private unsubs: (() => void)[] = [];
 
   // Recording state — tracked locally, mirrored into controller.voice.
   private recording = false;
   private interimId: MessageId | null = null;
+  private recordingStartedAt = 0;
+  private lastLevel = 0;
+  private lastSpeaking = false;
+
+  private readonly bargeIn = createVoiceBargeInDetector();
 
   // Shared turn accumulation (partials → interim, transcript_turn → text, utterance_end →
   // commit). Same module the classic chat uses, so both surfaces behave identically.
@@ -89,22 +98,35 @@ export class VoiceSessionAdapter {
   private activeTtsMessageId: MessageId | null = null;
 
   // Bound IPC listeners so we can unregister on dispose().
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   private readonly onTranscript = (_event: any, msg: any) => this.handleTranscript(msg);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   private readonly onMicVad = (_event: any, data: { speaking: boolean; level: number }) => {
     if (!this.recording) return;
+    this.lastLevel = Math.max(0, Math.min(1, data.level));
+    this.lastSpeaking = !!data.speaking;
+
+    if (this.bargeIn.update(this.lastSpeaking, this.tts.isPlaying)) {
+      logBargeIn();
+      this.tts.stop();
+    }
+
     const v = this.controller.voice.value;
     if (v.phase !== 'recording') return;
     this.controller.setVoice({
       ...v,
-      level:    Math.max(0, Math.min(1, data.level)),
-      speaking: !!data.speaking,
+      level:    this.lastLevel,
+      speaking: this.lastSpeaking,
     });
   };
 
   // Window-level ⌘/ shortcut bridge.
-  private readonly onWindowVoiceToggle = () => { void this.toggle(); };
+  private readonly onWindowVoiceToggle = () => {
+    this.toggle().catch((err) => {
+      console.error('[VoiceSessionAdapter] toggle failed', err);
+      this.onError?.('Voice capture failed to start.');
+    });
+  };
 
   // Speak bridge — PersonaAdapter listens for backend `speak` events
   // and re-dispatches them as this window event. We pick them up and
@@ -124,7 +146,7 @@ export class VoiceSessionAdapter {
 
     this.unsubs.push(
       this.tts.on('playbackStart', () => this.handleTtsStart()),
-      this.tts.on('queueEmpty',    () => this.handleTtsEnd()),
+      this.tts.on('queueEmpty', () => this.handleTtsEnd()),
     );
 
     window.addEventListener('chat:voice-toggle', this.onWindowVoiceToggle);
@@ -135,13 +157,16 @@ export class VoiceSessionAdapter {
 
   async toggle(): Promise<void> {
     if (this.recording) this.stop(true);
-    else                await this.start();
+    else await this.start();
   }
 
   async start(): Promise<void> {
     if (this.recording) return;
     this.recording = true;
     this.turn.reset();
+    this.bargeIn.reset();
+    this.lastLevel = 0;
+    this.lastSpeaking = false;
 
     // Drop in an interim message the transcript can render while we listen.
     this.spawnInterim();
@@ -163,8 +188,8 @@ export class VoiceSessionAdapter {
       return;
     }
 
-    ipcRenderer.on('gateway-transcript',       this.onTranscript);
-    ipcRenderer.on('audio-driver:mic-vad',     this.onMicVad);
+    ipcRenderer.on('gateway-transcript', this.onTranscript);
+    ipcRenderer.on('audio-driver:mic-vad', this.onMicVad);
   }
 
   /**
@@ -172,12 +197,13 @@ export class VoiceSessionAdapter {
    * @param commit  when true, send whatever transcript has accumulated;
    *                when false, drop it.
    */
-  stop(commit: boolean = true): void {
+  stop(commit = true): void {
     if (!this.recording) return;
     this.recording = false;
+    this.bargeIn.reset();
 
-    ipcRenderer.removeListener('gateway-transcript',    this.onTranscript);
-    ipcRenderer.removeListener('audio-driver:mic-vad',  this.onMicVad);
+    ipcRenderer.removeListener('gateway-transcript', this.onTranscript);
+    ipcRenderer.removeListener('audio-driver:mic-vad', this.onMicVad);
 
     // recording is already false, so commitTurn() below won't re-spawn an interim.
     if (commit) {
@@ -199,18 +225,19 @@ export class VoiceSessionAdapter {
 
   /** Create a fresh interim bubble and mark the voice UI as recording. */
   private spawnInterim(): void {
+    this.recordingStartedAt = Date.now();
     const interim: InterimMessage = {
       id:        newMessageId(),
       kind:      'interim',
       createdAt: Date.now(),
       text:      '',
-      startedAt: Date.now(),
+      startedAt: this.recordingStartedAt,
     };
     this.interimId = interim.id;
     this.controller.appendMessage(interim);
     this.controller.setVoice({
       phase:            'recording',
-      startedAt:        Date.now(),
+      startedAt:        this.recordingStartedAt,
       interimMessageId: interim.id,
       level:            0,
       speaking:         false,
@@ -232,7 +259,6 @@ export class VoiceSessionAdapter {
 
   // ─── Whisper transcript ───────────────────────────────────────────
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private handleTranscript(msg: any): void {
     if (!this.recording) return;
     this.turn.handleEvent(msg);
@@ -275,6 +301,7 @@ export class VoiceSessionAdapter {
   }
 
   private handleTtsStart(): void {
+    this.bargeIn.reset();
     // If we already have a TTS bubble in the transcript we leave it alone —
     // TTSPlayerService fires playbackStart for every sentence in the queue.
     if (!this.activeTtsMessageId) {
@@ -296,11 +323,21 @@ export class VoiceSessionAdapter {
   }
 
   private handleTtsEnd(): void {
+    this.bargeIn.reset();
     const id = this.activeTtsMessageId;
     this.activeTtsMessageId = null;
     if (id) this.controller.removeMessage(id);
     if (this.controller.voice.value.phase === 'playing') {
       this.controller.stopTTS(id ?? undefined);
+    }
+    if (this.recording && this.interimId) {
+      this.controller.setVoice({
+        phase:            'recording',
+        startedAt:        this.recordingStartedAt,
+        interimMessageId: this.interimId,
+        level:            this.lastLevel,
+        speaking:         this.lastSpeaking,
+      });
     }
   }
 }

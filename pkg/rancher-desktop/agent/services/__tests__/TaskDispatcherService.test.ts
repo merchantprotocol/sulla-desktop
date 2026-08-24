@@ -32,6 +32,9 @@ const generationHashMock: any = jest.fn(() => 'f'.repeat(64));
 const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({
   attributes: { enabled: true }, attributesSnapshot: { enabled: true },
 }));
+const preferredLaneKeyMock: any = jest.fn(
+  (_projectId: string, _role: string, compatibilityKey: string) => Promise.resolve(compatibilityKey),
+);
 const laneRole = (status: string) => status === 'in_review'
   ? 'review'
   : status === 'blocked'
@@ -72,7 +75,7 @@ jest.unstable_mockModule('../../database/models/WorkLaneDefinitionModel', () => 
     resolveStatus:     jest.fn((_projectId: string, status: string) => Promise.resolve({
       lane_key: status, semantic_role: laneRole(status),
     })),
-    preferredLaneKey: jest.fn((_projectId: string, _role: string, compatibilityKey: string) => Promise.resolve(compatibilityKey)),
+    preferredLaneKey: preferredLaneKeyMock,
   },
 }));
 jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({
@@ -130,6 +133,9 @@ describe('TaskDispatcherService', () => {
     countRunningMock.mockResolvedValue(0);
     claimNextMock.mockResolvedValue(null);
     claimNextReviewMock.mockResolvedValue(null);
+    preferredLaneKeyMock.mockImplementation(
+      (_projectId: string, _role: string, compatibilityKey: string) => Promise.resolve(compatibilityKey),
+    );
     workflowFindByIdMock.mockResolvedValue({ attributes: { enabled: true }, attributesSnapshot: { enabled: true } });
     resolvePullRequestHeadMock.mockResolvedValue({
       owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 123, sha: 'a'.repeat(40),
@@ -262,6 +268,11 @@ describe('TaskDispatcherService', () => {
   });
 
   it('claims mechanically, executes the assigned worker, and returns completed work for review', async() => {
+    preferredLaneKeyMock.mockImplementation(
+      (_projectId: string, role: string, compatibilityKey: string) => Promise.resolve(
+        role === 'review' ? 'qa-custom' : compatibilityKey,
+      ),
+    );
     const claim = {
       task: {
         id:          'task-1',
@@ -290,7 +301,7 @@ describe('TaskDispatcherService', () => {
             'node-todo-review':   { result: '{"verdict":"pass","evidence":["inspected remote PR"]}' },
             'node-todo-repair':   { result: '{"route":"pass"}' },
             'node-todo-custody':  { result: '{"verdict":"pass","artifactType":"code","artifactUrl":"https://github.com/o/r/pull/1","artifactRef":"feature/x","headSha":"1234567890123456789012345678901234567890","contentHash":"1234567890123456789012345678901234567890","verificationEvidence":["tests passed"],"reviewerVerdict":"pass"}' },
-            'node-todo-record':   { result: '{"taskId":"task-1","proposedComment":"Verified remote draft PR and tests.","nextState":"in_review"}' },
+            'node-todo-record':   { result: '{"taskId":"task-1","proposedComment":"Verified remote draft PR and tests.","nextRole":"review"}' },
           },
         },
       },
@@ -307,12 +318,13 @@ describe('TaskDispatcherService', () => {
     expect(claimNextMock).toHaveBeenCalledWith('opus-worker', 'core-todo');
     expect(executeMock).toHaveBeenCalled();
     expect(finalizeMock).toHaveBeenCalledWith('dispatch-1', 'task-1', expect.objectContaining({
-      dispatchStatus: 'completed', taskStatus: 'in_review', taskAssignee: 'heartbeat',
+      dispatchStatus: 'completed', taskStatus: 'qa-custom', taskAssignee: 'heartbeat',
     }));
+    expect(preferredLaneKeyMock).toHaveBeenCalledWith('project-1', 'review', 'in_review');
     expect(canonicalVerifyMock).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'task-1' }),
       expect.objectContaining({ artifactType: 'code' }),
-      expect.objectContaining({ taskId: 'task-1', nextState: 'in_review' }),
+      expect.objectContaining({ taskId: 'task-1', nextRole: 'review' }),
     );
     expect(addCommentMock).toHaveBeenCalledWith(expect.objectContaining({
       task_id: 'task-1', author: 'dispatcher',

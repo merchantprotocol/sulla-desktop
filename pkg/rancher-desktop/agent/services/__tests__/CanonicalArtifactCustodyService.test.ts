@@ -23,7 +23,7 @@ describe('CanonicalArtifactCustodyService', () => {
     jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
       ready: true, catalogPresent: true, missingRoles: [], degradedReason: null,
     });
-    jest.spyOn(WorkLaneDefinitionModel, 'resolveStatus').mockResolvedValue({ semantic_role: 'review' } as any);
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('qa-custom');
     jest.spyOn(WorkLaneDefinitionModel, 'semanticRoleForStatus').mockResolvedValue('execution');
   });
 
@@ -53,7 +53,7 @@ describe('CanonicalArtifactCustodyService', () => {
       contentHash:      '1234567890123456789012345678901234567890',
     }, {
       taskId:          'task-1',
-      nextState:       'in_review',
+      nextRole:        'review',
       proposedComment: 'Remote PR and validation verified.',
     }, reader)).resolves.toEqual(expect.objectContaining({
       valid:       true,
@@ -83,7 +83,7 @@ describe('CanonicalArtifactCustodyService', () => {
       headSha:      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       contentHash:  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     }, {
-      taskId: 'task-1', nextState: 'in_review', proposedComment: 'Verified.',
+      taskId: 'task-1', nextRole: 'review', proposedComment: 'Verified.',
     }, reader)).resolves.toEqual(expect.objectContaining({
       valid: false,
       error: 'asserted head SHA does not match the canonical pull request head',
@@ -93,7 +93,7 @@ describe('CanonicalArtifactCustodyService', () => {
   it('rejects a disposition for any task other than the originating claim', async() => {
     const reader = { getPullRequest: jest.fn(), getIssue: jest.fn() } as any;
     await expect(CanonicalArtifactCustodyService.verify(origin, {}, {
-      taskId: 'task-other', nextState: 'in_review', proposedComment: 'Wrong task.',
+      taskId: 'task-other', nextRole: 'review', proposedComment: 'Wrong task.',
     }, reader)).resolves.toEqual(expect.objectContaining({
       valid: false,
       error: 'proposed disposition is not bound to the originating task',
@@ -116,7 +116,7 @@ describe('CanonicalArtifactCustodyService', () => {
       artifactRef:      'task-1',
     }, {
       taskId:          'task-1',
-      nextState:       'in_review',
+      nextRole:        'review',
       proposedComment: 'Research evidence and disposition are ready.',
     }, reader)).resolves.toEqual(expect.objectContaining({
       valid:             true,

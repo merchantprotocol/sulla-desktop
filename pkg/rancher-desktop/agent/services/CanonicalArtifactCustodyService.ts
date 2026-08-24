@@ -16,7 +16,7 @@ export interface ProposedCustody {
 
 export interface ProposedDisposition {
   taskId?:          unknown;
-  nextState?:       unknown;
+  nextRole?:        unknown;
   proposedComment?: unknown;
 }
 
@@ -109,10 +109,12 @@ export class CanonicalArtifactCustodyService {
     if (String(disposition.taskId || '') !== origin.id) {
       return invalid('proposed disposition is not bound to the originating task');
     }
-    const proposedLane = await WorkLaneDefinitionModel.resolveStatus(origin.project_id, String(disposition.nextState || ''));
     const capability = await WorkLaneDefinitionModel.runtimeCapability(origin.project_id);
-    if (capability.ready ? proposedLane?.semantic_role !== 'review' : disposition.nextState !== 'in_review') {
-      return invalid('successful custody must propose a resolved review lane');
+    if (disposition.nextRole !== 'review') {
+      return invalid('successful custody must propose the review semantic role');
+    }
+    if (capability.ready) {
+      await WorkLaneDefinitionModel.preferredLaneKey(origin.project_id, 'review', 'in_review');
     }
     if (!String(disposition.proposedComment || '').trim()) {
       return invalid('successful custody requires proposed comment evidence');

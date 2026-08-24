@@ -153,7 +153,7 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
 
   lines.push('');
   lines.push(`## 🧭 Blocked tasks — recovery planning (${ blocked.length } of ${ blockedRows.length })`);
-  lines.push('_These are recovery-planning work, not a human review queue. A committed transition to `blocked` or `planning` triggers the locked core planning routine, which owns the independent council, synthesis, final-plan comment, and return to `todo/dispatcher`. Heartbeat must not launch a second council; supervise failed/stale runs and verify the persisted plan._');
+  lines.push('_These are recovery-planning work, not a human review queue. A committed transition into a resolved blocked or planning-role lane triggers the locked core planning routine, which owns the independent council, synthesis, final-plan comment, and return to the project’s first execution-entry lane under dispatcher custody. Heartbeat must not launch a second council; supervise failed/stale runs and verify the persisted plan._');
   if (!blocked.length) {
     lines.push('_No blocked tasks in scope._');
   } else {
