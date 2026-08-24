@@ -67,11 +67,12 @@ export const integrationsToolManifests: ToolManifest[] = [
   },
   {
     name:        'vault_autofill',
-    description: 'Autofill a login form on the current browser tab with saved vault credentials. The password is injected directly into the browser — it never appears in this conversation. Requires the credential to have AI access set to "autofill" or "full".',
+    description: 'Autofill a login form on the active browser tab, or an explicitly requested background tab, with saved vault credentials. Success is returned only after the target tab proves the expected fields are non-empty. The password is injected directly into the browser — it never appears in this conversation. Requires the credential to have AI access set to "autofill" or "full".',
     category:    'vault',
     schemaDef:   {
       origin:     { type: 'string', optional: true, description: 'The website origin to match (e.g. "https://github.com"). If omitted, uses account_id directly.' },
       account_id: { type: 'string', optional: true, description: 'The specific vault account ID to use for autofill. If omitted, matches by origin.' },
+      assetId:    { type: 'string', optional: true, description: 'Specific browser tab assetId to fill, including a background tab. If omitted, targets the active tab.' },
     },
     operationTypes: ['update'],
     loader:         () => import('./vault_autofill'),

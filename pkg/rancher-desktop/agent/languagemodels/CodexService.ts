@@ -5,8 +5,10 @@ import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
+import { emitCodexToolEvent } from './codexToolEvents';
 import { redisClient } from '../database/RedisClient';
 import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
+import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -569,6 +571,9 @@ Every time, in this order:
 This is a hard rule, not a suggestion: catalog and docs first, improvise last.
 </environment>`);
 
+    const browserController = graphBrowserControllerContext(state);
+    if (browserController) stableParts.push(browserController);
+
     const parts: string[] = [];
 
     // Only send the stable tier when it's new to this session or has changed
@@ -824,6 +829,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
               const activity = activityForItem(item);
               if (activity) emitActivity(activity);
             }
+            emitCodexToolEvent(parsed.type, item, callbacks.onToolEvent);
             if (kind === 'error' && parsed.type === 'item.completed') {
               errored = true;
               if (typeof item.message === 'string') errorMessage = item.message;

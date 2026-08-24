@@ -10,9 +10,19 @@ const addCommentMock: any = jest.fn(() => Promise.resolve());
 const updateTaskMock: any = jest.fn(() => Promise.resolve());
 const executeMock: any = jest.fn();
 const graphDeleteMock: any = jest.fn();
+const recoverPreviousRuntimeMock: any = jest.fn(() => Promise.resolve([]));
+const reportCapabilityMock: any = jest.fn(() => Promise.resolve({}));
+const releaseStageMock: any = jest.fn(() => Promise.resolve());
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
+}));
+jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({
+  LifecycleCapabilityModel: {
+    recoverPreviousRuntime: recoverPreviousRuntimeMock,
+    report:                 reportCapabilityMock,
+    releaseStage:           releaseStageMock,
+  },
 }));
 jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
   WorkTaskDispatchModel: {
@@ -52,6 +62,9 @@ describe('TaskDispatcherService', () => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
       return Promise.resolve(fallback);
     });
+    recoverPreviousRuntimeMock.mockResolvedValue([]);
+    reportCapabilityMock.mockResolvedValue({});
+    releaseStageMock.mockResolvedValue(undefined);
   });
 
   it('recovers orphaned leases before filling worker capacity', async() => {
@@ -62,6 +75,7 @@ describe('TaskDispatcherService', () => {
     service.destroy();
 
     expect(recoverStaleMock).toHaveBeenCalledWith(0);
+    expect(recoverPreviousRuntimeMock).toHaveBeenCalledWith('todo-execution', expect.stringContaining('task-dispatcher-'));
     expect(countRunningMock).toHaveBeenCalled();
   });
 
@@ -78,6 +92,7 @@ describe('TaskDispatcherService', () => {
       dispatch: {
         id: 'dispatch-1', task_id: 'task-1', agent_id: 'opus-worker', thread_id: 'thread-1',
       },
+      stage_claim: { id: 'stage-claim-1' },
     };
     claimNextMock
       .mockResolvedValueOnce(claim)
@@ -94,13 +109,33 @@ describe('TaskDispatcherService', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     service.destroy();
 
-    expect(claimNextMock).toHaveBeenCalledWith('opus-worker');
+    expect(claimNextMock).toHaveBeenCalledWith('opus-worker', expect.stringContaining('task-dispatcher-'));
     expect(executeMock).toHaveBeenCalled();
     expect(settleMock).toHaveBeenCalledWith(
       'dispatch-1', 'completed', 'Draft PR opened and tests passed.', undefined,
     );
+    expect(releaseStageMock).toHaveBeenCalledWith('stage-claim-1');
     expect(updateTaskMock).toHaveBeenCalledWith('task-1', {
       status: 'in_review', assignee: 'heartbeat', actor: 'dispatcher',
     });
+  });
+
+  it('turns user disablement into a visible manual hold without claiming work', async() => {
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled') return Promise.resolve(false);
+      return Promise.resolve(fallback);
+    });
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+
+    expect(reportCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({
+      key:          'todo-execution',
+      enabled:      false,
+      health:       'unavailable',
+      fallbackMode: 'manual_hold',
+    }));
+    expect(claimNextMock).not.toHaveBeenCalled();
   });
 });

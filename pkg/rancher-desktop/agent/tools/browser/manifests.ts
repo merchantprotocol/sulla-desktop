@@ -1,3 +1,5 @@
+import { GRAPH_BROWSER_TOOLS } from '../../utils/graphBrowserController';
+
 import type { ToolManifest } from '../registry';
 
 /**
@@ -11,6 +13,22 @@ import type { ToolManifest } from '../registry';
  * inline base64.
  */
 export const browserToolManifests: ToolManifest[] = [
+  {
+    name:        'browser_controller',
+    description: 'Graph-bound delegation to Sulla Desktop\'s in-app Browser for capability-enabled scheduled graphs. Read the installed Browser skill safety rules and bundled tools/browser.md first, then pass one browser operation plus its documented arguments. Tabs are automatically scoped to the calling graph thread. Fails closed outside explicitly enabled graphs.',
+    category:    'browser',
+    schemaDef:   {
+      tool: {
+        type:        'enum',
+        enum:        [...GRAPH_BROWSER_TOOLS],
+        description: 'Sulla browser operation to execute.',
+      },
+      args: { type: 'object', optional: true, default: {}, description: 'Arguments documented for the selected browser operation.' },
+    },
+    operationTypes: ['read', 'execute'],
+    loader:         () => import('./controller'),
+  },
+
   // ── Tabs & navigation ────────────────────────────────────────────
 
   {

@@ -149,7 +149,9 @@ sulla meta/restart_from_checkpoint '{"workflowId":"daily-planning"}'
 # List checkpoints in a run:
 sulla meta/restart_from_checkpoint '{"executionId":"wfp-..."}'
 
-# Restart from a specific node (re-runs that node + everything after):
+# Restart from a specific node (re-runs that node + everything after).
+# Builds before the stateful CLI dispatcher fix can return a restart id
+# without launching a graph; upgrade before relying on CLI restart.
 sulla meta/restart_from_checkpoint '{
   "executionId": "wfp-...",
   "nodeId":      "the-node-that-failed"
