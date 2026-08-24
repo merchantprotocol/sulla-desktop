@@ -7,6 +7,19 @@ jest.unstable_mockModule('relaxed-json', () => ({
   parse: jest.fn((value: string) => JSON.parse(value)),
 }));
 
+jest.unstable_mockModule('../../database/models/ObservationsModel', () => ({
+  ObservationsModel: {
+    listActive: jest.fn(() => Promise.resolve([])),
+    search:     jest.fn(() => Promise.resolve([])),
+  },
+}));
+
+jest.unstable_mockModule('../../database/models/IdentityObservationsModel', () => ({
+  IdentityObservationsModel: {
+    countActive: jest.fn(() => Promise.resolve(0)),
+  },
+}));
+
 const createSummarizerMock: any = jest.fn();
 const createObservationAgentMock: any = jest.fn();
 const createIdentityObserverMock: any = jest.fn();
@@ -152,7 +165,7 @@ describe('runSubconsciousMiddleware', () => {
     createConversationReaderMock.mockResolvedValue({
       graph: { execute: jest.fn(() => Promise.resolve()) },
       state: {
-        messages:  [],
+        messages:  [{ role: 'assistant', content: '<conversation_context>RAW_PROVIDER_TRANSCRIPT</conversation_context>' }],
         metadata: { agent: { status: 'done', response: '  [thread:abc] prior decision  ' } },
       },
       threadId: 'conversation-reader-test-thread',
@@ -169,7 +182,8 @@ describe('runSubconsciousMiddleware', () => {
 
     expect(createConversationReaderMock).toHaveBeenCalledTimes(1);
     expect(createConversationReaderMock).toHaveBeenCalledWith(state);
-    expect((state.metadata as any).conversationContext).toBe('[thread:abc] prior decision');
+    expect(state.metadata.conversationContext).toBe('[thread:abc] prior decision');
+    expect(JSON.stringify(state.messages)).not.toContain('RAW_PROVIDER_TRANSCRIPT');
   });
 
   it('does not dispatch the Conversation Reader without analyzable user text', async() => {
@@ -191,18 +205,18 @@ describe('runSubconsciousObservationWriters', () => {
     createIdentityObserverMock.mockReset();
     createConversationWriterMock.mockReset();
     createObservationAgentMock.mockResolvedValue({
-      graph: { execute: jest.fn(() => Promise.resolve()) },
-      state: { messages: [], metadata: { agent: { status: 'done' } } },
+      graph:    { execute: jest.fn(() => Promise.resolve()) },
+      state:    { messages: [], metadata: { agent: { status: 'done' } } },
       threadId: 'observation-agent-test-thread',
     });
     createIdentityObserverMock.mockResolvedValue({
-      graph: { execute: jest.fn(() => Promise.resolve()) },
-      state: { messages: [], metadata: { agent: { status: 'done' } } },
+      graph:    { execute: jest.fn(() => Promise.resolve()) },
+      state:    { messages: [], metadata: { agent: { status: 'done' } } },
       threadId: 'identity-observer-test-thread',
     });
     createConversationWriterMock.mockResolvedValue({
-      graph: { execute: jest.fn(() => Promise.resolve()) },
-      state: { messages: [], metadata: { agent: { status: 'done' } } },
+      graph:    { execute: jest.fn(() => Promise.resolve()) },
+      state:    { messages: [], metadata: { agent: { status: 'done' } } },
       threadId: 'conversation-writer-test-thread',
     });
   });
