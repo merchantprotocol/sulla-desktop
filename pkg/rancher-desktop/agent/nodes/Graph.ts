@@ -164,6 +164,8 @@ export interface BaseThreadState {
     isTrustedUser?:      'trusted' | 'untrusted' | 'verify';
     /** Whether the user can see browser panels in the UI */
     userVisibleBrowser?: boolean;
+    /** Opt a scheduled graph into Sulla's graph-bound in-app browser controller. */
+    graphNativeBrowserController?: boolean;
 
     /** Active workflow playbook — when set, the agent orchestrates this workflow */
     activeWorkflow?: WorkflowPlaybookState;

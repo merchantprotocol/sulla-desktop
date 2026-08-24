@@ -1,6 +1,6 @@
 # Tool Inventory
 
-Master list of every tool the agent can call. **Regenerated from the source manifests (`pkg/rancher-desktop/agent/tools/<category>/manifests.ts`) on 2026-08-19 — 262 tools across 30 categories.** Each line is `sulla <category>/<tool> — purpose`.
+Master list of every tool the agent can call. **Regenerated from the source manifests (`pkg/rancher-desktop/agent/tools/<category>/manifests.ts`) on 2026-08-23 — 263 tools across 30 categories.** Each line is `sulla <category>/<tool> — purpose`.
 
 > The `rules` category (user-created guardrail rules) and its **Security Conscience** enforcement were **retired 2026-08-19** and are intentionally omitted here. Some `rules/*` tool code may still linger in a given build; treat it as vestigial and don't re-add it to this doc.
 
@@ -82,7 +82,8 @@ sulla <category> --help          # what THIS install exposes right now
 
 → See [`functions/authoring.md`](../functions/authoring.md)
 
-## browser — web automation (23 tools)
+## browser — web automation (24 tools)
+- `sulla browser/browser_controller` — Graph-bound in-app Browser delegation for explicitly capable scheduled graphs; fails closed elsewhere.
 - `sulla browser/tab` — Open / navigate / close a tab (`action: upsert | remove`).
 - `sulla browser/list` — List open tabs (assetId, URL, title, ready/loading).
 - `sulla browser/snapshot` — Dehydrated DOM with clickable handles.
