@@ -172,6 +172,7 @@ describe('TaskDispatcherService', () => {
         kind:      'verification',
         attempt:   2,
       },
+      stage_claim: { id: 'review-stage-suppressed' },
     }, 'core-routine');
     expect(graphGetMock).not.toHaveBeenCalled();
     expect(recordReviewLaunchMock).not.toHaveBeenCalled();
