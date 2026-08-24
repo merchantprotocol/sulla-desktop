@@ -31,6 +31,7 @@ import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent
 import { extractAgentTurnOutcome } from '../tools/agents/agentTurnOutcome';
 import { toolRegistry } from '../tools/registry';
 import { createPlaybookState } from '../workflow/WorkflowPlaybook';
+import { findAgentDir } from '../utils/sullaPaths';
 
 const CHECK_INTERVAL_MS = 60_000;
 const LEASE_HEARTBEAT_MS = 120_000;
@@ -80,6 +81,7 @@ export class TaskDispatcherService {
   private checking = false;
   private schedulerId: ReturnType<typeof setInterval> | null = null;
   private recoveredOnStart = false;
+  private reclaimedReviewsOnStart = 0;
   private active = new Map<string, AbortService>();
   private lastBackpressure: {
     limits:   WipLimits;
@@ -93,7 +95,12 @@ export class TaskDispatcherService {
     this.initialized = true;
 
     await LifecycleCapabilityModel.recoverPreviousRuntime('todo-execution', RUNTIME_INSTANCE_ID);
-    await LifecycleCapabilityModel.recoverPreviousRuntime('in-review-verification', RUNTIME_INSTANCE_ID);
+    const recoveredReviewClaims = await LifecycleCapabilityModel.recoverPreviousRuntime(
+      'in-review-verification', RUNTIME_INSTANCE_ID,
+    );
+    this.reclaimedReviewsOnStart = (await WorkTaskDispatchModel.recoverOrphanedVerification(
+      recoveredReviewClaims,
+    )).length;
     await this.checkAndDispatch();
     this.schedulerId = setInterval(() => {
       this.checkAndDispatch().catch(err => console.error('[TaskDispatcher] Scheduled check failed:', err));
@@ -152,13 +159,17 @@ export class TaskDispatcherService {
       if (window && !isInsideWindow(window)) return;
 
       if (!this.recoveredOnStart) {
-        const recovered = await WorkTaskDispatchModel.recoverStale(0);
+        const recovered = await WorkTaskDispatchModel.recoverStale();
         this.recoveredOnStart = true;
         if (recovered.length > 0) console.warn(`[TaskDispatcher] Recovered ${ recovered.length } orphaned dispatch(es)`);
       }
 
       await this.checkInProgressRecovery();
-      await this.fillVerificationPool();
+      const reviewReady = await this.fillVerificationPool();
+      if (!reviewReady) {
+        console.warn('[TaskDispatcher] Protected review is unavailable; holding fresh execution work');
+        return;
+      }
       // Issue #711: semantic stage-aware WIP limits + downstream-first backpressure.
       // Additive over the #709 review-drain guard below: this only ever holds MORE
       // work, never less, and never interrupts already-running work. Re-evaluated
@@ -285,7 +296,7 @@ export class TaskDispatcherService {
       health:            'healthy',
       owner:             'dispatcher',
       runtimeInstanceId: RUNTIME_INSTANCE_ID,
-      fallbackMode:      'heartbeat',
+      fallbackMode:      'manual_hold',
     });
 
         let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
@@ -312,8 +323,8 @@ export class TaskDispatcherService {
     }
   }
 
-  private async fillVerificationPool(): Promise<void> {
-    const enabled = await SullaSettingsModel.get('taskVerifierEnabled', false);
+  private async fillVerificationPool(): Promise<boolean> {
+    const enabled = await SullaSettingsModel.get('taskVerifierEnabled', true);
     if (!enabled) {
       await LifecycleCapabilityModel.report({
         key:               'in-review-verification',
@@ -321,12 +332,25 @@ export class TaskDispatcherService {
         health:            'unavailable',
         owner:             null,
         runtimeInstanceId: RUNTIME_INSTANCE_ID,
-        fallbackMode:      'heartbeat',
+        fallbackMode:      'manual_hold',
+        details:           { ...(await WorkTaskDispatchModel.verificationPoolStats()), reclaimed: this.reclaimedReviewsOnStart },
       });
-      return;
+      return false;
     }
     const owner = await this.resolveVerificationOwner();
-    if (!owner) return;
+    if (!owner) {
+      await LifecycleCapabilityModel.report({
+        key:               'in-review-verification',
+        enabled:           true,
+        health:            'unavailable',
+        owner:             null,
+        runtimeInstanceId: RUNTIME_INSTANCE_ID,
+        fallbackMode:      'manual_hold',
+        error:             'Protected review routine, rollout, or default agent is unavailable.',
+        details:           { ...(await WorkTaskDispatchModel.verificationPoolStats()), reclaimed: this.reclaimedReviewsOnStart },
+      });
+      return false;
+    }
     const configured = Number(await SullaSettingsModel.get('taskVerifierConcurrency', DEFAULT_CONCURRENCY));
     const concurrency = await RoutineConcurrencyPolicy.resolveLimit('review', configured || DEFAULT_CONCURRENCY);
     const enforceSlots = await RoutineConcurrencyPolicy.isEnabled();
@@ -340,9 +364,10 @@ export class TaskDispatcherService {
       owner:             'dispatcher',
       runtimeInstanceId: RUNTIME_INSTANCE_ID,
       fallbackMode:      'heartbeat',
+      details:           { ...(await WorkTaskDispatchModel.verificationPoolStats()), reclaimed: this.reclaimedReviewsOnStart },
     });
 
-        let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification'));
+    let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('verification'));
     while (freeSlots > 0 && this.initialized) {
       let slot: string | null = null;
       if (enforceSlots) {
@@ -368,16 +393,28 @@ export class TaskDispatcherService {
         });
       freeSlots -= 1;
     }
+    await LifecycleCapabilityModel.report({
+      key:               'in-review-verification',
+      enabled:           true,
+      health:            'healthy',
+      owner:             'dispatcher',
+      runtimeInstanceId: RUNTIME_INSTANCE_ID,
+      fallbackMode:      'manual_hold',
+      details:           { ...(await WorkTaskDispatchModel.verificationPoolStats()), reclaimed: this.reclaimedReviewsOnStart },
+    });
+    return true;
   }
 
   /** One service and one claim path own in_review. Disabling the core routine pauses it. */
   private async resolveVerificationOwner(): Promise<VerificationOwner | null> {
-    const configured = String(await SullaSettingsModel.get('taskVerifierOwner', 'legacy'));
+    const configured = String(await SullaSettingsModel.get('taskVerifierOwner', 'core-routine'));
     if (configured === 'legacy') return 'legacy';
-    const rolloutEnabled = await SullaSettingsModel.get('taskReviewCoreRoutineEnabled', false);
+    if (configured !== 'core-routine') return null;
+    const rolloutEnabled = await SullaSettingsModel.get('taskReviewCoreRoutineEnabled', true);
     if (!rolloutEnabled) return null;
     const routine = await WorkflowModel.findById(REVIEW_PROJECT_ARTIFACT_ID);
     if (!routine || routine.attributesSnapshot.enabled === false) return null;
+    if (!findAgentDir(DEFAULT_CORE_ROUTINE_AGENT_ID)) return null;
     return 'core-routine';
   }
 

@@ -1020,6 +1020,77 @@ export class WorkTaskDispatchModel {
     });
   }
 
+  /**
+   * Settle verification dispatches whose previous-runtime stage claims were
+   * explicitly recovered during startup. Healthy current-runtime leases are
+   * never selected, regardless of their age.
+   */
+  static async recoverOrphanedVerification(taskIds: string[]): Promise<string[]> {
+    if (taskIds.length === 0) return [];
+    return postgresClient.transaction(async(client: PoolClient) => {
+      const reclaimed = await client.query<{ id: string; task_id: string }>(`
+        UPDATE work_task_dispatches dispatch
+           SET status = 'stale', failure_reason = 'previous_runtime_recovered',
+               error = 'previous runtime ended before review settlement',
+               heartbeat_at = now(), finished_at = now()
+         WHERE dispatch.kind = 'verification'
+           AND dispatch.status = 'running'
+           AND dispatch.task_id = ANY($1::text[])
+           AND NOT EXISTS (
+             SELECT 1 FROM work_task_stage_claims claim
+              WHERE claim.task_id = dispatch.task_id
+                AND claim.capability_key = 'in-review-verification'
+                AND claim.stage = 'in_review'
+                AND claim.status = 'active'
+           )
+        RETURNING dispatch.id, dispatch.task_id
+      `, [taskIds]);
+      const reclaimedTaskIds: string[] = [
+        ...new Set<string>(reclaimed.rows.map((row: { task_id: string }) => row.task_id)),
+      ];
+      if (reclaimedTaskIds.length > 0) {
+        await client.query(`
+          UPDATE work_tasks
+             SET status = 'in_review', assignee = 'heartbeat', updated_at = now(),
+                 last_activity_at = now(), last_moved_by = 'dispatcher'
+           WHERE id = ANY($1::text[]) AND status = 'in_review' AND assignee = 'verifier'
+        `, [reclaimedTaskIds]);
+      }
+      return reclaimedTaskIds;
+    });
+  }
+
+  static async verificationPoolStats(): Promise<{
+    backlog: number;
+    active: number;
+    suppressedDuplicates: number;
+    failures: number;
+  }> {
+    const rows = await postgresClient.query<{
+      backlog: string;
+      active: string;
+      suppressed_duplicates: string;
+      failures: string;
+    }>(`
+      SELECT
+        (SELECT COUNT(*) FROM work_tasks WHERE archived = false AND status = 'in_review')::text AS backlog,
+        (SELECT COUNT(*) FROM work_task_dispatches WHERE kind = 'verification' AND status = 'running')::text AS active,
+        (SELECT COUNT(*) FROM work_task_dispatches
+          WHERE kind = 'verification' AND status = 'completed'
+            AND result LIKE 'suppressed identical terminal generation%')::text AS suppressed_duplicates,
+        (SELECT COUNT(*) FROM work_task_dispatches
+          WHERE kind = 'verification' AND status = 'failed'
+            AND finished_at >= now() - interval '24 hours')::text AS failures
+    `);
+    const row = rows[0];
+    return {
+      backlog: Number(row?.backlog ?? 0),
+      active: Number(row?.active ?? 0),
+      suppressedDuplicates: Number(row?.suppressed_duplicates ?? 0),
+      failures: Number(row?.failures ?? 0),
+    };
+  }
+
   /** Settle a parsed verifier verdict and its Projects transition atomically. */
   static async finalizeVerification(
     id: string,
@@ -1300,13 +1371,21 @@ export class WorkTaskDispatchModel {
          LIMIT 1
       `, [taskId, id, reason]);
       if (!duplicate.rows[0] || terminal) {
-        await client.query(`
-          INSERT INTO work_task_comments (id, task_id, body, author)
-          VALUES ($1, $2, $3, 'verifier')
-        `, [randomUUID().slice(0, 12), taskId,
-          terminal
-            ? `Verification ${ id } hit three equivalent infrastructure failures for generation ${ generationHash ?? 'unbound' } and was escalated to planning: ${ reason }`
-            : `Verification ${ id } failed and was released for retry: ${ reason }`]);
+        await this.persistReceiptWithClient(client, this.reviewReceipt({
+          taskId,
+          eventType:         terminal ? 'repair' : 'review',
+          actor:             'verifier',
+          dispatchId:        id,
+          disposition:       terminal ? 'REPLAN' : 'RETRY',
+          nextOwner:         terminal ? 'dispatcher' : 'protected-review',
+          validationSummary: terminal
+            ? `Three equivalent verification infrastructure failures for generation ${ generationHash ?? 'unbound' }: ${ reason }`
+            : `Verification infrastructure failure released for retry: ${ reason }`,
+          artifacts:         generationHash
+            ? [{ type: 'review_generation', canonicalRef: generationHash, hash: generationHash }]
+            : [{ type: 'verification_dispatch', canonicalRef: id }],
+          evidence:          { kind: 'dispatch', ref: id },
+        }), 'verifier');
       }
       await client.query(`
         UPDATE work_tasks

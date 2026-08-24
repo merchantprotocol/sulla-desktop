@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const settingsGetMock: any = jest.fn();
 const recoverStaleMock: any = jest.fn(() => Promise.resolve([]));
+const recoverOrphanedVerificationMock: any = jest.fn(() => Promise.resolve([]));
+const verificationPoolStatsMock: any = jest.fn(() => Promise.resolve({ backlog: 0, active: 0, suppressedDuplicates: 0, failures: 0 }));
 const findRecoverableInProgressMock: any = jest.fn(() => Promise.resolve([]));
 const recoverOrphanedInProgressMock: any = jest.fn(() => Promise.resolve([]));
 const countRunningMock: any = jest.fn(() => Promise.resolve(0));
@@ -31,6 +33,7 @@ const resolvePullRequestHeadsMock: any = jest.fn();
 const bindReviewGenerationMock: any = jest.fn();
 const generationHashMock: any = jest.fn(() => 'f'.repeat(64));
 const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({ attributesSnapshot: { enabled: true } }));
+const findAgentDirMock: any = jest.fn(() => '/agents/sulla-desktop');
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
@@ -45,6 +48,8 @@ jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () =>
 jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
   WorkTaskDispatchModel: {
     recoverStale:            recoverStaleMock,
+    recoverOrphanedVerification: recoverOrphanedVerificationMock,
+    verificationPoolStats:   verificationPoolStatsMock,
     findRecoverableInProgress: findRecoverableInProgressMock,
     recoverOrphanedInProgress: recoverOrphanedInProgressMock,
     countRunning:            countRunningMock,
@@ -96,11 +101,16 @@ jest.unstable_mockModule('../../tools/registry', () => ({
     })),
   },
 }));
+jest.unstable_mockModule('../../utils/sullaPaths', () => ({
+  findAgentDir: findAgentDirMock,
+}));
 
 describe('TaskDispatcherService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     recoverStaleMock.mockResolvedValue([]);
+    recoverOrphanedVerificationMock.mockResolvedValue([]);
+    verificationPoolStatsMock.mockResolvedValue({ backlog: 0, active: 0, suppressedDuplicates: 0, failures: 0 });
     findRecoverableInProgressMock.mockResolvedValue([]);
     recoverOrphanedInProgressMock.mockResolvedValue([]);
     countRunningMock.mockResolvedValue(0);
@@ -108,6 +118,7 @@ describe('TaskDispatcherService', () => {
     claimNextMock.mockResolvedValue(null);
     claimNextReviewMock.mockResolvedValue(null);
     workflowFindByIdMock.mockResolvedValue({ attributesSnapshot: { enabled: true } });
+    findAgentDirMock.mockReturnValue('/agents/sulla-desktop');
     resolvePullRequestHeadMock.mockResolvedValue({
       owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 123, sha: 'a'.repeat(40),
     });
@@ -127,13 +138,30 @@ describe('TaskDispatcherService', () => {
     releaseStageMock.mockResolvedValue(undefined);
   });
 
-  it('dark-gates verification by default', async() => {
+  it('activates verification by default', async() => {
     const { TaskDispatcherService } = await import('../TaskDispatcherService');
     const service = new TaskDispatcherService();
     await service.initialize();
     service.destroy();
 
-    expect(claimNextReviewMock).not.toHaveBeenCalled();
+    expect(claimNextReviewMock).toHaveBeenCalled();
+  });
+
+  it('reclaims only review tasks whose previous-runtime claims were recovered', async() => {
+    recoverPreviousRuntimeMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(['orphan-review']);
+    recoverOrphanedVerificationMock.mockResolvedValue(['orphan-review']);
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+    expect(recoverOrphanedVerificationMock).toHaveBeenCalledWith(['orphan-review']);
+    expect(recoverStaleMock).toHaveBeenCalledWith();
+    expect(reportCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({
+      key: 'in-review-verification',
+      details: expect.objectContaining({ reclaimed: 1 }),
+    }));
   });
 
   it('leaves in_review visible and unclaimed when the protected routine is disabled', async() => {
@@ -148,6 +176,25 @@ describe('TaskDispatcherService', () => {
     await service.initialize();
     service.destroy();
     expect(claimNextReviewMock).not.toHaveBeenCalled();
+    expect(claimNextMock).not.toHaveBeenCalled();
+    expect(reportCapabilityMock).toHaveBeenCalledWith(expect.objectContaining({
+      key: 'in-review-verification', health: 'unavailable', fallbackMode: 'manual_hold',
+    }));
+  });
+
+  it('fails closed when the default core agent is unavailable', async() => {
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled' || key === 'taskReviewCoreRoutineEnabled') return Promise.resolve(true);
+      if (key === 'taskVerifierOwner') return Promise.resolve('core-routine');
+      return Promise.resolve(fallback);
+    });
+    findAgentDirMock.mockReturnValue(null);
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+    expect(claimNextReviewMock).not.toHaveBeenCalled();
+    expect(claimNextMock).not.toHaveBeenCalled();
   });
 
   it('suppresses an identical terminal generation before graph or workflow side effects', async() => {

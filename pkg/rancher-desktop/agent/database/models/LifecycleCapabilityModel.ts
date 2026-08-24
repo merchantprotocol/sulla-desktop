@@ -29,6 +29,7 @@ export interface LifecycleCapabilityRecord {
   fallback_active:     boolean;
   last_error:          string | null;
   recovery_task_id:    string | null;
+  details:             Record<string, unknown>;
   updated_at:          string;
 }
 
@@ -54,6 +55,7 @@ export interface CapabilityReport {
   runtimeInstanceId?: string | null;
   fallbackMode:       LifecycleFallback;
   error?:             string | null;
+  details?:           Record<string, unknown>;
 }
 
 export interface ClaimResult {
@@ -104,12 +106,12 @@ export class LifecycleCapabilityModel {
       INSERT INTO lifecycle_capabilities (
         capability_key, version, enabled, health, active_owner,
         runtime_instance_id, last_success_at, exception_count,
-        fallback_mode, fallback_active, last_error, updated_at
+        fallback_mode, fallback_active, last_error, details, updated_at
       ) VALUES (
         $1, $2, $3, $4, $5, $6,
         CASE WHEN $4 = 'healthy' THEN now() ELSE NULL END,
         CASE WHEN $4 = 'healthy' THEN 0 ELSE 1 END,
-        $7, $8, $9, now()
+        $7, $8, $9, $10::jsonb, now()
       )
       ON CONFLICT (capability_key) DO UPDATE SET
         version = EXCLUDED.version,
@@ -129,6 +131,7 @@ export class LifecycleCapabilityModel {
         fallback_mode = EXCLUDED.fallback_mode,
         fallback_active = EXCLUDED.fallback_active,
         last_error = EXCLUDED.last_error,
+        details = EXCLUDED.details,
         updated_at = now()
       RETURNING *
     `, [
@@ -141,6 +144,7 @@ export class LifecycleCapabilityModel {
       report.fallbackMode,
       fallbackActive,
       report.error ?? null,
+      JSON.stringify(report.details ?? {}),
     ]);
     if (!row) throw new Error(`Failed to report lifecycle capability ${ report.key }`);
 
@@ -323,7 +327,10 @@ export class LifecycleCapabilityModel {
     const compact = rows.map(row => {
       const last = row.last_success_at ? new Date(row.last_success_at).toISOString() : 'never';
       const owner = effectiveOwner(row) ?? 'hold';
-      return `${ row.capability_key }@${ row.version }=${ row.enabled ? row.health : 'disabled' } owner:${ owner } ok:${ last } ex:${ row.exception_count } fallback:${ row.fallback_mode }${ row.fallback_active ? '*' : '' }`;
+      const review = row.capability_key === 'in-review-verification' && row.details
+        ? ` backlog:${ Number(row.details.backlog ?? 0) } active:${ Number(row.details.active ?? 0) } reclaimed:${ Number(row.details.reclaimed ?? 0) } suppressed:${ Number(row.details.suppressedDuplicates ?? 0) } failures:${ Number(row.details.failures ?? 0) }`
+        : '';
+      return `${ row.capability_key }@${ row.version }=${ row.enabled ? row.health : 'disabled' } owner:${ owner } ok:${ last } ex:${ row.exception_count } fallback:${ row.fallback_mode }${ row.fallback_active ? '*' : '' }${ review }`;
     });
     return ['LIFECYCLE:', ...compact.map(line => `  • ${ line }`)].join('\n');
   }
