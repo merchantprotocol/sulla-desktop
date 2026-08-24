@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
 
@@ -116,6 +117,7 @@ export interface WorkTaskDispatchEvidence {
   contentHash?:         string;
   reviewerVerdict?:     string;
   reviewEvidence?:      unknown;
+  custody?:      ArtifactCustody | null;
   terminalReason?:      string;
 }
 
@@ -759,6 +761,10 @@ export class WorkTaskDispatchModel {
    */
   static async finalize(id: string, taskId: string, finalization: WorkTaskDispatchFinalization): Promise<WorkTaskRecord> {
     const evidence = finalization.evidence ?? {};
+    const custody = ArtifactCustodyPolicy.derive(evidence as unknown as Record<string, unknown>);
+    if (finalization.taskStatus === 'in_review') {
+      await ArtifactCustodyPolicy.assertForTransition('in_review', custody);
+    }
     return postgresClient.transaction(async(client: PoolClient) => {
       const locked = await client.query<{ status: WorkTaskDispatchStatus }>(
         'SELECT status FROM work_task_dispatches WHERE id = $1 AND task_id = $2 FOR UPDATE',
@@ -766,6 +772,9 @@ export class WorkTaskDispatchModel {
       );
       if (locked.rows[0]?.status !== 'running') {
         throw new Error(`Dispatch ${ id } is not running and cannot be finalized`);
+      }
+      if (finalization.taskStatus === 'in_review' && custody) {
+        await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'in_review', custody, 'dispatcher');
       }
 
       await client.query(`
@@ -924,6 +933,15 @@ export class WorkTaskDispatchModel {
         ? '\n\nRepeated identical rework reached the retry ceiling; routed to Heartbeat recovery.'
         : '';
 
+      if (finalVerdict === 'APPROVE') {
+        await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'done', {
+          workKind:   'non_code',
+          artifactId: `verification-dispatch:${ id }`,
+          evidence:   { artifactSha, currentArtifactSha, verdict: finalVerdict, summary },
+          provenance: { routine: 'legacy-verifier', dispatchId: id },
+        }, 'verifier');
+      }
+
       await client.query(`
         UPDATE work_task_dispatches
            SET status = 'completed', verdict = $2, artifact_sha = $3,
@@ -1001,7 +1019,27 @@ export class WorkTaskDispatchModel {
           ? { status: 'todo', assignee: 'dispatcher' }
           : finalDisposition === 'REPLAN'
             ? { status: 'planning', assignee: 'dispatcher' }
-            : { status: 'blocked', assignee: 'heartbeat' };
+        : { status: 'blocked', assignee: 'heartbeat' };
+
+      if (finalDisposition === 'PASS') {
+        await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'done', {
+          workKind:   'non_code',
+          artifactId: `protected-review-dispatch:${ id }`,
+          artifactUrl: evidence.artifactUrl ?? undefined,
+          evidence:   {
+            generationHash: evidence.generationHash,
+            artifactHash: evidence.artifactHash,
+            checks: evidence.checks,
+            findings: evidence.findings,
+          },
+          provenance: {
+            routine: 'protected-review',
+            dispatchId: id,
+            workflowExecutionId: evidence.workflowExecutionId,
+            reviewerAgentIds: evidence.reviewerAgentIds,
+          },
+        }, 'verifier');
+      }
 
       if (finalDisposition === 'EXTERNAL_WAIT') {
         const wait = evidence.wait;

@@ -8,7 +8,7 @@ import { up as createWorkItems } from '../../migrations/0044_create_work_items_t
 import { up as addWorkTaskActor } from '../../migrations/0047_add_work_task_actor';
 import { up as addWorkTaskActivity } from '../../migrations/0061_add_work_task_activity';
 import { up as createWorkTaskWaits } from '../../migrations/0065_create_work_task_waits';
-import { up as settleWaitsOnReplan } from '../../migrations/0078_settle_work_task_waits_on_replan';
+import { up as settleWaitsOnReplan } from '../../migrations/0080_settle_work_task_waits_on_replan';
 import { WorkTaskWaitModel } from '../WorkTaskWaitModel';
 
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
