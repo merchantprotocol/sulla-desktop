@@ -1096,8 +1096,14 @@ export class WorkItemsModel {
     const enteringReview = changes.status !== undefined
       && changes.status !== existing.status
       && (targetLane?.semantic_role === 'review' || (!targetLane && changes.status === 'in_review'));
+    const enteringDone = changes.status !== undefined
+      && changes.status !== existing.status
+      && changes.status === 'done';
     if (enteringReview) {
       await ArtifactCustodyPolicy.assertForTransition('in_review', changes.custody);
+    }
+    if (enteringDone) {
+      await ArtifactCustodyPolicy.assertForTransition('done', changes.custody);
     }
     const ownershipProjectId = nextProjectId ?? existing.project_id;
     const ownershipCapability = changes.status === undefined
@@ -1185,6 +1191,10 @@ export class WorkItemsModel {
         if (committed && enteringReview && changes.custody) {
           await ArtifactCustodyPolicy.persistWithClient(
             client, committed.id, 'in_review', changes.custody, actor);
+        }
+        if (committed && enteringDone && changes.custody) {
+          await ArtifactCustodyPolicy.persistWithClient(
+            client, committed.id, 'done', changes.custody, actor);
         }
         if (committed && committed.status !== current.rows[0].status) {
           const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
