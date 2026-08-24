@@ -73,9 +73,10 @@ export interface StreamCallbacks {
    * write one conversation-log entry (tool name, key input, result size/
    * error) without the caller needing to correlate call/result itself.
    *
-   * Currently only ClaudeCodeService fires this — CLI tool execution
-   * happens inside the spawned `claude -p` process, invisible to Sulla's
-   * own ToolExecutor, so this is the only place that sees it.
+   * CLI-backed providers fire this because their tool execution happens
+   * inside the spawned provider process, invisible to Sulla's own
+   * ToolExecutor. Claude Code correlates tool_use/tool_result blocks; Codex
+   * normalizes completed command and MCP items from its JSON event stream.
    */
   onToolEvent?: (event: {
     toolUseId:  string;
