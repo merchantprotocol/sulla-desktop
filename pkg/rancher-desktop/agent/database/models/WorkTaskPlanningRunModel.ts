@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { LifecycleCapabilityModel } from './LifecycleCapabilityModel';
 import { WorkLaneDefinitionModel } from './WorkLaneDefinitionModel';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
@@ -31,6 +32,19 @@ export interface ClaimedPlanningRun {
 }
 
 export class WorkTaskPlanningRunModel {
+  private static async reportStaleRecoveryDegraded(reason: string): Promise<void> {
+    await LifecycleCapabilityModel.report({
+      key:          'planning-council',
+      enabled:      true,
+      health:       'degraded',
+      owner:        'planning-council',
+      fallbackMode: 'keep_current',
+      error:        `Planning stale recovery entered stable-key compatibility mode: ${ reason }`,
+    }).catch(reportError => console.warn(
+      '[PlanningCouncil] Could not persist degraded stale-recovery capability:', reportError,
+    ));
+  }
+
   /**
    * Atomically claims a planning council. A blocked task becomes planning in
    * the same transaction; an already-planning task is left untouched.
@@ -157,7 +171,8 @@ export class WorkTaskPlanningRunModel {
 
   /** Marks expired councils stale and returns tasks that still need planning. */
   static async recoverStale(staleMinutes = 45): Promise<string[]> {
-    return postgresClient.transaction(async(client: PoolClient) => {
+    const degradedReasons: string[] = [];
+    const recovered = await postgresClient.transaction(async(client: PoolClient) => {
       const stale = await client.query<{ task_id: string }>(`
         UPDATE work_task_planning_runs
            SET status = 'stale',
@@ -170,7 +185,31 @@ export class WorkTaskPlanningRunModel {
       if (stale.rows.length === 0) return [];
 
       const ids = stale.rows.map(row => row.task_id);
-      const tasks = await client.query<{ id: string }>(`
+      const taskRows = await client.query<{ id: string; project_id: string; status: string }>(`
+        SELECT id, project_id, status FROM work_tasks
+         WHERE id = ANY($1::text[]) AND archived = false
+      `, [ids]);
+      const projectIds = [...new Set(taskRows.rows.map(row => row.project_id))];
+      const capabilities = new Map(await Promise.all(projectIds.map(async(projectId) => [
+        projectId,
+        await WorkLaneDefinitionModel.runtimeCapability(projectId),
+      ] as const)));
+      const degradedProjects = projectIds.filter(projectId => !capabilities.get(projectId)?.ready);
+      if (degradedProjects.length > 0) {
+        const reasons = degradedProjects.map(projectId =>
+          `${ projectId }: ${ capabilities.get(projectId)?.degradedReason ?? 'semantic lane capability unavailable' }`,
+        );
+        degradedReasons.push(...reasons);
+      }
+
+      const healthyIds = taskRows.rows
+        .filter(row => capabilities.get(row.project_id)?.ready)
+        .map(row => row.id);
+      let semanticIds: string[] = [];
+      let semanticQueryFailed = false;
+      if (healthyIds.length > 0) {
+        try {
+          const tasks = await client.query<{ id: string }>(`
         SELECT task.id FROM work_tasks task
         JOIN LATERAL (
           SELECT lane.semantic_role FROM work_lane_definitions lane
@@ -183,11 +222,26 @@ export class WorkTaskPlanningRunModel {
          WHERE task.id = ANY($1::text[])
            AND task.archived = false
            AND effective.semantic_role IN ('planning', 'blocked')
-      `, [ids]).catch(async() => client.query<{ id: string }>(`
-        SELECT id FROM work_tasks WHERE id = ANY($1::text[])
-          AND archived = false AND status IN ('planning', 'blocked')
-      `, [ids]));
-      return tasks.rows.map(row => row.id);
+          `, [healthyIds]);
+          semanticIds = tasks.rows.map(row => row.id);
+        } catch (error) {
+          semanticQueryFailed = true;
+          const message = error instanceof Error ? error.message : String(error);
+          degradedReasons.push(
+            `semantic role query failed after capability passed: ${ message }`,
+          );
+        }
+      }
+
+      const compatibilityIds = taskRows.rows
+        .filter(row => semanticQueryFailed || !capabilities.get(row.project_id)?.ready)
+        .filter(row => row.status === 'planning' || row.status === 'blocked')
+        .map(row => row.id);
+      return [...new Set([...semanticIds, ...compatibilityIds])];
     });
+    if (degradedReasons.length > 0) {
+      await WorkTaskPlanningRunModel.reportStaleRecoveryDegraded(degradedReasons.join('; '));
+    }
+    return recovered;
   }
 }

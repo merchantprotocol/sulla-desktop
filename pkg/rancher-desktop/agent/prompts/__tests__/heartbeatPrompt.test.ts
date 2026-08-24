@@ -21,15 +21,15 @@ describe('heartbeatPrompt', () => {
   it('assigns every lifecycle concern to one owner', () => {
     expect(heartbeatPrompt).toContain('## Single-Owner Projects Conveyor');
     for (const ownership of [
-      "'backlog' readiness, portfolio priority, sequencing, and dependencies | Heartbeat",
-      "'planning' and recoverable 'blocked' work | protected planning routine",
-      "'todo' and 'in_progress' execution plus artifact custody | protected execution routine",
-      "'in_review' verification and disposition | protected review routine",
+      'backlog-role readiness, portfolio priority, sequencing, and dependencies | Heartbeat',
+      'planning-role and recoverable blocked-role work | protected planning routine',
+      'execution-role work plus artifact custody | protected execution routine',
+      'review-role verification and disposition | protected review routine',
       'unchanged external gates | durable wait monitor',
       'lost leases and stale orphans | deterministic recovery',
       'systemic failure, cross-project conflict, or irreversible authority gate | Heartbeat',
-      "'parked' authority-decision framing and evidence | Heartbeat",
-      "'done' and 'cancelled' outcome synthesis and goal progress | Heartbeat",
+      'manual-role authority-decision framing and evidence | Heartbeat',
+      'terminal-role outcome synthesis and goal progress | Heartbeat',
     ]) {
       expect(heartbeatPrompt).toContain(ownership);
     }
@@ -39,10 +39,10 @@ describe('heartbeatPrompt', () => {
 
   it('forbids heartbeat from duplicating protected lifecycle work', () => {
     for (const rule of [
-      "claim, select, or launch ordinary 'todo' work",
+      'claim, select, or launch ordinary execution-role work',
       'run planning councils owned by the protected planning routine',
       'perform implementation or artifact custody owned by the protected execution routine',
-      "verify or disposition ordinary 'in_review' artifacts owned by the protected review routine",
+      'verify or disposition ordinary review-role artifacts owned by the protected review routine',
       'poll unchanged CI, Human gates, or external systems owned by the durable wait monitor',
       'reclaim leases or stale orphans owned by deterministic recovery',
       "change a task's state merely because it has been quiet while its lease is healthy",
@@ -61,6 +61,15 @@ describe('heartbeatPrompt', () => {
     ]) {
       expect(heartbeatPrompt).not.toContain(removedDoctrine);
     }
+  });
+
+  it('routes healthy work through resolved semantic lanes and limits fixed keys to degraded fallback', () => {
+    expect(heartbeatPrompt).toContain('Resolve every task\'s effective lane and semantic role');
+    expect(heartbeatPrompt).toContain('ordered effective planning lane');
+    expect(heartbeatPrompt).toContain('ordered effective execution-entry lane');
+    expect(heartbeatPrompt).toContain('seeded stable keys only when the capability check explicitly reports degraded');
+    expect(heartbeatPrompt).not.toContain("Send incomplete work to 'planning'; send executable work to 'todo'");
+    expect(heartbeatPrompt).not.toContain("route to 'planning' or 'todo'");
   });
 
   it('keeps portfolio alignment, verified prospecting, routine stewardship, and concise briefings', () => {

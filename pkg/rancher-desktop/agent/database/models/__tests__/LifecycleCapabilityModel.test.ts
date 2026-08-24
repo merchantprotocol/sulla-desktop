@@ -12,12 +12,19 @@ describe('LifecycleCapabilityModel', () => {
   beforeEach(() => {
     jest.restoreAllMocks();
     jest.spyOn(WorkLaneDefinitionModel, 'semanticRoleForStatus').mockImplementation((_projectId, status) => {
-      const role = status === 'planning' ? 'planning'
-        : status === 'blocked' ? 'blocked'
-          : status === 'in_review' ? 'review'
-            : status === 'todo' || status === 'in_progress' ? 'execution'
-              : status === 'done' || status === 'cancelled' ? 'terminal'
-                : status === 'backlog' ? 'backlog' : 'manual';
+      const role = status === 'planning'
+        ? 'planning'
+        : status === 'blocked'
+          ? 'blocked'
+          : status === 'in_review'
+            ? 'review'
+            : status === 'todo' || status === 'in_progress'
+              ? 'execution'
+              : status === 'done' || status === 'cancelled'
+                ? 'terminal'
+                : status === 'backlog'
+                  ? 'backlog'
+                  : 'manual';
       return Promise.resolve(role);
     });
   });
