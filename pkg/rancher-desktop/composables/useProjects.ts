@@ -26,11 +26,11 @@ import type {
 } from '@pkg/agent/database/models/WorkItemsModel';
 import type {
   CreateWorkLaneInput, EffectiveWorkLane, ListWorkLaneOpts, UpdateWorkLaneInput,
-  WorkLaneDefinitionRecord, WorkLaneScope,
+  ArchiveWorkLanePreview, WorkLaneDefinitionRecord, WorkLaneRuntimeCapability, WorkLaneScope,
 } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import type {
-  LaneBindingResolution, LaneEntryAutomationRecord, LaneWorkflowBindingRecord,
-  ListLaneBindingsInput, SetLaneBindingInput,
+  CompatibleLaneWorkflow, LaneBindingResolution, LaneEntryAutomationRecord, LaneWorkflowBindingRecord,
+  ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput,
 } from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
 import type {
   ProjectViewType, SaveProjectViewInput, WorkProjectViewRecord,
@@ -284,6 +284,10 @@ export function useProjects() {
     return result;
   }
 
+  async function previewArchiveLane(id: string): Promise<ArchiveWorkLanePreview> {
+    return ipcRenderer.invoke('work-items:lane-archive-preview', id);
+  }
+
   async function restoreLane(id: string): Promise<WorkLaneDefinitionRecord | null> {
     return ipcRenderer.invoke('work-items:lane-restore', id);
   }
@@ -310,6 +314,14 @@ export function useProjects() {
 
   async function resolveLaneWorkflow(taskId: string, laneKey: string, profileId = 'default'): Promise<LaneBindingResolution> {
     return ipcRenderer.invoke('work-items:lane-workflow-resolve', taskId, laneKey, profileId);
+  }
+
+  async function resolveLaneWorkflowContext(input: ResolveLaneBindingContextInput): Promise<LaneBindingResolution> {
+    return ipcRenderer.invoke('work-items:lane-workflow-resolve-context', input);
+  }
+
+  async function listCompatibleLaneWorkflows(projectId: string, laneKey: string): Promise<CompatibleLaneWorkflow[]> {
+    return ipcRenderer.invoke('work-items:lane-compatible-workflows', projectId, laneKey);
   }
 
   async function inspectLaneEntryAutomation(taskId: string): Promise<LaneEntryAutomationRecord[]> {
@@ -349,6 +361,7 @@ export function useProjects() {
     createLane,
     updateLane,
     archiveLane,
+    previewArchiveLane,
     restoreLane,
     reorderLanes,
     resetLaneOverride,
@@ -356,6 +369,8 @@ export function useProjects() {
     setLaneWorkflowBinding,
     removeLaneWorkflowBinding,
     resolveLaneWorkflow,
+    resolveLaneWorkflowContext,
+    listCompatibleLaneWorkflows,
     inspectLaneEntryAutomation,
   };
 }

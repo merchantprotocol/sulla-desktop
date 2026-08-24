@@ -121,6 +121,21 @@ describe('WorkLaneDefinitionModel', () => {
     expect(client.query.mock.calls[5][0]).toContain('SET archived = true');
   });
 
+  it('previews the exact move count and safe destinations before archive', async() => {
+    (postgresClient as any).queryOne = (jest.fn() as any)
+      .mockResolvedValueOnce(lane({ lane_key: 'parked', scope: 'project', project_id: 'p1' }))
+      .mockResolvedValueOnce({ count: '3' });
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([
+      lane({ lane_key: 'parked', scope: 'project', project_id: 'p1' }),
+      lane({ id: 'done', lane_key: 'done', display_name: 'Done', semantic_role: 'terminal' }),
+    ]));
+
+    const preview = await WorkLaneDefinitionModel.previewArchive('lane-1');
+
+    expect(preview.taskCount).toBe(3);
+    expect(preview.destinations.map(item => item.lane_key)).toEqual(['done']);
+  });
+
   it.each([
     ' Awaiting Vendor ',
     '   ',
