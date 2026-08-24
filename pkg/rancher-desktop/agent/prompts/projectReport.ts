@@ -12,6 +12,7 @@
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
+import { WorkTaskDependencyModel } from '../database/models/WorkTaskDependencyModel';
 import { WorkTaskWaitModel } from '../database/models/WorkTaskWaitModel';
 
 export interface ProjectReportOpts {
@@ -79,17 +80,20 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   const lifecycleOwnedRows = lifecycleAccess
     ? listedOpenRows.filter(task => !['heartbeat_fallback', 'unmanaged'].includes(lifecycleAccess.get(task.id)?.mode ?? 'manual_hold'))
     : [];
-  const [activeWaitIds, activeWaits, suppressionConfigured, monitorEnabled] = await Promise.all([
+  const [activeWaitIds, activeWaits, suppressionConfigured, monitorEnabled, dependencyHolds] = await Promise.all([
     WorkTaskWaitModel.activeTaskIds(),
     WorkTaskWaitModel.list({ status: 'active', limit: 500 }),
     SullaSettingsModel.get('externalWaitCommentSuppressionEnabled', false),
     SullaSettingsModel.get('externalWaitMonitorEnabled', true),
+    WorkTaskDependencyModel.listUnresolvedForTasks(openRows.map(task => task.id)),
   ]);
   const suppressionEnabled = monitorEnabled && suppressionConfigured;
   const scopedTaskIds = new Set(openRows.map(task => task.id));
   const scopedActiveWaits = activeWaits.filter(wait => scopedTaskIds.has(wait.task_id));
+  const dependencyHeldIds = new Set(dependencyHolds.map(hold => hold.taskId));
   const actionableRows = openRows.filter(t =>
-    t.status !== 'blocked' && t.status !== 'planning' && (!suppressionEnabled || !activeWaitIds.has(t.id)),
+    t.status !== 'blocked' && t.status !== 'planning' && !dependencyHeldIds.has(t.id)
+      && (!suppressionEnabled || !activeWaitIds.has(t.id)),
   );
   const blockedRows = openRows.filter(t => t.status === 'blocked');
   const planningRows = openRows.filter(t => t.status === 'planning');
@@ -129,6 +133,16 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
       const who = t.assignee ? ` · ${ t.assignee }` : '';
       lines.push(`- [${ t.priority }] **${ t.title }** — ${ context(t) } · ${ t.status }${ due }${ who } (id ${ t.id })`);
     }
+  }
+
+  lines.push('');
+  lines.push(`## 🔗 Dependency-held work (${ dependencyHeldIds.size })`);
+  lines.push('_These tasks are mechanically excluded from planning, execution, review, and lane-entry claims. They are separate from external waits and human gates._');
+  for (const taskId of [...dependencyHeldIds].slice(0, nextLimit)) {
+    const task = openRows.find(row => row.id === taskId);
+    const reasons = dependencyHolds.filter(hold => hold.taskId === taskId)
+      .map(hold => `${ hold.dependsOnTaskId } (${ hold.dependsOnStatus ?? hold.policy })`).join(', ');
+    lines.push(`- **${ task?.title ?? taskId }** · blocked by ${ reasons } (id ${ taskId })`);
   }
 
   lines.push('');

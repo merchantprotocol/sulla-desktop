@@ -69,6 +69,7 @@ import { up as up_0079, down as down_0079 } from './0079_create_work_task_artifa
 import { up as up_0080, down as down_0080 } from './0080_settle_work_task_waits_on_replan';
 import { up as up_0081, down as down_0081 } from './0081_add_workflow_execution_leases';
 import { up as up_0082, down as down_0082 } from './0082_create_artifact_receipts';
+import { up as up_0083, down as down_0083 } from './0083_create_work_task_dependencies';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -139,4 +140,5 @@ export const migrationsRegistry = [
   { name: '0080_settle_work_task_waits_on_replan',                 up: up_0080, down: down_0080 },
   { name: '0081_add_workflow_execution_leases',                    up: up_0081, down: down_0081 },
   { name: '0082_create_artifact_receipts',                         up: up_0082, down: down_0082 },
+  { name: '0083_create_work_task_dependencies',                    up: up_0083, down: down_0083 },
 ] as const;
