@@ -4,6 +4,7 @@ const claimDueMock: any = jest.fn();
 const observeMock: any = jest.fn();
 const summaryMock: any = jest.fn();
 const addCommentMock: any = jest.fn();
+const updateTaskMock: any = jest.fn();
 const settingsGetMock: any = jest.fn();
 const postgresQueryMock: any = jest.fn();
 
@@ -16,7 +17,7 @@ jest.unstable_mockModule('../../database/models/WorkTaskWaitModel', () => ({
 }));
 
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
-  WorkItemsModel: { addComment: addCommentMock },
+  WorkItemsModel: { addComment: addCommentMock, updateTask: updateTaskMock },
 }));
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
@@ -86,6 +87,7 @@ describe('ExternalWaitMonitorService', () => {
     expect(poller).toHaveBeenCalledTimes(11);
     expect(addCommentMock).toHaveBeenCalledTimes(1);
     expect(addCommentMock.mock.calls[0][0].body).toContain('External wait satisfied: 1 success');
+    expect(updateTaskMock).not.toHaveBeenCalled();
     const metrics = await service.getMetrics();
     expect(metrics.unchangedSuppressions).toBe(10);
     expect(metrics.deltasEmitted).toBe(1);

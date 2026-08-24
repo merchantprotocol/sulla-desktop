@@ -100,11 +100,10 @@ describe('heartbeatPrompt', () => {
   });
 
   it('delegates blocked recovery to the locked core routine', () => {
-    expect(heartbeatPrompt).toContain('## Auto-Dispatch on Blocked — Locked Core Routine');
+    expect(heartbeatPrompt).toContain('### Blocked Recovery Council — Decide, Do Not Escalate');
     expect(heartbeatPrompt).toContain('core-routine-plan-project-task');
-    expect(heartbeatPrompt).toContain('Do not manually dispatch planning agents');
-    expect(heartbeatPrompt).toContain('never a bare question');
-    expect(heartbeatPrompt).toContain('durable task-scoped claim prevents duplicate councils');
+    expect(heartbeatPrompt).toContain('Heartbeat does not spawn planners');
+    expect(heartbeatPrompt).toContain('must never be double-dispatched');
   });
 
   // Regression guard for #587: Jonathon rejected the "pick one task, make one

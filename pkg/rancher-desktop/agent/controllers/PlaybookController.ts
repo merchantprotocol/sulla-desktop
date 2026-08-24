@@ -65,6 +65,7 @@ import {
 } from '../workflow/WorkflowPlaybook';
 import { detectAgentNodeError } from '../workflow/agentNodeError';
 import {
+  inheritSubAgentToolPolicy,
   lockedCoreBlockedError,
   resolveAgentTaskForDispatch,
 } from '../workflow/lockedCoreRoutineExecution';
@@ -2380,6 +2381,7 @@ export class PlaybookController<TState = any> {
     subState.messages.push({ role: 'user', content: prompt });
 
     subState.metadata.isSubAgent = true;
+    inheritSubAgentToolPolicy(_state, subState, config);
 
     const parentChannel = (_state as any).metadata?.wsChannel || 'workbench';
     subState.metadata.workflowNodeId = nodeId;
