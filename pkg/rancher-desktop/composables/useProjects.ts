@@ -31,6 +31,9 @@ import type {
   LaneBindingResolution, LaneEntryAutomationRecord, LaneWorkflowBindingRecord,
   ListLaneBindingsInput, SetLaneBindingInput,
 } from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
+import type {
+  ProjectViewType, SaveProjectViewInput, WorkProjectViewRecord,
+} from '@pkg/agent/database/models/WorkProjectViewModel';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export type {
@@ -40,6 +43,7 @@ export type {
   UpsertTaskInput, UpdateTaskInput,
   CreateWorkLaneInput, EffectiveWorkLane, ListWorkLaneOpts, UpdateWorkLaneInput,
   WorkLaneDefinitionRecord, WorkLaneScope,
+  ProjectViewType, SaveProjectViewInput, WorkProjectViewRecord,
 };
 
 /** An epic with its tasks attached, ready to render. */
@@ -232,6 +236,18 @@ export function useProjects() {
     return row;
   }
 
+  async function listViews(projectId?: string | null): Promise<WorkProjectViewRecord[]> {
+    return ipcRenderer.invoke('work-items:views-list', projectId);
+  }
+
+  async function resolveView(projectId?: string | null): Promise<WorkProjectViewRecord | null> {
+    return ipcRenderer.invoke('work-items:view-resolve', projectId);
+  }
+
+  async function saveView(input: SaveProjectViewInput): Promise<WorkProjectViewRecord> {
+    return ipcRenderer.invoke('work-items:view-save', input);
+  }
+
   /** Apply a drag-reorder batch (positions + optional status/epic move), then refresh. */
   async function reorder(updates: ReorderUpdate[]): Promise<void> {
     if (!updates.length) return;
@@ -316,6 +332,9 @@ export function useProjects() {
     updateTask,
     archiveTask,
     addComment,
+    listViews,
+    resolveView,
+    saveView,
     reorder,
     listLanes,
     resolveLanes,

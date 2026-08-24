@@ -50,6 +50,8 @@ export interface WorkEpicRecord {
   priority:      string;
   position:      number;
   due_at:        string | null;
+  start_at:      string | null;
+  milestone_at:  string | null;
   source:        string | null;
   source_ref:    string | null;
   created_at:    string;
@@ -69,6 +71,8 @@ export interface WorkTaskRecord {
   status:           string;
   priority:         string;
   due_at:           string | null;
+  start_at:         string | null;
+  milestone_at:     string | null;
   github_issue:     string | null;
   assignee:         string | null;
   labels:           string[] | null;
@@ -169,30 +173,35 @@ export interface UpdateProjectInput {
 }
 
 export interface UpsertEpicInput {
-  id?:          string;
-  project_id:   string;
-  slug?:        string;
-  title:        string;
-  description?: string;
-  status?:      string;
-  priority?:    string;
-  position?:    number;
-  due_at?:      string | null;
-  source?:      string | null;
-  source_ref?:  string | null;
+  id?:           string;
+  project_id:    string;
+  slug?:         string;
+  title:         string;
+  description?:  string;
+  status?:       string;
+  priority?:     string;
+  position?:     number;
+  due_at?:       string | null;
+  start_at?:     string | null;
+  milestone_at?: string | null;
+  source?:       string | null;
+  source_ref?:   string | null;
 }
 
 export interface UpdateEpicInput {
-  project_id?:  string;
-  slug?:        string;
-  title?:       string;
-  description?: string;
-  status?:      string;
-  priority?:    string;
-  position?:    number;
-  due_at?:      string | null;
-  source?:      string | null;
-  source_ref?:  string | null;
+  project_id?:   string;
+  slug?:         string;
+  title?:        string;
+  description?:  string;
+  status?:       string;
+  priority?:     string;
+  position?:     number;
+  due_at?:       string | null;
+  start_at?:     string | null;
+  milestone_at?: string | null;
+  actor?:        string;
+  source?:       string | null;
+  source_ref?:   string | null;
 }
 
 export interface UpsertTaskInput {
@@ -207,6 +216,8 @@ export interface UpsertTaskInput {
   priority?:     string;
   assignee?:     string | null;
   due_at?:       string | null;
+  start_at?:     string | null;
+  milestone_at?: string | null;
   labels?:       string[];
   github_issue?: string | null;
   position?:     number;
@@ -225,6 +236,8 @@ export interface UpdateTaskInput {
   priority?:     string;
   assignee?:     string | null;
   due_at?:       string | null;
+  start_at?:     string | null;
+  milestone_at?: string | null;
   labels?:       string[];
   github_issue?: string | null;
   position?:     number;
@@ -615,6 +628,21 @@ export class WorkItemsModel {
     return epic;
   }
 
+  private static async auditScheduleChanges(
+    kind: 'epic' | 'task', id: string,
+    before: Pick<WorkEpicRecord, 'start_at' | 'due_at' | 'milestone_at'>,
+    after: Pick<WorkEpicRecord, 'start_at' | 'due_at' | 'milestone_at'>,
+    actor = 'sulla',
+  ): Promise<void> {
+    for (const field of ['start_at', 'due_at', 'milestone_at'] as const) {
+      if ((before[field] ?? null) === (after[field] ?? null)) continue;
+      await postgresClient.query(`INSERT INTO work_schedule_audit
+        (item_kind, item_id, field_name, old_value, new_value, actor)
+        VALUES ($1, $2, $3, $4, $5, $6)`,
+      [kind, id, field, before[field] ?? null, after[field] ?? null, actor]);
+    }
+  }
+
   private static pushClosedFilter(conds: string[], opts: ListOpts): void {
     if (opts.status) return;
     if (!opts.includeDone) conds.push(`NOT (${ CLOSED_STATUSES })`);
@@ -767,14 +795,16 @@ export class WorkItemsModel {
       );
       if (existing[0]) {
         return (await WorkItemsModel.updateEpic(existing[0].id, {
-          title:       input.title,
-          description: input.description,
-          status:      input.status,
-          priority:    input.priority,
-          position:    input.position,
-          due_at:      input.due_at,
-          source:      input.source,
-          source_ref:  input.source_ref,
+          title:        input.title,
+          description:  input.description,
+          status:       input.status,
+          priority:     input.priority,
+          position:     input.position,
+          due_at:       input.due_at,
+          start_at:     input.start_at,
+          milestone_at: input.milestone_at,
+          source:       input.source,
+          source_ref:   input.source_ref,
         })) ?? existing[0];
       }
     }
@@ -783,8 +813,8 @@ export class WorkItemsModel {
     const rows = await postgresClient.query<WorkEpicRecord>(
       `INSERT INTO ${ WorkItemsModel.EPICS }
          (id, project_id, slug, title, description, status, priority,
-          position, due_at, source, source_ref)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          position, due_at, start_at, milestone_at, source, source_ref)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         id,
@@ -796,6 +826,8 @@ export class WorkItemsModel {
         input.priority ?? 'p2',
         input.position ?? 0,
         input.due_at ?? null,
+        input.start_at ?? null,
+        input.milestone_at ?? null,
         input.source ?? null,
         input.source_ref ?? null,
       ],
@@ -830,6 +862,8 @@ export class WorkItemsModel {
     if (changes.priority !== undefined) { assign('priority', changes.priority); moved = true }
     if (changes.position !== undefined) assign('position', changes.position);
     if (changes.due_at !== undefined) { assign('due_at', changes.due_at); moved = true }
+    if (changes.start_at !== undefined) { assign('start_at', changes.start_at); moved = true }
+    if (changes.milestone_at !== undefined) { assign('milestone_at', changes.milestone_at); moved = true }
     if (changes.source !== undefined) assign('source', changes.source);
     if (changes.source_ref !== undefined) assign('source_ref', changes.source_ref);
 
@@ -842,7 +876,9 @@ export class WorkItemsModel {
         WHERE id = $${ idx } RETURNING *`,
       values,
     );
-    return rows[0] ?? null;
+    const updated = rows[0] ?? null;
+    if (updated) await WorkItemsModel.auditScheduleChanges('epic', id, existing, updated, changes.actor);
+    return updated;
   }
 
   static async listEpics(opts: ListEpicsOpts = {}): Promise<WorkEpicRecord[]> {
@@ -902,8 +938,8 @@ export class WorkItemsModel {
       `INSERT INTO ${ WorkItemsModel.TASKS }
          (id, project_id, epic_id, parent_id, slug, title, description, status,
           priority, due_at, github_issue, assignee, labels, position, source,
-          source_ref, created_by, completed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+          source_ref, created_by, completed_at, start_at, milestone_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        RETURNING *`,
       [
         id,
@@ -924,6 +960,8 @@ export class WorkItemsModel {
         input.source_ref ?? null,
         actor,
         (lane ? lane.semantic_role === 'terminal' : isClosedStatus(status)) ? new Date().toISOString() : null,
+        input.start_at ?? null,
+        input.milestone_at ?? null,
       ],
     );
     const created = rows[0];
@@ -952,6 +990,8 @@ export class WorkItemsModel {
           priority:     input.priority,
           assignee:     input.assignee,
           due_at:       input.due_at,
+          start_at:     input.start_at,
+          milestone_at: input.milestone_at,
           labels:       input.labels,
           github_issue: input.github_issue,
           position:     input.position,
@@ -1022,6 +1062,8 @@ export class WorkItemsModel {
       moved = true;
     }
     if (changes.due_at !== undefined) { assign('due_at', changes.due_at); moved = true }
+    if (changes.start_at !== undefined) { assign('start_at', changes.start_at); moved = true }
+    if (changes.milestone_at !== undefined) { assign('milestone_at', changes.milestone_at); moved = true }
     if (changes.labels !== undefined) assign('labels', changes.labels);
     if (changes.github_issue !== undefined) assign('github_issue', changes.github_issue);
     if (changes.position !== undefined) assign('position', changes.position);
@@ -1080,6 +1122,7 @@ export class WorkItemsModel {
     if (updated && changes.status !== undefined) {
       await notifyTaskStatusCommitted(updated, existing.status, changes.actor);
     }
+    if (updated) await WorkItemsModel.auditScheduleChanges('task', id, existing, updated, actor);
     return updated;
   }
 
