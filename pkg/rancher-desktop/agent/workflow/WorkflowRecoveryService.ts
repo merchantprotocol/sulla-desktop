@@ -34,16 +34,33 @@ let pendingSuspended: SuspendedExecution[] = [];
 export async function recoverOnBoot(): Promise<void> {
   try {
     const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+    const stale = await WorkflowExecutionModel.findStaleExecutions();
+    const recovered = [] as SuspendedExecution[];
+    for (const candidate of stale) {
+      const result = await WorkflowExecutionModel.recover(candidate.attributes.execution_id!);
+      if (!result) continue; // another worker won, or the retry ceiling failed it
+      const a = result.execution.attributes as any;
+      recovered.push({
+        executionId: a.execution_id,
+        workflowId: a.workflow_id,
+        workflowName: a.workflow_name || a.workflow_id,
+        workflowSlug: a.workflow_slug || a.workflow_id,
+        startedAt: a.started_at instanceof Date ? a.started_at.toISOString() : String(a.started_at),
+        autoRestart: a.auto_restart !== false,
+      });
+    }
+    // Legacy suspended rows predate leases; retain their existing path, but
+    // never use wall-clock age to classify a leased execution as stale.
     const suspended = await WorkflowExecutionModel.findSuspended();
 
-    if (suspended.length === 0) {
+    if (suspended.length === 0 && recovered.length === 0) {
       console.log('[WorkflowRecovery] No suspended executions found — nothing to recover.');
       return;
     }
 
-    console.log(`[WorkflowRecovery] Found ${ suspended.length } suspended execution(s) to recover.`);
+    console.log(`[WorkflowRecovery] Found ${ suspended.length } legacy suspended and ${ recovered.length } stale execution(s) to recover.`);
 
-    const autoRestarts: SuspendedExecution[] = [];
+    const autoRestarts: SuspendedExecution[] = [...recovered];
     const manualResumes: SuspendedExecution[] = [];
 
     for (const exec of suspended) {

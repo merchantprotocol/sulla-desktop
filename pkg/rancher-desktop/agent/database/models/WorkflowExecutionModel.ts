@@ -1,5 +1,6 @@
 import { BaseModel } from '../BaseModel';
 import { postgresClient } from '../PostgresClient';
+import { randomUUID } from 'crypto';
 
 interface WorkflowExecutionAttributes {
   execution_id:     string;
@@ -16,6 +17,15 @@ interface WorkflowExecutionAttributes {
   error:            string | null;
   created_at:       Date;
   updated_at:       Date;
+  owner_id:         string | null;
+  lease_token:      string | null;
+  leased_at:        Date | null;
+  heartbeat_at:     Date | null;
+  lease_expires_at: Date | null;
+  attempt_count:    number;
+  max_attempts:     number;
+  terminal_at:      Date | null;
+  terminal_reason:  string | null;
 }
 
 export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttributes> {
@@ -36,6 +46,8 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     'started_at',
     'completed_at',
     'error',
+    'owner_id', 'lease_token', 'leased_at', 'heartbeat_at', 'lease_expires_at',
+    'attempt_count', 'max_attempts', 'terminal_at', 'terminal_reason',
   ];
 
   protected readonly casts: Record<string, string> = {
@@ -44,6 +56,8 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     completed_at: 'timestamp',
     created_at:   'timestamp',
     updated_at:   'timestamp',
+    leased_at: 'timestamp', heartbeat_at: 'timestamp', lease_expires_at: 'timestamp', terminal_at: 'timestamp',
+    attempt_count: 'integer', max_attempts: 'integer',
   };
 
   /** Record a new execution as running. Safe to call multiple times — upserts. */
@@ -119,6 +133,71 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     );
   }
 
+  private static hydrate(row: any): WorkflowExecutionModel {
+    const model = new WorkflowExecutionModel();
+    model.databaseFill(row);
+    return model;
+  }
+
+  /** Atomically claim an unowned or expired execution. */
+  static async acquireLease(executionId: string, ownerId: string, ttlMs: number, token = randomUUID()): Promise<WorkflowExecutionModel | null> {
+    const row = await postgresClient.queryOne<any>(`UPDATE workflow_executions
+      SET owner_id = $2, lease_token = $4, leased_at = COALESCE(leased_at, NOW()), heartbeat_at = NOW(),
+          lease_expires_at = NOW() + ($3 * INTERVAL '1 millisecond'), updated_at = NOW()
+      WHERE execution_id = $1 AND status IN ('running', 'suspended')
+        AND (owner_id IS NULL OR lease_expires_at IS NULL OR lease_expires_at < NOW() OR (owner_id = $2 AND lease_token = $4))
+      RETURNING *`, [executionId, ownerId, ttlMs, token]);
+    return row ? WorkflowExecutionModel.hydrate(row) : null;
+  }
+
+  /** Renew only the lease held by this owner/token pair. */
+  static async renewHeartbeat(executionId: string, ownerId: string, token: string, ttlMs: number): Promise<WorkflowExecutionModel | null> {
+    const row = await postgresClient.queryOne<any>(`UPDATE workflow_executions
+      SET heartbeat_at = NOW(), lease_expires_at = NOW() + ($4 * INTERVAL '1 millisecond'), updated_at = NOW()
+      WHERE execution_id = $1 AND owner_id = $2 AND lease_token = $3 AND status IN ('running', 'suspended') RETURNING *`, [executionId, ownerId, token, ttlMs]);
+    return row ? WorkflowExecutionModel.hydrate(row) : null;
+  }
+
+  static async releaseLease(executionId: string, ownerId: string, token: string): Promise<void> {
+    await postgresClient.query(`UPDATE workflow_executions SET owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW() WHERE execution_id = $1 AND owner_id = $2 AND lease_token = $3`, [executionId, ownerId, token]);
+  }
+
+  static async findStaleExecutions(now = new Date()): Promise<WorkflowExecutionModel[]> {
+    const rows = await postgresClient.queryAll<any>(`SELECT * FROM workflow_executions WHERE status IN ('running', 'suspended') AND lease_expires_at IS NOT NULL AND lease_expires_at < $1 ORDER BY lease_expires_at ASC`, [now]);
+    return rows.map(WorkflowExecutionModel.hydrate);
+  }
+
+  /** Claim one stale execution for recovery and return its last checkpoint. */
+  static async recover(executionId: string, ownerId = `runtime-${ process.pid }`, ttlMs = 60000): Promise<{ execution: WorkflowExecutionModel; checkpoint: any | null } | null> {
+    return postgresClient.transaction(async(client) => {
+      // Deterministic across the recovery handoff: the first controller tick
+      // must be able to renew the lease claimed by this recovery worker.
+      const token = `${ ownerId }:${ executionId }`;
+      const row = (await client.query(`UPDATE workflow_executions
+        SET owner_id = $2, lease_token = $3, leased_at = NOW(), heartbeat_at = NOW(), lease_expires_at = NOW() + ($4 * INTERVAL '1 millisecond'), attempt_count = attempt_count + 1, updated_at = NOW()
+        WHERE execution_id = $1 AND status IN ('running', 'suspended') AND lease_expires_at < NOW() AND attempt_count < max_attempts RETURNING *`, [executionId, ownerId, token, ttlMs])).rows[0];
+      if (!row) {
+        await client.query(`UPDATE workflow_executions SET status = 'failed', completed_at = NOW(), terminal_at = NOW(), terminal_reason = 'recovery_attempt_ceiling', error = 'recovery attempt ceiling exceeded', updated_at = NOW() WHERE execution_id = $1 AND status IN ('running', 'suspended') AND lease_expires_at < NOW() AND attempt_count >= max_attempts`, [executionId]);
+        return null;
+      }
+      const checkpoint = (await client.query(`SELECT * FROM workflow_checkpoints WHERE execution_id = $1 ORDER BY sequence DESC LIMIT 1`, [executionId])).rows[0] ?? null;
+      return { execution: WorkflowExecutionModel.hydrate(row), checkpoint };
+    });
+  }
+
+  /** Terminal settlement is compare-and-set; repeated calls are no-ops. */
+  static async settle(executionId: string, outcome: 'completed' | 'failed', error?: string): Promise<WorkflowExecutionModel | null> {
+    const row = await postgresClient.queryOne<any>(`WITH settled AS (
+      UPDATE workflow_executions SET status = $2, completed_at = COALESCE(completed_at, NOW()), terminal_at = COALESCE(terminal_at, NOW()), terminal_reason = CASE WHEN $2 = 'failed' THEN COALESCE($3, terminal_reason) ELSE terminal_reason END, error = CASE WHEN $2 = 'failed' THEN COALESCE($3, error) ELSE error END, owner_id = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
+      WHERE execution_id = $1 AND status IN ('running', 'suspended') RETURNING *)
+      UPDATE work_lane_entry_automations
+      SET status = $2, outcome = CASE WHEN $2 = 'completed' THEN jsonb_build_object('disposition', 'completed') ELSE jsonb_build_object('disposition', 'runtime_failed', 'message', COALESCE($3, 'Unknown workflow failure')) END, completed_at = NOW()
+      WHERE execution_id = (SELECT execution_id FROM settled) AND status = 'running'
+      RETURNING execution_id)
+      SELECT settled.* FROM settled;`, [executionId, outcome, error ?? null]);
+    return row ? WorkflowExecutionModel.hydrate(row) : null;
+  }
+
   static async markFailed(executionId: string, error?: string): Promise<void> {
     await postgresClient.query(
       `WITH settled AS (
@@ -153,6 +232,7 @@ export class WorkflowExecutionModel extends BaseModel<WorkflowExecutionAttribute
     const rows = await postgresClient.queryAll(
       `SELECT * FROM workflow_executions
        WHERE status = 'suspended' AND scope_task_id IS NULL
+         AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
        ORDER BY started_at DESC`,
       [],
     );
