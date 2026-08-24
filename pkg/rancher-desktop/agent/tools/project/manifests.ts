@@ -224,6 +224,27 @@ export const projectToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./explain_task_claimability'),
   },
+  {
+    name:        'ready',
+    description: 'Return the authoritative claimable Projects frontier as structured JSON. Read-only: tasks are evaluated against live dependencies, waits, worker leases, WIP pressure, downstream review backpressure, and explicit human gates.',
+    category:    'project',
+    schemaDef:   {
+      project_id: { type: 'string', optional: true, description: 'Limit the frontier to one project.' },
+      limit:      { type: 'number', optional: true, description: 'Maximum tasks to evaluate (default 50, hard cap 200).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./ready'),
+  },
+  {
+    name:        'explain_blocked',
+    description: 'Explain exactly why a Projects task is not claimable without reading comments. Returns structured reason types, live details, and capability status.',
+    category:    'project',
+    schemaDef:   {
+      task_id: { type: 'string', description: 'Projects task id.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./explain_blocked'),
+  },
   // ── projects ─────────────────────────────────────────────────────────
   {
     name:        'create_project',
