@@ -1,3 +1,5 @@
+import type { WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
+
 export const TASK_ASSIGNEES = {
   dispatcher:  'dispatcher',
   heartbeat:   'heartbeat',
@@ -25,10 +27,12 @@ export const NON_AUTONOMOUS_TASK_LABELS = [
 ] as const;
 
 export interface TaskOwnershipInput {
-  status:   string;
-  assignee: string | null;
-  labels:   readonly string[] | null;
-  actor:    string;
+  status:                 string;
+  assignee:               string | null;
+  labels:                 readonly string[] | null;
+  actor:                  string;
+  semanticRole?:          WorkLaneSemanticRole;
+  executionEntryLaneKey?: string | null;
 }
 
 export function hasNonAutonomousTaskLabel(labels: readonly string[] | null): boolean {
@@ -42,7 +46,13 @@ export function hasNonAutonomousTaskLabel(labels: readonly string[] | null): boo
  * actor identity retained for attribution, not a mechanical queue assignee.
  */
 export function normalizeAutonomousTaskOwnership(input: TaskOwnershipInput): string | null {
-  if (input.status.trim().toLowerCase() !== 'todo') return input.assignee;
+  const status = input.status.trim();
+  const semanticCatalogReady = input.semanticRole !== undefined;
+  const isExecutionEntry = semanticCatalogReady
+    ? input.semanticRole === 'execution' && status === input.executionEntryLaneKey?.trim()
+    : status.toLowerCase() === 'todo';
+
+  if (!isExecutionEntry) return input.assignee;
   if (input.assignee?.trim().toLowerCase() !== TASK_ASSIGNEES.legacySulla) return input.assignee;
   const actor = input.actor.trim().toLowerCase();
   if (!AUTONOMOUS_TASK_ACTORS.some(candidate => candidate === actor)) return input.assignee;

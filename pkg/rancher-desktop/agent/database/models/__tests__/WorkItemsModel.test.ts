@@ -173,6 +173,32 @@ describe('WorkItemsModel', () => {
     expect((postgresClient.query as any).mock.calls[1][1][11]).toBe('dispatcher');
   });
 
+  it('normalizes a project-specific execution-entry lane when inserting through the model boundary', async() => {
+    jest.spyOn(WorkLaneDefinitionModel, 'validateTaskStatus').mockResolvedValue({
+      lane_key: 'ready-custom', semantic_role: 'execution',
+    } as any);
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('ready-custom');
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: params[0], status: params[7], assignee: params[11], labels: params[12],
+      }]));
+
+    const task = await WorkItemsModel.insertTask({
+      id:       'task-custom-create',
+      epic_id:  'epic-1',
+      title:    'Custom execution entry',
+      status:   'ready-custom',
+      assignee: 'sulla',
+      actor:    'sulla',
+    });
+
+    expect(task.assignee).toBe('dispatcher');
+    expect(WorkLaneDefinitionModel.preferredLaneKey).toHaveBeenCalledWith(
+      'project-1', 'execution', 'todo', 'first',
+    );
+  });
+
   it('preserves gated and human ownership when inserting through the model boundary', async() => {
     (postgresClient as any).query = (jest.fn() as any)
       .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
@@ -218,6 +244,64 @@ describe('WorkItemsModel', () => {
     expect(task?.assignee).toBe('dispatcher');
     expect(sql).toContain('assignee = $2');
     expect(sql).toContain('last_moved_by');
+  });
+
+  it('normalizes a project-specific execution-entry lane during update', async() => {
+    jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
+      ready: true, catalogPresent: true, missingRoles: [], degradedReason: null,
+    });
+    jest.spyOn(WorkLaneDefinitionModel, 'resolveStatus').mockResolvedValue({
+      lane_key: 'ready-custom', semantic_role: 'execution',
+    } as any);
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('ready-custom');
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{
+        id:         'task-custom-update',
+        project_id: 'project-1',
+        status:     'ready-custom',
+        priority:   'high',
+        assignee:   'sulla',
+        labels:     [],
+      }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: 'task-custom-update', assignee: params[1], title: params[0],
+      }]));
+
+    const task = await WorkItemsModel.updateTask('task-custom-update', {
+      title: 'Touched custom lane', actor: 'heartbeat',
+    });
+
+    expect(task?.assignee).toBe('dispatcher');
+    expect(WorkLaneDefinitionModel.preferredLaneKey).toHaveBeenCalledWith(
+      'project-1', 'execution', 'todo', 'first',
+    );
+  });
+
+  it('preserves an unknown legacy lane as manual during unrelated updates', async() => {
+    jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
+      ready: true, catalogPresent: true, missingRoles: [], degradedReason: null,
+    });
+    jest.spyOn(WorkLaneDefinitionModel, 'resolveStatus').mockResolvedValue(null);
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('todo');
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{
+        id:         'task-unknown-update',
+        project_id: 'project-1',
+        status:     'legacy-unknown',
+        priority:   'high',
+        assignee:   'sulla',
+        labels:     [],
+      }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: 'task-unknown-update', assignee: 'sulla', title: params[0],
+      }]));
+
+    const task = await WorkItemsModel.updateTask('task-unknown-update', {
+      title: 'Still visible', actor: 'heartbeat',
+    });
+
+    expect(task?.assignee).toBe('sulla');
+    expect(WorkLaneDefinitionModel.preferredLaneKey).not.toHaveBeenCalled();
   });
 
   it('inserts a comment and touches its task in one SQL statement', async() => {

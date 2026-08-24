@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
+import { LifecycleCapabilityModel } from '../../../database/models/LifecycleCapabilityModel';
 import { WorkItemsModel } from '../../../database/models/WorkItemsModel';
 import { CreateTaskWorker } from '../create_task';
 import { UpdateTaskWorker } from '../update_task';
@@ -34,6 +35,10 @@ describe('Projects task tools ownership inputs', () => {
 
   it('passes updated labels, ownership, and actor through update_task to the model boundary', async() => {
     jest.spyOn(WorkItemsModel, 'ensureTables').mockResolvedValue();
+    jest.spyOn(WorkItemsModel, 'getTask').mockResolvedValue({
+      id: 'task-1', project_id: 'project-1', status: 'todo',
+    } as any);
+    jest.spyOn(LifecycleCapabilityModel, 'assertActorCanManageTask').mockResolvedValue();
     const update = jest.spyOn(WorkItemsModel, 'updateTask').mockResolvedValue({
       id:               'task-1',
       epic_id:          'epic-1',

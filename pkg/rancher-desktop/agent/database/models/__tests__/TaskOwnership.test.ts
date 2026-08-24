@@ -15,6 +15,36 @@ describe('normalizeAutonomousTaskOwnership', () => {
     },
   );
 
+  it('routes a resolved project-specific execution-entry lane to the dispatcher', () => {
+    expect(normalizeAutonomousTaskOwnership({
+      status:                'ready-custom',
+      assignee:              'sulla',
+      labels:                [],
+      actor:                 'sulla',
+      semanticRole:          'execution',
+      executionEntryLaneKey: 'ready-custom',
+    })).toBe('dispatcher');
+  });
+
+  it('does not treat a later execution or manual lane as an execution entry', () => {
+    expect(normalizeAutonomousTaskOwnership({
+      status:                'building-custom',
+      assignee:              'sulla',
+      labels:                [],
+      actor:                 'sulla',
+      semanticRole:          'execution',
+      executionEntryLaneKey: 'ready-custom',
+    })).toBe('sulla');
+    expect(normalizeAutonomousTaskOwnership({
+      status:                'ready-custom',
+      assignee:              'sulla',
+      labels:                [],
+      actor:                 'sulla',
+      semanticRole:          'manual',
+      executionEntryLaneKey: null,
+    })).toBe('sulla');
+  });
+
   it.each(['gated', 'decision', 'human', 'manual', 'no-auto-dispatch', 'MANUAL'])(
     'preserves legacy ownership when the task is labeled %s',
     (label) => {

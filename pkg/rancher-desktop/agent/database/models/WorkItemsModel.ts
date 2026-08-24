@@ -883,14 +883,19 @@ export class WorkItemsModel {
     const slug = input.slug ? input.slug.slice(0, 80) : null;
     const status = input.status ?? 'todo';
     const lane = await WorkLaneDefinitionModel.validateTaskStatus(projectId, status);
+    const executionEntryLaneKey = lane?.semantic_role === 'execution'
+      ? await WorkLaneDefinitionModel.preferredLaneKey(projectId, 'execution', 'todo', 'first')
+      : null;
     const id = input.id || await WorkItemsModel.uniqueId(WorkItemsModel.TASKS);
     const actor = input.actor ?? 'sulla';
     const labels = input.labels ?? [];
     const assignee = normalizeAutonomousTaskOwnership({
       status,
-      assignee: input.assignee ?? null,
+      assignee:              input.assignee ?? null,
       labels,
       actor,
+      semanticRole:         lane?.semantic_role,
+      executionEntryLaneKey,
     });
 
     const rows = await postgresClient.query<WorkTaskRecord>(
@@ -971,6 +976,19 @@ export class WorkItemsModel {
     const targetLane = changes.status !== undefined
       ? await WorkLaneDefinitionModel.validateTaskStatus(nextProjectId ?? existing.project_id, changes.status)
       : null;
+    const ownershipProjectId = nextProjectId ?? existing.project_id;
+    const ownershipCapability = changes.status === undefined
+      ? await WorkLaneDefinitionModel.runtimeCapability(ownershipProjectId)
+      : null;
+    const ownershipLane = targetLane ?? (ownershipCapability?.ready
+      ? await WorkLaneDefinitionModel.resolveStatus(ownershipProjectId, existing.status)
+      : null);
+    const ownershipSemanticRole = targetLane?.semantic_role ?? (ownershipCapability?.ready
+      ? ownershipLane?.semantic_role ?? 'manual'
+      : undefined);
+    const executionEntryLaneKey = ownershipLane?.semantic_role === 'execution'
+      ? await WorkLaneDefinitionModel.preferredLaneKey(ownershipProjectId, 'execution', 'todo', 'first')
+      : null;
 
     const setClauses: string[] = ['updated_at = now()'];
     const values: any[] = [];
@@ -978,10 +996,12 @@ export class WorkItemsModel {
     let moved = false;
     const actor = changes.actor ?? 'sulla';
     const assignee = normalizeAutonomousTaskOwnership({
-      status:   changes.status ?? existing.status,
-      assignee: changes.assignee !== undefined ? changes.assignee : existing.assignee,
-      labels:   changes.labels ?? existing.labels,
+      status:                changes.status ?? existing.status,
+      assignee:              changes.assignee !== undefined ? changes.assignee : existing.assignee,
+      labels:                changes.labels ?? existing.labels,
       actor,
+      semanticRole:         ownershipSemanticRole,
+      executionEntryLaneKey,
     });
 
     const assign = (col: string, val: any) => {

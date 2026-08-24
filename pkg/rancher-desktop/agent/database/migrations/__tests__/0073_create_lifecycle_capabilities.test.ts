@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { up } from '../0068_create_lifecycle_capabilities';
+import { up } from '../0073_create_lifecycle_capabilities';
 
-describe('0068_create_lifecycle_capabilities', () => {
+describe('0073_create_lifecycle_capabilities', () => {
   it('seeds all protected lifecycle capabilities and enforces one live stage owner', () => {
     for (const key of [
       'planning-council', 'todo-execution', 'in-review-verification',
