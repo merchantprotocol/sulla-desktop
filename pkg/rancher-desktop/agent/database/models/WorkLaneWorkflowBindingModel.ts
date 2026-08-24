@@ -14,6 +14,9 @@ export interface LaneContract {
   output?:        string;
 }
 
+export const LANE_ENTRY_INPUT_ENVELOPE = 'project.lane-entry.v1';
+export const LANE_OUTCOME_OUTPUT_ENVELOPE = 'project.lane-outcome.v1';
+
 export interface LaneWorkflowBindingRecord {
   id:            string;
   profile_id:    string;
@@ -42,6 +45,16 @@ export interface SetLaneBindingInput {
   projectId?:    string;
   profileId?:    string;
   actor?:        string;
+}
+
+export interface ListLaneBindingsInput {
+  profileId?:       string;
+  scope?:           LaneBindingScope;
+  epicId?:          string;
+  projectId?:       string;
+  laneKey?:         string;
+  semanticRole?:    string;
+  includeArchived?: boolean;
 }
 
 export interface LaneBindingResolution {
@@ -95,11 +108,34 @@ function workflowLaneContract(workflow: WorkflowRow): LaneContract {
 function compatible(contract: LaneContract, laneKey: string, semanticRole: string): boolean {
   const keys = contract.laneKeys ?? [];
   const roles = contract.semanticRoles ?? [];
-  return (keys.length === 0 || keys.includes(laneKey)) &&
+  return contract.input === LANE_ENTRY_INPUT_ENVELOPE &&
+    contract.output === LANE_OUTCOME_OUTPUT_ENVELOPE &&
+    (keys.length === 0 || keys.includes(laneKey)) &&
     (roles.length === 0 || roles.includes(semanticRole));
 }
 
 export class WorkLaneWorkflowBindingModel {
+  static async list(input: ListLaneBindingsInput = {}): Promise<LaneWorkflowBindingRecord[]> {
+    const conditions = ['profile_id = $1'];
+    const values: unknown[] = [input.profileId?.trim() || 'default'];
+    const add = (column: string, value: string | undefined) => {
+      if (!value?.trim()) return;
+      values.push(value.trim());
+      conditions.push(`${ column } = $${ values.length }`);
+    };
+    add('scope', input.scope);
+    add('epic_id', input.epicId);
+    add('project_id', input.projectId);
+    add('lane_key', input.laneKey);
+    add('semantic_role', input.semanticRole);
+    if (!input.includeArchived) conditions.push('active = true AND archived = false');
+    return postgresClient.query<LaneWorkflowBindingRecord>(`
+      SELECT * FROM work_lane_workflow_bindings
+       WHERE ${ conditions.join(' AND ') }
+       ORDER BY created_at DESC
+    `, values);
+  }
+
   static async set(input: SetLaneBindingInput): Promise<LaneWorkflowBindingRecord> {
     const laneKey = cleanOptional(input.laneKey);
     const semanticRole = cleanOptional(input.semanticRole);
@@ -111,6 +147,9 @@ export class WorkLaneWorkflowBindingModel {
     if (input.scope === 'core' && !semanticRole) throw new Error('semanticRole is required for core bindings.');
 
     const workflow = await WorkLaneWorkflowBindingModel.requireWorkflow(input.workflowId);
+    if (input.scope === 'core' && (!workflow.system || !['system', 'core-seeder'].includes(input.actor ?? ''))) {
+      throw new Error('Protected core bindings may only be installed by the core seeder with a system workflow.');
+    }
     const lane = await WorkLaneWorkflowBindingModel.requireLane(input.scope, laneKey, semanticRole, epicId, projectId);
     const contract = workflowLaneContract(workflow);
     if (!compatible(contract, lane.lane_key, lane.semantic_role)) {
@@ -198,6 +237,47 @@ export class WorkLaneWorkflowBindingModel {
       laneContract:     {},
       workflowSnapshot: {},
     };
+  }
+
+  static async remove(id: string, actor = 'sulla'): Promise<LaneWorkflowBindingRecord | null> {
+    const rows = await postgresClient.query<LaneWorkflowBindingRecord>(`
+      UPDATE work_lane_workflow_bindings
+         SET active = false, archived = true, archived_at = now(), updated_at = now(), updated_by = $2
+       WHERE id = $1 AND active = true AND archived = false AND scope <> 'core'
+       RETURNING *
+    `, [id, actor]);
+    if (rows[0]) return rows[0];
+    const existing = await postgresClient.queryOne<LaneWorkflowBindingRecord>(
+      'SELECT * FROM work_lane_workflow_bindings WHERE id = $1', [id]);
+    if (existing?.scope === 'core') throw new Error('Protected core bindings cannot be removed.');
+    return null;
+  }
+
+  static async listLaneEntries(taskId: string): Promise<LaneEntryAutomationRecord[]> {
+    return postgresClient.query<LaneEntryAutomationRecord>(`
+      SELECT * FROM work_lane_entry_automations WHERE task_id = $1 ORDER BY generation DESC
+    `, [taskId]);
+  }
+
+  static async markStarted(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
+    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
+      UPDATE work_lane_entry_automations
+         SET execution_id = $2, status = 'running', started_at = now()
+       WHERE id = $1 AND status = 'pending' AND execution_id IS NULL
+       RETURNING *
+    `, [id, executionId]);
+    return rows[0] ?? null;
+  }
+
+  static async markOutcome(id: string, status: 'completed' | 'failed', outcome: Record<string, unknown>):
+  Promise<LaneEntryAutomationRecord | null> {
+    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
+      UPDATE work_lane_entry_automations
+         SET status = $2, outcome = $3::jsonb, completed_at = now()
+       WHERE id = $1 AND status IN ('pending', 'running')
+       RETURNING *
+    `, [id, status, JSON.stringify(outcome)]);
+    return rows[0] ?? null;
   }
 
   static async claimLaneEntry(taskId: string, laneKey: string, actor = 'sulla', profileId = 'default'):

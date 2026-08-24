@@ -659,6 +659,9 @@ export interface RoutineExecutionOptions {
    * activation marks it failed and starts a new run anyway.
    */
   force?:             boolean;
+  /** Optional lifecycle callback for trusted in-process dispatchers. */
+  onStarted?:          (executionId: string) => void | Promise<void>;
+  onSettled?:          (result: { status: 'completed' | 'failed'; error?: string }) => void | Promise<void>;
 }
 
 export async function executeRoutine(
@@ -701,8 +704,16 @@ export async function executeRoutine(
     throw new Error(activation.responseString);
   }
 
-  void graph.execute(state).catch((err) => {
+  await options?.onStarted?.(executionId);
+
+  graph.execute(state).then(async() => {
+    await options?.onSettled?.({ status: 'completed' });
+  }).catch(async(err) => {
     console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
+    await options?.onSettled?.({
+      status: 'failed',
+      error:  err instanceof Error ? err.message : String(err),
+    });
   });
 
   console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);

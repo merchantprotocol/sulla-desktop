@@ -32,6 +32,7 @@ import type {
 import type {
   CreateWorkLaneInput, UpdateWorkLaneInput, WorkLaneScope,
 } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
+import type { ListLaneBindingsInput, SetLaneBindingInput } from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -48,6 +49,11 @@ async function importWorkLaneDefinitionModel() {
   const mod = await import('@pkg/agent/database/models/WorkLaneDefinitionModel');
 
   return mod.WorkLaneDefinitionModel;
+}
+
+async function importWorkLaneWorkflowBindingModel() {
+  const mod = await import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel');
+  return mod.WorkLaneWorkflowBindingModel;
 }
 
 /** Local slugify — mirrors the model's private one (kebab, ≤80 chars). */
@@ -131,6 +137,33 @@ export function initWorkItemsEvents(): void {
   ipcMainProxy.handle('work-items:lane-reset-override', async(_event: unknown, projectId: string, laneKey: string) => {
     const Model = await importWorkLaneDefinitionModel();
     return Model.resetProjectOverride(projectId, laneKey, 'human');
+  });
+
+  // ── lane workflow bindings + entry audit ─────────────────────────────
+
+  ipcMainProxy.handle('work-items:lane-bindings-list', async(_event: unknown, input: ListLaneBindingsInput = {}) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.list(input);
+  });
+
+  ipcMainProxy.handle('work-items:lane-binding-set', async(_event: unknown, input: SetLaneBindingInput) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.set({ ...input, actor: input.actor ?? 'human' });
+  });
+
+  ipcMainProxy.handle('work-items:lane-binding-remove', async(_event: unknown, id: string) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.remove(id, 'human');
+  });
+
+  ipcMainProxy.handle('work-items:lane-workflow-resolve', async(_event: unknown, taskId: string, laneKey: string, profileId = 'default') => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.resolve(taskId, laneKey, profileId);
+  });
+
+  ipcMainProxy.handle('work-items:lane-entry-automations', async(_event: unknown, taskId: string) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.listLaneEntries(taskId);
   });
 
   // ── projects ─────────────────────────────────────────────────────────

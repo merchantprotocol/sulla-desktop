@@ -940,7 +940,12 @@ export class WorkItemsModel {
         WHERE id = $${ idx } RETURNING *`,
       values,
     );
-    return rows[0] ?? null;
+    const updated = rows[0] ?? null;
+    if (updated && changes.status !== undefined && changes.status !== existing.status) {
+      const { LaneEntryAutomationService } = await import('../../services/LaneEntryAutomationService');
+      await LaneEntryAutomationService.handleTransition(updated.id, updated.status, changes.actor ?? 'sulla');
+    }
+    return updated;
   }
 
   static async listTasks(opts: ListTasksOpts = {}): Promise<WorkTaskRecord[]> {
