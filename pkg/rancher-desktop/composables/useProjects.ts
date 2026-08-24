@@ -26,7 +26,7 @@ import type {
 } from '@pkg/agent/database/models/WorkItemsModel';
 import type {
   CreateWorkLaneInput, EffectiveWorkLane, ListWorkLaneOpts, UpdateWorkLaneInput,
-  ArchiveWorkLanePreview, WorkLaneDefinitionRecord, WorkLaneRuntimeCapability, WorkLaneScope,
+  ArchiveWorkLanePreview, WorkLaneDefinitionRecord, WorkLaneScope,
 } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import type {
   CompatibleLaneWorkflow, LaneBindingResolution, LaneEntryAutomationRecord, LaneWorkflowBindingRecord,
@@ -48,9 +48,22 @@ export type {
   ProjectViewType, SaveProjectViewInput, WorkProjectViewRecord,
 };
 
+/** A task with its resolved lane attached, ready for every Projects projection. */
+export interface TaskView extends WorkTaskRecord {
+  lane?:            EffectiveWorkLane;
+  knowledge_count?: number;
+}
+
+export interface WorkLaneRuntimeCapability {
+  ready:          boolean;
+  catalogPresent: boolean;
+  missingRoles:   string[];
+  degradedReason: string | null;
+}
+
 /** An epic with its tasks attached, ready to render. */
 export interface EpicWithTasks extends WorkEpicRecord {
-  tasks:            (WorkTaskRecord & { knowledge_count?: number })[];
+  tasks:            TaskView[];
   knowledge_count?: number;
 }
 
@@ -79,6 +92,8 @@ export function useProjects() {
   const isLoading = ref(false);
   const error = ref<string | null>(null);
   const loaded = ref(false);
+  const lanesByProject = ref<Record<string, EffectiveWorkLane[]>>({});
+  const laneCapability = ref<WorkLaneRuntimeCapability | null>(null);
 
   /** currently selected project id (drives the one-project-at-a-time view) */
   const selectedId = ref<string | null>(null);
@@ -90,12 +105,16 @@ export function useProjects() {
     rawProjects: WorkProjectRecord[],
     rawEpics: WorkEpicRecord[],
     rawTasks: WorkTaskRecord[],
+    resolvedLanes: Record<string, EffectiveWorkLane[]> = {},
   ): ProjectView[] {
-    const tasksByEpic = new Map<string, WorkTaskRecord[]>();
+    const laneMaps = new Map(Object.entries(resolvedLanes).map(([projectId, lanes]) => [
+      projectId, new Map(lanes.map(lane => [lane.lane_key, lane])),
+    ]));
+    const tasksByEpic = new Map<string, TaskView[]>();
     for (const t of rawTasks) {
       const key = t.epic_id ?? '__none__';
       const arr = tasksByEpic.get(key) ?? [];
-      arr.push(t);
+      arr.push({ ...t, lane: laneMaps.get(t.project_id)?.get(t.status) });
       tasksByEpic.set(key, arr);
     }
     for (const arr of tasksByEpic.values()) {
@@ -129,8 +148,8 @@ export function useProjects() {
       let doneCount = 0;
       for (const e of epics) {
         for (const t of e.tasks) {
-          if (t.status === 'done') doneCount++;
-          else if (!CLOSED.has(t.status) || t.status === 'blocked') openCount++;
+          if (t.lane ? t.lane.semantic_role === 'terminal' : CLOSED.has(t.status)) doneCount++;
+          else openCount++;
         }
       }
 
@@ -143,7 +162,9 @@ export function useProjects() {
     error.value = null;
     try {
       const board = await ipcRenderer.invoke('work-items:board');
-      projects.value = buildTree(board.projects, board.epics, board.tasks);
+      lanesByProject.value = board.lanesByProject ?? {};
+      laneCapability.value = board.laneCapability ?? null;
+      projects.value = buildTree(board.projects, board.epics, board.tasks, lanesByProject.value);
       if (!selectedId.value && projects.value.length) {
         selectedId.value = projects.value[0].id;
       }
@@ -337,6 +358,8 @@ export function useProjects() {
     isLoading,
     error,
     loaded,
+    lanesByProject,
+    laneCapability,
     load,
     select,
     loadComments,
