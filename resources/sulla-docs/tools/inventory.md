@@ -118,6 +118,8 @@ sulla <category> --help          # what THIS install exposes right now
 **Pull requests:** `github_create_pr`, `github_get_pr`, `github_list_prs`, `github_update_pr`, `github_ready_pr`, `github_close_pr`, `github_merge_pr`, `github_add_pr_review`, `github_list_pr_reviews`, `github_request_pr_reviewers`, `github_get_pr_files`.
 **Releases/CI:** `github_create_release`, `github_check_runs`, `github_trigger_workflow_run`.
 **Projects V2 boards:** `github_list_projects`, `github_add_issue_to_project`, `github_set_project_field`.
+
+**Knowledge Base associations:** Projects exposes `link_knowledge_item`, `unlink_knowledge_item`, and `list_linked_knowledge`. Memory exposes `episodic_search`, `episodic_resolve`, `episodic_recall`, `episodic_link_project_item`, `episodic_unlink_project_item`, and `episodic_list_linked_project_items` over the same FK-backed association model.
 **Heartbeat issue-discovery (#500):** `heartbeat_new_issues`, `heartbeat_claim_issue`.
 
 `git_push`/`git_pull` inject the vault PAT automatically — never extract it for raw git. Merges require `confirm:true`. → See [`tools/github.md`](github.md)

@@ -23,6 +23,7 @@
  * DUAL-STORE NOTE: reads/writes ONLY Postgres via WorkItemsModel — never Redis.
  */
 
+import type { KnowledgeLinkInput, KnowledgeWorkItemKind } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
 import type {
   UpsertProjectInput, UpdateProjectInput,
   UpsertEpicInput, UpdateEpicInput,
@@ -64,6 +65,40 @@ async function importWorkProjectViewModel() {
   return mod.WorkProjectViewModel;
 }
 
+async function importKnowledgeModels() {
+  const [associations, graph] = await Promise.all([
+    import('@pkg/agent/database/models/WorkItemKnowledgeModel'),
+    import('@pkg/agent/database/models/KnowledgeGraphModel'),
+  ]);
+  return { WorkItemKnowledgeModel: associations.WorkItemKnowledgeModel, KnowledgeGraphModel: graph.KnowledgeGraphModel };
+}
+
+export async function listKnowledgeForWorkItem(input: {
+  itemKind: KnowledgeWorkItemKind; itemId: string; includeInherited?: boolean; includeArchived?: boolean; limit?: number;
+}) {
+  const { WorkItemKnowledgeModel } = await importKnowledgeModels();
+  return WorkItemKnowledgeModel.listForItem(input.itemKind, input.itemId, {
+    includeInherited: input.includeInherited ?? true,
+    includeArchived:  input.includeArchived ?? false,
+    limit:            input.limit,
+  });
+}
+
+export async function linkKnowledgeForWorkItem(input: KnowledgeLinkInput) {
+  const { WorkItemKnowledgeModel } = await importKnowledgeModels();
+  return WorkItemKnowledgeModel.link({ ...input, source: input.source ?? 'ui', actor: input.actor ?? 'human' });
+}
+
+export async function unlinkKnowledgeForWorkItem(input: KnowledgeLinkInput) {
+  const { WorkItemKnowledgeModel } = await importKnowledgeModels();
+  return WorkItemKnowledgeModel.unlink({ ...input, source: input.source ?? 'ui', actor: input.actor ?? 'human' });
+}
+
+export async function listWorkForKnowledge(input: { knowledgeNodeId: string; includeArchived?: boolean; limit?: number }) {
+  const { WorkItemKnowledgeModel } = await importKnowledgeModels();
+  return WorkItemKnowledgeModel.listForNode(input.knowledgeNodeId, input);
+}
+
 /** Local slugify — mirrors the model's private one (kebab, ≤80 chars). */
 function slugify(value: string): string {
   return value
@@ -81,13 +116,24 @@ export function initWorkItemsEvents(): void {
   // Do NOT swallow errors — a thrown query surfaces in useProjects.error.
   ipcMainProxy.handle('work-items:board', async() => {
     const WorkItemsModel = await importWorkItemsModel();
+    const { WorkItemKnowledgeModel } = await importKnowledgeModels();
     const [projects, epics, tasks] = await Promise.all([
       WorkItemsModel.listProjects({ includeDone: true, limit: 500 }),
       WorkItemsModel.listEpics({ includeDone: true, limit: 1000 }),
       WorkItemsModel.listTasks({ includeDone: true, limit: 3000 }),
     ]);
 
-    return { projects, epics, tasks };
+    const [projectCounts, epicCounts, taskCounts] = await Promise.all([
+      WorkItemKnowledgeModel.countForItems('project', projects.map(item => item.id)),
+      WorkItemKnowledgeModel.countForItems('epic', epics.map(item => item.id)),
+      WorkItemKnowledgeModel.countForItems('task', tasks.map(item => item.id)),
+    ]);
+
+    return {
+      projects: projects.map(item => ({ ...item, knowledge_count: projectCounts[item.id] ?? 0 })),
+      epics:    epics.map(item => ({ ...item, knowledge_count: epicCounts[item.id] ?? 0 })),
+      tasks:    tasks.map(item => ({ ...item, knowledge_count: taskCounts[item.id] ?? 0 })),
+    };
   });
 
   ipcMainProxy.handle('work-items:comments', async(_event: unknown, taskId: string) => {
@@ -218,6 +264,21 @@ export function initWorkItemsEvents(): void {
     const Model = await importWorkLaneWorkflowBindingModel();
     return Model.listLaneEntries(taskId);
   });
+
+  ipcMainProxy.handle('work-items:knowledge-list', async(_event: unknown, input: {
+    itemKind: KnowledgeWorkItemKind; itemId: string; includeInherited?: boolean; includeArchived?: boolean; limit?: number;
+  }) => listKnowledgeForWorkItem(input));
+
+  ipcMainProxy.handle('work-items:knowledge-link', async(_event: unknown, input: KnowledgeLinkInput) => linkKnowledgeForWorkItem(input));
+
+  ipcMainProxy.handle('work-items:knowledge-unlink', async(_event: unknown, input: KnowledgeLinkInput) => unlinkKnowledgeForWorkItem(input));
+
+  ipcMainProxy.handle('knowledge:nodes-search', async(_event: unknown, input: { query?: string; includeArchived?: boolean; limit?: number } = {}) => {
+    const { KnowledgeGraphModel } = await importKnowledgeModels();
+    return KnowledgeGraphModel.searchNodes(input);
+  });
+
+  ipcMainProxy.handle('knowledge:work-list', async(_event: unknown, input: { knowledgeNodeId: string; includeArchived?: boolean; limit?: number }) => listWorkForKnowledge(input));
 
   // ── projects ─────────────────────────────────────────────────────────
 

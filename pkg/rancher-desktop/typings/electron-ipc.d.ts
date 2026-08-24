@@ -429,14 +429,19 @@ export interface IpcMainInvokeEvents {
   // Work-items Projects (Postgres): projects → epics → tasks (+ comments).
   // Full CRUD bridge backing the Projects view (ProjectsHome.vue).
   'work-items:board':    () => {
-    projects: import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord[];
-    epics:    import('@pkg/agent/database/models/WorkItemsModel').WorkEpicRecord[];
-    tasks:    import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord[];
+    projects: (import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord & { knowledge_count: number })[];
+    epics:    (import('@pkg/agent/database/models/WorkItemsModel').WorkEpicRecord & { knowledge_count: number })[];
+    tasks:    (import('@pkg/agent/database/models/WorkItemsModel').WorkTaskRecord & { knowledge_count: number })[];
     lanesByProject: Record<string, import('@pkg/agent/database/models/WorkLaneDefinitionModel').EffectiveWorkLane[]>;
     laneCapability: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneRuntimeCapability;
   };
   'work-items:comments':        (taskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkCommentRecord[];
   'work-items:activity':        (opts?: { projectId?: string; author?: string; limit?: number }) => import('@pkg/agent/database/models/WorkItemsModel').WorkActivityRecord[];
+  'work-items:knowledge-list':  (input: { itemKind: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeWorkItemKind; itemId: string; includeInherited?: boolean; includeArchived?: boolean; limit?: number }) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').LinkedKnowledgeRecord[];
+  'work-items:knowledge-link':  (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkRecord;
+  'work-items:knowledge-unlink': (input: import('@pkg/agent/database/models/WorkItemKnowledgeModel').KnowledgeLinkInput) => boolean;
+  'knowledge:nodes-search':     (input?: { query?: string; includeArchived?: boolean; limit?: number }) => import('@pkg/agent/database/models/KnowledgeGraphModel').KnowledgeNodeRecord[];
+  'knowledge:work-list':        (input: { knowledgeNodeId: string; includeArchived?: boolean; limit?: number }) => import('@pkg/agent/database/models/WorkItemKnowledgeModel').LinkedWorkItemRecord[];
   'work-items:project-create':  (input: import('@pkg/agent/database/models/WorkItemsModel').UpsertProjectInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord;
   'work-items:project-update':  (id: string, changes: import('@pkg/agent/database/models/WorkItemsModel').UpdateProjectInput) => import('@pkg/agent/database/models/WorkItemsModel').WorkProjectRecord | null;
   'work-items:project-archive': (id: string) => boolean;

@@ -63,6 +63,7 @@ import { up as up_0072, down as down_0072 } from './0072_create_work_task_planni
 import { up as up_0074, down as down_0074 } from './0074_semantic_lane_runtime_helpers';
 import { up as up_0075, down as down_0075 } from './0075_add_project_views_and_scheduling';
 import { up as up_0076, down as down_0076 } from './0076_extend_work_task_dispatch_custody';
+import { up as up_0077, down as down_0077 } from './0077_create_work_item_knowledge_links';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -127,4 +128,5 @@ export const migrationsRegistry = [
   { name: '0074_semantic_lane_runtime_helpers',                    up: up_0074, down: down_0074 },
   { name: '0075_add_project_views_and_scheduling',                 up: up_0075, down: down_0075 },
   { name: '0076_extend_work_task_dispatch_custody',                up: up_0076, down: down_0076 },
+  { name: '0077_create_work_item_knowledge_links',                 up: up_0077, down: down_0077 },
 ] as const;

@@ -1,21 +1,26 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import {
+  knowledgeAssociationRoleForAgentId,
+  knowledgeAssociationToolsFor,
+  type KnowledgeAssociationRole,
+} from './KnowledgeAssociationPolicies';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { getCurrentModel } from '../languagemodels';
 import { Graph, createHeartbeatGraph, createAgentGraph, createSubconsciousGraph, BaseThreadState, AgentGraphState, GeneralGraphState } from '../nodes/Graph';
 import { saveThreadState, loadThreadState } from '../nodes/ThreadStateStore';
-import { toolRegistry } from '../tools/registry';
-import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
-import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
-export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
-import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
-export { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
-import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
-export { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
-
 // Side-effect: ensure tool manifests are registered before any graph runs
 import '../tools/manifests';
+import { toolRegistry } from '../tools/registry';
+import { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
+import { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
+import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+import { resolveSullaAgentsDir, resolveAllAgentsDirs, findAgentDir } from '../utils/sullaPaths';
+
+export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+export { CONVERSATION_READER_TOOLS } from '../utils/conversationReaderPolicy';
+export { CONVERSATION_WRITER_TOOLS } from '../utils/conversationWriterPolicy';
 // Back-compat re-export
 export type { AgentGraphState as OverlordThreadState } from '../nodes/Graph';
 
@@ -33,6 +38,13 @@ const SUMMARIZER_TOOLS: string[] = [];
 
 /** Tool-Result Digester: no tools — pure text analysis and XML output */
 const TOOL_RESULT_DIGESTER_TOOLS: string[] = [];
+
+const KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS: Record<KnowledgeAssociationRole, string> = {
+  project_reader:   `You are the Project Reader. Read Projects items and their linked Knowledge Base context. You are strictly read-only: never create, update, archive, link, or unlink anything.`,
+  project_writer:   `You are the Project Writer for Knowledge Base associations. You may search Knowledge Base nodes and link or unlink those nodes from Projects items. You may not mutate Knowledge Base content or any Projects status, priority, assignment, description, or comment.`,
+  knowledge_reader: `You are the Knowledge Base Reader. Recall Knowledge Base nodes and inspect their linked Projects context. You are strictly read-only: never create, update, archive, link, or unlink anything.`,
+  knowledge_writer: `You are the Knowledge Base Writer for Projects associations. You may search Projects and link or unlink Knowledge Base nodes. You may not mutate Projects status, priority, assignment, description, comments, or unrelated Knowledge Base content.`,
+};
 
 /** Observation Writer: write/archive observations and update identity files */
 const OBSERVATION_AGENT_TOOLS: string[] = [
@@ -1755,10 +1767,24 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
     : await SullaSettingsModel.get('sullaModel', '');
   const llmLocal = mode === 'local';
 
-  const agentConfig = await loadAgentConfig(wsChannel);
+  const associationRole = knowledgeAssociationRoleForAgentId(wsChannel);
+  const loadedAgentConfig = await loadAgentConfig(wsChannel);
+  const associationTools = associationRole ? knowledgeAssociationToolsFor(associationRole) : null;
+  const agentConfig = associationRole
+    ? {
+      ...loadedAgentConfig,
+      name:                     loadedAgentConfig?.name || wsChannel,
+      description:              loadedAgentConfig?.description || KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS[associationRole],
+      type:                     loadedAgentConfig?.type || (associationRole.endsWith('_reader') ? 'reader' : 'writer'),
+      tools:                    associationTools!,
+      prompt:                   [KNOWLEDGE_ASSOCIATION_ROLE_PROMPTS[associationRole], loadedAgentConfig?.prompt]
+        .filter(Boolean).join('\n\n'),
+      knowledgeAssociationRole: associationRole,
+    }
+    : loadedAgentConfig;
   console.log(`[GraphRegistry] buildAgentState() — agent config for "${ wsChannel }": name="${ agentConfig?.name || '(none)' }", hasPrompt=${ !!agentConfig?.prompt }, type="${ agentConfig?.type || '(none)' }"`);
 
-  return {
+  const state: AgentGraphState = {
     messages: [],
     metadata: {
       action:    'direct_answer',
@@ -1803,6 +1829,15 @@ async function buildAgentState(wsChannel: string, threadId?: string, graphOpts?:
       agentLoopCount: 0,
     },
   };
+
+  if (associationTools) {
+    (state as any).llmTools = await Promise.all(
+      associationTools.map(name => toolRegistry.convertToolToLLM(name)),
+    );
+    (state.metadata as any).allowedToolNames = associationTools;
+  }
+
+  return state;
 }
 
 /**
