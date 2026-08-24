@@ -176,6 +176,54 @@ export const projectToolManifests: ToolManifest[] = [
     loader:         () => import('./unlink_knowledge_item'),
   },
 
+  {
+    name:        'create_task_dependency',
+    description: 'Create one first-class task dependency (dependent depends on a prerequisite). Rejects self-links and cycles transactionally. The dependent cannot be claimed for planning, execution, review, or lane entry until the prerequisite task is done.',
+    category:    'project',
+    schemaDef:   {
+      dependent_task_id:    { type: 'string', description: 'The task that is blocked (the dependent).' },
+      depends_on_task_id:   { type: 'string', description: 'The prerequisite task that must reach done first.' },
+      relation_type:        { type: 'string', optional: true, description: 'blocks | requires | ordered-after. Default requires.' },
+      acceptance_condition: { type: 'string', optional: true, description: 'Optional human-readable release condition, surfaced in explain_task_claimability.' },
+      actor:                { type: 'string', optional: true, description: 'Attribution for the created dependency.' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./create_task_dependency'),
+  },
+  {
+    name:        'remove_task_dependency',
+    description: 'Remove (soft-archive) one task dependency by id, or by dependent_task_id + depends_on_task_id (+ relation_type). Use to explicitly override a failed/cancelled prerequisite; dependencies are never silently unblocked.',
+    category:    'project',
+    schemaDef:   {
+      id:                 { type: 'string', optional: true, description: 'Dependency id from list_task_dependencies.' },
+      dependent_task_id:  { type: 'string', optional: true, description: 'The dependent task (with depends_on_task_id).' },
+      depends_on_task_id: { type: 'string', optional: true, description: 'The prerequisite task (with dependent_task_id).' },
+      relation_type:      { type: 'string', optional: true, description: 'blocks | requires | ordered-after. Default requires.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./remove_task_dependency'),
+  },
+  {
+    name:        'list_task_dependencies',
+    description: 'List a task dependencies (its prerequisites) and its dependents. Read-only.',
+    category:    'project',
+    schemaDef:   {
+      task_id:          { type: 'string', description: 'Projects task id.' },
+      include_archived: { type: 'boolean', optional: true, description: 'Include soft-archived dependencies.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_task_dependencies'),
+  },
+  {
+    name:        'explain_task_claimability',
+    description: 'Explain whether a task is claimable: returns the transitive dependency chain and the exact reason a task is or is not claimable (unresolved prerequisites and their live status).',
+    category:    'project',
+    schemaDef:   {
+      task_id: { type: 'string', description: 'Projects task id.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./explain_task_claimability'),
+  },
   // ── projects ─────────────────────────────────────────────────────────
   {
     name:        'create_project',
