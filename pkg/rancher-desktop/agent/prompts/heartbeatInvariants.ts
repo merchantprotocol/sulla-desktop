@@ -46,6 +46,10 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback',
   'Repeated failures of the same owner capability update one existing systemic recovery item',
   'Notify once when the gate is created or materially changes',
+  'Projects Comment Hygiene — Delta or Silence',
+  'Projects comments are durable audit evidence, not a heartbeat transcript',
+  'If the state and evidence are unchanged, write nothing',
+  'One material event gets one concise comment',
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',
 ] as const;

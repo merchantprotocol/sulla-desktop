@@ -104,6 +104,17 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('A raw status update or activity dump is not movement');
   });
 
+  it('treats Projects comments as delta-only audit evidence', () => {
+    expect(heartbeatPrompt).toContain('## Projects Comment Hygiene — Delta or Silence');
+    expect(heartbeatPrompt).toContain('Projects comments are durable audit evidence, not a heartbeat transcript');
+    expect(heartbeatPrompt).toContain('Do not comment merely because another wake occurred');
+    expect(heartbeatPrompt).toContain('Never post "still blocked," "still waiting," "unchanged,"');
+    expect(heartbeatPrompt).toContain('Never add a comment only to prove Heartbeat ran');
+    expect(heartbeatPrompt).toContain('If the state and evidence are unchanged, write nothing');
+    expect(heartbeatPrompt).toContain('One material event gets one concise comment');
+    expect(heartbeatPrompt).toContain('consolidate them into one evidence receipt');
+  });
+
   it('remains continuous without a one-item ceiling', () => {
     expect(heartbeatPrompt).toContain('not a one-task worker');
     expect(heartbeatPrompt).toContain('does not cap you at one item per wake');
