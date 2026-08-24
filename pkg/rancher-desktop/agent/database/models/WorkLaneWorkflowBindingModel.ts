@@ -87,6 +87,11 @@ export interface LaneEntryAutomationRecord {
   completed_at:      string | null;
 }
 
+export interface RecoverableLaneEntryRecord extends LaneEntryAutomationRecord {
+  workflow_execution_status: 'running' | 'suspended' | 'completed' | 'failed' | null;
+  workflow_execution_error:  string | null;
+}
+
 interface WorkflowRow {
   id:         string;
   definition: Record<string, any>;
@@ -268,6 +273,27 @@ export class WorkLaneWorkflowBindingModel {
     `, [taskId]);
   }
 
+  static async getLaneEntry(id: string): Promise<LaneEntryAutomationRecord | null> {
+    return postgresClient.queryOne<LaneEntryAutomationRecord>(
+      'SELECT * FROM work_lane_entry_automations WHERE id = $1', [id]);
+  }
+
+  static async listRecoverable(limit = 50, includeInterrupted = false): Promise<RecoverableLaneEntryRecord[]> {
+    return postgresClient.query<RecoverableLaneEntryRecord>(`
+      SELECT lane.*, execution.status AS workflow_execution_status,
+             execution.error AS workflow_execution_error
+        FROM work_lane_entry_automations lane
+        LEFT JOIN workflow_executions execution ON execution.execution_id = lane.execution_id
+       WHERE lane.workflow_id IS NOT NULL AND (
+         lane.status = 'pending'
+         OR (lane.status = 'running' AND (
+           execution.execution_id IS NULL OR execution.status IN ('completed', 'failed') OR $2 = true
+         ))
+       )
+       ORDER BY lane.created_at ASC LIMIT $1
+    `, [limit, includeInterrupted]);
+  }
+
   static async markStarted(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
     const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
       UPDATE work_lane_entry_automations
@@ -278,45 +304,81 @@ export class WorkLaneWorkflowBindingModel {
     return rows[0] ?? null;
   }
 
-  static async markOutcome(id: string, status: 'completed' | 'failed', outcome: Record<string, unknown>):
+  static async resetMissingExecution(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
+    const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
+      UPDATE work_lane_entry_automations
+         SET execution_id = NULL, status = 'pending', started_at = NULL
+       WHERE id = $1 AND execution_id = $2 AND status = 'running'
+         AND NOT EXISTS (SELECT 1 FROM workflow_executions WHERE execution_id = $2)
+       RETURNING *
+    `, [id, executionId]);
+    return rows[0] ?? null;
+  }
+
+  static async resetInterruptedExecution(id: string, executionId: string): Promise<LaneEntryAutomationRecord | null> {
+    return postgresClient.transaction(async(client) => {
+      const interrupted = await client.query(`
+        UPDATE workflow_executions
+           SET status = 'failed', completed_at = now(), updated_at = now(), error = 'interrupted_before_lane_recovery'
+         WHERE execution_id = $1 AND status IN ('running', 'suspended')
+         RETURNING execution_id
+      `, [executionId]);
+      if (!interrupted.rows[0]) return null;
+      const reset = await client.query<LaneEntryAutomationRecord>(`
+        UPDATE work_lane_entry_automations
+           SET execution_id = NULL, status = 'pending', started_at = NULL, completed_at = NULL, outcome = NULL
+         WHERE id = $1 AND execution_id = $2 AND status = 'running'
+         RETURNING *
+      `, [id, executionId]);
+      return reset.rows[0] ?? null;
+    });
+  }
+
+  static async markOutcome(id: string, executionId: string, status: 'completed' | 'failed', outcome: Record<string, unknown>):
   Promise<LaneEntryAutomationRecord | null> {
     const rows = await postgresClient.query<LaneEntryAutomationRecord>(`
       UPDATE work_lane_entry_automations
-         SET status = $2, outcome = $3::jsonb, completed_at = now()
-       WHERE id = $1 AND status IN ('pending', 'running')
+         SET status = $3, outcome = $4::jsonb, completed_at = now()
+       WHERE id = $1 AND execution_id = $2 AND status = 'running'
        RETURNING *
-    `, [id, status, JSON.stringify(outcome)]);
+    `, [id, executionId, status, JSON.stringify(outcome)]);
     return rows[0] ?? null;
   }
 
   static async claimLaneEntry(taskId: string, laneKey: string, actor = 'sulla', profileId = 'default'):
   Promise<{ created: boolean; entry: LaneEntryAutomationRecord }> {
     return postgresClient.transaction(async(client: PoolClient) => {
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ taskId }`]);
-      const prior = await client.query<LaneEntryAutomationRecord>(`
+      return WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(client, taskId, laneKey, actor, profileId);
+    });
+  }
+
+  static async claimLaneEntryInTransaction(client: PoolClient, taskId: string, laneKey: string,
+    actor = 'sulla', profileId = 'default'):
+    Promise<{ created: boolean; entry: LaneEntryAutomationRecord }> {
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ taskId }`]);
+    const prior = await client.query<LaneEntryAutomationRecord>(`
         SELECT * FROM work_lane_entry_automations WHERE task_id = $1 ORDER BY generation DESC LIMIT 1
       `, [taskId]);
-      if (prior.rows[0]?.lane_key === laneKey) return { created: false, entry: prior.rows[0] };
+    if (prior.rows[0]?.lane_key === laneKey) return { created: false, entry: prior.rows[0] };
 
-      const resolution = await WorkLaneWorkflowBindingModel.resolve(taskId, laneKey, profileId, client);
-      const generation = (prior.rows[0]?.generation ?? 0) + 1;
-      const status = resolution.workflowId ? 'pending' : 'unautomated';
-      const inserted = await client.query<LaneEntryAutomationRecord>(`
+    const resolution = await WorkLaneWorkflowBindingModel.resolve(taskId, laneKey, profileId, client);
+    const generation = (prior.rows[0]?.generation ?? 0) + 1;
+    const status = resolution.workflowId ? 'pending' : 'unautomated';
+    const inserted = await client.query<LaneEntryAutomationRecord>(`
         INSERT INTO work_lane_entry_automations (
           id, task_id, generation, previous_lane_key, lane_key, binding_id, workflow_id,
           resolution_source, fallback_reason, binding_snapshot, workflow_snapshot, status, actor
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13)
         ON CONFLICT (task_id, generation) DO NOTHING
         RETURNING *
-      `, [`lane-entry-${ randomUUID() }`, taskId, generation, prior.rows[0]?.lane_key ?? null, laneKey,
-        resolution.binding?.id ?? null, resolution.workflowId, resolution.source, resolution.fallbackReason,
-        JSON.stringify(resolution.binding ?? {}), JSON.stringify(resolution.workflowSnapshot), status, actor]);
-      if (inserted.rows[0]) return { created: true, entry: inserted.rows[0] };
-      const winner = await client.query<LaneEntryAutomationRecord>(`
+    `, [`lane-entry-${ randomUUID() }`, taskId, generation, prior.rows[0]?.lane_key ?? null, laneKey,
+      resolution.binding?.id ?? null, resolution.workflowId, resolution.source, resolution.fallbackReason,
+      JSON.stringify(resolution.binding ?? {}), JSON.stringify(resolution.workflowSnapshot), status, actor]);
+    if (inserted.rows[0]) return { created: true, entry: inserted.rows[0] };
+    const winner = await client.query<LaneEntryAutomationRecord>(`
         SELECT * FROM work_lane_entry_automations WHERE task_id = $1 AND generation = $2
       `, [taskId, generation]);
-      return { created: false, entry: winner.rows[0] };
-    });
+    return { created: false, entry: winner.rows[0] };
   }
 
   private static async getWorkflow(id: string, client?: PoolClient): Promise<WorkflowRow | null> {

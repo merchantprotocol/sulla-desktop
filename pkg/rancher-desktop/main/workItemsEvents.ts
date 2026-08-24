@@ -269,6 +269,12 @@ export function initWorkItemsEvents(): void {
 
     return true;
   });
+
+  // Lane claims are committed outbox rows. Drain them after handler setup so
+  // a crash between task commit and dispatch cannot silently strand work.
+  import('@pkg/agent/services/LaneEntryAutomationService')
+    .then(({ LaneEntryAutomationService }) => LaneEntryAutomationService.drainRecoverable(50, true))
+    .catch(error => console.warn('[WorkItems] Lane-entry recovery failed:', error));
 }
 
 interface ReorderUpdate {
