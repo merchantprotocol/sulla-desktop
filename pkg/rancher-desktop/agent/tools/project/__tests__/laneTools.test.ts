@@ -14,6 +14,8 @@ describe('project lane tools', () => {
     for (const name of [
       'list_lanes', 'resolve_lanes', 'create_lane', 'update_lane',
       'archive_lane', 'restore_lane', 'reorder_lanes', 'reset_lane_override',
+      'list_lane_workflow_bindings', 'set_lane_workflow_binding', 'remove_lane_workflow_binding',
+      'resolve_lane_workflow', 'inspect_lane_entry_automation',
     ]) expect(names.has(name)).toBe(true);
   });
 

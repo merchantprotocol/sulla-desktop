@@ -52,6 +52,8 @@ import { up as up_0061, down as down_0061 } from './0061_add_work_task_activity'
 import { up as up_0062, down as down_0062 } from './0062_create_work_task_dispatches';
 import { up as up_0068, down as down_0068 } from './0068_create_lifecycle_capabilities';
 import { up as up_0069, down as down_0069 } from './0069_create_work_lane_definitions';
+import { up as up_0070, down as down_0070 } from './0070_create_lane_workflow_bindings';
+import { up as up_0071, down as down_0071 } from './0071_scope_lane_workflow_executions';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -105,4 +107,6 @@ export const migrationsRegistry = [
   { name: '0062_create_work_task_dispatches',                      up: up_0062, down: down_0062 },
   { name: '0068_create_lifecycle_capabilities',                    up: up_0068, down: down_0068 },
   { name: '0069_create_work_lane_definitions',                     up: up_0069, down: down_0069 },
+  { name: '0070_create_lane_workflow_bindings',                    up: up_0070, down: down_0070 },
+  { name: '0071_scope_lane_workflow_executions',                    up: up_0071, down: down_0071 },
 ] as const;

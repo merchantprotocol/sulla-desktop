@@ -935,12 +935,41 @@ export class WorkItemsModel {
     setClauses.push('last_activity_at = now()');
 
     values.push(id);
-    const rows = await postgresClient.query<WorkTaskRecord>(
-      `UPDATE ${ WorkItemsModel.TASKS } SET ${ setClauses.join(', ') }
-        WHERE id = $${ idx } RETURNING *`,
-      values,
-    );
-    return rows[0] ?? null;
+    let laneEntryId: string | null = null;
+    const updateSql = `UPDATE ${ WorkItemsModel.TASKS } SET ${ setClauses.join(', ') }
+      WHERE id = $${ idx } RETURNING *`;
+    let updated: WorkTaskRecord | null;
+
+    if (changes.status !== undefined) {
+      updated = await postgresClient.transaction(async(client) => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ id }`]);
+        const current = await client.query<WorkTaskRecord>(
+          `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
+        if (!current.rows[0]) return null;
+        const rows = await client.query<WorkTaskRecord>(updateSql, values);
+        const committed = rows.rows[0] ?? null;
+        if (committed && committed.status !== current.rows[0].status) {
+          const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
+          const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
+            client, committed.id, committed.status, changes.actor ?? 'sulla');
+          if (claimed.created && claimed.entry.status === 'pending') laneEntryId = claimed.entry.id;
+        }
+        return committed;
+      });
+    } else {
+      const rows = await postgresClient.query<WorkTaskRecord>(updateSql, values);
+      updated = rows[0] ?? null;
+    }
+
+    if (laneEntryId) {
+      try {
+        const { LaneEntryAutomationService } = await import('../../services/LaneEntryAutomationService');
+        await LaneEntryAutomationService.dispatchEntry(laneEntryId);
+      } catch (error) {
+        console.warn(`[WorkItems] Lane entry ${ laneEntryId } remains recoverable after dispatch failure:`, error);
+      }
+    }
+    return updated;
   }
 
   static async listTasks(opts: ListTasksOpts = {}): Promise<WorkTaskRecord[]> {

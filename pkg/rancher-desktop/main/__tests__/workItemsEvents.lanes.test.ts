@@ -10,7 +10,11 @@ describe('work-items lane IPC contract', () => {
       'work-items:lanes-list', 'work-items:lanes-resolve', 'work-items:lane-create',
       'work-items:lane-update', 'work-items:lane-archive', 'work-items:lane-restore',
       'work-items:lanes-reorder', 'work-items:lane-reset-override',
+      'work-items:lane-bindings-list', 'work-items:lane-binding-set',
+      'work-items:lane-binding-remove', 'work-items:lane-workflow-resolve',
+      'work-items:lane-entry-automations',
     ]) expect(source).toContain(`handle('${ channel }'`);
     expect(source).toContain("import('@pkg/agent/database/models/WorkLaneDefinitionModel')");
+    expect(source).toContain("import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel')");
   });
 });

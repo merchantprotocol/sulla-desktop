@@ -24,6 +24,7 @@ import * as path from 'path';
 import yaml from 'yaml';
 
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
 import Logging from '@pkg/utils/logging';
 
 const console = Logging.background;
@@ -659,6 +660,15 @@ export interface RoutineExecutionOptions {
    * activation marks it failed and starts a new run anyway.
    */
   force?:             boolean;
+  /** Trusted immutable workflow definition captured by a durable dispatcher. */
+  definitionSnapshot?: WorkflowDefinition;
+  /** Durable lane-entry scope. Absent for ordinary user/scheduled runs. */
+  executionScope?: { taskId: string; generation: number };
+  /** Deterministic playbook execution id for idempotent dispatch. */
+  executionId?: string;
+  /** Optional lifecycle callback for trusted in-process dispatchers. */
+  onStarted?:          (executionId: string) => void | Promise<void>;
+  onSettled?:          (result: { executionId: string; status: 'completed' | 'failed'; error?: string }) => void | Promise<void>;
 }
 
 export async function executeRoutine(
@@ -670,13 +680,13 @@ export async function executeRoutine(
     throw new Error('executeRoutine: workflowId is required');
   }
 
-  const executionId = `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
+  const graphExecutionId = options?.executionId ?? `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
   const WS_CHANNEL = 'sulla-desktop';
 
   const { GraphRegistry } = await import('@pkg/agent/services/GraphRegistry');
   const { activateWorkflowOnState } = await import('@pkg/agent/tools/workflow/execute_workflow');
 
-  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, executionId);
+  const graphResult = await GraphRegistry.getOrCreateAgentGraph(WS_CHANNEL, graphExecutionId);
   const graph = (graphResult as { graph: unknown }).graph as { execute: (state: unknown) => Promise<unknown> };
   const state = (graphResult as { state: Record<string, any> }).state;
 
@@ -695,14 +705,31 @@ export async function executeRoutine(
     startNodeId:       options?.startNodeId,
     resumeExecutionId: options?.resumeExecutionId,
     force:             options?.force,
+    definitionSnapshot: options?.definitionSnapshot,
+    executionScope:    options?.executionScope,
+    executionId:       options?.executionId,
   });
 
   if (!activation.ok) {
     throw new Error(activation.responseString);
   }
 
-  void graph.execute(state).catch((err) => {
+  const executionId = state.metadata.activeWorkflow?.executionId;
+  if (!executionId) throw new Error('Workflow activation did not produce an execution id.');
+
+  await options?.onStarted?.(executionId);
+
+  graph.execute(state).then(async() => {
+    const terminal = state.metadata.activeWorkflow;
+    const status = terminal?.status === 'failed' ? 'failed' : 'completed';
+    await options?.onSettled?.({ executionId, status, error: terminal?.error });
+  }).catch(async(err) => {
     console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
+    await options?.onSettled?.({
+      executionId,
+      status: 'failed',
+      error:  err instanceof Error ? err.message : String(err),
+    });
   });
 
   console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);
