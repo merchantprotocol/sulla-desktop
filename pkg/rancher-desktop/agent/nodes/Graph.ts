@@ -189,6 +189,7 @@ export interface AgentGraphState extends BaseThreadState {
       type?:         string;
       skills?:       string[];
       tools?:        string[];         // allowlist of tool names
+      knowledgeAssociationRole?: 'project_reader' | 'project_writer' | 'knowledge_reader' | 'knowledge_writer';
       integrations?: string[];  // allowlist of integration slugs (empty = none, ["*"] = all)
       prompt?:       string;          // compiled .md files, no variable substitution
       excludeSoul?:  boolean;         // if true, skip the global soul prompt from settings

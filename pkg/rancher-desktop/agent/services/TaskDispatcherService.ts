@@ -6,6 +6,7 @@ import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { getIntegrationService } from './IntegrationService';
+import { isKnowledgeAssociationAgentId } from './KnowledgeAssociationPolicies';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import {
@@ -226,7 +227,7 @@ export class TaskDispatcherService {
     const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
     const concurrency = Math.max(1, Math.min(10, configured || DEFAULT_CONCURRENCY));
     const agentId = String(await SullaSettingsModel.get('taskDispatcherAgentId', DEFAULT_AGENT_ID)).trim() || DEFAULT_AGENT_ID;
-    if (!findAgentDir(agentId)) {
+    if (!findAgentDir(agentId) && !isKnowledgeAssociationAgentId(agentId)) {
       console.error(`[TaskDispatcher] Agent config "${ agentId }" does not exist; execution paused`);
       await LifecycleCapabilityModel.report({
         key:               'todo-execution',

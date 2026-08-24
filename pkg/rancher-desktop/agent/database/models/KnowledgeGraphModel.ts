@@ -194,7 +194,7 @@ export class KnowledgeGraphModel {
 
   /** Preserve #516's alias-resolution row shape and exact-before-fuzzy order. */
   static async resolveAliases(terms: string[]): Promise<AliasResolutionRecord[]> {
-    const clean = Array.from(new Set(terms.map(term => term.trim()).filter(Boolean))).slice(0, 16);
+    const clean = terms.map(term => term.trim()).filter(Boolean);
     if (!clean.length) return [];
 
     return postgresClient.query<AliasResolutionRecord>(

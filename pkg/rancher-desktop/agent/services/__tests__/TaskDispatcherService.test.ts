@@ -29,6 +29,7 @@ const resolvePullRequestHeadsMock: any = jest.fn();
 const bindReviewGenerationMock: any = jest.fn();
 const generationHashMock: any = jest.fn(() => 'f'.repeat(64));
 const workflowFindByIdMock: any = jest.fn(() => Promise.resolve({ attributesSnapshot: { enabled: true } }));
+const findAgentDirMock: any = jest.fn(() => '/agents/opus-worker');
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
@@ -86,7 +87,7 @@ jest.unstable_mockModule('../GitHubPullRequestHeadService', () => ({
   resolvePullRequestHeads: resolvePullRequestHeadsMock,
 }));
 jest.unstable_mockModule('../../utils/sullaPaths', () => ({
-  findAgentDir: jest.fn(() => '/agents/opus-worker'),
+  findAgentDir: findAgentDirMock,
 }));
 jest.unstable_mockModule('../../tools/registry', () => ({
   toolRegistry: {
@@ -115,6 +116,7 @@ describe('TaskDispatcherService', () => {
     bindReviewGenerationMock.mockResolvedValue({
       generationHash: 'f'.repeat(64), excludedAgentIds: ['technical-architect'], suppressed: false,
     });
+    findAgentDirMock.mockReturnValue('/agents/opus-worker');
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
       if (key === 'taskVerifierOwner') return Promise.resolve('legacy');
@@ -221,6 +223,22 @@ describe('TaskDispatcherService', () => {
     expect(recoverOrphanedInProgressMock).toHaveBeenCalledWith([candidate], 2, 4);
     expect(recoverOrphanedInProgressMock.mock.invocationCallOrder[0])
       .toBeLessThan(countRunningMock.mock.invocationCallOrder[0]);
+  });
+
+  it('dispatches canonical Knowledge/Projects role actors without a filesystem persona', async() => {
+    findAgentDirMock.mockReturnValue(null);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled') return Promise.resolve(true);
+      if (key === 'taskDispatcherAgentId') return Promise.resolve('project-reader');
+      return Promise.resolve(fallback);
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+
+    expect(claimNextMock).toHaveBeenCalledWith('project-reader');
   });
 
   it('claims mechanically, executes the assigned worker, and returns completed work for review', async() => {

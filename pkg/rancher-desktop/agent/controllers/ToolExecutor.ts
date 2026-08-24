@@ -497,10 +497,16 @@ export class ToolExecutor {
   // --------------------------------------------------------------------------
 
   async getToolPolicyBlockReason(state: BaseThreadState, toolName: string): Promise<string | null> {
-    const policy = (state.metadata as any).__toolAccessPolicy as {
+    const callPolicy = (state.metadata as any).__toolAccessPolicy as {
       allowedCategories: string[] | null;
       allowedToolNames:  string[] | null;
     } | undefined;
+    const stateAllowedToolNames = (state.metadata as any).allowedToolNames;
+    const policy = callPolicy ?? (
+      Array.isArray(stateAllowedToolNames)
+        ? { allowedCategories: null, allowedToolNames: stateAllowedToolNames }
+        : undefined
+    );
 
     if (!policy) return null;
 
