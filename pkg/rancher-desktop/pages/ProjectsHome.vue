@@ -48,6 +48,7 @@
             <button type="button" class="ph-tab" :class="{ on: tab === 'board' }" @click="tab = 'board'">Board</button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'activity' }" @click="tab = 'activity'">Activity</button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'projects' }" @click="tab = 'projects'">Projects</button>
+            <button type="button" class="ph-tab" :class="{ on: tab === 'lanes' }" @click="tab = 'lanes'">Lanes</button>
           </div>
           <div class="ph-sp" />
           <button type="button" class="ph-btn ghost" @click="refresh" :disabled="isLoading">
@@ -158,7 +159,12 @@
                   @dragleave="dragOverCol = ''"
                   @drop="onColumnDrop(col.key)"
                 >
-                  <div class="ph-colh"><span class="ph-cd" :style="{ background: col.color }" />{{ col.label }} <span class="ph-n">{{ col.items.length }}</span></div>
+                  <div class="ph-colh">
+                    <span class="ph-cd" :style="{ background: col.color }" />{{ col.label }} <span class="ph-n">{{ col.items.length }}</span>
+                    <span class="ph-sp" />
+                    <button type="button" class="ph-lane-action" :aria-label="`Customize ${col.label}`" @click="openLaneEditor(col.key)">Customize</button>
+                    <button type="button" class="ph-lane-action" :aria-label="`Assign workflow to ${col.label}`" @click="openLaneAssignment(col.key)">Automate</button>
+                  </div>
                   <div v-if="!col.items.length" class="ph-card ghost"><div class="ph-ct">Drop here</div></div>
                   <div
                     v-for="t in col.items"
@@ -232,6 +238,9 @@
                 </div>
               </div>
             </div>
+
+            <!-- LANE SETTINGS -->
+            <LaneSettings v-if="sel" v-show="tab === 'lanes'" ref="laneSettings" :project="sel" @refresh="refresh" />
           </template>
         </div>
       </section>
@@ -398,6 +407,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 
+import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
@@ -412,10 +422,11 @@ const {
   lanesByProject, laneCapability,
 } = useProjects();
 
-const tab = ref<'today' | 'board' | 'activity' | 'projects'>('today');
+const tab = ref<'today' | 'board' | 'activity' | 'projects' | 'lanes'>('today');
 const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
+const laneSettings = ref<InstanceType<typeof LaneSettings> | null>(null);
 
 const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[selectedId.value] ?? []) : []);
 const COMPATIBILITY_LANE_KEYS = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
@@ -590,6 +601,19 @@ const boardColumns = computed(() => {
   }
   return columns;
 });
+
+function openLaneEditor(laneKey: string): void {
+  const lane = selectedLanes.value.find(item => item.lane_key === laneKey);
+  if (!lane) return;
+  tab.value = 'lanes';
+  laneSettings.value?.openEdit(lane);
+}
+
+function openLaneAssignment(laneKey: string): void {
+  const lane = selectedLanes.value.find(item => item.lane_key === laneKey);
+  if (!lane) return;
+  laneSettings.value?.openAssignment(lane);
+}
 
 // ══════════ DRAG TO REORDER ══════════
 // Native HTML5 DnD. A drag carries { kind, id, fromEpicId }; on drop we rebuild
@@ -1076,6 +1100,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-card[draggable="true"] { cursor: grab; }
 .ph-card[draggable="true"]:active { cursor: grabbing; }
 .ph-colh { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; font-weight: 600; color: var(--ptext2); }
+.ph-lane-action { border: 0; background: transparent; color: var(--ptext3); font: 9px var(--pmono); cursor: pointer; padding: 2px; text-transform: uppercase; }
+.ph-lane-action:hover, .ph-lane-action:focus-visible { color: var(--pacc); outline: none; }
 .ph-cd { width: 7px; height: 7px; border-radius: 50%; }
 .ph-n { font-family: var(--pmono); font-size: 11px; color: var(--ptext3); }
 .ph-card { background: var(--psurface); border: 1px solid var(--pborder-soft); border-radius: 10px; padding: 12px 13px; margin-bottom: 9px; cursor: pointer; }

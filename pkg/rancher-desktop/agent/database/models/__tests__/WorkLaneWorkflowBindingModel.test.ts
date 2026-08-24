@@ -54,6 +54,39 @@ describe('WorkLaneWorkflowBindingModel', () => {
       .rejects.toThrow('incompatible');
   });
 
+  it('lists only enabled workflows compatible with the authoritative lane contract', async() => {
+    (postgresClient as any).queryOne = jest.fn(() => Promise.resolve({
+      lane_key: 'in_review', semantic_role: 'review', system_required: true,
+    }));
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([
+      { id: 'reviewer', name: 'Reviewer', description: null, definition: { laneContract: contract }, enabled: true, status: 'production', system: true },
+      { id: 'planner', name: 'Planner', description: null, definition: { laneContract: { ...contract, semanticRoles: ['planning'] } }, enabled: true, status: 'production', system: false },
+    ]));
+
+    await expect(WorkLaneWorkflowBindingModel.listCompatibleWorkflows('project-1', 'in_review')).resolves.toEqual([
+      expect.objectContaining({ id: 'reviewer', name: 'Reviewer', system: true }),
+    ]);
+  });
+
+  it('previews effective provenance for an epic without duplicating resolution in the renderer', async() => {
+    (postgresClient as any).queryOne = (jest.fn() as any)
+      .mockResolvedValueOnce({ id: 'project-1' })
+      .mockResolvedValueOnce({ id: 'epic-1' })
+      .mockResolvedValueOnce({ id: 'project-1' })
+      .mockResolvedValueOnce({ lane_key: 'in_review', semantic_role: 'review', system_required: true })
+      .mockResolvedValueOnce({ id: 'reviewer', definition: { laneContract: contract }, enabled: true, status: 'production', system: true });
+    (postgresClient as any).query = jest.fn(() => Promise.resolve([
+      { id: 'epic-binding', scope: 'epic', epic_id: 'epic-1', lane_key: 'in_review', workflow_id: 'reviewer' },
+    ]));
+
+    const result = await WorkLaneWorkflowBindingModel.resolveForContext({
+      projectId: 'project-1', epicId: 'epic-1', laneKey: 'in_review',
+    });
+
+    expect(result).toEqual(expect.objectContaining({ source: 'epic', workflowId: 'reviewer' }));
+    expect((postgresClient.query as any).mock.calls[0][1]).toEqual(['default', 'epic-1', 'project-1', 'in_review', 'review']);
+  });
+
   it('never removes a protected core binding', async() => {
     (postgresClient as any).query = jest.fn(() => Promise.resolve([]));
     (postgresClient as any).queryOne = jest.fn(() => Promise.resolve({ id: 'core', scope: 'core' }));

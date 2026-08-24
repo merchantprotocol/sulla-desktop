@@ -93,11 +93,28 @@ export interface RecoverableLaneEntryRecord extends LaneEntryAutomationRecord {
 }
 
 interface WorkflowRow {
-  id:         string;
-  definition: Record<string, any>;
-  enabled:    boolean;
-  status:     string;
-  system:     boolean;
+  id:           string;
+  name?:        string;
+  description?: string | null;
+  definition:   Record<string, any>;
+  enabled:      boolean;
+  status:       string;
+  system:       boolean;
+}
+
+export interface CompatibleLaneWorkflow {
+  id:           string;
+  name:         string;
+  description:  string | null;
+  system:       boolean;
+  laneContract: LaneContract;
+}
+
+export interface ResolveLaneBindingContextInput {
+  projectId:  string;
+  epicId?:    string;
+  laneKey:    string;
+  profileId?: string;
 }
 
 function cleanOptional(value?: string): string | null {
@@ -120,6 +137,27 @@ function compatible(contract: LaneContract, laneKey: string, semanticRole: strin
 }
 
 export class WorkLaneWorkflowBindingModel {
+  static async listCompatibleWorkflows(projectId: string, laneKey: string): Promise<CompatibleLaneWorkflow[]> {
+    const lane = await WorkLaneWorkflowBindingModel.requireLane('project', laneKey, null, null, projectId);
+    const workflows = await postgresClient.query<WorkflowRow>(`
+      SELECT id, name, description, definition, enabled, status, system
+        FROM workflows
+       WHERE enabled = true AND status <> 'archive'
+       ORDER BY system DESC, name ASC, id ASC
+    `);
+    return workflows.flatMap((workflow) => {
+      const contract = workflowLaneContract(workflow);
+      if (!compatible(contract, lane.lane_key, lane.semantic_role)) return [];
+      return [{
+        id:           workflow.id,
+        name:         workflow.name?.trim() || workflow.id,
+        description:  workflow.description ?? null,
+        system:       workflow.system,
+        laneContract: contract,
+      }];
+    });
+  }
+
   static async list(input: ListLaneBindingsInput = {}): Promise<LaneWorkflowBindingRecord[]> {
     const conditions = ['profile_id = $1'];
     const values: unknown[] = [input.profileId?.trim() || 'default'];
@@ -185,10 +223,6 @@ export class WorkLaneWorkflowBindingModel {
 
   static async resolve(taskId: string, laneKey: string, profileId = 'default', client?: PoolClient):
   Promise<LaneBindingResolution> {
-    const query = async<T>(text: string, params: unknown[]): Promise<T[]> => {
-      if (client) return (await client.query(text, params)).rows as T[];
-      return postgresClient.query<T>(text, params);
-    };
     const queryOne = async<T>(text: string, params: unknown[]): Promise<T | null> => {
       if (client) return ((await client.query(text, params)).rows[0] as T | undefined) ?? null;
       return postgresClient.queryOne<T>(text, params);
@@ -208,6 +242,51 @@ export class WorkLaneWorkflowBindingModel {
     `, [taskId, laneKey]);
     if (!context) throw new Error(`No active task/lane context found for ${ taskId } in ${ laneKey }.`);
 
+    return WorkLaneWorkflowBindingModel.resolveContext({
+      projectId:      context.project_id,
+      epicId:         context.epic_id,
+      laneKey,
+      semanticRole:   context.semantic_role,
+      systemRequired: context.system_required,
+      profileId,
+    }, client);
+  }
+
+  static async resolveForContext(input: ResolveLaneBindingContextInput): Promise<LaneBindingResolution> {
+    const project = await postgresClient.queryOne<{ id: string }>(
+      'SELECT id FROM work_projects WHERE id = $1 AND archived = false', [input.projectId],
+    );
+    if (!project) throw new Error(`Project not found: ${ input.projectId }`);
+    if (input.epicId) {
+      const epic = await postgresClient.queryOne<{ id: string }>(
+        'SELECT id FROM work_epics WHERE id = $1 AND project_id = $2 AND archived = false',
+        [input.epicId, input.projectId],
+      );
+      if (!epic) throw new Error(`Epic not found in project ${ input.projectId }: ${ input.epicId }`);
+    }
+    const lane = await WorkLaneWorkflowBindingModel.requireLane('project', input.laneKey, null, null, input.projectId);
+    return WorkLaneWorkflowBindingModel.resolveContext({
+      projectId:      input.projectId,
+      epicId:         input.epicId ?? null,
+      laneKey:        input.laneKey,
+      semanticRole:   lane.semantic_role,
+      systemRequired: lane.system_required,
+      profileId:      input.profileId?.trim() || 'default',
+    });
+  }
+
+  private static async resolveContext(context: {
+    projectId:      string;
+    epicId:         string | null;
+    laneKey:        string;
+    semanticRole:   string;
+    systemRequired: boolean;
+    profileId:      string;
+  }, client?: PoolClient): Promise<LaneBindingResolution> {
+    const query = async<T>(text: string, params: unknown[]): Promise<T[]> => {
+      if (client) return (await client.query(text, params)).rows as T[];
+      return postgresClient.query<T>(text, params);
+    };
     const candidates = await query<LaneWorkflowBindingRecord>(`
       SELECT * FROM work_lane_workflow_bindings
        WHERE profile_id = $1 AND active = true AND archived = false
@@ -219,7 +298,7 @@ export class WorkLaneWorkflowBindingModel {
          )
        ORDER BY CASE scope WHEN 'epic' THEN 0 WHEN 'project' THEN 1 WHEN 'global' THEN 2 ELSE 3 END,
          CASE WHEN lane_key = $4 THEN 0 ELSE 1 END, created_at DESC
-    `, [profileId, context.epic_id, context.project_id, laneKey, context.semantic_role]);
+    `, [context.profileId, context.epicId, context.projectId, context.laneKey, context.semanticRole]);
 
     let fallbackReason: string | null = null;
     for (const binding of candidates) {
@@ -229,7 +308,7 @@ export class WorkLaneWorkflowBindingModel {
         continue;
       }
       const contract = workflowLaneContract(workflow);
-      if (!compatible(contract, laneKey, context.semantic_role)) {
+      if (!compatible(contract, context.laneKey, context.semanticRole)) {
         fallbackReason ??= `Binding ${ binding.id } is no longer compatible with this lane.`;
         continue;
       }
@@ -242,7 +321,7 @@ export class WorkLaneWorkflowBindingModel {
         workflowSnapshot: workflow.definition,
       };
     }
-    const manual = context.semantic_role === 'manual' && !context.system_required;
+    const manual = context.semanticRole === 'manual' && !context.systemRequired;
     return {
       binding:          null,
       workflowId:       null,
@@ -397,7 +476,7 @@ export class WorkLaneWorkflowBindingModel {
   }
 
   private static async requireLane(scope: LaneBindingScope, laneKey: string | null, semanticRole: string | null,
-    epicId: string | null, projectId: string | null): Promise<{ lane_key: string; semantic_role: string }> {
+    epicId: string | null, projectId: string | null): Promise<{ lane_key: string; semantic_role: string; system_required: boolean }> {
     let resolvedProjectId = projectId;
     if (scope === 'epic') {
       const epic = await postgresClient.queryOne<{ project_id: string }>('SELECT project_id FROM work_epics WHERE id = $1 AND archived = false', [epicId]);
@@ -409,8 +488,8 @@ export class WorkLaneWorkflowBindingModel {
       if (!project) throw new Error(`Project not found: ${ projectId }`);
     }
     if (laneKey) {
-      const lane = await postgresClient.queryOne<{ lane_key: string; semantic_role: string }>(`
-        SELECT lane_key, semantic_role FROM work_lane_definitions
+      const lane = await postgresClient.queryOne<{ lane_key: string; semantic_role: string; system_required: boolean }>(`
+        SELECT lane_key, semantic_role, system_required FROM work_lane_definitions
          WHERE lane_key = $1 AND reset_at IS NULL AND archived = false AND enabled = true
            AND (scope = 'global_default' OR (scope = 'project' AND project_id = $2))
          ORDER BY CASE WHEN scope = 'project' THEN 0 ELSE 1 END LIMIT 1
@@ -418,6 +497,6 @@ export class WorkLaneWorkflowBindingModel {
       if (!lane) throw new Error(`Active lane not found: ${ laneKey }`);
       return lane;
     }
-    return { lane_key: `role:${ semanticRole }`, semantic_role: semanticRole! };
+    return { lane_key: `role:${ semanticRole }`, semantic_role: semanticRole!, system_required: true };
   }
 }

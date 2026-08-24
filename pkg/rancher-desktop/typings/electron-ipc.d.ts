@@ -451,6 +451,7 @@ export interface IpcMainInvokeEvents {
   'work-items:lane-create':     (input: import('@pkg/agent/database/models/WorkLaneDefinitionModel').CreateWorkLaneInput) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord;
   'work-items:lane-update':     (id: string, changes: import('@pkg/agent/database/models/WorkLaneDefinitionModel').UpdateWorkLaneInput) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord | null;
   'work-items:lane-archive':    (id: string, destinationLaneKey?: string) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').ArchiveWorkLaneResult;
+  'work-items:lane-archive-preview': (id: string) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').ArchiveWorkLanePreview;
   'work-items:lane-restore':    (id: string) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord | null;
   'work-items:lanes-reorder':   (scope: import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneScope, orderedKeys: string[], projectId?: string) => number;
   'work-items:lane-reset-override': (projectId: string, laneKey: string) => boolean;
@@ -458,6 +459,8 @@ export interface IpcMainInvokeEvents {
   'work-items:lane-binding-set': (input: import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').SetLaneBindingInput) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneWorkflowBindingRecord;
   'work-items:lane-binding-remove': (id: string) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneWorkflowBindingRecord | null;
   'work-items:lane-workflow-resolve': (taskId: string, laneKey: string, profileId?: string) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneBindingResolution;
+  'work-items:lane-workflow-resolve-context': (input: import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').ResolveLaneBindingContextInput) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneBindingResolution;
+  'work-items:lane-compatible-workflows': (projectId: string, laneKey: string) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').CompatibleLaneWorkflow[];
   'work-items:lane-entry-automations': (taskId: string) => import('@pkg/agent/database/models/WorkLaneWorkflowBindingModel').LaneEntryAutomationRecord[];
 
   // User-defined project catalog (scanned from ~/sulla/projects/ + DB)

@@ -96,6 +96,12 @@ export interface ArchiveWorkLaneResult {
   movedTasks: number;
 }
 
+export interface ArchiveWorkLanePreview {
+  taskCount:    number;
+  protected:    boolean;
+  destinations: EffectiveWorkLane[];
+}
+
 export const DEFAULT_WORK_LANES: readonly CreateWorkLaneInput[] = [
   { lane_key: 'backlog', display_name: 'Backlog', position: 0, semantic_role: 'backlog', system_required: true },
   { lane_key: 'todo', display_name: 'To Do', position: 1, semantic_role: 'execution', system_required: true },
@@ -465,6 +471,34 @@ export class WorkLaneDefinitionModel {
       `, [id, actor]);
       return { lane: updated.rows[0], movedTasks: count };
     });
+  }
+
+  static async previewArchive(id: string): Promise<ArchiveWorkLanePreview> {
+    const lane = await WorkLaneDefinitionModel.get(id);
+    if (!lane || lane.reset_at) throw new Error(`No active lane definition found with id: ${ id }`);
+    const projectFilter = lane.scope === 'project'
+      ? 'AND project_id = $2'
+      : `AND NOT EXISTS (
+           SELECT 1 FROM work_lane_definitions project_lane
+            WHERE project_lane.scope = 'project'
+              AND project_lane.project_id = work_tasks.project_id
+              AND project_lane.lane_key = $1
+              AND project_lane.reset_at IS NULL
+         )`;
+    const params = lane.scope === 'project' ? [lane.lane_key, lane.project_id] : [lane.lane_key];
+    const occupied = await postgresClient.queryOne<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM work_tasks WHERE archived = false AND status = $1 ${ projectFilter }`,
+      params,
+    );
+    const destinations = lane.scope === 'project'
+      ? await WorkLaneDefinitionModel.resolveEffective(lane.project_id!)
+      : (await WorkLaneDefinitionModel.list({ scope: 'global_default' }))
+        .map(item => ({ ...item, provenance: 'global' as const, inherited_definition_id: null }));
+    return {
+      taskCount:    Number(occupied?.count ?? 0),
+      protected:    lane.system_required,
+      destinations: destinations.filter(item => item.lane_key !== lane.lane_key && item.enabled && !item.archived),
+    };
   }
 
   static async restore(id: string, actor = 'sulla'): Promise<WorkLaneDefinitionRecord | null> {
