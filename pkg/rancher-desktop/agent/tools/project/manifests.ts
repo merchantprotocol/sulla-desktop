@@ -503,4 +503,16 @@ export const projectToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader: () => import('./inspect_lane_entry_automation'),
   },
+  {
+    name:        'conveyor_health',
+    description: 'Read-only Projects conveyor-health & productivity snapshot (issue #717): count/oldest-age by semantic stage, stage-age percentiles, execution->review->done throughput, verifier throughput (dedup/suppression excluded), rework rate & repair loops, custody completeness, durable-wait adoption, stale leases, dependency-held, WIP pressure, and independent shipments vs integration-train closures. Optional project scope and time window.',
+    category:    'project',
+    schemaDef:   {
+      project_id:    { type: 'string', optional: true, description: 'Limit metrics to one project id (default: whole portfolio).' },
+      window_hours:  { type: 'number', optional: true, description: 'Rolling window for rate/throughput metrics in hours (default 168 = 7d).' },
+      wip_limit:     { type: 'number', optional: true, description: 'Soft WIP ceiling for active execution leases (default 6).' },
+      stale_minutes: { type: 'number', optional: true, description: 'Lease is stale when its heartbeat is older than this many minutes (default 20).' },
+    },
+    loader:      () => import('./conveyor_health'),
+  },
 ];
