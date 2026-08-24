@@ -73,6 +73,39 @@ describe('checkHeartbeatPromptInvariants', () => {
       expect(HEARTBEAT_FORBIDDEN_PHRASES).toContain(phrase);
     }
   });
+
+  it('fails closed on every forbidden ordinary-owner regression', () => {
+    for (const phrase of [
+      'launch ordinary todo workers',
+      'run its own planner council',
+      'inspect and close every in_review task',
+      'commit, push, or open PRs as ordinary artifact custodian',
+      'update marketing trackers as ordinary artifact custodian',
+      'poll unchanged CI or external gates',
+      'reclaim healthy leases based only on time',
+      'perform core-routine state transitions directly',
+    ]) {
+      const result = checkHeartbeatPromptInvariants(`${ heartbeatPrompt }\n${ phrase }`);
+      expect(result.ok).toBe(false);
+      expect(result.forbidden).toContain(phrase);
+    }
+  });
+
+  it('pins missing-capability, single-recovery, durable-wait, Projects, and freeze behavior', () => {
+    for (const phrase of [
+      'Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback',
+      'Repeated failures of the same owner capability update one existing systemic recovery item',
+      'Notify once when the gate is created or materially changes',
+      'Projects project-state is your only durable agenda',
+      'never let install-local Markdown replace or append to it',
+      "never flip 'heartbeatEnabled'",
+    ]) {
+      const stripped = heartbeatPrompt.split(phrase).join('');
+      const result = checkHeartbeatPromptInvariants(stripped);
+      expect(result.ok).toBe(false);
+      expect(result.missing).toContain(phrase);
+    }
+  });
 });
 
 describe('SystemPromptBuilder heartbeat invariant wiring', () => {
@@ -156,5 +189,22 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
 
     const built = await SystemPromptBuilder.build(baseCtx({ isHeartbeat: false }));
     expect(built.heartbeatInvariants).toBeUndefined();
+  });
+
+  it('keeps the compiled heartbeat prompt in the stable Anthropic cache segment', async() => {
+    SystemPromptBuilder.register('heartbeat', () => ({
+      id:             'heartbeat',
+      content:        heartbeatPrompt,
+      priority:       110,
+      cacheStability: 'stable',
+    }), ['full']);
+
+    const built = await SystemPromptBuilder.build(baseCtx({ provider: 'anthropic' }));
+    expect(built.anthropicSystem?.[0]).toEqual(expect.objectContaining({
+      type:          'text',
+      cache_control: { type: 'ephemeral', ttl: '1h' },
+    }));
+    expect(built.anthropicSystem?.[0]?.text).toContain('# Autonomous Executive Control Plane — Sulla');
+    expect(built.heartbeatInvariants?.ok).toBe(true);
   });
 });

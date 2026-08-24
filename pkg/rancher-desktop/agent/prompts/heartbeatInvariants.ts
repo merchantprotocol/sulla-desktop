@@ -35,6 +35,12 @@ export const HEARTBEAT_REQUIRED_PHRASES = [
   'Routine Stewardship',
   'Durable Movement Per Cycle',
   'create a second dispatch, planning, review, custody, wait, or recovery path',
+  'Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback',
+  'Repeated failures of the same owner capability update one existing systemic recovery item',
+  'Notify once when the gate is created or materially changes',
+  'Projects project-state is your only durable agenda',
+  'never let install-local Markdown replace or append to it',
+  "never flip 'heartbeatEnabled'",
   // Stability covenant: the prompt is frozen — heartbeat may not tweak itself.
   'This Prompt Is Frozen',
 ] as const;
@@ -58,6 +64,14 @@ export const HEARTBEAT_FORBIDDEN_PHRASES = [
   'Artifact-per-Cycle Contract',
   "Review tasks returned to 'in_review'",
   'three independent high-reasoning planner agents',
+  'launch ordinary todo workers',
+  'run its own planner council',
+  'inspect and close every in_review task',
+  'commit, push, or open PRs as ordinary artifact custodian',
+  'update marketing trackers as ordinary artifact custodian',
+  'poll unchanged CI or external gates',
+  'reclaim healthy leases based only on time',
+  'perform core-routine state transitions directly',
 ] as const;
 
 export interface HeartbeatInvariantResult {

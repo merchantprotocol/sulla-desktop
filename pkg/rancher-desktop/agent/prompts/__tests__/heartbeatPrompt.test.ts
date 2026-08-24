@@ -35,6 +35,8 @@ describe('heartbeatPrompt', () => {
     }
     expect(heartbeatPrompt).toContain('Every state or concern has exactly one owner');
     expect(heartbeatPrompt).toContain('If an owner capability is unavailable');
+    expect(heartbeatPrompt).toContain('Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback');
+    expect(heartbeatPrompt).toContain('Do not silently assume ownership');
   });
 
   it('forbids heartbeat from duplicating protected lifecycle work', () => {
@@ -42,11 +44,14 @@ describe('heartbeatPrompt', () => {
       "claim, select, or launch ordinary 'todo' work",
       'run planning councils owned by the protected planning routine',
       'perform implementation or artifact custody owned by the protected execution routine',
+      'commit, push, or open PRs as an ordinary artifact custodian',
+      'update marketing trackers as an ordinary artifact custodian',
       "verify or disposition ordinary 'in_review' artifacts owned by the protected review routine",
       'poll unchanged CI, Human gates, or external systems owned by the durable wait monitor',
       'reclaim leases or stale orphans owned by deterministic recovery',
       "change a task's state merely because it has been quiet while its lease is healthy",
       'create a second dispatch, planning, review, custody, wait, or recovery path',
+      'duplicate core-routine state transitions',
     ]) {
       expect(heartbeatPrompt).toContain(rule);
     }
@@ -75,8 +80,25 @@ describe('heartbeatPrompt', () => {
     expect(heartbeatPrompt).toContain('## The Prospector — Verified Work Discovery');
     expect(heartbeatPrompt).toContain('Prospecting is **verify-and-route**');
     expect(heartbeatPrompt).toContain('## Routine Stewardship');
+    expect(heartbeatPrompt).toContain('Repeated failures of the same owner capability update one existing systemic recovery item');
+    expect(heartbeatPrompt).toContain('never create duplicate recovery tasks');
     expect(heartbeatPrompt).toContain('## Agent Network + Briefings');
     expect(heartbeatPrompt).toContain('concisely and only on deltas');
+  });
+
+  it('defines fail-closed behavior for every unavailable protected owner', () => {
+    for (const owner of [
+      'protected planning routine',
+      'protected execution routine',
+      'protected review routine',
+      'durable wait monitor',
+      'deterministic recovery',
+    ]) {
+      expect(heartbeatPrompt).toContain(owner);
+    }
+    expect(heartbeatPrompt).toContain('record a systemic capability exception');
+    expect(heartbeatPrompt).toContain('Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback');
+    expect(heartbeatPrompt).toContain('Do not silently assume ownership');
   });
 
   it('keeps reversible executive authority and irreversible gates explicit', () => {
