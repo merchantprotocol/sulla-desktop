@@ -205,7 +205,7 @@ export class WorkTaskWaitModel {
                  last_moved_at = now(), last_activity_at = now(),
                  last_moved_by = 'external-wait-monitor'
            WHERE id = $1 AND status = 'blocked'
-        `, [current.task_id, nextStatus === 'failed' ? 'planning' : 'in_review', nextStatus === 'failed' ? 'dispatcher' : 'heartbeat']);
+        `, [current.task_id, 'planning', 'dispatcher']);
       }
       return { changed: changed || terminal, wait: updated.rows[0] ?? null };
     });

@@ -6,6 +6,7 @@ import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES }
 
 import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
+import type { ProposedCustody, ProposedDisposition } from '../../services/CanonicalArtifactCustodyService';
 
 export type WorkTaskDispatchStatus = 'running' | 'completed' | 'blocked' | 'failed' | 'stale';
 export type WorkTaskDispatchKind = 'execution' | 'verification';
@@ -117,6 +118,8 @@ export interface WorkTaskDispatchEvidence {
   reviewerVerdict?:     string;
   reviewEvidence?:      unknown;
   terminalReason?:      string;
+  custody?:             ProposedCustody;
+  custodyDisposition?:   ProposedDisposition;
 }
 
 export interface ClaimedDispatch {
@@ -722,6 +725,29 @@ export class WorkTaskDispatchModel {
       );
       if (locked.rows[0]?.status !== 'running') {
         throw new Error(`Dispatch ${ id } is not running and cannot be finalized`);
+      }
+
+      if (finalization.taskStatus === 'in_review') {
+        const custody = evidence.custody;
+        const disposition = evidence.custodyDisposition ?? {
+          taskId,
+          dispatchId: id,
+          nextState: 'in_review',
+          proposedComment: finalization.comment,
+        };
+        if (!custody) throw new Error(`Dispatch ${ id } completed without structured artifact custody`);
+        const task = await client.query<WorkTaskRecord>('SELECT * FROM work_tasks WHERE id = $1 FOR UPDATE', [taskId]);
+        const { CanonicalArtifactCustodyService } = await import('../../services/CanonicalArtifactCustodyService');
+        const verified = await CanonicalArtifactCustodyService.verify(task.rows[0], custody, disposition);
+        if (!verified.valid) throw new Error(`artifact custody rejected: ${ verified.error }`);
+        await client.query(`
+          INSERT INTO work_task_artifact_custody
+            (id, task_id, dispatch_id, custody_status, receipt, created_at)
+          VALUES ($1, $2, $3, 'validated', $4::jsonb, now())
+        `, [
+          `custody-${ taskId }-${ id }`, taskId, id,
+          JSON.stringify({ ...verified, custody }),
+        ]);
       }
 
       await client.query(`

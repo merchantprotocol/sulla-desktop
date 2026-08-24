@@ -10,11 +10,21 @@ export interface ProposedCustody {
   artifactRef?:          unknown;
   contentHash?:          unknown;
   headSha?:              unknown;
+  repository?:           unknown;
+  branch?:               unknown;
+  base?:                 unknown;
+  pullRequestRef?:       unknown;
+  pullRequestUrl?:       unknown;
+  taskId?:               unknown;
+  dispatchId?:           unknown;
+  validationEvidence?:   unknown;
+  workerProvenance?:     unknown;
   verificationEvidence?: unknown;
 }
 
 export interface ProposedDisposition {
   taskId?:          unknown;
+  dispatchId?:      unknown;
   nextState?:       unknown;
   proposedComment?: unknown;
 }
@@ -24,6 +34,7 @@ interface PullRequestArtifact {
   state:   string;
   draft:   boolean;
   headRef: string;
+  baseRef?: string;
   headSha: string;
   body:    string;
 }
@@ -78,6 +89,7 @@ class VaultGitHubArtifactReader implements CanonicalArtifactReader {
       state:   data.state,
       draft:   data.draft === true,
       headRef: data.head.ref,
+      baseRef: data.base.ref,
       headSha: data.head.sha,
       body:    data.body || '',
     };
@@ -108,11 +120,17 @@ export class CanonicalArtifactCustodyService {
     if (String(disposition.taskId || '') !== origin.id) {
       return invalid('proposed disposition is not bound to the originating task');
     }
+    if (!String(custody.taskId || '') || String(custody.taskId) !== origin.id) {
+      return invalid('custody is not bound to the originating task');
+    }
+    if (!String(custody.dispatchId || '') || String(disposition.dispatchId || '') !== String(custody.dispatchId)) {
+      return invalid('custody is not bound to the originating dispatch');
+    }
     if (disposition.nextState !== 'in_review') {
       return invalid('successful custody must propose in_review');
     }
-    if (!String(disposition.proposedComment || '').trim()) {
-      return invalid('successful custody requires proposed comment evidence');
+    if (!String(custody.validationEvidence || '').trim() || !String(custody.workerProvenance || '').trim()) {
+      return invalid('structured validation evidence and worker provenance are required');
     }
 
     const live = await WorkItemsModel.getTask(origin.id);
@@ -136,23 +154,37 @@ export class CanonicalArtifactCustodyService {
     reader: CanonicalArtifactReader,
   ): Promise<CanonicalCustodyResult> {
     const artifactUrl = String(custody.artifactUrl || '');
-    const requested = parsePullRequestUrl(artifactUrl);
+    const pullRequestUrl = String(custody.pullRequestUrl || artifactUrl);
+    const repository = String(custody.repository || '');
+    const branch = String(custody.branch || custody.artifactRef || '');
+    const base = String(custody.base || '');
+    const pullRequestRef = String(custody.pullRequestRef || '');
+    const requested = parsePullRequestUrl(pullRequestUrl);
     const expectedIssue = parseTaskIssue(origin.github_issue);
-    if (!requested) return invalid('code custody requires a canonical GitHub pull-request URL');
+    if (!requested || !repository || !branch || !base || !pullRequestRef) {
+      return invalid('code custody requires repository, branch, base, PR reference, and canonical URL');
+    }
+    if (pullRequestRef !== `${ requested.owner }/${ requested.repo }#${ requested.number }` ||
+        repository !== `${ requested.owner }/${ requested.repo }`) {
+      return invalid('code custody repository or pull request reference does not match the canonical URL');
+    }
     if (expectedIssue && (requested.owner !== expectedIssue.owner || requested.repo !== expectedIssue.repo)) {
       return invalid('pull request repository does not match the originating task');
     }
 
     const pull = await reader.getPullRequest(requested.owner, requested.repo, requested.number);
     const assertedHead = String(custody.headSha || '');
-    if (pull.htmlUrl !== artifactUrl || pull.state !== 'open' || !pull.draft) {
+    if (pull.htmlUrl !== pullRequestUrl || pull.state !== 'open' || !pull.draft) {
       return invalid('canonical pull request is missing, closed, or not draft');
     }
     if (!/^[0-9a-f]{40}$/i.test(assertedHead) || pull.headSha !== assertedHead) {
       return invalid('asserted head SHA does not match the canonical pull request head');
     }
-    if (String(custody.artifactRef || '') !== pull.headRef) {
+    if (branch !== pull.headRef || String(custody.artifactRef || branch) !== pull.headRef) {
       return invalid('asserted branch does not match the canonical pull request head ref');
+    }
+    if (base !== String(pull.baseRef || '')) {
+      return invalid('asserted base does not match the canonical pull request base');
     }
     if (String(custody.contentHash || '') !== pull.headSha) {
       return invalid('content hash does not match the canonical pull request head');
@@ -175,6 +207,11 @@ export class CanonicalArtifactCustodyService {
     custody: ProposedCustody,
     reader: CanonicalArtifactReader,
   ): Promise<CanonicalCustodyResult> {
+    if (!String(custody.artifactType || '').trim() || !String(custody.artifactLocation || '').trim() ||
+        !String(custody.artifactRef || '').trim() || !String(custody.contentHash || '').trim() ||
+        (!String(custody.artifactUrl || '').trim() && !String(custody.artifactLocation || '').trim())) {
+      return invalid('non-code custody requires type, authoritative system, stable reference, immutable hash, and URL or path');
+    }
     const issue = parseTaskIssue(liveTask.github_issue);
     if (issue) {
       const live = await reader.getIssue(issue.owner, issue.repo, issue.number);

@@ -27,6 +27,7 @@ import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent
 import { extractAgentTurnOutcome } from '../tools/agents/agentTurnOutcome';
 import { toolRegistry } from '../tools/registry';
 import { createPlaybookState } from '../workflow/WorkflowPlaybook';
+import type { ProposedCustody } from './CanonicalArtifactCustodyService';
 
 const CHECK_INTERVAL_MS = 60_000;
 const LEASE_HEARTBEAT_MS = 120_000;
@@ -577,34 +578,44 @@ export class TaskDispatcherService {
     summary: string,
   ): Promise<void> {
     const { dispatch, task } = claim;
-    const taskStatus = status === 'completed' ? 'in_review' : 'blocked';
-    const result = status === 'failed' ? undefined : summary;
-    const error = status === 'failed' ? summary : undefined;
-    const comment = status === 'failed'
+    const custody = status === 'completed' ? this.parseArtifactCustody(summary) : null;
+    const evidenceGap = status === 'completed' && !custody;
+    const finalStatus = evidenceGap ? 'failed' : status;
+    const taskStatus = status === 'completed' && custody ? 'in_review' : evidenceGap ? 'planning' : 'blocked';
+    const result = finalStatus === 'failed' ? undefined : summary;
+    const error = finalStatus === 'failed' ? (evidenceGap ? 'structured artifact custody missing' : summary) : undefined;
+    const comment = finalStatus === 'failed'
       ? `Dispatch ${ dispatch.id } failed: ${ summary }`
+      : evidenceGap
+        ? `Dispatch ${ dispatch.id } completed without structured artifact custody; routed to planning.`
       : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }.\n\n${ summary }`;
+    await WorkTaskDispatchModel.finalize(dispatch.id, task.id, {
+      dispatchStatus: finalStatus,
+      taskStatus,
+      taskAssignee: taskStatus === 'planning' ? 'dispatcher' : taskStatus === 'blocked' ? 'heartbeat' : 'heartbeat',
+      comment,
+      result,
+      error,
+      evidence: custody ? {
+        artifactType: custody.artifactType as string,
+        artifactLocation: custody.artifactLocation as string,
+        artifactUrl: custody.artifactUrl as string,
+        artifactRef: custody.artifactRef as string,
+        contentHash: custody.contentHash as string,
+        custody,
+        custodyDisposition: { taskId: task.id, dispatchId: dispatch.id, nextState: 'in_review', proposedComment: comment },
+      } : undefined,
+    });
+  }
 
-    // Persist the worker's blocker/result before the status transition. A
-    // blocked transition immediately snapshots the task for the planning
-    // council, so racing the comment and update could omit the original
-    // blocker from every planner's input.
-    const settled = await Promise.allSettled([
-      WorkTaskDispatchModel.settle(dispatch.id, status, result, error),
-      WorkItemsModel.addComment({ task_id: task.id, author: 'dispatcher', body: comment }),
-    ]);
-
-    for (const outcome of settled) {
-      if (outcome.status === 'rejected') {
-        console.error(`[TaskDispatcher] Could not finalize ${ dispatch.id }:`, outcome.reason);
-      }
-    }
-
+  private parseArtifactCustody(summary: string): ProposedCustody | null {
+    const matches = [...summary.matchAll(/<ARTIFACT_CUSTODY>([\s\S]*?)<\/ARTIFACT_CUSTODY>/g)];
+    if (matches.length !== 1) return null;
     try {
-      await WorkItemsModel.updateTask(task.id, {
-        status: taskStatus, assignee: 'heartbeat', actor: 'dispatcher',
-      });
-    } catch (err) {
-      console.error(`[TaskDispatcher] Could not move task ${ task.id } after ${ dispatch.id }:`, err);
+      const parsed = JSON.parse(matches[0][1].trim());
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as ProposedCustody : null;
+    } catch {
+      return null;
     }
   }
 
@@ -620,7 +631,7 @@ Dispatch: ${ dispatchId }
 Description:
 ${ task.description || '(no description)' }
 
-Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR when possible. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. End with a concise artifact-and-verification summary. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.`;
+Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR when possible. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. A completed result may enter review only when the final response includes exactly one <ARTIFACT_CUSTODY>{JSON}</ARTIFACT_CUSTODY> block with taskId, dispatchId, repository, branch, base, pullRequestRef, pullRequestUrl, full headSha, validationEvidence, and workerProvenance for code, or the complete non-code custody envelope. Free-form narration never satisfies custody. If the envelope is missing or unverifiable, return BLOCKED with the exact gap; reversible evidence gaps are routed to planning.`;
   }
 
   private buildVerifierPrompt(task: WorkTaskRecord, dispatchId: string, comments: { author: string | null; body: string }[]): string {

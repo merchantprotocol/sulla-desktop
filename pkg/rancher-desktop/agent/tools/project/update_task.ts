@@ -64,6 +64,10 @@ export class UpdateTaskWorker extends BaseTool {
         github_issue: input.github_issue === '' ? null : input.github_issue,
         position:     typeof input.position === 'number' ? input.position : undefined,
         source:       input.source,
+        custody:      input.custody && typeof input.custody === 'object' ? input.custody : undefined,
+        custodyDisposition: input.custodyDisposition && typeof input.custodyDisposition === 'object'
+          ? input.custodyDisposition
+          : undefined,
         actor,
       });
       if (!updated) return { successBoolean: false, responseString: `No task found with id: ${ id }` };

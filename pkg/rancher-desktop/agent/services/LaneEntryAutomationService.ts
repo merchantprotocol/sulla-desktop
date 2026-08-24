@@ -2,6 +2,7 @@ import { WorkLaneWorkflowBindingModel, type LaneEntryAutomationRecord } from '..
 
 import type { RoutineExecutionOptions, RoutineExecutionResult } from '@pkg/main/sullaRoutineTemplateEvents';
 import type { WorkflowDefinition } from '@pkg/pages/editor/workflow/types';
+import type { ProposedCustody, ProposedDisposition } from './CanonicalArtifactCustodyService';
 
 export interface LaneEntryTransitionResult {
   created: boolean;
@@ -10,8 +11,17 @@ export interface LaneEntryTransitionResult {
 
 /** Claims and dispatches the immutable automation snapshot for one real lane transition. */
 export class LaneEntryAutomationService {
-  static async handleTransition(taskId: string, laneKey: string, actor = 'sulla'):
+  static async handleTransition(taskId: string, laneKey: string, actor = 'sulla', custody?: ProposedCustody, disposition?: ProposedDisposition):
   Promise<LaneEntryTransitionResult> {
+    if (laneKey === 'in_review') {
+      if (!custody || !disposition) throw new Error('lane entry in_review requires structured artifact custody');
+      const { WorkItemsModel } = await import('../database/models/WorkItemsModel');
+      const task = await WorkItemsModel.getTask(taskId);
+      if (!task) throw new Error(`Task not found for in_review lane entry: ${ taskId }`);
+      const { CanonicalArtifactCustodyService } = await import('./CanonicalArtifactCustodyService');
+      const verified = await CanonicalArtifactCustodyService.verify(task, custody, disposition);
+      if (!verified.valid) throw new Error(`artifact custody rejected: ${ verified.error }`);
+    }
     const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntry(taskId, laneKey, actor);
     if (claimed.created && claimed.entry.workflow_id) {
       return { created: true, entry: await LaneEntryAutomationService.dispatchEntry(claimed.entry.id) };

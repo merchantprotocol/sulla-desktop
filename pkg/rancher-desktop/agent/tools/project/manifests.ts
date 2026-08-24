@@ -292,6 +292,8 @@ export const projectToolManifests: ToolManifest[] = [
       github_issue: { type: 'string', optional: true, description: 'owner/repo#n or URL, or empty string to clear.' },
       position:     { type: 'number', optional: true, description: 'Manual sort order inside the epic.' },
       actor:        { type: 'string', optional: true, description: 'Acting source/agent for attribution: "heartbeat" (autonomous), "sulla" (chat), "workbench", or "human". Defaults to "sulla".' },
+      custody:      { type: 'object', optional: true, description: 'Typed artifact custody envelope required when entering in_review; free-form narration is not accepted.' },
+      custodyDisposition: { type: 'object', optional: true, description: 'Typed task/dispatch disposition paired with custody.' },
     },
     operationTypes: ['update'],
     loader:         () => import('./update_task'),

@@ -18,6 +18,7 @@ import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
 import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
 import type { PoolClient } from 'pg';
+import type { ProposedCustody, ProposedDisposition } from '../../services/CanonicalArtifactCustodyService';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -254,6 +255,8 @@ export interface UpdateTaskInput {
   source?:       string | null;
   source_ref?:   string | null;
   actor?:        string;
+  custody?:      ProposedCustody;
+  custodyDisposition?: ProposedDisposition;
 }
 
 export interface AddCommentInput {
@@ -989,6 +992,9 @@ export class WorkItemsModel {
 
   static async insertTask(input: UpsertTaskInput): Promise<WorkTaskRecord> {
     if (!input.epic_id) throw new Error('epic_id is required to create a task.');
+    if (input.status === 'in_review') {
+      throw new Error('new tasks cannot enter in_review without an originating dispatch and custody receipt');
+    }
     const epic = await WorkItemsModel.requireEpic(input.epic_id);
     const projectId = input.project_id || epic.project_id;
     const slug = input.slug ? input.slug.slice(0, 80) : null;
@@ -1172,6 +1178,27 @@ export class WorkItemsModel {
         const current = await client.query<WorkTaskRecord>(
           `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1 AND archived = false FOR UPDATE`, [id]);
         if (!current.rows[0]) return null;
+        const enteringReview = changes.status === 'in_review' && current.rows[0].status !== 'in_review';
+        if (enteringReview) {
+          if (!changes.custody || !changes.custodyDisposition) {
+            throw new Error('in_review requires a structured artifact custody envelope');
+          }
+          const { CanonicalArtifactCustodyService } = await import('../../services/CanonicalArtifactCustodyService');
+          const verified = await CanonicalArtifactCustodyService.verify(
+            current.rows[0], changes.custody, changes.custodyDisposition,
+          );
+          if (!verified.valid) throw new Error(`artifact custody rejected: ${ verified.error }`);
+          await client.query(`
+            INSERT INTO work_task_artifact_custody
+              (id, task_id, dispatch_id, custody_status, receipt, created_at)
+            VALUES ($1, $2, $3, 'validated', $4::jsonb, now())
+          `, [
+            `custody-${ current.rows[0].id }-${ String(changes.custody.dispatchId) }`,
+            current.rows[0].id,
+            String(changes.custody.dispatchId),
+            JSON.stringify({ ...verified, custody: changes.custody }),
+          ]);
+        }
         const rows = await client.query<WorkTaskRecord>(updateSql, values);
         const committed = rows.rows[0] ?? null;
         if (committed && committed.status !== current.rows[0].status) {
