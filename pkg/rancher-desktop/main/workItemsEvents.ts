@@ -32,7 +32,9 @@ import type {
 import type {
   CreateWorkLaneInput, UpdateWorkLaneInput, WorkLaneScope,
 } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
-import type { ListLaneBindingsInput, SetLaneBindingInput } from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
+import type {
+  ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput,
+} from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
 import type { SaveProjectViewInput } from '@pkg/agent/database/models/WorkProjectViewModel';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -160,6 +162,11 @@ export function initWorkItemsEvents(): void {
     return Model.archive(id, destinationLaneKey, 'human');
   });
 
+  ipcMainProxy.handle('work-items:lane-archive-preview', async(_event: unknown, id: string) => {
+    const Model = await importWorkLaneDefinitionModel();
+    return Model.previewArchive(id);
+  });
+
   ipcMainProxy.handle('work-items:lane-restore', async(_event: unknown, id: string) => {
     const Model = await importWorkLaneDefinitionModel();
     return Model.restore(id, 'human');
@@ -195,6 +202,16 @@ export function initWorkItemsEvents(): void {
   ipcMainProxy.handle('work-items:lane-workflow-resolve', async(_event: unknown, taskId: string, laneKey: string, profileId = 'default') => {
     const Model = await importWorkLaneWorkflowBindingModel();
     return Model.resolve(taskId, laneKey, profileId);
+  });
+
+  ipcMainProxy.handle('work-items:lane-workflow-resolve-context', async(_event: unknown, input: ResolveLaneBindingContextInput) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.resolveForContext(input);
+  });
+
+  ipcMainProxy.handle('work-items:lane-compatible-workflows', async(_event: unknown, projectId: string, laneKey: string) => {
+    const Model = await importWorkLaneWorkflowBindingModel();
+    return Model.listCompatibleWorkflows(projectId, laneKey);
   });
 
   ipcMainProxy.handle('work-items:lane-entry-automations', async(_event: unknown, taskId: string) => {

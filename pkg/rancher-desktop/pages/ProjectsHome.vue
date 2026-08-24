@@ -91,6 +91,7 @@
             >
               Projects
             </button>
+            <button type="button" class="ph-tab" :class="{ on: tab === 'lanes' }" @click="tab = 'lanes'">Lanes</button>
           </div>
           <div class="ph-sp" />
           <label
@@ -387,6 +388,9 @@
                       class="ph-cd"
                       :style="{ background: col.color }"
                     />{{ col.label }} <span class="ph-n">{{ col.items.length }}</span>
+                    <span class="ph-sp" />
+                    <button type="button" class="ph-lane-action" :aria-label="`Customize ${col.label}`" @click="openLaneEditor(col.key)">Customize</button>
+                    <button type="button" class="ph-lane-action" :aria-label="`Assign workflow to ${col.label}`" @click="openLaneAssignment(col.key)">Automate</button>
                   </div>
                   <div
                     v-if="!col.items.length"
@@ -840,6 +844,9 @@
                 </div>
               </div>
             </div>
+
+            <!-- LANE SETTINGS -->
+            <LaneSettings v-if="sel" v-show="tab === 'lanes'" ref="laneSettings" :project="sel" @refresh="refresh" />
           </template>
         </div>
       </section>
@@ -1288,6 +1295,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
+import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
@@ -1313,7 +1321,7 @@ const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
   { key: 'calendar', label: 'Calendar', icon: '□' },
   { key: 'list', label: 'List', icon: '☷' },
 ];
-type ProjectsTab = ProjectViewType | 'activity' | 'projects';
+type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes';
 const tab = ref<ProjectsTab>('board');
 const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
@@ -1329,6 +1337,7 @@ const TABLE_RENDER_LIMIT = 500;
 const PROJECTION_RENDER_LIMIT = 500;
 const isDataView = computed(() => PROJECT_VIEWS.some(view => view.key === tab.value));
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
+const laneSettings = ref<InstanceType<typeof LaneSettings> | null>(null);
 
 const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[selectedId.value] ?? []) : []);
 const COMPATIBILITY_LANE_KEYS = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
@@ -1667,6 +1676,19 @@ async function dropOnDate(date: string): Promise<void> {
   const task = allTasks.value.find(row => row.task.id === calendarDragId.value)?.task;
   calendarDragId.value = '';
   if (task) await inlineTaskField(task, task.milestone_at ? 'milestone_at' : 'due_at', isoFromYmd(date));
+}
+
+function openLaneEditor(laneKey: string): void {
+  const lane = selectedLanes.value.find(item => item.lane_key === laneKey);
+  if (!lane) return;
+  tab.value = 'lanes';
+  laneSettings.value?.openEdit(lane);
+}
+
+function openLaneAssignment(laneKey: string): void {
+  const lane = selectedLanes.value.find(item => item.lane_key === laneKey);
+  if (!lane) return;
+  laneSettings.value?.openAssignment(lane);
 }
 
 // ══════════ DRAG TO REORDER ══════════
@@ -2222,6 +2244,8 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-card[draggable="true"] { cursor: grab; }
 .ph-card[draggable="true"]:active { cursor: grabbing; }
 .ph-colh { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 12px; font-weight: 600; color: var(--ptext2); }
+.ph-lane-action { border: 0; background: transparent; color: var(--ptext3); font: 9px var(--pmono); cursor: pointer; padding: 2px; text-transform: uppercase; }
+.ph-lane-action:hover, .ph-lane-action:focus-visible { color: var(--pacc); outline: none; }
 .ph-cd { width: 7px; height: 7px; border-radius: 50%; }
 .ph-n { font-family: var(--pmono); font-size: 11px; color: var(--ptext3); }
 .ph-card { background: var(--psurface); border: 1px solid var(--pborder-soft); border-radius: 10px; padding: 12px 13px; margin-bottom: 9px; cursor: pointer; }
