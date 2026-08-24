@@ -17,6 +17,7 @@ import {
   type ReviewDisposition,
   type VerificationVerdict,
 } from '../database/models/WorkTaskDispatchModel';
+import { resolveWipLimits, evaluateClaim, type WipLimits, type RoleCounts, type BackpressureDecision } from './ProjectAutomationWipLimits';
 import { WorkflowModel } from '../database/models/WorkflowModel';
 import {
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
@@ -77,6 +78,12 @@ export class TaskDispatcherService {
   private schedulerId: ReturnType<typeof setInterval> | null = null;
   private recoveredOnStart = false;
   private active = new Map<string, AbortService>();
+  private lastBackpressure: {
+    limits:   WipLimits;
+    counts:   RoleCounts;
+    decision: BackpressureDecision;
+    at:       string;
+  } | null = null;
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -93,6 +100,20 @@ export class TaskDispatcherService {
 
   async forceCheck(): Promise<void> {
     await this.checkAndDispatch();
+  }
+
+  /**
+   * Current WIP limits, per-role counts, and the most recent backpressure
+   * decision, so the Projects UI can explain why upstream work is held
+   * (issue #711 AC6). Null until the first dispatch tick evaluates capacity.
+   */
+  getBackpressureStatus(): {
+    limits:   WipLimits;
+    counts:   RoleCounts;
+    decision: BackpressureDecision;
+    at:       string;
+  } | null {
+    return this.lastBackpressure;
   }
 
   destroy(): void {
@@ -135,6 +156,28 @@ export class TaskDispatcherService {
 
       await this.checkInProgressRecovery();
       await this.fillVerificationPool();
+      // Issue #711: semantic stage-aware WIP limits + downstream-first backpressure.
+      // Additive over the #709 review-drain guard below: this only ever holds MORE
+      // work, never less, and never interrupts already-running work. Re-evaluated
+      // every tick, so queued work resumes automatically as capacity releases.
+      try {
+        const wipLimits = await resolveWipLimits();
+        const roleCounts = await WorkTaskDispatchModel.countByRole();
+        const wipDecision = evaluateClaim('execution', roleCounts, wipLimits);
+        this.lastBackpressure = {
+          limits:   wipLimits,
+          counts:   roleCounts,
+          decision: wipDecision,
+          at:       new Date().toISOString(),
+        };
+        if (!wipDecision.allowed) {
+          console.log(`[TaskDispatcher] Holding fresh execution work: ${ wipDecision.reason }`);
+          return;
+        }
+      } catch (wipErr) {
+        // WIP gating is best-effort backpressure; never let it wedge the tick.
+        console.warn('[TaskDispatcher] WIP limit evaluation failed, continuing:', wipErr);
+      }
       const reviewBacklog = await WorkTaskDispatchModel.countReviewBacklog();
       if (reviewBacklog > 0) {
         console.log(`[TaskDispatcher] Holding fresh todo work until ${ reviewBacklog } downstream review item(s) drain`);

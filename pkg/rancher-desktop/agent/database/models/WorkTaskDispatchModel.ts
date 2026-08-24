@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { postgresClient } from '../PostgresClient';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
+import { WorkLaneDefinitionModel, resolveRoleForStatus, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
@@ -454,6 +455,50 @@ export class WorkTaskDispatchModel {
          )
     `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
     return Number(row?.count || 0);
+  }
+
+  /**
+   * Count autonomous, non-terminal work in each semantic lane role across the
+   * whole portfolio, honouring custom project lanes via their resolved
+   * semantic_role (issue #711). Queued and active work both count. Closed epics
+   * and non-autonomous or human-gated tasks are excluded, matching the
+   * eligibility surface of countReviewBacklog and the claim paths.
+   */
+  static async countByRole(): Promise<Partial<Record<WorkLaneSemanticRole, number>>> {
+    const rows = await postgresClient.query<{ project_id: string; status: string; count: string }>(`
+      SELECT e.project_id AS project_id, t.status AS status, COUNT(*)::text AS count
+        FROM work_tasks t
+        JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = e.project_id
+       WHERE t.archived = false
+         AND e.archived = false
+         AND p.archived = false
+         AND NOT (p.status = ANY($1::text[]))
+         AND NOT (e.status = ANY($1::text[]))
+         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+         AND NOT EXISTS (
+           SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
+            WHERE LOWER(label) = ANY($2::text[])
+         )
+       GROUP BY e.project_id, t.status
+    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
+
+    const laneCache = new Map<string, Array<{ lane_key: string; semantic_role?: WorkLaneSemanticRole | null }>>();
+    const totals: Partial<Record<WorkLaneSemanticRole, number>> = {};
+    for (const row of rows) {
+      let lanes = laneCache.get(row.project_id);
+      if (!lanes) {
+        try {
+          lanes = await WorkLaneDefinitionModel.resolveEffective(row.project_id);
+        } catch {
+          lanes = [];
+        }
+        laneCache.set(row.project_id, lanes);
+      }
+      const role = resolveRoleForStatus(row.status, lanes);
+      totals[role] = (totals[role] ?? 0) + Number(row.count || 0);
+    }
+    return totals;
   }
 
   /**

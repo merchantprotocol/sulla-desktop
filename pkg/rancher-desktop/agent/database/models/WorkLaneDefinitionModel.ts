@@ -517,3 +517,29 @@ export class WorkLaneDefinitionModel {
     if (!result.rows[0]) throw new Error(`Destination lane is not active in this scope: ${ key }`);
   }
 }
+
+/**
+ * Map a task status (its lane key) to a semantic role, honouring custom project
+ * lanes via their resolved semantic_role and falling back to the built-in
+ * status->role mapping. Pure, so it is exhaustively unit-testable (issue #711).
+ */
+export const DEFAULT_STATUS_SEMANTIC_ROLE: Record<string, WorkLaneSemanticRole> = {
+  backlog:     'backlog',
+  todo:        'execution',
+  planning:    'planning',
+  in_progress: 'execution',
+  in_review:   'review',
+  blocked:     'blocked',
+  done:        'terminal',
+  cancelled:   'terminal',
+  parked:      'manual',
+};
+
+export function resolveRoleForStatus(
+  status: string,
+  effectiveLanes: ReadonlyArray<{ lane_key: string; semantic_role?: WorkLaneSemanticRole | null }> = [],
+): WorkLaneSemanticRole {
+  const match = effectiveLanes.find(lane => lane.lane_key === status);
+  if (match?.semantic_role) return match.semantic_role;
+  return DEFAULT_STATUS_SEMANTIC_ROLE[status] ?? 'execution';
+}
