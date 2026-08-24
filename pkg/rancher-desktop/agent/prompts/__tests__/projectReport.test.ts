@@ -5,18 +5,32 @@ const listProjectsMock: any = jest.fn();
 const listEpicsMock: any = jest.fn();
 const listTasksMock: any = jest.fn();
 const filterHeartbeatEligibleMock: any = jest.fn((tasks: any[]) => Promise.resolve(tasks));
+const activeTaskIdsMock: any = jest.fn();
+const listWaitsMock: any = jest.fn();
+const settingsGetMock: any = jest.fn();
 
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
   WorkItemsModel: {
     ensureTables: ensureTablesMock,
     listProjects: listProjectsMock,
-    listEpics: listEpicsMock,
-    listTasks: listTasksMock,
+    listEpics:    listEpicsMock,
+    listTasks:    listTasksMock,
   },
 }));
 
 jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({
   LifecycleCapabilityModel: { filterHeartbeatEligible: filterHeartbeatEligibleMock },
+}));
+
+jest.unstable_mockModule('../../database/models/WorkTaskWaitModel', () => ({
+  WorkTaskWaitModel: {
+    activeTaskIds: activeTaskIdsMock,
+    list:          listWaitsMock,
+  },
+}));
+
+jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
+  SullaSettingsModel: { get: settingsGetMock },
 }));
 
 describe('buildProjectReport activity rotation queues', () => {
@@ -33,6 +47,9 @@ describe('buildProjectReport activity rotation queues', () => {
         { id: 'action-new', project_id: 'project-1', epic_id: 'epic-1', title: 'Action newer', status: 'in_progress', priority: 'critical', assignee: 'heartbeat' },
       ]);
     filterHeartbeatEligibleMock.mockImplementation((tasks: any[]) => Promise.resolve(tasks));
+    activeTaskIdsMock.mockReset().mockResolvedValue(new Set());
+    listWaitsMock.mockReset().mockResolvedValue([]);
+    settingsGetMock.mockReset().mockResolvedValue(false);
   });
 
   it('separates actionable, blocked recovery, and planning-in-flight work', async() => {
@@ -46,6 +63,8 @@ describe('buildProjectReport activity rotation queues', () => {
     expect(report).toContain('choose the strongest reversible path');
     expect(report).toContain('portfolio dispatch queue, not a one-task limit');
     expect(report).toContain('as many independent tasks as available sub-agent capacity allows');
+    expect(report).toContain('## ⏳ Monitor-owned external waits (0)');
+    expect(report).toContain('Shadow mode');
 
     const actionableStart = report.indexOf('## ▶️ Actionable now');
     const blockedStart = report.indexOf('## 🧭 Blocked tasks');
@@ -67,5 +86,31 @@ describe('buildProjectReport activity rotation queues', () => {
     expect(report).not.toContain('Action oldest');
     expect(report).not.toContain('Blocked oldest');
     expect(filterHeartbeatEligibleMock).toHaveBeenCalled();
+  });
+
+  it('omits active monitor-owned waits from actionable work when suppression is enabled', async() => {
+    listTasksMock.mockReset()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: 'waiting', project_id: 'project-1', epic_id: 'epic-1', title: 'CI pending', status: 'in_review', priority: 'high' },
+        { id: 'ready', project_id: 'project-1', epic_id: 'epic-1', title: 'Ready work', status: 'todo', priority: 'high' },
+      ]);
+    activeTaskIdsMock.mockResolvedValue(new Set(['waiting']));
+    listWaitsMock.mockResolvedValue([{
+      id:                          'wait-1',
+      task_id:                     'waiting',
+      wait_kind:                   'github_checks',
+      target_key:                  'org/repo#1',
+      next_check_at:               new Date().toISOString(),
+      consecutive_unchanged_count: 9,
+    }]);
+    settingsGetMock.mockResolvedValue(true);
+
+    const { buildProjectReport } = await import('../projectReport');
+    const report = await buildProjectReport();
+    const actionable = report.slice(report.indexOf('## ▶️ Actionable now'), report.indexOf('## ⏳'));
+    expect(actionable).toContain('Ready work');
+    expect(actionable).not.toContain('CI pending');
+    expect(report).toContain('omitted from actionable work until a material delta');
   });
 });

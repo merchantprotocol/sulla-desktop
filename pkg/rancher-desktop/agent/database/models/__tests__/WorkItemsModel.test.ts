@@ -122,6 +122,74 @@ describe('WorkItemsModel', () => {
     expect(sql).not.toContain('last_moved_at = now()');
   });
 
+  it('normalizes direct Sulla todo ownership when inserting through the model boundary', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: params[0], status: params[7], assignee: params[11], labels: params[12],
+      }]));
+
+    const task = await WorkItemsModel.insertTask({
+      id:       'task-1',
+      epic_id:  'epic-1',
+      title:    'Executable',
+      status:   'todo',
+      assignee: 'sulla',
+      actor:    'sulla',
+      labels:   ['projects'],
+    });
+
+    expect(task.assignee).toBe('dispatcher');
+    expect((postgresClient.query as any).mock.calls[1][1][11]).toBe('dispatcher');
+  });
+
+  it('preserves gated and human ownership when inserting through the model boundary', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockResolvedValueOnce([{ id: 'gated', assignee: 'sulla' }])
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockResolvedValueOnce([{ id: 'human', assignee: 'human' }]);
+
+    await WorkItemsModel.insertTask({
+      id:       'gated',
+      epic_id:  'epic-1',
+      title:    'Needs approval',
+      status:   'todo',
+      assignee: 'sulla',
+      actor:    'sulla',
+      labels:   ['gated'],
+    });
+    await WorkItemsModel.insertTask({
+      id:       'human',
+      epic_id:  'epic-1',
+      title:    'Human task',
+      status:   'todo',
+      assignee: 'human',
+      actor:    'sulla',
+      labels:   [],
+    });
+
+    expect((postgresClient.query as any).mock.calls[1][1][11]).toBe('sulla');
+    expect((postgresClient.query as any).mock.calls[3][1][11]).toBe('human');
+  });
+
+  it('normalizes a legacy todo during an update using the resulting labels and status', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{
+        id: 'task-1', status: 'todo', priority: 'high', assignee: 'sulla', labels: [],
+      }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: 'task-1', assignee: params[1], title: params[0],
+      }]));
+
+    const task = await WorkItemsModel.updateTask('task-1', { title: 'Touched', actor: 'heartbeat' });
+    const sql = (postgresClient.query as any).mock.calls[1][0] as string;
+
+    expect(task?.assignee).toBe('dispatcher');
+    expect(sql).toContain('assignee = $2');
+    expect(sql).toContain('last_moved_by');
+  });
+
   it('inserts a comment and touches its task in one SQL statement', async() => {
     (postgresClient as any).query = (jest.fn() as any)
       .mockResolvedValueOnce([{ id: 'task-1', title: 'Rotate me' }])
