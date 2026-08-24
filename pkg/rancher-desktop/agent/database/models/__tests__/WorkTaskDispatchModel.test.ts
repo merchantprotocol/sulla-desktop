@@ -326,6 +326,26 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[2][0]).toContain("assignee = 'verifier'");
   });
 
+  it('reclaims only verification dispatches whose previous-runtime claims were recovered', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ id: 'verify-old', task_id: 'task-old' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.recoverOrphanedVerification(['task-old']))
+      .resolves.toEqual(['task-old']);
+    expect(query.mock.calls[0][0]).toContain("dispatch.kind = 'verification'");
+    expect(query.mock.calls[0][0]).toContain("claim.status = 'active'");
+    expect(query.mock.calls[0][1]).toEqual([['task-old']]);
+    expect(query.mock.calls[1][0]).toContain("assignee = 'verifier'");
+  });
+
+  it('leaves healthy review leases untouched when no recovered task ids exist', async() => {
+    const transaction = jest.spyOn(postgresClient, 'transaction');
+    await expect(WorkTaskDispatchModel.recoverOrphanedVerification([])).resolves.toEqual([]);
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it('settles the verifier verdict, exact head, comment, and task transition in one transaction', async() => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ task_id: 'task-2' }] })
@@ -365,7 +385,7 @@ describe('WorkTaskDispatchModel', () => {
 
     await expect(WorkTaskDispatchModel.failVerification('dispatch-2', 'boom')).resolves.toBe(true);
     expect(query.mock.calls[0][0]).toContain("status = 'failed'");
-    expect(query.mock.calls[3][1][2]).toContain('released for retry');
+    expect(query.mock.calls[3][1][2]).toContain('<!-- artifact-receipt');
     expect(query.mock.calls[4][1]).toEqual(['task-2', 'in_review', 'heartbeat']);
   });
 
@@ -381,7 +401,7 @@ describe('WorkTaskDispatchModel', () => {
 
     await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).resolves.toBe(true);
     expect(query.mock.calls[2][0]).toContain("'terminal:' || $2");
-    expect(query.mock.calls[4][1][2]).toContain('escalated to planning');
+    expect(query.mock.calls[4][1][2]).toContain('<!-- artifact-receipt');
     expect(query.mock.calls[5][1]).toEqual(['task-fail', 'planning', 'dispatcher']);
   });
 

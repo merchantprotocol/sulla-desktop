@@ -153,12 +153,25 @@ describe('LifecycleCapabilityModel', () => {
         fallback_mode:   'manual_hold',
         fallback_active: true,
       },
+      {
+        capability_key:  'in-review-verification',
+        version:         1,
+        enabled:         true,
+        health:          'healthy',
+        active_owner:    'dispatcher',
+        last_success_at: '2026-08-23T20:00:00.000Z',
+        exception_count: 0,
+        fallback_mode:   'manual_hold',
+        fallback_active: false,
+        details:         { backlog: 12, active: 3, reclaimed: 2, suppressedDuplicates: 4, failures: 1 },
+      },
     ]));
 
     const digest = await LifecycleCapabilityModel.buildDigest();
     expect(digest).toContain('planning-council@2=healthy owner:planning-council');
     expect(digest).toContain('todo-execution@1=disabled owner:hold');
     expect(digest).toContain('fallback:manual_hold*');
+    expect(digest).toContain('backlog:12 active:3 reclaimed:2 suppressed:4 failures:1');
   });
 
   it('hides healthy protected stages and preserves explicit Heartbeat fallbacks', async() => {
