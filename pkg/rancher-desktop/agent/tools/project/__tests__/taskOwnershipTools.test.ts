@@ -32,6 +32,29 @@ describe('Projects task tools ownership inputs', () => {
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ assignee: 'sulla', actor: 'sulla' }));
   });
 
+  it('leaves an omitted create_task status unresolved for the model boundary', async() => {
+    jest.spyOn(WorkItemsModel, 'ensureTables').mockResolvedValue();
+    const insert = jest.spyOn(WorkItemsModel, 'insertTask').mockResolvedValue({
+      id:       'task-custom',
+      epic_id:  'epic-1',
+      title:    'Use the semantic entry',
+      status:   'ready-custom',
+      priority: 'p2',
+      assignee: 'dispatcher',
+    } as any);
+
+    const result = await (new CreateTaskWorker() as any)._validatedCall({
+      epic_id:  'epic-1',
+      title:    'Use the semantic entry',
+      assignee: 'sulla',
+    });
+
+    expect(result.responseString).toContain('status: ready-custom');
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({
+      status: undefined, assignee: 'sulla', actor: 'sulla',
+    }));
+  });
+
   it('passes updated labels, ownership, and actor through update_task to the model boundary', async() => {
     jest.spyOn(WorkItemsModel, 'ensureTables').mockResolvedValue();
     const update = jest.spyOn(WorkItemsModel, 'updateTask').mockResolvedValue({

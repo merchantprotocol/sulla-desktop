@@ -215,7 +215,7 @@ export const projectToolManifests: ToolManifest[] = [
       title:        { type: 'string', description: 'Task title.' },
       parent_id:    { type: 'string', optional: true, description: 'Parent task id when this is a subtask.' },
       description:  { type: 'string', optional: true, description: 'Issue-style body — what done looks like.' },
-      status:       { type: 'string', optional: true, description: `Status: ${ TASK_STATUS_DESC } Default todo.` },
+      status:       { type: 'string', optional: true, description: `Status: ${ TASK_STATUS_DESC } Defaults to the project's first execution lane; todo is used only in compatibility mode.` },
       priority:     { type: 'string', optional: true, description: `Priority: ${ PRIORITY_DESC } Default medium.` },
       assignee:     { type: 'string', optional: true, description: 'Queue owner: dispatcher (autonomous execution), heartbeat (supervision/review), or human. Legacy sulla ownership on ordinary todos is normalized to dispatcher.' },
       due_at:       { type: 'string', optional: true, description: 'ISO due date.' },

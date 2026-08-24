@@ -843,7 +843,13 @@ export class WorkItemsModel {
     const epic = await WorkItemsModel.requireEpic(input.epic_id);
     const projectId = input.project_id || epic.project_id;
     const slug = input.slug ? input.slug.slice(0, 80) : null;
-    const status = input.status ?? 'todo';
+    const status = input.status ?? await WorkLaneDefinitionModel.preferredLaneKey(
+      projectId, 'execution', 'todo', 'first',
+    );
+    const lane = await WorkLaneDefinitionModel.validateTaskStatus(projectId, status);
+    const executionEntryLaneKey = lane?.semantic_role === 'execution'
+      ? await WorkLaneDefinitionModel.preferredLaneKey(projectId, 'execution', 'todo', 'first')
+      : null;
     const id = input.id || await WorkItemsModel.uniqueId(WorkItemsModel.TASKS);
     const actor = input.actor ?? 'sulla';
     const labels = input.labels ?? [];
