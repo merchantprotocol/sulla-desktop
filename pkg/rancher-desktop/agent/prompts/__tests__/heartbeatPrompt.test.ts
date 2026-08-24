@@ -80,13 +80,23 @@ describe('heartbeatPrompt', () => {
 
   it('delegates ordinary queue selection to the mechanical dispatcher and keeps heartbeat supervisory', () => {
     expect(heartbeatPrompt).toContain('## Mechanical Dispatch — Heartbeat Supervises, PostgreSQL Decides');
-    expect(heartbeatPrompt).toContain('TaskDispatcherService mechanically fills configured worker capacity');
+    expect(heartbeatPrompt).toContain('TaskDispatcherService mechanically fills configured execution capacity');
     expect(heartbeatPrompt).toContain('one live dispatch per task');
     expect(heartbeatPrompt).toContain('Heartbeat does not select or launch ordinary queue work');
     expect(heartbeatPrompt).toContain("do not self-assign unclaimed 'todo' tasks");
     expect(heartbeatPrompt).toContain('## Supervisor Loop — Verify, Recover, Decide');
-    expect(heartbeatPrompt).toContain("Review tasks returned to 'in_review'");
-    expect(heartbeatPrompt).toContain("return the task to 'todo' for a fresh mechanical run");
+    expect(heartbeatPrompt).toContain("'taskVerifierEnabled' is true");
+    expect(heartbeatPrompt).toContain('separately bounded independent verifier pool');
+    expect(heartbeatPrompt).toContain('exact-head APPROVE/REWORK/BLOCKED evidence');
+    expect(heartbeatPrompt).toContain('Never duplicate a live verification lease');
+  });
+
+  it('hands unchanged external waits to one durable monitor and keeps moving', () => {
+    expect(heartbeatPrompt).toContain('## External Waits — Register Once, Then Keep Moving');
+    expect(heartbeatPrompt).toContain("call 'register_task_wait'");
+    expect(heartbeatPrompt).toContain('Never append unchanged wait comments');
+    expect(heartbeatPrompt).toContain('never stop after registering a wait');
+    expect(heartbeatPrompt).toContain('Human gates are event-driven and must not poll GitHub');
   });
 
   it('keeps blocked recovery as the reasoning-only dispatch exception', () => {

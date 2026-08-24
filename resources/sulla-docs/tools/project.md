@@ -41,6 +41,20 @@ round-robin cursor inside each priority block.
 Defaults from `WorkItemsModel`: projects + epics `status='working'`
 `priority='p2'`; tasks `status='todo'` `priority='p2'`.
 
+## Task ownership contract
+
+Task authorship and queue ownership are separate. Use `dispatcher` for
+autonomous executable work, `heartbeat` for supervisory/review work, and
+`human` for explicit human ownership. A null assignee is unowned work that the
+dispatcher may claim unless a non-autonomous label excludes it. `sulla` is the
+legacy/direct-chat actor identity, not a durable queue owner; ordinary `todo`
+tasks written by Sulla, Heartbeat, or the dispatcher with `assignee='sulla'`
+are stored as `dispatcher`.
+
+Labels `gated`, `decision`, `human`, `manual`, and `no-auto-dispatch` always
+exclude a task from mechanical dispatch. Their ownership is never normalized,
+and an explicit `assignee='human'` is never rewritten.
+
 ## Tools (bare names — slash paths misroute)
 
 Reads:
@@ -51,6 +65,7 @@ Reads:
 | `sulla project/get_project_item` | One row + children + comments. |
 | `sulla project/search_project_items` | Title + description search. Use before creating. |
 | `sulla project/list_task_comments` | Comment thread on a task, oldest first. |
+| `sulla project/list_task_waits` | Durable external waits. Active unchanged waits are monitor-owned. |
 | `sulla project/project_report` | Standup: completed work plus separate actionable, blocked-recovery, and planning-in-flight queues. Within each priority block, least-recent activity comes first. Injected as `<project_report>` on first chat turn. |
 
 Writes — explicit create / update, **no upsert**:
@@ -64,6 +79,8 @@ Writes — explicit create / update, **no upsert**:
 | `sulla project/create_task` | Always inserts. `project_id` required; `epic_id` and `parent_id` optional. |
 | `sulla project/update_task` | In-place by id. |
 | `sulla project/add_task_comment` | Append a note. Default author `sulla`; desktop UI stamps `human`. |
+| `sulla project/register_task_wait` | Idempotently register one structured external wait; adds one initial comment. |
+| `sulla project/cancel_task_wait` | Cancel one obsolete active wait; terminal task states cancel automatically. |
 | `sulla project/archive_project_item` | Soft-archive. Cascades to children. |
 
 Lane definitions:
@@ -79,15 +96,26 @@ Lane definitions:
 | `sulla project/reorder_lanes` | Reorder one scope atomically. Reordering an inherited project lane creates an override. |
 | `sulla project/reset_lane_override` | Return a project override to global inheritance while retaining the old row as audit history. |
 
-Schema-only migrations `0044_create_work_items_tables` and
-`0069_create_work_lane_definitions`. No user data is embedded in either
-migration. A runtime seeder (`WorkItemsImportSeeder`) may import this
+Schema-only migrations `0044_create_work_items_tables`,
+`0065_create_work_task_waits`, and `0069_create_work_lane_definitions` contain
+no install-local user data. A runtime seeder (`WorkItemsImportSeeder`) may import this
 install's leftover `~/sulla/ledger/goals/*.md` on first boot by stable
 slug. `WorkLaneDefinitionSeeder` runs on every boot, reasserts missing built-in
 definitions, and adds every unknown task status as a visible manual lane using
 the exact existing status value. Neither seeder remaps task status.
 
 Optional GitHub mapping on tasks: `github_issue`. Not a live sync.
+
+## External waits
+
+`work_task_waits` is the durable owner for pending GitHub checks, human gates,
+scheduled times, and external jobs. Register a stable structured target once;
+the monitor fingerprints GitHub head SHA plus normalized check state and writes
+only material deltas. Active unchanged waits are summarized in `project_report`
+and, once `externalWaitCommentSuppressionEnabled` is enabled, omitted from the
+actionable queue. `externalWaitMonitorEnabled=false` restores the prior report
+behavior. Human comments/task mutations and terminal task states invalidate or
+cancel waits through database triggers, so human gates do not poll GitHub.
 
 ## Cycle contract
 

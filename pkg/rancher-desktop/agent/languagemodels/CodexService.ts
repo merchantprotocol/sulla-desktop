@@ -5,6 +5,7 @@ import * as path from 'path';
 
 import { BaseLanguageModel, type ChatMessage, type NormalizedResponse, type StreamCallbacks, FinishReason } from './BaseLanguageModel';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
+import { codexSandboxArgs } from './codexSandboxPolicy';
 import { redisClient } from '../database/RedisClient';
 import { ensureCodexAuthFile, codexAuthPath, codexHomeDir } from '../util/codexAuthFile';
 
@@ -28,6 +29,7 @@ interface CodexPrewarmRecord {
   mcpSession:      RegisteredSession | null;
   model:           string;
   existingSession: string | undefined;
+  readOnly:        boolean;
   createdAt:       number;
   closed:          boolean;
   busy:            boolean;
@@ -155,18 +157,20 @@ export class CodexService extends BaseLanguageModel {
    * process before the turn's prompt exists — runCodex and prewarm both
    * write the prompt to stdin themselves, at different times.
    */
-  private buildSpawnArgs(p: { existingSession?: string; mcpSession?: RegisteredSession | null }): string[] {
+  private buildSpawnArgs(p: {
+    existingSession?: string;
+    mcpSession?: RegisteredSession | null;
+    readOnly?: boolean;
+  }): string[] {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const codexArgs = ['codex', 'exec'];
     if (p.existingSession) {
       codexArgs.push('resume', shq(p.existingSession));
     }
-    codexArgs.push(
-      '--json',
-      '--dangerously-bypass-approvals-and-sandbox',
-      '--skip-git-repo-check',
-    );
+    codexArgs.push('--json');
+    codexArgs.push(...codexSandboxArgs(!!p.readOnly));
+    codexArgs.push('--skip-git-repo-check');
     if (p.mcpSession) {
       for (const override of buildCodexMcpOverrides(p.mcpSession)) {
         codexArgs.push('-c', shq(override));
@@ -229,7 +233,8 @@ export class CodexService extends BaseLanguageModel {
 
       const limactlPath = paths.limactl;
       const limaHome = paths.lima;
-      const args = this.buildSpawnArgs({ existingSession, mcpSession });
+      const readOnly = !!(state.metadata as any)?.verifierReadOnly;
+      const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly });
       const proc = childProcess.spawn(limactlPath, args, {
         env: { ...process.env, LIMA_HOME: limaHome, TERM: 'dumb' },
       });
@@ -239,6 +244,7 @@ export class CodexService extends BaseLanguageModel {
         mcpSession,
         model:     this.model || 'codex',
         existingSession,
+        readOnly,
         createdAt: Date.now(),
         closed:    false,
         busy:      false,
@@ -271,12 +277,17 @@ export class CodexService extends BaseLanguageModel {
    * was minted concurrently) must also evict the record, not just a model
    * mismatch.
    */
-  private claimPrewarm(convId: string, model: string, existingSession: string | undefined): CodexPrewarmRecord | null {
+  private claimPrewarm(
+    convId: string,
+    model: string,
+    existingSession: string | undefined,
+    readOnly: boolean,
+  ): CodexPrewarmRecord | null {
     const rec = this.prewarmed.get(convId);
     if (!rec) return null;
     this.prewarmed.delete(convId);
     if (rec.reapTimer) { clearTimeout(rec.reapTimer); rec.reapTimer = null; }
-    if (rec.closed || rec.model !== model || rec.existingSession !== existingSession) {
+    if (rec.closed || rec.model !== model || rec.existingSession !== existingSession || rec.readOnly !== readOnly) {
       this.killPrewarmRecord(rec);                       // dead, model, or session mismatch
       return null;
     }
@@ -652,14 +663,19 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
     // Speculative boot: adopt a process pre-warmed for this conversation
     // during the accumulator phase; otherwise spawn fresh below. Flag off →
     // adopted is always null and the legacy path runs byte-for-byte as
-    // before. --dangerously-bypass-approvals-and-sandbox: codex runs inside
-    // the Lima VM, which IS the sandbox — its own landlock layer is
-    // redundant here and approval prompts have no TTY to land on. The
+    // before. Normal actor runs use --dangerously-bypass-approvals-and-sandbox:
+    // codex runs inside the Lima VM, which IS the sandbox. Verifier runs are
+    // different: their graph state carries verifierReadOnly, so Codex uses its
+    // read-only sandbox and cannot mutate a checkout even through native shell.
+    // The
     // prompt is fed via stdin (`-` positional), NOT as an argv element — a
     // large transcript on the command line overflows limactl's SSH
     // multiplexing channel (same failure mode ClaudeCodeService hit).
     const speculative = await this.speculativeBootEnabled();
-    const adopted = speculative ? this.claimPrewarm(convId, this.model || 'codex', existingSession) : null;
+    const readOnly = !!(options.state?.metadata as any)?.verifierReadOnly;
+    const adopted = speculative
+      ? this.claimPrewarm(convId, this.model || 'codex', existingSession, readOnly)
+      : null;
 
     let mcpSession: RegisteredSession | null = adopted?.mcpSession ?? null;
     if (options.state) {
@@ -674,7 +690,7 @@ This is a hard rule, not a suggestion: catalog and docs first, improvise last.
         log.log(`[CodexService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
       }
     }
-    const args = this.buildSpawnArgs({ existingSession, mcpSession });
+    const args = this.buildSpawnArgs({ existingSession, mcpSession, readOnly });
 
     return await new Promise((resolve, reject) => {
       let mcpCleaned = false;

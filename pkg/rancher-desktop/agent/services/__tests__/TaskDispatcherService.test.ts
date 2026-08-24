@@ -2,14 +2,20 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const settingsGetMock: any = jest.fn();
 const recoverStaleMock: any = jest.fn(() => Promise.resolve([]));
+const findRecoverableInProgressMock: any = jest.fn(() => Promise.resolve([]));
+const recoverOrphanedInProgressMock: any = jest.fn(() => Promise.resolve([]));
 const countRunningMock: any = jest.fn(() => Promise.resolve(0));
 const claimNextMock: any = jest.fn(() => Promise.resolve(null));
+const claimNextReviewMock: any = jest.fn(() => Promise.resolve(null));
 const settleMock: any = jest.fn(() => Promise.resolve());
+const finalizeVerificationMock: any = jest.fn(() => Promise.resolve('APPROVE'));
+const failVerificationMock: any = jest.fn(() => Promise.resolve(true));
 const touchMock: any = jest.fn(() => Promise.resolve());
 const addCommentMock: any = jest.fn(() => Promise.resolve());
 const updateTaskMock: any = jest.fn(() => Promise.resolve());
 const executeMock: any = jest.fn();
 const graphDeleteMock: any = jest.fn();
+const resolvePullRequestHeadMock: any = jest.fn();
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: settingsGetMock },
@@ -17,14 +23,23 @@ jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
 jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
   WorkTaskDispatchModel: {
     recoverStale: recoverStaleMock,
+    findRecoverableInProgress: findRecoverableInProgressMock,
+    recoverOrphanedInProgress: recoverOrphanedInProgressMock,
     countRunning: countRunningMock,
     claimNext:    claimNextMock,
+    claimNextReview: claimNextReviewMock,
     settle:       settleMock,
+    finalizeVerification: finalizeVerificationMock,
+    failVerification: failVerificationMock,
     touch:        touchMock,
   },
 }));
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
-  WorkItemsModel: { addComment: addCommentMock, updateTask: updateTaskMock },
+  WorkItemsModel: {
+    addComment: addCommentMock,
+    updateTask: updateTaskMock,
+    listComments: jest.fn(() => Promise.resolve([{ author: 'worker', body: 'Draft PR #123 at head.' }])),
+  },
 }));
 jest.unstable_mockModule('../GraphRegistry', () => ({
   GraphRegistry: {
@@ -38,20 +53,45 @@ jest.unstable_mockModule('../GraphRegistry', () => ({
 jest.unstable_mockModule('../HeartbeatService', () => ({
   isInsideWindow: jest.fn(() => true),
 }));
+jest.unstable_mockModule('../GitHubPullRequestHeadService', () => ({
+  resolvePullRequestHead: resolvePullRequestHeadMock,
+}));
 jest.unstable_mockModule('../../utils/sullaPaths', () => ({
   findAgentDir: jest.fn(() => '/agents/opus-worker'),
+}));
+jest.unstable_mockModule('../../tools/registry', () => ({
+  toolRegistry: {
+    convertToolToLLM: jest.fn((name: string) => Promise.resolve({
+      type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } },
+    })),
+  },
 }));
 
 describe('TaskDispatcherService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     recoverStaleMock.mockResolvedValue([]);
+    findRecoverableInProgressMock.mockResolvedValue([]);
+    recoverOrphanedInProgressMock.mockResolvedValue([]);
     countRunningMock.mockResolvedValue(0);
     claimNextMock.mockResolvedValue(null);
+    claimNextReviewMock.mockResolvedValue(null);
+    resolvePullRequestHeadMock.mockResolvedValue({
+      owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 123, sha: 'a'.repeat(40),
+    });
     settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
       if (key === 'heartbeatEnabled') return Promise.resolve(true);
       return Promise.resolve(fallback);
     });
+  });
+
+  it('dark-gates verification by default', async() => {
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    service.destroy();
+
+    expect(claimNextReviewMock).not.toHaveBeenCalled();
   });
 
   it('recovers orphaned leases before filling worker capacity', async() => {
@@ -63,6 +103,38 @@ describe('TaskDispatcherService', () => {
 
     expect(recoverStaleMock).toHaveBeenCalledWith(0);
     expect(countRunningMock).toHaveBeenCalled();
+  });
+
+  it('reports in-progress candidates without mutating while rollout is disabled', async() => {
+    findRecoverableInProgressMock.mockResolvedValue([{ task: { id: 'task-1' }, exclusionReasons: [] }]);
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+
+    await service.initialize();
+    service.destroy();
+
+    expect(findRecoverableInProgressMock).toHaveBeenCalledWith(360, 100);
+    expect(recoverOrphanedInProgressMock).not.toHaveBeenCalled();
+  });
+
+  it('recovers before normal refill when explicitly enabled and honors the batch and retry caps', async() => {
+    const candidate = { task: { id: 'task-1', github_issue: null }, exclusionReasons: [] };
+    findRecoverableInProgressMock.mockResolvedValue([candidate]);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskDispatcherInProgressRecoveryEnabled') return Promise.resolve(true);
+      if (key === 'taskDispatcherRecoveryBatchSize') return Promise.resolve(2);
+      if (key === 'taskDispatcherRecoveryRetryCeiling') return Promise.resolve(4);
+      return Promise.resolve(fallback);
+    });
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+
+    await service.initialize();
+    service.destroy();
+
+    expect(recoverOrphanedInProgressMock).toHaveBeenCalledWith([candidate], 2, 4);
+    expect(recoverOrphanedInProgressMock.mock.invocationCallOrder[0])
+      .toBeLessThan(countRunningMock.mock.invocationCallOrder[0]);
   });
 
   it('claims mechanically, executes the assigned worker, and returns completed work for review', async() => {
@@ -102,5 +174,150 @@ describe('TaskDispatcherService', () => {
     expect(updateTaskMock).toHaveBeenCalledWith('task-1', {
       status: 'in_review', assignee: 'heartbeat', actor: 'dispatcher',
     });
+  });
+
+  it('starts three independent review leases in one pass and settles exact-head approvals', async() => {
+    const claims = [1, 2, 3].map(i => ({
+      task: {
+        id:           `task-${ i }`,
+        title:        `Review ${ i }`,
+        description:  'Acceptance criteria.',
+        project_id:   'project-1',
+        epic_id:      'epic-1',
+        priority:     'high',
+        github_issue: null,
+      },
+      dispatch: {
+        id:        `verify-${ i }`,
+        task_id:   `task-${ i }`,
+        agent_id:  'codex-test',
+        thread_id: `verify-thread-${ i }`,
+        kind:      'verification',
+        attempt:   1,
+      },
+    }));
+    claimNextReviewMock
+      .mockResolvedValueOnce(claims[0])
+      .mockResolvedValueOnce(claims[1])
+      .mockResolvedValueOnce(claims[2])
+      .mockResolvedValue(null);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled') return Promise.resolve(true);
+      return Promise.resolve(fallback);
+    });
+    executeMock.mockResolvedValue({
+      metadata: {
+        agent: { status: 'completed' },
+        finalSummary: `<VERIFIER_RESULT>{"verdict":"APPROVE","artifact_sha":"${ 'a'.repeat(40) }","summary":"All criteria and focused tests passed."}</VERIFIER_RESULT>`,
+      },
+      messages: [],
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    service.destroy();
+
+    expect(claimNextReviewMock).toHaveBeenCalledTimes(4);
+    expect(executeMock).toHaveBeenCalledTimes(3);
+    expect(finalizeVerificationMock).toHaveBeenCalledTimes(3);
+    expect(finalizeVerificationMock).toHaveBeenCalledWith(
+      'verify-1', 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'All criteria and focused tests passed.',
+    );
+    expect(resolvePullRequestHeadMock).toHaveBeenCalledTimes(3);
+    const verifierState = executeMock.mock.calls[0][0];
+    expect(verifierState.metadata.allowedToolNames).toContain('git_diff');
+    expect(verifierState.metadata.allowedToolNames).not.toContain('exec');
+    expect(verifierState.metadata.allowedToolNames).not.toContain('git_commit');
+    expect(verifierState.metadata.allowedToolNames).not.toContain('git_push');
+    expect(verifierState.metadata.allowedToolNames).not.toContain('github_merge_pr');
+    expect(verifierState.metadata.verifierReadOnly).toBe(true);
+    expect(verifierState.messages[0].content).toContain('Re-check the remote head immediately before your verdict');
+    expect(verifierState.messages[0].content).toContain('matching local worktree');
+  });
+
+  it('invalidates approval when the live PR head changed after review', async() => {
+    claimNextReviewMock
+      .mockResolvedValueOnce({
+        task: {
+          id:           'task-5',
+          title:        'Review',
+          description:  '',
+          project_id:   'p',
+          epic_id:      'e',
+          priority:     'p0',
+          github_issue: 'merchantprotocol/sulla-desktop#660',
+        },
+        dispatch: {
+          id:        'verify-5',
+          task_id:   'task-5',
+          agent_id:  'codex-test',
+          thread_id: 'v5',
+          kind:      'verification',
+          attempt:   1,
+        },
+      })
+      .mockResolvedValue(null);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled') return Promise.resolve(true);
+      return Promise.resolve(fallback);
+    });
+    resolvePullRequestHeadMock.mockResolvedValue({
+      owner: 'merchantprotocol', repo: 'sulla-desktop', pullNumber: 665, sha: 'c'.repeat(40),
+    });
+    executeMock.mockResolvedValue({
+      metadata: {
+        agent: { status: 'completed' },
+        finalSummary: `<VERIFIER_RESULT>{"verdict":"APPROVE","artifact_sha":"${ 'b'.repeat(40) }","summary":"Reviewed old head."}</VERIFIER_RESULT>`,
+      },
+      messages: [],
+    });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    service.destroy();
+
+    expect(failVerificationMock).toHaveBeenCalledWith(
+      'verify-5', `artifact_head_changed:${ 'b'.repeat(40) }:${ 'c'.repeat(40) }`,
+    );
+    expect(finalizeVerificationMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['APPROVE', 'REWORK', 'BLOCKED'] as const)('strictly parses %s with a full exact head', async(verdict) => {
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService() as any;
+    expect(service.parseVerification(
+      `<VERIFIER_RESULT>{"verdict":"${ verdict }","artifact_sha":"${ 'b'.repeat(40) }","summary":"Evidence."}</VERIFIER_RESULT>`,
+    )).toEqual({ verdict, artifactSha: 'b'.repeat(40), summary: 'Evidence.' });
+    expect(service.parseVerification(
+      `<VERIFIER_RESULT>{"verdict":"${ verdict }","artifact_sha":"deadbeef","summary":"Evidence."}</VERIFIER_RESULT>`,
+    )).toBeNull();
+  });
+
+  it('rejects malformed verifier output without changing the task to blocked', async() => {
+    claimNextReviewMock
+      .mockResolvedValueOnce({
+        task: { id: 'task-4', title: 'Review', description: '', project_id: 'p', epic_id: 'e', priority: 'p0' },
+        dispatch: { id: 'verify-4', task_id: 'task-4', agent_id: 'codex-test', thread_id: 'v4', kind: 'verification', attempt: 1 },
+      })
+      .mockResolvedValue(null);
+    settingsGetMock.mockImplementation((key: string, fallback: unknown) => {
+      if (key === 'heartbeatEnabled' || key === 'taskVerifierEnabled') return Promise.resolve(true);
+      return Promise.resolve(fallback);
+    });
+    executeMock.mockResolvedValue({ metadata: { agent: { status: 'completed' }, finalSummary: 'APPROVE maybe' }, messages: [] });
+
+    const { TaskDispatcherService } = await import('../TaskDispatcherService');
+    const service = new TaskDispatcherService();
+    await service.initialize();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    service.destroy();
+
+    expect(failVerificationMock).toHaveBeenCalledWith('verify-4', 'malformed_verifier_output');
+    expect(finalizeVerificationMock).not.toHaveBeenCalled();
+    expect(updateTaskMock).not.toHaveBeenCalledWith('task-4', expect.objectContaining({ status: 'blocked' }));
   });
 });
