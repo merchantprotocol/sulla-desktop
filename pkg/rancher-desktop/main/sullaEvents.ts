@@ -7,7 +7,6 @@ import * as os from 'os';
 import * as path from 'path';
 
 import { initTabsIpc } from './browserTabs/tabsIpc';
-import { initAgentsIpc } from './agentsIpc';
 import { initClaudeCodeTestEvents } from './claudeCodeTest';
 import { initClaudeOAuthEvents } from './claudeOAuth';
 import { initOpenAIOAuthEvents } from './openaiOAuth';
@@ -70,7 +69,6 @@ function assertInsideUserHome(targetPath: string): string {
 export function initSullaEvents(): void {
   initMessageBusIpc();
   initTabsIpc();
-  initAgentsIpc();
   initConversationHistoryIpc();
   initChatMessagesIpc();
   initClaudeOAuthEvents();

@@ -403,7 +403,6 @@ export interface IpcMainInvokeEvents {
   'git-show-head':                 (dirPath: string, file: string) => string;
   'git-show-staged':               (dirPath: string, file: string) => string;
   'agents-list':                   () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
-  'agents:list':                   () => import('@pkg/main/agentsIpc').AgentsListResponse;
   'agents-get-prompt-templates':   () => { soul: string; environment: string };
   'agents-delete':                 (agentId: string) => boolean;
   'agents-get-template-variables': () => { key: string; label: string; preview: string }[];
