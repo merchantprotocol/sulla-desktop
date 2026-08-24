@@ -21,6 +21,7 @@ import { ObservationsModel } from '../database/models/ObservationsModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { parseJson } from '../services/JsonParseService';
+import { sanitizeConversationContext } from '../utils/conversationContext';
 import { formatDateOnly } from '../utils/formatDateOnly';
 
 import Logging from '@pkg/utils/logging';
@@ -821,7 +822,7 @@ export async function runConversationReader(state: BaseThreadState): Promise<str
 
     const elapsed = Date.now() - startTime;
     const agentMeta = (subState.metadata as any).agent || {};
-    const response = typeof agentMeta.response === 'string' ? agentMeta.response.trim() : '';
+    const response = sanitizeConversationContext(agentMeta.response);
 
     if (!response) {
       perf.log(`[ConversationReader] threadId=${ threadId } chars=0 ms=${ elapsed }`);
