@@ -1,7 +1,8 @@
-import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
+import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
 import { classifyInProgressRow, WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
 describe('WorkTaskDispatchModel', () => {
@@ -11,6 +12,14 @@ describe('WorkTaskDispatchModel', () => {
   beforeAll(() => {
     originalTransaction = postgresClient.transaction;
     originalQuery = postgresClient.query;
+  });
+
+  beforeEach(() => {
+    jest.spyOn(ArtifactReceiptModel, 'insertIfAbsentWithClient').mockResolvedValue({
+      inserted: true,
+      row: { id: 'receipt-1' } as any,
+    });
+    jest.spyOn(ArtifactReceiptModel, 'attachCommentWithClient').mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -330,6 +339,7 @@ describe('WorkTaskDispatchModel', () => {
     )).resolves.toBe('APPROVE');
     expect(query.mock.calls[1][0]).toContain('artifact_sha = $3');
     expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
+    expect(query.mock.calls[2][1][2]).toContain('<!-- artifact-receipt');
     expect(query.mock.calls[3][0]).toContain("completed_at = CASE WHEN $2 = 'done'");
     expect(query.mock.calls[3][1]).toEqual(['task-2', 'done', null]);
   });
@@ -580,6 +590,7 @@ describe('WorkTaskDispatchModel', () => {
 
     expect(query.mock.calls[2][0]).toContain('reviewer_agent_ids = $12::text[]');
     expect(query.mock.calls[3][1][2]).toContain('REPLAN');
+    expect(query.mock.calls[3][1][2]).toContain('<!-- artifact-receipt');
     expect(query.mock.calls[4][1]).toEqual(['task-3', 'planning', 'dispatcher']);
   });
 
@@ -629,6 +640,7 @@ describe('WorkTaskDispatchModel', () => {
 
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_waits');
     expect(query.mock.calls[3][1][2]).toBe('github_checks');
+    expect(query.mock.calls[5][1][2]).toContain('<!-- artifact-receipt');
     expect(query.mock.calls[6][1]).toEqual(['task-4', 'blocked', 'heartbeat']);
   });
 

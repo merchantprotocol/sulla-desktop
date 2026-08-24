@@ -11,18 +11,15 @@ import {
   type ArtifactReceiptInput,
 } from '../ArtifactReceiptService';
 import { ArtifactReceiptModel } from '../../database/models/ArtifactReceiptModel';
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { postgresClient } from '../../database/PostgresClient';
 
 jest.mock('../../database/models/ArtifactReceiptModel', () => ({
-  ArtifactReceiptModel: { insertIfAbsent: jest.fn(), attachComment: jest.fn() },
-}));
-jest.mock('../../database/models/WorkItemsModel', () => ({
-  WorkItemsModel: { addComment: jest.fn() },
+  ArtifactReceiptModel: { insertIfAbsentWithClient: jest.fn(), attachCommentWithClient: jest.fn() },
 }));
 
-const insertIfAbsent = ArtifactReceiptModel.insertIfAbsent as jest.Mock;
-const attachComment = ArtifactReceiptModel.attachComment as jest.Mock;
-const addComment = WorkItemsModel.addComment as jest.Mock;
+const insertIfAbsent = ArtifactReceiptModel.insertIfAbsentWithClient as jest.Mock;
+const attachComment = ArtifactReceiptModel.attachCommentWithClient as jest.Mock;
+const query = jest.fn();
 
 function baseInput(): ArtifactReceiptInput {
   return {
@@ -40,7 +37,12 @@ function baseInput(): ArtifactReceiptInput {
   };
 }
 
-beforeEach(() => { jest.clearAllMocks(); });
+beforeEach(() => {
+  jest.clearAllMocks();
+  jest.spyOn(postgresClient, 'transaction').mockImplementation((callback: any) => callback({ query }));
+  query.mockResolvedValue({ rows: [] });
+});
+afterEach(() => jest.restoreAllMocks());
 
 describe('fingerprint (dedupe + restart determinism)', () => {
   it('is stable across repeated builds of the same event', () => {
@@ -100,24 +102,30 @@ describe('isLegacyComment', () => {
 describe('recordReceipt (linkage + dedupe)', () => {
   it('posts exactly one concise comment linked to full evidence on first sight', async () => {
     insertIfAbsent.mockResolvedValue({ inserted: true, row: { id: 'r1', comment_id: null } });
-    addComment.mockResolvedValue({ id: 'c1' });
     const res = await recordReceipt(baseInput());
     expect(res.deduped).toBe(false);
-    expect(res.commentId).toBe('c1');
-    expect(addComment).toHaveBeenCalledTimes(1);
-    const body = addComment.mock.calls[0][0].body as string;
+    expect(res.commentId).toMatch(/^artifact-receipt-comment-/);
+    expect(query).toHaveBeenCalledTimes(1);
+    const body = query.mock.calls[0][1][2] as string;
     expect(body).toContain('https://example/dispatch');
     expect(body).toContain(RECEIPT_MARKER_PREFIX);
-    expect(insertIfAbsent.mock.calls[0][0].contentHashes).toContain('abc1234');
+    expect(insertIfAbsent.mock.calls[0][1].contentHashes).toContain('abc1234');
     expect(attachComment).toHaveBeenCalledTimes(1);
-    expect(attachComment.mock.calls[0][1]).toBe('c1');
+    expect(attachComment.mock.calls[0][2]).toBe(res.commentId);
   });
   it('does not add a second comment when the same event replays', async () => {
     insertIfAbsent.mockResolvedValue({ inserted: false, row: { id: 'r1', comment_id: 'c1' } });
     const res = await recordReceipt(baseInput());
     expect(res.deduped).toBe(true);
     expect(res.commentId).toBe('c1');
-    expect(addComment).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
     expect(attachComment).not.toHaveBeenCalled();
+  });
+  it('keeps receipt insertion and comment creation in one rollback boundary', async () => {
+    insertIfAbsent.mockResolvedValue({ inserted: true, row: { id: 'r1', comment_id: null } });
+    query.mockRejectedValueOnce(new Error('comment insert failed'));
+    await expect(recordReceipt(baseInput())).rejects.toThrow('comment insert failed');
+    expect(attachComment).not.toHaveBeenCalled();
+    expect(postgresClient.transaction).toHaveBeenCalledTimes(1);
   });
 });

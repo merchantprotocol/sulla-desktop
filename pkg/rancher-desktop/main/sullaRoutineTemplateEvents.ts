@@ -674,6 +674,8 @@ export interface RoutineExecutionOptions {
   onSettled?:          (result: { executionId: string; status: 'completed' | 'failed'; error?: string }) => void | Promise<void>;
   /** Internal only: concurrency is guarded by a task-scoped durable ledger. */
   allowConcurrent?:   boolean;
+  /** Protected automation class used by the global mechanical-work limiter. */
+  routineKind?: 'planning' | 'execution' | 'review' | 'repair' | 'dreaming' | 'other';
 }
 
 export async function executeRoutine(
@@ -685,6 +687,14 @@ export async function executeRoutine(
     throw new Error('executeRoutine: workflowId is required');
   }
 
+  const { RoutineConcurrencyPolicy } = await import('@pkg/agent/services/RoutineConcurrencyPolicy');
+  const { WorkflowModel } = await import('@pkg/agent/database/models/WorkflowModel');
+  const workflow = await WorkflowModel.findById(workflowId);
+  const protectedKind = options?.routineKind
+    ?? (workflow?.attributes.system
+      ? (workflowId === 'core-routine-dream-about-human' ? 'dreaming' : 'other')
+      : null);
+  let routineSlotId: string | null = null;
   const graphExecutionId = options?.executionId ?? `routine-exec-${ Date.now().toString(36) }-${ Math.random().toString(36).slice(2, 8) }`;
   const WS_CHANNEL = 'sulla-desktop';
 
@@ -704,7 +714,21 @@ export async function executeRoutine(
   // LLMs misread that as an imperative and trigger recursive workflow calls.
   const message = (triggerPayload ?? '').trim();
 
-  const activation = await activateWorkflowOnState(state as any, {
+  if (protectedKind && await RoutineConcurrencyPolicy.isEnabled()) {
+    await RoutineConcurrencyPolicy.reclaimStale();
+    const limit = await RoutineConcurrencyPolicy.resolveLimit(protectedKind);
+    routineSlotId = await RoutineConcurrencyPolicy.acquire(protectedKind, limit, {
+      owner:  options?.executionId ?? workflowId,
+      taskId: options?.executionScope?.taskId,
+    });
+    if (!routineSlotId) {
+      throw new Error(`Routine concurrency limit reached for ${ protectedKind } work.`);
+    }
+  }
+
+  let activation;
+  try {
+    activation = await activateWorkflowOnState(state as any, {
     workflowId,
     message,
     startNodeId:       options?.startNodeId,
@@ -714,9 +738,14 @@ export async function executeRoutine(
     executionScope:    options?.executionScope,
     executionId:       options?.executionId,
     allowConcurrent:   options?.allowConcurrent,
-  });
+    });
+  } catch (error) {
+    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
+    throw error;
+  }
 
   if (!activation.ok) {
+    if (routineSlotId) await RoutineConcurrencyPolicy.release(routineSlotId);
     throw new Error(activation.responseString);
   }
 
@@ -725,10 +754,23 @@ export async function executeRoutine(
 
   await options?.onStarted?.(executionId);
 
+  const slotHeartbeat = routineSlotId
+    ? setInterval(() => { if (routineSlotId) void RoutineConcurrencyPolicy.heartbeat(routineSlotId); }, 30_000)
+    : null;
+  const releaseRoutineSlot = async() => {
+    if (slotHeartbeat) clearInterval(slotHeartbeat);
+    if (routineSlotId) {
+      const id = routineSlotId;
+      routineSlotId = null;
+      await RoutineConcurrencyPolicy.release(id);
+    }
+  };
+
   graph.execute(state).then(async() => {
     const terminal = state.metadata.activeWorkflow;
     const status = terminal?.status === 'failed' ? 'failed' : 'completed';
     await options?.onSettled?.({ executionId, status, error: terminal?.error });
+    await releaseRoutineSlot();
   }).catch(async(err) => {
     console.error(`[Sulla] routine execution ${ executionId } failed:`, err);
     await options?.onSettled?.({
@@ -736,6 +778,7 @@ export async function executeRoutine(
       status: 'failed',
       error:  err instanceof Error ? err.message : String(err),
     });
+    await releaseRoutineSlot();
   });
 
   console.log(`[Sulla] Executing routine "${ workflowId }" as ${ executionId } on channel ${ WS_CHANNEL }`);

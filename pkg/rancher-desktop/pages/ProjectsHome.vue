@@ -194,6 +194,18 @@
               <b>Lane automation is in compatibility mode.</b>
               <p>{{ laneCapability.degradedReason }}</p>
             </div>
+            <div v-if="automationStatus" class="ph-automation-health" :class="{ held: !automationStatus.decision.allowed }">
+              <div>
+                <b>Conveyor capacity</b>
+                <span v-if="automationStatus.decision.reason"> · {{ automationStatus.decision.reason }}</span>
+                <span v-else> · upstream claims have capacity</span>
+              </div>
+              <div class="ph-automation-stages">
+                <span v-for="role in automationRoles" :key="role" class="ph-pill">
+                  {{ role }} {{ automationStatus.counts[role] || 0 }}/{{ automationStatus.limits[role] || '∞' }}
+                </span>
+              </div>
+            </div>
             <!-- TODAY -->
             <div
               v-show="tab === 'list'"
@@ -1121,6 +1133,15 @@
             <div class="ph-cmt-b">
               {{ c.body }}
             </div>
+            <button
+              v-if="isArtifactReceipt(c.body)"
+              type="button"
+              class="ph-btn ghost xs"
+              @click="toggleReceiptEvidence(c.id)"
+            >
+              {{ receiptEvidence[c.id] ? 'Hide full evidence' : 'Open full evidence' }}
+            </button>
+            <pre v-if="receiptEvidence[c.id]" class="ph-receipt-evidence">{{ receiptEvidence[c.id] }}</pre>
           </div>
           <div
             v-if="!taskComments.length"
@@ -1331,6 +1352,8 @@ import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
 import type { LinkedWorkItemRecord } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
 import KnowledgeBrowserPanel from '@pkg/components/KnowledgeBrowserPanel.vue';
 import KnowledgeLinksPanel from '@pkg/components/KnowledgeLinksPanel.vue';
+import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
@@ -1374,6 +1397,8 @@ const PROJECTION_RENDER_LIMIT = 500;
 const isDataView = computed(() => PROJECT_VIEWS.some(view => view.key === tab.value));
 let refreshTimer: ReturnType<typeof setInterval> | null = null;
 const laneSettings = ref<InstanceType<typeof LaneSettings> | null>(null);
+const automationRoles = ['terminal', 'review', 'blocked', 'execution', 'planning', 'backlog', 'manual'] as const;
+const automationStatus = ref<{ limits: WipLimits; counts: RoleCounts; decision: BackpressureDecision; at: string } | null>(null);
 
 const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[selectedId.value] ?? []) : []);
 const COMPATIBILITY_LANE_KEYS = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
@@ -1403,8 +1428,14 @@ onMounted(async() => {
   }
   await loadAvailableViews();
   await restoreProjectView();
+  automationStatus.value = await ipcRenderer.invoke('work-items:automation-status').catch(() => null);
   refreshTimer = setInterval(() => {
-    if (!document.hidden && !saving.value) load().catch(() => undefined);
+    if (!document.hidden && !saving.value) {
+      load().catch(() => undefined);
+      ipcRenderer.invoke('work-items:automation-status')
+        .then(status => { automationStatus.value = status; })
+        .catch(() => undefined);
+    }
   }, 15_000);
 });
 
@@ -1830,6 +1861,20 @@ const taskComments = ref<WorkCommentRecord[]>([]);
 const taskDependencies = ref<WorkTaskDependencyRecord[]>([]);
 const dependencyCandidate = ref('');
 const newComment = ref('');
+const receiptEvidence = reactive<Record<string, string>>({});
+
+function isArtifactReceipt(body: string): boolean {
+  return body.includes('<!-- artifact-receipt');
+}
+
+async function toggleReceiptEvidence(commentId: string): Promise<void> {
+  if (receiptEvidence[commentId]) {
+    delete receiptEvidence[commentId];
+    return;
+  }
+  const result = await ipcRenderer.invoke('work-items:artifact-evidence', commentId);
+  receiptEvidence[commentId] = JSON.stringify(result?.evidence ?? result?.receipt ?? { unavailable: true }, null, 2);
+}
 
 const taskDueYmd = computed<string>({
   get: () => ymd(taskDraft.due_at),
@@ -2307,6 +2352,9 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-ct { font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--ptext); }
 .ph-card.ghost .ph-ct { color: var(--ptext3); font-weight: 400; font-size: 12.5px; }
 .ph-cm { font-family: var(--pmono); font-size: 10.5px; color: var(--ptext3); margin-top: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
+.ph-automation-health { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--pacc-line); border-radius: 9px; background: var(--pacc-soft); color: var(--ptext2); font-size: 12px; }
+.ph-automation-health.held { border-color: color-mix(in srgb, var(--pamber) 55%, transparent); background: color-mix(in srgb, var(--pamber) 10%, transparent); }
+.ph-automation-stages { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
 /* shared data projections */
 .ph-data-view { min-width: 0; }
@@ -2419,6 +2467,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-cmt { border-left: 2px solid var(--pacc-line); padding: 4px 0 4px 10px; margin-bottom: 10px; }
 .ph-cmt-who { font-family: var(--pmono); font-size: 10px; color: var(--pacc); margin-bottom: 3px; }
 .ph-cmt-b { font-size: 12.5px; color: var(--ptext2); line-height: 1.5; white-space: pre-wrap; }
+.ph-receipt-evidence { max-height: 280px; overflow: auto; margin: 8px 0 0; padding: 9px; border: 1px solid var(--pborder); border-radius: 6px; background: var(--pbg); color: var(--ptext2); font: 10px/1.45 var(--pmono); white-space: pre-wrap; }
 .ph-cmt-add { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .ph-cmt-add .ph-btn { align-self: flex-end; }
 

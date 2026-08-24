@@ -5,6 +5,7 @@ import {
   type ClaimedPlanningRun,
 } from '../database/models/WorkTaskPlanningRunModel';
 import { WorkflowModel } from '../database/models/WorkflowModel';
+import { recordReceipt } from './ArtifactReceiptService';
 
 const MAX_DESCRIPTION_CHARS = 12_000;
 const MAX_CONTEXT_DESCRIPTION_CHARS = 4_000;
@@ -28,10 +29,15 @@ export class PlanningCouncilService {
         'completed',
       );
       if (settled) {
-        await WorkItemsModel.addComment({
-          task_id: task.id,
-          author:  'planning-council',
-          body:    `Planning council ${ settled.id } completed; task returned to ${ task.status }${ task.assignee ? `/${ task.assignee }` : '' }.`,
+        await recordReceipt({
+          taskId: task.id, eventType: 'planning', actor: 'planning-council',
+          workflowExecutionId: settled.execution_id ?? undefined,
+          disposition: 'completed', nextOwner: task.assignee ?? 'complete',
+          validationSummary: `Task returned to ${ task.status }.`,
+          artifacts: [{ type: 'planning_run', canonicalRef: settled.id }],
+          evidence: settled.execution_id
+            ? { kind: 'workflow_execution', ref: settled.execution_id }
+            : { kind: 'other', ref: settled.id },
         });
       }
       return;
@@ -42,10 +48,15 @@ export class PlanningCouncilService {
     if (previousStatus === 'planning' && task.status === 'blocked') {
       const settled = await WorkTaskPlanningRunModel.settleForTask(task.id, 'blocked');
       if (settled) {
-        await WorkItemsModel.addComment({
-          task_id: task.id,
-          author:  'planning-council',
-          body:    `Planning council ${ settled.id } preserved a genuine gate; task remains blocked.`,
+        await recordReceipt({
+          taskId: task.id, eventType: 'planning', actor: 'planning-council',
+          workflowExecutionId: settled.execution_id ?? undefined,
+          disposition: 'blocked', nextOwner: 'heartbeat',
+          validationSummary: 'Planning preserved a genuine gate.',
+          artifacts: [{ type: 'planning_run', canonicalRef: settled.id }],
+          evidence: settled.execution_id
+            ? { kind: 'workflow_execution', ref: settled.execution_id }
+            : { kind: 'other', ref: settled.id },
         });
       }
       return;
@@ -85,10 +96,12 @@ export class PlanningCouncilService {
       ? 'Planning routine completed without persisting a final plan and state transition.'
       : `Planning routine failed: ${ bounded(error || 'unknown error', 1_000) }`;
     await WorkTaskPlanningRunModel.settleForTask(task.id, 'failed', reason);
-    await WorkItemsModel.addComment({
-      task_id: task.id,
-      author:  'planning-council',
-      body:    `${ reason } The durable run is closed and the task is blocked for an auditable retry.`,
+    await recordReceipt({
+      taskId: task.id, eventType: 'planning', actor: 'planning-council',
+      workflowExecutionId: executionId,
+      disposition: outcome, nextOwner: 'heartbeat', validationSummary: reason,
+      artifacts: [{ type: 'planning_run', canonicalRef: run.id }],
+      evidence: { kind: 'workflow_execution', ref: executionId },
     });
     await WorkItemsModel.updateTask(task.id, {
       status:   'blocked',
@@ -131,7 +144,7 @@ export class PlanningCouncilService {
       const execution = await executeRoutine(
         PROJECT_TASK_PLANNING_WORKFLOW_ID,
         JSON.stringify(snapshot),
-        { allowConcurrent: true },
+        { allowConcurrent: true, routineKind: 'planning' },
       );
       await WorkTaskPlanningRunModel.attachExecution(claim.run.id, execution.playbookExecutionId ?? execution.executionId);
       await WorkItemsModel.addComment({

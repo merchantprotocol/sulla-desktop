@@ -4,7 +4,7 @@ import { isInsideWindow } from './HeartbeatService';
 import { getIntegrationService } from './IntegrationService';
 import { postgresClient } from '../database/PostgresClient';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
-import { WorkItemsModel } from '../database/models/WorkItemsModel';
+import { recordReceipt } from './ArtifactReceiptService';
 import {
   WorkTaskWaitModel,
   type WorkTaskWaitRecord,
@@ -141,10 +141,15 @@ export class ExternalWaitMonitorService {
       }
 
       this.metrics.deltasEmitted += 1;
-      await WorkItemsModel.addComment({
-        task_id: wait.task_id,
-        author:  'external-wait-monitor',
-        body:    `External wait ${ result.wait?.status ?? observation.outcome }: ${ observation.summary }`,
+      await recordReceipt({
+        taskId:             wait.task_id,
+        eventType:          'external_wait',
+        actor:              'external-wait-monitor',
+        disposition:        result.wait?.status ?? observation.outcome,
+        nextOwner:          observation.outcome === 'satisfied' ? 'dispatcher' : 'external-wait-monitor',
+        validationSummary:  observation.summary,
+        artifacts:          [{ type: wait.wait_kind, canonicalRef: wait.target_key, hash: observation.fingerprint }],
+        evidence:           { kind: 'wait', ref: wait.id },
       });
       console.log(`[ExternalWaitMonitor] Material delta for task ${ wait.task_id }: ${ observation.summary }`);
     } catch (err) {
@@ -157,10 +162,15 @@ export class ExternalWaitMonitorService {
       console.error(`[ExternalWaitMonitor] Check failed for ${ wait.id }; retry in ${ backoffMinutes }m:`, err);
       if (result.terminal) {
         this.metrics.deltasEmitted += 1;
-        await WorkItemsModel.addComment({
-          task_id: wait.task_id,
-          author:  'external-wait-monitor',
-          body:    `External wait monitor failed after ${ MAX_FAILURES } attempts: ${ message }. The task was reactivated for recovery; it was not marked blocked.`,
+        await recordReceipt({
+          taskId:            wait.task_id,
+          eventType:         'external_wait',
+          actor:             'external-wait-monitor',
+          disposition:       'monitor_failed',
+          nextOwner:         'dispatcher',
+          validationSummary: `Monitor failed after ${ MAX_FAILURES } attempts: ${ message }`,
+          artifacts:         [{ type: wait.wait_kind, canonicalRef: wait.target_key }],
+          evidence:          { kind: 'wait', ref: wait.id },
         });
       }
     }

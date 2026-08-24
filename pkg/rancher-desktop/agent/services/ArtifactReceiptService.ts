@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
-import { WorkItemsModel } from '../database/models/WorkItemsModel';
-import { ArtifactReceiptModel } from '../database/models/ArtifactReceiptModel';
+import { postgresClient } from '../database/PostgresClient';
+import { ArtifactReceiptModel, type InsertArtifactReceiptInput } from '../database/models/ArtifactReceiptModel';
 
 /**
  * Concise artifact receipts (#716).
@@ -26,7 +26,7 @@ export type ReceiptEventType =
   | 'execution' | 'review' | 'repair' | 'planning' | 'external_wait';
 
 export type ReceiptEvidenceKind =
-  | 'dispatch' | 'workflow_execution' | 'conversation' | 'custody' | 'other';
+  | 'dispatch' | 'workflow_execution' | 'conversation' | 'custody' | 'wait' | 'other';
 
 export interface ReceiptArtifact {
   type:          string;   // pull_request | issue | projects_task | document | ...
@@ -147,6 +147,27 @@ export function buildReceipt(input: ArtifactReceiptInput): ArtifactReceipt {
   };
 }
 
+export function receiptInsertInput(receipt: ArtifactReceipt, id = randomUUID()): InsertArtifactReceiptInput {
+  return {
+    id,
+    receiptVersion:      receipt.version,
+    taskId:              receipt.taskId,
+    eventType:           receipt.eventType,
+    actor:               receipt.actor,
+    workflowExecutionId: receipt.workflowExecutionId,
+    dispatchId:          receipt.dispatchId,
+    disposition:         receipt.disposition,
+    nextOwner:           receipt.nextOwner,
+    validationSummary:   receipt.validationSummary ? redactSecrets(receipt.validationSummary) : null,
+    artifacts:           receipt.artifacts,
+    contentHashes:       receipt.artifacts.map(a => a.hash).filter((h): h is string => Boolean(h)),
+    evidenceKind:        receipt.evidence?.kind ?? null,
+    evidenceRef:         receipt.evidence?.ref ?? null,
+    evidenceUrl:         receipt.evidence?.url ?? null,
+    fingerprint:         receipt.fingerprint,
+  };
+}
+
 function truncate(text: string, max: number): string {
   const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
   return clean.length <= max ? clean : `${ clean.slice(0, Math.max(0, max - 1)).trimEnd() }…`;
@@ -199,39 +220,20 @@ export function renderReceiptComment(receipt: ArtifactReceipt): string {
 export async function recordReceipt(input: ArtifactReceiptInput): Promise<RecordReceiptResult> {
   const receipt = buildReceipt(input);
   const receiptId = randomUUID();
-  const contentHashes = receipt.artifacts
-    .map(a => a.hash)
-    .filter((h): h is string => typeof h === 'string' && h.length > 0);
+  const insert = receiptInsertInput(receipt, receiptId);
 
-  const { inserted, row } = await ArtifactReceiptModel.insertIfAbsent({
-    id:                  receiptId,
-    receiptVersion:      receipt.version,
-    taskId:              receipt.taskId,
-    eventType:           receipt.eventType,
-    actor:               receipt.actor,
-    workflowExecutionId: receipt.workflowExecutionId,
-    dispatchId:          receipt.dispatchId,
-    disposition:         receipt.disposition,
-    nextOwner:           receipt.nextOwner,
-    validationSummary:   receipt.validationSummary ? redactSecrets(receipt.validationSummary) : null,
-    artifacts:           receipt.artifacts,
-    contentHashes,
-    evidenceKind:        receipt.evidence?.kind ?? null,
-    evidenceRef:         receipt.evidence?.ref ?? null,
-    evidenceUrl:         receipt.evidence?.url ?? null,
-    fingerprint:         receipt.fingerprint,
+  return postgresClient.transaction(async(client) => {
+    const { inserted, row } = await ArtifactReceiptModel.insertIfAbsentWithClient(client, insert);
+    if (!inserted) {
+      return { receipt, deduped: true, commentId: row?.comment_id ?? null, receiptId: row?.id ?? receiptId };
+    }
+
+    const commentId = `artifact-receipt-comment-${ randomUUID() }`;
+    await client.query(`
+      INSERT INTO work_task_comments (id, task_id, body, author)
+      VALUES ($1, $2, $3, $4)
+    `, [commentId, receipt.taskId, renderReceiptComment(receipt), receipt.actor ?? 'sulla']);
+    await ArtifactReceiptModel.attachCommentWithClient(client, receiptId, commentId);
+    return { receipt, deduped: false, commentId, receiptId };
   });
-
-  if (!inserted) {
-    return { receipt, deduped: true, commentId: row?.comment_id ?? null, receiptId: row?.id ?? receiptId };
-  }
-
-  const body = renderReceiptComment(receipt);
-  const comment = await WorkItemsModel.addComment({
-    task_id: receipt.taskId,
-    author:  receipt.actor ?? 'sulla',
-    body,
-  });
-  await ArtifactReceiptModel.attachComment(receiptId, comment.id);
-  return { receipt, deduped: false, commentId: comment.id, receiptId };
 }

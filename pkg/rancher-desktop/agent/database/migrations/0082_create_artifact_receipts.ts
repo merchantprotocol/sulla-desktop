@@ -8,8 +8,8 @@ CREATE TABLE IF NOT EXISTS work_artifact_receipts (
   task_id               TEXT        NOT NULL REFERENCES work_tasks (id) ON DELETE CASCADE,
   event_type            TEXT        NOT NULL,
   actor                 TEXT,
-  workflow_execution_id TEXT,
-  dispatch_id           TEXT,
+  workflow_execution_id TEXT REFERENCES workflow_executions (execution_id) ON DELETE SET NULL,
+  dispatch_id           TEXT REFERENCES work_task_dispatches (id) ON DELETE SET NULL,
   disposition           TEXT,
   next_owner            TEXT,
   validation_summary    TEXT,
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS work_artifact_receipts (
   evidence_ref          TEXT,
   evidence_url          TEXT,
   fingerprint           TEXT        NOT NULL,
-  comment_id            TEXT,
+  comment_id            TEXT REFERENCES work_task_comments (id) ON DELETE SET NULL,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_work_artifact_receipts_task_fingerprint
