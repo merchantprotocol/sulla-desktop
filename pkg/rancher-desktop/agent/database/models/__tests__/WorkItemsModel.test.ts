@@ -173,7 +173,25 @@ describe('WorkItemsModel', () => {
     expect((postgresClient.query as any).mock.calls[1][1][11]).toBe('dispatcher');
   });
 
-  it('normalizes a project-specific execution-entry lane when inserting through the model boundary', async() => {
+  it('falls back to todo ownership when omitted-status creation is capability-degraded', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
+        id: params[0], status: params[7], assignee: params[11], labels: params[12],
+      }]));
+
+    const task = await WorkItemsModel.insertTask({
+      id:       'task-degraded-default',
+      epic_id:  'epic-1',
+      title:    'Compatibility entry',
+      assignee: 'sulla',
+      actor:    'sulla',
+    });
+
+    expect(task).toMatchObject({ status: 'todo', assignee: 'dispatcher' });
+  });
+
+  it('defaults omitted-status creation to the project-specific execution-entry lane', async() => {
     jest.spyOn(WorkLaneDefinitionModel, 'validateTaskStatus').mockResolvedValue({
       lane_key: 'ready-custom', semantic_role: 'execution',
     } as any);
@@ -188,12 +206,11 @@ describe('WorkItemsModel', () => {
       id:       'task-custom-create',
       epic_id:  'epic-1',
       title:    'Custom execution entry',
-      status:   'ready-custom',
       assignee: 'sulla',
       actor:    'sulla',
     });
 
-    expect(task.assignee).toBe('dispatcher');
+    expect(task).toMatchObject({ status: 'ready-custom', assignee: 'dispatcher' });
     expect(WorkLaneDefinitionModel.preferredLaneKey).toHaveBeenCalledWith(
       'project-1', 'execution', 'todo', 'first',
     );

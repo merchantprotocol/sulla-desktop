@@ -96,5 +96,8 @@ describe('semantic lane runtime consumers', () => {
     expect(report).toContain('laneFor(task)?.semantic_role');
     expect(composable).toContain("t.lane?.semantic_role === 'terminal'");
     expect(projectsPage).toContain('function semanticRole(status: string)');
+    expect(projectsPage).toContain("lane.semantic_role === 'execution'");
+    expect(projectsPage).toContain("if (!laneCapability.value?.ready) return 'todo'");
+    expect(projectsPage).not.toContain("fillTaskDraft({ epic_id: epicId, status: 'todo'");
   });
 });

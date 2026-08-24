@@ -46,8 +46,25 @@ export const up = `
   CREATE OR REPLACE FUNCTION resolve_project_lane_key(
     p_project_id TEXT, p_role TEXT, p_compatibility_key TEXT, p_prefer_last BOOLEAN DEFAULT false
   ) RETURNS TEXT AS $$
-  DECLARE resolved_key TEXT;
+  DECLARE
+    resolved_key TEXT;
+    catalog_ready BOOLEAN;
   BEGIN
+    SELECT NOT EXISTS (
+      SELECT required.role
+        FROM unnest(ARRAY['backlog','planning','execution','review','blocked','terminal']::TEXT[]) required(role)
+       WHERE NOT EXISTS (
+         SELECT 1 FROM work_lane_definitions lane
+          WHERE lane.scope = 'global_default' AND lane.reset_at IS NULL
+            AND lane.archived = false AND lane.enabled = true
+            AND lane.semantic_role = required.role
+       )
+    ) INTO catalog_ready;
+
+    IF NOT catalog_ready THEN
+      RETURN p_compatibility_key;
+    END IF;
+
     SELECT effective.lane_key INTO resolved_key
       FROM (
         SELECT DISTINCT ON (lane.lane_key) lane.lane_key, lane.semantic_role, lane.position

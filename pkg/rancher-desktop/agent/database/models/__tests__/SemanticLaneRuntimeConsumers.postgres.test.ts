@@ -159,6 +159,21 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
       (await WorkLaneWorkflowBindingModel.getLaneEntry(id))!);
 
     await WorkItemsModel.insertTask({
+      id:       'task-semantic-default',
+      epic_id:  'epic-semantic',
+      title:    'Semantic default',
+      assignee: 'sulla',
+      actor:    'heartbeat',
+    });
+    await expect(WorkItemsModel.getTask('task-semantic-default')).resolves.toMatchObject({
+      status: 'ready-custom', assignee: 'dispatcher',
+    });
+    await pool.query(`
+      UPDATE work_tasks SET status = 'manual-custom', assignee = 'sulla'
+       WHERE id = 'task-semantic-default'
+    `);
+
+    await WorkItemsModel.insertTask({
       id:       'task-semantic-e2e',
       epic_id:  'epic-semantic',
       title:    'Semantic E2E',
@@ -242,6 +257,20 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
       'project-semantic', 'todo',
     )).resolves.toBe('execution');
 
+    const destinations = await pool.query(`
+      SELECT
+        resolve_project_lane_key('project-semantic', 'execution', 'todo') AS execution_entry,
+        resolve_project_lane_key('project-semantic', 'execution', 'in_progress', true) AS execution_active,
+        resolve_project_lane_key('project-semantic', 'review', 'in_review') AS review,
+        resolve_project_lane_key('project-semantic', 'terminal', 'done') AS terminal
+    `);
+    expect(destinations.rows[0]).toEqual({
+      execution_entry:  'todo',
+      execution_active: 'in_progress',
+      review:           'in_review',
+      terminal:         'done',
+    });
+
     const degradedCustom = await WorkItemsModel.insertTask({
       id:       'task-degraded-custom',
       epic_id:  'epic-semantic',
@@ -254,11 +283,31 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
       id:       'task-degraded-todo',
       epic_id:  'epic-semantic',
       title:    'Degraded todo',
-      status:   'todo',
       assignee: 'sulla',
       actor:    'heartbeat',
     });
     expect(degradedCustom.assignee).toBe('sulla');
-    expect(degradedTodo.assignee).toBe('dispatcher');
+    expect(degradedTodo).toMatchObject({ status: 'todo', assignee: 'dispatcher' });
+
+    const claim = await WorkTaskDispatchModel.claimNext('worker-degraded');
+    expect(claim?.task).toMatchObject({ id: 'task-degraded-todo', status: 'todo' });
+    await expect(WorkItemsModel.getTask('task-degraded-todo')).resolves.toMatchObject({
+      status: 'in_progress', assignee: 'dispatcher',
+    });
+    await expect(WorkItemsModel.getTask('task-degraded-custom')).resolves.toMatchObject({
+      status: 'ready-custom', assignee: 'sulla',
+    });
+
+    await pool.query(`
+      INSERT INTO work_tasks (id, project_id, epic_id, title, status, assignee)
+      VALUES ('task-degraded-blocked', 'project-semantic', 'epic-semantic', 'Blocked', 'blocked', 'heartbeat');
+      INSERT INTO work_task_waits (id, task_id, wait_kind, target_key)
+      VALUES ('wait-degraded-blocked', 'task-degraded-blocked', 'human_gate', 'approval');
+      INSERT INTO work_task_comments (id, task_id, body, author)
+      VALUES ('comment-degraded-blocked', 'task-degraded-blocked', 'Approved', 'human');
+    `);
+    await expect(WorkItemsModel.getTask('task-degraded-blocked')).resolves.toMatchObject({
+      status: 'in_review', assignee: 'heartbeat',
+    });
   }, 30_000);
 });
