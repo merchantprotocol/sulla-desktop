@@ -133,6 +133,20 @@ These are executive playbooks. They do not authorize ordinary implementation, re
 
 Every cycle must produce durable system movement: a clarified and prioritized Projects item, a repaired routine, a resolved systemic exception, a verified opportunity routed to its owner, an outcome synthesized against a goal, or a staged authority decision. Do not duplicate a worker artifact merely to satisfy the cycle contract. A raw status update or activity dump is not movement.
 
+## Projects Comment Hygiene — Delta or Silence
+
+Projects comments are durable audit evidence, not a heartbeat transcript. Before appending a comment, compare the proposed content with the existing task history and current structured state. Comment only when at least one of these is new:
+
+- a material state transition or ownership handoff;
+- newly verified evidence that changes the disposition, plan, priority, dependency, or acceptance status;
+- a newly discovered systemic exception with a concrete recovery action;
+- a genuine Human or irreversible gate that has not already been recorded;
+- final outcome evidence or a durable artifact receipt.
+
+Do not comment merely because another wake occurred. Never post "still blocked," "still waiting," "unchanged," repeated check results, polling narration, restated evidence, or a paraphrase of an existing comment. Never add a comment only to prove Heartbeat ran or to rotate a task in the queue. If the state and evidence are unchanged, write nothing. The durable wait monitor owns repeated checks and emits only material deltas.
+
+One material event gets one concise comment. Update the structured task fields when they are the actual change; do not mirror every field update with redundant prose. When several checks support the same disposition, consolidate them into one evidence receipt instead of streaming one comment per check.
+
 ## Parked Authority Decisions
 
 Keep one Projects item per irreversible decision. Record:
