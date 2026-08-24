@@ -6,7 +6,6 @@ import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { getIntegrationService } from './IntegrationService';
-import { isKnowledgeAssociationAgentId } from './KnowledgeAssociationPolicies';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import {
@@ -23,20 +22,16 @@ import {
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
   REVIEW_PROJECT_ARTIFACT_ID,
   ARTIFACT_VERIFICATION_ADAPTERS,
-  REVIEWER_AGENT_IDS,
-  REVIEWER_NODE_IDS,
 } from '../routines/core/reviewProjectArtifact';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 import { extractAgentTurnOutcome } from '../tools/agents/agentTurnOutcome';
 import { toolRegistry } from '../tools/registry';
-import { findAgentDir } from '../utils/sullaPaths';
 import { createPlaybookState } from '../workflow/WorkflowPlaybook';
 
 const CHECK_INTERVAL_MS = 60_000;
 const LEASE_HEARTBEAT_MS = 120_000;
 const DEFAULT_CONCURRENCY = 3;
-const DEFAULT_AGENT_ID = 'opus-worker';
 const RUNTIME_INSTANCE_ID = `task-dispatcher-${ process.pid }-${ Date.now() }`;
-const DEFAULT_VERIFIER_AGENT_ID = 'codex-test';
 const DEFAULT_VERIFIER_TIMEOUT_MINUTES = 45;
 const DEFAULT_IN_PROGRESS_STALE_MINUTES = 360;
 const DEFAULT_RECOVERY_BATCH_SIZE = 1;
@@ -226,20 +221,7 @@ export class TaskDispatcherService {
   private async fillExecutionPool(): Promise<void> {
     const configured = Number(await SullaSettingsModel.get('taskDispatcherConcurrency', DEFAULT_CONCURRENCY));
     const concurrency = Math.max(1, Math.min(10, configured || DEFAULT_CONCURRENCY));
-    const agentId = String(await SullaSettingsModel.get('taskDispatcherAgentId', DEFAULT_AGENT_ID)).trim() || DEFAULT_AGENT_ID;
-    if (!findAgentDir(agentId) && !isKnowledgeAssociationAgentId(agentId)) {
-      console.error(`[TaskDispatcher] Agent config "${ agentId }" does not exist; execution paused`);
-      await LifecycleCapabilityModel.report({
-        key:               'todo-execution',
-        enabled:           true,
-        health:            'degraded',
-        owner:             'dispatcher',
-        runtimeInstanceId: RUNTIME_INSTANCE_ID,
-        fallbackMode:      'heartbeat',
-        error:             `Agent config ${ agentId } does not exist.`,
-      });
-      return;
-    }
+    const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
 
     await LifecycleCapabilityModel.report({
       key:               'todo-execution',
@@ -276,20 +258,7 @@ export class TaskDispatcherService {
     if (!owner) return;
     const configured = Number(await SullaSettingsModel.get('taskVerifierConcurrency', DEFAULT_CONCURRENCY));
     const concurrency = Math.max(1, Math.min(10, configured || DEFAULT_CONCURRENCY));
-    const agentId = String(await SullaSettingsModel.get('taskVerifierAgentId', DEFAULT_VERIFIER_AGENT_ID)).trim() || DEFAULT_VERIFIER_AGENT_ID;
-    if (!findAgentDir(agentId)) {
-      console.error(`[TaskDispatcher] Agent config "${ agentId }" does not exist; verification paused`);
-      await LifecycleCapabilityModel.report({
-        key:               'in-review-verification',
-        enabled:           true,
-        health:            'degraded',
-        owner:             'dispatcher',
-        runtimeInstanceId: RUNTIME_INSTANCE_ID,
-        fallbackMode:      'heartbeat',
-        error:             `Agent config ${ agentId } does not exist.`,
-      });
-      return;
-    }
+    const agentId = DEFAULT_CORE_ROUTINE_AGENT_ID;
 
     await LifecycleCapabilityModel.report({
       key:               'in-review-verification',
@@ -304,7 +273,7 @@ export class TaskDispatcherService {
     while (freeSlots > 0 && this.initialized) {
       const claim = await WorkTaskDispatchModel.claimNextReview(
         agentId,
-        owner === 'core-routine' ? [...REVIEWER_AGENT_IDS] : [],
+        owner === 'core-routine' ? [DEFAULT_CORE_ROUTINE_AGENT_ID] : [],
         RUNTIME_INSTANCE_ID,
       );
       if (!claim) break;
@@ -358,11 +327,10 @@ export class TaskDispatcherService {
         const binding = await WorkTaskDispatchModel.bindReviewGeneration(dispatch.id, claimedArtifacts);
         if (binding.suppressed) return;
         excludedAgentIds = binding.excludedAgentIds;
-        selectedReviewerAgentIds = REVIEWER_AGENT_IDS.filter(id => !excludedAgentIds.includes(id));
-        if (selectedReviewerAgentIds.length === 0) {
-          await WorkTaskDispatchModel.failVerification(dispatch.id, 'no_independent_reviewer_available');
-          return;
-        }
+        // Review independence comes from separate workflow-node executions and
+        // threads. Agent profile identity is deliberately the same default
+        // Sulla Desktop profile for workers, reviewers, and synthesizers.
+        selectedReviewerAgentIds = [DEFAULT_CORE_ROUTINE_AGENT_ID];
         generationHash = binding.generationHash;
       }
 
@@ -383,8 +351,7 @@ export class TaskDispatcherService {
         state.metadata.allowedToolNames = verifierTools;
         state.metadata.verifierReadOnly = true;
         if (verificationOwner === 'core-routine') {
-          const definition = this.buildReviewDefinition(excludedAgentIds);
-          const playbook = createPlaybookState(definition as any, reviewPrompt);
+          const playbook = createPlaybookState(REVIEW_PROJECT_ARTIFACT_DEFINITION as any, reviewPrompt);
           state.metadata.activeWorkflow = playbook;
           state.metadata.verificationAdapters = ARTIFACT_VERIFICATION_ADAPTERS;
           await WorkTaskDispatchModel.recordReviewLaunch(dispatch.id, playbook.executionId, selectedReviewerAgentIds);
@@ -604,20 +571,6 @@ export class TaskDispatcherService {
     };
   }
 
-  private buildReviewDefinition(excludedAgentIds: string[]): Record<string, any> {
-    const definition = JSON.parse(JSON.stringify(REVIEW_PROJECT_ARTIFACT_DEFINITION));
-    if (excludedAgentIds.length === 0) return definition;
-    const excluded = new Set(
-      definition.nodes
-        .filter((node: any) => (REVIEWER_NODE_IDS as readonly string[]).includes(node.id) && excludedAgentIds.includes(node.data?.config?.agentId))
-        .map((node: any) => node.id),
-    );
-    if (excluded.size === 0) return definition;
-    definition.nodes = definition.nodes.filter((node: any) => !excluded.has(node.id));
-    definition.edges = definition.edges.filter((edge: any) => !excluded.has(edge.source) && !excluded.has(edge.target));
-    return definition;
-  }
-
   private async finalizeClaim(
     claim: ClaimedDispatch,
     status: 'completed' | 'blocked' | 'failed',
@@ -746,7 +699,7 @@ ${ JSON.stringify(dispatch.origin_evidence ?? {}) }
 Artifact hint: ${ task.github_issue ?? '(resolve from custody evidence)' }
 Bound review generation: ${ generationHash }
 Structured artifact components: ${ JSON.stringify(artifacts) }
-Durably excluded worker/custodian identities: ${ JSON.stringify(excludedAgentIds) }
+Producer/custodian profile identities (audit only; reviewer independence is enforced by separate workflow node executions): ${ JSON.stringify(excludedAgentIds) }
 Read-only adapter catalog: ${ JSON.stringify(ARTIFACT_VERIFICATION_ADAPTERS) }
 
 Acceptance contract:

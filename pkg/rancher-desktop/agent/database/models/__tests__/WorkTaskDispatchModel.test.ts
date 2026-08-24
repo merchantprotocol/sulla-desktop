@@ -232,7 +232,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(clientQuery.mock.calls[5][1]).toEqual(['task-new', 'dispatcher']);
   });
 
-  it('claims review work under the same cross-kind lease and excludes the execution agent', async() => {
+  it('claims review work under the same cross-kind lease even when the default profile executed the work', async() => {
     const task = { id: 'task-2', status: 'in_review', labels: [] } as any;
     const capability = {
       capability_key: 'in-review-verification', enabled: true, health: 'healthy',
@@ -270,8 +270,9 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[0][0]).toContain("d.status = 'running'");
     expect(query.mock.calls[0][0]).toContain("d.status IN ('failed', 'stale')");
     expect(query.mock.calls[0][0]).toContain("interval '5 minutes'");
-    expect(query.mock.calls[0][0]).toContain("d.kind = 'execution'");
-    expect(query.mock.calls[0][0]).toContain("<> $3");
+    expect(query.mock.calls[0][0]).not.toContain("<> $3");
+    expect(query.mock.calls[0][1]).toEqual(expect.any(Array));
+    expect(query.mock.calls[0][1]).not.toContain('codex-test');
     expect(query.mock.calls[1][0]).toContain('lifecycle_capabilities');
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_stage_claims');
     expect(query.mock.calls[4][0]).toContain("'verification'");

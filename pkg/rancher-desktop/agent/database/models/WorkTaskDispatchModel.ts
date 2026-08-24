@@ -326,12 +326,6 @@ export class WorkTaskDispatchModel {
                 AND d.status IN ('failed', 'stale')
                 AND d.finished_at > now() - interval '5 minutes'
            )
-           AND COALESCE((
-             SELECT d.agent_id
-               FROM work_task_dispatches d
-              WHERE d.task_id = t.id AND d.kind = 'execution'
-              ORDER BY d.started_at DESC LIMIT 1
-           ), '') <> $3
          ORDER BY
            CASE p.priority
              WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
@@ -359,7 +353,7 @@ export class WorkTaskDispatchModel {
            t.position ASC
          FOR UPDATE OF t SKIP LOCKED
          LIMIT 1
-      `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, agentId]);
+      `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
 
       const task = candidate.rows[0];
       if (!task) return null;

@@ -2,11 +2,11 @@ import { describe, expect, it } from '@jest/globals';
 
 import { validateWorkflowDefinition } from '../../../tools/workflow/validate_sulla_workflow';
 import { CORE_ROUTINES } from '../index';
+import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../defaultCoreAgent';
 import {
   REVIEW_PROJECT_ARTIFACT_DEFINITION,
   REVIEW_PROJECT_ARTIFACT_ID,
   ARTIFACT_VERIFICATION_ADAPTERS,
-  REVIEWER_AGENT_IDS,
   REVIEWER_NODE_IDS,
 } from '../reviewProjectArtifact';
 
@@ -17,12 +17,12 @@ describe('protected review core routine', () => {
     expect(REVIEW_PROJECT_ARTIFACT_DEFINITION.enabled).toBe(true);
     const nodes = REVIEW_PROJECT_ARTIFACT_DEFINITION.nodes;
     const reviewers = nodes.filter((node: any) => (REVIEWER_NODE_IDS as readonly string[]).includes(node.id));
-    expect(reviewers.map((node: any) => node.data.config.agentId)).toEqual(REVIEWER_AGENT_IDS);
-    expect(new Set(REVIEWER_AGENT_IDS).size).toBe(REVIEWER_AGENT_IDS.length);
+    expect(reviewers.every((node: any) => node.data.config.agentId === DEFAULT_CORE_ROUTINE_AGENT_ID)).toBe(true);
     expect(reviewers.every((node: any) => node.data.config.inheritParentToolPolicy === true)).toBe(true);
     expect(nodes.filter((node: any) => node.data.subtype === 'agent')
       .every((node: any) => node.data.config.inheritParentToolPolicy === true)).toBe(true);
-    expect(nodes.find((node: any) => node.id === 'node-review-synthesize')?.data.config.agentId).toBe('codex-test');
+    expect(nodes.find((node: any) => node.id === 'node-review-synthesize')?.data.config.agentId)
+      .toBe(DEFAULT_CORE_ROUTINE_AGENT_ID);
     expect(REVIEW_PROJECT_ARTIFACT_DEFINITION.edges.filter((edge: any) => edge.target === 'node-review-merge')).toHaveLength(3);
   });
 
