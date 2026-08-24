@@ -31,9 +31,10 @@ describe('ArtifactGeneration', () => {
   });
   it('sameArtifacts detects identical bound hashes only', () => {
     const a = ArtifactGeneration.of(1, 'h');
-    const b = ArtifactGeneration.of(2, 'h');
+    const b = ArtifactGeneration.of(1, 'h');
     const c = ArtifactGeneration.of(3, 'other');
     expect(a.sameArtifacts(b)).toBe(true);
+    expect(a.sameArtifacts(ArtifactGeneration.of(2, 'h'))).toBe(false);
     expect(a.sameArtifacts(c)).toBe(false);
     expect(ArtifactGeneration.initial().sameArtifacts(ArtifactGeneration.initial())).toBe(false);
   });

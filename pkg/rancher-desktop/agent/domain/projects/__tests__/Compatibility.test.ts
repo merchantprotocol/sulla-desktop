@@ -41,7 +41,7 @@ describe('Projects legacy compatibility', () => {
     ])).toThrow(DomainError);
   });
 
-  it('keeps the domain kernel free of database, Electron, tool, and service imports', () => {
+  it('allows production kernel imports only from inside the kernel', () => {
     const root = path.resolve(process.cwd(), 'pkg/rancher-desktop/agent/domain/projects');
     const files: string[] = [];
     const visit = (directory: string) => {
@@ -52,7 +52,17 @@ describe('Projects legacy compatibility', () => {
       }
     };
     visit(root);
-    const forbidden = /from ['"][^'"]*(?:database|electron|tools|services)[^'"]*['"]/;
-    expect(files.filter(file => forbidden.test(fs.readFileSync(file, 'utf8')))).toEqual([]);
+    const offenders: string[] = [];
+    for (const file of files) {
+      const source = fs.readFileSync(file, 'utf8');
+      for (const match of source.matchAll(/from ['"]([^'"]+)['"]/g)) {
+        const specifier = match[1];
+        const resolved = path.resolve(path.dirname(file), specifier);
+        if (!specifier.startsWith('.') || !resolved.startsWith(`${ root }${ path.sep }`)) {
+          offenders.push(`${ path.relative(root, file) }:${ specifier }`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });

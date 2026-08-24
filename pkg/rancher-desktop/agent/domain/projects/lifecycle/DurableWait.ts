@@ -14,4 +14,8 @@ export class DurableWait {
     if (!targetKey.trim()) throw new DomainError('Durable wait target key is required');
     Object.freeze(this);
   }
+
+  belongsTo(taskId: TaskId, generation: ArtifactGeneration): boolean {
+    return this.taskId.equals(taskId) && this.generation.equals(generation);
+  }
 }

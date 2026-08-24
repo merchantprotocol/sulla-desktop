@@ -10,4 +10,8 @@ export class Dependency {
     if (taskId.equals(dependsOnTaskId)) throw new DomainError('A task cannot depend on itself');
     Object.freeze(this);
   }
+
+  belongsTo(taskId: TaskId): boolean {
+    return this.taskId.equals(taskId);
+  }
 }

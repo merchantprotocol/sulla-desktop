@@ -22,13 +22,24 @@ export class LifecyclePolicy {
     const enteringReview = transition.to.semanticRole.equals(SemanticRole.REVIEW);
     const enteringTerminal = transition.to.semanticRole.equals(SemanticRole.TERMINAL);
 
+    if (context.dependencies?.some(dependency => !dependency.belongsTo(transition.to.id))) {
+      throw new DomainError('Lifecycle dependency facts include another task');
+    }
+    if (context.waits?.some(wait => !wait.taskId.equals(transition.to.id))) {
+      throw new DomainError('Lifecycle wait facts include another task');
+    }
+    if (context.lease && !context.lease.belongsTo(transition.to.id)) {
+      throw new DomainError('Lifecycle lease belongs to another task');
+    }
+
     if (enteringExecution && context.dependencies?.some(dependency => !dependency.satisfied)) {
       throw new DomainError('Task has unsatisfied dependencies');
     }
     if (enteringExecution && context.wipAvailable === false) {
       throw new DomainError('Destination lane WIP limit is reached');
     }
-    if (context.waits?.some(wait => wait.active && wait.generation.equals(transition.from.artifactGeneration))) {
+    if (context.waits?.some(wait => wait.active
+      && wait.belongsTo(transition.from.id, transition.from.artifactGeneration))) {
       throw new DomainError('Task has an active durable wait for this generation');
     }
     if (transition.from.semanticRole.equals(SemanticRole.EXECUTION) && context.lease?.isActive(context.now)) {

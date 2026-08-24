@@ -55,7 +55,7 @@ export class ArtifactGeneration {
 
   /** True if both carry the same non-null artifact hash (identical terminal generation). */
   sameArtifacts(other: ArtifactGeneration): boolean {
-    return this.hash !== null && this.hash === other.hash;
+    return this.generation === other.generation && this.hash !== null && this.hash === other.hash;
   }
 
   equals(other: ArtifactGeneration | null | undefined): boolean {

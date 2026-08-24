@@ -71,6 +71,32 @@ describe('Projects lifecycle', () => {
       .not.toThrow();
   });
 
+  it('fails closed when repositories supply facts for another task', () => {
+    const transition = new LifecycleTransition(
+      task('backlog', SemanticRole.BACKLOG), task('todo', SemanticRole.EXECUTION), 'worker', 'tool',
+    );
+    const otherTask = TaskId.of('other');
+    expect(() => LifecyclePolicy.authorize(transition, {
+      now, dependencies: [new Dependency(otherTask, TaskId.of('dep'), true)],
+    })).toThrow('another task');
+    expect(() => LifecyclePolicy.authorize(transition, {
+      now, waits: [new DurableWait(otherTask, 'human_gate', 'approval', generation, false)],
+    })).toThrow('another task');
+    expect(() => LifecyclePolicy.authorize(transition, {
+      now, lease: new DispatchLease(otherTask, 'worker', generation, new Date(now.getTime() + 60_000)),
+    })).toThrow('another task');
+  });
+
+  it('does not let callers mutate a dispatch lease expiry after construction', () => {
+    const mutableExpiry = new Date(now.getTime() + 60_000);
+    const lease = new DispatchLease(taskId, 'worker', generation, mutableExpiry);
+    mutableExpiry.setTime(now.getTime() - 1);
+    expect(lease.isActive(now)).toBe(true);
+    const exposed = lease.expiresAt;
+    exposed.setTime(now.getTime() - 1);
+    expect(lease.isActive(now)).toBe(true);
+  });
+
   it('rejects self-dependencies and malformed domain objects', () => {
     expect(() => new Dependency(taskId, taskId, false)).toThrow(DomainError);
     expect(() => new DurableWait(taskId, 'human_gate', ' ', generation, true)).toThrow(DomainError);

@@ -9,7 +9,7 @@ describe('SemanticRole', () => {
   });
   it('REQUIRED mirrors REQUIRED_WORK_LANE_ROLES (manual excluded)', () => {
     expect([...SemanticRole.REQUIRED]).toEqual([
-      'backlog', 'planning', 'execution', 'review', 'blocked', 'terminal',
+      'backlog', 'execution', 'planning', 'review', 'blocked', 'terminal',
     ]);
     expect(SemanticRole.MANUAL.isRequired()).toBe(false);
     for (const v of SemanticRole.REQUIRED) {

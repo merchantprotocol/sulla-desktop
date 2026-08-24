@@ -26,7 +26,7 @@ export class SemanticRole {
 
   /** Roles a runtime lane catalog must provide (mirrors REQUIRED_WORK_LANE_ROLES; manual excluded). */
   static readonly REQUIRED: readonly SemanticRoleValue[] = Object.freeze([
-    'backlog', 'planning', 'execution', 'review', 'blocked', 'terminal',
+    'backlog', 'execution', 'planning', 'review', 'blocked', 'terminal',
   ]);
 
   /** Compatibility mapping from a known lane key to its semantic role (COMPATIBILITY_ROLE_BY_KEY). */
