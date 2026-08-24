@@ -6,6 +6,17 @@ export type WorkLaneScope = 'global_default' | 'project';
 export type WorkLaneSemanticRole = 'backlog' | 'planning' | 'execution' | 'review' | 'blocked' | 'terminal' | 'manual';
 export type WorkLaneProvenance = 'global' | 'project_override' | 'project_only';
 
+export const REQUIRED_WORK_LANE_ROLES: readonly WorkLaneSemanticRole[] = [
+  'backlog', 'planning', 'execution', 'review', 'blocked', 'terminal',
+] as const;
+
+export interface WorkLaneRuntimeCapability {
+  ready:          boolean;
+  catalogPresent: boolean;
+  missingRoles:   WorkLaneSemanticRole[];
+  degradedReason: string | null;
+}
+
 export interface WorkLaneDefinitionRecord {
   id:              string;
   lane_key:        string;
@@ -279,6 +290,91 @@ export class WorkLaneDefinitionModel {
       effective.push({ ...projectLane, provenance: 'project_only', inherited_definition_id: null });
     }
     return effective.sort((a, b) => a.position - b.position || a.lane_key.localeCompare(b.lane_key));
+  }
+
+  /**
+   * Runtime gate shared by every Projects consumer. A partial migration must
+   * never silently strand work: callers retain their stable-key compatibility
+   * path until the complete semantic conveyor is available.
+   */
+  static async runtimeCapability(projectId?: string): Promise<WorkLaneRuntimeCapability> {
+    try {
+      const catalog = await postgresClient.queryOne<{ present: boolean }>(
+        `SELECT to_regclass('work_lane_definitions') IS NOT NULL AS present`,
+      );
+      if (!catalog?.present) {
+        return {
+          ready: false, catalogPresent: false, missingRoles: [...REQUIRED_WORK_LANE_ROLES],
+          degradedReason: 'work_lane_definitions is unavailable; stable-key compatibility mode is active.',
+        };
+      }
+      const lanes = projectId
+        ? await WorkLaneDefinitionModel.resolveEffective(projectId)
+        : (await WorkLaneDefinitionModel.list({ scope: 'global_default' }))
+          .filter(lane => lane.enabled && !lane.archived)
+          .map(lane => ({ ...lane, provenance: 'global' as const, inherited_definition_id: null }));
+      const roles = new Set(lanes.map(lane => lane.semantic_role));
+      const missingRoles = REQUIRED_WORK_LANE_ROLES.filter(role => !roles.has(role));
+      return {
+        ready: missingRoles.length === 0,
+        catalogPresent: true,
+        missingRoles,
+        degradedReason: missingRoles.length
+          ? `Required semantic lane roles are missing: ${ missingRoles.join(', ') }.`
+          : null,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ready: false, catalogPresent: false, missingRoles: [...REQUIRED_WORK_LANE_ROLES],
+        degradedReason: `Semantic lane capability check failed: ${ message }`,
+      };
+    }
+  }
+
+  static async resolveStatus(projectId: string, laneKey: string): Promise<EffectiveWorkLane | null> {
+    const lanes = await WorkLaneDefinitionModel.resolveEffective(projectId);
+    return lanes.find(lane => lane.lane_key === laneKey) ?? null;
+  }
+
+  static async laneKeysForRoles(projectId: string, roles: WorkLaneSemanticRole[]): Promise<string[]> {
+    const capability = await WorkLaneDefinitionModel.runtimeCapability(projectId);
+    if (!capability.ready) return [];
+    const wanted = new Set(roles);
+    return (await WorkLaneDefinitionModel.resolveEffective(projectId))
+      .filter(lane => wanted.has(lane.semantic_role))
+      .map(lane => lane.lane_key);
+  }
+
+  /** Validate writes only after the complete catalog passes its capability gate. */
+  static async validateTaskStatus(projectId: string, laneKey: string): Promise<EffectiveWorkLane | null> {
+    const capability = await WorkLaneDefinitionModel.runtimeCapability(projectId);
+    if (!capability.ready) return null;
+    const lane = await WorkLaneDefinitionModel.resolveStatus(projectId, laneKey);
+    if (!lane) throw new Error(`No active Projects lane with key "${ laneKey }" exists for project ${ projectId }.`);
+    return lane;
+  }
+
+  /**
+   * Resolve a transition destination by behavior, preferring the seeded stable
+   * key only as a compatibility tie-breaker. Renamed and project-only lanes
+   * therefore keep working without deriving behavior from display text.
+   */
+  static async preferredLaneKey(
+    projectId: string,
+    role: WorkLaneSemanticRole,
+    compatibilityKey: string,
+    preference: 'first' | 'last' = 'first',
+  ): Promise<string> {
+    const capability = await WorkLaneDefinitionModel.runtimeCapability(projectId);
+    if (!capability.ready) return compatibilityKey;
+    const lanes = (await WorkLaneDefinitionModel.resolveEffective(projectId))
+      .filter(lane => lane.semantic_role === role);
+    const compatible = lanes.find(lane => lane.lane_key === compatibilityKey);
+    if (compatible) return compatible.lane_key;
+    const selected = preference === 'last' ? lanes.at(-1) : lanes[0];
+    if (!selected) throw new Error(`Project ${ projectId } has no active ${ role } lane.`);
+    return selected.lane_key;
   }
 
   static async archive(id: string, destinationKey?: string, actor = 'sulla'): Promise<ArchiveWorkLaneResult> {

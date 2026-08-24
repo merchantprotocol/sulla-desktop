@@ -15,6 +15,7 @@
 
 import { postgresClient } from '../PostgresClient';
 import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
+import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -262,6 +263,9 @@ export interface ListTasksOpts extends ListOpts {
   epicId?:    string;
   parentId?:  string;
   assignee?:  string;
+  semanticRoles?:        WorkLaneSemanticRole[];
+  excludeSemanticRoles?: WorkLaneSemanticRole[];
+  fallbackStatuses?:     string[];
 }
 
 export interface SearchOpts {
@@ -345,6 +349,45 @@ function tokenizeQuery(query: string): string[] {
 
 function isClosedStatus(status: string | undefined): boolean {
   return status === 'done' || status === 'cancelled' || status === 'parked';
+}
+
+const FALLBACK_ROLE_KEYS: Record<WorkLaneSemanticRole, string[]> = {
+  backlog:   ['backlog'],
+  planning:  ['planning'],
+  execution: ['todo', 'in_progress'],
+  review:    ['in_review'],
+  blocked:   ['blocked'],
+  terminal:  ['done', 'cancelled'],
+  manual:    ['parked'],
+};
+
+function fallbackKeys(roles: WorkLaneSemanticRole[]): string[] {
+  return Array.from(new Set(roles.flatMap(role => FALLBACK_ROLE_KEYS[role])));
+}
+
+/**
+ * Bridge committed Projects status writes into the sole matching routine.
+ * Dynamic import keeps the Projects model free of main-process/workflow cycles.
+ * The task write is already durable when this runs, so bridge failures do not
+ * misreport the Projects mutation to its caller.
+ */
+async function notifyTaskStatusCommitted(
+  task: WorkTaskRecord,
+  previousStatus: string,
+  actor?: string,
+): Promise<void> {
+  try {
+    if (['blocked', 'planning'].includes(task.status) || ['blocked', 'planning'].includes(previousStatus)) {
+      const { PlanningCouncilService } = await import('../../services/PlanningCouncilService');
+      await PlanningCouncilService.handleTaskStatusTransition(task, previousStatus, actor);
+    }
+    if (task.status === 'todo' && previousStatus !== 'todo') {
+      const { getTaskDispatcherService } = await import('../../services/TaskDispatcherService');
+      await getTaskDispatcherService().forceCheck();
+    }
+  } catch (err) {
+    console.error(`[WorkItemsModel] Post-commit status bridge failed for task ${ task.id }:`, err);
+  }
 }
 
 // ── Model ──────────────────────────────────────────────────────────────
@@ -824,6 +867,7 @@ export class WorkItemsModel {
     const projectId = input.project_id || epic.project_id;
     const slug = input.slug ? input.slug.slice(0, 80) : null;
     const status = input.status ?? 'todo';
+    const lane = await WorkLaneDefinitionModel.validateTaskStatus(projectId, status);
     const id = input.id || await WorkItemsModel.uniqueId(WorkItemsModel.TASKS);
     const actor = input.actor ?? 'sulla';
     const labels = input.labels ?? [];
@@ -859,10 +903,14 @@ export class WorkItemsModel {
         input.source ?? null,
         input.source_ref ?? null,
         actor,
-        isClosedStatus(status) ? new Date().toISOString() : null,
+        (lane ? lane.semantic_role === 'terminal' : isClosedStatus(status)) ? new Date().toISOString() : null,
       ],
     );
-    return rows[0];
+    const created = rows[0];
+    if (created && ['todo', 'blocked', 'planning'].includes(created.status)) {
+      await notifyTaskStatusCommitted(created, '', input.actor);
+    }
+    return created;
   }
 
   static async upsertTask(input: UpsertTaskInput): Promise<WorkTaskRecord> {
@@ -905,6 +953,9 @@ export class WorkItemsModel {
       const epic = await WorkItemsModel.requireEpic(changes.epic_id);
       nextProjectId = epic.project_id;
     }
+    const targetLane = changes.status !== undefined
+      ? await WorkLaneDefinitionModel.validateTaskStatus(nextProjectId ?? existing.project_id, changes.status)
+      : null;
 
     const setClauses: string[] = ['updated_at = now()'];
     const values: any[] = [];
@@ -943,7 +994,10 @@ export class WorkItemsModel {
     if (changes.source_ref   !== undefined) assign('source_ref', changes.source_ref);
 
     if (changes.status !== undefined) {
-      assign('completed_at', isClosedStatus(changes.status) ? new Date().toISOString() : null);
+      const terminal = targetLane
+        ? targetLane.semantic_role === 'terminal'
+        : isClosedStatus(changes.status);
+      assign('completed_at', terminal ? new Date().toISOString() : null);
     }
 
     if (moved) {
@@ -988,6 +1042,9 @@ export class WorkItemsModel {
         console.warn(`[WorkItems] Lane entry ${ laneEntryId } remains recoverable after dispatch failure:`, error);
       }
     }
+    if (updated && changes.status !== undefined) {
+      await notifyTaskStatusCommitted(updated, existing.status, changes.actor);
+    }
     return updated;
   }
 
@@ -995,7 +1052,37 @@ export class WorkItemsModel {
     const conds = ['archived = false'];
     const values: any[] = [];
     let idx = 1;
-    WorkItemsModel.pushClosedFilter(conds, opts);
+    const needsSemanticCatalog = !opts.includeDone || Boolean(opts.semanticRoles?.length) || Boolean(opts.excludeSemanticRoles?.length);
+    const capability = needsSemanticCatalog
+      ? await WorkLaneDefinitionModel.runtimeCapability(opts.projectId)
+      : null;
+    const effectiveRole = `(SELECT effective.semantic_role FROM work_lane_definitions effective
+      WHERE effective.reset_at IS NULL AND effective.archived = false AND effective.enabled = true
+        AND effective.lane_key = work_tasks.status
+        AND (effective.scope = 'global_default'
+          OR (effective.scope = 'project' AND effective.project_id = work_tasks.project_id))
+      ORDER BY CASE WHEN effective.scope = 'project' THEN 0 ELSE 1 END LIMIT 1)`;
+    if (!opts.includeDone) {
+      if (capability?.ready) {
+        conds.push(`COALESCE(${ effectiveRole }, 'manual') <> 'terminal'`);
+      } else {
+        conds.push(`NOT (${ CLOSED_STATUSES })`);
+      }
+    }
+    if (opts.semanticRoles?.length) {
+      const keys = opts.fallbackStatuses?.length ? opts.fallbackStatuses : fallbackKeys(opts.semanticRoles);
+      values.push(capability?.ready ? opts.semanticRoles : keys);
+      conds.push(capability?.ready
+        ? `COALESCE(${ effectiveRole }, 'manual') = ANY($${ idx++ }::text[])`
+        : `status = ANY($${ idx++ }::text[])`);
+    }
+    if (opts.excludeSemanticRoles?.length) {
+      const keys = opts.fallbackStatuses?.length ? opts.fallbackStatuses : fallbackKeys(opts.excludeSemanticRoles);
+      values.push(capability?.ready ? opts.excludeSemanticRoles : keys);
+      conds.push(capability?.ready
+        ? `NOT (COALESCE(${ effectiveRole }, 'manual') = ANY($${ idx++ }::text[]))`
+        : `NOT (status = ANY($${ idx++ }::text[]))`);
+    }
     if (opts.projectId) { conds.push(`project_id = $${ idx++ }`); values.push(opts.projectId); }
     if (opts.epicId)    { conds.push(`epic_id = $${ idx++ }`);    values.push(opts.epicId); }
     if (opts.parentId)  { conds.push(`parent_id = $${ idx++ }`);  values.push(opts.parentId); }

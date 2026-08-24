@@ -1,16 +1,24 @@
 import { Octokit } from '@octokit/rest';
 
 import { AbortService } from './AbortService';
+import { CanonicalArtifactCustodyService } from './CanonicalArtifactCustodyService';
 import { resolvePullRequestHead } from './GitHubPullRequestHeadService';
 import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
 import { getIntegrationService } from './IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
-import { WorkTaskDispatchModel, type ClaimedDispatch, type VerificationVerdict } from '../database/models/WorkTaskDispatchModel';
+import {
+  WorkTaskDispatchModel, type ClaimedDispatch, type VerificationVerdict, type WorkTaskDispatchEvidence,
+} from '../database/models/WorkTaskDispatchModel';
+import { WorkflowModel } from '../database/models/WorkflowModel';
+import { EXECUTE_PROJECT_TODO_DEFINITION, EXECUTE_PROJECT_TODO_ID } from '../routines/core/executeProjectTodo';
 import { extractAgentTurnOutcome } from '../tools/agents/agentTurnOutcome';
 import { toolRegistry } from '../tools/registry';
 import { findAgentDir } from '../utils/sullaPaths';
+import { createPlaybookState } from '../workflow/WorkflowPlaybook';
+
+import type { WorkflowPlaybookState } from '../workflow/types';
 
 const CHECK_INTERVAL_MS = 60_000;
 const LEASE_HEARTBEAT_MS = 120_000;
@@ -32,6 +40,7 @@ interface ParsedVerification {
   artifactSha:  string;
   summary:      string;
 }
+type ExecutionOwner = 'core-routine' | 'legacy';
 
 let taskDispatcherServiceInstance: TaskDispatcherService | null = null;
 
@@ -180,11 +189,15 @@ export class TaskDispatcherService {
       return;
     }
 
+    const executionOwner = await this.resolveExecutionOwner();
+    if (!executionOwner) return;
+
     let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning('execution'));
     while (freeSlots > 0 && this.initialized) {
-      const claim = await WorkTaskDispatchModel.claimNext(agentId);
+      const claim = await WorkTaskDispatchModel.claimNext(
+        agentId, executionOwner === 'core-routine' ? 'core-todo' : 'legacy-worker');
       if (!claim) break;
-      this.runClaim(claim).catch(err => console.error('[TaskDispatcher] Worker promise failed:', err));
+      this.runClaim(claim, executionOwner).catch(err => console.error('[TaskDispatcher] Worker promise failed:', err));
       freeSlots -= 1;
     }
   }
@@ -204,12 +217,27 @@ export class TaskDispatcherService {
     while (freeSlots > 0 && this.initialized) {
       const claim = await WorkTaskDispatchModel.claimNextReview(agentId);
       if (!claim) break;
-      this.runClaim(claim).catch(err => console.error('[TaskDispatcher] Verifier promise failed:', err));
+      this.runClaim(claim, 'legacy').catch(err => console.error('[TaskDispatcher] Verifier promise failed:', err));
       freeSlots -= 1;
     }
   }
 
-  private async runClaim(claim: ClaimedDispatch): Promise<void> {
+  /**
+   * One scheduler and one database claim path own todo. The core routine is
+   * activated only by `taskDispatcherExecutionOwner=core-routine`; legacy is
+   * the dark-rollout default. Once core owns dispatch, disabling the locked
+   * routine pauses claims instead of starting a second owner beside it.
+   */
+  private async resolveExecutionOwner(): Promise<ExecutionOwner | null> {
+    const configured = String(await SullaSettingsModel.get('taskDispatcherExecutionOwner', 'legacy'));
+    if (configured === 'legacy') return 'legacy';
+
+    const routine = await WorkflowModel.findById(EXECUTE_PROJECT_TODO_ID);
+    if (!routine || routine.attributes.enabled === false) return null;
+    return 'core-routine';
+  }
+
+  private async runClaim(claim: ClaimedDispatch, executionOwner: ExecutionOwner): Promise<void> {
     const { dispatch, task } = claim;
     const abort = new AbortService();
     this.active.set(dispatch.id, abort);
@@ -230,7 +258,6 @@ export class TaskDispatcherService {
         author:  'dispatcher',
         body:    `${ isVerification ? 'Verification' : 'Mechanical dispatch' } started with ${ dispatch.agent_id } (dispatch ${ dispatch.id }, attempt ${ dispatch.attempt || 1 }).`,
       }).catch(err => console.error(`[TaskDispatcher] Could not write start comment for ${ dispatch.id }:`, err));
-
       const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(
         dispatch.agent_id,
         dispatch.thread_id,
@@ -245,7 +272,25 @@ export class TaskDispatcherService {
         state.metadata.allowedToolNames = [...VERIFIER_TOOLS];
         state.metadata.verifierReadOnly = true;
       } else {
-        state.messages.push({ role: 'user', content: this.buildWorkerPrompt(task, dispatch.id) });
+        const taskPrompt = await this.buildWorkerPrompt(task, dispatch.id, executionOwner);
+        state.messages.push({ role: 'user', content: taskPrompt });
+        if (executionOwner === 'core-routine') {
+          const playbook = createPlaybookState(EXECUTE_PROJECT_TODO_DEFINITION as any, taskPrompt);
+          state.metadata.activeWorkflow = playbook;
+          await WorkTaskDispatchModel.recordEvidence(dispatch.id, { workflowExecutionId: playbook.executionId });
+          try {
+            const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+            await WorkflowExecutionModel.markRunning({
+              executionId:  playbook.executionId,
+              workflowId:   EXECUTE_PROJECT_TODO_ID,
+              workflowName: EXECUTE_PROJECT_TODO_DEFINITION.name,
+              workflowSlug: EXECUTE_PROJECT_TODO_ID,
+              triggerInput: taskPrompt,
+            });
+          } catch (err) {
+            console.warn(`[TaskDispatcher] Could not record workflow execution ${ playbook.executionId }:`, err);
+          }
+        }
       }
       state.metadata.isSubAgent = true;
       state.metadata.subAgentDepth = 1;
@@ -293,7 +338,7 @@ export class TaskDispatcherService {
           }
         }
       } else {
-        await this.finalizeClaim(claim, outcome.status, summary);
+        await this.finalizeClaim(claim, outcome.status, summary, executionOwner, finalState.metadata?.activeWorkflow);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -303,7 +348,7 @@ export class TaskDispatcherService {
           verifierTimedOut ? 'verifier_timeout' : message.slice(0, 2_000),
         );
       } else {
-        await this.finalizeClaim(claim, 'failed', message);
+        await this.finalizeClaim(claim, 'failed', message, executionOwner);
       }
     } finally {
       if (verifierTimeout) clearTimeout(verifierTimeout);
@@ -338,30 +383,152 @@ export class TaskDispatcherService {
     claim: ClaimedDispatch,
     status: 'completed' | 'blocked' | 'failed',
     summary: string,
+    executionOwner: ExecutionOwner,
+    playbook?: WorkflowPlaybookState,
   ): Promise<void> {
     const { dispatch, task } = claim;
-    const taskStatus = status === 'completed' ? 'in_review' : 'blocked';
-    const result = status === 'failed' ? undefined : summary;
-    const error = status === 'failed' ? summary : undefined;
-    const comment = status === 'failed'
-      ? `Dispatch ${ dispatch.id } failed: ${ summary }`
-      : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }.\n\n${ summary }`;
+    const evidence = playbook ? await this.extractWorkflowEvidence(playbook, task) : null;
+    const coreContractMissing = executionOwner === 'core-routine' && !evidence;
+    const taskStatus = status === 'failed' || coreContractMissing
+      ? 'planning'
+      : status === 'completed'
+        ? evidence?.nextState ?? 'in_review'
+        : evidence?.nextState === 'blocked' ? 'blocked' : 'planning';
+    const assignee = taskStatus === 'planning' ? 'dispatcher' : 'heartbeat';
+    const dispatchStatus = status === 'failed' || coreContractMissing || evidence?.contractValid === false
+      ? 'failed'
+      : taskStatus === 'blocked' ? 'blocked' : 'completed';
+    const contractError = coreContractMissing
+      ? 'core routine returned without structured acceptance and custody evidence'
+      : evidence?.contractError;
+    const result = dispatchStatus === 'failed' ? undefined : summary;
+    const error = dispatchStatus === 'failed' ? contractError || summary : undefined;
+    const comment = dispatchStatus === 'failed'
+      ? `Dispatch ${ dispatch.id } requires replanning: ${ error }`
+      : [
+        `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }.`,
+        evidence?.proposedComment,
+        evidence?.ledger.artifactUrl || evidence?.ledger.artifactLocation
+          ? `Canonical artifact: ${ evidence.ledger.artifactUrl || evidence.ledger.artifactLocation } @ ${ evidence.ledger.contentHash || evidence.ledger.artifactRef || 'verified' }`
+          : null,
+        summary,
+      ].filter(Boolean).join('\n\n');
 
-    const settled = await Promise.allSettled([
-      WorkTaskDispatchModel.settle(dispatch.id, status, result, error),
-      WorkItemsModel.addComment({ task_id: task.id, author: 'dispatcher', body: comment }),
-      WorkItemsModel.updateTask(task.id, { status: taskStatus, assignee: 'heartbeat', actor: 'dispatcher' }),
-    ]);
+    const committed = await WorkTaskDispatchModel.finalize(dispatch.id, task.id, {
+      dispatchStatus,
+      taskStatus,
+      taskAssignee: assignee,
+      comment,
+      result,
+      error,
+      evidence:     evidence?.ledger,
+    });
 
-    for (const outcome of settled) {
-      if (outcome.status === 'rejected') {
-        console.error(`[TaskDispatcher] Could not finalize ${ dispatch.id }:`, outcome.reason);
-      }
+    if (taskStatus === 'planning') {
+      const { PlanningCouncilService } = await import('./PlanningCouncilService');
+      await PlanningCouncilService.handleTaskStatusTransition(committed, 'in_progress', 'dispatcher');
     }
   }
 
-  private buildWorkerPrompt(task: WorkTaskRecord, dispatchId: string): string {
-    return `You are the execution worker for Projects task ${ task.id }.
+  private parseJsonResult(value: unknown): Record<string, any> | null {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, any>;
+    if (typeof value !== 'string') return null;
+    const start = value.indexOf('{');
+    const end = value.lastIndexOf('}');
+    if (start < 0 || end <= start) return null;
+    try {
+      return JSON.parse(value.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+
+  private async extractWorkflowEvidence(playbook: WorkflowPlaybookState, task: WorkTaskRecord): Promise<{
+    ledger:           WorkTaskDispatchEvidence;
+    nextState:        'in_review' | 'planning' | 'blocked';
+    contractValid:    boolean;
+    contractError?:   string;
+    proposedComment?: string;
+  }> {
+    const output = (id: string) => this.parseJsonResult(playbook.nodeOutputs[id]?.result);
+    const classifier = output('node-todo-classify');
+    const workers = output('node-todo-workers');
+    const review = output('node-todo-review');
+    const repair = output('node-todo-repair');
+    const custody = output('node-todo-custody');
+    const record = output('node-todo-record');
+    const custodyVerdict = String(custody?.verdict || '').toLowerCase();
+    const repairRoute = String(repair?.route || '').toLowerCase();
+    const reviewerVerdict = String(custody?.reviewerVerdict || review?.verdict || '').toLowerCase();
+    const hasReviewEvidence = review?.evidence !== undefined && review?.evidence !== null && JSON.stringify(review.evidence).length > 2;
+    const hasVerification = custody?.verificationEvidence !== undefined && custody?.verificationEvidence !== null && JSON.stringify(custody.verificationEvidence).length > 2;
+    const proposedComment = String(record?.proposedComment || '').trim();
+    const passProposal = custodyVerdict === 'pass' &&
+      ['pass', 'repaired'].includes(repairRoute) &&
+      reviewerVerdict === 'pass' &&
+      hasReviewEvidence &&
+      hasVerification &&
+      record?.taskId === task.id &&
+      record?.nextState === 'in_review' &&
+      proposedComment.length > 0;
+    const explicitExternalBlock = custodyVerdict === 'blocked' &&
+      repairRoute === 'blocked' &&
+      Boolean(custody?.terminalReason) &&
+      hasReviewEvidence;
+    let canonical = null;
+    let canonicalError: string | undefined;
+    if (passProposal) {
+      try {
+        canonical = await CanonicalArtifactCustodyService.verify(task, custody || {}, record || {});
+        canonicalError = canonical.valid ? undefined : canonical.error;
+      } catch (err) {
+        canonicalError = `canonical artifact verification failed: ${ err instanceof Error ? err.message : String(err) }`;
+      }
+    }
+    const passContract = passProposal && canonical?.valid === true;
+    const contractValid = passContract || explicitExternalBlock || repairRoute === 'replan';
+    const contractError = contractValid
+      ? undefined
+      : canonicalError || 'structured review or durable artifact custody evidence is incomplete';
+    const nextState = passContract
+      ? 'in_review'
+      : explicitExternalBlock
+        ? 'blocked'
+        : 'planning';
+
+    return {
+      nextState,
+      contractValid,
+      contractError,
+      proposedComment: passContract ? proposedComment : undefined,
+      ledger:          {
+        workflowExecutionId: playbook.executionId,
+        classifierDecision:  classifier ?? undefined,
+        selectedAgents:      Array.isArray(classifier?.selectedAgents) ? classifier.selectedAgents : undefined,
+        workerChildIds:      Array.isArray(workers?.childIds) ? workers.childIds.map(String) : undefined,
+        reviewCount:         review ? 1 : 0,
+        repairCount:         repairRoute === 'repaired' ? 1 : 0,
+        artifactType:        custody?.artifactType,
+        artifactLocation:    canonical?.artifactLocation || custody?.artifactLocation,
+        artifactUrl:         canonical?.artifactUrl || custody?.artifactUrl,
+        artifactRef:         canonical?.artifactRef || custody?.artifactRef || custody?.headSha,
+        contentHash:         canonical?.contentHash || custody?.contentHash || custody?.headSha,
+        reviewerVerdict,
+        reviewEvidence:      review?.evidence ?? review ?? undefined,
+        terminalReason:      custody?.terminalReason || contractError || (nextState === 'planning' ? 'acceptance_or_custody_incomplete' : undefined),
+      },
+    };
+  }
+
+  private async buildWorkerPrompt(task: WorkTaskRecord, dispatchId: string, executionOwner: ExecutionOwner): Promise<string> {
+    const comments = await WorkItemsModel.listComments(task.id);
+    const boundedComments = comments.slice(-50).map(comment => ({
+      author:     comment.author,
+      body:       comment.body.slice(0, 4_000),
+      created_at: comment.created_at,
+    }));
+
+    return `You are executing the ${ executionOwner === 'core-routine' ? 'locked core todo routine' : 'legacy capability fallback' } for Projects task ${ task.id }.
 
 Title: ${ task.title }
 Priority: ${ task.priority }
@@ -372,7 +539,10 @@ Dispatch: ${ dispatchId }
 Description:
 ${ task.description || '(no description)' }
 
-Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR when possible. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. End with a concise artifact-and-verification summary. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.`;
+Bounded task comments (oldest to newest, maximum 50):
+${ JSON.stringify(boundedComments) }
+
+The dispatcher already owns the atomic claim. Run classification, capability-based worker fan-out, independent artifact review, targeted repair or #667 planning handoff, and durable artifact custody. Coding work requires a verified commit, pushed branch, remote draft PR, exact head SHA, and URL. Non-code work requires an authoritative tracker artifact linked back to Projects. Do not mark the task done.`;
   }
 
   private buildVerifierPrompt(task: WorkTaskRecord, dispatchId: string, comments: { author: string | null; body: string }[]): string {

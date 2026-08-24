@@ -38,6 +38,11 @@ export interface ActivateWorkflowInput {
    * Used by the "Start Fresh" choice in the UI and by boot-time recovery.
    */
   force?: boolean;
+  /**
+   * Internal task-scoped routines may own concurrency in a separate durable
+   * ledger. Never exposed by ExecuteWorkflowWorker's public manifest.
+   */
+  allowConcurrent?: boolean;
 }
 
 export interface ActivateWorkflowResult {
@@ -178,12 +183,13 @@ export async function activateWorkflowOnState(
   // choice, boot recovery). When forcing, flip the stale row to failed so
   // we don't leave two concurrent "running" rows behind.
   const force = (input as any).force === true;
+  const allowConcurrent = input.allowConcurrent === true;
   try {
     const { WorkflowExecutionModel } = await import('../../database/models/WorkflowExecutionModel');
     const active = executionScope
       ? await WorkflowExecutionModel.findActiveByLaneScope(definition.id, executionScope.taskId, executionScope.generation)
       : await WorkflowExecutionModel.findActiveByWorkflow(definition.id);
-    if (active) {
+    if (active && !allowConcurrent) {
       const a = active.attributes as any;
       if (!force) {
         return {

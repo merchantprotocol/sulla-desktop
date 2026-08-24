@@ -44,7 +44,7 @@ describe('WorkTaskDispatchModel', () => {
 
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
-    const claimed = await WorkTaskDispatchModel.claimNext('opus-worker');
+    const claimed = await WorkTaskDispatchModel.claimNext('opus-worker', 'core-todo');
 
     expect(claimed).toMatchObject({ task: { id: 'task-1' }, dispatch: { task_id: 'task-1' } });
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
@@ -60,7 +60,10 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[0][0]).toContain('child.parent_id = t.id');
     expect(query.mock.calls[0][0]).toContain('t.due_at ASC NULLS LAST');
     expect(query.mock.calls[1][0]).toContain('INSERT INTO work_task_dispatches');
-    expect(query.mock.calls[2][0]).toContain("status = 'planning'");
+    expect(query.mock.calls[1][0]).toContain('run_kind');
+    expect(query.mock.calls[1][0]).toContain('MAX(attempt_count)');
+    expect(query.mock.calls[1][1][4]).toBe('core-todo');
+    expect(query.mock.calls[2][0]).toContain("status = 'in_progress'");
     expect(query.mock.calls[2][0]).toContain('assignee = $2');
     expect(query.mock.calls[2][1]).toEqual(['task-1', 'dispatcher']);
   });
@@ -73,7 +76,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
-  it('flows a normalized create through scheduler claim into a dispatcher planning lease', async() => {
+  it('flows a normalized create through scheduler claim into a dispatcher execution lease', async() => {
     (postgresClient as any).query = (jest.fn() as any)
       .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
       .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
@@ -112,7 +115,7 @@ describe('WorkTaskDispatchModel', () => {
     const claim = await WorkTaskDispatchModel.claimNext('opus-worker');
 
     expect(claim?.task).toMatchObject({ id: 'task-new', assignee: 'dispatcher' });
-    expect(clientQuery.mock.calls[2][0]).toContain("status = 'planning'");
+    expect(clientQuery.mock.calls[2][0]).toContain("status = 'in_progress'");
     expect(clientQuery.mock.calls[2][1]).toEqual(['task-new', 'dispatcher']);
   });
 
@@ -149,7 +152,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[2][0]).toContain("assignee = 'verifier'");
   });
 
-  it('releases stale planning leases back to todo in one transaction', async() => {
+  it('recovers stale leases without duplicating work that already has verified custody', async() => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ id: 'dispatch-1', task_id: 'task-1', kind: 'execution' }] })
       .mockResolvedValueOnce({ rows: [] });
@@ -158,8 +161,9 @@ describe('WorkTaskDispatchModel', () => {
     await expect(WorkTaskDispatchModel.recoverStale(45)).resolves.toEqual(['task-1']);
     expect(query.mock.calls[0][0]).toContain("status = 'stale'");
     expect(query.mock.calls[0][0]).toContain("interval '1 minute'");
-    expect(query.mock.calls[1][0]).toContain("status = 'todo'");
-    expect(query.mock.calls[1][0]).toContain("status = 'planning'");
+    expect(query.mock.calls[1][0]).toContain("THEN 'in_review' ELSE 'todo'");
+    expect(query.mock.calls[1][0]).toContain("reviewer_verdict = 'pass'");
+    expect(query.mock.calls[1][0]).toContain("status = 'in_progress'");
     expect(query.mock.calls[1][0]).toContain("assignee = 'dispatcher'");
   });
 
@@ -335,5 +339,32 @@ describe('WorkTaskDispatchModel', () => {
     await expect(WorkTaskDispatchModel.recoverOrphanedInProgress([candidate], 1, 3))
       .resolves.toEqual([{ taskId: 'task-1', outcome: 'blocked_ceiling', attemptNumber: 3 }]);
     expect(ceilingQuery.mock.calls[3][1]).toEqual(expect.arrayContaining(['blocked', 'heartbeat']));
+  });
+
+  it('finalizes ledger evidence, task state, and Projects comment in one transaction', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ status: 'running' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-1', status: 'in_review', assignee: 'heartbeat' }] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    const committed = await WorkTaskDispatchModel.finalize('dispatch-1', 'task-1', {
+      dispatchStatus: 'completed',
+      taskStatus:     'in_review',
+      taskAssignee:   'heartbeat',
+      comment:        'Verified custody.',
+      result:         'done',
+      evidence:       { artifactUrl: 'https://github.com/o/r/pull/1', contentHash: 'abc1234' },
+    });
+
+    expect((postgresClient as any).transaction).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][0]).toContain('FOR UPDATE');
+    expect(query.mock.calls[1][0]).toContain('UPDATE work_task_dispatches');
+    expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
+    expect(query.mock.calls[3][0]).toContain('UPDATE work_tasks');
+    expect(query.mock.calls[3][0]).toContain("status = 'in_progress'");
+    expect(query.mock.calls[3][0]).toContain('RETURNING *');
+    expect(committed).toEqual(expect.objectContaining({ id: 'task-1', status: 'in_review' }));
   });
 });
