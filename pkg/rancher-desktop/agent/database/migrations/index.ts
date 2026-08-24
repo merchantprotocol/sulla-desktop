@@ -66,6 +66,7 @@ import { up as up_0076, down as down_0076 } from './0076_extend_work_task_dispat
 import { up as up_0077, down as down_0077 } from './0077_create_work_item_knowledge_links';
 import { up as up_0078, down as down_0078 } from './0078_create_work_routine_slots';
 import { up as up_0079, down as down_0079 } from './0079_create_work_task_artifact_custody';
+import { up as up_0080, down as down_0080 } from './0080_settle_work_task_waits_on_replan';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -133,4 +134,5 @@ export const migrationsRegistry = [
   { name: '0077_create_work_item_knowledge_links',                 up: up_0077, down: down_0077 },
   { name: '0078_create_work_routine_slots',                        up: up_0078, down: down_0078 },
   { name: '0079_create_work_task_artifact_custody',                up: up_0079, down: down_0079 },
+  { name: '0080_settle_work_task_waits_on_replan',                 up: up_0080, down: down_0080 },
 ] as const;
