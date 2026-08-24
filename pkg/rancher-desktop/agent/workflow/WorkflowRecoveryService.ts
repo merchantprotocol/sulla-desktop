@@ -74,8 +74,8 @@ export async function recoverOnBoot(): Promise<void> {
 
     console.log(`[WorkflowRecovery] Found ${ suspended.length } legacy suspended and ${ recovered.length } stale execution(s) to recover.`);
 
-    const autoRestarts: SuspendedExecution[] = [...recovered];
-    const manualResumes: SuspendedExecution[] = [];
+    const autoRestarts: SuspendedExecution[] = recovered.filter(entry => entry.autoRestart);
+    const manualResumes: SuspendedExecution[] = recovered.filter(entry => !entry.autoRestart);
 
     for (const exec of suspended) {
       const a = exec.attributes as any;
