@@ -16,6 +16,7 @@
 import { postgresClient } from '../PostgresClient';
 import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
 import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
+import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
 
 import type { PoolClient } from 'pg';
 
@@ -254,6 +255,7 @@ export interface UpdateTaskInput {
   source?:       string | null;
   source_ref?:   string | null;
   actor?:        string;
+  custody?:      ArtifactCustody | null;
 }
 
 export interface AddCommentInput {
@@ -1091,6 +1093,18 @@ export class WorkItemsModel {
     const targetLane = changes.status !== undefined
       ? await WorkLaneDefinitionModel.validateTaskStatus(nextProjectId ?? existing.project_id, changes.status)
       : null;
+    const enteringReview = changes.status !== undefined
+      && changes.status !== existing.status
+      && (targetLane?.semantic_role === 'review' || (!targetLane && changes.status === 'in_review'));
+    const enteringDone = changes.status !== undefined
+      && changes.status !== existing.status
+      && changes.status === 'done';
+    if (enteringReview) {
+      await ArtifactCustodyPolicy.assertForTransition('in_review', changes.custody);
+    }
+    if (enteringDone) {
+      await ArtifactCustodyPolicy.assertForTransition('done', changes.custody);
+    }
     const ownershipProjectId = nextProjectId ?? existing.project_id;
     const ownershipCapability = changes.status === undefined
       ? await WorkLaneDefinitionModel.runtimeCapability(ownershipProjectId)
@@ -1174,6 +1188,14 @@ export class WorkItemsModel {
         if (!current.rows[0]) return null;
         const rows = await client.query<WorkTaskRecord>(updateSql, values);
         const committed = rows.rows[0] ?? null;
+        if (committed && enteringReview && changes.custody) {
+          await ArtifactCustodyPolicy.persistWithClient(
+            client, committed.id, 'in_review', changes.custody, actor);
+        }
+        if (committed && enteringDone && changes.custody) {
+          await ArtifactCustodyPolicy.persistWithClient(
+            client, committed.id, 'done', changes.custody, actor);
+        }
         if (committed && committed.status !== current.rows[0].status) {
           const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
           const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(

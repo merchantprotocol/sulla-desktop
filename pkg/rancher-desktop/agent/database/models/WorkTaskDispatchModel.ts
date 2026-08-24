@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
 
@@ -116,6 +117,7 @@ export interface WorkTaskDispatchEvidence {
   contentHash?:         string;
   reviewerVerdict?:     string;
   reviewEvidence?:      unknown;
+  custody?:      ArtifactCustody | null;
   terminalReason?:      string;
 }
 
@@ -222,6 +224,23 @@ export class WorkTaskDispatchModel {
            AND NOT EXISTS (
              SELECT 1 FROM work_task_stage_claims c
               WHERE c.task_id = t.id AND c.stage = 'in_progress' AND c.status = 'active'
+           )
+           AND NOT EXISTS (
+             SELECT 1
+               FROM work_tasks downstream
+               JOIN work_epics downstream_epic ON downstream_epic.id = downstream.epic_id
+               JOIN work_projects downstream_project ON downstream_project.id = downstream_epic.project_id
+              WHERE downstream.archived = false
+                AND downstream.status = 'in_review'
+                AND downstream_epic.archived = false
+                AND downstream_project.archived = false
+                AND NOT (downstream_project.status = ANY($1::text[]))
+                AND NOT (downstream_epic.status = ANY($1::text[]))
+                AND (downstream.assignee IS NULL OR LOWER(downstream.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+                AND NOT EXISTS (
+                  SELECT 1 FROM unnest(COALESCE(downstream.labels, '{}')) AS downstream_label
+                   WHERE LOWER(downstream_label) = ANY($3::text[])
+                )
            )
            AND NOT EXISTS (
              SELECT 1 FROM work_tasks child
@@ -409,6 +428,33 @@ export class WorkTaskDispatchModel {
         WHERE status = 'running' AND ($1::text IS NULL OR kind = $1)`,
       [kind ?? null],
     );
+    return Number(row?.count || 0);
+  }
+
+  /**
+   * Count autonomous work already at the review stage, including work with an
+   * active verification lease. Any such row is farther down the conveyor than
+   * todo, so the dispatcher uses this as a hard backpressure gate before
+   * claiming fresh execution work.
+   */
+  static async countReviewBacklog(): Promise<number> {
+    const row = await postgresClient.queryOne<{ count: string }>(`
+      SELECT COUNT(*)::text AS count
+        FROM work_tasks t
+        JOIN work_epics e ON e.id = t.epic_id
+        JOIN work_projects p ON p.id = e.project_id
+       WHERE t.archived = false
+         AND t.status = 'in_review'
+         AND e.archived = false
+         AND p.archived = false
+         AND NOT (p.status = ANY($1::text[]))
+         AND NOT (e.status = ANY($1::text[]))
+         AND (t.assignee IS NULL OR LOWER(t.assignee) IN ('heartbeat', 'dispatcher', 'verifier'))
+         AND NOT EXISTS (
+           SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
+            WHERE LOWER(label) = ANY($2::text[])
+         )
+    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
     return Number(row?.count || 0);
   }
 
@@ -715,6 +761,10 @@ export class WorkTaskDispatchModel {
    */
   static async finalize(id: string, taskId: string, finalization: WorkTaskDispatchFinalization): Promise<WorkTaskRecord> {
     const evidence = finalization.evidence ?? {};
+    const custody = ArtifactCustodyPolicy.derive(evidence as unknown as Record<string, unknown>);
+    if (finalization.taskStatus === 'in_review') {
+      await ArtifactCustodyPolicy.assertForTransition('in_review', custody);
+    }
     return postgresClient.transaction(async(client: PoolClient) => {
       const locked = await client.query<{ status: WorkTaskDispatchStatus }>(
         'SELECT status FROM work_task_dispatches WHERE id = $1 AND task_id = $2 FOR UPDATE',
@@ -722,6 +772,9 @@ export class WorkTaskDispatchModel {
       );
       if (locked.rows[0]?.status !== 'running') {
         throw new Error(`Dispatch ${ id } is not running and cannot be finalized`);
+      }
+      if (finalization.taskStatus === 'in_review' && custody) {
+        await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'in_review', custody, 'dispatcher');
       }
 
       await client.query(`
@@ -880,6 +933,15 @@ export class WorkTaskDispatchModel {
         ? '\n\nRepeated identical rework reached the retry ceiling; routed to Heartbeat recovery.'
         : '';
 
+      if (finalVerdict === 'APPROVE') {
+        await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'done', {
+          workKind:   'non_code',
+          artifactId: `verification-dispatch:${ id }`,
+          evidence:   { artifactSha, currentArtifactSha, verdict: finalVerdict, summary },
+          provenance: { routine: 'legacy-verifier', dispatchId: id },
+        }, 'verifier');
+      }
+
       await client.query(`
         UPDATE work_task_dispatches
            SET status = 'completed', verdict = $2, artifact_sha = $3,
@@ -957,7 +1019,27 @@ export class WorkTaskDispatchModel {
           ? { status: 'todo', assignee: 'dispatcher' }
           : finalDisposition === 'REPLAN'
             ? { status: 'planning', assignee: 'dispatcher' }
-            : { status: 'blocked', assignee: 'heartbeat' };
+        : { status: 'blocked', assignee: 'heartbeat' };
+
+      if (finalDisposition === 'PASS') {
+        await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'done', {
+          workKind:   'non_code',
+          artifactId: `protected-review-dispatch:${ id }`,
+          artifactUrl: evidence.artifactUrl ?? undefined,
+          evidence:   {
+            generationHash: evidence.generationHash,
+            artifactHash: evidence.artifactHash,
+            checks: evidence.checks,
+            findings: evidence.findings,
+          },
+          provenance: {
+            routine: 'protected-review',
+            dispatchId: id,
+            workflowExecutionId: evidence.workflowExecutionId,
+            reviewerAgentIds: evidence.reviewerAgentIds,
+          },
+        }, 'verifier');
+      }
 
       if (finalDisposition === 'EXTERNAL_WAIT') {
         const wait = evidence.wait;

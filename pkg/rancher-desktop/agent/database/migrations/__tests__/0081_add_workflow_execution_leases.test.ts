@@ -1,15 +1,15 @@
 import { describe, expect, it } from '@jest/globals';
-import { down, up } from '../0078_add_workflow_execution_leases';
+import { down, up } from '../0081_add_workflow_execution_leases';
 import { migrationsRegistry } from '..';
 
-describe('0078_add_workflow_execution_leases', () => {
+describe('0081_add_workflow_execution_leases', () => {
   it('is additive, ordered after 0077, and defines stale-lease recovery fields', () => {
     expect(up).toContain('ADD COLUMN IF NOT EXISTS owner_id');
     expect(up).toContain('lease_expires_at');
     expect(up).toContain('attempt_count INTEGER NOT NULL DEFAULT 0');
     expect(up).toContain('idx_wf_executions_stale_lease');
     expect(up).toContain("status IN ('running', 'suspended')");
-    expect(migrationsRegistry.findIndex(m => m.name.startsWith('0078')))
+    expect(migrationsRegistry.findIndex(m => m.name.startsWith('0081')))
       .toBeGreaterThan(migrationsRegistry.findIndex(m => m.name.startsWith('0077')));
   });
 

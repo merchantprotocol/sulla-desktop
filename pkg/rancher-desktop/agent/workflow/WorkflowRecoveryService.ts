@@ -29,6 +29,19 @@ export interface SuspendedExecution {
 
 /** Non-auto-restart executions waiting for user decision. Cleared once read. */
 let pendingSuspended: SuspendedExecution[] = [];
+let leaseRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function scheduleNextLeaseRecovery(WorkflowExecutionModel: any): Promise<void> {
+  const next = await WorkflowExecutionModel.nextLeaseExpiry();
+  if (!next) return;
+  if (leaseRecoveryTimer) clearTimeout(leaseRecoveryTimer);
+  const delay = Math.max(1_000, next.getTime() - Date.now() + 250);
+  leaseRecoveryTimer = setTimeout(() => {
+    leaseRecoveryTimer = null;
+    void recoverOnBoot();
+  }, delay);
+  (leaseRecoveryTimer as any).unref?.();
+}
 
 /** Called from initSullaEvents (main process) after the DB is ready. */
 export async function recoverOnBoot(): Promise<void> {
@@ -55,6 +68,7 @@ export async function recoverOnBoot(): Promise<void> {
 
     if (suspended.length === 0 && recovered.length === 0) {
       console.log('[WorkflowRecovery] No suspended executions found — nothing to recover.');
+      await scheduleNextLeaseRecovery(WorkflowExecutionModel);
       return;
     }
 
@@ -92,6 +106,7 @@ export async function recoverOnBoot(): Promise<void> {
     if (manualResumes.length > 0) {
       console.log(`[WorkflowRecovery] ${ manualResumes.length } workflow(s) need manual resume: ${ manualResumes.map(e => e.workflowName).join(', ') }`);
     }
+    await scheduleNextLeaseRecovery(WorkflowExecutionModel);
   } catch (err) {
     console.error('[WorkflowRecovery] recoverOnBoot failed:', err);
   }
