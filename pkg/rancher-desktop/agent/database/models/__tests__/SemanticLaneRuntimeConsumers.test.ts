@@ -84,6 +84,7 @@ describe('semantic lane runtime consumers', () => {
     const waits = source('pkg/rancher-desktop/agent/database/models/WorkTaskWaitModel.ts');
     const heartbeat = source('pkg/rancher-desktop/agent/nodes/HeartbeatNode.ts');
     const report = source('pkg/rancher-desktop/agent/prompts/projectReport.ts');
+    const heartbeatPrompt = source('pkg/rancher-desktop/agent/prompts/heartbeat.ts');
     const composable = source('pkg/rancher-desktop/composables/useProjects.ts');
     const projectsPage = source('pkg/rancher-desktop/pages/ProjectsHome.vue');
 
@@ -94,6 +95,9 @@ describe('semantic lane runtime consumers', () => {
     expect(heartbeat).toContain("semanticRoles: ['backlog', 'execution']");
     expect(heartbeat).toContain('filterHeartbeatEligible');
     expect(report).toContain('laneFor(task)?.semantic_role');
+    expect(heartbeatPrompt).toContain("Resolve every task's effective lane and semantic role");
+    expect(heartbeatPrompt).toContain('ordered effective execution-entry lane');
+    expect(heartbeatPrompt).not.toContain("Send incomplete work to 'planning'; send executable work to 'todo'");
     expect(composable).toContain("t.lane?.semantic_role === 'terminal'");
     expect(projectsPage).toContain('function semanticRole(status: string)');
     expect(projectsPage).toContain("lane.semantic_role === 'execution'");

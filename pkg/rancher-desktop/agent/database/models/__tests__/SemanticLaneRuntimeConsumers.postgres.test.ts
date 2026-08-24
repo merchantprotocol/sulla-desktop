@@ -14,11 +14,13 @@ import { up as addWorkTaskActivity } from '../../migrations/0061_add_work_task_a
 import { up as createWorkTaskDispatches } from '../../migrations/0062_create_work_task_dispatches';
 import { up as addVerificationDispatches } from '../../migrations/0064_add_verification_dispatches';
 import { up as createWorkTaskWaits } from '../../migrations/0065_create_work_task_waits';
+import { up as createWorkTaskPlanningRuns } from '../../migrations/0067_create_work_task_planning_runs';
 import { up as extendDispatchCustody } from '../../migrations/0068_extend_work_task_dispatch_custody';
 import { up as createLaneDefinitions } from '../../migrations/0069_create_work_lane_definitions';
 import { up as createLaneWorkflowBindings } from '../../migrations/0070_create_lane_workflow_bindings';
 import { up as scopeLaneWorkflowExecutions } from '../../migrations/0071_scope_lane_workflow_executions';
 import { up as addReviewDispositionEvidence } from '../../migrations/0072_add_review_disposition_evidence';
+import { up as createLifecycleCapabilities } from '../../migrations/0073_create_lifecycle_capabilities';
 import { up as addSemanticLaneRuntimeHelpers } from '../../migrations/0074_semantic_lane_runtime_helpers';
 import { WorkItemsModel } from '../WorkItemsModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
@@ -28,6 +30,7 @@ import {
   WorkLaneWorkflowBindingModel,
 } from '../WorkLaneWorkflowBindingModel';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
+import { WorkTaskPlanningRunModel } from '../WorkTaskPlanningRunModel';
 import { WorkflowExecutionModel } from '../WorkflowExecutionModel';
 
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
@@ -68,11 +71,13 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
       createWorkTaskDispatches,
       addVerificationDispatches,
       createWorkTaskWaits,
+      createWorkTaskPlanningRuns,
       extendDispatchCustody,
       createLaneDefinitions,
       createLaneWorkflowBindings,
       scopeLaneWorkflowExecutions,
       addReviewDispositionEvidence,
+      createLifecycleCapabilities,
       addSemanticLaneRuntimeHelpers,
     ]) await pool.query(migration);
 
@@ -112,6 +117,7 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
         ('global-done', 'done', 'global_default', NULL, 'Done', 60, 'terminal', true),
         ('project-ready', 'ready-custom', 'project', 'project-semantic', 'Ready custom', 5, 'execution', false),
         ('project-building', 'building-custom', 'project', 'project-semantic', 'Building custom', 25, 'execution', false),
+        ('project-planning', 'plan-custom', 'project', 'project-semantic', 'Plan custom', 28, 'planning', false),
         ('project-review', 'qa-custom', 'project', 'project-semantic', 'QA custom', 35, 'review', false),
         ('project-complete', 'complete-custom', 'project', 'project-semantic', 'Complete custom', 55, 'terminal', false),
         ('project-manual', 'manual-custom', 'project', 'project-semantic', 'Manual custom', 70, 'manual', false);
@@ -309,5 +315,49 @@ describeWithPostgres('semantic lane runtime migrated PostgreSQL transition', () 
     await expect(WorkItemsModel.getTask('task-degraded-blocked')).resolves.toMatchObject({
       status: 'in_review', assignee: 'heartbeat',
     });
+  }, 30_000);
+
+  it('recovers custom planning lanes and visibly degrades before stable-key fallback', async() => {
+    await pool.query(`
+      UPDATE work_lane_definitions
+         SET archived = false, enabled = true
+       WHERE semantic_role = 'blocked';
+      INSERT INTO work_tasks (id, project_id, epic_id, title, status, assignee)
+      VALUES ('task-stale-custom', 'project-semantic', 'epic-semantic', 'Custom stale planning', 'plan-custom', 'planning-council');
+      INSERT INTO work_task_planning_runs
+        (id, task_id, workflow_id, status, trigger_status, heartbeat_at)
+      VALUES
+        ('planning-stale-custom', 'task-stale-custom', 'core-routine-plan-project-task', 'active', 'plan-custom', now() - interval '2 hours');
+    `);
+
+    await expect(WorkTaskPlanningRunModel.recoverStale(45)).resolves.toEqual(['task-stale-custom']);
+
+    await pool.query(`
+      UPDATE work_lane_definitions
+         SET archived = true, enabled = false
+       WHERE semantic_role = 'blocked';
+      INSERT INTO work_tasks (id, project_id, epic_id, title, status, assignee)
+      VALUES
+        ('task-stale-legacy', 'project-semantic', 'epic-semantic', 'Legacy stale planning', 'planning', 'planning-council'),
+        ('task-stale-degraded-custom', 'project-semantic', 'epic-semantic', 'Degraded custom planning', 'plan-custom', 'planning-council');
+      INSERT INTO work_task_planning_runs
+        (id, task_id, workflow_id, status, trigger_status, heartbeat_at)
+      VALUES
+        ('planning-stale-legacy', 'task-stale-legacy', 'core-routine-plan-project-task', 'active', 'planning', now() - interval '2 hours'),
+        ('planning-stale-degraded-custom', 'task-stale-degraded-custom', 'core-routine-plan-project-task', 'active', 'plan-custom', now() - interval '2 hours');
+    `);
+
+    await expect(WorkTaskPlanningRunModel.recoverStale(45)).resolves.toEqual(['task-stale-legacy']);
+    const capability = await pool.query(`
+      SELECT health, fallback_mode, fallback_active, last_error
+        FROM lifecycle_capabilities
+       WHERE capability_key = 'planning-council'
+    `);
+    expect(capability.rows[0]).toMatchObject({
+      health:          'degraded',
+      fallback_mode:   'keep_current',
+      fallback_active: true,
+    });
+    expect(capability.rows[0].last_error).toContain('Required semantic lane roles are missing: blocked');
   }, 30_000);
 });
