@@ -9,13 +9,15 @@
  * round-robin rotation whenever an agent edits or comments on a task.
  */
 
+import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
 
 export interface ProjectReportOpts {
-  hours?:     number;
-  nextLimit?: number;
-  projectId?: string;
-  assignee?:  string;
+  hours?:          number;
+  nextLimit?:      number;
+  projectId?:      string;
+  assignee?:       string;
+  lifecycleAware?: boolean;
 }
 
 function shorten(s: string): string {
@@ -59,13 +61,22 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   const doneRows = await WorkItemsModel.listTasks({ projectId, assignee, includeDone: true, limit: 3000 });
   const completed = doneRows
     .filter(t => (t.status === 'done' || t.status === 'cancelled') && t.completed_at && Date.parse(t.completed_at) >= cutoffMs)
-    .sort((a, b) => Date.parse(b.completed_at as string) - Date.parse(a.completed_at as string));
+    .sort((a, b) => Date.parse(b.completed_at!) - Date.parse(a.completed_at!));
   const doneEpics = epics.filter(e => e.status === 'done' && Date.parse(e.last_moved_at) >= cutoffMs);
   const doneProjects = projects.filter(p => p.status === 'done' && Date.parse(p.last_moved_at) >= cutoffMs);
 
   // OPEN QUEUES — WorkItemsModel already orders by epic priority → task
   // priority → oldest activity. Preserve that order while separating states.
-  const openRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
+  const listedOpenRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
+  const lifecycleAccess = opts.lifecycleAware
+    ? await LifecycleCapabilityModel.heartbeatAccessByTask(listedOpenRows)
+    : null;
+  const openRows = lifecycleAccess
+    ? listedOpenRows.filter(task => ['heartbeat_fallback', 'unmanaged'].includes(lifecycleAccess.get(task.id)?.mode ?? 'manual_hold'))
+    : listedOpenRows;
+  const lifecycleOwnedRows = lifecycleAccess
+    ? listedOpenRows.filter(task => !['heartbeat_fallback', 'unmanaged'].includes(lifecycleAccess.get(task.id)?.mode ?? 'manual_hold'))
+    : [];
   const actionableRows = openRows.filter(t => t.status !== 'blocked' && t.status !== 'planning');
   const blockedRows = openRows.filter(t => t.status === 'blocked');
   const planningRows = openRows.filter(t => t.status === 'planning');
@@ -91,8 +102,12 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   for (const p of doneProjects) lines.push(`- _(project)_ **${ p.title }** completed (id ${ p.id })`);
 
   lines.push('');
-  lines.push(`## ▶️ Actionable now (${ next.length } of ${ actionableRows.length })`);
-  lines.push('_This is a portfolio dispatch queue, not a one-task limit. Heartbeat should hydrate and dispatch as many independent tasks as available sub-agent capacity allows, one task per work agent, then continue across the queue for the full wake._');
+  lines.push(opts.lifecycleAware
+    ? `## ▶️ Explicit Heartbeat fallback (${ next.length } of ${ actionableRows.length })`
+    : `## ▶️ Actionable now (${ next.length } of ${ actionableRows.length })`);
+  lines.push(opts.lifecycleAware
+    ? '_Only rows listed here have an explicit named Heartbeat fallback (or no lifecycle stage). Heartbeat may act within that fallback; absence or manual hold never grants ownership._'
+    : '_This is a portfolio dispatch queue, not a one-task limit. Heartbeat should hydrate and dispatch as many independent tasks as available sub-agent capacity allows, one task per work agent, then continue across the queue for the full wake._');
   if (!next.length) {
     lines.push('_No open tasks in scope._');
   } else {
@@ -104,8 +119,12 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   }
 
   lines.push('');
-  lines.push(`## 🧭 Blocked tasks — recovery planning (${ blocked.length } of ${ blockedRows.length })`);
-  lines.push('_These are recovery-planning work, not a human review queue. After dispatching across actionable tasks, Heartbeat should use remaining capacity on the oldest blocked task in the highest priority block: move it to `planning` and dispatch a council of independent high-reasoning planners. Cross-check their proposals, choose the strongest reversible path, record the decision, move the task to `in_progress`, and execute it. Escalate only a genuinely irreversible/high-blast action after staging the reversible work. If no execution path exists, return it to `blocked`; the new activity rotates it to the bottom of its priority block._');
+  lines.push(opts.lifecycleAware
+    ? `## 🧭 Explicit Heartbeat planning fallback (${ blocked.length } of ${ blockedRows.length })`
+    : `## 🧭 Blocked tasks — recovery planning (${ blocked.length } of ${ blockedRows.length })`);
+  lines.push(opts.lifecycleAware
+    ? '_These rows are available only because the planning-capability contract explicitly names Heartbeat as fallback._'
+    : '_These are recovery-planning work, not a human review queue. After dispatching across actionable tasks, Heartbeat should use remaining capacity on the oldest blocked task in the highest priority block: move it to `planning` and dispatch a council of independent high-reasoning planners. Cross-check their proposals, choose the strongest reversible path, record the decision, move the task to `in_progress`, and execute it. Escalate only a genuinely irreversible/high-blast action after staging the reversible work. If no execution path exists, return it to `blocked`; the new activity rotates it to the bottom of its priority block._');
   if (!blocked.length) {
     lines.push('_No blocked tasks in scope._');
   } else {
@@ -122,6 +141,18 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
     for (const t of planning) {
       const who = t.assignee ? ` · ${ t.assignee }` : '';
       lines.push(`- [${ t.priority }] **${ t.title }** — ${ context(t) }${ who } (id ${ t.id })`);
+    }
+  }
+
+  if (lifecycleOwnedRows.length) {
+    lines.push('');
+    lines.push(`## 🔒 Protected lifecycle work — data only (${ lifecycleOwnedRows.length })`);
+    lines.push('_Visibility is informational. Do not plan, execute, review, poll, reclaim, or mutate task status for these rows; the named capability owner and its live claim retain custody._');
+    for (const task of lifecycleOwnedRows.slice(0, nextLimit)) {
+      const access = lifecycleAccess?.get(task.id);
+      const owner = access?.owner ?? 'manual hold';
+      const claim = access?.liveClaim ? ` · live claim ${ access.liveClaim.id } by ${ access.liveClaim.owner }` : '';
+      lines.push(`- [${ task.priority }] **${ task.title }** — ${ context(task) } · ${ task.status } · capability ${ access?.capabilityKey ?? 'none' } · owner ${ owner }${ claim } (id ${ task.id })`);
     }
   }
 
