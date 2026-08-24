@@ -178,8 +178,17 @@ export class WorkLaneWorkflowBindingModel {
     });
   }
 
-  static async resolve(taskId: string, laneKey: string, profileId = 'default'): Promise<LaneBindingResolution> {
-    const context = await postgresClient.queryOne<{
+  static async resolve(taskId: string, laneKey: string, profileId = 'default', client?: PoolClient):
+  Promise<LaneBindingResolution> {
+    const query = async<T>(text: string, params: unknown[]): Promise<T[]> => {
+      if (client) return (await client.query(text, params)).rows as T[];
+      return postgresClient.query<T>(text, params);
+    };
+    const queryOne = async<T>(text: string, params: unknown[]): Promise<T | null> => {
+      if (client) return ((await client.query(text, params)).rows[0] as T | undefined) ?? null;
+      return postgresClient.queryOne<T>(text, params);
+    };
+    const context = await queryOne<{
       project_id: string; epic_id: string; semantic_role: string; system_required: boolean;
     }>(`
       SELECT t.project_id, t.epic_id, lane.semantic_role, lane.system_required
@@ -194,7 +203,7 @@ export class WorkLaneWorkflowBindingModel {
     `, [taskId, laneKey]);
     if (!context) throw new Error(`No active task/lane context found for ${ taskId } in ${ laneKey }.`);
 
-    const candidates = await postgresClient.query<LaneWorkflowBindingRecord>(`
+    const candidates = await query<LaneWorkflowBindingRecord>(`
       SELECT * FROM work_lane_workflow_bindings
        WHERE profile_id = $1 AND active = true AND archived = false
          AND (
@@ -209,7 +218,7 @@ export class WorkLaneWorkflowBindingModel {
 
     let fallbackReason: string | null = null;
     for (const binding of candidates) {
-      const workflow = await WorkLaneWorkflowBindingModel.getWorkflow(binding.workflow_id);
+      const workflow = await WorkLaneWorkflowBindingModel.getWorkflow(binding.workflow_id, client);
       if (!workflow || !workflow.enabled || workflow.status === 'archive') {
         fallbackReason ??= `Binding ${ binding.id } references an unavailable workflow.`;
         continue;
@@ -289,7 +298,7 @@ export class WorkLaneWorkflowBindingModel {
       `, [taskId]);
       if (prior.rows[0]?.lane_key === laneKey) return { created: false, entry: prior.rows[0] };
 
-      const resolution = await WorkLaneWorkflowBindingModel.resolve(taskId, laneKey, profileId);
+      const resolution = await WorkLaneWorkflowBindingModel.resolve(taskId, laneKey, profileId, client);
       const generation = (prior.rows[0]?.generation ?? 0) + 1;
       const status = resolution.workflowId ? 'pending' : 'unautomated';
       const inserted = await client.query<LaneEntryAutomationRecord>(`
@@ -310,7 +319,11 @@ export class WorkLaneWorkflowBindingModel {
     });
   }
 
-  private static async getWorkflow(id: string): Promise<WorkflowRow | null> {
+  private static async getWorkflow(id: string, client?: PoolClient): Promise<WorkflowRow | null> {
+    if (client) {
+      const result = await client.query('SELECT id, definition, enabled, status, system FROM workflows WHERE id = $1', [id]);
+      return (result.rows[0] as WorkflowRow | undefined) ?? null;
+    }
     return postgresClient.queryOne<WorkflowRow>('SELECT id, definition, enabled, status, system FROM workflows WHERE id = $1', [id]);
   }
 
