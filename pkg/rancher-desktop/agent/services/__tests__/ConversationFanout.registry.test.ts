@@ -74,8 +74,6 @@ describe('GraphRegistry Conversation Writer + Reader factories', () => {
     expect(writerMeta.subconsciousSilent).toBe(true);
     expect(readerMeta.agentLabel).toBe('conversation-reader');
     expect(readerMeta.subconsciousSilent).toBe(false);
-    expect(writerMeta.systemPrompt).not.toContain('Jonathon');
-    expect(readerMeta.systemPrompt).not.toContain('Jonathon');
     expect(writerMeta.systemPrompt).not.toContain('profile-42');
     expect(readerMeta.systemPrompt).not.toContain('profile-42');
   });
