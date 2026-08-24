@@ -85,6 +85,38 @@ export interface WorkTaskDispatchRecord {
   started_at:              string;
   heartbeat_at:            string;
   finished_at:             string | null;
+  run_kind?:               string;
+  classifier_decision?:    unknown;
+  selected_agents?:        unknown[];
+  worker_child_ids?:       string[];
+  attempt_count?:          number;
+  review_count?:           number;
+  repair_count?:           number;
+  artifact_type?:          string | null;
+  artifact_location?:      string | null;
+  artifact_url?:           string | null;
+  artifact_ref?:           string | null;
+  content_hash?:           string | null;
+  reviewer_verdict?:       string | null;
+  review_evidence?:        unknown;
+  terminal_reason?:        string | null;
+}
+
+export interface WorkTaskDispatchEvidence {
+  workflowExecutionId?: string;
+  classifierDecision?:  unknown;
+  selectedAgents?:      unknown[];
+  workerChildIds?:      string[];
+  reviewCount?:         number;
+  repairCount?:         number;
+  artifactType?:        string;
+  artifactLocation?:    string;
+  artifactUrl?:         string;
+  artifactRef?:         string;
+  contentHash?:         string;
+  reviewerVerdict?:     string;
+  reviewEvidence?:      unknown;
+  terminalReason?:      string;
 }
 
 export interface ClaimedDispatch {
@@ -126,6 +158,16 @@ export interface OrphanRecoveryResult {
   taskId:         string;
   outcome:        'recovered' | 'blocked_ceiling' | 'cas_miss';
   attemptNumber?: number;
+}
+
+export interface WorkTaskDispatchFinalization {
+  dispatchStatus: Exclude<WorkTaskDispatchStatus, 'running' | 'stale'>;
+  taskStatus:     'in_review' | 'planning' | 'blocked';
+  taskAssignee:   'heartbeat' | 'dispatcher';
+  comment:        string;
+  result?:        string;
+  error?:         string;
+  evidence?:      WorkTaskDispatchEvidence;
 }
 
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
@@ -670,6 +712,83 @@ export class WorkTaskDispatchModel {
              heartbeat_at = now(), finished_at = now()
        WHERE id = $1 AND status = 'running'
     `, [id, status, result ?? null, error ?? null]);
+  }
+
+  /**
+   * Commit the terminal ledger, Projects comment, and task transition as one
+   * unit. A crash cannot leave a terminal dispatch attached to an in-progress
+   * task (or move the task without retaining the evidence that justified it).
+   */
+  static async finalize(id: string, taskId: string, finalization: WorkTaskDispatchFinalization): Promise<WorkTaskRecord> {
+    const evidence = finalization.evidence ?? {};
+    return postgresClient.transaction(async(client: PoolClient) => {
+      const locked = await client.query<{ status: WorkTaskDispatchStatus }>(
+        'SELECT status FROM work_task_dispatches WHERE id = $1 AND task_id = $2 FOR UPDATE',
+        [id, taskId],
+      );
+      if (locked.rows[0]?.status !== 'running') {
+        throw new Error(`Dispatch ${ id } is not running and cannot be finalized`);
+      }
+
+      await client.query(`
+        UPDATE work_task_dispatches
+           SET status = $3, result = $4, error = $5,
+               workflow_execution_id = COALESCE($6, workflow_execution_id),
+               classifier_decision = COALESCE($7::jsonb, classifier_decision),
+               selected_agents = COALESCE($8::jsonb, selected_agents),
+               worker_child_ids = COALESCE($9::text[], worker_child_ids),
+               review_count = GREATEST(review_count, COALESCE($10, review_count)),
+               repair_count = GREATEST(repair_count, COALESCE($11, repair_count)),
+               artifact_type = COALESCE($12, artifact_type),
+               artifact_location = COALESCE($13, artifact_location),
+               artifact_url = COALESCE($14, artifact_url),
+               artifact_ref = COALESCE($15, artifact_ref),
+               content_hash = COALESCE($16, content_hash),
+               reviewer_verdict = COALESCE($17, reviewer_verdict),
+               review_evidence = COALESCE($18::jsonb, review_evidence),
+               terminal_reason = COALESCE($19, terminal_reason),
+               heartbeat_at = now(), finished_at = now()
+         WHERE id = $1 AND task_id = $2 AND status = 'running'
+      `, [
+        id,
+        taskId,
+        finalization.dispatchStatus,
+        finalization.result ?? null,
+        finalization.error ?? null,
+        evidence.workflowExecutionId ?? null,
+        evidence.classifierDecision === undefined ? null : JSON.stringify(evidence.classifierDecision),
+        evidence.selectedAgents === undefined ? null : JSON.stringify(evidence.selectedAgents),
+        evidence.workerChildIds ?? null,
+        evidence.reviewCount ?? null,
+        evidence.repairCount ?? null,
+        evidence.artifactType ?? null,
+        evidence.artifactLocation ?? null,
+        evidence.artifactUrl ?? null,
+        evidence.artifactRef ?? null,
+        evidence.contentHash ?? null,
+        evidence.reviewerVerdict ?? null,
+        evidence.reviewEvidence === undefined ? null : JSON.stringify(evidence.reviewEvidence),
+        evidence.terminalReason ?? null,
+      ]);
+
+      await client.query(`
+        INSERT INTO work_task_comments (id, task_id, body, author)
+        VALUES ($1, $2, $3, 'dispatcher')
+      `, [`dispatch-comment-${ randomUUID() }`, taskId, finalization.comment]);
+
+      const moved = await client.query<WorkTaskRecord>(`
+        UPDATE work_tasks
+           SET status = $2, assignee = $3, updated_at = now(),
+               last_moved_at = now(), last_activity_at = now(),
+               last_moved_by = 'dispatcher', completed_at = NULL
+         WHERE id = $1 AND status = 'in_progress' AND assignee = 'dispatcher'
+         RETURNING *
+      `, [taskId, finalization.taskStatus, finalization.taskAssignee]);
+      if (!moved.rows[0]) {
+        throw new Error(`Task ${ taskId } is no longer owned by dispatch ${ id }`);
+      }
+      return moved.rows[0];
+    });
   }
 
   static async recoverStale(staleMinutes = 45): Promise<string[]> {

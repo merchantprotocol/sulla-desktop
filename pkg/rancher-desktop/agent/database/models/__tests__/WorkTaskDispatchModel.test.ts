@@ -630,6 +630,33 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[3][1][2]).toBe('github_checks');
     expect(query.mock.calls[6][1]).toEqual(['task-4', 'blocked', 'heartbeat']);
   });
+
+  it('finalizes ledger evidence, task state, and Projects comment in one transaction', async() => {
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [{ status: 'running' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-1', status: 'in_review', assignee: 'heartbeat' }] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    const committed = await WorkTaskDispatchModel.finalize('dispatch-1', 'task-1', {
+      dispatchStatus: 'completed',
+      taskStatus:     'in_review',
+      taskAssignee:   'heartbeat',
+      comment:        'Verified custody.',
+      result:         'done',
+      evidence:       { artifactUrl: 'https://github.com/o/r/pull/1', contentHash: 'abc1234' },
+    });
+
+    expect((postgresClient as any).transaction).toHaveBeenCalledTimes(1);
+    expect(query.mock.calls[0][0]).toContain('FOR UPDATE');
+    expect(query.mock.calls[1][0]).toContain('UPDATE work_task_dispatches');
+    expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
+    expect(query.mock.calls[3][0]).toContain('UPDATE work_tasks');
+    expect(query.mock.calls[3][0]).toContain("status = 'in_progress'");
+    expect(query.mock.calls[3][0]).toContain('RETURNING *');
+    expect(committed).toEqual(expect.objectContaining({ id: 'task-1', status: 'in_review' }));
+  });
 });
 
 async function captureCandidateSql(): Promise<string> {
