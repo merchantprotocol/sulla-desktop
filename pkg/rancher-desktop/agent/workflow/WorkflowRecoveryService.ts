@@ -29,22 +29,53 @@ export interface SuspendedExecution {
 
 /** Non-auto-restart executions waiting for user decision. Cleared once read. */
 let pendingSuspended: SuspendedExecution[] = [];
+let leaseRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function scheduleNextLeaseRecovery(WorkflowExecutionModel: any): Promise<void> {
+  const next = await WorkflowExecutionModel.nextLeaseExpiry();
+  if (!next) return;
+  if (leaseRecoveryTimer) clearTimeout(leaseRecoveryTimer);
+  const delay = Math.max(1_000, next.getTime() - Date.now() + 250);
+  leaseRecoveryTimer = setTimeout(() => {
+    leaseRecoveryTimer = null;
+    void recoverOnBoot();
+  }, delay);
+  (leaseRecoveryTimer as any).unref?.();
+}
 
 /** Called from initSullaEvents (main process) after the DB is ready. */
 export async function recoverOnBoot(): Promise<void> {
   try {
     const { WorkflowExecutionModel } = await import('../database/models/WorkflowExecutionModel');
+    const stale = await WorkflowExecutionModel.findStaleExecutions();
+    const recovered = [] as SuspendedExecution[];
+    for (const candidate of stale) {
+      const result = await WorkflowExecutionModel.recover(candidate.attributes.execution_id!);
+      if (!result) continue; // another worker won, or the retry ceiling failed it
+      const a = result.execution.attributes as any;
+      recovered.push({
+        executionId: a.execution_id,
+        workflowId: a.workflow_id,
+        workflowName: a.workflow_name || a.workflow_id,
+        workflowSlug: a.workflow_slug || a.workflow_id,
+        startedAt: a.started_at instanceof Date ? a.started_at.toISOString() : String(a.started_at),
+        autoRestart: a.auto_restart !== false,
+      });
+    }
+    // Legacy suspended rows predate leases; retain their existing path, but
+    // never use wall-clock age to classify a leased execution as stale.
     const suspended = await WorkflowExecutionModel.findSuspended();
 
-    if (suspended.length === 0) {
+    if (suspended.length === 0 && recovered.length === 0) {
       console.log('[WorkflowRecovery] No suspended executions found — nothing to recover.');
+      await scheduleNextLeaseRecovery(WorkflowExecutionModel);
       return;
     }
 
-    console.log(`[WorkflowRecovery] Found ${ suspended.length } suspended execution(s) to recover.`);
+    console.log(`[WorkflowRecovery] Found ${ suspended.length } legacy suspended and ${ recovered.length } stale execution(s) to recover.`);
 
-    const autoRestarts: SuspendedExecution[] = [];
-    const manualResumes: SuspendedExecution[] = [];
+    const autoRestarts: SuspendedExecution[] = recovered.filter(entry => entry.autoRestart);
+    const manualResumes: SuspendedExecution[] = recovered.filter(entry => !entry.autoRestart);
 
     for (const exec of suspended) {
       const a = exec.attributes as any;
@@ -75,6 +106,7 @@ export async function recoverOnBoot(): Promise<void> {
     if (manualResumes.length > 0) {
       console.log(`[WorkflowRecovery] ${ manualResumes.length } workflow(s) need manual resume: ${ manualResumes.map(e => e.workflowName).join(', ') }`);
     }
+    await scheduleNextLeaseRecovery(WorkflowExecutionModel);
   } catch (err) {
     console.error('[WorkflowRecovery] recoverOnBoot failed:', err);
   }
