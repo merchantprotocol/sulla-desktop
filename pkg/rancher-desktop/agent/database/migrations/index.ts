@@ -60,6 +60,7 @@ import { up as up_0069, down as down_0069 } from './0069_create_work_lane_defini
 import { up as up_0070, down as down_0070 } from './0070_create_lane_workflow_bindings';
 import { up as up_0071, down as down_0071 } from './0071_scope_lane_workflow_executions';
 import { up as up_0072, down as down_0072 } from './0072_add_review_disposition_evidence';
+import { up as up_0073, down as down_0073 } from './0073_create_lifecycle_capabilities';
 
 export const migrationsRegistry = [
   { name: '0001_create_migrations_and_seeders_table', up: up_0001, down: down_0001 },
@@ -121,4 +122,5 @@ export const migrationsRegistry = [
   { name: '0070_create_lane_workflow_bindings',                    up: up_0070, down: down_0070 },
   { name: '0071_scope_lane_workflow_executions',                    up: up_0071, down: down_0071 },
   { name: '0072_add_review_disposition_evidence',                   up: up_0072, down: down_0072 },
+  { name: '0073_create_lifecycle_capabilities',                     up: up_0073, down: down_0073 },
 ] as const;
