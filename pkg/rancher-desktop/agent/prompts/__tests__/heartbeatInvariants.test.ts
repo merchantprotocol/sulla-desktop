@@ -1,12 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 
+import { SystemPromptBuilder, type PromptBuildContext } from '../SystemPromptBuilder';
 import { heartbeatPrompt } from '../heartbeat';
 import {
   HEARTBEAT_FORBIDDEN_PHRASES,
   HEARTBEAT_REQUIRED_PHRASES,
   checkHeartbeatPromptInvariants,
 } from '../heartbeatInvariants';
-import { SystemPromptBuilder, type PromptBuildContext } from '../SystemPromptBuilder';
 
 describe('checkHeartbeatPromptInvariants', () => {
   it('passes on the real continuous-operator heartbeat prompt', () => {
@@ -50,20 +50,61 @@ describe('checkHeartbeatPromptInvariants', () => {
     expect(HEARTBEAT_FORBIDDEN_PHRASES.length).toBeGreaterThan(0);
   });
 
-  it('keeps blocked recovery autonomous and council-driven', () => {
-    expect(heartbeatPrompt).toContain('Blocked Recovery Council — Decide, Do Not Escalate');
-    expect(heartbeatPrompt).toContain('three independent high-reasoning planner agents');
-    expect(heartbeatPrompt).toContain('core-routine-plan-project-task');
-    expect(heartbeatPrompt).toContain('Heartbeat does not spawn planners');
-    expect(heartbeatPrompt).toContain('unchanged gates get no repeated notification');
+  it('keeps blocked planning, execution, review, waiting, and recovery single-owned', () => {
+    expect(heartbeatPrompt).toContain('Single-Owner Projects Conveyor');
+    expect(heartbeatPrompt).toContain('protected planning routine');
+    expect(heartbeatPrompt).toContain('protected execution routine');
+    expect(heartbeatPrompt).toContain('protected review routine');
+    expect(heartbeatPrompt).toContain('durable wait monitor');
+    expect(heartbeatPrompt).toContain('deterministic recovery');
+    expect(heartbeatPrompt).toContain('Every state or concern has exactly one owner');
   });
 
-  it('requires mechanical ordinary dispatch and heartbeat supervision', () => {
-    expect(heartbeatPrompt).toContain('Mechanical Dispatch');
-    expect(heartbeatPrompt).toContain('PostgreSQL Decides');
-    expect(heartbeatPrompt).toContain('one live dispatch per task');
-    expect(heartbeatPrompt).toContain('Heartbeat does not select or launch ordinary queue work');
-    expect(heartbeatPrompt).toContain('Supervisor Loop');
+  it('forbids the removed duplicate-owner doctrine at runtime', () => {
+    for (const phrase of [
+      'Blocked Recovery Council — Decide, Do Not Escalate',
+      'Auto-Dispatch on Blocked — Independent Council, Then Act',
+      'Task-Type Playbooks',
+      'Artifact-per-Cycle Contract',
+      "Review tasks returned to 'in_review'",
+      'three independent high-reasoning planner agents',
+    ]) {
+      expect(heartbeatPrompt).not.toContain(phrase);
+      expect(HEARTBEAT_FORBIDDEN_PHRASES).toContain(phrase);
+    }
+  });
+
+  it('fails closed on every forbidden ordinary-owner regression', () => {
+    for (const phrase of [
+      'launch ordinary todo workers',
+      'run its own planner council',
+      'inspect and close every in_review task',
+      'commit, push, or open PRs as ordinary artifact custodian',
+      'update marketing trackers as ordinary artifact custodian',
+      'poll unchanged CI or external gates',
+      'reclaim healthy leases based only on time',
+      'perform core-routine state transitions directly',
+    ]) {
+      const result = checkHeartbeatPromptInvariants(`${ heartbeatPrompt }\n${ phrase }`);
+      expect(result.ok).toBe(false);
+      expect(result.forbidden).toContain(phrase);
+    }
+  });
+
+  it('pins missing-capability, single-recovery, durable-wait, Projects, and freeze behavior', () => {
+    for (const phrase of [
+      'Affected tasks remain visible and unclaimed unless the responsibility contract names an explicit fallback',
+      'Repeated failures of the same owner capability update one existing systemic recovery item',
+      'Notify once when the gate is created or materially changes',
+      'Projects project-state is your only durable agenda',
+      'never let install-local Markdown replace or append to it',
+      "never flip 'heartbeatEnabled'",
+    ]) {
+      const stripped = heartbeatPrompt.split(phrase).join('');
+      const result = checkHeartbeatPromptInvariants(stripped);
+      expect(result.ok).toBe(false);
+      expect(result.missing).toContain(phrase);
+    }
   });
 });
 
@@ -86,7 +127,7 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     ...overrides,
   });
 
-  it('attaches a passing invariant result for a healthy heartbeat build', async () => {
+  it('attaches a passing invariant result for a healthy heartbeat build', async() => {
     SystemPromptBuilder.register('heartbeat', () => ({
       id:             'heartbeat',
       content:        heartbeatPrompt,
@@ -98,7 +139,7 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     expect(built.heartbeatInvariants?.ok).toBe(true);
   });
 
-  it('does not let install-local markdown replace or append to the frozen heartbeat contract', async () => {
+  it('does not let install-local markdown replace or append to the frozen heartbeat contract', async() => {
     SystemPromptBuilder.register('agent_prompt', () => ({
       id:             'agent_prompt',
       content:        'STALE LOCAL PLAYBOOK CONTENT',
@@ -124,13 +165,13 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
 
     expect(built.includedSections).toContain('heartbeat');
     expect(built.includedSections).not.toContain('agent_prompt');
-    expect(built.text).toContain('## Mechanical Dispatch — Heartbeat Supervises, PostgreSQL Decides');
+    expect(built.text).toContain('## Single-Owner Projects Conveyor');
     expect(built.text).not.toContain('STALE LOCAL HEARTBEAT OVERRIDE');
     expect(built.text).not.toContain('STALE LOCAL PLAYBOOK CONTENT');
     expect(built.heartbeatInvariants?.ok).toBe(true);
   });
 
-  it('flags a stale/reverted heartbeat build', async () => {
+  it('flags a stale/reverted heartbeat build', async() => {
     SystemPromptBuilder.register('heartbeat', () => ({
       id:             'heartbeat',
       content:        'stale prompt with a Cycle Budget: pick exactly one task and STOP.',
@@ -143,10 +184,27 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     expect(built.heartbeatInvariants?.forbidden).toContain('Cycle Budget');
   });
 
-  it('skips the invariant check for non-heartbeat builds', async () => {
+  it('skips the invariant check for non-heartbeat builds', async() => {
     SystemPromptBuilder.register('heartbeat', () => null, ['full']);
 
     const built = await SystemPromptBuilder.build(baseCtx({ isHeartbeat: false }));
     expect(built.heartbeatInvariants).toBeUndefined();
+  });
+
+  it('keeps the compiled heartbeat prompt in the stable Anthropic cache segment', async() => {
+    SystemPromptBuilder.register('heartbeat', () => ({
+      id:             'heartbeat',
+      content:        heartbeatPrompt,
+      priority:       110,
+      cacheStability: 'stable',
+    }), ['full']);
+
+    const built = await SystemPromptBuilder.build(baseCtx({ provider: 'anthropic' }));
+    expect(built.anthropicSystem?.[0]).toEqual(expect.objectContaining({
+      type:          'text',
+      cache_control: { type: 'ephemeral', ttl: '1h' },
+    }));
+    expect(built.anthropicSystem?.[0]?.text).toContain('# Autonomous Executive Control Plane — Sulla');
+    expect(built.heartbeatInvariants?.ok).toBe(true);
   });
 });
