@@ -717,8 +717,9 @@ export class WorkTaskDispatchModel {
    */
   static async finalize(id: string, taskId: string, finalization: WorkTaskDispatchFinalization): Promise<WorkTaskRecord> {
     const evidence = finalization.evidence ?? {};
+    const custody = ArtifactCustodyPolicy.derive(evidence as unknown as Record<string, unknown>);
     if (finalization.taskStatus === 'in_review') {
-      await ArtifactCustodyPolicy.assertForTransition('in_review', ArtifactCustodyPolicy.derive(evidence as unknown as Record<string, unknown>));
+      await ArtifactCustodyPolicy.assertForTransition('in_review', custody);
     }
     return postgresClient.transaction(async(client: PoolClient) => {
       const locked = await client.query<{ status: WorkTaskDispatchStatus }>(
@@ -727,6 +728,9 @@ export class WorkTaskDispatchModel {
       );
       if (locked.rows[0]?.status !== 'running') {
         throw new Error(`Dispatch ${ id } is not running and cannot be finalized`);
+      }
+      if (finalization.taskStatus === 'in_review' && custody) {
+        await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'in_review', custody, 'dispatcher');
       }
 
       await client.query(`

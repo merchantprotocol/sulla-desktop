@@ -65,6 +65,7 @@ export class UpdateTaskWorker extends BaseTool {
         position:     typeof input.position === 'number' ? input.position : undefined,
         source:       input.source,
         actor,
+        custody:      input.custody,
       });
       if (!updated) return { successBoolean: false, responseString: `No task found with id: ${ id }` };
 

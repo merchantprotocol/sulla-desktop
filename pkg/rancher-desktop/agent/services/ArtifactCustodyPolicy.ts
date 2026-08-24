@@ -56,7 +56,11 @@ function present(value: unknown): boolean {
 
 export class ArtifactCustodyPolicy {
   static async isEnforced(): Promise<boolean> {
-    return Boolean(await SullaSettingsModel.get(CUSTODY_ENFORCEMENT_KEY, false));
+    // This is a lifecycle invariant, not an operator preference. Keep reading
+    // the retired key for downgrade compatibility, but never permit it to
+    // disable the gate.
+    await SullaSettingsModel.get(CUSTODY_ENFORCEMENT_KEY, true);
+    return true;
   }
 
   /** Pure fail-closed validation. Never touches settings. */
@@ -124,5 +128,20 @@ export class ArtifactCustodyPolicy {
     if (!(await this.isEnforced())) return;
     const { ok, missing } = this.validate(custody);
     if (!ok) throw new ArtifactCustodyError(transition, missing);
+  }
+
+  static async persistWithClient(
+    client: import('pg').PoolClient,
+    taskId: string,
+    transition: CustodyTransition,
+    custody: ArtifactCustody,
+    actor: string,
+  ): Promise<void> {
+    const { randomUUID } = await import('node:crypto');
+    await client.query(`
+      INSERT INTO work_task_artifact_custody
+        (id, task_id, transition, work_kind, custody, created_by)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+    `, [`custody-${ randomUUID() }`, taskId, transition, custody.workKind, JSON.stringify(custody), actor]);
   }
 }

@@ -37,9 +37,9 @@ describe('ArtifactCustodyPolicy.validate', () => {
 describe('ArtifactCustodyPolicy.assertForTransition', () => {
   beforeEach(() => settingsGet.mockReset());
 
-  it('is a no-op when enforcement is disabled', async() => {
+  it('cannot be disabled by the retired preference', async() => {
     settingsGet.mockResolvedValue(false);
-    await expect(ArtifactCustodyPolicy.assertForTransition('in_review', null)).resolves.toBeUndefined();
+    await expect(ArtifactCustodyPolicy.assertForTransition('in_review', null)).rejects.toBeInstanceOf(ArtifactCustodyError);
   });
 
   it('throws when enforced and custody is missing', async() => {
