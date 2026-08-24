@@ -1467,15 +1467,9 @@ export const GraphRegistry = {
    * for <conversation_context> injection. Closest template is
    * createObservationRecall / createIdentityObservationRecall above.
    *
-   * NOT YET wired into the live pre-turn Promise.allSettled fan-out in
-   * SubconsciousMiddleware.ts (see runConversationReader there) — that
-   * registration is deliberately deferred to Sulla Projects task drqq
-   * ("Wire Conversation Writer + Reader into GraphRegistry subconscious
-   * fan-out"). This factory, its prompt, its read-only tool allowlist
-   * (CONVERSATION_READER_TOOLS), and the <conversation_context>
-   * inject/strip plumbing (AgentNode.ts, BaseNode.stripInjectedContextBlocks,
-   * ClaudeCodeService/CodexService context builders) are complete and ready
-   * for that follow-up task to dispatch.
+   * SubconsciousMiddleware dispatches this factory in the awaited pre-turn
+   * recall fan-out. Its strict allowlist is intentionally separate from the
+   * post-episode Conversation Writer's single write-tool policy.
    */
   createConversationReader: async function(parentState: BaseThreadState): Promise<{
     graph:    Graph<BaseThreadState>;

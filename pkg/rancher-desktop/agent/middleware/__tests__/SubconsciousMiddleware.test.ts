@@ -1,13 +1,21 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+// relaxed-json is CommonJS and does not expose the named ESM export used by
+// JsonParseService under Jest's VM-module loader. Stub the package boundary so
+// this integration suite exercises the middleware instead of failing at link.
+jest.unstable_mockModule('relaxed-json', () => ({
+  parse: jest.fn((value: string) => JSON.parse(value)),
+}));
+
 const createSummarizerMock: any = jest.fn();
 const createObservationAgentMock: any = jest.fn();
 const createIdentityObserverMock: any = jest.fn();
 const createIdentityObservationRecallMock: any = jest.fn();
 const createToolResultDigesterMock: any = jest.fn();
 const createConversationReaderMock: any = jest.fn();
+const createConversationWriterMock: any = jest.fn();
 
-jest.mock('../../services/GraphRegistry', () => ({
+jest.unstable_mockModule('../../services/GraphRegistry', () => ({
   GraphRegistry: {
     createSummarizer:                createSummarizerMock,
     createObservationAgent:          createObservationAgentMock,
@@ -15,10 +23,11 @@ jest.mock('../../services/GraphRegistry', () => ({
     createIdentityObservationRecall: createIdentityObservationRecallMock,
     createToolResultDigester:        createToolResultDigesterMock,
     createConversationReader:        createConversationReaderMock,
+    createConversationWriter:        createConversationWriterMock,
   },
 }));
 
-jest.mock('@pkg/utils/logging', () => ({
+jest.unstable_mockModule('@pkg/utils/logging', () => ({
   __esModule: true,
   default:    {
     perf: {
@@ -45,6 +54,7 @@ describe('runSubconsciousMiddleware', () => {
     createIdentityObservationRecallMock.mockReset();
     createToolResultDigesterMock.mockReset();
     createConversationReaderMock.mockReset();
+    createConversationWriterMock.mockReset();
 
     createSummarizerMock.mockResolvedValue({
       graph: {
@@ -88,6 +98,14 @@ describe('runSubconsciousMiddleware', () => {
       },
       threadId: 'conversation-reader-test-thread',
     });
+    createConversationWriterMock.mockResolvedValue({
+      graph: { execute: jest.fn(() => Promise.resolve()) },
+      state: {
+        messages:  [],
+        metadata: { agent: { status: 'done' } },
+      },
+      threadId: 'conversation-writer-test-thread',
+    });
   });
 
   it('does not wake the summarizer at the 30-message boundary', async() => {
@@ -130,11 +148,15 @@ describe('runSubconsciousMiddleware', () => {
     expect(createIdentityObservationRecallMock).not.toHaveBeenCalled();
   });
 
-  // Conversation Reader (task RpvD) is deliberately NOT wired into the live
-  // pre-turn fan-out yet — that registration is task drqq. This locks in the
-  // current scope boundary: a normal turn with observations enabled and
-  // analyzable user text must never reach GraphRegistry.createConversationReader.
-  it('does not dispatch the Conversation Reader from the pre-turn fan-out (deferred to task drqq)', async() => {
+  it('dispatches the Conversation Reader from the live pre-turn fan-out and awaits its context', async() => {
+    createConversationReaderMock.mockResolvedValue({
+      graph: { execute: jest.fn(() => Promise.resolve()) },
+      state: {
+        messages:  [],
+        metadata: { agent: { status: 'done', response: '  [thread:abc] prior decision  ' } },
+      },
+      threadId: 'conversation-reader-test-thread',
+    });
     const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
     const state: any = {
       messages: [
@@ -145,8 +167,62 @@ describe('runSubconsciousMiddleware', () => {
 
     await runSubconsciousMiddleware(state, { includeObservations: true });
 
+    expect(createConversationReaderMock).toHaveBeenCalledTimes(1);
+    expect(createConversationReaderMock).toHaveBeenCalledWith(state);
+    expect((state.metadata as any).conversationContext).toBe('[thread:abc] prior decision');
+  });
+
+  it('does not dispatch the Conversation Reader without analyzable user text', async() => {
+    const { runSubconsciousMiddleware } = await import('../SubconsciousMiddleware');
+    const state: any = {
+      messages: [{ role: 'user', content: '', metadata: { source: 'subconscious' } }],
+      metadata: {},
+    };
+
+    await runSubconsciousMiddleware(state, { includeObservations: true });
+
     expect(createConversationReaderMock).not.toHaveBeenCalled();
-    expect((state.metadata as any).conversationContext).toBeUndefined();
+  });
+});
+
+describe('runSubconsciousObservationWriters', () => {
+  beforeEach(() => {
+    createObservationAgentMock.mockReset();
+    createIdentityObserverMock.mockReset();
+    createConversationWriterMock.mockReset();
+    createObservationAgentMock.mockResolvedValue({
+      graph: { execute: jest.fn(() => Promise.resolve()) },
+      state: { messages: [], metadata: { agent: { status: 'done' } } },
+      threadId: 'observation-agent-test-thread',
+    });
+    createIdentityObserverMock.mockResolvedValue({
+      graph: { execute: jest.fn(() => Promise.resolve()) },
+      state: { messages: [], metadata: { agent: { status: 'done' } } },
+      threadId: 'identity-observer-test-thread',
+    });
+    createConversationWriterMock.mockResolvedValue({
+      graph: { execute: jest.fn(() => Promise.resolve()) },
+      state: { messages: [], metadata: { agent: { status: 'done' } } },
+      threadId: 'conversation-writer-test-thread',
+    });
+  });
+
+  it('dispatches the Conversation Writer from the live post-episode writer set', async() => {
+    const { runSubconsciousObservationWriters } = await import('../SubconsciousMiddleware');
+    const state: any = {
+      messages: [
+        { role: 'user', content: 'We chose the GraphRegistry fan-out.' },
+        { role: 'assistant', content: 'Implemented.' },
+      ],
+      metadata: { threadId: 'parent-thread' },
+    };
+
+    runSubconsciousObservationWriters(state, { includeObservations: true });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(createConversationWriterMock).toHaveBeenCalledTimes(1);
+    expect(createConversationWriterMock).toHaveBeenCalledWith(state);
   });
 });
 
