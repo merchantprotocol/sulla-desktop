@@ -73,13 +73,19 @@ export function initWorkItemsEvents(): void {
   // Do NOT swallow errors — a thrown query surfaces in useProjects.error.
   ipcMainProxy.handle('work-items:board', async() => {
     const WorkItemsModel = await importWorkItemsModel();
+    const LaneModel = await importWorkLaneDefinitionModel();
     const [projects, epics, tasks] = await Promise.all([
       WorkItemsModel.listProjects({ includeDone: true, limit: 500 }),
       WorkItemsModel.listEpics({ includeDone: true, limit: 1000 }),
       WorkItemsModel.listTasks({ includeDone: true, limit: 3000 }),
     ]);
+    const laneEntries = await Promise.all(projects.map(async project => [
+      project.id,
+      await LaneModel.resolveEffective(project.id).catch(() => []),
+    ] as const));
+    const laneCapability = await LaneModel.runtimeCapability();
 
-    return { projects, epics, tasks };
+    return { projects, epics, tasks, lanesByProject: Object.fromEntries(laneEntries), laneCapability };
   });
 
   ipcMainProxy.handle('work-items:comments', async(_event: unknown, taskId: string) => {

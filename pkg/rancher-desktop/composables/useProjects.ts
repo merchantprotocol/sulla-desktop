@@ -25,7 +25,7 @@ import type {
 } from '@pkg/agent/database/models/WorkItemsModel';
 import type {
   CreateWorkLaneInput, EffectiveWorkLane, ListWorkLaneOpts, UpdateWorkLaneInput,
-  WorkLaneDefinitionRecord, WorkLaneScope,
+  WorkLaneDefinitionRecord, WorkLaneRuntimeCapability, WorkLaneScope,
 } from '@pkg/agent/database/models/WorkLaneDefinitionModel';
 import type {
   LaneBindingResolution, LaneEntryAutomationRecord, LaneWorkflowBindingRecord,
@@ -43,8 +43,12 @@ export type {
 };
 
 /** An epic with its tasks attached, ready to render. */
+export interface TaskView extends WorkTaskRecord {
+  lane?: EffectiveWorkLane;
+}
+
 export interface EpicWithTasks extends WorkEpicRecord {
-  tasks: WorkTaskRecord[];
+  tasks: TaskView[];
 }
 
 /** A project with its epics (each carrying tasks) and roll-up counts. */
@@ -53,8 +57,6 @@ export interface ProjectView extends WorkProjectRecord {
   openCount: number;
   doneCount: number;
 }
-
-const CLOSED = new Set(['done', 'cancelled', 'parked']);
 
 /** One entry in a drag-reorder batch (position + optional status/epic move). */
 export interface ReorderUpdate {
@@ -71,6 +73,8 @@ export function useProjects() {
   const isLoading = ref(false);
   const error = ref<string | null>(null);
   const loaded = ref(false);
+  const lanesByProject = ref<Record<string, EffectiveWorkLane[]>>({});
+  const laneCapability = ref<WorkLaneRuntimeCapability | null>(null);
 
   /** currently selected project id (drives the one-project-at-a-time view) */
   const selectedId = ref<string | null>(null);
@@ -82,14 +86,18 @@ export function useProjects() {
     rawProjects: WorkProjectRecord[],
     rawEpics: WorkEpicRecord[],
     rawTasks: WorkTaskRecord[],
+    resolvedLanes: Record<string, EffectiveWorkLane[]> = {},
   ): ProjectView[] {
-    const tasksByEpic = new Map<string, WorkTaskRecord[]>();
+    const laneMaps = new Map(Object.entries(resolvedLanes).map(([projectId, lanes]) => [
+      projectId, new Map(lanes.map(lane => [lane.lane_key, lane])),
+    ]));
+    const tasksByEpic = new Map<string, TaskView[]>();
     for (const t of rawTasks) {
       // top-level tasks only (subtasks hang off parent_id — not shown here yet)
       if (t.parent_id) continue;
       const key = t.epic_id ?? '__none__';
       const arr = tasksByEpic.get(key) ?? [];
-      arr.push(t);
+      arr.push({ ...t, lane: laneMaps.get(t.project_id)?.get(t.status) });
       tasksByEpic.set(key, arr);
     }
     for (const arr of tasksByEpic.values()) {
@@ -118,8 +126,8 @@ export function useProjects() {
       let doneCount = 0;
       for (const e of epics) {
         for (const t of e.tasks) {
-          if (t.status === 'done') doneCount++;
-          else if (!CLOSED.has(t.status) || t.status === 'blocked') openCount++;
+          if (t.lane?.semantic_role === 'terminal') doneCount++;
+          else openCount++;
         }
       }
 
@@ -132,7 +140,9 @@ export function useProjects() {
     error.value = null;
     try {
       const board = await ipcRenderer.invoke('work-items:board');
-      projects.value = buildTree(board.projects, board.epics, board.tasks);
+      lanesByProject.value = board.lanesByProject ?? {};
+      laneCapability.value = board.laneCapability ?? null;
+      projects.value = buildTree(board.projects, board.epics, board.tasks, lanesByProject.value);
       if (!selectedId.value && projects.value.length) {
         selectedId.value = projects.value[0].id;
       }
@@ -290,6 +300,8 @@ export function useProjects() {
     isLoading,
     error,
     loaded,
+    lanesByProject,
+    laneCapability,
     load,
     select,
     loadComments,

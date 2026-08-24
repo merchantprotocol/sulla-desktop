@@ -68,6 +68,10 @@
           </div>
 
           <template v-else>
+            <div v-if="laneCapability && !laneCapability.ready" class="ph-state ph-err">
+              <b>Lane automation is in compatibility mode.</b>
+              <p>{{ laneCapability.degradedReason }}</p>
+            </div>
             <!-- TODAY -->
             <div v-show="tab === 'today'" v-if="sel">
               <div class="ph-lead">
@@ -134,7 +138,7 @@
                     <div class="ph-t" v-html="cleanTitle(t.title)" />
                     <div v-if="showPriority(t.priority)" class="ph-m"><span>{{ t.priority }}</span></div>
                   </div>
-                  <span class="ph-tag" :class="{ wait: t.status === 'blocked' }">{{ statusLabel(t.status) }}</span>
+                  <span class="ph-tag" :class="{ wait: isBlockedStatus(t.status) }">{{ statusLabel(t.status) }}</span>
                 </div>
               </div>
               <div v-if="!sel.epics.length" class="ph-muted">
@@ -207,7 +211,7 @@
                     <span class="ph-activity-task" v-html="cleanTitle(activityTitle(item))" />
                     <span class="ph-activity-text">{{ activityText(item) }}</span>
                   </span>
-                  <span class="ph-tag" :class="{ wait: item.task_status === 'blocked' }">{{ statusLabel(item.task_status) }}</span>
+                  <span class="ph-tag" :class="{ wait: isBlockedStatus(item.task_status) }">{{ statusLabel(item.task_status) }}</span>
                 </button>
               </div>
             </div>
@@ -396,7 +400,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import {
   useProjects,
-  type ProjectView, type EpicWithTasks, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
+  type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
   type UpsertProjectInput, type UpsertEpicInput, type UpsertTaskInput, type ReorderUpdate,
 } from '@pkg/composables/useProjects';
 
@@ -405,6 +409,7 @@ const {
   loadComments, loadActivity, createProject, updateProject, archiveProject,
   createEpic, updateEpic, archiveEpic,
   createTask, updateTask, archiveTask, addComment, reorder,
+  lanesByProject, laneCapability,
 } = useProjects();
 
 const tab = ref<'today' | 'board' | 'activity' | 'projects'>('today');
@@ -412,7 +417,11 @@ const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
 
-const STATUSES = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
+const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[selectedId.value] ?? []) : []);
+const COMPATIBILITY_LANE_KEYS = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
+const STATUSES = computed(() => selectedLanes.value.length
+  ? selectedLanes.value.map(lane => lane.lane_key)
+  : COMPATIBILITY_LANE_KEYS);
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
 // Canonical assignees. Values are the exact lowercase tokens the Projects tools and
 // the Heartbeat lane filter match on — 'heartbeat' is what routes work into the
@@ -507,16 +516,24 @@ function cleanTitle(raw: string): string {
   return s;
 }
 
-const MARK: Record<string, string> = { planning: 'hi', in_progress: 'hi', in_review: 'hi', todo: 'hi', backlog: 'hi', blocked: 'wait', done: 'gray' };
+function laneForStatus(status: string) {
+  return selectedLanes.value.find(lane => lane.lane_key === status);
+}
+function semanticRole(status: string): string {
+  return laneForStatus(status)?.semantic_role ?? 'manual';
+}
+function isBlockedStatus(status: string): boolean {
+  return semanticRole(status) === 'blocked';
+}
 function markClass(status: string): string {
-  return MARK[status] ?? 'gray';
+  const role = semanticRole(status);
+  if (role === 'blocked') return 'wait';
+  if (role === 'terminal' || role === 'manual') return 'gray';
+  return 'hi';
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  planning: 'Planning', in_progress: 'In progress', in_review: 'In review', todo: 'To do', backlog: 'Backlog', blocked: 'Blocked', done: 'Done', cancelled: 'Cancelled', parked: 'Parked',
-};
 function statusLabel(status: string): string {
-  return STATUS_LABEL[status] ?? status;
+  return laneForStatus(status)?.display_name ?? status;
 }
 function showPriority(pr: string): boolean {
   return pr === 'high' || pr === 'critical' || pr === 'p0' || pr === 'p1';
@@ -525,8 +542,8 @@ function epicSummary(epic: EpicWithTasks): string {
   let open = 0;
   let done = 0;
   for (const t of epic.tasks) {
-    if (t.status === 'done') done++;
-    else if (t.status !== 'cancelled' && t.status !== 'parked') open++;
+    if (t.lane?.semantic_role === 'terminal') done++;
+    else open++;
   }
   const parts: string[] = [];
   if (open) parts.push(`${ open } open`);
@@ -553,26 +570,25 @@ function shortDate(iso: string): string {
 }
 
 // ── board columns for the selected project ────────────────────────────
-type Task = WorkTaskRecord;
+type Task = TaskView;
 const boardColumns = computed(() => {
-  const cols = { todo: [] as Task[], inprogress: [] as Task[], waiting: [] as Task[], done: [] as Task[] };
+  const tasks: Task[] = [];
   if (sel.value) {
     for (const epic of sel.value.epics) {
-      for (const t of epic.tasks) {
-        if (t.status === 'planning' || t.status === 'in_progress' || t.status === 'in_review') cols.inprogress.push(t);
-        else if (t.status === 'blocked') cols.waiting.push(t);
-        else if (t.status === 'done' || t.status === 'cancelled' || t.status === 'parked') cols.done.push(t);
-        else cols.todo.push(t);
-      }
+      tasks.push(...epic.tasks);
     }
   }
-
-  return [
-    { key: 'todo', label: 'To do', color: 'var(--pacc)', items: cols.todo },
-    { key: 'inprogress', label: 'In progress', color: 'var(--pgreen)', items: cols.inprogress },
-    { key: 'waiting', label: 'Waiting', color: 'var(--pamber)', items: cols.waiting },
-    { key: 'done', label: 'Done', color: 'var(--ptext3)', items: cols.done },
-  ];
+  const known = new Set(selectedLanes.value.map(lane => lane.lane_key));
+  const columns = selectedLanes.value.map(lane => ({
+    key: lane.lane_key,
+    label: lane.display_name,
+    color: lane.color || (lane.semantic_role === 'blocked' ? 'var(--pamber)' : lane.semantic_role === 'terminal' ? 'var(--ptext3)' : 'var(--pacc)'),
+    items: tasks.filter(task => task.status === lane.lane_key),
+  }));
+  for (const status of new Set(tasks.filter(task => !known.has(task.status)).map(task => task.status))) {
+    columns.push({ key: status, label: status, color: 'var(--ptext3)', items: tasks.filter(task => task.status === status) });
+  }
+  return columns;
 });
 
 // ══════════ DRAG TO REORDER ══════════
@@ -583,8 +599,6 @@ const dnd = reactive<{ kind: 'task' | 'epic' | null; id: string; fromEpicId: str
 const dragOverTaskId = ref('');
 const dragOverEpicId = ref('');
 const dragOverCol = ref('');
-
-const BOARD_STATUS: Record<string, string> = { todo: 'todo', inprogress: 'in_progress', waiting: 'blocked', done: 'done' };
 
 function onDragStartTask(t: WorkTaskRecord, epicId: string | null, ev: DragEvent): void {
   dnd.kind = 'task';
@@ -642,10 +656,9 @@ async function onSectionDrop(epic: EpicWithTasks): Promise<void> {
 
 async function onColumnDrop(colKey: string): Promise<void> {
   if (dnd.kind !== 'task') return;
-  const status = BOARD_STATUS[colKey];
   const id = dnd.id;
   onDragEnd();
-  if (status) await reorder([{ kind: 'task', id, status }]);
+  if (colKey) await reorder([{ kind: 'task', id, status: colKey }]);
 }
 
 // ══ date helpers ══
