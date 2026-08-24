@@ -9,6 +9,7 @@ const getEpicMock: any = jest.fn();
 const getTaskMock: any = jest.fn();
 const listCommentsMock: any = jest.fn();
 const latestCommentAtByTaskMock: any = jest.fn();
+const filterHeartbeatEligibleMock: any = jest.fn((tasks: any[]) => Promise.resolve(tasks));
 
 jest.unstable_mockModule('../BaseNode', () => ({
   BaseNode: class MockBaseNode {
@@ -29,6 +30,13 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
     getTask:      getTaskMock,
     listComments: listCommentsMock,
     latestCommentAtByTask: latestCommentAtByTaskMock,
+  },
+}));
+
+jest.unstable_mockModule('../../database/models/LifecycleCapabilityModel', () => ({
+  LifecycleCapabilityModel: {
+    buildDigest:             jest.fn(() => Promise.resolve('LIFECYCLE: test')),
+    filterHeartbeatEligible: filterHeartbeatEligibleMock,
   },
 }));
 
@@ -73,6 +81,7 @@ describe('HeartbeatNode Projects context injection', () => {
     listCommentsMock.mockReset();
     latestCommentAtByTaskMock.mockReset();
     latestCommentAtByTaskMock.mockResolvedValue(new Map());
+    filterHeartbeatEligibleMock.mockImplementation((tasks: any[]) => Promise.resolve(tasks));
 
     ensureTablesMock.mockResolvedValue(undefined);
     buildProjectReportMock.mockResolvedValue('# Project report\n\n## Next up\n- [critical] Hydrate me (id task1)');
@@ -152,6 +161,7 @@ describe('HeartbeatNode Projects context injection', () => {
       commentCount: 1,
     });
     expect(state.messages[1].role).toBe('user');
+    expect(buildProjectReportMock).toHaveBeenCalledWith(expect.objectContaining({ lifecycleAware: true }));
   });
 
   it('skips blocked and planning tasks when actionable work exists', async() => {

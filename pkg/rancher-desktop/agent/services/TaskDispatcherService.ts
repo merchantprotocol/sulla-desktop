@@ -1,6 +1,7 @@
 import { AbortService } from './AbortService';
 import { GraphRegistry } from './GraphRegistry';
 import { isInsideWindow } from './HeartbeatService';
+import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import { WorkTaskDispatchModel, type ClaimedDispatch } from '../database/models/WorkTaskDispatchModel';
@@ -11,6 +12,7 @@ const CHECK_INTERVAL_MS = 60_000;
 const LEASE_HEARTBEAT_MS = 120_000;
 const DEFAULT_CONCURRENCY = 3;
 const DEFAULT_AGENT_ID = 'opus-worker';
+const RUNTIME_INSTANCE_ID = `task-dispatcher-${ process.pid }-${ Date.now() }`;
 
 let taskDispatcherServiceInstance: TaskDispatcherService | null = null;
 
@@ -35,6 +37,8 @@ export class TaskDispatcherService {
   async initialize(): Promise<void> {
     if (this.initialized) return;
     this.initialized = true;
+
+    await LifecycleCapabilityModel.recoverPreviousRuntime('todo-execution', RUNTIME_INSTANCE_ID);
 
     // No graph promise survives a process/service restart. Release every live
     // database lease before taking new work so a crash cannot strand a task.
@@ -69,7 +73,18 @@ export class TaskDispatcherService {
     this.checking = true;
     try {
       const enabled = await SullaSettingsModel.get('heartbeatEnabled', false);
-      if (!enabled) return;
+      if (!enabled) {
+        await LifecycleCapabilityModel.report({
+          key:               'todo-execution',
+          enabled:           false,
+          health:            'unavailable',
+          owner:             null,
+          runtimeInstanceId: RUNTIME_INSTANCE_ID,
+          fallbackMode:      'manual_hold',
+          error:             'Heartbeat and mechanical dispatch are disabled by user setting.',
+        });
+        return;
+      }
 
       const window = await SullaSettingsModel.get('heartbeatWindow', null);
       if (window && !isInsideWindow(window)) return;
@@ -79,25 +94,52 @@ export class TaskDispatcherService {
       const agentId = String(await SullaSettingsModel.get('taskDispatcherAgentId', DEFAULT_AGENT_ID)).trim() || DEFAULT_AGENT_ID;
       if (!findAgentDir(agentId)) {
         console.error(`[TaskDispatcher] Agent config "${ agentId }" does not exist; dispatch paused`);
+        await LifecycleCapabilityModel.report({
+          key:               'todo-execution',
+          enabled:           true,
+          health:            'degraded',
+          owner:             'dispatcher',
+          runtimeInstanceId: RUNTIME_INSTANCE_ID,
+          fallbackMode:      'heartbeat',
+          error:             `Agent config ${ agentId } does not exist.`,
+        });
         return;
       }
 
+      await LifecycleCapabilityModel.report({
+        key:               'todo-execution',
+        enabled:           true,
+        health:            'healthy',
+        owner:             'dispatcher',
+        runtimeInstanceId: RUNTIME_INSTANCE_ID,
+        fallbackMode:      'heartbeat',
+      });
+
       let freeSlots = Math.max(0, concurrency - await WorkTaskDispatchModel.countRunning());
       while (freeSlots > 0 && this.initialized) {
-        const claim = await WorkTaskDispatchModel.claimNext(agentId);
+        const claim = await WorkTaskDispatchModel.claimNext(agentId, RUNTIME_INSTANCE_ID);
         if (!claim) break;
         this.runClaim(claim).catch(err => console.error('[TaskDispatcher] Worker promise failed:', err));
         freeSlots -= 1;
       }
     } catch (err) {
       console.error('[TaskDispatcher] Dispatch check failed:', err);
+      await LifecycleCapabilityModel.report({
+        key:               'todo-execution',
+        enabled:           true,
+        health:            'degraded',
+        owner:             'dispatcher',
+        runtimeInstanceId: RUNTIME_INSTANCE_ID,
+        fallbackMode:      'heartbeat',
+        error:             err instanceof Error ? err.message : String(err),
+      }).catch(reportErr => console.error('[TaskDispatcher] Capability report failed:', reportErr));
     } finally {
       this.checking = false;
     }
   }
 
   private async runClaim(claim: ClaimedDispatch): Promise<void> {
-    const { dispatch, task } = claim;
+    const { dispatch, task, stage_claim: liveStageClaim } = claim;
     const abort = new AbortService();
     this.active.set(dispatch.id, abort);
     const leaseTimer = setInterval(
@@ -138,6 +180,8 @@ export class TaskDispatcherService {
       await this.finalizeClaim(claim, 'failed', message);
     } finally {
       clearInterval(leaseTimer);
+      await LifecycleCapabilityModel.releaseStage(liveStageClaim.id)
+        .catch(err => console.error(`[TaskDispatcher] Stage-claim release failed for ${ liveStageClaim.id }:`, err));
       this.active.delete(dispatch.id);
       GraphRegistry.delete(dispatch.thread_id);
       if (this.initialized) {
