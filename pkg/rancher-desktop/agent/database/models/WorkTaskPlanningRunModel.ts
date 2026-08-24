@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 
 import { postgresClient } from '../PostgresClient';
 import { LifecycleCapabilityModel } from './LifecycleCapabilityModel';
@@ -73,6 +74,7 @@ export class WorkTaskPlanningRunModel {
       `, [taskId]);
       const task = taskResult.rows[0];
       if (!task || !planningKeys.includes(task.status)) return null;
+      if ((await WorkTaskDependencyModel.listUnresolvedDependencies(taskId, client)).length > 0) return null;
 
       const active = await client.query<{ id: string }>(`
         SELECT id FROM work_task_planning_runs

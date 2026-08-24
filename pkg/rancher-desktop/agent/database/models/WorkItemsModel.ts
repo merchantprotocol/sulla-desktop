@@ -16,6 +16,7 @@
 import { postgresClient } from '../PostgresClient';
 import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
 import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
+import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
 
 import type { PoolClient } from 'pg';
@@ -95,8 +96,10 @@ export interface WorkTaskRecord {
 export interface WorkTaskDependencyRecord {
   task_id:            string;
   depends_on_task_id: string;
+  relation_type:      string;
+  acceptance_condition: string | null;
   created_at:         string;
-  created_by:         string;
+  created_by:         string | null;
   archived:           boolean;
 }
 
@@ -939,54 +942,46 @@ export class WorkItemsModel {
 
   static async listTaskDependencies(projectId: string): Promise<WorkTaskDependencyRecord[]> {
     return postgresClient.query<WorkTaskDependencyRecord>(`
-      SELECT dependency.*
+      SELECT dependency.dependent_task_id AS task_id,
+             dependency.depends_on_task_id,
+             dependency.relation_type,
+             dependency.acceptance_condition,
+             dependency.created_at,
+             dependency.created_by,
+             (dependency.archived_at IS NOT NULL) AS archived
       FROM work_task_dependencies dependency
-      JOIN ${ WorkItemsModel.TASKS } task ON task.id = dependency.task_id
+      JOIN ${ WorkItemsModel.TASKS } task ON task.id = dependency.dependent_task_id
       JOIN ${ WorkItemsModel.TASKS } prerequisite ON prerequisite.id = dependency.depends_on_task_id
-      WHERE dependency.archived = false
+      WHERE dependency.archived_at IS NULL
         AND task.archived = false AND prerequisite.archived = false
         AND task.project_id = $1 AND prerequisite.project_id = $1
       ORDER BY dependency.created_at ASC`, [projectId]);
   }
 
   static async setTaskDependency(taskId: string, dependsOnTaskId: string, actor = 'human'): Promise<WorkTaskDependencyRecord> {
-    if (taskId === dependsOnTaskId) throw new Error('A task cannot depend on itself.');
-    return postgresClient.transaction(async(client) => {
-      const tasks = await client.query<WorkTaskRecord>(`
-        SELECT * FROM ${ WorkItemsModel.TASKS }
-        WHERE id = ANY($1::text[]) AND archived = false
-        FOR UPDATE`, [[taskId, dependsOnTaskId]]);
-      if (tasks.rows.length !== 2) throw new Error('Both dependency tasks must be active.');
-      if (new Set(tasks.rows.map(task => task.project_id)).size !== 1) {
-        throw new Error('Task dependencies must stay within one project.');
-      }
-      const cycle = await client.query<{ found: boolean }>(`
-        WITH RECURSIVE prerequisites(id) AS (
-          SELECT $2::text
-          UNION
-          SELECT dependency.depends_on_task_id
-          FROM work_task_dependencies dependency
-          JOIN prerequisites current ON dependency.task_id = current.id
-          WHERE dependency.archived = false
-        )
-        SELECT EXISTS(SELECT 1 FROM prerequisites WHERE id = $1) AS found`, [taskId, dependsOnTaskId]);
-      if (cycle.rows[0]?.found) throw new Error('This dependency would create a cycle.');
-      const rows = await client.query<WorkTaskDependencyRecord>(`
-        INSERT INTO work_task_dependencies (task_id, depends_on_task_id, created_by, archived)
-        VALUES ($1, $2, $3, false)
-        ON CONFLICT (task_id, depends_on_task_id) DO UPDATE
-          SET archived = false, created_by = EXCLUDED.created_by, created_at = now()
-        RETURNING *`, [taskId, dependsOnTaskId, actor]);
-      return rows.rows[0];
+    const dependency = await WorkTaskDependencyModel.create({
+      dependentTaskId: taskId,
+      dependsOnTaskId,
+      relationType: 'requires',
+      actor,
     });
+    return {
+      task_id: dependency.dependent_task_id,
+      depends_on_task_id: dependency.depends_on_task_id,
+      relation_type: dependency.relation_type,
+      acceptance_condition: dependency.acceptance_condition,
+      created_at: dependency.created_at,
+      created_by: dependency.created_by,
+      archived: dependency.archived_at !== null,
+    };
   }
 
   static async removeTaskDependency(taskId: string, dependsOnTaskId: string): Promise<boolean> {
-    const rows = await postgresClient.query<{ task_id: string }>(`
-      UPDATE work_task_dependencies SET archived = true
-      WHERE task_id = $1 AND depends_on_task_id = $2 AND archived = false
-      RETURNING task_id`, [taskId, dependsOnTaskId]);
-    return rows.length > 0;
+    return WorkTaskDependencyModel.remove({
+      dependentTaskId: taskId,
+      dependsOnTaskId,
+      relationType: 'requires',
+    });
   }
 
   static async insertTask(input: UpsertTaskInput): Promise<WorkTaskRecord> {

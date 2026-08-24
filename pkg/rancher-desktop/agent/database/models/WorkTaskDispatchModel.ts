@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 
 import { postgresClient } from '../PostgresClient';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
@@ -291,6 +292,7 @@ export class WorkTaskDispatchModel {
                 AND child.archived = false
                 AND child.status NOT IN ('done', 'cancelled', 'parked')
            )
+         ${WorkTaskDependencyModel.claimExclusionSql('t.id')}
          ORDER BY
            CASE e.priority
              WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
@@ -388,6 +390,7 @@ export class WorkTaskDispatchModel {
                 AND d.status IN ('failed', 'stale')
                 AND d.finished_at > now() - interval '5 minutes'
            )
+         ${WorkTaskDependencyModel.claimExclusionSql('t.id')}
          ORDER BY
            CASE p.priority
              WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0

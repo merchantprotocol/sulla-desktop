@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 
 import { postgresClient } from '../PostgresClient';
 
@@ -435,6 +436,7 @@ export class WorkLaneWorkflowBindingModel {
     actor = 'sulla', profileId = 'default'):
     Promise<{ created: boolean; entry: LaneEntryAutomationRecord }> {
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ taskId }`]);
+    await WorkTaskDependencyModel.assertClaimable(taskId, client);
     const prior = await client.query<LaneEntryAutomationRecord>(`
         SELECT * FROM work_lane_entry_automations WHERE task_id = $1 ORDER BY generation DESC LIMIT 1
       `, [taskId]);
