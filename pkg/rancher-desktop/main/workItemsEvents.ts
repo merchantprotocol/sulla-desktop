@@ -172,6 +172,31 @@ export function initWorkItemsEvents(): void {
     };
   });
 
+  ipcMainProxy.handle('work-items:conveyor-health', async(_event: unknown, opts: {
+    projectId?: string | null; windowHours?: number;
+  } = {}) => {
+    const [{ WorkConveyorMetricsModel }, { resolveWipLimits }] = await Promise.all([
+      import('@pkg/agent/database/models/WorkConveyorMetricsModel'),
+      import('@pkg/agent/services/ProjectAutomationWipLimits'),
+    ]);
+    const limits = await resolveWipLimits();
+    return WorkConveyorMetricsModel.snapshot({
+      projectId: opts.projectId ?? null,
+      windowHours: opts.windowHours,
+      wipLimit: limits.execution,
+      reviewLimit: limits.review,
+    });
+  });
+
+  ipcMainProxy.handle('work-items:conveyor-oldest', async(_event: unknown, opts: {
+    projectId?: string | null; stage: import('@pkg/agent/database/models/WorkConveyorMetricsModel').SemanticStage;
+  }) => {
+    const { WorkConveyorMetricsModel } = await import('@pkg/agent/database/models/WorkConveyorMetricsModel');
+    const allowed = new Set(['backlog', 'planning', 'execution', 'review', 'blocked', 'terminal', 'manual']);
+    if (!allowed.has(opts.stage)) throw new Error(`Invalid semantic stage: ${ opts.stage }`);
+    return WorkConveyorMetricsModel.oldestItems({ projectId: opts.projectId ?? null, drillLimit: 20 }, opts.stage);
+  });
+
   ipcMainProxy.handle('work-items:views-list', async(_event: unknown, projectId?: string | null) => {
     const Model = await importWorkProjectViewModel();
     return Model.list(projectId);
