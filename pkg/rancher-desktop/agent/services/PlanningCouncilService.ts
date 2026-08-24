@@ -131,7 +131,7 @@ export class PlanningCouncilService {
       const execution = await executeRoutine(
         PROJECT_TASK_PLANNING_WORKFLOW_ID,
         JSON.stringify(snapshot),
-        { allowConcurrent: true },
+        { allowConcurrent: true, routineKind: 'planning' },
       );
       await WorkTaskPlanningRunModel.attachExecution(claim.run.id, execution.playbookExecutionId ?? execution.executionId);
       await WorkItemsModel.addComment({

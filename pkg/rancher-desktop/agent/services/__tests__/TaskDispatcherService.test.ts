@@ -9,6 +9,7 @@ const countReviewBacklogMock: any = jest.fn(() => Promise.resolve(0));
 const claimNextMock: any = jest.fn(() => Promise.resolve(null));
 const claimNextReviewMock: any = jest.fn(() => Promise.resolve(null));
 const settleMock: any = jest.fn(() => Promise.resolve());
+const finalizeMock: any = jest.fn(() => Promise.resolve());
 const finalizeVerificationMock: any = jest.fn(() => Promise.resolve('APPROVE'));
 const finalizeProtectedReviewMock: any = jest.fn(() => Promise.resolve('PASS'));
 const recordReviewLaunchMock: any = jest.fn(() => Promise.resolve());
@@ -51,6 +52,7 @@ jest.unstable_mockModule('../../database/models/WorkTaskDispatchModel', () => ({
     claimNext:               claimNextMock,
     claimNextReview:         claimNextReviewMock,
     settle:                  settleMock,
+    finalize:                finalizeMock,
     finalizeVerification:    finalizeVerificationMock,
     finalizeProtectedReview: finalizeProtectedReviewMock,
     recordReviewLaunch:      recordReviewLaunchMock,
@@ -294,7 +296,7 @@ describe('TaskDispatcherService', () => {
       .mockResolvedValueOnce(claim)
       .mockResolvedValue(null);
     executeMock.mockResolvedValue({
-      metadata: { agent: { status: 'completed' }, finalSummary: 'Draft PR opened and tests passed.' },
+      metadata: { agent: { status: 'completed' }, finalSummary: `<WORK_RESULT>{"summary":"Draft PR opened and tests passed.","custody":{"workKind":"code","branch":"feat/test","commitSha":"${ 'a'.repeat(40) }","prUrl":"https://github.com/merchantprotocol/sulla-desktop/pull/123","prHeadSha":"${ 'a'.repeat(40) }","validation":{"tests":"pass"},"provenance":{"agentId":"sulla-desktop"}}}</WORK_RESULT>` },
       messages: [],
     });
 
@@ -307,13 +309,12 @@ describe('TaskDispatcherService', () => {
 
     expect(claimNextMock).toHaveBeenCalledWith('sulla-desktop', expect.stringContaining('task-dispatcher-'));
     expect(executeMock).toHaveBeenCalled();
-    expect(settleMock).toHaveBeenCalledWith(
-      'dispatch-1', 'completed', 'Draft PR opened and tests passed.', undefined,
-    );
+    expect(finalizeMock).toHaveBeenCalledWith('dispatch-1', 'task-1', expect.objectContaining({
+      dispatchStatus: 'completed', taskStatus: 'in_review', taskAssignee: 'heartbeat',
+      evidence: expect.objectContaining({ custody: expect.objectContaining({ workKind: 'code' }) }),
+    }));
     expect(releaseStageMock).toHaveBeenCalledWith('stage-claim-1');
-    expect(updateTaskMock).toHaveBeenCalledWith('task-1', {
-      status: 'in_review', assignee: 'heartbeat', actor: 'dispatcher',
-    });
+    expect(updateTaskMock).not.toHaveBeenCalled();
   });
 
   it('turns user disablement into a visible manual hold without claiming work', async() => {

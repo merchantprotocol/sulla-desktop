@@ -292,6 +292,7 @@ export const projectToolManifests: ToolManifest[] = [
       github_issue: { type: 'string', optional: true, description: 'owner/repo#n or URL, or empty string to clear.' },
       position:     { type: 'number', optional: true, description: 'Manual sort order inside the epic.' },
       actor:        { type: 'string', optional: true, description: 'Acting source/agent for attribution: "heartbeat" (autonomous), "sulla" (chat), "workbench", or "human". Defaults to "sulla".' },
+      custody:      { type: 'object', optional: true, description: 'Required structured artifact custody when entering a review lane. Code: workKind, branch, commitSha, prUrl, prHeadSha, validation, provenance. Non-code: workKind, artifactId or artifactUrl, evidence, provenance.' },
     },
     operationTypes: ['update'],
     loader:         () => import('./update_task'),
