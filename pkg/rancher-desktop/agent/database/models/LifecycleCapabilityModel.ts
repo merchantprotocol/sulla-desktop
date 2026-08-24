@@ -62,6 +62,15 @@ export interface ClaimResult {
   claim?:  LifecycleStageClaim;
 }
 
+export type HeartbeatLifecycleMode = 'heartbeat_fallback' | 'protected_owner' | 'manual_hold' | 'unmanaged';
+
+export interface HeartbeatLifecycleAccess {
+  capabilityKey: LifecycleCapabilityKey | null;
+  mode:          HeartbeatLifecycleMode;
+  owner:         string | null;
+  liveClaim:     LifecycleStageClaim | null;
+}
+
 const STATUS_CAPABILITY: Record<string, LifecycleCapabilityKey> = {
   blocked:     'planning-council',
   planning:    'planning-council',
@@ -243,8 +252,9 @@ export class LifecycleCapabilityModel {
       'SELECT * FROM lifecycle_capabilities WHERE capability_key = $1',
       [key],
     );
-    // Old/incomplete rollout: no row means preserve the working Heartbeat path.
-    if (!capability) return;
+    if (!capability) {
+      throw new Error(`Lifecycle handoff denied: ${ key } is unavailable and no explicit Heartbeat fallback is registered.`);
+    }
     const owner = effectiveOwner(capability);
     if (owner !== 'heartbeat') {
       throw new Error(`Lifecycle handoff denied: ${ key } is ${ capability.health } and owned by ${ owner ?? 'manual hold' }.`);
@@ -252,21 +262,55 @@ export class LifecycleCapabilityModel {
   }
 
   /** Remove stages owned by healthy protected services from Heartbeat's queue. */
-  static async filterHeartbeatEligible<T extends { status: string; labels?: string[] | null }>(tasks: T[]): Promise<T[]> {
-    if (tasks.length === 0) return tasks;
-    const rows = await postgresClient.query<LifecycleCapabilityRecord>(`
-      SELECT * FROM lifecycle_capabilities
-       WHERE capability_key = ANY($1::text[])
-    `, [[...LIFECYCLE_CAPABILITY_KEYS]]);
-    const byKey = new Map(rows.map(row => [row.capability_key, row]));
+  static async filterHeartbeatEligible<T extends { id: string; status: string; labels?: string[] | null }>(tasks: T[]): Promise<T[]> {
+    const access = await LifecycleCapabilityModel.heartbeatAccessByTask(tasks);
+    return tasks.filter(task => ['heartbeat_fallback', 'unmanaged'].includes(access.get(task.id)?.mode ?? 'manual_hold'));
+  }
 
-    return tasks.filter((task) => {
+  /**
+   * Resolve the one lifecycle owner and any live data-plane claim for each
+   * task. A missing capability is a hold, never an implicit Heartbeat grant;
+   * Heartbeat may act only when the registered contract explicitly resolves
+   * its owner to "heartbeat".
+   */
+  static async heartbeatAccessByTask<T extends { id: string; status: string; labels?: string[] | null }>(tasks: T[]): Promise<Map<string, HeartbeatLifecycleAccess>> {
+    const access = new Map<string, HeartbeatLifecycleAccess>();
+    if (tasks.length === 0) return access;
+    const [capabilities, claims] = await Promise.all([
+      postgresClient.query<LifecycleCapabilityRecord>(`
+        SELECT * FROM lifecycle_capabilities
+         WHERE capability_key = ANY($1::text[])
+      `, [[...LIFECYCLE_CAPABILITY_KEYS]]),
+      postgresClient.query<LifecycleStageClaim>(`
+        SELECT * FROM work_task_stage_claims
+         WHERE task_id = ANY($1::text[])
+           AND status = 'active'
+      `, [tasks.map(task => task.id)]),
+    ]);
+    const byKey = new Map(capabilities.map(row => [row.capability_key, row]));
+    const claimByTask = new Map(claims.map(claim => [claim.task_id, claim]));
+
+    for (const task of tasks) {
       const key = LifecycleCapabilityModel.capabilityForStatus(task.status, task.labels ?? []);
-      if (!key) return true;
+      if (!key) {
+        access.set(task.id, { capabilityKey: null, mode: 'unmanaged', owner: null, liveClaim: claimByTask.get(task.id) ?? null });
+        continue;
+      }
       const capability = byKey.get(key);
-      // Incomplete rollout preserves the current working Heartbeat owner.
-      return !capability || effectiveOwner(capability) === 'heartbeat';
-    });
+      const owner = capability ? effectiveOwner(capability) : null;
+      const mode: HeartbeatLifecycleMode = owner === 'heartbeat'
+        ? 'heartbeat_fallback'
+        : capability?.enabled && capability.health === 'healthy' && owner
+          ? 'protected_owner'
+          : 'manual_hold';
+      access.set(task.id, {
+        capabilityKey: key,
+        mode,
+        owner,
+        liveClaim:     claimByTask.get(task.id) ?? null,
+      });
+    }
+    return access;
   }
 
   static async buildDigest(): Promise<string> {
@@ -275,7 +319,7 @@ export class LifecycleCapabilityModel {
        WHERE capability_key = ANY($1::text[])
        ORDER BY array_position($1::text[], capability_key)
     `, [[...LIFECYCLE_CAPABILITY_KEYS]]);
-    if (rows.length === 0) return 'LIFECYCLE: control plane unavailable; Heartbeat retains legacy ownership.';
+    if (rows.length === 0) return 'LIFECYCLE: control plane unavailable; lifecycle work is held until an explicit owner or named Heartbeat fallback is registered.';
     const compact = rows.map(row => {
       const last = row.last_success_at ? new Date(row.last_success_at).toISOString() : 'never';
       const owner = effectiveOwner(row) ?? 'hold';

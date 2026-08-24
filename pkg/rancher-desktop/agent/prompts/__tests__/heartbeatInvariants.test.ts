@@ -1,6 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { SystemPromptBuilder, type PromptBuildContext } from '../SystemPromptBuilder';
+import {
+  HeartbeatPromptInvariantError,
+  SystemPromptBuilder,
+  type PromptBuildContext,
+} from '../SystemPromptBuilder';
 import { heartbeatPrompt } from '../heartbeat';
 import {
   HEARTBEAT_FORBIDDEN_PHRASES,
@@ -24,7 +28,13 @@ describe('checkHeartbeatPromptInvariants', () => {
   });
 
   it('fails when the operator doctrine or freeze covenant is stripped from a deployed prompt', () => {
-    for (const phrase of ['Two-Door Rule', 'The Prospector', 'This Prompt Is Frozen']) {
+    for (const phrase of [
+      'Two-Door Rule',
+      'The Prospector',
+      'If an owner capability is unavailable',
+      'Write every material outcome back to Projects',
+      'This Prompt Is Frozen',
+    ]) {
       const stripped = heartbeatPrompt.split(phrase).join('');
       const result = checkHeartbeatPromptInvariants(stripped);
       expect(result.ok).toBe(false);
@@ -84,6 +94,7 @@ describe('checkHeartbeatPromptInvariants', () => {
       'poll unchanged CI or external gates',
       'reclaim healthy leases based only on time',
       'perform core-routine state transitions directly',
+      'one task per wake',
     ]) {
       const result = checkHeartbeatPromptInvariants(`${ heartbeatPrompt }\n${ phrase }`);
       expect(result.ok).toBe(false);
@@ -161,6 +172,14 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
         ['heartbeat', 'STALE LOCAL HEARTBEAT OVERRIDE'],
       ]),
       excludeSections: new Set(['heartbeat']),
+      dbSections:            new Map([
+        ['heartbeat', {
+          content:        'STALE DB HEARTBEAT OVERRIDE',
+          priority:       1,
+          cacheStability: 'dynamic',
+          isGenerated:    false,
+        }],
+      ]),
     }));
 
     expect(built.includedSections).toContain('heartbeat');
@@ -168,10 +187,11 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     expect(built.text).toContain('## Single-Owner Projects Conveyor');
     expect(built.text).not.toContain('STALE LOCAL HEARTBEAT OVERRIDE');
     expect(built.text).not.toContain('STALE LOCAL PLAYBOOK CONTENT');
+    expect(built.text).not.toContain('STALE DB HEARTBEAT OVERRIDE');
     expect(built.heartbeatInvariants?.ok).toBe(true);
   });
 
-  it('flags a stale/reverted heartbeat build', async() => {
+  it('rejects a stale/reverted prompt before the heartbeat wake can run', async() => {
     SystemPromptBuilder.register('heartbeat', () => ({
       id:             'heartbeat',
       content:        'stale prompt with a Cycle Budget: pick exactly one task and STOP.',
@@ -179,9 +199,32 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
       cacheStability: 'stable',
     }), ['full']);
 
-    const built = await SystemPromptBuilder.build(baseCtx({}));
-    expect(built.heartbeatInvariants?.ok).toBe(false);
-    expect(built.heartbeatInvariants?.forbidden).toContain('Cycle Budget');
+    await expect(SystemPromptBuilder.build(baseCtx({}))).rejects.toMatchObject({
+      name:       'HeartbeatPromptInvariantError',
+      invariants: {
+        ok:        false,
+        forbidden: expect.arrayContaining(['Cycle Budget', 'pick exactly one']),
+      },
+    });
+  });
+
+  it('exposes a typed production-boundary error for heartbeat wake handling', async() => {
+    SystemPromptBuilder.register('heartbeat', () => ({
+      id:             'heartbeat',
+      content:        heartbeatPrompt.split('Two-Door Rule').join(''),
+      priority:       110,
+      cacheStability: 'stable',
+    }), ['full']);
+
+    let rejection: unknown;
+    try {
+      await SystemPromptBuilder.build(baseCtx({}));
+    } catch (err) {
+      rejection = err;
+    }
+
+    expect(rejection).toBeInstanceOf(HeartbeatPromptInvariantError);
+    expect((rejection as HeartbeatPromptInvariantError).invariants.missing).toContain('Two-Door Rule');
   });
 
   it('skips the invariant check for non-heartbeat builds', async() => {
@@ -191,7 +234,7 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
     expect(built.heartbeatInvariants).toBeUndefined();
   });
 
-  it('keeps the compiled heartbeat prompt in the stable Anthropic cache segment', async() => {
+  it('keeps the compiled heartbeat bytes in the stable Anthropic cache segment across wakes', async() => {
     SystemPromptBuilder.register('heartbeat', () => ({
       id:             'heartbeat',
       content:        heartbeatPrompt,
@@ -199,12 +242,18 @@ describe('SystemPromptBuilder heartbeat invariant wiring', () => {
       cacheStability: 'stable',
     }), ['full']);
 
-    const built = await SystemPromptBuilder.build(baseCtx({ provider: 'anthropic' }));
-    expect(built.anthropicSystem?.[0]).toEqual(expect.objectContaining({
+    const first = await SystemPromptBuilder.build(baseCtx({ provider: 'anthropic', basePrompt: 'dynamic wake A' }));
+    const second = await SystemPromptBuilder.build(baseCtx({ provider: 'anthropic', basePrompt: 'dynamic wake B' }));
+
+    expect(first.anthropicSystem?.[0]).toEqual({
       type:          'text',
+      text:          heartbeatPrompt,
       cache_control: { type: 'ephemeral', ttl: '1h' },
-    }));
-    expect(built.anthropicSystem?.[0]?.text).toContain('# Autonomous Executive Control Plane — Sulla');
-    expect(built.heartbeatInvariants?.ok).toBe(true);
+    });
+    expect(second.anthropicSystem?.[0]).toEqual(first.anthropicSystem?.[0]);
+    expect(first.anthropicSystem?.at(-1)?.text).toBe('dynamic wake A');
+    expect(second.anthropicSystem?.at(-1)?.text).toBe('dynamic wake B');
+    expect(first.heartbeatInvariants?.ok).toBe(true);
+    expect(second.heartbeatInvariants?.ok).toBe(true);
   });
 });

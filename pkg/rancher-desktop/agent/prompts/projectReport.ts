@@ -70,9 +70,15 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   // OPEN QUEUES — WorkItemsModel already orders by epic priority → task
   // priority → oldest activity. Preserve that order while separating states.
   const listedOpenRows = await WorkItemsModel.listTasks({ projectId, assignee, limit: 500 });
-  const openRows = opts.lifecycleAware
-    ? await LifecycleCapabilityModel.filterHeartbeatEligible(listedOpenRows)
+  const lifecycleAccess = opts.lifecycleAware
+    ? await LifecycleCapabilityModel.heartbeatAccessByTask(listedOpenRows)
+    : null;
+  const openRows = lifecycleAccess
+    ? listedOpenRows.filter(task => ['heartbeat_fallback', 'unmanaged'].includes(lifecycleAccess.get(task.id)?.mode ?? 'manual_hold'))
     : listedOpenRows;
+  const lifecycleOwnedRows = lifecycleAccess
+    ? listedOpenRows.filter(task => !['heartbeat_fallback', 'unmanaged'].includes(lifecycleAccess.get(task.id)?.mode ?? 'manual_hold'))
+    : [];
   const [activeWaitIds, activeWaits, suppressionConfigured, monitorEnabled] = await Promise.all([
     WorkTaskWaitModel.activeTaskIds(),
     WorkTaskWaitModel.list({ status: 'active', limit: 500 }),
@@ -109,8 +115,12 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   for (const p of doneProjects) lines.push(`- _(project)_ **${ p.title }** completed (id ${ p.id })`);
 
   lines.push('');
-  lines.push(`## ▶️ Actionable now (${ next.length } of ${ actionableRows.length })`);
-  lines.push('_This is a portfolio dispatch queue, not a one-task limit. Heartbeat should hydrate and dispatch as many independent tasks as available sub-agent capacity allows, one task per work agent, then continue across the queue for the full wake._');
+  lines.push(opts.lifecycleAware
+    ? `## ▶️ Explicit Heartbeat fallback (${ next.length } of ${ actionableRows.length })`
+    : `## ▶️ Actionable now (${ next.length } of ${ actionableRows.length })`);
+  lines.push(opts.lifecycleAware
+    ? '_Only rows listed here have an explicit named Heartbeat fallback (or no lifecycle stage). Heartbeat may act within that fallback; absence or manual hold never grants ownership._'
+    : '_This is a portfolio dispatch queue, not a one-task limit. Heartbeat should hydrate and dispatch as many independent tasks as available sub-agent capacity allows, one task per work agent, then continue across the queue for the full wake._');
   if (!next.length) {
     lines.push('_No open tasks in scope._');
   } else {
@@ -131,8 +141,12 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   }
 
   lines.push('');
-  lines.push(`## 🧭 Blocked tasks — recovery planning (${ blocked.length } of ${ blockedRows.length })`);
-  lines.push('_These are recovery-planning work, not a human review queue. A committed transition to `blocked` or `planning` triggers the locked core planning routine, which owns the independent council, synthesis, final-plan comment, and return to `todo/dispatcher`. Heartbeat must not launch a second council; supervise failed/stale runs and verify the persisted plan._');
+  lines.push(opts.lifecycleAware
+    ? `## 🧭 Explicit Heartbeat planning fallback (${ blocked.length } of ${ blockedRows.length })`
+    : `## 🧭 Blocked tasks — recovery planning (${ blocked.length } of ${ blockedRows.length })`);
+  lines.push(opts.lifecycleAware
+    ? '_These rows are available only because the planning-capability contract explicitly names Heartbeat as fallback._'
+    : '_These are recovery-planning work, not a human review queue. A committed transition to `blocked` or `planning` triggers the locked core planning routine, which owns the independent council, synthesis, final-plan comment, and return to `todo/dispatcher`. Heartbeat must not launch a second council; supervise failed/stale runs and verify the persisted plan._');
   if (!blocked.length) {
     lines.push('_No blocked tasks in scope._');
   } else {
@@ -149,6 +163,18 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
     for (const t of planning) {
       const who = t.assignee ? ` · ${ t.assignee }` : '';
       lines.push(`- [${ t.priority }] **${ t.title }** — ${ context(t) }${ who } (id ${ t.id })`);
+    }
+  }
+
+  if (lifecycleOwnedRows.length) {
+    lines.push('');
+    lines.push(`## 🔒 Protected lifecycle work — data only (${ lifecycleOwnedRows.length })`);
+    lines.push('_Visibility is informational. Do not plan, execute, review, poll, reclaim, or mutate task status for these rows; the named capability owner and its live claim retain custody._');
+    for (const task of lifecycleOwnedRows.slice(0, nextLimit)) {
+      const access = lifecycleAccess?.get(task.id);
+      const owner = access?.owner ?? 'manual hold';
+      const claim = access?.liveClaim ? ` · live claim ${ access.liveClaim.id } by ${ access.liveClaim.owner }` : '';
+      lines.push(`- [${ task.priority }] **${ task.title }** — ${ context(task) } · ${ task.status } · capability ${ access?.capabilityKey ?? 'none' } · owner ${ owner }${ claim } (id ${ task.id })`);
     }
   }
 

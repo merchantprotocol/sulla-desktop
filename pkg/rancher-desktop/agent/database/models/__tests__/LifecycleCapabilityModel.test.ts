@@ -31,11 +31,21 @@ describe('LifecycleCapabilityModel', () => {
       .rejects.toThrow('owned by planning-council');
   });
 
-  it('keeps the legacy Heartbeat owner during incomplete rollout', async() => {
+  it('fails closed when a capability row is absent during incomplete rollout', async() => {
     (postgresClient as any).queryOne = jest.fn(() => Promise.resolve(null));
 
     await expect(LifecycleCapabilityModel.assertActorCanManageTask('in_review', [], 'heartbeat'))
-      .resolves.toBeUndefined();
+      .rejects.toThrow('no explicit Heartbeat fallback is registered');
+  });
+
+  it('holds lifecycle work out of Heartbeat context when capability state is absent', async() => {
+    (postgresClient as any).query = (jest.fn() as any)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    const task = { id: 'review-without-owner', status: 'in_review' };
+
+    await expect(LifecycleCapabilityModel.filterHeartbeatEligible([task]))
+      .resolves.toEqual([]);
   });
 
   it('lets Heartbeat claim an unavailable capability with explicit fallback', async() => {
