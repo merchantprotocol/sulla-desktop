@@ -143,6 +143,12 @@ export function initWorkItemsEvents(): void {
     return WorkItemsModel.listComments(taskId);
   });
 
+  ipcMainProxy.handle('work-items:artifact-evidence', async(_event: unknown, commentId: string) => {
+    if (!commentId) return null;
+    const { ArtifactReceiptModel } = await import('@pkg/agent/database/models/ArtifactReceiptModel');
+    return ArtifactReceiptModel.loadEvidenceForComment(commentId);
+  });
+
   ipcMainProxy.handle('work-items:activity', async(_event: unknown, opts: { projectId?: string; author?: string; limit?: number } = {}) => {
     const WorkItemsModel = await importWorkItemsModel();
 

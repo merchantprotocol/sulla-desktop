@@ -3,6 +3,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { postgresClient } from '../PostgresClient';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
 import { evaluateClaim, type WipLimits } from '../../services/ProjectAutomationWipLimits';
+import {
+  buildReceipt, receiptInsertInput, renderReceiptComment,
+  type ArtifactReceipt, type ArtifactReceiptInput,
+} from '../../services/ArtifactReceiptService';
+import { ArtifactReceiptModel } from './ArtifactReceiptModel';
 import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
 import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
 import type { WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
@@ -172,6 +177,7 @@ export interface WorkTaskDispatchFinalization {
   result?:        string;
   error?:         string;
   evidence?:      WorkTaskDispatchEvidence;
+  receipt?:       ArtifactReceipt;
 }
 
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
@@ -190,6 +196,29 @@ export function classifyInProgressRow(row: InProgressClassificationRow): InProgr
 }
 
 export class WorkTaskDispatchModel {
+  private static async persistReceiptWithClient(
+    client: PoolClient,
+    receipt: ArtifactReceipt,
+    author: string,
+  ): Promise<boolean> {
+    const receiptId = randomUUID();
+    const inserted = await ArtifactReceiptModel.insertIfAbsentWithClient(
+      client,
+      receiptInsertInput(receipt, receiptId),
+    );
+    if (!inserted.inserted) return false;
+    const commentId = `artifact-receipt-comment-${ randomUUID() }`;
+    await client.query(`
+      INSERT INTO work_task_comments (id, task_id, body, author)
+      VALUES ($1, $2, $3, $4)
+    `, [commentId, receipt.taskId, renderReceiptComment(receipt), author]);
+    await ArtifactReceiptModel.attachCommentWithClient(client, receiptId, commentId);
+    return true;
+  }
+
+  private static reviewReceipt(input: ArtifactReceiptInput): ArtifactReceipt {
+    return buildReceipt({ ...input, validationSummary: input.validationSummary?.slice(0, 500) });
+  }
   static reviewGenerationHash(artifacts: ReviewArtifactComponent[]): string {
     const normalized = [...artifacts]
       .map(artifact => ({
@@ -909,10 +938,14 @@ export class WorkTaskDispatchModel {
         evidence.terminalReason ?? null,
       ]);
 
-      await client.query(`
-        INSERT INTO work_task_comments (id, task_id, body, author)
-        VALUES ($1, $2, $3, 'dispatcher')
-      `, [`dispatch-comment-${ randomUUID() }`, taskId, finalization.comment]);
+      if (finalization.receipt) {
+        await this.persistReceiptWithClient(client, finalization.receipt, 'dispatcher');
+      } else {
+        await client.query(`
+          INSERT INTO work_task_comments (id, task_id, body, author)
+          VALUES ($1, $2, $3, 'dispatcher')
+        `, [`dispatch-comment-${ randomUUID() }`, taskId, finalization.comment]);
+      }
 
       const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
@@ -1040,11 +1073,17 @@ export class WorkTaskDispatchModel {
                heartbeat_at = now(), finished_at = now()
          WHERE id = $1 AND status = 'running'
       `, [id, finalVerdict, artifactSha, summary, verdict === 'REWORK' ? summary : null]);
-      await client.query(`
-        INSERT INTO work_task_comments (id, task_id, body, author)
-        VALUES ($1, $2, $3, 'verifier')
-      `, [randomUUID().slice(0, 12), taskId,
-        `Verification ${ id }: ${ finalVerdict } at ${ artifactSha }.\n\n${ summary }${ repeatedSuffix }`]);
+      await this.persistReceiptWithClient(client, this.reviewReceipt({
+        taskId,
+        eventType:          finalVerdict === 'REWORK' ? 'repair' : 'review',
+        actor:              'verifier',
+        dispatchId:         id,
+        disposition:        finalVerdict,
+        nextOwner:          transition.assignee ?? 'complete',
+        validationSummary:  `${ summary }${ repeatedSuffix }`,
+        artifacts:          [{ type: 'reviewed_artifact', canonicalRef: artifactSha, hash: artifactSha }],
+        evidence:           { kind: 'dispatch', ref: id },
+      }), 'verifier');
       await client.query(`
         UPDATE work_tasks
            SET status = $2, assignee = $3, updated_at = now(),
@@ -1197,11 +1236,23 @@ export class WorkTaskDispatchModel {
         const waitLine = finalDisposition === 'EXTERNAL_WAIT' && evidence.wait
           ? `\nDurable wait: ${ evidence.wait.kind } ${ evidence.wait.targetKey }.`
           : '';
-        await client.query(`
-          INSERT INTO work_task_comments (id, task_id, body, author)
-          VALUES ($1, $2, $3, 'verifier')
-        `, [randomUUID().slice(0, 12), taskId,
-          `Protected review ${ id }: ${ finalDisposition } for ${ evidence.artifactType } ${ evidence.artifactRef } (${ evidence.artifactHash }).\nReviewers: ${ evidence.reviewerAgentIds.join(', ') }.\n\n${ evidence.summary }${ waitLine }${ escalation }`]);
+        await this.persistReceiptWithClient(client, this.reviewReceipt({
+          taskId,
+          eventType:          finalDisposition === 'REPAIRABLE' || finalDisposition === 'REPLAN' ? 'repair' : 'review',
+          actor:              'verifier',
+          workflowExecutionId: evidence.workflowExecutionId,
+          dispatchId:         id,
+          disposition:        finalDisposition,
+          nextOwner:          transition.assignee ?? 'complete',
+          validationSummary:  `${ evidence.summary }${ waitLine }${ escalation }`,
+          artifacts:          evidence.artifacts.map(artifact => ({
+            type:         artifact.type,
+            canonicalRef: artifact.canonicalRef,
+            url:          artifact.url ?? undefined,
+            hash:         artifact.hash,
+          })),
+          evidence: { kind: 'dispatch', ref: id },
+        }), 'verifier');
       }
 
       await client.query(`

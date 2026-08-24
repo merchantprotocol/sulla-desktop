@@ -14,6 +14,7 @@ const recoverStaleMock: any = jest.fn();
 const recoverStaleForTaskMock: any = jest.fn();
 const findWorkflowMock: any = jest.fn();
 const executeRoutineMock: any = jest.fn();
+const recordReceiptMock: any = jest.fn();
 
 jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
   WorkItemsModel: {
@@ -44,6 +45,10 @@ jest.unstable_mockModule('../../database/models/WorkflowModel', () => ({
 
 jest.unstable_mockModule('../../../main/sullaRoutineTemplateEvents', () => ({
   executeRoutine: executeRoutineMock,
+}));
+
+jest.unstable_mockModule('../ArtifactReceiptService', () => ({
+  recordReceipt: recordReceiptMock,
 }));
 
 const task = {
@@ -81,6 +86,7 @@ describe('PlanningCouncilService', () => {
     getEpicMock.mockResolvedValue({ id: 'epic-1', title: 'Epic', description: '' });
     listCommentsMock.mockResolvedValue([{ author: 'worker', created_at: '2026-08-23', body: 'Exact blocker' }]);
     addCommentMock.mockResolvedValue({});
+    recordReceiptMock.mockResolvedValue({});
     attachExecutionMock.mockResolvedValue(undefined);
     executeRoutineMock.mockResolvedValue({ executionId: 'graph-1', playbookExecutionId: 'wfp-1' });
     settleForTaskMock.mockResolvedValue(null);
@@ -95,7 +101,7 @@ describe('PlanningCouncilService', () => {
     expect(executeRoutineMock).toHaveBeenCalledWith(
       'core-routine-plan-project-task',
       expect.stringContaining('"original_blocker":"Exact blocker"'),
-      { allowConcurrent: true },
+      { allowConcurrent: true, routineKind: 'planning' },
     );
     expect(attachExecutionMock).toHaveBeenCalledWith('planning-1', 'wfp-1');
     expect(addCommentMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -147,8 +153,8 @@ describe('PlanningCouncilService', () => {
     );
 
     expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'completed');
-    expect(addCommentMock).toHaveBeenCalledWith(expect.objectContaining({
-      body: expect.stringContaining('returned to todo/dispatcher'),
+    expect(recordReceiptMock).toHaveBeenCalledWith(expect.objectContaining({
+      disposition: 'completed', nextOwner: 'dispatcher',
     }));
     expect(executeRoutineMock).not.toHaveBeenCalled();
   });

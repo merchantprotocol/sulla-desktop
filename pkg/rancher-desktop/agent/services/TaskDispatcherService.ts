@@ -9,6 +9,7 @@ import { getIntegrationService } from './IntegrationService';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { RoutineConcurrencyPolicy } from './RoutineConcurrencyPolicy';
 import { ArtifactCustodyPolicy } from './ArtifactCustodyPolicy';
+import { buildReceipt, renderReceiptComment } from './ArtifactReceiptService';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
 import {
   WorkTaskDispatchModel,
@@ -456,7 +457,7 @@ export class TaskDispatcherService {
           }
         }
       } else {
-        state.messages.push({ role: 'user', content: this.buildWorkerPrompt(task, dispatch.id) });
+        state.messages.push({ role: 'user', content: this.buildWorkerPrompt(task, dispatch.id, dispatch.agent_id) });
       }
       state.metadata.isSubAgent = true;
       state.metadata.subAgentDepth = 1;
@@ -672,12 +673,33 @@ export class TaskDispatcherService {
     const comment = malformed
       ? `Dispatch ${ dispatch.id } stopped before review: structured artifact custody was missing or malformed.`
       : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }: ${ concise }`;
+    const receipt = buildReceipt({
+      taskId:     task.id,
+      eventType:  'execution',
+      actor:      'dispatcher',
+      dispatchId: dispatch.id,
+      disposition: malformed ? 'custody_rejected' : status,
+      nextOwner:  taskStatus === 'in_review' ? 'review' : taskStatus,
+      validationSummary: concise,
+      artifacts: parsed ? [parsed.custody.workKind === 'code' ? {
+        type:         'pull_request',
+        canonicalRef: parsed.custody.prUrl ?? undefined,
+        url:          parsed.custody.prUrl ?? undefined,
+        hash:         parsed.custody.prHeadSha ?? parsed.custody.commitSha ?? undefined,
+      } : {
+        type:         'authoritative_artifact',
+        canonicalRef: parsed.custody.artifactId ?? undefined,
+        url:          parsed.custody.artifactUrl ?? undefined,
+      }] : [],
+      evidence: { kind: 'dispatch', ref: dispatch.id },
+    });
     try {
       await WorkTaskDispatchModel.finalize(dispatch.id, task.id, {
         dispatchStatus,
         taskStatus,
         taskAssignee: taskStatus === 'planning' ? 'dispatcher' : 'heartbeat',
-        comment,
+        comment: renderReceiptComment(receipt),
+        receipt,
         result: status === 'failed' ? undefined : summary,
         error:  status === 'failed' || malformed ? concise : undefined,
         evidence: parsed ? {
@@ -709,7 +731,7 @@ export class TaskDispatcherService {
     }
   }
 
-  private buildWorkerPrompt(task: WorkTaskRecord, dispatchId: string): string {
+  private buildWorkerPrompt(task: WorkTaskRecord, dispatchId: string, workerAgentId: string): string {
     return `You are the execution worker for Projects task ${ task.id }.
 
 Title: ${ task.title }
@@ -724,7 +746,7 @@ ${ task.description || '(no description)' }
 Execute the task autonomously to the reversible edge. Inspect the real state first. For code work, use an isolated worktree/feature branch, verify the change, commit it, push it through the Sulla GitHub tools, and open a draft PR. Do not merge, deploy, spend money, send external communications, or perform destructive shared-system actions. If a truly irreversible dependency remains, return BLOCKED with the exact requirement; reversible uncertainty is yours to decide.
 
 Completed work MUST end with exactly one machine block. Code custody requires the exact remote PR head and validation/provenance; non-code custody requires an immutable authoritative artifact and evidence:
-<WORK_RESULT>{"summary":"concise receipt","custody":{"workKind":"code","branch":"feat/example","commitSha":"FULL_SHA","prUrl":"https://github.com/owner/repo/pull/123","prHeadSha":"FULL_SHA","validation":{"tests":"exact commands and outcomes"},"provenance":{"agentId":"${ dispatch.agent_id }","dispatchId":"${ dispatchId }"}}}</WORK_RESULT>
+<WORK_RESULT>{"summary":"concise receipt","custody":{"workKind":"code","branch":"feat/example","commitSha":"FULL_SHA","prUrl":"https://github.com/owner/repo/pull/123","prHeadSha":"FULL_SHA","validation":{"tests":"exact commands and outcomes"},"provenance":{"agentId":"${ workerAgentId }","dispatchId":"${ dispatchId }"}}}</WORK_RESULT>
 
 Use workKind "non_code" with artifactId or artifactUrl, evidence, and provenance for non-code work. Missing or malformed custody is structurally rejected and the task will not enter review.`;
   }

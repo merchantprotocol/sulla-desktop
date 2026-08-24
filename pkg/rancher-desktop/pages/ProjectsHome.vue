@@ -1133,6 +1133,15 @@
             <div class="ph-cmt-b">
               {{ c.body }}
             </div>
+            <button
+              v-if="isArtifactReceipt(c.body)"
+              type="button"
+              class="ph-btn ghost xs"
+              @click="toggleReceiptEvidence(c.id)"
+            >
+              {{ receiptEvidence[c.id] ? 'Hide full evidence' : 'Open full evidence' }}
+            </button>
+            <pre v-if="receiptEvidence[c.id]" class="ph-receipt-evidence">{{ receiptEvidence[c.id] }}</pre>
           </div>
           <div
             v-if="!taskComments.length"
@@ -1852,6 +1861,20 @@ const taskComments = ref<WorkCommentRecord[]>([]);
 const taskDependencies = ref<WorkTaskDependencyRecord[]>([]);
 const dependencyCandidate = ref('');
 const newComment = ref('');
+const receiptEvidence = reactive<Record<string, string>>({});
+
+function isArtifactReceipt(body: string): boolean {
+  return body.includes('<!-- artifact-receipt');
+}
+
+async function toggleReceiptEvidence(commentId: string): Promise<void> {
+  if (receiptEvidence[commentId]) {
+    delete receiptEvidence[commentId];
+    return;
+  }
+  const result = await ipcRenderer.invoke('work-items:artifact-evidence', commentId);
+  receiptEvidence[commentId] = JSON.stringify(result?.evidence ?? result?.receipt ?? { unavailable: true }, null, 2);
+}
 
 const taskDueYmd = computed<string>({
   get: () => ymd(taskDraft.due_at),
@@ -2444,6 +2467,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-cmt { border-left: 2px solid var(--pacc-line); padding: 4px 0 4px 10px; margin-bottom: 10px; }
 .ph-cmt-who { font-family: var(--pmono); font-size: 10px; color: var(--pacc); margin-bottom: 3px; }
 .ph-cmt-b { font-size: 12.5px; color: var(--ptext2); line-height: 1.5; white-space: pre-wrap; }
+.ph-receipt-evidence { max-height: 280px; overflow: auto; margin: 8px 0 0; padding: 9px; border: 1px solid var(--pborder); border-radius: 6px; background: var(--pbg); color: var(--ptext2); font: 10px/1.45 var(--pmono); white-space: pre-wrap; }
 .ph-cmt-add { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .ph-cmt-add .ph-btn { align-self: flex-end; }
 

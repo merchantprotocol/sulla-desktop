@@ -3,8 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const claimDueMock: any = jest.fn();
 const observeMock: any = jest.fn();
 const summaryMock: any = jest.fn();
-const addCommentMock: any = jest.fn();
-const updateTaskMock: any = jest.fn();
+const recordReceiptMock: any = jest.fn();
 const settingsGetMock: any = jest.fn();
 const postgresQueryMock: any = jest.fn();
 
@@ -16,8 +15,8 @@ jest.unstable_mockModule('../../database/models/WorkTaskWaitModel', () => ({
   },
 }));
 
-jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
-  WorkItemsModel: { addComment: addCommentMock, updateTask: updateTaskMock },
+jest.unstable_mockModule('../ArtifactReceiptService', () => ({
+  recordReceipt: recordReceiptMock,
 }));
 
 jest.unstable_mockModule('../../database/models/SullaSettingsModel', () => ({
@@ -43,7 +42,7 @@ describe('ExternalWaitMonitorService', () => {
       Promise.resolve(key === 'externalWaitMonitorEnabled' ? true : fallback),
     );
     summaryMock.mockResolvedValue({ active: 0, oldest: null, unchanged: 0, failures: 0 });
-    addCommentMock.mockResolvedValue(undefined);
+    recordReceiptMock.mockResolvedValue(undefined);
     postgresQueryMock.mockResolvedValue([]);
   });
 
@@ -85,9 +84,10 @@ describe('ExternalWaitMonitorService', () => {
     for (let i = 0; i < 11; i++) await service.forceCheck();
 
     expect(poller).toHaveBeenCalledTimes(11);
-    expect(addCommentMock).toHaveBeenCalledTimes(1);
-    expect(addCommentMock.mock.calls[0][0].body).toContain('External wait satisfied: 1 success');
-    expect(updateTaskMock).not.toHaveBeenCalled();
+    expect(recordReceiptMock).toHaveBeenCalledTimes(1);
+    expect(recordReceiptMock.mock.calls[0][0]).toMatchObject({
+      eventType: 'external_wait', disposition: 'satisfied', validationSummary: '1 success',
+    });
     const metrics = await service.getMetrics();
     expect(metrics.unchangedSuppressions).toBe(10);
     expect(metrics.deltasEmitted).toBe(1);
