@@ -5,6 +5,7 @@ import { getIntegrationService } from './IntegrationService';
 import { postgresClient } from '../database/PostgresClient';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 import {
   WorkTaskWaitModel,
   type WorkTaskWaitRecord,
@@ -251,17 +252,31 @@ export class ExternalWaitMonitorService {
     const complete = await SullaSettingsModel.get('externalWaitMonitorBootstrapComplete', false);
     if (!enabled || complete) return;
 
+    const capability = await WorkLaneDefinitionModel.runtimeCapability();
+    if (!capability.ready) {
+      console.warn(`[ExternalWaitMonitor] Semantic lanes degraded during bootstrap: ${ capability.degradedReason }`);
+    }
     const rows = await postgresClient.query<{ task_id: string; body: string }>(`
       SELECT DISTINCT ON (c.task_id) c.task_id, c.body
         FROM work_task_comments c
         JOIN work_tasks t ON t.id = c.task_id
+        LEFT JOIN LATERAL (
+          SELECT lane.semantic_role FROM work_lane_definitions lane
+           WHERE lane.reset_at IS NULL AND lane.archived = false AND lane.enabled = true
+             AND lane.lane_key = t.status
+             AND (lane.scope = 'global_default' OR (lane.scope = 'project' AND lane.project_id = t.project_id))
+           ORDER BY CASE WHEN lane.scope = 'project' THEN 0 ELSE 1 END LIMIT 1
+        ) effective_lane ON $1::boolean
        WHERE c.archived = false AND t.archived = false
-         AND t.status NOT IN ('done', 'cancelled', 'parked')
+         AND CASE WHEN $1::boolean
+           THEN COALESCE(effective_lane.semantic_role, 'manual') <> 'terminal'
+           ELSE t.status NOT IN ('done', 'cancelled', 'parked')
+         END
          AND c.body ~* 'github\\.com/[^/]+/[^/]+/pull/[0-9]+'
          AND c.body ~* '(pending|in.progress|waiting).*(ci|check)|(ci|check).*(pending|in.progress|waiting)'
        ORDER BY c.task_id, c.created_at DESC
        LIMIT 100
-    `);
+    `, [capability.ready]);
     const urlPattern = /github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/i;
     let created = 0;
     for (const row of rows) {

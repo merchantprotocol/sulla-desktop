@@ -6,6 +6,7 @@
 import { BaseNode } from './BaseNode';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 import { WorkTaskDispatchModel } from '../database/models/WorkTaskDispatchModel';
 import { runSubconsciousMiddleware } from '../middleware/SubconsciousMiddleware';
 import { throwIfAborted } from '../services/AbortService';
@@ -768,12 +769,23 @@ export class HeartbeatNode extends BaseNode {
    */
   private async buildLaneHealthDigest(reportOpts: { projectId?: string; assignee?: string }): Promise<string> {
     const nowMs = Date.now();
-    const [laneInProgress, laneBlocked] = await Promise.all([
-      WorkItemsModel.listTasks({ ...reportOpts, status: 'in_progress', limit: 50 }),
-      WorkItemsModel.listTasks({ ...reportOpts, status: 'blocked', limit: 50 }),
+    const [executionRows, laneBlocked, capability] = await Promise.all([
+      WorkItemsModel.listTasks({ ...reportOpts, semanticRoles: ['execution'], limit: 100 }),
+      WorkItemsModel.listTasks({ ...reportOpts, semanticRoles: ['blocked'], limit: 50 }),
+      WorkLaneDefinitionModel.runtimeCapability(reportOpts.projectId),
     ]);
+    const activeKeys = new Map<string, string>();
+    for (const projectId of new Set(executionRows.map(task => task.project_id))) {
+      activeKeys.set(projectId, await WorkLaneDefinitionModel.preferredLaneKey(
+        projectId, 'execution', 'in_progress', 'last',
+      ));
+    }
+    const laneInProgress = executionRows.filter(task => activeKeys.get(task.project_id) === task.status);
 
     const lines: string[] = [];
+    if (!capability.ready) {
+      lines.push(`- DEGRADED LANES: ${ capability.degradedReason ?? 'semantic capability unavailable' } Compatibility ownership remains active.`);
+    }
 
     // A parent task legitimately stays in_progress while its subtasks are
     // worked, and add_task_comment does not bump last_moved_at — so parents
@@ -790,7 +802,7 @@ export class HeartbeatNode extends BaseNode {
     //    a parent + its single active subtask is the healthy case, not a dupe.
     if (leafInProgress.length > 1) {
       const ids = leafInProgress.map(task => this.escapeXmlText(task.id)).join(', ');
-      lines.push(`- DUPLICATE ACTIVE: ${ leafInProgress.length } tasks are in_progress at once (${ ids }). Advance ONE; for the others add a comment and move them back to todo or blocked so the lane keeps a single active thread.`);
+      lines.push(`- DUPLICATE ACTIVE: ${ leafInProgress.length } tasks occupy active execution lanes (${ ids }). Advance ONE; move the others to the resolved execution-entry or blocked lane with an audit comment.`);
     }
 
     // 2. Stale in_progress — resume or park with a status change + comment.
@@ -825,7 +837,7 @@ export class HeartbeatNode extends BaseNode {
       if (!Number.isFinite(lastActivityMs)) continue;
       const ageHours = Math.floor((nowMs - lastActivityMs) / 3_600_000);
       if (ageHours >= STALE_IN_PROGRESS_HOURS) {
-        lines.push(`- STALE: task ${ this.escapeXmlText(task.id) } "${ this.escapeXmlText(task.title) }" has sat in_progress ~${ ageHours }h with no movement or comment. Resume it now, or add a comment and set status (blocked/todo) explaining the pause.`);
+        lines.push(`- STALE: task ${ this.escapeXmlText(task.id) } "${ this.escapeXmlText(task.title) }" has sat in active execution lane ${ this.escapeXmlText(task.status) } ~${ ageHours }h with no movement or comment. Resume it or move it to the resolved blocked/execution-entry lane with an audit comment.`);
       }
     }
 
@@ -837,7 +849,15 @@ export class HeartbeatNode extends BaseNode {
 
     // 4. Lane drift — heartbeat in_progress work outside the Operator lane.
     if (reportOpts.projectId) {
-      const heartbeatInProgress = await WorkItemsModel.listTasks({ assignee: 'heartbeat', status: 'in_progress', limit: 50 });
+      const heartbeatExecution = await WorkItemsModel.listTasks({ assignee: 'heartbeat', semanticRoles: ['execution'], limit: 100 });
+      for (const projectId of new Set(heartbeatExecution.map(task => task.project_id))) {
+        if (!activeKeys.has(projectId)) {
+          activeKeys.set(projectId, await WorkLaneDefinitionModel.preferredLaneKey(
+            projectId, 'execution', 'in_progress', 'last',
+          ));
+        }
+      }
+      const heartbeatInProgress = heartbeatExecution.filter(task => activeKeys.get(task.project_id) === task.status);
       const offLane = heartbeatInProgress.filter(task => task.project_id !== reportOpts.projectId);
       if (offLane.length) {
         const refs = offLane.map(task => `${ this.escapeXmlText(task.id) } (project ${ this.escapeXmlText(task.project_id) })`).join(', ');
