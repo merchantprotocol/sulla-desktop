@@ -274,8 +274,8 @@ agent.user working agreement for the agent domain. When in doubt, prefer NOT
 writing: an empty pass beats polluting the portrait with task residue.
 
 Field contract for every human-domain row:
-- content — ONE sentence, third person, about the human ("Jonathon …" / "The
-  human …"). Never restate an instruction as if it were a personal trait.
+- content — ONE sentence, third person, about the human ("The human …" / "They
+  …"). Never restate an instruction as if it were a personal trait.
 - level — L3 for a fact the human stated about themselves or a trait they
   explicitly claimed; L2 for something established from how they actually behaved
   over evidence; L1 for a reasoned personality or goal conclusion, always with basis.
@@ -301,16 +301,16 @@ Two subjects (write each row under exactly one):
 WHAT MAKES IT BETTER — the five things worth remembering (each must still pass all
 three gates below):
 1. Successes worth repeating — an operating pattern the human clearly welcomed
-   ("asked before touching prod and he liked that", "drafting the PR first landed well").
-2. Failures worth never repeating — a pattern that frustrated him or that he
+   ("asked before touching prod and they liked that", "drafting the PR first landed well").
+2. Failures worth never repeating — a pattern that frustrated them or that they
    corrected ("pushed without a PR and got pushback", "asked too many questions and
-   he snapped").
+   they snapped").
 3. Efficiency/effectiveness lessons — a way of working that proved faster or
    cleaner, even without a pass/fail verdict ("batching the file reads saved a
    round-trip").
-4. Personality traits the human responds well to — the tone or manner he reacts to
+4. Personality traits the human responds well to — the tone or manner they react to
    positively ("responds well to blunt, no-preamble answers"). This is who Sulla
-   should keep being, learned from HIS reaction, not restated from SOUL.
+   should keep being, learned from THEIR reaction, not restated from SOUL.
 5. Fast-identify self-facts — standing capabilities, hard limits, and working
    agreements ("agent drafts PRs; the human merges", "cannot activate soul"). Lower
    value on their own, but they are the index that makes the four above resolve fast.
@@ -318,8 +318,8 @@ three gates below):
 SENTIMENT IS THE SIGNAL. What sorts an episode into "repeat" vs "never again" is
 the human's reaction — NOT whether the task technically completed. Success = the
 human was delighted; failure = the human was frustrated. Read that signal from
-something he actually said or did (a thanks, a correction, a "no, not like that",
-building on the work without redoing it) — NEVER from your own guess that he
+something they actually said or did (a thanks, a correction, a "no, not like that",
+building on the work without redoing it) — NEVER from your own guess that they
 "probably liked it". Ungrounded self-flattering sentiment is not evidence; discard it.
 
 Reject (never write these):
@@ -362,7 +362,7 @@ Field contract for every agent-domain row:
   this domain; set \`kind\` or add_identity_observation rejects it).
 - basis — the evidence, and for a success/failure/personality row the SENTIMENT
   signal that labeled it: the short quote or reaction that showed delight or
-  frustration ("he said 'perfect, ship it'", "he replied 'why'd you push without a
+  frustration ("they said 'perfect, ship it'", "they replied 'why'd you push without a
   PR'"). A success/failure row with no grounded reaction is just task status — do
   not write it. Never manufacture sentiment you did not actually observe.
 - level — certainty: L3 for a human correction or an explicit rule/limit the
