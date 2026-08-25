@@ -244,6 +244,16 @@ export class LifecycleCapabilityModel {
     `, [claimId, status]);
   }
 
+  /** Renew an active claim's liveness signal. Returns null if the claim is missing or no longer active. */
+  static async heartbeatStage(claimId: string): Promise<LifecycleStageClaim | null> {
+    return postgresClient.queryOne<LifecycleStageClaim>(`
+      UPDATE work_task_stage_claims
+         SET heartbeat_at = now()
+       WHERE id = $1 AND status = 'active'
+       RETURNING *
+    `, [claimId]);
+  }
+
   static async assertActorCanManageTask(
     status: string,
     labels: string[] | null,

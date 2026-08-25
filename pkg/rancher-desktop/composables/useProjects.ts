@@ -33,8 +33,13 @@ import type {
   ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput,
 } from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
 import type {
+  CreateProjectPipelineTemplateInput, ProjectPipelineTemplate, ProjectPipelineTemplateRecord,
+  UpdateProjectPipelineTemplateInput,
+} from '@pkg/agent/database/models/WorkProjectPipelineTemplateModel';
+import type {
   ProjectViewType, SaveProjectViewInput, WorkProjectViewRecord,
 } from '@pkg/agent/database/models/WorkProjectViewModel';
+import type { ReadyTasksResult } from '@pkg/agent/projects/application/ProjectsApplicationService';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export type {
@@ -46,6 +51,8 @@ export type {
   CreateWorkLaneInput, EffectiveWorkLane, ListWorkLaneOpts, UpdateWorkLaneInput,
   WorkLaneDefinitionRecord, WorkLaneScope,
   ProjectViewType, SaveProjectViewInput, WorkProjectViewRecord,
+  CreateProjectPipelineTemplateInput, ProjectPipelineTemplate, ProjectPipelineTemplateRecord,
+  UpdateProjectPipelineTemplateInput, ReadyTasksResult,
 };
 
 /** A task with its resolved lane attached, ready for every Projects projection. */
@@ -278,6 +285,39 @@ export function useProjects() {
     return ipcRenderer.invoke('work-items:dependency-remove', taskId, dependsOnTaskId);
   }
 
+  async function listReadyTasks(projectId: string, epicId?: string): Promise<ReadyTasksResult> {
+    return ipcRenderer.invoke('work-items:ready-tasks', { projectId, epicId });
+  }
+
+  async function listPipelineTemplates(includeArchived = false): Promise<ProjectPipelineTemplateRecord[]> {
+    return ipcRenderer.invoke('work-items:pipeline-templates-list', includeArchived);
+  }
+
+  async function getPipelineTemplate(templateId: string): Promise<ProjectPipelineTemplate | null> {
+    return ipcRenderer.invoke('work-items:pipeline-template-get', templateId);
+  }
+
+  async function createPipelineTemplate(input: CreateProjectPipelineTemplateInput): Promise<ProjectPipelineTemplate> {
+    return ipcRenderer.invoke('work-items:pipeline-template-create', input);
+  }
+
+  async function updatePipelineTemplate(
+    templateId: string,
+    input: UpdateProjectPipelineTemplateInput,
+  ): Promise<ProjectPipelineTemplate> {
+    return ipcRenderer.invoke('work-items:pipeline-template-update', templateId, input);
+  }
+
+  async function archivePipelineTemplate(templateId: string): Promise<ProjectPipelineTemplateRecord | null> {
+    return ipcRenderer.invoke('work-items:pipeline-template-archive', templateId);
+  }
+
+  async function applyPipelineTemplate(projectId: string, templateId: string): Promise<ProjectPipelineTemplate> {
+    const template = await ipcRenderer.invoke('work-items:pipeline-template-apply', projectId, templateId);
+    await load();
+    return template;
+  }
+
   /** Apply a drag-reorder batch (positions + optional status/epic move), then refresh. */
   async function reorder(updates: ReorderUpdate[]): Promise<void> {
     if (!updates.length) return;
@@ -380,6 +420,13 @@ export function useProjects() {
     listTaskDependencies,
     setTaskDependency,
     removeTaskDependency,
+    listReadyTasks,
+    listPipelineTemplates,
+    getPipelineTemplate,
+    createPipelineTemplate,
+    updatePipelineTemplate,
+    archivePipelineTemplate,
+    applyPipelineTemplate,
     reorder,
     listLanes,
     resolveLanes,

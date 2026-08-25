@@ -471,6 +471,13 @@ export interface IpcMainInvokeEvents {
   'work-items:dependencies-list': (projectId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskDependencyRecord[];
   'work-items:dependency-set':    (taskId: string, dependsOnTaskId: string) => import('@pkg/agent/database/models/WorkItemsModel').WorkTaskDependencyRecord;
   'work-items:dependency-remove': (taskId: string, dependsOnTaskId: string) => boolean;
+  'work-items:ready-tasks': (input: import('@pkg/agent/projects/application/ProjectsApplicationService').ReadyTasksInput) => import('@pkg/agent/projects/application/ProjectsApplicationService').ReadyTasksResult;
+  'work-items:pipeline-templates-list': (includeArchived?: boolean) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplateRecord[];
+  'work-items:pipeline-template-get': (templateId: string) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplate | null;
+  'work-items:pipeline-template-create': (input: import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').CreateProjectPipelineTemplateInput) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplate;
+  'work-items:pipeline-template-update': (templateId: string, input: import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').UpdateProjectPipelineTemplateInput) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplate;
+  'work-items:pipeline-template-archive': (templateId: string) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplateRecord | null;
+  'work-items:pipeline-template-apply': (projectId: string, templateId: string) => import('@pkg/agent/database/models/WorkProjectPipelineTemplateModel').ProjectPipelineTemplate;
   'work-items:lanes-list':      (opts?: import('@pkg/agent/database/models/WorkLaneDefinitionModel').ListWorkLaneOpts) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord[];
   'work-items:lanes-resolve':   (projectId: string, includeArchived?: boolean) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').EffectiveWorkLane[];
   'work-items:lane-create':     (input: import('@pkg/agent/database/models/WorkLaneDefinitionModel').CreateWorkLaneInput) => import('@pkg/agent/database/models/WorkLaneDefinitionModel').WorkLaneDefinitionRecord;
