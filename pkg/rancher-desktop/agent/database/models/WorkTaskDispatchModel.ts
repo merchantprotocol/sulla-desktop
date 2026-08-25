@@ -138,7 +138,6 @@ export interface ClaimedDispatch {
 export type InProgressExclusionReason =
   | 'archived'
   | 'epic_closed'
-  | 'human_or_unknown_owner'
   | 'non_autonomous_label'
   | 'live_dispatch'
   | 'active_child'
@@ -148,7 +147,6 @@ export type InProgressExclusionReason =
 
 export interface InProgressClassificationRow extends WorkTaskRecord {
   epic_open:            boolean;
-  autonomous_owner:     boolean;
   autonomous_labels:    boolean;
   has_live_dispatch:    boolean;
   has_active_child:     boolean;
@@ -183,11 +181,21 @@ export interface WorkTaskDispatchFinalization {
 
 const CLOSED_EPIC_STATUSES = ['done', 'cancelled', 'parked', 'blocked'];
 
+/**
+ * Idle in_progress reclaim is ownership-neutral by design (Jonathon
+ * directive 2026-08-25, Projects task 1Nk7): whoever is actively working a
+ * task — human or agent — holds it as assignee exactly like any other
+ * sub-agent assignment. There is no "must already be assignee=dispatcher"
+ * or "must be an autonomous owner" gate here. The only protections against
+ * yanking real work out from under someone are activity-based
+ * (stale_activity / has_live_dispatch / has_active_child /
+ * has_active_agent_job) and the explicit opt-out labels in
+ * NON_AUTONOMOUS_TASK_LABELS (e.g. "human", "gated", "no-auto-dispatch").
+ */
 export function classifyInProgressRow(row: InProgressClassificationRow): InProgressExclusionReason[] {
   const reasons: InProgressExclusionReason[] = [];
   if (row.archived) reasons.push('archived');
   if (!row.epic_open) reasons.push('epic_closed');
-  if (!row.autonomous_owner) reasons.push('human_or_unknown_owner');
   if (!row.autonomous_labels) reasons.push('non_autonomous_label');
   if (row.has_live_dispatch) reasons.push('live_dispatch');
   if (row.has_active_child) reasons.push('active_child');
@@ -590,10 +598,9 @@ export class WorkTaskDispatchModel {
     const rows = await postgresClient.query<InProgressClassificationRow>(`
       SELECT t.*,
              (e.id IS NOT NULL AND e.archived = false AND NOT (e.status = ANY($1::text[]))) AS epic_open,
-             (t.assignee IS NULL OR LOWER(t.assignee) = ANY($2::text[])) AS autonomous_owner,
              NOT EXISTS (
                SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-                WHERE LOWER(label) = ANY($3::text[])
+                WHERE LOWER(label) = ANY($2::text[])
              ) AS autonomous_labels,
              EXISTS (
                SELECT 1 FROM work_task_dispatches d
@@ -605,7 +612,7 @@ export class WorkTaskDispatchModel {
                   AND child.archived = false
                   AND child.status NOT IN ('done', 'cancelled', 'parked')
              ) AS has_active_child,
-             (t.last_activity_at <= now() - ($4 * interval '1 minute')) AS stale_activity,
+             (t.last_activity_at <= now() - ($3 * interval '1 minute')) AS stale_activity,
              EXISTS (
                SELECT 1 FROM agent_jobs j
                 WHERE j.status = 'running'
@@ -616,13 +623,12 @@ export class WorkTaskDispatchModel {
         LEFT JOIN work_epics e ON e.id = t.epic_id
        WHERE t.status = 'in_progress'
        ORDER BY t.last_activity_at ASC, t.id ASC
-       LIMIT $5
-    `, [CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, staleMinutes, Math.max(1, limit)]);
+       LIMIT $4
+    `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, staleMinutes, Math.max(1, limit)]);
 
     return rows.map((row) => {
       const {
         epic_open: _epicOpen,
-        autonomous_owner: _autonomousOwner,
         autonomous_labels: _autonomousLabels,
         has_live_dispatch: _hasLiveDispatch,
         has_active_child: _hasActiveChild,
@@ -665,10 +671,9 @@ export class WorkTaskDispatchModel {
              AND t.archived = false
              AND e.archived = false
              AND NOT (e.status = ANY($2::text[]))
-             AND (t.assignee IS NULL OR LOWER(t.assignee) = ANY($3::text[]))
              AND NOT EXISTS (
                SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
-                WHERE LOWER(label) = ANY($4::text[])
+                WHERE LOWER(label) = ANY($3::text[])
              )
              AND NOT EXISTS (
                SELECT 1 FROM work_task_dispatches d
@@ -685,9 +690,9 @@ export class WorkTaskDispatchModel {
                 WHERE j.status = 'running'
                   AND (j.job_id = t.source_ref OR COALESCE(j.results, '[]'::jsonb)::text LIKE '%' || t.id || '%')
              )
-             AND t.last_activity_at = $5::timestamptz
+             AND t.last_activity_at = $4::timestamptz
            FOR UPDATE OF t SKIP LOCKED
-        `, [candidate.task.id, CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, candidate.fingerprint]);
+        `, [candidate.task.id, CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS, candidate.fingerprint]);
 
         const task = locked.rows[0];
         if (!task) {
@@ -703,10 +708,15 @@ export class WorkTaskDispatchModel {
         const outcome = attemptNumber >= Math.max(1, retryCeiling) ? 'blocked_ceiling' : 'recovered';
         const nextStatus = outcome === 'recovered' ? 'todo' : 'blocked';
         const nextAssignee = outcome === 'recovered' ? TASK_ASSIGNEES.dispatcher : TASK_ASSIGNEES.heartbeat;
+        // Ownership-neutral: prior assignee may be a human, dispatcher, heartbeat, or any
+        // other agent identity. Idle timeout is the only gate — see classifyInProgressRow.
         const reason = outcome === 'recovered'
-          ? 'stale autonomous in_progress task had no live owner or operation'
+          ? 'in_progress task idle past the reclaim threshold with no live owner or operation'
           : `recovery retry ceiling reached (${ retryCeiling })`;
         const auditId = `recovery-${ randomUUID() }`;
+        const idleMinutes = Math.max(0, Math.round(
+          (Date.now() - new Date(task.last_activity_at).getTime()) / 60000,
+        ));
         const undo = `restore status=in_progress, assignee=${ task.assignee ?? 'unassigned' }, and review activity at ${ task.last_activity_at }`;
 
         await client.query(`
@@ -730,7 +740,9 @@ export class WorkTaskDispatchModel {
            WHERE id = $2
         `, [
           `comment-${ randomUUID() }`, task.id,
-          `Orphan recovery attempt ${ attemptNumber }: ${ reason }. Prior owner: ${ task.assignee ?? 'unassigned' }. Prior activity: ${ task.last_activity_at }. Outcome: ${ nextStatus }/${ nextAssignee }. Undo path: ${ undo }.`,
+          `Orphan recovery attempt ${ attemptNumber }: ${ reason }. Prior owner: ${ task.assignee ?? 'unassigned' }. ` +
+          `Idle for ${ idleMinutes } minute(s) (no activity since ${ task.last_activity_at }). ` +
+          `Outcome: ${ nextStatus }/${ nextAssignee }. Undo: ${ undo }.`,
           nextStatus, nextAssignee,
         ]);
         results.push({ taskId: task.id, outcome, attemptNumber });
