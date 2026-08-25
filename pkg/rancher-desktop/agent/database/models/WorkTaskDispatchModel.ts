@@ -4,6 +4,7 @@ import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 import { postgresClient } from '../PostgresClient';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
 import { evaluateClaim, type WipLimits } from '../../services/ProjectAutomationWipLimits';
+import { appendTaskTransitionEvent } from '../../projects/infrastructure/appendTaskTransitionEvent';
 import {
   buildReceipt, receiptInsertInput, renderReceiptComment,
   type ArtifactReceipt, type ArtifactReceiptInput,
@@ -353,6 +354,7 @@ export class WorkTaskDispatchModel {
       if (!updated.rows[0]) {
         throw new Error(`Atomic dispatch lost task ${ task.id } before execution handoff`);
       }
+      await appendTaskTransitionEvent(client, updated.rows[0], task.status, 'dispatcher', 'task-dispatch-claim');
 
       return { dispatch: inserted.rows[0], task: updated.rows[0], stage_claim: stageClaim.claim };
     });
@@ -961,6 +963,9 @@ export class WorkTaskDispatchModel {
       if (!moved.rows[0]) {
         throw new Error(`Task ${ taskId } is no longer owned by dispatch ${ id }`);
       }
+      await appendTaskTransitionEvent(
+        client, moved.rows[0], 'in_progress', 'dispatcher', 'task-dispatch-finalize',
+      );
       return moved.rows[0];
     });
   }
@@ -1158,14 +1163,20 @@ export class WorkTaskDispatchModel {
         artifacts:          [{ type: 'reviewed_artifact', canonicalRef: artifactSha, hash: artifactSha }],
         evidence:           { kind: 'dispatch', ref: id },
       }), 'verifier');
-      await client.query(`
+      const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
                completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
          WHERE id = $1 AND status = 'in_review'
+        RETURNING *
       `, [taskId, transition.status, transition.assignee]);
+      if (moved.rows[0]) {
+        await appendTaskTransitionEvent(
+          client, moved.rows[0], 'in_review', 'verifier', 'legacy-review-finalize',
+        );
+      }
       return finalVerdict;
     });
   }
@@ -1329,14 +1340,20 @@ export class WorkTaskDispatchModel {
         }), 'verifier');
       }
 
-      await client.query(`
+      const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'verifier',
                completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
          WHERE id = $1 AND status = 'in_review'
+        RETURNING *
       `, [taskId, transition.status, transition.assignee]);
+      if (moved.rows[0]) {
+        await appendTaskTransitionEvent(
+          client, moved.rows[0], 'in_review', 'verifier', 'protected-review-finalize',
+        );
+      }
       return finalDisposition;
     });
   }
@@ -1387,12 +1404,18 @@ export class WorkTaskDispatchModel {
           evidence:          { kind: 'dispatch', ref: id },
         }), 'verifier');
       }
-      await client.query(`
+      const moved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
            SET status = $2, assignee = $3, updated_at = now(),
                last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier'
          WHERE id = $1 AND status = 'in_review'
+        RETURNING *
       `, [taskId, terminal ? 'planning' : 'in_review', terminal ? 'dispatcher' : 'heartbeat']);
+      if (moved.rows[0] && terminal) {
+        await appendTaskTransitionEvent(
+          client, moved.rows[0], 'in_review', 'verifier', 'verification-failure-escalation',
+        );
+      }
       return true;
     });
   }

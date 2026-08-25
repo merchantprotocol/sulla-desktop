@@ -18,6 +18,7 @@ import { normalizeAutonomousTaskOwnership } from './TaskOwnership';
 import { WorkLaneDefinitionModel, type WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
+import { appendTaskTransitionEvent } from '../../projects/infrastructure/appendTaskTransitionEvent';
 
 import type { PoolClient } from 'pg';
 
@@ -989,26 +990,9 @@ export class WorkItemsModel {
             client, committed.id, 'done', changes.custody, actor);
         }
         if (committed && committed.status !== current.rows[0].status) {
-          const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
-          const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
-            client, committed.id, committed.status, changes.actor ?? 'sulla');
-          const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
-          await createPostgresProjectsRepositories(client).events.append({
-            id:             `projects-event-${ committed.id }-${ claimed.entry.generation }-transition`,
-            taskId:         committed.id,
-            generation:     claimed.entry.generation,
-            eventType:      'projects.task.transitioned',
-            idempotencyKey: `projects.task.transitioned:${ committed.id }:${ claimed.entry.generation }`,
-            occurredAt:     new Date(),
-            payload:        {
-              actor,
-              source:        changes.source ?? 'system',
-              fromLane:      current.rows[0].status,
-              toLane:        committed.status,
-              laneEntryId:   claimed.entry.id,
-              laneAutomated: claimed.entry.status === 'pending',
-            },
-          });
+          await appendTaskTransitionEvent(
+            client, committed, current.rows[0].status, actor, changes.source ?? 'system',
+          );
         }
         if (committed && changesSchedule) {
           await WorkItemsModel.auditScheduleChangesWithClient(

@@ -141,6 +141,9 @@ export class TaskDispatcherService {
     if (!this.initialized || this.checking) return;
     this.checking = true;
     try {
+      // Complete any committed lifecycle handoffs before claiming more WIP.
+      const { getProjectsOrchestrationEventService } = await import('../projects/application/ProjectsOrchestrationEventService');
+      await getProjectsOrchestrationEventService().drain(50);
       const enabled = await SullaSettingsModel.get('heartbeatEnabled', false);
       if (!enabled) {
         await LifecycleCapabilityModel.report({
@@ -608,6 +611,9 @@ export class TaskDispatcherService {
         .catch(err => console.error(`[TaskDispatcher] Stage-claim release failed for ${ liveStageClaim.id }:`, err));
       this.active.delete(dispatch.id);
       GraphRegistry.delete(dispatch.thread_id);
+      const { getProjectsOrchestrationEventService } = await import('../projects/application/ProjectsOrchestrationEventService');
+      await getProjectsOrchestrationEventService().drain(50)
+        .catch(err => console.error('[TaskDispatcher] Orchestration event drain failed:', err));
       if (this.initialized) {
         this.checkAndDispatch().catch(err => console.error('[TaskDispatcher] Refill check failed:', err));
       }

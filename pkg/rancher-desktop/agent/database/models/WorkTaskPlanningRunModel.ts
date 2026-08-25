@@ -4,6 +4,7 @@ import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 import { postgresClient } from '../PostgresClient';
 import { LifecycleCapabilityModel } from './LifecycleCapabilityModel';
 import { WorkLaneDefinitionModel } from './WorkLaneDefinitionModel';
+import { appendTaskTransitionEvent } from '../../projects/infrastructure/appendTaskTransitionEvent';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
 import type { PoolClient } from 'pg';
@@ -111,6 +112,11 @@ export class WorkTaskPlanningRunModel {
            RETURNING *
         `, [taskId, planningLaneKey]);
         claimedTask = moved.rows[0] ?? task;
+        if (moved.rows[0]) {
+          await appendTaskTransitionEvent(
+            client, moved.rows[0], task.status, 'planning-council', 'planning-run-claim',
+          );
+        }
       }
 
       return { run: inserted.rows[0], task: claimedTask };

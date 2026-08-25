@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { appendTaskTransitionEvent } from '../../projects/infrastructure/appendTaskTransitionEvent';
+
+import type { WorkTaskRecord } from './WorkItemsModel';
 
 export type WorkTaskWaitKind = 'github_checks' | 'human_gate' | 'scheduled_time' | 'external_job';
 export type WorkTaskWaitStatus = 'active' | 'changed' | 'satisfied' | 'cancelled' | 'failed';
@@ -199,13 +202,19 @@ export class WorkTaskWaitModel {
          RETURNING *
       `, [id, observation.fingerprint, nextStatus, observation.nextCheckAt, changed, terminal]);
       if (changed || terminal) {
-        await client.query(`
+        const moved = await client.query<WorkTaskRecord>(`
           UPDATE work_tasks
              SET status = $2, assignee = $3, updated_at = now(),
                  last_moved_at = now(), last_activity_at = now(),
                  last_moved_by = 'external-wait-monitor'
            WHERE id = $1 AND status = 'blocked'
+          RETURNING *
         `, [current.task_id, nextStatus === 'failed' ? 'planning' : 'in_review', nextStatus === 'failed' ? 'dispatcher' : 'heartbeat']);
+        if (moved.rows[0]) {
+          await appendTaskTransitionEvent(
+            client, moved.rows[0], 'blocked', 'external-wait-monitor', 'durable-wait-observation',
+          );
+        }
       }
       return { changed: changed || terminal, wait: updated.rows[0] ?? null };
     });
@@ -226,12 +235,18 @@ export class WorkTaskWaitModel {
       `, [id, message.slice(0, 2000), nextCheckAt, terminalAfter]);
       const wait = result.rows[0] ?? null;
       if (wait?.status === 'failed') {
-        await client.query(`
+        const moved = await client.query<WorkTaskRecord>(`
           UPDATE work_tasks SET status = 'planning', assignee = 'dispatcher',
             updated_at = now(), last_moved_at = now(), last_activity_at = now(),
             last_moved_by = 'external-wait-monitor'
           WHERE id = $1 AND status = 'blocked'
+          RETURNING *
         `, [wait.task_id]);
+        if (moved.rows[0]) {
+          await appendTaskTransitionEvent(
+            client, moved.rows[0], 'blocked', 'external-wait-monitor', 'durable-wait-failure',
+          );
+        }
       }
       return { terminal: wait?.status === 'failed', wait };
     });
