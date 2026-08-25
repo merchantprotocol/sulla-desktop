@@ -345,6 +345,34 @@ export const projectToolManifests: ToolManifest[] = [
     operationTypes: ['update'],
     loader:         () => import('./update_task'),
   },
+  {
+    name:        'transition_task_stage',
+    description: 'Move a task to one explicit active stage in its project pipeline. Workflow routines should pass expected_generation so a stale run cannot move a newer stage entry.',
+    category:    'project',
+    schemaDef:   {
+      task_id:            { type: 'string', description: 'Task to transition.' },
+      stage_key:          { type: 'string', description: 'Exact stable stage key from resolve_lanes.' },
+      expected_generation:{ type: 'number', optional: true, description: 'Current immutable stage-entry generation. Rejects stale workflow runs.' },
+      custody:            { type: 'object', optional: true, description: 'Structured evidence when the destination stage policy requires custody.' },
+      actor:              { type: 'string', optional: true, description: 'Audit actor. Defaults to sulla.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./transition_task_stage'),
+  },
+  {
+    name:        'transition_task_relative',
+    description: 'Move a task to the next or previous active stage derived solely from its project pipeline order. No lane name or semantic role is assumed.',
+    category:    'project',
+    schemaDef:   {
+      task_id:            { type: 'string', description: 'Task to transition.' },
+      direction:          { type: 'enum', enum: ['next', 'previous'], description: 'Relative movement in the configured project pipeline.' },
+      expected_generation:{ type: 'number', optional: true, description: 'Current immutable stage-entry generation. Rejects stale workflow runs.' },
+      custody:            { type: 'object', optional: true, description: 'Structured evidence when the destination stage policy requires custody.' },
+      actor:              { type: 'string', optional: true, description: 'Audit actor. Defaults to sulla.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./transition_task_relative'),
+  },
 
   // ── comments ─────────────────────────────────────────────────────────
   {
