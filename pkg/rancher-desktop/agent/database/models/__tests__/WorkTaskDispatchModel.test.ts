@@ -479,12 +479,11 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[3][1][2]).toContain('retry ceiling');
   });
 
-  it('classifies the full in-progress safety matrix', () => {
+  it('classifies the full in-progress safety matrix without gating on assignee', () => {
     const eligible = {
       id:                   'task-1',
       archived:             false,
       epic_open:            true,
-      autonomous_owner:     true,
       autonomous_labels:    true,
       has_live_dispatch:    false,
       has_active_child:     false,
@@ -496,16 +495,38 @@ describe('WorkTaskDispatchModel', () => {
       ...eligible,
       archived:             true,
       epic_open:            false,
-      autonomous_owner:     false,
       autonomous_labels:    false,
       has_live_dispatch:    true,
       has_active_child:     true,
       stale_activity:       false,
       has_active_agent_job: true,
     })).toEqual([
-      'archived', 'epic_closed', 'human_or_unknown_owner', 'non_autonomous_label',
+      'archived', 'epic_closed', 'non_autonomous_label',
       'live_dispatch', 'active_child', 'recent_activity', 'active_agent_job',
     ]);
+  });
+
+  it('Jonathon directive 1Nk7: a human- or agent-assigned idle task is eligible for reclaim regardless of assignee', () => {
+    const base = {
+      id:                   'task-human',
+      archived:             false,
+      epic_open:            true,
+      autonomous_labels:    true,
+      has_live_dispatch:    false,
+      has_active_child:     false,
+      has_active_agent_job: false,
+    } as any;
+
+    // Idle (stale_activity = true): reclaimable no matter who currently holds it.
+    for (const assignee of ['human', 'sulla-desktop', 'heartbeat', 'some-other-agent', null]) {
+      expect(classifyInProgressRow({ ...base, assignee, stale_activity: true })).toEqual([]);
+    }
+
+    // Recent activity (stale_activity = false): never reclaimed, regardless of assignee.
+    for (const assignee of ['human', 'sulla-desktop', 'heartbeat', 'some-other-agent', null]) {
+      expect(classifyInProgressRow({ ...base, assignee, stale_activity: false }))
+        .toEqual(['recent_activity']);
+    }
   });
 
   it('uses the configured stale boundary and includes durable operation checks in report-only classification', async() => {
@@ -514,9 +535,10 @@ describe('WorkTaskDispatchModel', () => {
     try {
       await WorkTaskDispatchModel.findRecoverableInProgress(360, 25);
       const [sql, values] = (postgresClient.query as any).mock.calls[0];
-      expect(sql).toContain("last_activity_at <= now() - ($4 * interval '1 minute')");
+      expect(sql).toContain("last_activity_at <= now() - ($3 * interval '1 minute')");
       expect(sql).toContain("j.status = 'running'");
       expect(sql).toContain("d.status = 'running'");
+      expect(sql).not.toContain('autonomous_owner');
       expect(values).toEqual(expect.arrayContaining([360, 25]));
     } finally {
       (postgresClient as any).query = originalQuery;
@@ -533,8 +555,9 @@ describe('WorkTaskDispatchModel', () => {
     await expect(WorkTaskDispatchModel.recoverOrphanedInProgress([candidate], 1, 3))
       .resolves.toEqual([{ taskId: 'task-1', outcome: 'cas_miss' }]);
     expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0][0]).toContain('t.last_activity_at = $5::timestamptz');
+    expect(query.mock.calls[0][0]).toContain('t.last_activity_at = $4::timestamptz');
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
+    expect(query.mock.calls[0][0]).not.toContain('autonomous_owner');
   });
 
   it('audits and requeues an orphan, then blocks at the retry ceiling', async() => {
@@ -569,6 +592,42 @@ describe('WorkTaskDispatchModel', () => {
     await expect(WorkTaskDispatchModel.recoverOrphanedInProgress([candidate], 1, 3))
       .resolves.toEqual([{ taskId: 'task-1', outcome: 'blocked_ceiling', attemptNumber: 3 }]);
     expect(ceilingQuery.mock.calls[3][1]).toEqual(expect.arrayContaining(['blocked', 'heartbeat']));
+  });
+
+  it('Jonathon directive 1Nk7: reclaims a human-assigned idle in_progress task and audits prior owner + idle duration + undo path', async() => {
+    const staleActivity = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(); // 8h idle
+    const task = {
+      id:               'task-human-1',
+      status:           'in_progress',
+      assignee:         'human',
+      last_activity_at: staleActivity,
+    } as any;
+    const candidate = {
+      task, fingerprint: task.last_activity_at, attemptCount: 0, exclusionReasons: [],
+    } as any;
+
+    const query = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [task] })
+      .mockResolvedValueOnce({ rows: [{ count: '0' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
+
+    await expect(WorkTaskDispatchModel.recoverOrphanedInProgress([candidate], 1, 3))
+      .resolves.toEqual([{ taskId: 'task-human-1', outcome: 'recovered', attemptNumber: 1 }]);
+
+    // The locking re-check no longer filters on assignee at all.
+    expect(query.mock.calls[0][0]).not.toContain('autonomous_owner');
+    expect(query.mock.calls[0][0]).not.toMatch(/t\.assignee IS NULL OR LOWER\(t\.assignee\)/);
+
+    const commentSql = query.mock.calls[3][0];
+    const commentParams = query.mock.calls[3][1];
+    expect(commentSql).toContain('INSERT INTO work_task_comments');
+    expect(commentParams).toEqual(expect.arrayContaining(['todo', 'dispatcher']));
+    const commentBody = commentParams[2];
+    expect(commentBody).toContain('Prior owner: human');
+    expect(commentBody).toMatch(/Idle for \d+ minute\(s\)/);
+    expect(commentBody).toContain('Undo:');
   });
 
   it('atomically records protected review evidence and routes REPLAN to the planning council', async() => {
