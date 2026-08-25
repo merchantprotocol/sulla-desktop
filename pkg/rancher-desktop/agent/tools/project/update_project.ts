@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -14,8 +14,9 @@ export class UpdateProjectWorker extends BaseTool {
     if (!id) return { successBoolean: false, responseString: 'id is required to update a project.' };
 
     try {
-      await WorkItemsModel.ensureTables();
-      const updated = await WorkItemsModel.updateProject(id, {
+      const projects = getProjectsApplicationService();
+      await projects.ready();
+      const updated = await projects.updateProject(id, {
         slug:           input.slug,
         title:          input.title,
         description:    input.description,
@@ -26,7 +27,7 @@ export class UpdateProjectWorker extends BaseTool {
         due_at:         input.due_at === '' ? null : input.due_at,
         github_repo:    input.github_repo,
         source:         input.source,
-      });
+      }, { actor: input.actor || 'sulla', source: 'tool' });
       if (!updated) return { successBoolean: false, responseString: `No project found with id: ${ id }` };
 
       return {

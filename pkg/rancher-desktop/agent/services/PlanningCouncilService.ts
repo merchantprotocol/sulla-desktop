@@ -1,11 +1,12 @@
+import { recordReceipt } from './ArtifactReceiptService';
 import { WorkItemsModel, type WorkTaskRecord } from '../database/models/WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 import {
   PROJECT_TASK_PLANNING_WORKFLOW_ID,
   WorkTaskPlanningRunModel,
   type ClaimedPlanningRun,
 } from '../database/models/WorkTaskPlanningRunModel';
 import { WorkflowModel } from '../database/models/WorkflowModel';
-import { recordReceipt } from './ArtifactReceiptService';
 
 const MAX_DESCRIPTION_CHARS = 12_000;
 const MAX_CONTEXT_DESCRIPTION_CHARS = 4_000;
@@ -23,19 +24,26 @@ export class PlanningCouncilService {
     previousStatus: string,
     actor?: string,
   ): Promise<void> {
-    if (!['blocked', 'planning'].includes(task.status)) {
+    const [semanticRole, previousSemanticRole] = await Promise.all([
+      WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, task.status),
+      WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, previousStatus),
+    ]);
+    if (!['blocked', 'planning'].includes(semanticRole)) {
       const settled = await WorkTaskPlanningRunModel.settleForTask(
         task.id,
         'completed',
       );
       if (settled) {
         await recordReceipt({
-          taskId: task.id, eventType: 'planning', actor: 'planning-council',
+          taskId:              task.id,
+          eventType:           'planning',
+          actor:               'planning-council',
           workflowExecutionId: settled.execution_id ?? undefined,
-          disposition: 'completed', nextOwner: task.assignee ?? 'complete',
-          validationSummary: `Task returned to ${ task.status }.`,
-          artifacts: [{ type: 'planning_run', canonicalRef: settled.id }],
-          evidence: settled.execution_id
+          disposition:         'completed',
+          nextOwner:           task.assignee ?? 'complete',
+          validationSummary:   `Task returned to ${ task.status }.`,
+          artifacts:           [{ type: 'planning_run', canonicalRef: settled.id }],
+          evidence:            settled.execution_id
             ? { kind: 'workflow_execution', ref: settled.execution_id }
             : { kind: 'other', ref: settled.id },
         });
@@ -45,16 +53,19 @@ export class PlanningCouncilService {
 
     // planning -> blocked is the council's explicit irreversible-gate outcome.
     // Settle it; do not recursively create another council for the same result.
-    if (previousStatus === 'planning' && task.status === 'blocked') {
+    if (previousSemanticRole === 'planning' && semanticRole === 'blocked') {
       const settled = await WorkTaskPlanningRunModel.settleForTask(task.id, 'blocked');
       if (settled) {
         await recordReceipt({
-          taskId: task.id, eventType: 'planning', actor: 'planning-council',
+          taskId:              task.id,
+          eventType:           'planning',
+          actor:               'planning-council',
           workflowExecutionId: settled.execution_id ?? undefined,
-          disposition: 'blocked', nextOwner: 'heartbeat',
-          validationSummary: 'Planning preserved a genuine gate.',
-          artifacts: [{ type: 'planning_run', canonicalRef: settled.id }],
-          evidence: settled.execution_id
+          disposition:         'blocked',
+          nextOwner:           'heartbeat',
+          validationSummary:   'Planning preserved a genuine gate.',
+          artifacts:           [{ type: 'planning_run', canonicalRef: settled.id }],
+          evidence:            settled.execution_id
             ? { kind: 'workflow_execution', ref: settled.execution_id }
             : { kind: 'other', ref: settled.id },
         });
@@ -62,7 +73,7 @@ export class PlanningCouncilService {
       return;
     }
 
-    await PlanningCouncilService.claimAndLaunch(task.id, task.status as 'blocked' | 'planning', actor);
+    await PlanningCouncilService.claimAndLaunch(task.id, semanticRole as 'blocked' | 'planning', actor);
   }
 
   static async recoverOnStartup(): Promise<void> {
@@ -74,8 +85,11 @@ export class PlanningCouncilService {
         body:    'Recovered a planning council interrupted by restart; retrying with a new durable claim.',
       }).catch(err => console.warn(`[PlanningCouncil] Could not audit recovery for ${ taskId }:`, err));
       const task = await WorkItemsModel.getTask(taskId);
-      if (task && ['blocked', 'planning'].includes(task.status)) {
-        await PlanningCouncilService.claimAndLaunch(taskId, task.status as 'blocked' | 'planning', 'startup-recovery');
+      if (task) {
+        const semanticRole = await WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, task.status);
+        if (semanticRole === 'blocked' || semanticRole === 'planning') {
+          await PlanningCouncilService.claimAndLaunch(taskId, semanticRole, 'startup-recovery');
+        }
       }
     }
   }
@@ -90,21 +104,26 @@ export class PlanningCouncilService {
     if (!run) return;
 
     const task = await WorkItemsModel.getTask(run.task_id);
-    if (task?.status !== 'planning') return;
+    if (!task || await WorkLaneDefinitionModel.semanticRoleForStatus(task.project_id, task.status) !== 'planning') return;
 
     const reason = outcome === 'completed'
       ? 'Planning routine completed without persisting a final plan and state transition.'
       : `Planning routine failed: ${ bounded(error || 'unknown error', 1_000) }`;
     await WorkTaskPlanningRunModel.settleForTask(task.id, 'failed', reason);
     await recordReceipt({
-      taskId: task.id, eventType: 'planning', actor: 'planning-council',
+      taskId:              task.id,
+      eventType:           'planning',
+      actor:               'planning-council',
       workflowExecutionId: executionId,
-      disposition: outcome, nextOwner: 'heartbeat', validationSummary: reason,
-      artifacts: [{ type: 'planning_run', canonicalRef: run.id }],
-      evidence: { kind: 'workflow_execution', ref: executionId },
+      disposition:         outcome,
+      nextOwner:           'heartbeat',
+      validationSummary:   reason,
+      artifacts:           [{ type: 'planning_run', canonicalRef: run.id }],
+      evidence:            { kind: 'workflow_execution', ref: executionId },
     });
+    const blockedLane = await WorkLaneDefinitionModel.preferredLaneKey(task.project_id, 'blocked', 'blocked');
     await WorkItemsModel.updateTask(task.id, {
-      status:   'blocked',
+      status:   blockedLane,
       assignee: 'heartbeat',
       actor:    'planning-council',
     });
@@ -160,8 +179,11 @@ export class PlanningCouncilService {
         author:  'planning-council',
         body:    `Planning council launch failed (run ${ claim.run.id }): ${ bounded(message, 1_000) }`,
       });
+      const blockedLane = await WorkLaneDefinitionModel.preferredLaneKey(
+        claim.task.project_id, 'blocked', 'blocked',
+      );
       await WorkItemsModel.updateTask(claim.task.id, {
-        status:   'blocked',
+        status:   blockedLane,
         assignee: 'heartbeat',
         actor:    'planning-council',
       });
@@ -193,7 +215,8 @@ export class PlanningCouncilService {
         id:               task.id,
         title:            bounded(task.title, 500),
         description:      bounded(task.description, MAX_DESCRIPTION_CHARS),
-        status:           'planning',
+        status:           task.status,
+        semantic_role:    'planning',
         priority:         task.priority,
         assignee:         task.assignee,
         labels:           task.labels ?? [],

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { WorkLaneDefinitionModel } from './WorkLaneDefinitionModel';
 
 export type WorkTaskWaitKind = 'github_checks' | 'human_gate' | 'scheduled_time' | 'external_job';
 export type WorkTaskWaitStatus = 'active' | 'changed' | 'satisfied' | 'cancelled' | 'failed';
@@ -75,12 +76,14 @@ export class WorkTaskWaitModel {
 
   static async register(input: RegisterWaitInput): Promise<WaitRegistration> {
     return postgresClient.transaction(async(client) => {
-      const task = await client.query<{ id: string; status: string }>(
-        `SELECT id, status FROM work_tasks WHERE id = $1 AND archived = false FOR UPDATE`,
+      const task = await client.query<{ id: string; project_id: string; status: string }>(
+        `SELECT id, project_id, status FROM work_tasks WHERE id = $1 AND archived = false FOR UPDATE`,
         [input.taskId],
       );
       if (!task.rows[0]) throw new Error(`Task not found: ${ input.taskId }`);
-      if (['done', 'cancelled', 'parked'].includes(task.rows[0].status)) {
+      if (await WorkLaneDefinitionModel.semanticRoleForStatus(
+        task.rows[0].project_id, task.rows[0].status,
+      ) === 'terminal') {
         throw new Error(`Cannot register a wait for terminal task ${ input.taskId }`);
       }
 
@@ -150,7 +153,7 @@ export class WorkTaskWaitModel {
          WHERE w.status = 'active'
            AND w.next_check_at <= now()
            AND t.archived = false
-           AND t.status NOT IN ('done', 'cancelled', 'parked')
+             AND resolve_work_task_lane_role(t.id, t.status) <> 'terminal'
          ORDER BY w.next_check_at ASC
          FOR UPDATE OF w SKIP LOCKED
          LIMIT $1
@@ -200,12 +203,17 @@ export class WorkTaskWaitModel {
       `, [id, observation.fingerprint, nextStatus, observation.nextCheckAt, changed, terminal]);
       if (changed || terminal) {
         await client.query(`
-          UPDATE work_tasks
-             SET status = $2, assignee = $3, updated_at = now(),
+              UPDATE work_tasks
+                 SET status = resolve_project_lane_key(
+                       project_id,
+                       CASE WHEN $2 = 'failed' THEN 'planning' ELSE 'review' END,
+                       CASE WHEN $2 = 'failed' THEN 'planning' ELSE 'in_review' END
+                     ),
+                     assignee = $3, updated_at = now(),
                  last_moved_at = now(), last_activity_at = now(),
                  last_moved_by = 'external-wait-monitor'
-           WHERE id = $1 AND status = 'blocked'
-        `, [current.task_id, nextStatus === 'failed' ? 'planning' : 'in_review', nextStatus === 'failed' ? 'dispatcher' : 'heartbeat']);
+               WHERE id = $1 AND resolve_work_task_lane_role(id, status) = 'blocked'
+            `, [current.task_id, nextStatus, nextStatus === 'failed' ? 'dispatcher' : 'heartbeat']);
       }
       return { changed: changed || terminal, wait: updated.rows[0] ?? null };
     });
@@ -227,10 +235,11 @@ export class WorkTaskWaitModel {
       const wait = result.rows[0] ?? null;
       if (wait?.status === 'failed') {
         await client.query(`
-          UPDATE work_tasks SET status = 'planning', assignee = 'dispatcher',
+              UPDATE work_tasks SET status = resolve_project_lane_key(project_id, 'planning', 'planning'),
+                assignee = 'dispatcher',
             updated_at = now(), last_moved_at = now(), last_activity_at = now(),
             last_moved_by = 'external-wait-monitor'
-          WHERE id = $1 AND status = 'blocked'
+              WHERE id = $1 AND resolve_work_task_lane_role(id, status) = 'blocked'
         `, [wait.task_id]);
       }
       return { terminal: wait?.status === 'failed', wait };

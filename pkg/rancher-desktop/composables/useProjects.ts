@@ -148,7 +148,7 @@ export function useProjects() {
       let doneCount = 0;
       for (const e of epics) {
         for (const t of e.tasks) {
-          if (t.lane ? t.lane.semantic_role === 'terminal' : CLOSED.has(t.status)) doneCount++;
+          if (t.lane?.semantic_role === 'terminal' || (!t.lane && CLOSED.has(t.status))) doneCount++;
           else openCount++;
         }
       }

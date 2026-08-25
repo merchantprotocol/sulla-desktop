@@ -1,5 +1,4 @@
-import { LifecycleCapabilityModel } from '../../database/models/LifecycleCapabilityModel';
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -26,32 +25,12 @@ export class UpdateTaskWorker extends BaseTool {
       : undefined;
 
     try {
-      await WorkItemsModel.ensureTables();
+      const projects = getProjectsApplicationService();
+      await projects.ready();
       const actor = input.actor || 'sulla';
-      const current = await WorkItemsModel.getTask(id);
+      const current = await projects.getTask(id);
       if (!current) return { successBoolean: false, responseString: `No task found with id: ${ id }` };
-      if (input.status !== undefined || input.assignee !== undefined) {
-        // A move must be authorized by the owner of the stage being left, not
-        // only by the destination owner. Otherwise Heartbeat could bypass a
-        // healthy protected routine by moving its task to an unprotected
-        // status (for example in_review -> done).
-        await LifecycleCapabilityModel.assertActorCanManageTask(
-          current.status,
-          current.labels,
-          actor,
-        );
-
-        const destinationStatus = typeof input.status === 'string' ? input.status : current.status;
-        const destinationLabels = labels ?? current.labels;
-        if (destinationStatus !== current.status || destinationLabels !== current.labels) {
-          await LifecycleCapabilityModel.assertActorCanManageTask(
-            destinationStatus,
-            destinationLabels,
-            actor,
-          );
-        }
-      }
-      const updated = await WorkItemsModel.updateTask(id, {
+      const updated = await projects.updateTask(id, {
         epic_id:      typeof input.epic_id === 'string' && input.epic_id.trim() ? input.epic_id.trim() : undefined,
         parent_id:    parentId,
         title:        input.title,
@@ -66,7 +45,7 @@ export class UpdateTaskWorker extends BaseTool {
         source:       input.source,
         actor,
         custody:      input.custody,
-      });
+      }, { actor, source: 'tool' });
       if (!updated) return { successBoolean: false, responseString: `No task found with id: ${ id }` };
 
       return {

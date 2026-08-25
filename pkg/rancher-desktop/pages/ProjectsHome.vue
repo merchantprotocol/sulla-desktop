@@ -91,8 +91,22 @@
             >
               Projects
             </button>
-            <button type="button" class="ph-tab" :class="{ on: tab === 'lanes' }" @click="tab = 'lanes'">Lanes</button>
-            <button type="button" class="ph-tab" :class="{ on: tab === 'knowledge' }" @click="tab = 'knowledge'">Knowledge</button>
+            <button
+              type="button"
+              class="ph-tab"
+              :class="{ on: tab === 'lanes' }"
+              @click="tab = 'lanes'"
+            >
+              Lanes
+            </button>
+            <button
+              type="button"
+              class="ph-tab"
+              :class="{ on: tab === 'knowledge' }"
+              @click="tab = 'knowledge'"
+            >
+              Knowledge
+            </button>
           </div>
           <div class="ph-sp" />
           <label
@@ -194,32 +208,62 @@
               <b>Lane automation is in compatibility mode.</b>
               <p>{{ laneCapability.degradedReason }}</p>
             </div>
-            <div v-if="automationStatus" class="ph-automation-health" :class="{ held: !automationStatus.decision.allowed }">
+            <div
+              v-if="automationStatus"
+              class="ph-automation-health"
+              :class="{ held: !automationStatus.decision.allowed }"
+            >
               <div>
                 <b>Conveyor capacity</b>
                 <span v-if="automationStatus.decision.reason"> · {{ automationStatus.decision.reason }}</span>
                 <span v-else> · upstream claims have capacity</span>
               </div>
               <div class="ph-automation-stages">
-                <span v-for="role in automationRoles" :key="role" class="ph-pill">
+                <span
+                  v-for="role in automationRoles"
+                  :key="role"
+                  class="ph-pill"
+                >
                   {{ role }} {{ automationStatus.counts[role] || 0 }}/{{ automationStatus.limits[role] || '∞' }}
                 </span>
               </div>
             </div>
-            <section v-if="conveyorHealth" class="ph-health" aria-label="Projects conveyor health">
+            <section
+              v-if="conveyorHealth"
+              class="ph-health"
+              aria-label="Projects conveyor health"
+            >
               <header class="ph-health-head">
                 <div>
                   <b>Conveyor health</b>
                   <span> · {{ conveyorWindow }}h · {{ healthScopeProject ? 'current project' : 'portfolio' }}</span>
                 </div>
                 <div class="ph-health-controls">
-                  <label><input v-model="healthScopeProject" type="checkbox"> Project only</label>
-                  <select v-model.number="conveyorWindow" aria-label="Metrics window">
-                    <option :value="24">24 hours</option>
-                    <option :value="168">7 days</option>
-                    <option :value="720">30 days</option>
+                  <label><input
+                    v-model="healthScopeProject"
+                    type="checkbox"
+                  > Project only</label>
+                  <select
+                    v-model.number="conveyorWindow"
+                    aria-label="Metrics window"
+                  >
+                    <option :value="24">
+                      24 hours
+                    </option>
+                    <option :value="168">
+                      7 days
+                    </option>
+                    <option :value="720">
+                      30 days
+                    </option>
                   </select>
-                  <button type="button" class="ph-btn ghost sm" @click="loadConveyorHealth">Refresh</button>
+                  <button
+                    type="button"
+                    class="ph-btn ghost sm"
+                    @click="loadConveyorHealth"
+                  >
+                    Refresh
+                  </button>
                 </div>
               </header>
               <div class="ph-health-grid">
@@ -233,18 +277,42 @@
                 >
                   <span>{{ stage.stage }}</span><b>{{ stage.count }}</b><small>oldest {{ duration(stage.oldestAgeSeconds) }}</small>
                 </button>
-                <div class="ph-health-stat"><span>Throughput</span><b>{{ conveyorHealth.throughput.reachedDone }}</b><small>done · {{ conveyorHealth.throughput.reviewsCompleted }} reviews</small></div>
-                <div class="ph-health-stat"><span>Verifier</span><b>{{ percent(conveyorHealth.verifier.utilization) }}</b><small>{{ conveyorHealth.verifier.activeVerificationLeases }}/{{ conveyorHealth.verifier.capacity ?? '∞' }} active</small></div>
-                <div class="ph-health-stat"><span>Rework</span><b>{{ percent(conveyorHealth.rework.reworkRate) }}</b><small>{{ conveyorHealth.rework.avgRepairLoops.toFixed(1) }} loops avg</small></div>
-                <div class="ph-health-stat"><span>Wait adoption</span><b>{{ percent(conveyorHealth.waits.adoptionRate) }}</b><small>{{ conveyorHealth.waits.blockedWithActiveWait }}/{{ conveyorHealth.waits.blockedTotal }} external gates</small></div>
-                <div class="ph-health-stat"><span>Custody</span><b>{{ custodyPercent }}</b><small>latest completed artifacts</small></div>
-                <div class="ph-health-stat"><span>Stale leases</span><b>{{ conveyorHealth.leases.staleLeases }}</b><small>{{ conveyorHealth.leases.activeLeases }} active total</small></div>
-                <div class="ph-health-stat"><span>Dependency held</span><b>{{ conveyorHealth.deps.dependencyHeld }}</b><small>claim-gated tasks</small></div>
-                <div class="ph-health-stat"><span>Shipments</span><b>{{ conveyorHealth.shipments.independentShipments }}</b><small>{{ conveyorHealth.shipments.integrationTrainClosures }} train · {{ conveyorHealth.shipments.missingEvidence }} missing</small></div>
+                <div class="ph-health-stat">
+                  <span>Throughput</span><b>{{ conveyorHealth.throughput.reachedDone }}</b><small>done · {{ conveyorHealth.throughput.reviewsCompleted }} reviews</small>
+                </div>
+                <div class="ph-health-stat">
+                  <span>Verifier</span><b>{{ percent(conveyorHealth.verifier.utilization) }}</b><small>{{ conveyorHealth.verifier.activeVerificationLeases }}/{{ conveyorHealth.verifier.capacity ?? '∞' }} active</small>
+                </div>
+                <div class="ph-health-stat">
+                  <span>Rework</span><b>{{ percent(conveyorHealth.rework.reworkRate) }}</b><small>{{ conveyorHealth.rework.avgRepairLoops.toFixed(1) }} loops avg</small>
+                </div>
+                <div class="ph-health-stat">
+                  <span>Wait adoption</span><b>{{ percent(conveyorHealth.waits.adoptionRate) }}</b><small>{{ conveyorHealth.waits.blockedWithActiveWait }}/{{ conveyorHealth.waits.blockedTotal }} external gates</small>
+                </div>
+                <div class="ph-health-stat">
+                  <span>Custody</span><b>{{ custodyPercent }}</b><small>latest completed artifacts</small>
+                </div>
+                <div class="ph-health-stat">
+                  <span>Stale leases</span><b>{{ conveyorHealth.leases.staleLeases }}</b><small>{{ conveyorHealth.leases.activeLeases }} active total</small>
+                </div>
+                <div class="ph-health-stat">
+                  <span>Dependency held</span><b>{{ conveyorHealth.deps.dependencyHeld }}</b><small>claim-gated tasks</small>
+                </div>
+                <div class="ph-health-stat">
+                  <span>Shipments</span><b>{{ conveyorHealth.shipments.independentShipments }}</b><small>{{ conveyorHealth.shipments.integrationTrainClosures }} train · {{ conveyorHealth.shipments.missingEvidence }} missing</small>
+                </div>
               </div>
-              <div v-if="healthItems.length" class="ph-health-drill">
+              <div
+                v-if="healthItems.length"
+                class="ph-health-drill"
+              >
                 <b>Oldest {{ healthStage }} work</b>
-                <button v-for="item in healthItems" :key="item.id" type="button" @click="openHealthTask(item.id)">
+                <button
+                  v-for="item in healthItems"
+                  :key="item.id"
+                  type="button"
+                  @click="openHealthTask(item.id)"
+                >
                   <span>{{ item.title }}</span><small>{{ duration(item.ageSeconds) }}</small>
                 </button>
               </div>
@@ -300,7 +368,10 @@
                     v-if="sel.github_repo"
                     class="ph-pill"
                   >{{ sel.github_repo }}</span>
-                  <span v-if="sel.knowledge_count" class="ph-pill">{{ sel.knowledge_count }} knowledge</span>
+                  <span
+                    v-if="sel.knowledge_count"
+                    class="ph-pill"
+                  >{{ sel.knowledge_count }} knowledge</span>
                 </div>
               </div>
 
@@ -340,7 +411,10 @@
                   </button>
                   <h3>{{ epic.title }}</h3>
                   <span class="ph-cnt">{{ epicSummary(epic) }}</span>
-                  <span v-if="epic.knowledge_count" class="ph-cnt">{{ epic.knowledge_count }} knowledge</span>
+                  <span
+                    v-if="epic.knowledge_count"
+                    class="ph-cnt"
+                  >{{ epic.knowledge_count }} knowledge</span>
                   <div class="ph-sp" />
                   <div class="ph-actions">
                     <button
@@ -416,7 +490,12 @@
                     >
                       <span>{{ t.priority }}</span>
                     </div>
-                    <div v-if="t.knowledge_count" class="ph-m"><span>{{ t.knowledge_count }} knowledge</span></div>
+                    <div
+                      v-if="t.knowledge_count"
+                      class="ph-m"
+                    >
+                      <span>{{ t.knowledge_count }} knowledge</span>
+                    </div>
                   </div>
                   <span
                     class="ph-tag"
@@ -459,8 +538,22 @@
                       :style="{ background: col.color }"
                     />{{ col.label }} <span class="ph-n">{{ col.items.length }}</span>
                     <span class="ph-sp" />
-                    <button type="button" class="ph-lane-action" :aria-label="`Customize ${col.label}`" @click="openLaneEditor(col.key)">Customize</button>
-                    <button type="button" class="ph-lane-action" :aria-label="`Assign workflow to ${col.label}`" @click="openLaneAssignment(col.key)">Automate</button>
+                    <button
+                      type="button"
+                      class="ph-lane-action"
+                      :aria-label="`Customize ${col.label}`"
+                      @click="openLaneEditor(col.key)"
+                    >
+                      Customize
+                    </button>
+                    <button
+                      type="button"
+                      class="ph-lane-action"
+                      :aria-label="`Assign workflow to ${col.label}`"
+                      @click="openLaneAssignment(col.key)"
+                    >
+                      Automate
+                    </button>
                   </div>
                   <div
                     v-if="!col.items.length"
@@ -507,7 +600,12 @@
                         {{ statusLabel(status) }}
                       </option>
                     </select>
-                    <div v-if="t.knowledge_count" class="ph-cm">{{ t.knowledge_count }} knowledge</div>
+                    <div
+                      v-if="t.knowledge_count"
+                      class="ph-cm"
+                    >
+                      {{ t.knowledge_count }} knowledge
+                    </div>
                   </div>
                 </div>
               </div>
@@ -917,7 +1015,13 @@
             </div>
 
             <!-- LANE SETTINGS -->
-            <LaneSettings v-if="sel" v-show="tab === 'lanes'" ref="laneSettings" :project="sel" @refresh="refresh" />
+            <LaneSettings
+              v-if="sel"
+              v-show="tab === 'lanes'"
+              ref="laneSettings"
+              :project="sel"
+              @refresh="refresh"
+            />
 
             <!-- KNOWLEDGE BASE -->
             <div v-show="tab === 'knowledge'">
@@ -1184,7 +1288,10 @@
             >
               {{ receiptEvidence[c.id] ? 'Hide full evidence' : 'Open full evidence' }}
             </button>
-            <pre v-if="receiptEvidence[c.id]" class="ph-receipt-evidence">{{ receiptEvidence[c.id] }}</pre>
+            <pre
+              v-if="receiptEvidence[c.id]"
+              class="ph-receipt-evidence"
+            >{{ receiptEvidence[c.id] }}</pre>
           </div>
           <div
             v-if="!taskComments.length"
@@ -1391,13 +1498,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
-import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
+import type { SemanticStage, WorkConveyorMetricsModel } from '@pkg/agent/database/models/WorkConveyorMetricsModel';
 import type { LinkedWorkItemRecord } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
+import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
 import KnowledgeBrowserPanel from '@pkg/components/KnowledgeBrowserPanel.vue';
 import KnowledgeLinksPanel from '@pkg/components/KnowledgeLinksPanel.vue';
-import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
-import type { SemanticStage, WorkConveyorMetricsModel } from '@pkg/agent/database/models/WorkConveyorMetricsModel';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
@@ -1405,6 +1511,7 @@ import {
   type UpsertProjectInput, type UpsertEpicInput, type UpsertTaskInput, type ReorderUpdate,
   type ProjectViewType, type WorkProjectViewRecord,
 } from '@pkg/composables/useProjects';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const {
   projects, selected: sel, selectedId, isLoading, error, loaded, load, select,
@@ -1491,7 +1598,7 @@ onMounted(async() => {
     if (!document.hidden && !saving.value) {
       load().catch(() => undefined);
       ipcRenderer.invoke('work-items:automation-status')
-        .then(status => { automationStatus.value = status; })
+        .then(status => { automationStatus.value = status })
         .catch(() => undefined);
       loadConveyorHealth().catch(() => undefined);
     }
@@ -1523,7 +1630,7 @@ function duration(seconds: number | null): string {
   return `${ Math.round(seconds / 86_400) }d`;
 }
 
-function percent(value: number | null): string { return value == null ? 'unlimited' : `${ Math.round(value * 100) }%`; }
+function percent(value: number | null): string { return value == null ? 'unlimited' : `${ Math.round(value * 100) }%` }
 
 async function openHealthTask(taskId: string): Promise<void> {
   const row = allTasks.value.find(entry => entry.task.id === taskId);
@@ -1715,6 +1822,10 @@ function laneForStatus(status: string) {
 }
 function semanticRole(status: string): string {
   return laneForStatus(status)?.semantic_role ?? 'manual';
+}
+function executionEntryLaneKey(): string {
+  if (!laneCapability.value?.ready) return 'todo';
+  return selectedLanes.value.find(lane => lane.semantic_role === 'execution')?.lane_key ?? 'todo';
 }
 function isBlockedStatus(status: string): boolean {
   return semanticRole(status) === 'blocked';
@@ -2099,7 +2210,7 @@ function activityText(item: WorkActivityRecord): string {
 function openNewTask(epicId: string): void {
   taskMode.value = 'create';
   openTask.value = { id: '' } as WorkTaskRecord;
-  fillTaskDraft({ epic_id: epicId, status: 'todo', priority: 'medium' });
+  fillTaskDraft({ epic_id: epicId, status: executionEntryLaneKey(), priority: 'medium' });
   taskComments.value = [];
   taskDependencies.value = [];
   dependencyCandidate.value = '';

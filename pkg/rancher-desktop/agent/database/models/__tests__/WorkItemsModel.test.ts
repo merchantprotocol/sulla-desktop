@@ -1,13 +1,25 @@
-import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 
 describe('WorkItemsModel', () => {
   let originalQuery: any;
 
   beforeAll(() => {
     originalQuery = postgresClient.query;
+  });
+
+  beforeEach(() => {
+    jest.spyOn(WorkLaneDefinitionModel, 'runtimeCapability').mockResolvedValue({
+      ready: false, catalogPresent: false, missingRoles: [], degradedReason: 'test compatibility mode',
+    });
+    jest.spyOn(WorkLaneDefinitionModel, 'validateTaskStatus').mockImplementation((_projectId, laneKey) => Promise.resolve({
+      lane_key:      laneKey,
+      semantic_role: ['done', 'cancelled'].includes(laneKey) ? 'terminal' : laneKey === 'blocked' ? 'blocked' : 'execution',
+    } as any));
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockImplementation((_projectId, _role, fallback) => Promise.resolve(fallback));
   });
 
   afterEach(() => {
@@ -290,8 +302,23 @@ describe('WorkItemsModel', () => {
             { id: 'task-b', project_id: 'project-1' },
           ],
         })
-        .mockResolvedValueOnce({ rows: [{ found: false }] })
-        .mockResolvedValueOnce({ rows: [{ task_id: 'task-a', depends_on_task_id: 'task-b' }] }),
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [{
+            id:                   'dep-1',
+            dependent_task_id:    'task-a',
+            depends_on_task_id:   'task-b',
+            relation_type:        'requires',
+            acceptance_condition: null,
+            created_by:           'human',
+            created_at:           '2026-08-24T00:00:00.000Z',
+            updated_at:           null,
+            archived_at:          null,
+          }],
+        }),
     };
     (postgresClient as any).transaction = jest.fn((callback: any) => callback(successClient));
     await expect(WorkItemsModel.setTaskDependency('task-a', 'task-b', 'human')).resolves.toMatchObject(
@@ -299,7 +326,7 @@ describe('WorkItemsModel', () => {
         task_id: 'task-a', depends_on_task_id: 'task-b',
       },
     );
-    expect(successClient.query.mock.calls[1][0]).toContain('WITH RECURSIVE prerequisites');
+    expect(successClient.query.mock.calls[3][0]).toContain('WITH RECURSIVE reach');
 
     const cycleClient = {
       query: (jest.fn() as any)
@@ -309,6 +336,8 @@ describe('WorkItemsModel', () => {
             { id: 'task-b', project_id: 'project-1' },
           ],
         })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [{ found: true }] }),
     };
     (postgresClient as any).transaction = jest.fn((callback: any) => callback(cycleClient));

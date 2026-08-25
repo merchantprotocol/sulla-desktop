@@ -12,6 +12,7 @@
 import { LifecycleCapabilityModel } from '../database/models/LifecycleCapabilityModel';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { WorkItemsModel } from '../database/models/WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../database/models/WorkLaneDefinitionModel';
 import { WorkTaskDependencyModel } from '../database/models/WorkTaskDependencyModel';
 import { WorkTaskWaitModel } from '../database/models/WorkTaskWaitModel';
 
@@ -52,6 +53,15 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   ]);
   const projectTitle = new Map(projects.map(p => [p.id, p.title]));
   const epicTitle = new Map(epics.map(e => [e.id, e.title]));
+  const laneEntries = await Promise.all(projects.map(async project => [
+    project.id,
+    await WorkLaneDefinitionModel.resolveEffective(project.id),
+  ] as const));
+  const laneMaps = new Map(laneEntries.map(([id, lanes]) => [
+    id, new Map(lanes.map(lane => [lane.lane_key, lane])),
+  ]));
+  const laneFor = (task: { project_id: string; status: string }) =>
+    laneMaps.get(task.project_id)?.get(task.status);
 
   const context = (t: { project_id: string; epic_id: string | null }): string => {
     const proj = projectTitle.get(t.project_id) ?? t.project_id;
@@ -63,7 +73,7 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   // DONE in window
   const doneRows = await WorkItemsModel.listTasks({ projectId, assignee, includeDone: true, limit: 3000 });
   const completed = doneRows
-    .filter(t => (t.status === 'done' || t.status === 'cancelled') && t.completed_at && Date.parse(t.completed_at) >= cutoffMs)
+    .filter(task => laneFor(task)?.semantic_role === 'terminal' && task.completed_at && Date.parse(task.completed_at) >= cutoffMs)
     .sort((a, b) => Date.parse(b.completed_at!) - Date.parse(a.completed_at!));
   const doneEpics = epics.filter(e => e.status === 'done' && Date.parse(e.last_moved_at) >= cutoffMs);
   const doneProjects = projects.filter(p => p.status === 'done' && Date.parse(p.last_moved_at) >= cutoffMs);
@@ -92,11 +102,11 @@ export async function buildProjectReport(opts: ProjectReportOpts = {}): Promise<
   const scopedActiveWaits = activeWaits.filter(wait => scopedTaskIds.has(wait.task_id));
   const dependencyHeldIds = new Set(dependencyHolds.map(hold => hold.taskId));
   const actionableRows = openRows.filter(t =>
-    t.status !== 'blocked' && t.status !== 'planning' && !dependencyHeldIds.has(t.id)
-      && (!suppressionEnabled || !activeWaitIds.has(t.id)),
+    !['blocked', 'planning', 'terminal'].includes(laneFor(t)?.semantic_role ?? 'manual') && !dependencyHeldIds.has(t.id) &&
+      (!suppressionEnabled || !activeWaitIds.has(t.id)),
   );
-  const blockedRows = openRows.filter(t => t.status === 'blocked');
-  const planningRows = openRows.filter(t => t.status === 'planning');
+  const blockedRows = openRows.filter(t => laneFor(t)?.semantic_role === 'blocked');
+  const planningRows = openRows.filter(t => laneFor(t)?.semantic_role === 'planning');
   const next = actionableRows.slice(0, nextLimit);
   const blocked = blockedRows.slice(0, nextLimit);
   const planning = planningRows.slice(0, nextLimit);

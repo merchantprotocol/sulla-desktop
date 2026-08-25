@@ -1,4 +1,4 @@
-import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 export class ListLanesWorker extends BaseTool {
@@ -7,8 +7,7 @@ export class ListLanesWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      await WorkLaneDefinitionModel.ensureTable();
-      const rows = await WorkLaneDefinitionModel.list({
+      const rows = await getProjectsApplicationService().listLanes({
         scope:           input.scope || undefined,
         projectId:       input.project_id || undefined,
         includeArchived: Boolean(input.include_archived),

@@ -538,7 +538,21 @@ export class HeartbeatNode extends BaseNode {
   }
 
   private async buildSelectedHeartbeatWorkItemContext(state: BaseThreadState, reportOpts: { projectId?: string; assignee?: string }): Promise<string> {
-    const listedCandidates = await WorkItemsModel.listTasks({ ...reportOpts, limit: 500 });
+    const [actionable, blocked] = await Promise.all([
+      WorkItemsModel.listTasks({
+        ...reportOpts,
+        semanticRoles:    ['backlog', 'execution'],
+        fallbackStatuses: ['backlog', 'todo', 'in_progress'],
+        limit:            500,
+      }),
+      WorkItemsModel.listTasks({
+        ...reportOpts,
+        semanticRoles:    ['blocked'],
+        fallbackStatuses: ['blocked'],
+        limit:            500,
+      }),
+    ]);
+    const listedCandidates = [...actionable, ...blocked];
     const candidates = await LifecycleCapabilityModel.filterHeartbeatEligible(listedCandidates);
     // Match projectReport's section order: hydrate executable work first. If
     // the lane is fully blocked, hydrate the top recovery-planning candidate.

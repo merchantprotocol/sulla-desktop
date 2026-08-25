@@ -1,8 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+import { ArtifactCustodyPolicy } from '../../../services/ArtifactCustodyPolicy';
 import { postgresClient } from '../../PostgresClient';
-import { WorkItemsModel } from '../WorkItemsModel';
 import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
+import { WorkItemsModel } from '../WorkItemsModel';
+import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { classifyInProgressRow, WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
 describe('WorkTaskDispatchModel', () => {
@@ -15,9 +17,10 @@ describe('WorkTaskDispatchModel', () => {
   });
 
   beforeEach(() => {
+    jest.spyOn(ArtifactCustodyPolicy, 'assertForTransition').mockResolvedValue(undefined);
     jest.spyOn(ArtifactReceiptModel, 'insertIfAbsentWithClient').mockResolvedValue({
       inserted: true,
-      row: { id: 'receipt-1' } as any,
+      row:      { id: 'receipt-1' } as any,
     });
     jest.spyOn(ArtifactReceiptModel, 'attachCommentWithClient').mockResolvedValue(undefined);
   });
@@ -30,14 +33,15 @@ describe('WorkTaskDispatchModel', () => {
 
   it('claims the next eligible task under a row lock and creates its live lease atomically', async() => {
     const task = {
-      id:          'task-1',
-      project_id:  'project-1',
-      epic_id:     'epic-1',
-      title:       'Ship it',
-      description: '',
-      status:      'todo',
-      priority:    'high',
-      labels:      [],
+      id:              'task-1',
+      project_id:      'project-1',
+      epic_id:         'epic-1',
+      title:           'Ship it',
+      description:     '',
+      status:          'todo',
+      priority:        'high',
+      labels:          [],
+      active_lane_key: 'in_progress',
     } as any;
     const dispatch = {
       id:        'dispatch-1',
@@ -81,7 +85,7 @@ describe('WorkTaskDispatchModel', () => {
       stage_claim: { id: 'stage-1', stage: 'in_progress' },
     });
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE OF t SKIP LOCKED');
-    expect(query.mock.calls[0][0]).toContain("t.status = 'todo'");
+    expect(query.mock.calls[0][0]).toContain("resolve_work_task_lane_role(t.id, t.status) = 'execution'");
     expect(query.mock.calls[0][0]).toContain('work_task_dispatches');
     expect(query.mock.calls[0][0]).toContain("FROM unnest(COALESCE(t.labels, '{}')) AS label");
     expect(query.mock.calls[0][0]).toContain('LOWER(t.assignee) = ANY($2::text[])');
@@ -96,9 +100,9 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[1][0]).toContain('lifecycle_capabilities');
     expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_stage_claims');
     expect(query.mock.calls[4][0]).toContain('INSERT INTO work_task_dispatches');
-    expect(query.mock.calls[5][0]).toContain("status = 'in_progress'");
-    expect(query.mock.calls[5][0]).toContain('assignee = $2');
-    expect(query.mock.calls[5][1]).toEqual(['task-1', 'dispatcher']);
+    expect(query.mock.calls[5][0]).toContain('status = $2');
+    expect(query.mock.calls[5][0]).toContain('assignee = $3');
+    expect(query.mock.calls[5][1]).toEqual(['task-1', 'in_progress', 'dispatcher', 'todo']);
     expect(query.mock.calls[5][0]).toContain('RETURNING *');
   });
 
@@ -180,6 +184,10 @@ describe('WorkTaskDispatchModel', () => {
   });
 
   it('flows a normalized create through lifecycle claim into a dispatcher execution lease', async() => {
+    jest.spyOn(WorkLaneDefinitionModel, 'validateTaskStatus').mockResolvedValue({
+      lane_key: 'todo', semantic_role: 'execution',
+    } as any);
+    jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('todo');
     (postgresClient as any).query = (jest.fn() as any)
       .mockResolvedValueOnce([{ id: 'epic-1', project_id: 'project-1' }])
       .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve([{
@@ -223,13 +231,15 @@ describe('WorkTaskDispatchModel', () => {
     } as any;
     const executingTask = { ...created, status: 'in_progress', assignee: 'dispatcher' };
     const clientQuery = (jest.fn() as any)
-      .mockResolvedValueOnce({ rows: [created] })
+      .mockResolvedValueOnce({ rows: [{ ...created, active_lane_key: 'in_progress' }] })
       .mockResolvedValueOnce({ rows: [capability] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [stageClaim] })
-      .mockResolvedValueOnce({ rows: [{
-        id: 'dispatch-1', task_id: created.id, agent_id: 'opus-worker', status: 'running',
-      }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: 'dispatch-1', task_id: created.id, agent_id: 'opus-worker', status: 'running',
+        }],
+      })
       .mockResolvedValueOnce({ rows: [executingTask] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query: clientQuery }));
 
@@ -237,19 +247,27 @@ describe('WorkTaskDispatchModel', () => {
 
     expect(claim?.task).toMatchObject({ id: 'task-new', status: 'in_progress', assignee: 'dispatcher' });
     expect(claim?.stage_claim).toMatchObject({ id: 'stage-new', stage: 'in_progress' });
-    expect(clientQuery.mock.calls[5][0]).toContain("status = 'in_progress'");
-    expect(clientQuery.mock.calls[5][1]).toEqual(['task-new', 'dispatcher']);
+    expect(clientQuery.mock.calls[5][0]).toContain('status = $2');
+    expect(clientQuery.mock.calls[5][1]).toEqual(['task-new', 'in_progress', 'dispatcher', 'todo']);
   });
 
   it('claims review work under the same cross-kind lease even when the default profile executed the work', async() => {
     const task = { id: 'task-2', status: 'in_review', labels: [] } as any;
     const capability = {
-      capability_key: 'in-review-verification', enabled: true, health: 'healthy',
-      active_owner: 'dispatcher', fallback_mode: 'heartbeat',
+      capability_key: 'in-review-verification',
+      enabled:        true,
+      health:         'healthy',
+      active_owner:   'dispatcher',
+      fallback_mode:  'heartbeat',
     } as any;
     const stageClaim = {
-      id: 'stage-review-1', task_id: 'task-2', capability_key: 'in-review-verification',
-      stage: 'in_review', owner: 'dispatcher', runtime_instance_id: 'runtime-1', status: 'active',
+      id:                  'stage-review-1',
+      task_id:             'task-2',
+      capability_key:      'in-review-verification',
+      stage:               'in_review',
+      owner:               'dispatcher',
+      runtime_instance_id: 'runtime-1',
+      status:              'active',
     } as any;
     const dispatch = {
       id: 'dispatch-review-1', task_id: 'task-2', kind: 'verification', attempt: 1,
@@ -266,7 +284,7 @@ describe('WorkTaskDispatchModel', () => {
     await expect(WorkTaskDispatchModel.claimNextReview('codex-test', [], 'runtime-1')).resolves.toMatchObject({
       task: { id: 'task-2' }, dispatch: { kind: 'verification' }, stage_claim: { id: 'stage-review-1' },
     });
-    expect(query.mock.calls[0][0]).toContain("t.status = 'in_review'");
+    expect(query.mock.calls[0][0]).toContain("resolve_work_task_lane_role(t.id, t.status) = 'review'");
     expect(query.mock.calls[0][0]).toContain('JOIN work_projects p ON p.id = e.project_id');
     expect(query.mock.calls[0][0]).toContain('CASE p.priority');
     expect(query.mock.calls[0][0].indexOf('CASE p.priority')).toBeLessThan(
@@ -279,7 +297,7 @@ describe('WorkTaskDispatchModel', () => {
     expect(query.mock.calls[0][0]).toContain("d.status = 'running'");
     expect(query.mock.calls[0][0]).toContain("d.status IN ('failed', 'stale')");
     expect(query.mock.calls[0][0]).toContain("interval '5 minutes'");
-    expect(query.mock.calls[0][0]).not.toContain("<> $3");
+    expect(query.mock.calls[0][0]).not.toContain('<> $3');
     expect(query.mock.calls[0][1]).toEqual(expect.any(Array));
     expect(query.mock.calls[0][1]).not.toContain('codex-test');
     expect(query.mock.calls[1][0]).toContain('lifecycle_capabilities');
@@ -357,11 +375,12 @@ describe('WorkTaskDispatchModel', () => {
     await expect(WorkTaskDispatchModel.finalizeVerification(
       'dispatch-2', 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'All criteria verified.',
     )).resolves.toBe('APPROVE');
-    expect(query.mock.calls[1][0]).toContain('artifact_sha = $3');
-    expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
-    expect(query.mock.calls[2][1][2]).toContain('<!-- artifact-receipt');
-    expect(query.mock.calls[3][0]).toContain("completed_at = CASE WHEN $2 = 'done'");
-    expect(query.mock.calls[3][1]).toEqual(['task-2', 'done', null]);
+    expect(query.mock.calls[1][0]).toContain('INSERT INTO work_task_artifact_custody');
+    expect(query.mock.calls[2][0]).toContain('artifact_sha = $3');
+    expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_comments');
+    expect(query.mock.calls[3][1][2]).toContain('<!-- artifact-receipt');
+    expect(query.mock.calls[4][0]).toContain("completed_at = CASE WHEN $2 = 'done'");
+    expect(query.mock.calls[4][1]).toEqual(['task-2', 'done', null]);
   });
 
   it('refuses to settle approval when the server-resolved head differs', async() => {

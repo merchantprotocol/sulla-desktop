@@ -1,4 +1,4 @@
-import { WorkItemKnowledgeModel } from '../../database/models/WorkItemKnowledgeModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 import { associationInput } from '../knowledgeAssociationAdapter';
 
@@ -8,7 +8,9 @@ export class UnlinkKnowledgeItemWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      const removed = await WorkItemKnowledgeModel.unlink(associationInput(input));
+      const removed = await getProjectsApplicationService().unlinkKnowledge(
+        associationInput(input), { actor: input.actor || 'sulla', source: 'tool' },
+      );
       return {
         successBoolean: true,
         responseString: removed ? 'Direct knowledge association archived.' : 'No matching active direct association.',

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { postgresClient } from '../../PostgresClient';
 import { up as semanticRuntimeMigration } from '../../migrations/0074_semantic_lane_runtime_helpers';
+import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
 import { WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
 
@@ -17,6 +18,10 @@ describe('semantic lane runtime consumers', () => {
   });
 
   it('claims a project-specific execution entry and moves it to its resolved active lane', async() => {
+    jest.spyOn(LifecycleCapabilityModel, 'claimStageWithClient').mockResolvedValue({
+      claimed: true,
+      claim:   { id: 'stage-1', task_id: 'task-1', stage: 'in_progress' } as any,
+    });
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({
         rows: [{
@@ -29,11 +34,11 @@ describe('semantic lane runtime consumers', () => {
         }],
       })
       .mockResolvedValueOnce({ rows: [{ id: 'dispatch-1', task_id: 'task-1', kind: 'execution' }] })
-      .mockResolvedValueOnce({ rows: [{ id: 'task-1' }] });
+      .mockResolvedValueOnce({ rows: [{ id: 'task-1', status: 'building-custom' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
-    await expect(WorkTaskDispatchModel.claimNext('opus-worker')).resolves.toMatchObject({
-      task: { status: 'ready-custom' }, dispatch: { task_id: 'task-1' },
+    await expect(WorkTaskDispatchModel.claimNext('opus-worker', 'runtime-1')).resolves.toMatchObject({
+      task: { status: 'building-custom' }, dispatch: { task_id: 'task-1' },
     });
     expect(query.mock.calls[0][0]).toContain("resolve_work_task_lane_role(t.id, t.status) = 'execution'");
     expect(query.mock.calls[0][0]).toContain("resolve_project_lane_key(t.project_id, 'execution', 'in_progress', true)");
@@ -64,7 +69,9 @@ describe('semantic lane runtime consumers', () => {
     const query = (jest.fn() as any).mockResolvedValueOnce({ rows: [] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
-    await expect(WorkTaskDispatchModel.claimNextReview('codex-test')).resolves.toBeNull();
+    await expect(WorkTaskDispatchModel.claimNextReview(
+      'codex-test', ['codex-test'], 'runtime-1',
+    )).resolves.toBeNull();
     expect(query.mock.calls[0][0]).toContain("resolve_work_task_lane_role(t.id, t.status) = 'review'");
     expect(query.mock.calls[0][0]).not.toContain("t.status = 'in_review'");
   });
@@ -92,7 +99,7 @@ describe('semantic lane runtime consumers', () => {
     expect(dispatch).toContain('work_lane_entry_automations');
     expect(planning).toContain('semantic_role');
     expect(waits).toContain('semanticRoleForStatus');
-    expect(heartbeat).toContain("semanticRoles: ['backlog', 'execution']");
+    expect(heartbeat).toMatch(/semanticRoles:\s+\['backlog', 'execution'\]/);
     expect(heartbeat).toContain('filterHeartbeatEligible');
     expect(report).toContain('laneFor(task)?.semantic_role');
     expect(heartbeatPrompt).toContain("Resolve every task's effective lane and semantic role");

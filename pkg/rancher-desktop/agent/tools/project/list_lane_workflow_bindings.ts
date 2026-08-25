@@ -1,11 +1,11 @@
-import { WorkLaneWorkflowBindingModel } from '../../database/models/WorkLaneWorkflowBindingModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 export class ListLaneWorkflowBindingsWorker extends BaseTool {
   name = ''; description = '';
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      const rows = await WorkLaneWorkflowBindingModel.list({
+      const rows = await getProjectsApplicationService().listLaneBindings({
         profileId:       input.profile_id,
         scope:           input.scope,
         epicId:          input.epic_id,

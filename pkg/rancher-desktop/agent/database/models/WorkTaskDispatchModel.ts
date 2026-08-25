@@ -1,19 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 
-import { postgresClient } from '../PostgresClient';
+import { ArtifactReceiptModel } from './ArtifactReceiptModel';
+import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
+import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
+import { WorkTaskDependencyModel } from './WorkTaskDependencyModel';
 import { ArtifactCustodyPolicy, type ArtifactCustody } from '../../services/ArtifactCustodyPolicy';
-import { evaluateClaim, type WipLimits } from '../../services/ProjectAutomationWipLimits';
 import {
   buildReceipt, receiptInsertInput, renderReceiptComment,
   type ArtifactReceipt, type ArtifactReceiptInput,
 } from '../../services/ArtifactReceiptService';
-import { ArtifactReceiptModel } from './ArtifactReceiptModel';
-import { LifecycleCapabilityModel, type LifecycleStageClaim } from './LifecycleCapabilityModel';
-import { AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS, TASK_ASSIGNEES } from './TaskOwnership';
-import type { WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
+import { evaluateClaim, type WipLimits } from '../../services/ProjectAutomationWipLimits';
+import { postgresClient } from '../PostgresClient';
 
 import type { WorkTaskRecord } from './WorkItemsModel';
+import type { WorkLaneSemanticRole } from './WorkLaneDefinitionModel';
 import type { PoolClient } from 'pg';
 
 export type WorkTaskDispatchStatus = 'running' | 'completed' | 'blocked' | 'failed' | 'stale';
@@ -125,7 +125,7 @@ export interface WorkTaskDispatchEvidence {
   contentHash?:         string;
   reviewerVerdict?:     string;
   reviewEvidence?:      unknown;
-  custody?:      ArtifactCustody | null;
+  custody?:             ArtifactCustody | null;
   terminalReason?:      string;
 }
 
@@ -220,6 +220,7 @@ export class WorkTaskDispatchModel {
   private static reviewReceipt(input: ArtifactReceiptInput): ArtifactReceipt {
     return buildReceipt({ ...input, validationSummary: input.validationSummary?.slice(0, 500) });
   }
+
   static reviewGenerationHash(artifacts: ReviewArtifactComponent[]): string {
     const normalized = [...artifacts]
       .map(artifact => ({
@@ -235,7 +236,7 @@ export class WorkTaskDispatchModel {
 
   static async claimNext(
     agentId: string,
-    runtimeInstanceId: string,
+    runtimeInstanceId = 'dispatcher-runtime',
     wipLimits?: WipLimits,
   ): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
@@ -248,11 +249,13 @@ export class WorkTaskDispatchModel {
         if (!evaluateClaim('execution', counts, wipLimits).allowed) return null;
       }
       const candidate = await client.query<WorkTaskRecord>(`
-        SELECT t.*
+        SELECT t.*,
+               resolve_project_lane_key(t.project_id, 'execution', 'in_progress', true) AS active_lane_key
           FROM work_tasks t
           JOIN work_epics e ON e.id = t.epic_id
          WHERE t.archived = false
-           AND t.status = 'todo'
+           AND resolve_work_task_lane_role(t.id, t.status) = 'execution'
+           AND t.status = resolve_project_lane_key(t.project_id, 'execution', 'todo', false)
            AND e.archived = false
            AND NOT (e.status = ANY($1::text[]))
            AND (t.assignee IS NULL OR LOWER(t.assignee) = ANY($2::text[]))
@@ -266,6 +269,11 @@ export class WorkTaskDispatchModel {
               WHERE d.task_id = t.id AND d.status = 'running'
            )
            AND NOT EXISTS (
+             SELECT 1 FROM work_lane_entry_automations lane_entry
+              WHERE lane_entry.task_id = t.id
+                AND lane_entry.status IN ('pending', 'running')
+           )
+           AND NOT EXISTS (
              SELECT 1 FROM work_task_stage_claims c
               WHERE c.task_id = t.id AND c.stage = 'in_progress' AND c.status = 'active'
            )
@@ -275,7 +283,7 @@ export class WorkTaskDispatchModel {
                JOIN work_epics downstream_epic ON downstream_epic.id = downstream.epic_id
                JOIN work_projects downstream_project ON downstream_project.id = downstream_epic.project_id
               WHERE downstream.archived = false
-                AND downstream.status = 'in_review'
+                AND resolve_work_task_lane_role(downstream.id, downstream.status) = 'review'
                 AND downstream_epic.archived = false
                 AND downstream_project.archived = false
                 AND NOT (downstream_project.status = ANY($1::text[]))
@@ -290,9 +298,9 @@ export class WorkTaskDispatchModel {
              SELECT 1 FROM work_tasks child
               WHERE child.parent_id = t.id
                 AND child.archived = false
-                AND child.status NOT IN ('done', 'cancelled', 'parked')
+                AND resolve_work_task_lane_role(child.id, child.status) <> 'terminal'
            )
-         ${WorkTaskDependencyModel.claimExclusionSql('t.id')}
+         ${ WorkTaskDependencyModel.claimExclusionSql('t.id') }
          ORDER BY
            CASE e.priority
              WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
@@ -315,7 +323,7 @@ export class WorkTaskDispatchModel {
          LIMIT 1
       `, [CLOSED_EPIC_STATUSES, AUTONOMOUS_TASK_ASSIGNEES, NON_AUTONOMOUS_TASK_LABELS]);
 
-      const task = candidate.rows[0];
+      const task = candidate.rows[0] as WorkTaskRecord & { active_lane_key: string };
       if (!task) return null;
 
       const stageClaim = await LifecycleCapabilityModel.claimStageWithClient(
@@ -341,15 +349,15 @@ export class WorkTaskDispatchModel {
 
       const updated = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
-           SET status = 'in_progress',
-               assignee = $2,
+           SET status = $2,
+               assignee = $3,
                updated_at = now(),
                last_moved_at = now(),
                last_activity_at = now(),
-               last_moved_by = $2
-         WHERE id = $1 AND status = 'todo'
+               last_moved_by = $3
+         WHERE id = $1 AND status = $4
         RETURNING *
-      `, [task.id, TASK_ASSIGNEES.dispatcher]);
+      `, [task.id, task.active_lane_key, TASK_ASSIGNEES.dispatcher, task.status]);
       if (!updated.rows[0]) {
         throw new Error(`Atomic dispatch lost task ${ task.id } before execution handoff`);
       }
@@ -360,8 +368,8 @@ export class WorkTaskDispatchModel {
 
   static async claimNextReview(
     agentId: string,
-    reviewerAgentIds: string[],
-    runtimeInstanceId: string,
+    reviewerAgentIds: string[] = [],
+    runtimeInstanceId = 'dispatcher-runtime',
   ): Promise<ClaimedDispatch | null> {
     return postgresClient.transaction(async(client) => {
       const candidate = await client.query<WorkTaskRecord>(`
@@ -370,7 +378,7 @@ export class WorkTaskDispatchModel {
           JOIN work_epics e ON e.id = t.epic_id
           JOIN work_projects p ON p.id = e.project_id
          WHERE t.archived = false
-           AND t.status = 'in_review'
+           AND resolve_work_task_lane_role(t.id, t.status) = 'review'
            AND e.archived = false
            AND p.archived = false
            AND NOT (p.status = ANY($1::text[]))
@@ -390,7 +398,7 @@ export class WorkTaskDispatchModel {
                 AND d.status IN ('failed', 'stale')
                 AND d.finished_at > now() - interval '5 minutes'
            )
-         ${WorkTaskDependencyModel.claimExclusionSql('t.id')}
+         ${ WorkTaskDependencyModel.claimExclusionSql('t.id') }
          ORDER BY
            CASE p.priority
              WHEN 'critical' THEN 0 WHEN 'p0' THEN 0 WHEN 'P0' THEN 0 WHEN '🔴' THEN 0
@@ -461,7 +469,7 @@ export class WorkTaskDispatchModel {
         UPDATE work_tasks
            SET assignee = 'verifier', updated_at = now(), last_activity_at = now(),
                last_moved_at = now(), last_moved_by = 'dispatcher'
-         WHERE id = $1 AND status = 'in_review'
+         WHERE id = $1 AND resolve_work_task_lane_role(id, status) = 'review'
       `, [task.id]);
 
       return { dispatch: inserted.rows[0], task, stage_claim: stageClaim.claim };
@@ -490,7 +498,7 @@ export class WorkTaskDispatchModel {
         JOIN work_epics e ON e.id = t.epic_id
         JOIN work_projects p ON p.id = e.project_id
        WHERE t.archived = false
-         AND t.status = 'in_review'
+         AND resolve_work_task_lane_role(t.id, t.status) = 'review'
          AND e.archived = false
          AND p.archived = false
          AND NOT (p.status = ANY($1::text[]))
@@ -1061,16 +1069,16 @@ export class WorkTaskDispatchModel {
   }
 
   static async verificationPoolStats(): Promise<{
-    backlog: number;
-    active: number;
+    backlog:              number;
+    active:               number;
     suppressedDuplicates: number;
-    failures: number;
+    failures:             number;
   }> {
     const rows = await postgresClient.query<{
-      backlog: string;
-      active: string;
+      backlog:               string;
+      active:                string;
       suppressed_duplicates: string;
-      failures: string;
+      failures:              string;
     }>(`
       SELECT
         (SELECT COUNT(*) FROM work_tasks WHERE archived = false AND status = 'in_review')::text AS backlog,
@@ -1084,10 +1092,10 @@ export class WorkTaskDispatchModel {
     `);
     const row = rows[0];
     return {
-      backlog: Number(row?.backlog ?? 0),
-      active: Number(row?.active ?? 0),
+      backlog:              Number(row?.backlog ?? 0),
+      active:               Number(row?.active ?? 0),
       suppressedDuplicates: Number(row?.suppressed_duplicates ?? 0),
-      failures: Number(row?.failures ?? 0),
+      failures:             Number(row?.failures ?? 0),
     };
   }
 
@@ -1223,24 +1231,24 @@ export class WorkTaskDispatchModel {
           ? { status: 'todo', assignee: 'dispatcher' }
           : finalDisposition === 'REPLAN'
             ? { status: 'planning', assignee: 'dispatcher' }
-        : { status: 'blocked', assignee: 'heartbeat' };
+            : { status: 'blocked', assignee: 'heartbeat' };
 
       if (finalDisposition === 'PASS') {
         await ArtifactCustodyPolicy.persistWithClient(client, taskId, 'done', {
-          workKind:   'non_code',
-          artifactId: `protected-review-dispatch:${ id }`,
+          workKind:    'non_code',
+          artifactId:  `protected-review-dispatch:${ id }`,
           artifactUrl: evidence.artifactUrl ?? undefined,
-          evidence:   {
+          evidence:    {
             generationHash: evidence.generationHash,
-            artifactHash: evidence.artifactHash,
-            checks: evidence.checks,
-            findings: evidence.findings,
+            artifactHash:   evidence.artifactHash,
+            checks:         evidence.checks,
+            findings:       evidence.findings,
           },
           provenance: {
-            routine: 'protected-review',
-            dispatchId: id,
+            routine:             'protected-review',
+            dispatchId:          id,
             workflowExecutionId: evidence.workflowExecutionId,
-            reviewerAgentIds: evidence.reviewerAgentIds,
+            reviewerAgentIds:    evidence.reviewerAgentIds,
           },
         }, 'verifier');
       }
@@ -1312,14 +1320,14 @@ export class WorkTaskDispatchModel {
           : '';
         await this.persistReceiptWithClient(client, this.reviewReceipt({
           taskId,
-          eventType:          finalDisposition === 'REPAIRABLE' || finalDisposition === 'REPLAN' ? 'repair' : 'review',
-          actor:              'verifier',
+          eventType:           finalDisposition === 'REPAIRABLE' || finalDisposition === 'REPLAN' ? 'repair' : 'review',
+          actor:               'verifier',
           workflowExecutionId: evidence.workflowExecutionId,
-          dispatchId:         id,
-          disposition:        finalDisposition,
-          nextOwner:          transition.assignee ?? 'complete',
-          validationSummary:  `${ evidence.summary }${ waitLine }${ escalation }`,
-          artifacts:          evidence.artifacts.map(artifact => ({
+          dispatchId:          id,
+          disposition:         finalDisposition,
+          nextOwner:           transition.assignee ?? 'complete',
+          validationSummary:   `${ evidence.summary }${ waitLine }${ escalation }`,
+          artifacts:           evidence.artifacts.map(artifact => ({
             type:         artifact.type,
             canonicalRef: artifact.canonicalRef,
             url:          artifact.url ?? undefined,
@@ -1384,7 +1392,7 @@ export class WorkTaskDispatchModel {
           artifacts:         generationHash
             ? [{ type: 'review_generation', canonicalRef: generationHash, hash: generationHash }]
             : [{ type: 'verification_dispatch', canonicalRef: id }],
-          evidence:          { kind: 'dispatch', ref: id },
+          evidence: { kind: 'dispatch', ref: id },
         }), 'verifier');
       }
       await client.query(`
