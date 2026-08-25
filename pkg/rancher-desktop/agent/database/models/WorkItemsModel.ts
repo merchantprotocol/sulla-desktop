@@ -1029,6 +1029,23 @@ export class WorkItemsModel {
           const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
             client, committed.id, committed.status, changes.actor ?? 'sulla');
           if (claimed.created && claimed.entry.status === 'pending') laneEntryId = claimed.entry.id;
+          const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
+          await createPostgresProjectsRepositories(client).events.append({
+            id:             `projects-event-${ committed.id }-${ claimed.entry.generation }-transition`,
+            taskId:         committed.id,
+            generation:     claimed.entry.generation,
+            eventType:      'projects.task.transitioned',
+            idempotencyKey: `projects.task.transitioned:${ committed.id }:${ claimed.entry.generation }`,
+            occurredAt:     new Date(),
+            payload:        {
+              actor,
+              source:        changes.source ?? 'system',
+              fromLane:      current.rows[0].status,
+              toLane:        committed.status,
+              laneEntryId:   claimed.entry.id,
+              laneAutomated: claimed.entry.status === 'pending',
+            },
+          });
         }
         if (committed && changesSchedule) {
           await WorkItemsModel.auditScheduleChangesWithClient(
