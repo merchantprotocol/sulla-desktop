@@ -393,46 +393,6 @@ function fallbackKeys(roles: WorkLaneSemanticRole[]): string[] {
   return Array.from(new Set(roles.flatMap(role => FALLBACK_ROLE_KEYS[role])));
 }
 
-/**
- * Bridge committed Projects status writes into the sole matching routine.
- * Dynamic import keeps the Projects model free of main-process/workflow cycles.
- * The task write is already durable when this runs, so bridge failures do not
- * misreport the Projects mutation to its caller.
- */
-async function notifyTaskStatusCommitted(
-  task: WorkTaskRecord,
-  previousStatus: string,
-  actor?: string,
-): Promise<void> {
-  try {
-    const capability = await WorkLaneDefinitionModel.runtimeCapability(task.project_id);
-    const currentRole = capability.ready
-      ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, task.status))?.semantic_role ?? 'manual'
-      : (FALLBACK_ROLE_KEYS.planning.includes(task.status)
-        ? 'planning'
-        : FALLBACK_ROLE_KEYS.blocked.includes(task.status)
-          ? 'blocked'
-          : FALLBACK_ROLE_KEYS.execution.includes(task.status) ? 'execution' : 'manual');
-    const previousRole = capability.ready
-      ? (await WorkLaneDefinitionModel.resolveStatus(task.project_id, previousStatus))?.semantic_role ?? 'manual'
-      : (FALLBACK_ROLE_KEYS.planning.includes(previousStatus)
-        ? 'planning'
-        : FALLBACK_ROLE_KEYS.blocked.includes(previousStatus)
-          ? 'blocked'
-          : FALLBACK_ROLE_KEYS.execution.includes(previousStatus) ? 'execution' : 'manual');
-    if ([currentRole, previousRole].some(role => role === 'blocked' || role === 'planning')) {
-      const { PlanningCouncilService } = await import('../../services/PlanningCouncilService');
-      await PlanningCouncilService.handleTaskStatusTransition(task, previousStatus, actor);
-    }
-    if (currentRole === 'execution' && previousRole !== 'execution') {
-      const { getTaskDispatcherService } = await import('../../services/TaskDispatcherService');
-      await getTaskDispatcherService().forceCheck();
-    }
-  } catch (err) {
-    console.error(`[WorkItemsModel] Post-commit status bridge failed for task ${ task.id }:`, err);
-  }
-}
-
 // ── Model ──────────────────────────────────────────────────────────────
 
 export class WorkItemsModel {
@@ -871,7 +831,12 @@ export class WorkItemsModel {
     );
     const created = rows[0];
     if (created) {
-      await notifyTaskStatusCommitted(created, '', input.actor);
+      try {
+        const { TaskLifecycleOrchestrationService } = await import('../../projects/application/TaskLifecycleOrchestrationService');
+        await TaskLifecycleOrchestrationService.handleCommittedTransition(created, '', input.actor);
+      } catch (error) {
+        console.error(`[WorkItemsModel] Post-create orchestration failed for task ${ created.id }:`, error);
+      }
     }
     return created;
   }
@@ -1063,9 +1028,6 @@ export class WorkItemsModel {
       } catch (error) {
         console.warn(`[WorkItems] Transition events for task ${ updated.id } remain recoverable after dispatch failure:`, error);
       }
-    }
-    if (updated && changes.status !== undefined) {
-      await notifyTaskStatusCommitted(updated, existing.status, changes.actor);
     }
     return updated;
   }
