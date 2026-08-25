@@ -45,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 
 import { renderMarkdown } from './markdown';
 
@@ -70,6 +70,8 @@ const thinkingLines = computed(() => {
 const startMs = Date.now();
 const elapsed = ref('0.0s');
 let timer: ReturnType<typeof setInterval> | null = null;
+let scrollFrame: number | null = null;
+let scrollTarget: HTMLElement | null = null;
 
 function startTimer() {
   if (timer) return;
@@ -92,16 +94,25 @@ watch(completed, (done) => {
     startTimer();
   }
 }, { immediate: true });
-onUnmounted(stopTimer);
+onUnmounted(() => {
+  stopTimer();
+  if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
+  scrollFrame = null;
+  scrollTarget = null;
+});
 
 function toggle() {
   if (completed.value) expanded.value = !expanded.value;
 }
 
 function scrollToBottom(el: any) {
-  if (el instanceof HTMLElement) {
-    nextTick(() => { el.scrollTop = el.scrollHeight });
-  }
+  if (!(el instanceof HTMLElement)) return;
+  scrollTarget = el;
+  if (scrollFrame !== null) return;
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = null;
+    if (scrollTarget) scrollTarget.scrollTop = scrollTarget.scrollHeight;
+  });
 }
 </script>
 
