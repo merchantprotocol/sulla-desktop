@@ -38,6 +38,11 @@ export interface PersonaAdapterOptions {
 export class PersonaAdapter {
   private ci: ChatInterface;
   private stopWatchers: WatchStopHandle[] = [];
+  // Backend stream deltas can arrive faster than Vue can paint. Coalesce the
+  // deep-watch callbacks into one sync per animation frame so a long thinking
+  // trace cannot monopolize the renderer's microtask queue. Completion/stop
+  // paths call flushSyncMessages() to publish the final state immediately.
+  private syncFrame: number | null = null;
 
   /**
    * Mirrors ChatInterface.hasMessages — true once the user has sent their
@@ -87,7 +92,7 @@ export class PersonaAdapter {
 
     // React to persona.messages growing / items being mutated in place.
     this.stopWatchers.push(
-      watch(() => this.ci.messages.value, () => this.syncMessages(), { deep: true }),
+      watch(() => this.ci.messages.value, () => this.scheduleSyncMessages(), { deep: true }),
     );
 
     // Drive the run-state machine from the backend. Also re-map every
@@ -98,7 +103,7 @@ export class PersonaAdapter {
     this.stopWatchers.push(
       watch(() => this.ci.graphRunning.value, (running) => {
         this.syncRunState(running);
-        this.syncMessages();
+        this.flushSyncMessages();
       }),
     );
 
@@ -230,6 +235,10 @@ export class PersonaAdapter {
   }
 
   dispose(): void {
+    if (this.syncFrame !== null) {
+      cancelAnimationFrame(this.syncFrame);
+      this.syncFrame = null;
+    }
     for (const stop of this.stopWatchers) stop();
     this.stopWatchers = [];
     this.firstSeenAt.clear();
@@ -243,6 +252,22 @@ export class PersonaAdapter {
   }
 
   // ─── Sync backend → controller ─────────────────────────────────────
+  private scheduleSyncMessages(): void {
+    if (this.syncFrame !== null) return;
+    this.syncFrame = requestAnimationFrame(() => {
+      this.syncFrame = null;
+      this.syncMessages();
+    });
+  }
+
+  private flushSyncMessages(): void {
+    if (this.syncFrame !== null) {
+      cancelAnimationFrame(this.syncFrame);
+      this.syncFrame = null;
+    }
+    this.syncMessages();
+  }
+
   private syncMessages(): void {
     const backend = this.ci.messages.value;
     for (const b of backend) {
