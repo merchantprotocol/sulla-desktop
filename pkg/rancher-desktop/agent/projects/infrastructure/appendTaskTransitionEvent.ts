@@ -16,6 +16,10 @@ export async function appendTaskTransitionEvent(
   previousStatus: string,
   actor: string,
   source: string,
+  options: {
+    generationHash?: string | null;
+    metadata?:       Readonly<Record<string, unknown>>;
+  } = {},
 ): Promise<void> {
   if (task.status === previousStatus) return;
   const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
@@ -25,6 +29,7 @@ export async function appendTaskTransitionEvent(
     id:             `projects-event-${ task.id }-${ claimed.entry.generation }-transition`,
     taskId:         task.id,
     generation:     claimed.entry.generation,
+    generationHash: options.generationHash,
     eventType:      'projects.task.transitioned',
     idempotencyKey: `projects.task.transitioned:${ task.id }:${ claimed.entry.generation }`,
     occurredAt:     new Date(),
@@ -35,6 +40,7 @@ export async function appendTaskTransitionEvent(
       toLane:        task.status,
       laneEntryId:   claimed.entry.id,
       laneAutomated: claimed.entry.status === 'pending',
+      ...options.metadata,
     },
   });
 }

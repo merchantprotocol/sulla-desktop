@@ -19,6 +19,7 @@ describe('appendTaskTransitionEvent', () => {
       'in_progress',
       'dispatcher',
       'task-dispatch-finalize',
+      { generationHash: 'artifact-generation-4', metadata: { dispatchId: 'dispatch-4' } },
     );
 
     expect(claim).toHaveBeenCalledWith(client, 'task-1', 'in_review', 'dispatcher');
@@ -28,6 +29,7 @@ describe('appendTaskTransitionEvent', () => {
       'projects-event-task-1-4-transition',
       'projects.task.transitioned:task-1:4',
       'projects.task.transitioned',
+      'artifact-generation-4',
     ]));
   });
 

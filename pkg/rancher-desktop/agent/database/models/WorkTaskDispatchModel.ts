@@ -860,6 +860,7 @@ export class WorkTaskDispatchModel {
         if (moved.rows[0]) {
           await appendTaskTransitionEvent(
             client, moved.rows[0], 'in_review', 'verifier', 'duplicate-review-generation',
+            { generationHash, metadata: { dispatchId: id, disposition: priorDisposition } },
           );
         }
         return { generationHash, excludedAgentIds: [...excluded], suppressed: true };
@@ -977,6 +978,7 @@ export class WorkTaskDispatchModel {
       }
       await appendTaskTransitionEvent(
         client, moved.rows[0], 'in_progress', 'dispatcher', 'task-dispatch-finalize',
+        { generationHash: evidence.contentHash ?? evidence.artifactRef ?? null, metadata: { dispatchId: id } },
       );
       return moved.rows[0];
     });
@@ -1193,6 +1195,7 @@ export class WorkTaskDispatchModel {
       if (moved.rows[0]) {
         await appendTaskTransitionEvent(
           client, moved.rows[0], 'in_review', 'verifier', 'legacy-review-finalize',
+          { generationHash: artifactSha, metadata: { dispatchId: id, disposition: finalVerdict } },
         );
       }
       return finalVerdict;
@@ -1370,6 +1373,7 @@ export class WorkTaskDispatchModel {
       if (moved.rows[0]) {
         await appendTaskTransitionEvent(
           client, moved.rows[0], 'in_review', 'verifier', 'protected-review-finalize',
+          { generationHash: evidence.generationHash, metadata: { dispatchId: id, disposition: finalDisposition } },
         );
       }
       return finalDisposition;
@@ -1432,6 +1436,7 @@ export class WorkTaskDispatchModel {
       if (moved.rows[0] && terminal) {
         await appendTaskTransitionEvent(
           client, moved.rows[0], 'in_review', 'verifier', 'verification-failure-escalation',
+          { generationHash, metadata: { dispatchId: id, disposition: 'REPLAN' } },
         );
       }
       return true;
