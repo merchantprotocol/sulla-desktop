@@ -44,15 +44,15 @@ describe('LifecycleCapabilityModel', () => {
       fallback_mode:  'heartbeat',
     }));
 
-    await expect(LifecycleCapabilityModel.assertActorCanManageTask('task-1', 'project-1', 'planning', 'heartbeat'))
+    await expect(LifecycleCapabilityModel.assertActorCanManageTask('planning', [], 'heartbeat'))
       .rejects.toThrow('owned by planning-council');
   });
 
-  it('keeps the legacy Heartbeat owner during incomplete rollout', async() => {
+  it('denies Heartbeat when no capability row is registered for the stage', async() => {
     (postgresClient as any).queryOne = jest.fn(() => Promise.resolve(null));
 
-    await expect(LifecycleCapabilityModel.assertActorCanManageTask('task-1', 'project-1', 'in_review', 'heartbeat'))
-      .resolves.toBeUndefined();
+    await expect(LifecycleCapabilityModel.assertActorCanManageTask('in_review', [], 'heartbeat'))
+      .rejects.toThrow('no explicit Heartbeat fallback is registered');
   });
 
   it('lets Heartbeat claim an unavailable capability with explicit fallback', async() => {
@@ -275,8 +275,8 @@ describe('LifecycleCapabilityModel', () => {
       fallbackMode:      'heartbeat',
     });
 
-    expect(query.mock.calls[0][0]).toContain("resolve_project_lane_key(project_id, 'terminal', 'done')");
-    expect(query.mock.calls[0][0]).toContain("resolve_work_task_lane_role(id, status) <> 'terminal'");
+    expect(query.mock.calls[0][0]).toContain("SET status = 'done'");
+    expect(query.mock.calls[0][0]).toContain("WHERE id = $1 AND status NOT IN ('done', 'cancelled', 'parked')");
     expect(query.mock.calls[0][1]).toEqual(['caprec-durable-waits']);
     expect(query.mock.calls[1][0]).toContain('SET recovery_task_id = NULL');
   });
