@@ -6,6 +6,7 @@ import {
 } from '../database/models/WorkTaskPlanningRunModel';
 import { WorkflowModel } from '../database/models/WorkflowModel';
 import { recordReceipt } from './ArtifactReceiptService';
+import { getProjectsApplicationService } from '../projects/application/ProjectsApplicationService';
 
 const MAX_DESCRIPTION_CHARS = 12_000;
 const MAX_CONTEXT_DESCRIPTION_CHARS = 4_000;
@@ -103,7 +104,7 @@ export class PlanningCouncilService {
       artifacts: [{ type: 'planning_run', canonicalRef: run.id }],
       evidence: { kind: 'workflow_execution', ref: executionId },
     });
-    await WorkItemsModel.updateTask(task.id, {
+    await getProjectsApplicationService().updateTask(task.id, {
       status:   'blocked',
       assignee: 'heartbeat',
       actor:    'planning-council',
@@ -160,7 +161,7 @@ export class PlanningCouncilService {
         author:  'planning-council',
         body:    `Planning council launch failed (run ${ claim.run.id }): ${ bounded(message, 1_000) }`,
       });
-      await WorkItemsModel.updateTask(claim.task.id, {
+      await getProjectsApplicationService().updateTask(claim.task.id, {
         status:   'blocked',
         assignee: 'heartbeat',
         actor:    'planning-council',

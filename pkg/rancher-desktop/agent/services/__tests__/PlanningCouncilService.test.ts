@@ -5,7 +5,7 @@ const getProjectMock: any = jest.fn();
 const getEpicMock: any = jest.fn();
 const listCommentsMock: any = jest.fn();
 const addCommentMock: any = jest.fn();
-const updateTaskMock: any = jest.fn();
+const applicationUpdateTaskMock: any = jest.fn();
 const claimMock: any = jest.fn();
 const attachExecutionMock: any = jest.fn();
 const settleForTaskMock: any = jest.fn();
@@ -23,8 +23,11 @@ jest.unstable_mockModule('../../database/models/WorkItemsModel', () => ({
     getEpic:      getEpicMock,
     listComments: listCommentsMock,
     addComment:   addCommentMock,
-    updateTask:   updateTaskMock,
   },
+}));
+
+jest.unstable_mockModule('../../projects/application/ProjectsApplicationService', () => ({
+  getProjectsApplicationService: () => ({ updateTask: applicationUpdateTaskMock }),
 }));
 
 jest.unstable_mockModule('../../database/models/WorkTaskPlanningRunModel', () => ({
@@ -109,6 +112,17 @@ describe('PlanningCouncilService', () => {
     }));
   });
 
+  it('routes the task back to blocked through the application facade when launch throws', async() => {
+    executeRoutineMock.mockRejectedValue(new Error('routine engine unavailable'));
+    const PlanningCouncilService = await service();
+    await PlanningCouncilService.handleTaskStatusTransition({ ...task, status: 'blocked' }, 'in_progress', 'worker');
+
+    expect(settleForTaskMock).toHaveBeenCalledWith('task-1', 'failed', expect.stringContaining('routine engine unavailable'));
+    expect(applicationUpdateTaskMock).toHaveBeenCalledWith('task-1', {
+      status: 'blocked', assignee: 'heartbeat', actor: 'planning-council',
+    });
+  });
+
   it('does nothing when the human disabled the locked routine', async() => {
     findWorkflowMock.mockResolvedValue({
       attributes: { system: true, status: 'production', enabled: false },
@@ -170,7 +184,7 @@ describe('PlanningCouncilService', () => {
       'failed',
       expect.stringContaining('without persisting a final plan'),
     );
-    expect(updateTaskMock).toHaveBeenCalledWith('task-1', {
+    expect(applicationUpdateTaskMock).toHaveBeenCalledWith('task-1', {
       status: 'blocked', assignee: 'heartbeat', actor: 'planning-council',
     });
   });
