@@ -1,11 +1,14 @@
+import { randomUUID, createHash } from 'node:crypto';
+
+import { ArtifactReceiptModel } from '../../database/models/ArtifactReceiptModel';
 import { KnowledgeGraphModel } from '../../database/models/KnowledgeGraphModel';
 import { LifecycleCapabilityModel } from '../../database/models/LifecycleCapabilityModel';
 import { WorkConveyorMetricsModel } from '../../database/models/WorkConveyorMetricsModel';
 import { WorkItemKnowledgeModel } from '../../database/models/WorkItemKnowledgeModel';
 import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
 import { WorkLaneWorkflowBindingModel } from '../../database/models/WorkLaneWorkflowBindingModel';
-import { WorkProjectViewModel } from '../../database/models/WorkProjectViewModel';
 import { CORE_PROJECT_PIPELINE_TEMPLATE_ID, WorkProjectPipelineTemplateModel } from '../../database/models/WorkProjectPipelineTemplateModel';
+import { WorkProjectViewModel } from '../../database/models/WorkProjectViewModel';
 import { WorkTaskDependencyModel } from '../../database/models/WorkTaskDependencyModel';
 import { WorkTaskDispatchModel } from '../../database/models/WorkTaskDispatchModel';
 import { WorkTaskWaitModel } from '../../database/models/WorkTaskWaitModel';
@@ -14,6 +17,8 @@ import { evaluateClaim, resolveWipLimits } from '../../services/ProjectAutomatio
 import { PostgresProjectsRepository } from '../infrastructure/PostgresProjectsRepository';
 
 import type { ProjectsRepository } from './ProjectsRepository';
+import type { ArtifactReceiptRow } from '../../database/models/ArtifactReceiptModel';
+import type { ClaimResult, LifecycleStageClaim } from '../../database/models/LifecycleCapabilityModel';
 import type { ConveyorMetricsOptions, SemanticStage } from '../../database/models/WorkConveyorMetricsModel';
 import type { KnowledgeLinkInput, KnowledgeWorkItemKind } from '../../database/models/WorkItemKnowledgeModel';
 import type {
@@ -24,10 +29,10 @@ import type {
 } from '../../database/models/WorkItemsModel';
 import type { CreateWorkLaneInput, ListWorkLaneOpts, UpdateWorkLaneInput, WorkLaneScope } from '../../database/models/WorkLaneDefinitionModel';
 import type { ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput } from '../../database/models/WorkLaneWorkflowBindingModel';
-import type { SaveProjectViewInput } from '../../database/models/WorkProjectViewModel';
 import type { CreateProjectPipelineTemplateInput } from '../../database/models/WorkProjectPipelineTemplateModel';
+import type { SaveProjectViewInput } from '../../database/models/WorkProjectViewModel';
 import type { CreateDependencyInput, RemoveDependencyInput } from '../../database/models/WorkTaskDependencyModel';
-import type { WorkTaskWaitStatus, RegisterWaitInput } from '../../database/models/WorkTaskWaitModel';
+import type { WorkTaskWaitStatus, RegisterWaitInput, WaitObservation } from '../../database/models/WorkTaskWaitModel';
 
 export type ProjectsCommandSource = 'tool' | 'ipc' | 'heartbeat' | 'routine' | 'dispatcher' | 'system';
 
@@ -64,6 +69,49 @@ export interface TaskStageTransitionResult {
   toStage:            string;
   stagePosition:      number;
   previousGeneration: number | null;
+}
+
+export interface ClaimTaskLeaseInput {
+  taskId:            string;
+  owner:             string;
+  runtimeInstanceId: string;
+}
+
+export interface ReleaseTaskLeaseInput {
+  claimId: string;
+  status?: 'released' | 'cancelled';
+}
+
+export interface HeartbeatTaskLeaseInput {
+  claimId: string;
+}
+
+export interface AttachTaskEvidenceInput {
+  taskId:              string;
+  eventType:           string;
+  artifacts?:          unknown[];
+  contentHashes?:      string[];
+  evidenceKind?:       string | null;
+  evidenceRef?:        string | null;
+  evidenceUrl?:        string | null;
+  disposition?:        string | null;
+  validationSummary?:  string | null;
+  expectedGeneration?: number;
+}
+
+export interface AttachTaskEvidenceResult {
+  receipt:    ArtifactReceiptRow;
+  created:    boolean;
+  stage:      string;
+  generation: number | null;
+}
+
+export interface SettleTaskWaitInput {
+  id:           string;
+  outcome:      'satisfied' | 'failed';
+  summary:      string;
+  fingerprint?: string;
+  nextCheckAt?: string;
 }
 
 const DEFAULT_CONTEXT: ProjectsCommandContext = { actor: 'sulla', source: 'system' };
@@ -196,6 +244,37 @@ export class ProjectsApplicationService {
 
   cancelWait(id: string, reason: string) { return WorkTaskWaitModel.cancel(id, reason) }
   explainTaskClaimability(taskId: string) { return WorkTaskDependencyModel.explainClaimability(taskId) }
+
+  /**
+   * Claim the lease-governed lifecycle capability for a task's CURRENT stage.
+   * The stage (and therefore the capability key) is always derived from the
+   * live task, never supplied by the caller, so a workflow node cannot claim
+   * a lease for a stage the task is not actually in. Authorization (single
+   * effective owner per capability) is enforced by LifecycleCapabilityModel
+   * itself — this is a thin, generation-agnostic pass-through, not a second
+   * policy engine.
+   */
+  async claimTaskLease(input: ClaimTaskLeaseInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT): Promise<ClaimResult> {
+    const taskId = itemId(input.taskId, 'task_id');
+    const owner = itemId(input.owner, 'owner');
+    const runtimeInstanceId = itemId(input.runtimeInstanceId, 'runtime_instance_id');
+    const task = await this.repository.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${ taskId }`);
+    const key = LifecycleCapabilityModel.capabilityForStatus(task.status, task.labels ?? []);
+    if (!key) throw new Error(`Task ${ taskId } stage '${ task.status }' has no lease-governed capability.`);
+    return LifecycleCapabilityModel.claimStage(taskId, key, task.status, owner, runtimeInstanceId);
+  }
+
+  releaseTaskLease(input: ReleaseTaskLeaseInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT): Promise<void> {
+    const claimId = itemId(input.claimId, 'claim_id');
+    return LifecycleCapabilityModel.releaseStage(claimId, input.status ?? 'released');
+  }
+
+  heartbeatTaskLease(input: HeartbeatTaskLeaseInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT): Promise<LifecycleStageClaim | null> {
+    const claimId = itemId(input.claimId, 'claim_id');
+    return LifecycleCapabilityModel.heartbeatStage(claimId);
+  }
+
   conveyorHealth(opts: ConveyorMetricsOptions) { return WorkConveyorMetricsModel.snapshot(opts) }
   async automationStatus() {
     const [limits, counts] = await Promise.all([resolveWipLimits(), WorkTaskDispatchModel.countByRole()]);
@@ -397,6 +476,85 @@ export class ProjectsApplicationService {
       }, context);
     }
     return registration;
+  }
+
+  /**
+   * Attach one structured, generation-scoped evidence/artifact receipt for a
+   * task. Reuses the durable, restart-safe work_artifact_receipts ledger
+   * (#716) already used to record workflow/dispatch/custody evidence — this
+   * only adds a workflow-callable write path and an explicit generation so
+   * the receipt is bound to the exact stage-entry generation it was attached
+   * under, the same staleness contract transition_task_stage already applies.
+   * expected_generation is optional: omit it to attach evidence against
+   * whatever the current generation is; pass it to fail closed on a stale
+   * duplicate workflow run.
+   */
+  async attachEvidence(
+    input: AttachTaskEvidenceInput,
+    context: ProjectsCommandContext = DEFAULT_CONTEXT,
+  ): Promise<AttachTaskEvidenceResult> {
+    const taskId = itemId(input.taskId, 'task_id');
+    const eventType = itemId(input.eventType, 'event_type');
+    const task = await this.repository.getTask(taskId);
+    if (!task) throw new Error(`Task not found: ${ taskId }`);
+    const generation = await this.assertCurrentStageGeneration(taskId, task.status, input.expectedGeneration);
+    const artifacts = Array.isArray(input.artifacts) ? input.artifacts : [];
+    const contentHashes = Array.isArray(input.contentHashes) ? input.contentHashes : [];
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      taskId,
+      stage:        task.status,
+      generation,
+      eventType,
+      evidenceKind: input.evidenceKind ?? null,
+      evidenceRef:  input.evidenceRef ?? null,
+      evidenceUrl:  input.evidenceUrl ?? null,
+      artifacts,
+      contentHashes,
+    })).digest('hex');
+    const { row, inserted } = await ArtifactReceiptModel.insertIfAbsent({
+      id:                 `evidence-${ randomUUID() }`,
+      receiptVersion:     1,
+      taskId,
+      eventType,
+      actor:              context.actor,
+      disposition:        input.disposition ?? null,
+      validationSummary:  input.validationSummary ?? null,
+      artifacts,
+      contentHashes,
+      evidenceKind:       input.evidenceKind ?? null,
+      evidenceRef:        input.evidenceRef ?? null,
+      evidenceUrl:        input.evidenceUrl ?? null,
+      fingerprint,
+      generation,
+    });
+    return { receipt: row, created: inserted, stage: task.status, generation };
+  }
+
+  /**
+   * Settle one durable external wait a workflow node holds evidence for,
+   * without waiting on the periodic external-wait-monitor poll. Reuses
+   * WorkTaskWaitModel.observe exactly as the monitor already calls it — same
+   * mechanics, same trust model, no new locking. Note: observe() still moves
+   * a task off the literal 'blocked' status onto literal 'planning'/'in_review'
+   * on its legacy compatibility path; that is pre-existing Phase 4-era
+   * behavior this node does not change (see dHAe/MBJx follow-up comment).
+   */
+  async settleWait(input: SettleTaskWaitInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    const id = itemId(input.id, 'id');
+    if (input.outcome !== 'satisfied' && input.outcome !== 'failed') {
+      throw new Error("outcome must be 'satisfied' or 'failed'.");
+    }
+    const summary = typeof input.summary === 'string' ? input.summary.trim() : '';
+    if (!summary) throw new Error('summary is required to settle a durable wait.');
+    const fingerprint = typeof input.fingerprint === 'string' && input.fingerprint.trim()
+      ? input.fingerprint.trim()
+      : `manual-settle-${ context.actor }-${ Date.now() }`;
+    const nextCheckAt = input.nextCheckAt ? new Date(input.nextCheckAt) : new Date();
+    if (Number.isNaN(nextCheckAt.getTime())) throw new Error('next_check_at must be a valid ISO date when provided.');
+    const observation: WaitObservation = { fingerprint, outcome: input.outcome, summary, nextCheckAt };
+    const result = await WorkTaskWaitModel.observe(id, observation);
+    if (!result.wait) throw new Error(`No active task wait found with id ${ id }.`);
+    return result;
   }
 
   async reorder(updates: ReorderProjectItem[], context: ProjectsCommandContext): Promise<void> {

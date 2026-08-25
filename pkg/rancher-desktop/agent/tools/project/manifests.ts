@@ -618,6 +618,77 @@ export const projectToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader: () => import('./inspect_lane_entry_automation'),
   },
+  // ── task lease controls ─────────────────────────────────────────────
+  {
+    name:        'claim_task_lease',
+    description: 'Claim the lease-governed lifecycle capability for a task current stage (e.g. todo-execution, in-review-verification). The stage is always read from the live task, never supplied — a workflow node cannot claim a lease for a stage the task is not actually in. Fails closed when the capability is unhealthy or owned by someone else.',
+    category:    'project',
+    schemaDef:   {
+      task_id:              { type: 'string', description: 'Task whose current-stage lease to claim.' },
+      owner:                { type: 'string', description: 'Logical capability owner (e.g. dispatcher, heartbeat) — must match the capability effective owner.' },
+      runtime_instance_id:  { type: 'string', description: 'Stable identity of this runtime process/execution, used to recover abandoned claims on restart.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./claim_task_lease'),
+  },
+  {
+    name:        'release_task_lease',
+    description: 'Release an active task lease claim by id, so another authorized owner can claim the stage.',
+    category:    'project',
+    schemaDef:   {
+      claim_id: { type: 'string', description: 'Claim id returned by claim_task_lease.' },
+      status:   { type: 'string', optional: true, description: 'released | cancelled. Default released.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./release_task_lease'),
+  },
+  {
+    name:        'heartbeat_task_lease',
+    description: 'Renew liveness on an active task lease claim while long-running stage work continues, so it is not recovered as abandoned.',
+    category:    'project',
+    schemaDef:   {
+      claim_id: { type: 'string', description: 'Claim id returned by claim_task_lease.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./heartbeat_task_lease'),
+  },
+  // ── evidence receipts ────────────────────────────────────────────────
+  {
+    name:        'attach_task_evidence',
+    description: 'Attach one structured artifact/evidence receipt to a task, scoped to its current immutable stage-entry generation. Deduplicated on an exact-content fingerprint, so replaying the same attach is idempotent. Pass expected_generation to reject a stale/duplicate workflow run.',
+    category:    'project',
+    schemaDef:   {
+      task_id:             { type: 'string', description: 'Task to attach evidence to.' },
+      event_type:          { type: 'string', description: 'Short evidence-event label, e.g. "review-verified" or "external-artifact-published".' },
+      artifacts:           { type: 'array', optional: true, description: 'Structured artifact list (URLs, ids, hashes).' },
+      content_hashes:      { type: 'array', items: { type: 'string' }, optional: true, description: 'Immutable content hashes for audit drill-down.' },
+      evidence_kind:       { type: 'string', optional: true, description: 'Evidence source kind, e.g. dispatch | workflow_execution | wait | custody.' },
+      evidence_ref:        { type: 'string', optional: true, description: 'Id of the referenced evidence record.' },
+      evidence_url:        { type: 'string', optional: true, description: 'Canonical evidence URL, when applicable.' },
+      disposition:         { type: 'string', optional: true, description: 'Free-text disposition summary.' },
+      validation_summary:  { type: 'string', optional: true, description: 'Free-text validation summary.' },
+      expected_generation: { type: 'number', optional: true, description: 'Current immutable stage-entry generation. Rejects stale workflow runs.' },
+      actor:               { type: 'string', optional: true, description: 'Audit actor. Defaults to sulla.' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./attach_task_evidence'),
+  },
+  // ── durable wait settlement ──────────────────────────────────────────
+  {
+    name:        'settle_task_wait',
+    description: 'Settle one durable external wait a workflow node already holds evidence for (satisfied or failed), without waiting on the periodic monitor poll. Reuses the exact same settlement mechanics the external-wait-monitor uses.',
+    category:    'project',
+    schemaDef:   {
+      id:            { type: 'string', description: 'Wait id from list_task_waits.' },
+      outcome:       { type: 'enum', enum: ['satisfied', 'failed'], description: 'Terminal settlement outcome.' },
+      summary:       { type: 'string', description: 'Concise settlement evidence summary.' },
+      fingerprint:   { type: 'string', optional: true, description: 'Exact observed fingerprint, when known.' },
+      next_check_at: { type: 'string', optional: true, description: 'ISO time recorded for the settling check. Defaults to now.' },
+      actor:         { type: 'string', optional: true, description: 'Audit actor. Defaults to sulla.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./settle_task_wait'),
+  },
   {
     name:        'conveyor_health',
     description: 'Read-only Projects conveyor-health & productivity snapshot (issue #717): count/oldest-age by semantic stage, stage-age percentiles, execution->review->done throughput, verifier throughput (dedup/suppression excluded), rework rate & repair loops, custody completeness, durable-wait adoption, stale leases, dependency-held, WIP pressure, and independent shipments vs integration-train closures. Optional project scope and time window.',

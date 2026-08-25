@@ -1,5 +1,6 @@
-import { postgresClient } from '../PostgresClient';
 import type { PoolClient } from 'pg';
+
+import { postgresClient } from '../PostgresClient';
 
 /** One persisted concise artifact receipt (#716). Full narration is NOT stored
  * here — only the compact receipt plus a link to the full evidence record on a
@@ -22,6 +23,7 @@ export interface ArtifactReceiptRow {
   evidence_url:          string | null;
   fingerprint:           string;
   comment_id:            string | null;
+  generation:            number | null;
   created_at:            string;
 }
 
@@ -42,6 +44,7 @@ export interface InsertArtifactReceiptInput {
   evidenceRef?:          string | null;
   evidenceUrl?:          string | null;
   fingerprint:           string;
+  generation?:           number | null;
 }
 
 export interface InsertArtifactReceiptResult {
@@ -70,8 +73,8 @@ export class ArtifactReceiptModel {
       `INSERT INTO ${ ArtifactReceiptModel.TABLE }
          (id, receipt_version, task_id, event_type, actor, workflow_execution_id,
           dispatch_id, disposition, next_owner, validation_summary, artifacts,
-          content_hashes, evidence_kind, evidence_ref, evidence_url, fingerprint)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16)
+          content_hashes, evidence_kind, evidence_ref, evidence_url, fingerprint, generation)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$13,$14,$15,$16,$17)
        ON CONFLICT (task_id, fingerprint) DO NOTHING
        RETURNING *`,
       [
@@ -80,7 +83,7 @@ export class ArtifactReceiptModel {
         input.disposition ?? null, input.nextOwner ?? null, input.validationSummary ?? null,
         JSON.stringify(input.artifacts ?? []), input.contentHashes ?? [],
         input.evidenceKind ?? null, input.evidenceRef ?? null, input.evidenceUrl ?? null,
-        input.fingerprint,
+        input.fingerprint, input.generation ?? null,
       ],
     );
     if (inserted.rows.length > 0) return { inserted: true, row: inserted.rows[0] };
