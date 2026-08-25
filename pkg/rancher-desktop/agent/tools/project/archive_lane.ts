@@ -1,4 +1,4 @@
-import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 export class ArchiveLaneWorker extends BaseTool {
@@ -7,9 +7,9 @@ export class ArchiveLaneWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      await WorkLaneDefinitionModel.ensureTable();
-      const result = await WorkLaneDefinitionModel.archive(
-        String(input.id || '').trim(), input.destination_lane_key || undefined, input.actor || 'sulla',
+      const result = await getProjectsApplicationService().archiveLane(
+        String(input.id || '').trim(), input.destination_lane_key || undefined,
+        { actor: input.actor || 'sulla', source: 'tool' },
       );
       return { successBoolean: true, responseString: JSON.stringify(result) };
     } catch (err: any) {

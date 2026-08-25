@@ -1,9 +1,8 @@
-import { BaseTool, ToolResponse } from '../base';
-import {
-  WorkConveyorMetricsModel,
-  type ConveyorMetricsOptions,
-} from '../../database/models/WorkConveyorMetricsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { resolveWipLimits } from '../../services/ProjectAutomationWipLimits';
+import { BaseTool, ToolResponse } from '../base';
+
+import type { ConveyorMetricsOptions } from '../../database/models/WorkConveyorMetricsModel';
 
 /**
  * conveyor_health — read-only Projects conveyor-health & productivity snapshot
@@ -25,7 +24,7 @@ export class ConveyorHealthWorker extends BaseTool {
         reviewLimit:  limits.review,
         staleMinutes: typeof input?.stale_minutes === 'number' ? input.stale_minutes : undefined,
       };
-      const snap = await WorkConveyorMetricsModel.snapshot(opts);
+      const snap = await getProjectsApplicationService().conveyorHealth(opts);
       const scope = snap.project_id ? `project ${ snap.project_id }` : 'all projects';
       const lines: string[] = [];
       lines.push(`# Projects conveyor health (window ${ snap.window_hours }h, ${ scope })`);

@@ -1,5 +1,7 @@
-import { WorkTaskDependencyModel, type DependencyRelationType } from '../../database/models/WorkTaskDependencyModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
+
+import type { DependencyRelationType } from '../../database/models/WorkTaskDependencyModel';
 
 const RELATIONS = new Set<DependencyRelationType>(['blocks', 'requires', 'ordered-after']);
 
@@ -18,13 +20,14 @@ export class CreateTaskDependencyWorker extends BaseTool {
       return { successBoolean: false, responseString: 'relation_type must be one of blocks, requires, ordered-after.' };
     }
     try {
-      const dep = await WorkTaskDependencyModel.create({
+      const actor = typeof input.actor === 'string' && input.actor.trim() ? input.actor.trim() : 'sulla';
+      const dep = await getProjectsApplicationService().createDependency({
         dependentTaskId,
         dependsOnTaskId,
         relationType:         relationRaw as DependencyRelationType,
         acceptanceCondition:  typeof input.acceptance_condition === 'string' && input.acceptance_condition.trim() ? input.acceptance_condition.trim() : null,
-        actor:                typeof input.actor === 'string' && input.actor.trim() ? input.actor.trim() : undefined,
-      });
+        actor,
+      }, { actor, source: 'tool' });
       return {
         successBoolean: true,
         responseString: `Dependency ${ dep.id }: task ${ dep.dependent_task_id } ${ dep.relation_type } ${ dep.depends_on_task_id }. The dependent cannot be claimed until the prerequisite is done.`,

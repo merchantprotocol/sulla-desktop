@@ -57,6 +57,16 @@ describe('Projects task tools ownership inputs', () => {
 
   it('passes updated labels, ownership, and actor through update_task to the model boundary', async() => {
     jest.spyOn(WorkItemsModel, 'ensureTables').mockResolvedValue();
+    jest.spyOn(WorkItemsModel, 'getTask').mockResolvedValue({
+      id:         'task-1',
+      project_id: 'project-1',
+      epic_id:    'epic-1',
+      title:      'Ship it',
+      status:     'todo',
+      priority:   'p0',
+      assignee:   'dispatcher',
+      labels:     [],
+    } as any);
     const update = jest.spyOn(WorkItemsModel, 'updateTask').mockResolvedValue({
       id:               'task-1',
       epic_id:          'epic-1',

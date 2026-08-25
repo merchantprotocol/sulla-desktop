@@ -1,4 +1,4 @@
-import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 export class ResetLaneOverrideWorker extends BaseTool {
@@ -7,9 +7,9 @@ export class ResetLaneOverrideWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      await WorkLaneDefinitionModel.ensureTable();
-      const reset = await WorkLaneDefinitionModel.resetProjectOverride(
-        String(input.project_id || '').trim(), String(input.lane_key || '').trim(), input.actor || 'sulla',
+      const reset = await getProjectsApplicationService().resetLaneOverride(
+        String(input.project_id || '').trim(), String(input.lane_key || '').trim(),
+        { actor: input.actor || 'sulla', source: 'tool' },
       );
       return reset
         ? { successBoolean: true, responseString: `Project lane ${ input.lane_key } now inherits the global definition.` }

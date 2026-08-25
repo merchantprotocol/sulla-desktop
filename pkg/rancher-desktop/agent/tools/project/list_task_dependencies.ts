@@ -1,4 +1,4 @@
-import { WorkTaskDependencyModel } from '../../database/models/WorkTaskDependencyModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /** List a task's dependencies (its prerequisites) and its dependents. Read-only. */
@@ -10,9 +10,10 @@ export class ListTaskDependenciesWorker extends BaseTool {
     if (!taskId) return { successBoolean: false, responseString: 'task_id is required.' };
     try {
       const includeArchived = input.include_archived === true;
+      const projects = getProjectsApplicationService();
       const [dependencies, dependents] = await Promise.all([
-        WorkTaskDependencyModel.listDependencies(taskId, { includeArchived }),
-        WorkTaskDependencyModel.listDependents(taskId, { includeArchived }),
+        projects.listDependencies(taskId, { includeArchived }),
+        projects.listDependents(taskId, { includeArchived }),
       ]);
       return { successBoolean: true, responseString: JSON.stringify({ taskId, dependencies, dependents }, null, 2) };
     } catch (err: any) {

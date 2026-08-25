@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -13,8 +13,9 @@ export class ListTaskCommentsWorker extends BaseTool {
     if (!taskId) return { successBoolean: false, responseString: 'task_id is required.' };
 
     try {
-      await WorkItemsModel.ensureTables();
-      const comments = await WorkItemsModel.listComments(taskId);
+      const projects = getProjectsApplicationService();
+      await projects.ready();
+      const comments = await projects.listComments(taskId);
       if (!comments.length) {
         return { successBoolean: true, responseString: `No comments on task ${ taskId }.` };
       }

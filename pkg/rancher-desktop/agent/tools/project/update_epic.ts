@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -15,8 +15,9 @@ export class UpdateEpicWorker extends BaseTool {
     if (!id) return { successBoolean: false, responseString: 'id is required to update an epic.' };
 
     try {
-      await WorkItemsModel.ensureTables();
-      const updated = await WorkItemsModel.updateEpic(id, {
+      const projects = getProjectsApplicationService();
+      await projects.ready();
+      const updated = await projects.updateEpic(id, {
         project_id:  input.project_id,
         slug:        input.slug,
         title:       input.title,
@@ -26,7 +27,7 @@ export class UpdateEpicWorker extends BaseTool {
         position:    typeof input.position === 'number' ? input.position : undefined,
         due_at:      input.due_at === '' ? null : input.due_at,
         source:      input.source,
-      });
+      }, { actor: input.actor || 'sulla', source: 'tool' });
       if (!updated) return { successBoolean: false, responseString: `No epic found with id: ${ id }` };
 
       return {
