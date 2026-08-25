@@ -16,19 +16,20 @@
 
 import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
 import type { ChatController } from '../controller/ChatController';
+import type {
+  ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, HtmlPayload,
+} from '../models/Artifact';
+import type { Attachment } from '../models/Attachment';
 import type { Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
   ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, CitationMessage, ErrorMessage, HtmlMessage, InterimMessage,
   PatchMessage, PatchHunk, ProactiveMessage,
 } from '../models/Message';
-import type { Attachment } from '../models/Attachment';
-import type {
-  ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, HtmlPayload,
-} from '../models/Artifact';
 import { asMessageId, newAttachmentId, newMessageId, type ArtifactId } from '../types/chat';
+import { StreamUpdateScheduler } from './StreamUpdateScheduler';
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 export interface PersonaAdapterOptions {
   channelId?: string;
@@ -38,11 +39,12 @@ export interface PersonaAdapterOptions {
 export class PersonaAdapter {
   private ci: ChatInterface;
   private stopWatchers: WatchStopHandle[] = [];
-  // Backend stream deltas can arrive faster than Vue can paint. Coalesce the
-  // deep-watch callbacks into one sync per animation frame so a long thinking
-  // trace cannot monopolize the renderer's microtask queue. Completion/stop
-  // paths call flushSyncMessages() to publish the final state immediately.
-  private syncFrame: number | null = null;
+  // Backend stream deltas can arrive faster than Vue can paint. Publish the
+  // leading update immediately, then cap continuous updates to ~30fps. A pure
+  // requestAnimationFrame scheduler can deadlock visibly under renderer
+  // starvation: no paint means no callback, while Stop appears to fix it only
+  // because the completion path flushes synchronously.
+  private readonly messageSyncScheduler = new StreamUpdateScheduler(() => this.syncMessages());
 
   /**
    * Mirrors ChatInterface.hasMessages — true once the user has sent their
@@ -97,10 +99,10 @@ export class PersonaAdapter {
     // Pull in any messages that were already restored from localStorage.
     this.syncMessages();
 
-    // React to persona.messages growing / items being mutated in place.
-    // Coalesced to one sync per animation frame — see scheduleSyncMessages().
+    // React to the persona's explicit scalar revision. Deep-watching the
+    // message array traversed the entire transcript on every stream delta.
     this.stopWatchers.push(
-      watch(() => this.ci.messages.value, () => this.scheduleSyncMessages(), { deep: true }),
+      watch(() => this.ci.messagesRevision.value, () => this.messageSyncScheduler.schedule()),
     );
 
     // Drive the run-state machine from the backend. Also re-map every
@@ -113,7 +115,7 @@ export class PersonaAdapter {
     this.stopWatchers.push(
       watch(() => this.ci.graphRunning.value, (running) => {
         this.syncRunState(running);
-        this.flushSyncMessages();
+        this.messageSyncScheduler.flush();
       }),
     );
 
@@ -246,10 +248,7 @@ export class PersonaAdapter {
   }
 
   dispose(): void {
-    if (this.syncFrame !== null) {
-      cancelAnimationFrame(this.syncFrame);
-      this.syncFrame = null;
-    }
+    this.messageSyncScheduler.dispose();
     for (const stop of this.stopWatchers) stop();
     this.stopWatchers = [];
     this.firstSeenAt.clear();
@@ -282,27 +281,9 @@ export class PersonaAdapter {
   // lets us skip all of that for messages nothing has actually changed on.
   //
   // scheduleSyncMessages() additionally caps how often the loop below can
-  // even run — deep-watch fires once per backend mutation, which during a
-  // fast token stream can be far more often than the browser can paint.
-  // Coalescing to one call per animation frame means bursts of events
-  // collapse into a single sync each frame instead of one sync per event.
-  private scheduleSyncMessages(): void {
-    if (this.syncFrame !== null) return;
-    this.syncFrame = requestAnimationFrame(() => {
-      this.syncFrame = null;
-      this.syncMessages();
-    });
-  }
-
-  /** Cancel any pending scheduled sync and run one immediately. */
-  private flushSyncMessages(): void {
-    if (this.syncFrame !== null) {
-      cancelAnimationFrame(this.syncFrame);
-      this.syncFrame = null;
-    }
-    this.syncMessages();
-  }
-
+  // run. The leading update is synchronous so visible progress never depends
+  // on reaching an animation-frame boundary. During a continuous stream, a
+  // short timer publishes the latest accumulated state at a bounded rate.
   private syncMessages(): void {
     const backend = this.ci.messages.value;
     for (const b of backend) {
