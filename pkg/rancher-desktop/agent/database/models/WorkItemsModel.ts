@@ -94,13 +94,13 @@ export interface WorkTaskRecord {
 }
 
 export interface WorkTaskDependencyRecord {
-  task_id:            string;
-  depends_on_task_id: string;
-  relation_type:      string;
+  task_id:              string;
+  depends_on_task_id:   string;
+  relation_type:        string;
   acceptance_condition: string | null;
-  created_at:         string;
-  created_by:         string | null;
-  archived:           boolean;
+  created_at:           string;
+  created_by:           string | null;
+  archived:             boolean;
 }
 
 export interface WorkCommentRecord {
@@ -446,177 +446,10 @@ export class WorkItemsModel {
   // ──────────────────────────────────────────────
 
   static async ensureTables(): Promise<void> {
-    try {
-      await postgresClient.query(`
-        CREATE TABLE IF NOT EXISTS ${ WorkItemsModel.PROJECTS } (
-          id              TEXT        PRIMARY KEY,
-          slug            TEXT        NOT NULL UNIQUE,
-          title           TEXT        NOT NULL,
-          description     TEXT        NOT NULL DEFAULT '',
-          outcome_metric  TEXT,
-          status          TEXT        NOT NULL DEFAULT 'working',
-          priority        TEXT        NOT NULL DEFAULT 'p2',
-          owner           TEXT,
-          source          TEXT,
-          source_path     TEXT,
-          github_repo     TEXT,
-          due_at          TIMESTAMPTZ,
-          created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at      TIMESTAMPTZ,
-          last_moved_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-          archived        BOOLEAN     NOT NULL DEFAULT false
-        )
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_projects_board
-          ON ${ WorkItemsModel.PROJECTS } (archived, status, priority, last_moved_at ASC)
-      `);
-
-      await postgresClient.query(`
-        CREATE TABLE IF NOT EXISTS ${ WorkItemsModel.EPICS } (
-          id              TEXT        PRIMARY KEY,
-          project_id      TEXT        NOT NULL REFERENCES ${ WorkItemsModel.PROJECTS }(id),
-          slug            TEXT,
-          title           TEXT        NOT NULL,
-          description     TEXT        NOT NULL DEFAULT '',
-          status          TEXT        NOT NULL DEFAULT 'working',
-          priority        TEXT        NOT NULL DEFAULT 'p2',
-          position        INTEGER     NOT NULL DEFAULT 0,
-          due_at          TIMESTAMPTZ,
-          source          TEXT,
-          source_ref      TEXT,
-          created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at      TIMESTAMPTZ,
-          last_moved_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-          archived        BOOLEAN     NOT NULL DEFAULT false
-        )
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_epics_project
-          ON ${ WorkItemsModel.EPICS } (project_id, archived, position, status)
-      `);
-      await postgresClient.query(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_work_epics_project_slug
-          ON ${ WorkItemsModel.EPICS } (project_id, slug)
-          WHERE slug IS NOT NULL
-      `);
-
-      await postgresClient.query(`
-        CREATE TABLE IF NOT EXISTS ${ WorkItemsModel.TASKS } (
-          id              TEXT        PRIMARY KEY,
-          project_id      TEXT        NOT NULL REFERENCES ${ WorkItemsModel.PROJECTS }(id),
-          epic_id         TEXT        REFERENCES ${ WorkItemsModel.EPICS }(id),
-          parent_id       TEXT        REFERENCES ${ WorkItemsModel.TASKS }(id),
-          slug            TEXT,
-          title           TEXT        NOT NULL,
-          description     TEXT        NOT NULL DEFAULT '',
-          status          TEXT        NOT NULL DEFAULT 'todo',
-          priority        TEXT        NOT NULL DEFAULT 'p2',
-          due_at          TIMESTAMPTZ,
-          github_issue    TEXT,
-          assignee        TEXT,
-          labels          TEXT[],
-          position        INTEGER     NOT NULL DEFAULT 0,
-          source          TEXT,
-          source_ref      TEXT,
-          created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at      TIMESTAMPTZ,
-          last_moved_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-          last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-          created_by      TEXT,
-          last_moved_by   TEXT,
-          completed_at    TIMESTAMPTZ,
-          archived        BOOLEAN     NOT NULL DEFAULT false
-        )
-      `);
-      await postgresClient.query(`
-        ALTER TABLE ${ WorkItemsModel.TASKS }
-          ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_epic
-          ON ${ WorkItemsModel.TASKS } (epic_id, archived, status, position)
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_project
-          ON ${ WorkItemsModel.TASKS } (project_id, archived, status, priority, due_at)
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_parent
-          ON ${ WorkItemsModel.TASKS } (parent_id) WHERE parent_id IS NOT NULL
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_due
-          ON ${ WorkItemsModel.TASKS } (archived, due_at)
-          WHERE due_at IS NOT NULL AND archived = false
-      `);
-      await postgresClient.query(`
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_work_tasks_epic_slug
-          ON ${ WorkItemsModel.TASKS } (epic_id, slug)
-          WHERE slug IS NOT NULL
-      `);
-
-      await postgresClient.query(`
-        CREATE TABLE IF NOT EXISTS ${ WorkItemsModel.COMMENTS } (
-          id              TEXT        PRIMARY KEY,
-          task_id         TEXT        NOT NULL REFERENCES ${ WorkItemsModel.TASKS }(id),
-          body            TEXT        NOT NULL,
-          author          TEXT,
-          created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-          updated_at      TIMESTAMPTZ,
-          archived        BOOLEAN     NOT NULL DEFAULT false
-        )
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_task_comments_task
-          ON ${ WorkItemsModel.COMMENTS } (task_id, archived, created_at ASC)
-      `);
-      await postgresClient.query(`
-        UPDATE ${ WorkItemsModel.TASKS } t
-           SET last_activity_at = GREATEST(
-             t.last_moved_at,
-             COALESCE(t.updated_at, t.last_moved_at),
-             COALESCE((
-               SELECT MAX(c.created_at)
-                 FROM ${ WorkItemsModel.COMMENTS } c
-                WHERE c.task_id = t.id AND c.archived = false
-             ), t.last_moved_at)
-           )
-         WHERE t.last_activity_at IS NULL
-      `);
-      await postgresClient.query(`
-        ALTER TABLE ${ WorkItemsModel.TASKS }
-          ALTER COLUMN last_activity_at SET DEFAULT now(),
-          ALTER COLUMN last_activity_at SET NOT NULL
-      `);
-      await postgresClient.query(`
-        CREATE INDEX IF NOT EXISTS idx_work_tasks_activity
-          ON ${ WorkItemsModel.TASKS } (archived, status, priority, last_activity_at ASC)
-      `);
-
-      try {
-        await postgresClient.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
-        await postgresClient.query(`
-          CREATE INDEX IF NOT EXISTS idx_work_projects_title_trgm
-            ON ${ WorkItemsModel.PROJECTS } USING gin (title gin_trgm_ops)
-        `);
-        await postgresClient.query(`
-          CREATE INDEX IF NOT EXISTS idx_work_epics_title_trgm
-            ON ${ WorkItemsModel.EPICS } USING gin (title gin_trgm_ops)
-        `);
-        await postgresClient.query(`
-          CREATE INDEX IF NOT EXISTS idx_work_tasks_title_trgm
-            ON ${ WorkItemsModel.TASKS } USING gin (title gin_trgm_ops)
-        `);
-      } catch (trgmErr) {
-        console.warn('[WorkItemsModel] pg_trgm index unavailable (non-fatal):', trgmErr);
-      }
-    } catch (err) {
-      console.error('[WorkItemsModel] Failed to ensure tables:', err);
-    }
+    const { PostgresProjectsSchemaVerifier } = await import('../../projects/infrastructure/PostgresProjectsSchemaVerifier');
+    return PostgresProjectsSchemaVerifier.verify();
   }
 
-  /** Alias — ObservationsModel/RulesModel style. */
   static async ensureTable(): Promise<void> {
     return WorkItemsModel.ensureTables();
   }
@@ -962,17 +795,17 @@ export class WorkItemsModel {
     const dependency = await WorkTaskDependencyModel.create({
       dependentTaskId: taskId,
       dependsOnTaskId,
-      relationType: 'requires',
+      relationType:    'requires',
       actor,
     });
     return {
-      task_id: dependency.dependent_task_id,
-      depends_on_task_id: dependency.depends_on_task_id,
-      relation_type: dependency.relation_type,
+      task_id:              dependency.dependent_task_id,
+      depends_on_task_id:   dependency.depends_on_task_id,
+      relation_type:        dependency.relation_type,
       acceptance_condition: dependency.acceptance_condition,
-      created_at: dependency.created_at,
-      created_by: dependency.created_by,
-      archived: dependency.archived_at !== null,
+      created_at:           dependency.created_at,
+      created_by:           dependency.created_by,
+      archived:             dependency.archived_at !== null,
     };
   }
 
@@ -980,7 +813,7 @@ export class WorkItemsModel {
     return WorkTaskDependencyModel.remove({
       dependentTaskId: taskId,
       dependsOnTaskId,
-      relationType: 'requires',
+      relationType:    'requires',
     });
   }
 
@@ -1088,12 +921,12 @@ export class WorkItemsModel {
     const targetLane = changes.status !== undefined
       ? await WorkLaneDefinitionModel.validateTaskStatus(nextProjectId ?? existing.project_id, changes.status)
       : null;
-    const enteringReview = changes.status !== undefined
-      && changes.status !== existing.status
-      && (targetLane?.semantic_role === 'review' || (!targetLane && changes.status === 'in_review'));
-    const enteringDone = changes.status !== undefined
-      && changes.status !== existing.status
-      && changes.status === 'done';
+    const enteringReview = changes.status !== undefined &&
+      changes.status !== existing.status &&
+      (targetLane?.semantic_role === 'review' || (!targetLane && changes.status === 'in_review'));
+    const enteringDone = changes.status !== undefined &&
+      changes.status !== existing.status &&
+      changes.status === 'done';
     if (enteringReview) {
       await ArtifactCustodyPolicy.assertForTransition('in_review', changes.custody);
     }
