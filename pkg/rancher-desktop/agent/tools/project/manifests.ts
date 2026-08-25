@@ -224,6 +224,18 @@ export const projectToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./explain_task_claimability'),
   },
+  {
+    name:        'list_ready_tasks',
+    description: 'Bulk readiness query for a project (optionally one epic): tasks split into ready (no unresolved dependency holds) vs blocked, with the exact holds for each blocked task. Complements explain_task_claimability, which is the single-task deep dive.',
+    category:    'project',
+    schemaDef:   {
+      project_id: { type: 'string', description: 'Project id to scan.' },
+      epic_id:    { type: 'string', optional: true, description: 'Limit to one epic.' },
+      limit:      { type: 'number', optional: true, description: 'Max candidate tasks to scan (default 200).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_ready_tasks'),
+  },
   // ── projects ─────────────────────────────────────────────────────────
   {
     name:        'list_pipeline_templates',
@@ -688,6 +700,21 @@ export const projectToolManifests: ToolManifest[] = [
     },
     operationTypes: ['update'],
     loader:         () => import('./settle_task_wait'),
+  },
+  // ── stage-generation settlement ──────────────────────────────────────
+  {
+    name:        'settle_stage_generation',
+    description: 'Complete or fail the exact stage-entry generation a workflow run was invoked with. Generation-bound: expected_generation must match the task current lane-entry generation, and settlement only applies to a still-running execution, so a stale or duplicate workflow run cannot clobber a prior settlement. Records the workflow own outcome; does not move the task to a different stage.',
+    category:    'project',
+    schemaDef:   {
+      task_id:             { type: 'string', description: 'Task whose current stage-entry generation to settle.' },
+      status:              { type: 'enum', enum: ['completed', 'failed'], description: 'Terminal settlement outcome for this generation.' },
+      expected_generation: { type: 'number', description: 'Current immutable stage-entry generation. Rejects stale/duplicate workflow runs.' },
+      outcome:             { type: 'object', optional: true, description: 'Free-form structured outcome payload recorded with the settlement.' },
+      actor:               { type: 'string', optional: true, description: 'Audit actor. Defaults to sulla.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./settle_stage_generation'),
   },
   {
     name:        'conveyor_health',
