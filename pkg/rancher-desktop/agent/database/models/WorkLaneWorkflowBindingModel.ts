@@ -128,35 +128,26 @@ function workflowLaneContract(workflow: WorkflowRow): LaneContract {
   return raw && typeof raw === 'object' ? raw as LaneContract : {};
 }
 
-function compatible(contract: LaneContract, laneKey: string, semanticRole: string): boolean {
-  const keys = contract.laneKeys ?? [];
-  const roles = contract.semanticRoles ?? [];
-  return contract.input === LANE_ENTRY_INPUT_ENVELOPE &&
-    contract.output === LANE_OUTCOME_OUTPUT_ENVELOPE &&
-    (keys.length === 0 || keys.includes(laneKey)) &&
-    (roles.length === 0 || roles.includes(semanticRole));
-}
-
 export class WorkLaneWorkflowBindingModel {
+  /** Any enabled, non-archived workflow may be assigned to any lane — the lane-entry/outcome
+   * envelope in {@link LaneContract} is informational metadata for display and runtime dispatch,
+   * not a selection gate. Workflows that don't declare a lane contract simply run without the
+   * structured envelope. */
   static async listCompatibleWorkflows(projectId: string, laneKey: string): Promise<CompatibleLaneWorkflow[]> {
-    const lane = await WorkLaneWorkflowBindingModel.requireLane('project', laneKey, null, null, projectId);
+    await WorkLaneWorkflowBindingModel.requireLane('project', laneKey, null, null, projectId);
     const workflows = await postgresClient.query<WorkflowRow>(`
       SELECT id, name, description, definition, enabled, status, system
         FROM workflows
        WHERE enabled = true AND status <> 'archive'
        ORDER BY system DESC, name ASC, id ASC
     `);
-    return workflows.flatMap((workflow) => {
-      const contract = workflowLaneContract(workflow);
-      if (!compatible(contract, lane.lane_key, lane.semantic_role)) return [];
-      return [{
-        id:           workflow.id,
-        name:         workflow.name?.trim() || workflow.id,
-        description:  workflow.description ?? null,
-        system:       workflow.system,
-        laneContract: contract,
-      }];
-    });
+    return workflows.map(workflow => ({
+      id:           workflow.id,
+      name:         workflow.name?.trim() || workflow.id,
+      description:  workflow.description ?? null,
+      system:       workflow.system,
+      laneContract: workflowLaneContract(workflow),
+    }));
   }
 
   static async list(input: ListLaneBindingsInput = {}): Promise<LaneWorkflowBindingRecord[]> {
@@ -194,11 +185,10 @@ export class WorkLaneWorkflowBindingModel {
     if (input.scope === 'core' && (!workflow.system || !['system', 'core-seeder'].includes(input.actor ?? ''))) {
       throw new Error('Protected core bindings may only be installed by the core seeder with a system workflow.');
     }
-    const lane = await WorkLaneWorkflowBindingModel.requireLane(input.scope, laneKey, semanticRole, epicId, projectId);
+    // Validates the lane exists; any enabled, non-archived workflow may be bound to it —
+    // the declared lane contract (if any) is stored for display/dispatch, not enforced here.
+    await WorkLaneWorkflowBindingModel.requireLane(input.scope, laneKey, semanticRole, epicId, projectId);
     const contract = workflowLaneContract(workflow);
-    if (!compatible(contract, lane.lane_key, lane.semantic_role)) {
-      throw new Error(`Workflow ${ workflow.id } is incompatible with lane ${ lane.lane_key } (${ lane.semantic_role }).`);
-    }
 
     const profileId = input.profileId?.trim() || 'default';
     return postgresClient.transaction(async(client) => {
@@ -308,17 +298,12 @@ export class WorkLaneWorkflowBindingModel {
         fallbackReason ??= `Binding ${ binding.id } references an unavailable workflow.`;
         continue;
       }
-      const contract = workflowLaneContract(workflow);
-      if (!compatible(contract, context.laneKey, context.semanticRole)) {
-        fallbackReason ??= `Binding ${ binding.id } is no longer compatible with this lane.`;
-        continue;
-      }
       return {
         binding,
         workflowId:       workflow.id,
         source:           binding.scope,
         fallbackReason,
-        laneContract:     contract,
+        laneContract:     workflowLaneContract(workflow),
         workflowSnapshot: workflow.definition,
       };
     }

@@ -92,55 +92,8 @@
               Projects
             </button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'lanes' }" @click="tab = 'lanes'">Lanes</button>
-            <button type="button" class="ph-tab" :class="{ on: tab === 'knowledge' }" @click="tab = 'knowledge'">Knowledge</button>
           </div>
           <div class="ph-sp" />
-          <label
-            v-if="isDataView"
-            class="ph-search"
-          ><span class="sr-only">Search visible work</span><input
-            v-model="viewSearch"
-            placeholder="Search this project…"
-          ></label>
-          <div
-            v-if="isDataView"
-            class="ph-view-presets"
-          >
-            <label><span class="sr-only">Saved view</span><select
-              v-model="activeViewId"
-              aria-label="Saved view"
-              @change="applySavedView"
-            >
-              <option value="">
-                Current view
-              </option>
-              <option
-                v-for="view in savedViews"
-                :key="view.id"
-                :value="view.id"
-              >
-                {{ view.project_id ? 'Project' : 'Global' }} · {{ view.name }}
-              </option>
-            </select></label>
-            <label><span class="sr-only">New saved view name</span><input
-              v-model="viewName"
-              aria-label="New saved view name"
-              placeholder="View name"
-              @keydown.enter.prevent="saveNamedView"
-            ></label>
-            <label class="ph-check"><input
-              v-model="saveViewGlobally"
-              type="checkbox"
-            > Global</label>
-            <button
-              type="button"
-              class="ph-btn ghost sm"
-              :disabled="!viewName.trim()"
-              @click="saveNamedView"
-            >
-              Save view
-            </button>
-          </div>
           <button
             type="button"
             class="ph-btn ghost"
@@ -300,15 +253,8 @@
                     v-if="sel.github_repo"
                     class="ph-pill"
                   >{{ sel.github_repo }}</span>
-                  <span v-if="sel.knowledge_count" class="ph-pill">{{ sel.knowledge_count }} knowledge</span>
                 </div>
               </div>
-
-              <KnowledgeLinksPanel
-                item-kind="project"
-                :item-id="sel.id"
-                @open-node="openKnowledgeNode"
-              />
 
               <div
                 v-for="epic in sel.epics"
@@ -340,7 +286,6 @@
                   </button>
                   <h3>{{ epic.title }}</h3>
                   <span class="ph-cnt">{{ epicSummary(epic) }}</span>
-                  <span v-if="epic.knowledge_count" class="ph-cnt">{{ epic.knowledge_count }} knowledge</span>
                   <div class="ph-sp" />
                   <div class="ph-actions">
                     <button
@@ -366,11 +311,6 @@
                     </button>
                   </div>
                 </div>
-                <KnowledgeLinksPanel
-                  item-kind="epic"
-                  :item-id="epic.id"
-                  @open-node="openKnowledgeNode"
-                />
                 <div
                   v-if="!collapsedEpics.has(epic.id) && !filteredEpicTasks(epic).length"
                   class="ph-muted ph-dropzone"
@@ -416,7 +356,6 @@
                     >
                       <span>{{ t.priority }}</span>
                     </div>
-                    <div v-if="t.knowledge_count" class="ph-m"><span>{{ t.knowledge_count }} knowledge</span></div>
                   </div>
                   <span
                     class="ph-tag"
@@ -507,7 +446,6 @@
                         {{ statusLabel(status) }}
                       </option>
                     </select>
-                    <div v-if="t.knowledge_count" class="ph-cm">{{ t.knowledge_count }} knowledge</div>
                   </div>
                 </div>
               </div>
@@ -918,15 +856,6 @@
 
             <!-- LANE SETTINGS -->
             <LaneSettings v-if="sel" v-show="tab === 'lanes'" ref="laneSettings" :project="sel" @refresh="refresh" />
-
-            <!-- KNOWLEDGE BASE -->
-            <div v-show="tab === 'knowledge'">
-              <KnowledgeBrowserPanel
-                :projects="projects"
-                :selected-node-id="selectedKnowledgeNodeId"
-                @open-work="openLinkedWork"
-              />
-            </div>
           </template>
         </div>
       </section>
@@ -1152,13 +1081,6 @@
             Archive
           </button>
         </div>
-
-        <KnowledgeLinksPanel
-          v-if="taskMode === 'edit' && openTask?.id"
-          item-kind="task"
-          :item-id="openTask.id"
-          @open-node="openKnowledgeNode"
-        />
 
         <!-- comments -->
         <template v-if="taskMode === 'edit'">
@@ -1392,9 +1314,6 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
-import type { LinkedWorkItemRecord } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
-import KnowledgeBrowserPanel from '@pkg/components/KnowledgeBrowserPanel.vue';
-import KnowledgeLinksPanel from '@pkg/components/KnowledgeLinksPanel.vue';
 import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
 import type { SemanticStage, WorkConveyorMetricsModel } from '@pkg/agent/database/models/WorkConveyorMetricsModel';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -1403,7 +1322,7 @@ import {
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
   type WorkTaskDependencyRecord,
   type UpsertProjectInput, type UpsertEpicInput, type UpsertTaskInput, type ReorderUpdate,
-  type ProjectViewType, type WorkProjectViewRecord,
+  type ProjectViewType,
 } from '@pkg/composables/useProjects';
 
 const {
@@ -1412,7 +1331,7 @@ const {
   createEpic, updateEpic, archiveEpic,
   createTask, updateTask, archiveTask, addComment, reorder,
   lanesByProject, laneCapability,
-  listViews, resolveView, saveView,
+  resolveView, saveView,
   listTaskDependencies, setTaskDependency, removeTaskDependency,
 } = useProjects();
 
@@ -1423,19 +1342,13 @@ const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
   { key: 'calendar', label: 'Calendar', icon: '□' },
   { key: 'list', label: 'List', icon: '☷' },
 ];
-type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes' | 'knowledge';
+type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes';
 const tab = ref<ProjectsTab>('board');
-const selectedKnowledgeNodeId = ref('');
 const saving = ref(false);
 const activity = ref<WorkActivityRecord[]>([]);
 const activityLoading = ref(false);
-const viewSearch = ref('');
 const collapsedEpics = ref(new Set<string>());
 const selectedTasks = ref(new Set<string>());
-const savedViews = ref<WorkProjectViewRecord[]>([]);
-const activeViewId = ref('');
-const viewName = ref('');
-const saveViewGlobally = ref(false);
 const TABLE_RENDER_LIMIT = 500;
 const PROJECTION_RENDER_LIMIT = 500;
 const isDataView = computed(() => PROJECT_VIEWS.some(view => view.key === tab.value));
@@ -1479,11 +1392,6 @@ onMounted(async() => {
   await load().catch((err) => {
     console.error('[ProjectsHome] initial load failed:', err);
   });
-  const globalViews = await listViews(null).catch(() => []);
-  if (!globalViews.some(view => view.project_id === null && view.is_default)) {
-    await saveView({ view_type: 'board', name: 'Default', is_default: true, configuration: {} }).catch(() => undefined);
-  }
-  await loadAvailableViews();
   await restoreProjectView();
   automationStatus.value = await ipcRenderer.invoke('work-items:automation-status').catch(() => null);
   await loadConveyorHealth();
@@ -1542,53 +1450,12 @@ async function restoreProjectView(): Promise<void> {
   const saved = await resolveView(selectedId.value).catch(() => null);
   if (!saved) return;
   tab.value = saved.view_type;
-  viewSearch.value = saved.configuration.search ?? '';
   collapsedEpics.value = new Set(saved.configuration.collapsedIds ?? []);
   ganttZoom.value = saved.configuration.zoom ?? 'week';
   if (saved.configuration.dateAnchor) {
     dateAnchor.value = saved.configuration.dateAnchor;
     calendarAnchor.value = saved.configuration.dateAnchor;
   }
-}
-
-async function loadAvailableViews(): Promise<void> {
-  savedViews.value = await listViews(selectedId.value).catch(() => []);
-}
-
-function applyViewRecord(saved: WorkProjectViewRecord): void {
-  tab.value = saved.view_type;
-  viewSearch.value = saved.configuration.search ?? '';
-  collapsedEpics.value = new Set(saved.configuration.collapsedIds ?? []);
-  ganttZoom.value = saved.configuration.zoom ?? 'week';
-  if (saved.configuration.dateAnchor) {
-    dateAnchor.value = saved.configuration.dateAnchor;
-    calendarAnchor.value = saved.configuration.dateAnchor;
-  }
-}
-
-function applySavedView(): void {
-  const saved = savedViews.value.find(view => view.id === activeViewId.value);
-  if (saved) applyViewRecord(saved);
-}
-
-async function saveNamedView(): Promise<void> {
-  const name = viewName.value.trim();
-  if (!name || !isDataView.value) return;
-  const saved = await saveView({
-    project_id:    saveViewGlobally.value ? null : selectedId.value,
-    name,
-    view_type:     tab.value as ProjectViewType,
-    is_default:    false,
-    configuration: {
-      search:       viewSearch.value,
-      zoom:         ganttZoom.value,
-      dateAnchor:   tab.value === 'calendar' ? calendarAnchor.value : dateAnchor.value,
-      collapsedIds: [...collapsedEpics.value],
-    },
-  });
-  viewName.value = '';
-  await loadAvailableViews();
-  activeViewId.value = saved.id;
 }
 
 async function setProjectView(view: ProjectViewType): Promise<void> {
@@ -1604,7 +1471,6 @@ async function persistProjectView(): Promise<void> {
     view_type:     tab.value as ProjectViewType,
     is_default:    true,
     configuration: {
-      search:        viewSearch.value,
       zoom:          ganttZoom.value,
       dateAnchor:    tab.value === 'calendar' ? calendarAnchor.value : dateAnchor.value,
       collapsedIds:  [...collapsedEpics.value],
@@ -1622,10 +1488,8 @@ watch([tab, selectedId], () => {
 });
 
 watch(selectedId, () => {
-  activeViewId.value = '';
-  Promise.all([loadAvailableViews(), restoreProjectView()]).catch(() => undefined);
+  restoreProjectView().catch(() => undefined);
 });
-watch(viewSearch, () => persistProjectView().catch(() => undefined));
 
 async function refresh(): Promise<void> {
   await load();
@@ -1642,22 +1506,6 @@ async function refreshActivity(): Promise<void> {
     activity.value = await loadActivity(selectedId.value, 80);
   } finally {
     activityLoading.value = false;
-  }
-}
-
-function openKnowledgeNode(id: string): void {
-  selectedKnowledgeNodeId.value = id;
-  tab.value = 'knowledge';
-  closeTask();
-}
-
-async function openLinkedWork(item: LinkedWorkItemRecord): Promise<void> {
-  select(item.project_id_resolved);
-  tab.value = 'today';
-  if (item.item_kind === 'task') {
-    const task = projects.value.flatMap(project => project.epics.flatMap(epic => epic.tasks))
-      .find(candidate => candidate.id === item.item_id);
-    if (task) await openTaskDrawer(task);
   }
 }
 
@@ -1782,13 +1630,7 @@ const boardColumns = computed(() => {
 
 interface ProjectTaskRow { task: TaskView; epic: EpicWithTasks }
 const allTasks = computed<ProjectTaskRow[]>(() => (sel.value?.epics ?? []).flatMap(epic => epic.tasks.map(task => ({ task, epic }))));
-const visibleTasks = computed(() => {
-  const needle = viewSearch.value.trim().toLowerCase();
-  return needle
-    ? allTasks.value.filter(({ task, epic }) =>
-      `${ task.title } ${ task.description } ${ task.status } ${ task.priority } ${ task.assignee ?? '' } ${ epic.title }`.toLowerCase().includes(needle))
-    : allTasks.value;
-});
+const visibleTasks = computed(() => allTasks.value);
 const boundedVisibleTasks = computed(() => visibleTasks.value.slice(0, PROJECTION_RENDER_LIMIT));
 function filteredEpicTasks(epic: EpicWithTasks): TaskView[] {
   return boundedVisibleTasks.value.filter(row => row.epic.id === epic.id).map(row => row.task);
@@ -2375,11 +2217,7 @@ async function confirmArchiveEpic(e: EpicWithTasks): Promise<void> {
 .ph-tab:hover { color: var(--ptext2); }
 .ph-tab.on { color: var(--ptext); border-bottom-color: var(--pacc); }
 .ph-view-tab { display: inline-flex; gap: 5px; align-items: center; }
-.ph-search input { width: 190px; background: var(--psurface2); border: 1px solid var(--pborder); color: var(--ptext); border-radius: 7px; padding: 7px 10px; font-size: 12px; }
-.ph-view-presets { display: flex; align-items: center; gap: 6px; }
-.ph-view-presets select, .ph-view-presets input { max-width: 150px; background: var(--psurface2); border: 1px solid var(--pborder); color: var(--ptext); border-radius: 7px; padding: 7px 8px; font-size: 11px; }
-.ph-check { display: inline-flex; align-items: center; gap: 4px; color: var(--ptext2); font-size: 11px; }
-.ph-search input:focus, .ph-view-presets input:focus, .ph-view-presets select:focus, .ph-tab:focus-visible, .ph-btn:focus-visible, .ph-link:focus-visible { outline: 2px solid var(--pacc); outline-offset: 2px; }
+.ph-tab:focus-visible, .ph-btn:focus-visible, .ph-link:focus-visible { outline: 2px solid var(--pacc); outline-offset: 2px; }
 .ph-card:focus-visible, .ph-row:focus-visible, .ph-gantt-label:focus-visible, .ph-gantt-dates input:focus-visible, .ph-calendar button:focus-visible { outline: 2px solid var(--pacc); outline-offset: 2px; }
 .ph-sp { flex: 1; }
 
@@ -2511,7 +2349,6 @@ button.ph-health-stat:hover, button.ph-health-stat.on { border-color: var(--pacc
 @media (max-width: 1100px) {
   .ph-side { width: 210px; }
   .ph-top { padding-inline: 16px; }
-  .ph-search, .ph-view-presets { display: none; }
   .ph-canvas { padding-inline: 16px; }
 }
 
