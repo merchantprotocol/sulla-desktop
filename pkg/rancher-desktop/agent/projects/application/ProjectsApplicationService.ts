@@ -395,6 +395,26 @@ export class ProjectsApplicationService {
     return this.repository.updateTask(taskId, { ...changes, actor });
   }
 
+  /**
+   * First-class reject->repair handoff (#727). Distinct from updateTask: the
+   * generic path enforces assertActorCanManageTask (an actor may not walk
+   * into a stage owned by a different healthy capability); this path is the
+   * one narrow exception, gated on its own authorization check inside
+   * LifecycleCapabilityModel.settleReviewReject — the caller must be the
+   * effective owner of in-review-verification at act time. Do not route
+   * generic status edits through this method.
+   */
+  rejectTaskReview(
+    input: { taskId: string; summary: string },
+    context: ProjectsCommandContext = DEFAULT_CONTEXT,
+  ) {
+    return LifecycleCapabilityModel.settleReviewReject({
+      taskId:  itemId(input.taskId, 'task_id'),
+      actor:   context.actor,
+      summary: input.summary,
+    });
+  }
+
   async transitionTaskStage(
     input: TransitionTaskStageInput,
     context: ProjectsCommandContext = DEFAULT_CONTEXT,
