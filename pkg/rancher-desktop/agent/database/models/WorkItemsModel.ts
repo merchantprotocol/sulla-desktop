@@ -42,6 +42,7 @@ export interface WorkProjectRecord {
   updated_at:     string | null;
   last_moved_at:  string;
   archived:       boolean;
+  pipeline_template_id: string | null;
 }
 
 export interface WorkEpicRecord {
@@ -170,6 +171,7 @@ export interface UpsertProjectInput {
   source_ref?:     string | null;
   source_path?:    string | null;
   github_repo?:    string | null;
+  pipeline_template_id?: string | null;
 }
 
 export interface UpdateProjectInput {

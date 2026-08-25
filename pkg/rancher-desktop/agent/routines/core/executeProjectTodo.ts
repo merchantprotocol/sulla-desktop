@@ -45,7 +45,11 @@ export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
   id:          EXECUTE_PROJECT_TODO_ID,
   name:        'Execute Projects Todo',
   description: 'Locked core routine for atomic todo execution, capability-based worker fan-out, independent acceptance review, repair/replan routing, and durable artifact custody.',
-  version:     2,
+  version:     3,
+  laneContract: {
+    input:  'project.lane-entry.v1',
+    output: 'project.lane-outcome.v1',
+  },
   // Ship dark. The human enables the protected routine only after shadow and
   // low-risk acceptance passes; the legacy owner remains the default meanwhile.
   enabled:     false,
@@ -91,7 +95,7 @@ export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
       'node-todo-repair',
       'Repair or Replan',
       620,
-      `${ SAFETY } Original claimed task: {{trigger}} Worker results: {{Dynamic Worker Fan-out}}. Independent verdict: {{Independent Acceptance Review}}. Apply that verdict. On pass, make no changes. On repairable, launch only the targeted repair worker(s), wait, inspect the repair, and re-run the acceptance checks once. On a wrong plan or failed repair, propose planning with assignee=dispatcher so core routine ${ 'core-routine-plan-project-task' } (#667) owns recovery after controller finalization. On a genuine external gate, propose blocked with the exact dependency. Return JSON only with route (pass|repaired|replan|blocked), childIds, actions, evidence, proposedDisposition, proposedComment, and remainingRisk. Do not call any project write tool.`,
+      `${ SAFETY } Original claimed task: {{trigger}} Worker results: {{Dynamic Worker Fan-out}}. Independent verdict: {{Independent Acceptance Review}}. Apply that verdict. On pass, make no changes. On repairable, launch only the targeted repair worker(s), wait, inspect the repair, and re-run the acceptance checks once. On a wrong plan or failed repair, propose the configured planning stage. On a genuine external gate, propose the configured blocked stage with the exact dependency. Return JSON only with route (pass|repaired|replan|blocked), childIds, actions, evidence, transition ({mode:"next"}|{mode:"specific",stageKey:string}), proposedComment, and remainingRisk. Do not call any project write tool.`,
       'Failed review cannot silently pass: it is repaired and rechecked, routed to planning, or blocked on a real external gate.',
     ),
     AGENT_NODE(
@@ -105,7 +109,7 @@ export const EXECUTE_PROJECT_TODO_DEFINITION: Record<string, any> = {
       'node-todo-record',
       'Record Projects Handoff',
       940,
-      `${ SAFETY } Original claimed task: {{trigger}} Classifier: {{Classify Work}}. Workers: {{Dynamic Worker Fan-out}}. Review: {{Independent Acceptance Review}}. Repair route: {{Repair or Replan}}. Custody: {{Artifact Custody}}. Propose one concise Projects task comment containing the classifier choice, child IDs, reviewer verdict, durable artifact reference, exact SHA/hash when applicable, validation evidence, and next state. Do not call any project write tool. The dispatcher controller will validate the originating task and live canonical artifact, then atomically persist this evidence with the final task state. Return JSON only with taskId, proposedComment, and nextState (in_review|planning|blocked).`,
+      `${ SAFETY } Original claimed task: {{trigger}} Classifier: {{Classify Work}}. Workers: {{Dynamic Worker Fan-out}}. Review: {{Independent Acceptance Review}}. Repair route: {{Repair or Replan}}. Custody: {{Artifact Custody}}. Propose one concise Projects task comment containing the classifier choice, child IDs, reviewer verdict, durable artifact reference, exact SHA/hash when applicable, validation evidence, and configured pipeline transition. Do not call any project write tool. The pipeline runner will validate the originating task and live canonical artifact, then use transition_task_relative for mode next or transition_task_stage for a specific exception stage. Return JSON only with taskId, proposedComment, and transition ({mode:"next"}|{mode:"specific",stageKey:string}).`,
       'The proposed disposition and comment contain enough evidence for controller-owned atomic finalization.',
     ),
     {

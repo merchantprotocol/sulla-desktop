@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { LifecycleCapabilityModel } from '../../../database/models/LifecycleCapabilityModel';
 import { WorkLaneDefinitionModel } from '../../../database/models/WorkLaneDefinitionModel';
+import { WorkLaneWorkflowBindingModel } from '../../../database/models/WorkLaneWorkflowBindingModel';
 import { ArtifactCustodyPolicy } from '../../../services/ArtifactCustodyPolicy';
 import { ProjectsApplicationService } from '../ProjectsApplicationService';
 
@@ -91,5 +92,46 @@ describe('ProjectsApplicationService lifecycle boundary', () => {
 
     expect(guard).not.toHaveBeenCalled();
     expect(repo.updateTask).toHaveBeenCalledWith('task-1', { title: 'Renamed', actor: 'human' });
+  });
+
+  it('derives the next stage only from the project pipeline order', async() => {
+    const repo = repository();
+    repo.getTask.mockResolvedValue({ ...current, status: 'research' });
+    jest.spyOn(WorkLaneDefinitionModel, 'resolveEffective').mockResolvedValue([
+      { lane_key: 'intake', position: 10, enabled: true, archived: false },
+      { lane_key: 'research', position: 20, enabled: true, archived: false },
+      { lane_key: 'publish', position: 30, enabled: true, archived: false },
+    ] as any);
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'listLaneEntries').mockResolvedValue([
+      { generation: 7, lane_key: 'research' },
+    ] as any);
+    jest.spyOn(LifecycleCapabilityModel, 'assertActorCanManageTask').mockResolvedValue();
+    jest.spyOn(WorkLaneDefinitionModel, 'validateTaskStatus').mockResolvedValue({
+      lane_key: 'publish', semantic_role: 'manual',
+    } as any);
+    const service = new ProjectsApplicationService(repo);
+
+    await expect(service.transitionTaskRelative({
+      taskId: 'task-1', direction: 'next', expectedGeneration: 7,
+    }, { actor: 'publishing-routine', source: 'routine' })).resolves.toMatchObject({
+      fromStage: 'research', toStage: 'publish', stagePosition: 2, previousGeneration: 7,
+    });
+    expect(repo.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({
+      status: 'publish', actor: 'publishing-routine',
+    }));
+  });
+
+  it('rejects a stale workflow generation before changing the task', async() => {
+    const repo = repository();
+    repo.getTask.mockResolvedValue({ ...current, status: 'research' });
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'listLaneEntries').mockResolvedValue([
+      { generation: 8, lane_key: 'research' },
+    ] as any);
+    const service = new ProjectsApplicationService(repo);
+
+    await expect(service.transitionTaskStage({
+      taskId: 'task-1', stageKey: 'publish', expectedGeneration: 7,
+    }, { actor: 'stale-routine', source: 'routine' })).rejects.toThrow('Stale stage generation');
+    expect(repo.updateTask).not.toHaveBeenCalled();
   });
 });

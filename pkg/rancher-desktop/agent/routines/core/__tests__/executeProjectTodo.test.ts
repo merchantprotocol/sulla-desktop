@@ -26,19 +26,21 @@ describe('Execute Projects Todo core routine', () => {
     expect(() => createPlaybookState(EXECUTE_PROJECT_TODO_DEFINITION as any, '{"taskId":"task-1"}')).not.toThrow();
   });
 
-  it('requires capability selection, independent inspection, #667 replan, and durable remote evidence', () => {
+  it('requires capability selection, independent inspection, configurable disposition, and durable remote evidence', () => {
     const text = JSON.stringify(EXECUTE_PROJECT_TODO_DEFINITION);
 
     expect(text).toContain(`every assignment must use agentId ${ DEFAULT_CORE_ROUTINE_AGENT_ID }`);
     expect(text).toContain('Never select or name a custom agent profile');
     expect(text).toContain('You did not execute the work');
-    expect(text).toContain('core-routine-plan-project-task');
+    expect(text).toContain('configured planning stage');
+    expect(text).toContain('transition_task_relative');
+    expect(text).toContain('transition_task_stage');
     expect(text).toContain('remote draft PR');
     expect(text).toContain('authoritative tracker');
     expect(text).toContain('Never merge or deploy');
     expect(text).toContain('Graph nodes are proposal-only');
     expect(text).toContain('Do not call any project write tool');
-    expect(text).toContain('dispatcher controller will validate the originating task and live canonical artifact');
+    expect(text).toContain('pipeline runner will validate the originating task and live canonical artifact');
     expect(text).not.toContain('recorded=true');
   });
 

@@ -57,7 +57,11 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
     'Automatically runs an independent three-planner council for a Projects task in blocked/planning, ' +
     'synthesizes one executable plan, persists it, and returns reversible work to the dispatcher. ' +
     'Locked core routine; visible and disable-able, but not editable, archivable, or deletable.',
-  version:   2,
+  version:   3,
+  laneContract: {
+    input:  'project.lane-entry.v1',
+    output: 'project.lane-outcome.v1',
+  },
   enabled:   true,
   createdAt: '2026-08-23T00:00:00.000Z',
   updatedAt: '2026-08-24T20:32:00.000Z',
@@ -173,8 +177,10 @@ export const PLAN_PROJECT_TASK_DEFINITION: Record<string, any> = {
             'Extract task.id from the bounded JSON snapshot below. First call `sulla project/add_task_comment` via exec ' +
             'with author `planning-council`; the body must contain `Final planning council plan` plus the complete synthesis. ' +
             'If the synthesis disposition is TODO, create well-bounded subtasks only when the plan genuinely requires independent ' +
-            'units, then call `sulla project/update_task` with status `todo`, assignee `dispatcher`, actor `planning-council`. ' +
-            'If and only if disposition is BLOCKED, update status `blocked`, assignee `heartbeat`, actor `planning-council`, ' +
+            'units, then call `sulla project/update_task` to set assignee `dispatcher` without changing status, followed by ' +
+            '`sulla project/transition_task_relative` with direction `next`, the trigger task id, and its exact stage-entry generation. ' +
+            'If and only if disposition is BLOCKED, set assignee `heartbeat` without changing status, then call ' +
+            '`sulla project/transition_task_stage` with the configured exception stage key `blocked` and exact generation, ' +
             'and ensure the comment names the exact irreversible gate. Re-read the task with `sulla project/get_project_item` ' +
             'and return a terse persistence receipt. Never merge or deploy.\n\nBounded task snapshot:\n{{trigger}}',
         },

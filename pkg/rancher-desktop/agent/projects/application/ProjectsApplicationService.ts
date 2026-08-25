@@ -5,6 +5,7 @@ import { WorkItemKnowledgeModel } from '../../database/models/WorkItemKnowledgeM
 import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
 import { WorkLaneWorkflowBindingModel } from '../../database/models/WorkLaneWorkflowBindingModel';
 import { WorkProjectViewModel } from '../../database/models/WorkProjectViewModel';
+import { CORE_PROJECT_PIPELINE_TEMPLATE_ID, WorkProjectPipelineTemplateModel } from '../../database/models/WorkProjectPipelineTemplateModel';
 import { WorkTaskDependencyModel } from '../../database/models/WorkTaskDependencyModel';
 import { WorkTaskDispatchModel } from '../../database/models/WorkTaskDispatchModel';
 import { WorkTaskWaitModel } from '../../database/models/WorkTaskWaitModel';
@@ -24,6 +25,7 @@ import type {
 import type { CreateWorkLaneInput, ListWorkLaneOpts, UpdateWorkLaneInput, WorkLaneScope } from '../../database/models/WorkLaneDefinitionModel';
 import type { ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput } from '../../database/models/WorkLaneWorkflowBindingModel';
 import type { SaveProjectViewInput } from '../../database/models/WorkProjectViewModel';
+import type { CreateProjectPipelineTemplateInput } from '../../database/models/WorkProjectPipelineTemplateModel';
 import type { CreateDependencyInput, RemoveDependencyInput } from '../../database/models/WorkTaskDependencyModel';
 import type { WorkTaskWaitStatus, RegisterWaitInput } from '../../database/models/WorkTaskWaitModel';
 
@@ -40,6 +42,28 @@ export interface ReorderProjectItem {
   position?: number;
   status?:   string;
   epic_id?:  string;
+}
+
+export interface TransitionTaskStageInput {
+  taskId:              string;
+  stageKey:            string;
+  expectedGeneration?: number;
+  custody?:            UpdateTaskInput['custody'];
+}
+
+export interface TransitionTaskRelativeInput {
+  taskId:              string;
+  direction:           'next' | 'previous';
+  expectedGeneration?: number;
+  custody?:            UpdateTaskInput['custody'];
+}
+
+export interface TaskStageTransitionResult {
+  task:               WorkTaskRecord;
+  fromStage:          string;
+  toStage:            string;
+  stagePosition:      number;
+  previousGeneration: number | null;
 }
 
 const DEFAULT_CONTEXT: ProjectsCommandContext = { actor: 'sulla', source: 'system' };
@@ -182,8 +206,37 @@ export class ProjectsApplicationService {
     return WorkConveyorMetricsModel.oldestItems({ projectId: opts.projectId ?? null, drillLimit: 20 }, opts.stage);
   }
 
-  createProject(input: UpsertProjectInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT) {
-    return this.repository.createProject(input);
+  async createProject(input: UpsertProjectInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    const project = await this.repository.createProject(input);
+    if (!project.pipeline_template_id) {
+      await WorkProjectPipelineTemplateModel.applyToProject(
+        project.id, input.pipeline_template_id ?? CORE_PROJECT_PIPELINE_TEMPLATE_ID, context.actor,
+      );
+      return (await this.repository.getProject(project.id)) ?? project;
+    }
+    return project;
+  }
+
+  listProjectPipelineTemplates(includeArchived = false) {
+    return WorkProjectPipelineTemplateModel.list(includeArchived);
+  }
+
+  getProjectPipelineTemplate(id: string) {
+    return WorkProjectPipelineTemplateModel.get(itemId(id, 'template_id'));
+  }
+
+  createProjectPipelineTemplate(input: CreateProjectPipelineTemplateInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    return WorkProjectPipelineTemplateModel.create({ ...input, actor: input.actor ?? context.actor });
+  }
+
+  applyProjectPipelineTemplate(projectId: string, templateId: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    return WorkProjectPipelineTemplateModel.applyToProject(
+      itemId(projectId, 'project_id'), itemId(templateId, 'template_id'), context.actor,
+    );
+  }
+
+  archiveProjectPipelineTemplate(templateId: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    return WorkProjectPipelineTemplateModel.archive(itemId(templateId, 'template_id'), context.actor);
   }
 
   updateProject(id: string, changes: UpdateProjectInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT) {
@@ -235,6 +288,71 @@ export class ProjectsApplicationService {
       }
     }
     return this.repository.updateTask(taskId, { ...changes, actor });
+  }
+
+  async transitionTaskStage(
+    input: TransitionTaskStageInput,
+    context: ProjectsCommandContext = DEFAULT_CONTEXT,
+  ): Promise<TaskStageTransitionResult> {
+    const taskId = itemId(input.taskId, 'task_id');
+    const stageKey = itemId(input.stageKey, 'stage_key');
+    const current = await this.repository.getTask(taskId);
+    if (!current) throw new Error(`Task not found: ${ taskId }`);
+    const previousGeneration = await this.assertCurrentStageGeneration(
+      taskId, current.status, input.expectedGeneration,
+    );
+    const stages = await this.resolveEffectiveLanes(current.project_id);
+    const targetIndex = stages.findIndex(stage => stage.lane_key === stageKey && stage.enabled && !stage.archived);
+    if (targetIndex < 0) throw new Error(`Stage ${ stageKey } is not active in project ${ current.project_id }.`);
+    if (stageKey === current.status) throw new Error(`Task ${ taskId } is already in stage ${ stageKey }.`);
+    const updated = await this.updateTask(taskId, {
+      status: stageKey, actor: context.actor, custody: input.custody,
+    }, context);
+    if (!updated) throw new Error(`Task disappeared during stage transition: ${ taskId }`);
+    return { task: updated, fromStage: current.status, toStage: stageKey, stagePosition: targetIndex, previousGeneration };
+  }
+
+  async transitionTaskRelative(
+    input: TransitionTaskRelativeInput,
+    context: ProjectsCommandContext = DEFAULT_CONTEXT,
+  ): Promise<TaskStageTransitionResult> {
+    const taskId = itemId(input.taskId, 'task_id');
+    const current = await this.repository.getTask(taskId);
+    if (!current) throw new Error(`Task not found: ${ taskId }`);
+    const stages = (await this.resolveEffectiveLanes(current.project_id))
+      .filter(stage => stage.enabled && !stage.archived);
+    const currentIndex = stages.findIndex(stage => stage.lane_key === current.status);
+    if (currentIndex < 0) {
+      throw new Error(`Current stage ${ current.status } is not active in project ${ current.project_id }.`);
+    }
+    const targetIndex = currentIndex + (input.direction === 'next' ? 1 : -1);
+    const target = stages[targetIndex];
+    if (!target) throw new Error(`Task ${ taskId } has no ${ input.direction } configured stage.`);
+    return this.transitionTaskStage({
+      taskId,
+      stageKey:            target.lane_key,
+      expectedGeneration: input.expectedGeneration,
+      custody:            input.custody,
+    }, context);
+  }
+
+  private async assertCurrentStageGeneration(
+    taskId: string,
+    currentStage: string,
+    expectedGeneration?: number,
+  ): Promise<number | null> {
+    const latest = (await WorkLaneWorkflowBindingModel.listLaneEntries(taskId))[0] ?? null;
+    if (expectedGeneration === undefined) return latest?.generation ?? null;
+    if (!Number.isInteger(expectedGeneration) || expectedGeneration < 1) {
+      throw new Error('expected_generation must be a positive integer.');
+    }
+    if (!latest || latest.generation !== expectedGeneration || latest.lane_key !== currentStage) {
+      throw new Error(
+        `Stale stage generation for task ${ taskId }: expected ${ expectedGeneration } in ${ currentStage }, ` +
+        `current is ${ latest?.generation ?? 'none' } in ${ latest?.lane_key ?? currentStage }.`,
+      );
+    }
+    return latest.generation;
   }
 
   archive(kind: WorkItemKind, id: string, _context: ProjectsCommandContext = DEFAULT_CONTEXT) {

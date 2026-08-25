@@ -671,7 +671,7 @@ export interface RoutineExecutionOptions {
   executionId?: string;
   /** Optional lifecycle callback for trusted in-process dispatchers. */
   onStarted?:          (executionId: string) => void | Promise<void>;
-  onSettled?:          (result: { executionId: string; status: 'completed' | 'failed'; error?: string }) => void | Promise<void>;
+  onSettled?:          (result: { executionId: string; status: 'completed' | 'failed'; error?: string; outcome?: unknown }) => void | Promise<void>;
   /** Internal only: concurrency is guarded by a task-scoped durable ledger. */
   allowConcurrent?:   boolean;
   /** Protected automation class used by the global mechanical-work limiter. */
@@ -769,7 +769,24 @@ export async function executeRoutine(
   graph.execute(state).then(async() => {
     const terminal = state.metadata.activeWorkflow;
     const status = terminal?.status === 'failed' ? 'failed' : 'completed';
-    await options?.onSettled?.({ executionId, status, error: terminal?.error });
+    const outputs = terminal?.nodeOutputs && typeof terminal.nodeOutputs === 'object'
+      ? terminal.nodeOutputs as Record<string, { result?: unknown }>
+      : {};
+    const orderedNodeIds = Array.isArray(terminal?.definition?.nodes)
+      ? terminal.definition.nodes.map((node: { id: string }) => node.id).reverse()
+      : Object.keys(outputs).reverse();
+    let outcome: unknown;
+    for (const nodeId of orderedNodeIds) {
+      const result = outputs[nodeId]?.result;
+      if (result && typeof result === 'object') { outcome = result; break }
+      if (typeof result !== 'string') continue;
+      try {
+        const normalized = result.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+        const parsed = JSON.parse(normalized);
+        if (parsed && typeof parsed === 'object') { outcome = parsed; break }
+      } catch { /* ordinary prose and response nodes are not structured outcomes */ }
+    }
+    await options?.onSettled?.({ executionId, status, error: terminal?.error, outcome });
     await releaseRoutineSlot();
   }).catch(async(err) => {
     console.error(`[Sulla] routine execution ${ executionId } failed:`, err);

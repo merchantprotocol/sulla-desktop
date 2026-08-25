@@ -226,6 +226,43 @@ export const projectToolManifests: ToolManifest[] = [
   },
   // ── projects ─────────────────────────────────────────────────────────
   {
+    name:        'list_pipeline_templates',
+    description: 'List reusable project pipeline templates, or fetch one template with its ordered stages and attached workflow routines. The bundled default is a locked core template; users may create many additional templates.',
+    category:    'project',
+    schemaDef:   {
+      template_id:     { type: 'string', optional: true, description: 'Fetch one template and its stages.' },
+      include_archived:{ type: 'boolean', optional: true, description: 'Include archived custom templates.' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_pipeline_templates'),
+  },
+  {
+    name:        'create_pipeline_template',
+    description: 'Create a reusable custom project pipeline template with fully ordered stages and optional workflow routine per stage. Core templates cannot be created or replaced through this tool.',
+    category:    'project',
+    schemaDef:   {
+      template_key: { type: 'string', description: 'Stable unique template key.' },
+      name:         { type: 'string', description: 'Human-facing template name.' },
+      description:  { type: 'string', optional: true, description: 'What this pipeline is for.' },
+      stages:       { type: 'array', description: 'Ordered stage objects: stage_key, display_name, position, optional semantic_role, workflow_id, entry_policy, and wip_limit.' },
+      actor:        { type: 'string', optional: true, description: 'Audit attribution.' },
+    },
+    operationTypes: ['create'],
+    loader:         () => import('./create_pipeline_template'),
+  },
+  {
+    name:        'apply_pipeline_template',
+    description: 'Materialize a reusable pipeline template onto an empty project: ordered project stages plus compatible stage workflow bindings. Fails closed once active tasks exist.',
+    category:    'project',
+    schemaDef:   {
+      project_id:  { type: 'string', description: 'Empty project to configure.' },
+      template_id: { type: 'string', description: 'Pipeline template id.' },
+      actor:       { type: 'string', optional: true, description: 'Audit attribution.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./apply_pipeline_template'),
+  },
+  {
     name:        'create_project',
     description: 'Create a NEW project (top of the operator agenda). Always inserts a new row (a unique slug is resolved automatically). Use update_project to change an existing one. Distinct from the filesystem PROJECT.md PRD tooling.',
     category:    'project',
@@ -239,6 +276,7 @@ export const projectToolManifests: ToolManifest[] = [
       owner:          { type: 'string', optional: true, description: 'Who owns the project (e.g. heartbeat, sulla, human).' },
       github_repo:    { type: 'string', optional: true, description: 'Optional owner/repo this project maps to.' },
       due_at:         { type: 'string', optional: true, description: 'ISO due date.' },
+      pipeline_template_id: { type: 'string', optional: true, description: 'Reusable pipeline template id. Defaults to the locked Sulla core project template.' },
     },
     operationTypes: ['create'],
     loader:         () => import('./create_project'),
@@ -344,6 +382,34 @@ export const projectToolManifests: ToolManifest[] = [
     },
     operationTypes: ['update'],
     loader:         () => import('./update_task'),
+  },
+  {
+    name:        'transition_task_stage',
+    description: 'Move a task to one explicit active stage in its project pipeline. Workflow routines should pass expected_generation so a stale run cannot move a newer stage entry.',
+    category:    'project',
+    schemaDef:   {
+      task_id:            { type: 'string', description: 'Task to transition.' },
+      stage_key:          { type: 'string', description: 'Exact stable stage key from resolve_lanes.' },
+      expected_generation:{ type: 'number', optional: true, description: 'Current immutable stage-entry generation. Rejects stale workflow runs.' },
+      custody:            { type: 'object', optional: true, description: 'Structured evidence when the destination stage policy requires custody.' },
+      actor:              { type: 'string', optional: true, description: 'Audit actor. Defaults to sulla.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./transition_task_stage'),
+  },
+  {
+    name:        'transition_task_relative',
+    description: 'Move a task to the next or previous active stage derived solely from its project pipeline order. No lane name or semantic role is assumed.',
+    category:    'project',
+    schemaDef:   {
+      task_id:            { type: 'string', description: 'Task to transition.' },
+      direction:          { type: 'enum', enum: ['next', 'previous'], description: 'Relative movement in the configured project pipeline.' },
+      expected_generation:{ type: 'number', optional: true, description: 'Current immutable stage-entry generation. Rejects stale workflow runs.' },
+      custody:            { type: 'object', optional: true, description: 'Structured evidence when the destination stage policy requires custody.' },
+      actor:              { type: 'string', optional: true, description: 'Audit actor. Defaults to sulla.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./transition_task_relative'),
   },
 
   // ── comments ─────────────────────────────────────────────────────────
