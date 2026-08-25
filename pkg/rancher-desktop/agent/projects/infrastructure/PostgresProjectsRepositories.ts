@@ -2,6 +2,8 @@ import type {
   EpicSnapshot,
   ProjectSnapshot,
   ProjectsCommentRepository,
+  ProjectsDomainEventRecord,
+  ProjectsDomainEventRepository,
   ProjectsEpicRepository,
   ProjectsProjectRepository,
   ProjectsRepositories,
@@ -111,11 +113,42 @@ class PostgresCommentRepository implements ProjectsCommentRepository {
   }
 }
 
+class PostgresDomainEventRepository implements ProjectsDomainEventRepository {
+  constructor(private readonly client: ProjectsSqlClient) {}
+
+  async append(input: {
+    id:              string;
+    taskId:          string;
+    generation:      number;
+    generationHash?: string | null;
+    eventType:       string;
+    idempotencyKey:  string;
+    payload:         Readonly<Record<string, unknown>>;
+    occurredAt:      Date;
+  }): Promise<ProjectsDomainEventRecord> {
+    const result = await this.client.query<ProjectsDomainEventRecord>(`
+      INSERT INTO work_project_domain_events (
+        id, task_id, generation, generation_hash, event_type,
+        idempotency_key, payload, occurred_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+      ON CONFLICT (idempotency_key) DO UPDATE
+        SET idempotency_key = EXCLUDED.idempotency_key
+      RETURNING *
+    `, [
+      input.id, input.taskId, input.generation, input.generationHash ?? null,
+      input.eventType, input.idempotencyKey, JSON.stringify(input.payload), input.occurredAt.toISOString(),
+    ]);
+    if (!result.rows[0]) throw new Error('Projects domain-event insert returned no row.');
+    return result.rows[0];
+  }
+}
+
 export function createPostgresProjectsRepositories(client: ProjectsSqlClient): ProjectsRepositories {
   return {
     projects: new PostgresProjectRepository(client),
     epics:    new PostgresEpicRepository(client),
     tasks:    new PostgresTaskRepository(client),
     comments: new PostgresCommentRepository(client),
+    events:   new PostgresDomainEventRepository(client),
   };
 }
