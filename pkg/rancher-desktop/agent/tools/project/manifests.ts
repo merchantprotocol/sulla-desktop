@@ -275,6 +275,31 @@ export const projectToolManifests: ToolManifest[] = [
     loader:         () => import('./apply_pipeline_template'),
   },
   {
+    name:        'update_pipeline_template',
+    description: 'Rename/re-describe a custom pipeline template and/or replace its ordered stage set. Editing a template never retroactively changes a project that already applied it — templates are blueprints, materialized only at apply time. Core templates cannot be edited.',
+    category:    'project',
+    schemaDef:   {
+      template_id: { type: 'string', description: 'Pipeline template id to edit.' },
+      name:        { type: 'string', optional: true, description: 'New template name.' },
+      description: { type: 'string', optional: true, description: 'New template description.' },
+      stages:      { type: 'array', optional: true, description: 'Full replacement ordered stage set: stage_key, display_name, position, optional semantic_role, workflow_id, entry_policy, and wip_limit. Omit to leave stages unchanged.' },
+      actor:       { type: 'string', optional: true, description: 'Audit attribution.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./update_pipeline_template'),
+  },
+  {
+    name:        'archive_pipeline_template',
+    description: 'Archive a custom pipeline template so it stops appearing for new projects. Core templates cannot be archived.',
+    category:    'project',
+    schemaDef:   {
+      template_id: { type: 'string', description: 'Pipeline template id to archive.' },
+      actor:       { type: 'string', optional: true, description: 'Audit attribution.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./archive_pipeline_template'),
+  },
+  {
     name:        'create_project',
     description: 'Create a NEW project (top of the operator agenda). Always inserts a new row (a unique slug is resolved automatically). Use update_project to change an existing one. Distinct from the filesystem PROJECT.md PRD tooling.',
     category:    'project',

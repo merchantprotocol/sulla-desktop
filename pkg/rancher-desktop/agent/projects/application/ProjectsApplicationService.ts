@@ -29,7 +29,7 @@ import type {
 } from '../../database/models/WorkItemsModel';
 import type { CreateWorkLaneInput, ListWorkLaneOpts, UpdateWorkLaneInput, WorkLaneScope } from '../../database/models/WorkLaneDefinitionModel';
 import type { ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput, LaneEntryAutomationRecord } from '../../database/models/WorkLaneWorkflowBindingModel';
-import type { CreateProjectPipelineTemplateInput } from '../../database/models/WorkProjectPipelineTemplateModel';
+import type { CreateProjectPipelineTemplateInput, UpdateProjectPipelineTemplateInput } from '../../database/models/WorkProjectPipelineTemplateModel';
 import type { SaveProjectViewInput } from '../../database/models/WorkProjectViewModel';
 import type { CreateDependencyInput, RemoveDependencyInput, TaskDependencyHold } from '../../database/models/WorkTaskDependencyModel';
 import type { WorkTaskWaitStatus, RegisterWaitInput, WaitObservation } from '../../database/models/WorkTaskWaitModel';
@@ -334,6 +334,14 @@ export class ProjectsApplicationService {
 
   archiveProjectPipelineTemplate(templateId: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
     return WorkProjectPipelineTemplateModel.archive(itemId(templateId, 'template_id'), context.actor);
+  }
+
+  updateProjectPipelineTemplate(
+    templateId: string,
+    input: UpdateProjectPipelineTemplateInput,
+    context: ProjectsCommandContext = DEFAULT_CONTEXT,
+  ) {
+    return WorkProjectPipelineTemplateModel.update(itemId(templateId, 'template_id'), { ...input, actor: input.actor ?? context.actor });
   }
 
   updateProject(id: string, changes: UpdateProjectInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT) {

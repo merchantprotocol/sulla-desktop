@@ -56,6 +56,13 @@ export interface CreateProjectPipelineTemplateInput {
   actor?: string;
 }
 
+export interface UpdateProjectPipelineTemplateInput {
+  name?: string;
+  description?: string;
+  stages?: CreateProjectPipelineTemplateInput['stages'];
+  actor?: string;
+}
+
 function required(value: string, field: string): string {
   const normalized = value?.trim();
   if (!normalized) throw new Error(`${ field } is required.`);
@@ -125,6 +132,55 @@ export class WorkProjectPipelineTemplateModel {
          SET enabled = false, archived_at = now(), updated_at = now(), updated_by = $2
        WHERE id = $1 RETURNING *
     `, [id, actor]);
+  }
+
+  /**
+   * Rename/re-describe a template and/or replace its ordered stage set.
+   * Templates are blueprints, not live state: applyToProject clones a
+   * template's stages into a project's own work_lane_definitions at apply
+   * time, so editing a template afterward never retroactively changes a
+   * project that already applied it. Stages are omitted-safe: pass none to
+   * only rename, or a full replacement set to redefine the pipeline shape.
+   */
+  static async update(id: string, input: UpdateProjectPipelineTemplateInput): Promise<ProjectPipelineTemplate> {
+    const current = await postgresClient.queryOne<ProjectPipelineTemplateRecord>(
+      'SELECT * FROM work_project_pipeline_templates WHERE id = $1 LIMIT 1', [id],
+    );
+    if (!current) throw new Error(`Pipeline template not found: ${ id }`);
+    if (current.locked || current.system) throw new Error(`Core pipeline template ${ id } cannot be edited.`);
+    if (input.stages) {
+      if (input.stages.length === 0) throw new Error('A pipeline template requires at least one stage.');
+      const keys = input.stages.map(stage => required(stage.stageKey, 'stage_key'));
+      if (new Set(keys).size !== keys.length) throw new Error('Pipeline template stage keys must be unique.');
+      const positions = input.stages.map(stage => stage.position);
+      if (new Set(positions).size !== positions.length) throw new Error('Pipeline template stage positions must be unique.');
+    }
+    const name = input.name !== undefined ? required(input.name, 'name') : null;
+    const actor = input.actor ?? 'sulla';
+
+    await postgresClient.transaction(async(client) => {
+      await client.query(`
+        UPDATE work_project_pipeline_templates
+           SET name = COALESCE($2, name), description = COALESCE($3, description),
+               version = version + 1, updated_at = now(), updated_by = $4
+         WHERE id = $1
+      `, [id, name, input.description ?? null, actor]);
+      if (input.stages) {
+        await client.query('DELETE FROM work_project_pipeline_template_stages WHERE template_id = $1', [id]);
+        for (const stage of input.stages) {
+          await client.query(`
+            INSERT INTO work_project_pipeline_template_stages (
+              id, template_id, stage_key, display_name, description, position,
+              semantic_role, bundled_workflow_id, entry_policy, wip_limit
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
+          `, [`pipeline-template-stage-${ randomUUID() }`, id, stage.stageKey.trim(),
+            required(stage.displayName, 'display_name'), stage.description ?? '', stage.position,
+            stage.semanticRole ?? null, stage.workflowId ?? null,
+            JSON.stringify(stage.entryPolicy ?? {}), stage.wipLimit ?? null]);
+        }
+      }
+    });
+    return (await WorkProjectPipelineTemplateModel.get(id))!;
   }
 
   static async applyToProject(projectId: string, templateId = CORE_PROJECT_PIPELINE_TEMPLATE_ID, actor = 'sulla'):
