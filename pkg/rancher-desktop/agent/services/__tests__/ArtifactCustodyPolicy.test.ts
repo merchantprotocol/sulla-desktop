@@ -1,3 +1,5 @@
+import { jest } from '@jest/globals';
+
 import { ArtifactCustodyPolicy } from '../ArtifactCustodyPolicy';
 
 describe('ArtifactCustodyPolicy.validate', () => {
@@ -52,7 +54,8 @@ describe('ArtifactCustodyPolicy.derive', () => {
 
 describe('ArtifactCustodyPolicy.persistWithClient', () => {
   it('defaults work_kind to non_code when custody omits workKind, to satisfy the NOT NULL column', async() => {
-    const query = jest.fn().mockResolvedValue({});
+    const query: any = jest.fn();
+    query.mockResolvedValue({});
     const client = { query } as any;
     await ArtifactCustodyPolicy.persistWithClient(client, 'task-1', 'in_review', { artifactUrl: 'https://a' }, 'sulla');
     expect(query).toHaveBeenCalledWith(
