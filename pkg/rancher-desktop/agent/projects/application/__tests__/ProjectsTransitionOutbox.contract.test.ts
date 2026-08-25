@@ -19,4 +19,9 @@ describe('Projects transition outbox contract', () => {
   it('uses task and generation as its replay identity', () => {
     expect(source).toContain('projects.task.transitioned:${ committed.id }:${ claimed.entry.generation }');
   });
+
+  it('dispatches orchestration only through the durable event service after commit', () => {
+    expect(source).toContain('getProjectsOrchestrationEventService().drain()');
+    expect(source).not.toContain('LaneEntryAutomationService.dispatchEntry(laneEntryId)');
+  });
 });

@@ -1002,7 +1002,6 @@ export class WorkItemsModel {
     setClauses.push('last_activity_at = now()');
 
     values.push(id);
-    let laneEntryId: string | null = null;
     const updateSql = `UPDATE ${ WorkItemsModel.TASKS } SET ${ setClauses.join(', ') }
       WHERE id = $${ idx } RETURNING *`;
     let updated: WorkTaskRecord | null;
@@ -1028,7 +1027,6 @@ export class WorkItemsModel {
           const { WorkLaneWorkflowBindingModel } = await import('./WorkLaneWorkflowBindingModel');
           const claimed = await WorkLaneWorkflowBindingModel.claimLaneEntryInTransaction(
             client, committed.id, committed.status, changes.actor ?? 'sulla');
-          if (claimed.created && claimed.entry.status === 'pending') laneEntryId = claimed.entry.id;
           const { createPostgresProjectsRepositories } = await import('../../projects/infrastructure/PostgresProjectsRepositories');
           await createPostgresProjectsRepositories(client).events.append({
             id:             `projects-event-${ committed.id }-${ claimed.entry.generation }-transition`,
@@ -1058,12 +1056,12 @@ export class WorkItemsModel {
       updated = rows[0] ?? null;
     }
 
-    if (laneEntryId) {
+    if (updated && changes.status !== undefined && updated.status !== existing.status) {
       try {
-        const { LaneEntryAutomationService } = await import('../../services/LaneEntryAutomationService');
-        await LaneEntryAutomationService.dispatchEntry(laneEntryId);
+        const { getProjectsOrchestrationEventService } = await import('../../projects/application/ProjectsOrchestrationEventService');
+        await getProjectsOrchestrationEventService().drain();
       } catch (error) {
-        console.warn(`[WorkItems] Lane entry ${ laneEntryId } remains recoverable after dispatch failure:`, error);
+        console.warn(`[WorkItems] Transition events for task ${ updated.id } remain recoverable after dispatch failure:`, error);
       }
     }
     if (updated && changes.status !== undefined) {

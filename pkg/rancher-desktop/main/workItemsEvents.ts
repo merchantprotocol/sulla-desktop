@@ -380,11 +380,11 @@ export function initWorkItemsEvents(): void {
     return true;
   });
 
-  // Lane claims are committed outbox rows. Drain them after handler setup so
-  // a crash between task commit and dispatch cannot silently strand work.
-  import('@pkg/agent/services/LaneEntryAutomationService')
-    .then(({ LaneEntryAutomationService }) => LaneEntryAutomationService.drainRecoverable(50, true))
-    .catch(error => console.warn('[WorkItems] Lane-entry recovery failed:', error));
+  // Domain events are the durable orchestration handoff. Drain them after IPC
+  // setup so a crash after task commit cannot strand a lane transition.
+  import('@pkg/agent/projects/application/ProjectsOrchestrationEventService')
+    .then(({ getProjectsOrchestrationEventService }) => getProjectsOrchestrationEventService().drain(50))
+    .catch(error => console.warn('[WorkItems] Projects orchestration recovery failed:', error));
 }
 
 interface ReorderUpdate {
