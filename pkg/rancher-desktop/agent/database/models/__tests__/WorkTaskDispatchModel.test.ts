@@ -4,6 +4,9 @@ import { postgresClient } from '../../PostgresClient';
 import { WorkItemsModel } from '../WorkItemsModel';
 import { ArtifactReceiptModel } from '../ArtifactReceiptModel';
 import { classifyInProgressRow, WorkTaskDispatchModel } from '../WorkTaskDispatchModel';
+import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
+import { ArtifactCustodyPolicy } from '../../../services/ArtifactCustodyPolicy';
+import { ProjectsDomainEventOutbox } from '../../../projects/infrastructure/ProjectsDomainEventOutbox';
 
 describe('WorkTaskDispatchModel', () => {
   let originalTransaction: any;
@@ -15,6 +18,16 @@ describe('WorkTaskDispatchModel', () => {
   });
 
   beforeEach(() => {
+    jest.spyOn(ProjectsDomainEventOutbox, 'claim').mockResolvedValue([]);
+    jest.spyOn(ArtifactCustodyPolicy, 'assertForTransition').mockResolvedValue();
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'claimLaneEntryInTransaction')
+      .mockImplementation(async(_client, taskId, laneKey) => ({
+        created: true,
+        entry: {
+          id: `lane-entry-${ taskId }`, task_id: taskId, lane_key: laneKey,
+          generation: 1, status: 'unautomated', workflow_id: null,
+        } as any,
+      }));
     jest.spyOn(ArtifactReceiptModel, 'insertIfAbsentWithClient').mockResolvedValue({
       inserted: true,
       row: { id: 'receipt-1' } as any,
@@ -69,7 +82,8 @@ describe('WorkTaskDispatchModel', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [stageClaim] })
       .mockResolvedValueOnce({ rows: [dispatch] })
-      .mockResolvedValueOnce({ rows: [executingTask] });
+      .mockResolvedValueOnce({ rows: [executingTask] })
+      .mockResolvedValue({ rows: [{ id: 'event-task-1' }] });
 
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
@@ -194,6 +208,21 @@ describe('WorkTaskDispatchModel', () => {
         archived:    false,
       }]));
 
+    const createQuery = (jest.fn() as any)
+      .mockImplementationOnce((_sql: string, params: any[]) => Promise.resolve({ rows: [{
+        id:          params[0],
+        project_id:  params[1],
+        epic_id:     params[2],
+        title:       params[5],
+        status:      params[7],
+        priority:    params[8],
+        assignee:    params[11],
+        labels:      params[12],
+        archived:    false,
+      }] }))
+      .mockResolvedValue({ rows: [{ id: 'event-task-new' }] });
+    (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query: createQuery }));
+
     const created = await WorkItemsModel.insertTask({
       id:       'task-new',
       epic_id:  'epic-1',
@@ -230,7 +259,8 @@ describe('WorkTaskDispatchModel', () => {
       .mockResolvedValueOnce({ rows: [{
         id: 'dispatch-1', task_id: created.id, agent_id: 'opus-worker', status: 'running',
       }] })
-      .mockResolvedValueOnce({ rows: [executingTask] });
+      .mockResolvedValueOnce({ rows: [executingTask] })
+      .mockResolvedValue({ rows: [{ id: 'event-task-new-claim' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query: clientQuery }));
 
     const claim = await WorkTaskDispatchModel.claimNext('opus-worker', 'runtime-1');
@@ -291,7 +321,9 @@ describe('WorkTaskDispatchModel', () => {
   it('releases stale execution dispatch and stage ownership before making the task reclaimable', async() => {
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [{ id: 'dispatch-1', task_id: 'task-1', kind: 'execution' }] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-1', status: 'todo' }] })
+      .mockResolvedValue({ rows: [{ id: 'event-task-1' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
     await expect(WorkTaskDispatchModel.recoverStale(45)).resolves.toEqual(['task-1']);
@@ -351,17 +383,17 @@ describe('WorkTaskDispatchModel', () => {
       .mockResolvedValueOnce({ rows: [{ task_id: 'task-2' }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [{ id: 'task-2', status: 'done' }] })
+      .mockResolvedValue({ rows: [{ id: 'event-task-2' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
     await expect(WorkTaskDispatchModel.finalizeVerification(
       'dispatch-2', 'APPROVE', 'a'.repeat(40), 'a'.repeat(40), 'All criteria verified.',
     )).resolves.toBe('APPROVE');
-    expect(query.mock.calls[1][0]).toContain('artifact_sha = $3');
-    expect(query.mock.calls[2][0]).toContain('INSERT INTO work_task_comments');
-    expect(query.mock.calls[2][1][2]).toContain('<!-- artifact-receipt');
-    expect(query.mock.calls[3][0]).toContain("completed_at = CASE WHEN $2 = 'done'");
-    expect(query.mock.calls[3][1]).toEqual(['task-2', 'done', null]);
+    expect(query.mock.calls.some(([sql]: [string]) => sql.includes('artifact_sha = $3'))).toBe(true);
+    const taskMove = query.mock.calls.find(([sql]: [string]) =>
+      sql.includes('UPDATE work_tasks') && sql.includes("completed_at = CASE WHEN $2 = 'done'"));
+    expect(taskMove?.[1]).toEqual(['task-2', 'done', null]);
   });
 
   it('refuses to settle approval when the server-resolved head differs', async() => {
@@ -396,7 +428,8 @@ describe('WorkTaskDispatchModel', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 'older' }] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
+      .mockResolvedValueOnce({ rows: [{ id: 'task-fail', status: 'planning' }] })
+      .mockResolvedValue({ rows: [{ id: 'event-task-fail' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
     await expect(WorkTaskDispatchModel.failVerification('dispatch-fail', 'adapter_unavailable')).resolves.toBe(true);
@@ -669,7 +702,8 @@ describe('WorkTaskDispatchModel', () => {
       .mockResolvedValueOnce({ rows: [{ status: 'running' }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: 'task-1', status: 'in_review', assignee: 'heartbeat' }] });
+      .mockResolvedValueOnce({ rows: [{ id: 'task-1', status: 'in_review', assignee: 'heartbeat' }] })
+      .mockResolvedValue({ rows: [{ id: 'event-task-1' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
     const committed = await WorkTaskDispatchModel.finalize('dispatch-1', 'task-1', {

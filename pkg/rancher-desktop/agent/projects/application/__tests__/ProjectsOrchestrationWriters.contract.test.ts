@@ -18,6 +18,7 @@ describe('Projects orchestration writer contract', () => {
       'verification-failure-escalation',
       'duplicate-review-generation',
       'orphan-execution-recovery',
+      'expired-execution-lease-recovery',
     ]) {
       expect(dispatch).toContain(`'${ sourceName }'`);
     }

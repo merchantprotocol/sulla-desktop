@@ -1007,13 +1007,19 @@ export class WorkTaskDispatchModel {
              AND status = 'active'
         `, [executionTaskIds]);
 
-        await client.query(`
+        const recoveredTasks = await client.query<WorkTaskRecord>(`
           UPDATE work_tasks
              SET status = 'todo', assignee = NULL,
                  updated_at = now(), last_moved_at = now(),
                  last_activity_at = now(), last_moved_by = 'dispatcher'
            WHERE id = ANY($1::text[]) AND status = 'in_progress' AND assignee = 'dispatcher'
+          RETURNING *
         `, [executionTaskIds]);
+        for (const task of recoveredTasks.rows) {
+          await appendTaskTransitionEvent(
+            client, task, 'in_progress', 'dispatcher', 'expired-execution-lease-recovery',
+          );
+        }
       }
       if (verificationTaskIds.length > 0) {
         await client.query(`

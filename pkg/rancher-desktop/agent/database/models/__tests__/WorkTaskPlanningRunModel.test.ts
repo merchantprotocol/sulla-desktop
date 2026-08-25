@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals'
 import { postgresClient } from '../../PostgresClient';
 import { LifecycleCapabilityModel } from '../LifecycleCapabilityModel';
 import { WorkLaneDefinitionModel } from '../WorkLaneDefinitionModel';
+import { WorkLaneWorkflowBindingModel } from '../WorkLaneWorkflowBindingModel';
 import { WorkTaskPlanningRunModel } from '../WorkTaskPlanningRunModel';
 
 describe('WorkTaskPlanningRunModel', () => {
@@ -23,25 +24,31 @@ describe('WorkTaskPlanningRunModel', () => {
       ready: false, catalogPresent: false, missingRoles: ['planning'], degradedReason: 'compatibility',
     });
     jest.spyOn(WorkLaneDefinitionModel, 'preferredLaneKey').mockResolvedValue('planning');
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'claimLaneEntryInTransaction').mockResolvedValue({
+      created: true,
+      entry: { id: 'lane-entry-planning', generation: 1, status: 'unautomated' } as any,
+    });
     const blocked = { id: 'task-1', project_id: 'project-1', status: 'blocked', archived: false } as any;
     const planning = { ...blocked, status: 'planning', assignee: 'planning-council' };
     const run = { id: 'planning-1', task_id: 'task-1', status: 'active', attempt: 1 } as any;
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [blocked] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ attempt: 1 }] })
       .mockResolvedValueOnce({ rows: [run] })
-      .mockResolvedValueOnce({ rows: [planning] });
+      .mockResolvedValueOnce({ rows: [planning] })
+      .mockResolvedValue({ rows: [{ id: 'event-planning' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
     const claimed = await WorkTaskPlanningRunModel.claim('task-1', 'blocked', 'heartbeat');
 
     expect(claimed).toMatchObject({ run: { status: 'active' }, task: { status: 'planning' } });
     expect(query.mock.calls[0][0]).toContain('FOR UPDATE');
-    expect(query.mock.calls[1][0]).toContain("status = 'active'");
-    expect(query.mock.calls[3][0]).toContain('INSERT INTO work_task_planning_runs');
-    expect(query.mock.calls[4][0]).toContain('status = $2');
-    expect(query.mock.calls[4][1]).toEqual(['task-1', 'planning']);
+    expect(query.mock.calls[2][0]).toContain("status = 'active'");
+    expect(query.mock.calls[4][0]).toContain('INSERT INTO work_task_planning_runs');
+    expect(query.mock.calls[5][0]).toContain('status = $2');
+    expect(query.mock.calls[5][1]).toEqual(['task-1', 'planning']);
   });
 
   it('does not launch a duplicate when a task already has an active council', async() => {
@@ -53,11 +60,12 @@ describe('WorkTaskPlanningRunModel', () => {
     const task = { id: 'task-1', project_id: 'project-1', status: 'planning', archived: false } as any;
     const query = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: [task] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: 'planning-existing' }] });
     (postgresClient as any).transaction = jest.fn((callback: any) => callback({ query }));
 
     await expect(WorkTaskPlanningRunModel.claim('task-1', 'planning')).resolves.toBeNull();
-    expect(query).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenCalledTimes(3);
   });
 
   it('refreshes the active task-scoped lease by workflow execution id', async() => {
