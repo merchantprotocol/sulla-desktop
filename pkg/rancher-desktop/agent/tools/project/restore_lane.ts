@@ -1,4 +1,4 @@
-import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 export class RestoreLaneWorker extends BaseTool {
@@ -7,8 +7,9 @@ export class RestoreLaneWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      await WorkLaneDefinitionModel.ensureTable();
-      const row = await WorkLaneDefinitionModel.restore(String(input.id || '').trim(), input.actor || 'sulla');
+      const row = await getProjectsApplicationService().restoreLane(
+        String(input.id || '').trim(), { actor: input.actor || 'sulla', source: 'tool' },
+      );
       if (!row) return { successBoolean: false, responseString: `No restorable lane found with id: ${ input.id }` };
       return { successBoolean: true, responseString: JSON.stringify(row) };
     } catch (err: any) {

@@ -1,5 +1,7 @@
-import { WorkTaskWaitModel, type WorkTaskWaitStatus } from '../../database/models/WorkTaskWaitModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
+
+import type { WorkTaskWaitStatus } from '../../database/models/WorkTaskWaitModel';
 
 export class ListTaskWaitsWorker extends BaseTool {
   name = '';
@@ -7,7 +9,7 @@ export class ListTaskWaitsWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      const waits = await WorkTaskWaitModel.list({
+      const waits = await getProjectsApplicationService().listWaits({
         taskId: typeof input.task_id === 'string' && input.task_id.trim() ? input.task_id.trim() : undefined,
         status: typeof input.status === 'string' && input.status.trim() ? input.status.trim() as WorkTaskWaitStatus : undefined,
         limit:  typeof input.limit === 'number' ? input.limit : undefined,

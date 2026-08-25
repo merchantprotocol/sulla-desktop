@@ -1,4 +1,4 @@
-import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 export class ResolveLanesWorker extends BaseTool {
@@ -9,8 +9,7 @@ export class ResolveLanesWorker extends BaseTool {
     const projectId = String(input.project_id || '').trim();
     if (!projectId) return { successBoolean: false, responseString: 'project_id is required.' };
     try {
-      await WorkLaneDefinitionModel.ensureTable();
-      const rows = await WorkLaneDefinitionModel.resolveEffective(projectId, Boolean(input.include_archived));
+      const rows = await getProjectsApplicationService().resolveEffectiveLanes(projectId, Boolean(input.include_archived));
       return { successBoolean: true, responseString: JSON.stringify(rows) };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Resolve lanes failed: ${ err?.message }` };

@@ -1,4 +1,4 @@
-import { WorkItemKnowledgeModel } from '../../database/models/WorkItemKnowledgeModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 import { formatJson, parseItem } from '../knowledgeAssociationAdapter';
 
@@ -9,7 +9,9 @@ export class ListLinkedKnowledgeWorker extends BaseTool {
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
       const item = parseItem(input);
-      const rows = await WorkItemKnowledgeModel.listForItem(item.kind, item.id, {
+      const rows = await getProjectsApplicationService().listKnowledgeForItem({
+        itemKind:         item.kind,
+        itemId:           item.id,
         includeInherited: Boolean(input.include_inherited ?? true),
         includeArchived:  Boolean(input.include_archived ?? false),
         relationType:     input.relation_type,

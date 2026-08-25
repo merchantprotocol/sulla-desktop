@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -16,8 +16,9 @@ export class SearchProjectItemsWorker extends BaseTool {
     const includeArchived = Boolean(input.include_archived ?? input.includeArchived ?? false);
 
     try {
-      await WorkItemsModel.ensureTables();
-      const rows = await WorkItemsModel.search({ query, kind, limit, includeArchived });
+      const projects = getProjectsApplicationService();
+      await projects.ready();
+      const rows = await projects.search({ query, kind, limit, includeArchived });
       if (rows.length === 0) {
         return { successBoolean: true, responseString: `No project items matched "${ query }".` };
       }

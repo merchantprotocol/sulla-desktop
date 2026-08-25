@@ -1,4 +1,4 @@
-import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 export class CreateLaneWorker extends BaseTool {
@@ -7,8 +7,7 @@ export class CreateLaneWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      await WorkLaneDefinitionModel.ensureTable();
-      const row = await WorkLaneDefinitionModel.create({
+      const row = await getProjectsApplicationService().createLane({
         lane_key:      input.lane_key,
         scope:         input.scope,
         project_id:    input.project_id || null,
@@ -21,7 +20,7 @@ export class CreateLaneWorker extends BaseTool {
         semantic_role: input.semantic_role,
         enabled:       input.enabled,
         actor:         input.actor || 'sulla',
-      });
+      }, { actor: input.actor || 'sulla', source: 'tool' });
       return { successBoolean: true, responseString: JSON.stringify(row) };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Create lane failed: ${ err?.message }` };

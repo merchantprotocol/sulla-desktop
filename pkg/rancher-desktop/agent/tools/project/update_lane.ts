@@ -1,4 +1,4 @@
-import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 export class UpdateLaneWorker extends BaseTool {
@@ -7,8 +7,7 @@ export class UpdateLaneWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      await WorkLaneDefinitionModel.ensureTable();
-      const row = await WorkLaneDefinitionModel.update(String(input.id || '').trim(), {
+      const row = await getProjectsApplicationService().updateLane(String(input.id || '').trim(), {
         display_name:  input.display_name,
         description:   input.description,
         color:         input.color === '' ? null : input.color,
@@ -17,7 +16,7 @@ export class UpdateLaneWorker extends BaseTool {
         semantic_role: input.semantic_role,
         enabled:       input.enabled,
         actor:         input.actor || 'sulla',
-      });
+      }, { actor: input.actor || 'sulla', source: 'tool' });
       if (!row) return { successBoolean: false, responseString: `No active lane found with id: ${ input.id }` };
       return { successBoolean: true, responseString: JSON.stringify(row) };
     } catch (err: any) {

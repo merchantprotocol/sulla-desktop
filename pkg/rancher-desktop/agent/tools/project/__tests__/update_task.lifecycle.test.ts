@@ -8,6 +8,7 @@ describe('update_task lifecycle ownership', () => {
   const call = (input: any) => (new UpdateTaskWorker() as any)._validatedCall(input);
   const task = (status: string) => ({
     id:               'task-1',
+    project_id:       'project-1',
     epic_id:          'epic-1',
     title:            'Protected work',
     status,

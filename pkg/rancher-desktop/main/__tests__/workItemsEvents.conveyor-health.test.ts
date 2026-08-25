@@ -9,13 +9,13 @@ describe('work-items conveyor-health IPC contract', () => {
   it('registers snapshot and bounded drill-down channels', () => {
     expect(source).toContain("handle('work-items:conveyor-health'");
     expect(source).toContain("handle('work-items:conveyor-oldest'");
-    expect(source).toContain('WorkConveyorMetricsModel.snapshot');
-    expect(source).toContain('WorkConveyorMetricsModel.oldestItems');
+    expect(source).toContain('projects.conveyorHealth');
+    expect(source).toContain('projects.conveyorOldest');
   });
 
   it('uses durable configured execution and review capacity', () => {
-    expect(source).toContain('resolveWipLimits');
-    expect(source).toContain('wipLimit: limits.execution');
-    expect(source).toContain('reviewLimit: limits.review');
+    expect(source).toContain('projects.automationStatus');
+    expect(source).toContain('wipLimit:    automation.limits.execution');
+    expect(source).toContain('reviewLimit: automation.limits.review');
   });
 });

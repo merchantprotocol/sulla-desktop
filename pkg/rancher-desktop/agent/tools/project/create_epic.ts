@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 function slugify(v: string): string {
@@ -20,15 +20,16 @@ export class CreateEpicWorker extends BaseTool {
     if (!title) return { successBoolean: false, responseString: 'title is required to create an epic.' };
 
     try {
-      await WorkItemsModel.ensureTables();
-      const existing = await WorkItemsModel.listEpics({ projectId, includeDone: true, limit: 1000 });
+      const projects = getProjectsApplicationService();
+      await projects.ready();
+      const existing = await projects.listEpics({ projectId, includeDone: true, limit: 1000 });
       const taken = new Set(existing.map(e => e.slug).filter(Boolean) as string[]);
       const base = slugify(input.slug || title);
       let slug = base;
       let n = 2;
       while (taken.has(slug)) slug = `${ base }-${ n++ }`;
 
-      const record = await WorkItemsModel.upsertEpic({
+      const record = await projects.createEpic({
         project_id:  projectId,
         slug,
         title,
@@ -38,7 +39,7 @@ export class CreateEpicWorker extends BaseTool {
         position:    typeof input.position === 'number' ? input.position : undefined,
         due_at:      input.due_at === '' ? null : input.due_at,
         source:      input.source || 'agent',
-      });
+      }, { actor: input.actor || 'sulla', source: 'tool' });
 
       return {
         successBoolean: true,

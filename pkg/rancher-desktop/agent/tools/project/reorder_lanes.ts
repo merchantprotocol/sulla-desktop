@@ -1,4 +1,4 @@
-import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 export class ReorderLanesWorker extends BaseTool {
@@ -7,9 +7,9 @@ export class ReorderLanesWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     try {
-      await WorkLaneDefinitionModel.ensureTable();
-      const changed = await WorkLaneDefinitionModel.reorder(
-        input.scope, input.ordered_lane_keys, input.project_id || undefined, input.actor || 'sulla',
+      const changed = await getProjectsApplicationService().reorderLanes(
+        input.scope, input.ordered_lane_keys, input.project_id || undefined,
+        { actor: input.actor || 'sulla', source: 'tool' },
       );
       return { successBoolean: true, responseString: `${ changed } lane definition(s) reordered.` };
     } catch (err: any) {

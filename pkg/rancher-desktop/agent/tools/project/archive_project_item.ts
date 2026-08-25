@@ -1,4 +1,4 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
 
 /**
@@ -14,10 +14,11 @@ export class ArchiveProjectItemWorker extends BaseTool {
     const hint = typeof input.kind === 'string' ? input.kind.trim().toLowerCase() : '';
 
     try {
-      await WorkItemsModel.ensureTables();
-      const tryKinds = (hint ? [hint] : ['task', 'epic', 'project']) as Array<'project' | 'epic' | 'task'>;
+      const projects = getProjectsApplicationService();
+      await projects.ready();
+      const tryKinds = (hint ? [hint] : ['task', 'epic', 'project']) as ('project' | 'epic' | 'task')[];
       for (const kind of tryKinds) {
-        const ok = await WorkItemsModel.archive(kind, id);
+        const ok = await projects.archive(kind, id, { actor: input.actor || 'sulla', source: 'tool' });
         if (ok) {
           return {
             successBoolean: true,

@@ -1,6 +1,7 @@
-import { WorkItemsModel } from '../../database/models/WorkItemsModel';
-import { WorkTaskWaitModel, type WorkTaskWaitKind } from '../../database/models/WorkTaskWaitModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { BaseTool, ToolResponse } from '../base';
+
+import type { WorkTaskWaitKind } from '../../database/models/WorkTaskWaitModel';
 
 const WAIT_KINDS = new Set<WorkTaskWaitKind>(['github_checks', 'human_gate', 'scheduled_time', 'external_job']);
 
@@ -22,7 +23,8 @@ export class RegisterTaskWaitWorker extends BaseTool {
       const nextCheckAt = typeof input.next_check_at === 'string' && input.next_check_at.trim()
         ? input.next_check_at.trim()
         : (waitKind === 'human_gate' && dueAt ? dueAt : undefined);
-      const registration = await WorkTaskWaitModel.register({
+      const actor = input.actor || 'sulla';
+      const registration = await getProjectsApplicationService().registerWait({
         taskId,
         waitKind,
         targetKey,
@@ -31,14 +33,7 @@ export class RegisterTaskWaitWorker extends BaseTool {
         nextCheckAt,
         dueAt,
         owner:       typeof input.owner === 'string' && input.owner.trim() ? input.owner.trim() : undefined,
-      });
-      if (registration.created) {
-        await WorkItemsModel.addComment({
-          task_id: taskId,
-          author:  input.actor || 'sulla',
-          body:    `External wait registered: ${ waitKind } (${ targetKey }). Unchanged checks are owned by the durable monitor and will not add task comments.`,
-        });
-      }
+      }, { actor, source: 'tool' });
       return {
         successBoolean: true,
         responseString: `${ registration.created ? 'Registered' : 'Existing' } ${ waitKind } wait ${ registration.wait.id } for task ${ taskId }; next check ${ registration.wait.next_check_at }.`,
