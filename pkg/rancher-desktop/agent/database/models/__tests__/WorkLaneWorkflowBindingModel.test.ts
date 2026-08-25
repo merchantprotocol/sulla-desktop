@@ -46,25 +46,31 @@ describe('WorkLaneWorkflowBindingModel', () => {
     expect(sql).toContain("WHEN 'epic' THEN 0 WHEN 'project' THEN 1 WHEN 'global' THEN 2 ELSE 3");
   });
 
-  it('rejects workflows without the required input/output envelopes', async() => {
+  it('allows binding a workflow that has no lane contract at all', async() => {
     (postgresClient as any).queryOne = (jest.fn() as any)
-      .mockResolvedValueOnce({ id: 'wf', definition: { laneContract: { laneKeys: ['todo'] } }, enabled: true, status: 'production', system: false })
+      .mockResolvedValueOnce({ id: 'wf', definition: {}, enabled: true, status: 'production', system: false })
       .mockResolvedValueOnce({ lane_key: 'todo', semantic_role: 'execution' });
+    (postgresClient as any).transaction = (jest.fn() as any).mockImplementation((cb: any) => cb({
+      query: (jest.fn() as any).mockResolvedValue({ rows: [{ id: 'binding-1' }] }),
+    }));
     await expect(WorkLaneWorkflowBindingModel.set({ scope: 'global', workflowId: 'wf', laneKey: 'todo' }))
-      .rejects.toThrow('incompatible');
+      .resolves.toEqual(expect.objectContaining({ id: 'binding-1' }));
   });
 
-  it('lists only enabled workflows compatible with the authoritative lane contract', async() => {
+  it('lists every enabled, non-archived workflow regardless of declared lane contract', async() => {
     (postgresClient as any).queryOne = jest.fn(() => Promise.resolve({
       lane_key: 'in_review', semantic_role: 'review', system_required: true,
     }));
     (postgresClient as any).query = jest.fn(() => Promise.resolve([
       { id: 'reviewer', name: 'Reviewer', description: null, definition: { laneContract: contract }, enabled: true, status: 'production', system: true },
       { id: 'planner', name: 'Planner', description: null, definition: { laneContract: { ...contract, semanticRoles: ['planning'] } }, enabled: true, status: 'production', system: false },
+      { id: 'plain', name: 'Plain', description: null, definition: {}, enabled: true, status: 'production', system: false },
     ]));
 
     await expect(WorkLaneWorkflowBindingModel.listCompatibleWorkflows('project-1', 'in_review')).resolves.toEqual([
       expect.objectContaining({ id: 'reviewer', name: 'Reviewer', system: true }),
+      expect.objectContaining({ id: 'planner', name: 'Planner', system: false }),
+      expect.objectContaining({ id: 'plain', name: 'Plain', system: false }),
     ]);
   });
 
