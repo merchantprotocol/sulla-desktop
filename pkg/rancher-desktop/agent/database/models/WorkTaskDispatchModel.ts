@@ -573,7 +573,7 @@ export class WorkTaskDispatchModel {
            SELECT 1 FROM unnest(COALESCE(t.labels, '{}')) AS label
             WHERE LOWER(label) = ANY($2::text[])
          )
-       GROUP BY semantic_role
+       GROUP BY 1
     `, [CLOSED_EPIC_STATUSES, NON_AUTONOMOUS_TASK_LABELS]);
 
     const totals: Partial<Record<WorkLaneSemanticRole, number>> = {};

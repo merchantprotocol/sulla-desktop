@@ -28,7 +28,8 @@ export function getDatabaseManager(): DatabaseManager {
 
 export class DatabaseManager {
   private initialized = false;
-  private pollingInterval: NodeJS.Timeout | null = null;
+  private initializationPromise: Promise<void> | null = null;
+  private pollingInterval:       NodeJS.Timeout | null = null;
   private isPolling = false;
 
   /**
@@ -38,14 +39,23 @@ export class DatabaseManager {
    */
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    if (this.initializationPromise) return this.initializationPromise;
 
+    this.initializationPromise = this.initializeOnce();
+    try {
+      await this.initializationPromise;
+    } finally {
+      this.initializationPromise = null;
+    }
+  }
+
+  private async initializeOnce(): Promise<void> {
     console.log('[DB] Connecting to PostgreSQL...');
 
     // Use the shared singleton — lifecycle manager already verified the host port is reachable
     await postgresClient.initialize();
     await postgresClient.query('SELECT 1');
     console.log('[DB] Connection healthy');
-    this.initialized = true;
 
     await this.runMigrations();
 
@@ -110,6 +120,7 @@ export class DatabaseManager {
       console.warn('[DB] ProjectRegistry warm initialization failed:', error);
     }
 
+    this.initialized = true;
     console.log('[DB] Database fully initialized');
   }
 
