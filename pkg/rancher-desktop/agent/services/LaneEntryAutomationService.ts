@@ -42,12 +42,35 @@ export class LaneEntryAutomationService {
         executionScope:     { taskId: entry.task_id, generation: entry.generation },
         executionId,
         onSettled:          async(result) => {
+          const outcome = result.outcome && typeof result.outcome === 'object'
+            ? result.outcome as Record<string, any>
+            : {};
+          let transitionReceipt: unknown = null;
+          if (result.status === 'completed' && outcome.transition) {
+            const transition = outcome.transition as { mode?: string; stageKey?: string };
+            const { getProjectsApplicationService } = await import('../projects/application/ProjectsApplicationService');
+            const projects = getProjectsApplicationService();
+            const context = { actor: 'sulla' as const, source: 'routine' as const };
+            if (transition.mode === 'next') {
+              transitionReceipt = await projects.transitionTaskRelative({
+                taskId: entry.task_id, direction: 'next', expectedGeneration: entry.generation,
+                custody: outcome.custody,
+              }, context);
+            } else if (transition.mode === 'specific' && typeof transition.stageKey === 'string') {
+              transitionReceipt = await projects.transitionTaskStage({
+                taskId: entry.task_id, stageKey: transition.stageKey, expectedGeneration: entry.generation,
+                custody: outcome.custody,
+              }, context);
+            } else {
+              throw new Error('Lane workflow returned an invalid transition outcome.');
+            }
+          }
           await WorkLaneWorkflowBindingModel.markOutcome(
             entry.id,
             result.executionId,
             result.status,
             result.status === 'completed'
-              ? { disposition: 'completed' }
+              ? { disposition: 'completed', workflowOutcome: outcome, transitionReceipt }
               : { disposition: 'runtime_failed', message: result.error ?? 'Unknown workflow failure' },
           );
         },

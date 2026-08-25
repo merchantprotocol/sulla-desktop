@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { WorkLaneWorkflowBindingModel } from '../../database/models/WorkLaneWorkflowBindingModel';
+import { getProjectsApplicationService } from '../../projects/application/ProjectsApplicationService';
 import { LaneEntryAutomationService } from '../LaneEntryAutomationService';
 
 describe('LaneEntryAutomationService', () => {
@@ -62,7 +63,36 @@ describe('LaneEntryAutomationService', () => {
       executionId:        'lane-exec-task-1-3',
     }));
     expect(settled).toHaveBeenCalledWith(
-      'entry-3', 'lane-exec-task-1-3', 'completed', { disposition: 'completed' });
+      'entry-3', 'lane-exec-task-1-3', 'completed', {
+        disposition: 'completed', workflowOutcome: {}, transitionReceipt: null,
+      });
+  });
+
+  it('applies a structured next-stage outcome against the exact claimed generation', async() => {
+    const entry: any = {
+      id: 'entry-next', task_id: 'task-1', workflow_id: 'wf-1', generation: 4,
+      lane_key: 'research', status: 'pending', binding_snapshot: {}, workflow_snapshot: { id: 'wf-1' },
+    };
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'getLaneEntry')
+      .mockResolvedValueOnce(entry).mockResolvedValueOnce({ ...entry, status: 'running' });
+    jest.spyOn(WorkLaneWorkflowBindingModel, 'markStarted').mockResolvedValue({ ...entry, status: 'running' });
+    const settled = jest.spyOn(WorkLaneWorkflowBindingModel, 'markOutcome').mockResolvedValue({ ...entry, status: 'completed' });
+    const transition = jest.spyOn(getProjectsApplicationService(), 'transitionTaskRelative').mockResolvedValue({
+      task: {} as any, fromStage: 'research', toStage: 'publish', stagePosition: 2, previousGeneration: 4,
+    });
+    jest.spyOn(LaneEntryAutomationService as any, 'executeRoutine').mockImplementation(async(...args: unknown[]) => {
+      await (args[2] as any).onSettled({
+        executionId: 'lane-exec-task-1-4', status: 'completed', outcome: { transition: { mode: 'next' } },
+      });
+      return { executionId: 'lane-exec-task-1-4', workflowId: 'wf-1' };
+    });
+
+    await LaneEntryAutomationService.dispatchEntry('entry-next');
+    expect(transition).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: 'task-1', direction: 'next', expectedGeneration: 4,
+    }), { actor: 'sulla', source: 'routine' });
+    expect(settled).toHaveBeenCalledWith('entry-next', 'lane-exec-task-1-4', 'completed',
+      expect.objectContaining({ transitionReceipt: expect.objectContaining({ toStage: 'publish' }) }));
   });
 
   it('retries a committed pending outbox row once', async() => {
