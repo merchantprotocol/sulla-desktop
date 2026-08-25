@@ -717,7 +717,7 @@ export class WorkTaskDispatchModel {
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `, [auditId, task.id, attemptNumber, outcome, reason, task.status, task.assignee, task.last_activity_at]);
 
-        await client.query(`
+        const moved = await client.query<WorkTaskRecord>(`
           WITH inserted AS (
             INSERT INTO work_task_comments (id, task_id, body, author)
             VALUES ($1, $2, $3, 'dispatcher')
@@ -730,11 +730,17 @@ export class WorkTaskDispatchModel {
                  last_activity_at = now(),
                  last_moved_by = 'dispatcher'
            WHERE id = $2
+          RETURNING work_tasks.*
         `, [
           `comment-${ randomUUID() }`, task.id,
           `Orphan recovery attempt ${ attemptNumber }: ${ reason }. Prior owner: ${ task.assignee ?? 'unassigned' }. Prior activity: ${ task.last_activity_at }. Outcome: ${ nextStatus }/${ nextAssignee }. Undo path: ${ undo }.`,
           nextStatus, nextAssignee,
         ]);
+        if (moved.rows[0]) {
+          await appendTaskTransitionEvent(
+            client, moved.rows[0], task.status, 'dispatcher', 'orphan-execution-recovery',
+          );
+        }
         results.push({ taskId: task.id, outcome, attemptNumber });
       }
       return results;
@@ -844,12 +850,18 @@ export class WorkTaskDispatchModel {
         `, [id, `suppressed identical terminal generation ${ terminal.rows[0].id }`, generationHash,
           [...new Set(artifacts.map(value => value.type))], JSON.stringify(artifacts), [...excluded], priorDisposition,
           [...workers], [...custodians]]);
-        await client.query(`
+        const moved = await client.query<WorkTaskRecord>(`
           UPDATE work_tasks SET status = $2, assignee = $3, updated_at = now(),
             last_moved_at = now(), last_activity_at = now(), last_moved_by = 'verifier',
             completed_at = CASE WHEN $2 = 'done' THEN now() ELSE NULL END
           WHERE id = $1 AND status = 'in_review'
+          RETURNING *
         `, [taskId, transition.status, transition.assignee]);
+        if (moved.rows[0]) {
+          await appendTaskTransitionEvent(
+            client, moved.rows[0], 'in_review', 'verifier', 'duplicate-review-generation',
+          );
+        }
         return { generationHash, excludedAgentIds: [...excluded], suppressed: true };
       }
 

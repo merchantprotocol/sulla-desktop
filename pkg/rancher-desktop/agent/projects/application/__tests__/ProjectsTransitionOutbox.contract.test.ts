@@ -28,4 +28,10 @@ describe('Projects transition outbox contract', () => {
     expect(source).toContain('getProjectsOrchestrationEventService().drain()');
     expect(source).not.toContain('LaneEntryAutomationService.dispatchEntry(laneEntryId)');
   });
+
+  it('commits task creation and its initial lifecycle event atomically', () => {
+    const insert = source.slice(source.indexOf('static async insertTask'), source.indexOf('static async upsertTask'));
+    expect(insert).toContain('postgresClient.transaction(async(client)');
+    expect(insert).toContain("appendTaskTransitionEvent(client, inserted, '', actor");
+  });
 });

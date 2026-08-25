@@ -800,43 +800,49 @@ export class WorkItemsModel {
       executionEntryLaneKey,
     });
 
-    const rows = await postgresClient.query<WorkTaskRecord>(
-      `INSERT INTO ${ WorkItemsModel.TASKS }
-         (id, project_id, epic_id, parent_id, slug, title, description, status,
-          priority, due_at, github_issue, assignee, labels, position, source,
-          source_ref, created_by, completed_at, start_at, milestone_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-       RETURNING *`,
-      [
-        id,
-        projectId,
-        input.epic_id,
-        input.parent_id ?? null,
-        slug,
-        input.title,
-        input.description ?? '',
-        status,
-        input.priority ?? 'p2',
-        input.due_at ?? null,
-        input.github_issue ?? null,
-        assignee,
-        labels,
-        input.position ?? 0,
-        input.source ?? null,
-        input.source_ref ?? null,
-        actor,
-        (lane ? lane.semantic_role === 'terminal' : isClosedStatus(status)) ? new Date().toISOString() : null,
-        input.start_at ?? null,
-        input.milestone_at ?? null,
-      ],
-    );
-    const created = rows[0];
+    const created = await postgresClient.transaction(async(client) => {
+      const rows = await client.query<WorkTaskRecord>(
+        `INSERT INTO ${ WorkItemsModel.TASKS }
+           (id, project_id, epic_id, parent_id, slug, title, description, status,
+            priority, due_at, github_issue, assignee, labels, position, source,
+            source_ref, created_by, completed_at, start_at, milestone_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+         RETURNING *`,
+        [
+          id,
+          projectId,
+          input.epic_id,
+          input.parent_id ?? null,
+          slug,
+          input.title,
+          input.description ?? '',
+          status,
+          input.priority ?? 'p2',
+          input.due_at ?? null,
+          input.github_issue ?? null,
+          assignee,
+          labels,
+          input.position ?? 0,
+          input.source ?? null,
+          input.source_ref ?? null,
+          actor,
+          (lane ? lane.semantic_role === 'terminal' : isClosedStatus(status)) ? new Date().toISOString() : null,
+          input.start_at ?? null,
+          input.milestone_at ?? null,
+        ],
+      );
+      const inserted = rows.rows[0];
+      if (inserted) {
+        await appendTaskTransitionEvent(client, inserted, '', actor, input.source ?? 'task-create');
+      }
+      return inserted;
+    });
     if (created) {
       try {
-        const { TaskLifecycleOrchestrationService } = await import('../../projects/application/TaskLifecycleOrchestrationService');
-        await TaskLifecycleOrchestrationService.handleCommittedTransition(created, '', input.actor);
+        const { getProjectsOrchestrationEventService } = await import('../../projects/application/ProjectsOrchestrationEventService');
+        await getProjectsOrchestrationEventService().drain();
       } catch (error) {
-        console.error(`[WorkItemsModel] Post-create orchestration failed for task ${ created.id }:`, error);
+        console.error(`[WorkItemsModel] Created task ${ created.id } has recoverable orchestration events:`, error);
       }
     }
     return created;
