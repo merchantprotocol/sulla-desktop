@@ -97,6 +97,7 @@ describe('WorkLaneWorkflowBindingModel', () => {
     const client = {
       query: (jest.fn() as any)
         .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [{ id: 'entry-1', task_id: 'task-1', generation: 4, lane_key: 'todo' }] }),
     };
     (postgresClient as any).transaction = jest.fn((callback: any) => callback(client));
@@ -104,6 +105,6 @@ describe('WorkLaneWorkflowBindingModel', () => {
     const result = await WorkLaneWorkflowBindingModel.claimLaneEntry('task-1', 'todo');
     expect(result).toEqual({ created: false, entry: expect.objectContaining({ generation: 4 }) });
     expect(client.query.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
-    expect(client.query).toHaveBeenCalledTimes(2);
+    expect(client.query).toHaveBeenCalledTimes(3);
   });
 });

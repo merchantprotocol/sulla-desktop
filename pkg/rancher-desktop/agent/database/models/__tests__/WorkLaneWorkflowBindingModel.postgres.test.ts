@@ -12,6 +12,10 @@ import { up as addWorkTaskActivity } from '../../migrations/0061_add_work_task_a
 import { up as createLaneDefinitions } from '../../migrations/0069_create_work_lane_definitions';
 import { up as createLaneWorkflowBindings } from '../../migrations/0070_create_lane_workflow_bindings';
 import { up as scopeLaneWorkflowExecutions } from '../../migrations/0071_scope_lane_workflow_executions';
+import { up as addProjectViewsAndScheduling } from '../../migrations/0075_add_project_views_and_scheduling';
+import { up as addWorkflowExecutionLeases } from '../../migrations/0081_add_workflow_execution_leases';
+import { up as createWorkTaskDependencies } from '../../migrations/0083_create_work_task_dependencies';
+import { up as createProjectsDomainEventOutbox } from '../../migrations/0086_create_projects_domain_event_outbox';
 import { WorkItemsModel } from '../WorkItemsModel';
 import {
   LANE_ENTRY_INPUT_ENVELOPE, LANE_OUTCOME_OUTPUT_ENVELOPE,
@@ -39,6 +43,10 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     await pool.query(createLaneDefinitions);
     await pool.query(createLaneWorkflowBindings);
     await pool.query(scopeLaneWorkflowExecutions);
+    await addProjectViewsAndScheduling(pool as any);
+    await pool.query(addWorkflowExecutionLeases);
+    await createWorkTaskDependencies(pool as any);
+    await pool.query(createProjectsDomainEventOutbox);
 
     (postgresClient as any).query = async(text: string, params: unknown[] = []) =>
       (await pool.query(text, params)).rows;
@@ -132,6 +140,78 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
     expect(entries.find(entry => entry.generation === 2)?.workflow_snapshot).toMatchObject({ revision: 2 });
   }, 30_000);
 
+  it('runs a custom non-coding pipeline from exact project-stage bindings without semantic behavior', async() => {
+    await pool.query(`
+      INSERT INTO work_projects (id, slug, title)
+      VALUES ('project-publishing', 'project-publishing', 'Publishing');
+      INSERT INTO work_epics (id, project_id, title)
+      VALUES ('epic-publishing', 'project-publishing', 'Launch issue');
+      INSERT INTO work_tasks (id, project_id, epic_id, title, status)
+      VALUES ('task-article', 'project-publishing', 'epic-publishing', 'Write article', 'backlog');
+      INSERT INTO work_lane_definitions
+        (id, lane_key, scope, project_id, display_name, position, semantic_role, system_required)
+      VALUES
+        ('lane-intake', 'intake', 'project', 'project-publishing', 'Intake', 10, 'manual', false),
+        ('lane-research', 'research', 'project', 'project-publishing', 'Research', 20, 'manual', false),
+        ('lane-publish', 'publish', 'project', 'project-publishing', 'Publish', 30, 'manual', false);
+    `);
+
+    for (const [stage, revision] of [['intake', 1], ['research', 2], ['publish', 3]] as const) {
+      const contract = {
+        laneKeys: [stage], input: LANE_ENTRY_INPUT_ENVELOPE, output: LANE_OUTCOME_OUTPUT_ENVELOPE,
+      };
+      await pool.query(`
+        INSERT INTO workflows (id, name, status, enabled, system, definition)
+        VALUES ($1, $2, 'production', true, false, $3::jsonb)
+      `, [`workflow-${ stage }`, `${ stage } workflow`, JSON.stringify({ laneContract: contract, revision })]);
+      await WorkLaneWorkflowBindingModel.set({
+        scope: 'project', projectId: 'project-publishing', laneKey: stage,
+        workflowId: `workflow-${ stage }`, actor: 'integration-test',
+      });
+    }
+
+    const intake = await WorkLaneWorkflowBindingModel.claimLaneEntry('task-article', 'intake', 'integration-test');
+    const research = await WorkLaneWorkflowBindingModel.claimLaneEntry('task-article', 'research', 'integration-test');
+    const publish = await WorkLaneWorkflowBindingModel.claimLaneEntry('task-article', 'publish', 'integration-test');
+
+    expect([intake, research, publish]).toEqual([
+      expect.objectContaining({ created: true, entry: expect.objectContaining({
+        lane_key: 'intake', workflow_id: 'workflow-intake', resolution_source: 'project',
+        workflow_snapshot: expect.objectContaining({ revision: 1 }),
+      }) }),
+      expect.objectContaining({ created: true, entry: expect.objectContaining({
+        lane_key: 'research', workflow_id: 'workflow-research', resolution_source: 'project',
+        workflow_snapshot: expect.objectContaining({ revision: 2 }),
+      }) }),
+      expect.objectContaining({ created: true, entry: expect.objectContaining({
+        lane_key: 'publish', workflow_id: 'workflow-publish', resolution_source: 'project',
+        workflow_snapshot: expect.objectContaining({ revision: 3 }),
+      }) }),
+    ]);
+
+    await pool.query(`
+      UPDATE workflows SET enabled = false, definition = '{"revision":99}'::jsonb
+       WHERE id = 'workflow-research'
+    `);
+    expect((await WorkLaneWorkflowBindingModel.getLaneEntry(research.entry.id))?.workflow_snapshot)
+      .toMatchObject({ revision: 2 });
+  }, 30_000);
+
+  it('keeps an unbound custom project stage manual instead of inventing pipeline behavior', async() => {
+    await pool.query(`
+      INSERT INTO work_lane_definitions
+        (id, lane_key, scope, project_id, display_name, position, semantic_role, system_required)
+      VALUES ('lane-legal-check', 'legal-check', 'project', 'project-publishing',
+              'Legal check', 25, 'manual', false);
+    `);
+    await expect(WorkLaneWorkflowBindingModel.claimLaneEntry(
+      'task-article', 'legal-check', 'integration-test',
+    )).resolves.toMatchObject({
+      created: true,
+      entry: { lane_key: 'legal-check', workflow_id: null, resolution_source: 'manual', status: 'unautomated' },
+    });
+  }, 30_000);
+
   it('commits the task status and lane outbox claim atomically, and rolls both back on claim failure', async() => {
     await pool.query(`
       INSERT INTO work_tasks (id, project_id, epic_id, title, status)
@@ -211,8 +291,9 @@ describeWithPostgres('WorkLaneWorkflowBindingModel migrated PostgreSQL integrati
       execution_id: execution1, status: 'completed', outcome: { disposition: 'completed' },
     });
 
-    await WorkItemsModel.updateTask('task-runtime', { status: 'in_review', actor: 'integration-test' });
-    const generation2 = (await WorkLaneWorkflowBindingModel.listLaneEntries('task-runtime'))[0];
+    const generation2 = (await WorkLaneWorkflowBindingModel.claimLaneEntry(
+      'task-runtime', 'in_review', 'integration-test',
+    )).entry;
     const execution2 = 'lane-exec-task-runtime-2';
     await WorkLaneWorkflowBindingModel.markStarted(generation2.id, execution2);
     await WorkflowExecutionModel.markRunning({
