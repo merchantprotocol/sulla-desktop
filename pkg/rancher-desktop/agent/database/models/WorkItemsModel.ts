@@ -1079,24 +1079,57 @@ export class WorkItemsModel {
   // ──────────────────────────────────────────────
 
   static async addComment(input: AddCommentInput): Promise<WorkCommentRecord> {
-    const task = await WorkItemsModel.getTask(input.task_id);
-    if (!task) throw new Error(`No task found with id: ${ input.task_id }`);
     const id = input.id || await WorkItemsModel.uniqueId(WorkItemsModel.COMMENTS);
-    const rows = await postgresClient.query<WorkCommentRecord>(
-      `WITH inserted AS (
-         INSERT INTO ${ WorkItemsModel.COMMENTS } (id, task_id, body, author)
-         VALUES ($1, $2, $3, $4)
-         RETURNING *
-       ), touched AS (
-         UPDATE ${ WorkItemsModel.TASKS }
-            SET last_activity_at = now()
-          WHERE id = $2
-          RETURNING id
-       )
-       SELECT inserted.* FROM inserted JOIN touched ON true`,
-      [id, input.task_id, input.body, input.author ?? input.actor ?? 'sulla'],
-    );
-    return rows[0];
+    const author = input.author ?? input.actor ?? 'sulla';
+    let transitioned = false;
+    const comment = await postgresClient.transaction(async(client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`lane-entry:${ input.task_id }`]);
+      const before = await client.query<WorkTaskRecord>(
+        `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1 AND archived = false FOR UPDATE`,
+        [input.task_id],
+      );
+      if (!before.rows[0]) throw new Error(`No task found with id: ${ input.task_id }`);
+
+      const rows = await client.query<WorkCommentRecord>(
+        `WITH inserted AS (
+           INSERT INTO ${ WorkItemsModel.COMMENTS } (id, task_id, body, author)
+           VALUES ($1, $2, $3, $4)
+           RETURNING *
+         ), touched AS (
+           UPDATE ${ WorkItemsModel.TASKS }
+              SET last_activity_at = now()
+            WHERE id = $2
+            RETURNING id
+         )
+         SELECT inserted.* FROM inserted JOIN touched ON true`,
+        [id, input.task_id, input.body, author],
+      );
+
+      // The packaged human-comment trigger may move a blocked task to its
+      // review lane while invalidating an active wait. Re-read inside this
+      // same transaction and append the durable handoff before commit, so
+      // the trigger can never create a split task/outbox state.
+      const after = await client.query<WorkTaskRecord>(
+        `SELECT * FROM ${ WorkItemsModel.TASKS } WHERE id = $1`, [input.task_id],
+      );
+      if (after.rows[0] && after.rows[0].status !== before.rows[0].status) {
+        await appendTaskTransitionEvent(
+          client, after.rows[0], before.rows[0].status, author, 'human-comment-wait-invalidation',
+        );
+        transitioned = true;
+      }
+      return rows.rows[0];
+    });
+
+    if (transitioned) {
+      try {
+        const { getProjectsOrchestrationEventService } = await import('../../projects/application/ProjectsOrchestrationEventService');
+        await getProjectsOrchestrationEventService().drain();
+      } catch (error) {
+        console.warn(`[WorkItems] Comment transition events for task ${ input.task_id } remain recoverable after dispatch failure:`, error);
+      }
+    }
+    return comment;
   }
 
   static async listComments(taskId: string): Promise<WorkCommentRecord[]> {

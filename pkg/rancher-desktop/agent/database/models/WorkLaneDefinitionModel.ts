@@ -1,6 +1,8 @@
 import { postgresClient } from '../PostgresClient';
+import { appendTaskTransitionEvent } from '../../projects/infrastructure/appendTaskTransitionEvent';
 
 import type { PoolClient } from 'pg';
+import type { WorkTaskRecord } from './WorkItemsModel';
 
 export type WorkLaneScope = 'global_default' | 'project';
 export type WorkLaneSemanticRole = 'backlog' | 'planning' | 'execution' | 'review' | 'blocked' | 'terminal' | 'manual';
@@ -384,11 +386,15 @@ export class WorkLaneDefinitionModel {
                   AND project_lane.lane_key = $3
                   AND project_lane.reset_at IS NULL
              )`;
-        await client.query(
+        const moved = await client.query<WorkTaskRecord>(
           `UPDATE work_tasks SET status = $1, updated_at = now(), last_moved_at = now(),
              last_activity_at = now(), last_moved_by = $2
-            WHERE archived = false AND status = $3 ${ moveFilter }`, moveParams,
+            WHERE archived = false AND status = $3 ${ moveFilter }
+            RETURNING *`, moveParams,
         );
+        for (const task of moved.rows) {
+          await appendTaskTransitionEvent(client, task, lane.lane_key, actor, 'lane-archive-move');
+        }
       }
       const updated = await client.query<WorkLaneDefinitionRecord>(`
         UPDATE work_lane_definitions

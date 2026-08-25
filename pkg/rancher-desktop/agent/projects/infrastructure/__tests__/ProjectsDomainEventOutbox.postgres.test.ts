@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Pool } from 'pg';
 
 import { postgresClient } from '../../../database/PostgresClient';
@@ -8,6 +8,9 @@ import { up as createWorkItems } from '../../../database/migrations/0044_create_
 import { up as createDomainEventOutbox } from '../../../database/migrations/0086_create_projects_domain_event_outbox';
 import { createPostgresProjectsRepositories } from '../PostgresProjectsRepositories';
 import { ProjectsDomainEventOutbox } from '../ProjectsDomainEventOutbox';
+import { WorkItemsModel } from '../../../database/models/WorkItemsModel';
+import { ProjectsOrchestrationEventService } from '../../application/ProjectsOrchestrationEventService';
+import { TaskLifecycleOrchestrationService } from '../../application/TaskLifecycleOrchestrationService';
 
 const connectionString = process.env.SULLA_INTEGRATION_POSTGRES_URL;
 const describeWithPostgres = connectionString ? describe : describe.skip;
@@ -44,6 +47,7 @@ describeWithPostgres('Projects domain-event outbox (migrated PostgreSQL)', () =>
   });
 
   afterAll(async() => {
+    jest.restoreAllMocks();
     (postgresClient as any).query = originalQuery;
     (postgresClient as any).transaction = originalTransaction;
     await pool?.end();
@@ -90,5 +94,50 @@ describeWithPostgres('Projects domain-event outbox (migrated PostgreSQL)', () =>
     })).rejects.toThrow('abort transition');
     expect((await pool.query(`SELECT status FROM work_tasks WHERE id = 't1'`)).rows[0].status).toBe('todo');
     expect((await pool.query(`SELECT id FROM work_project_domain_events WHERE id = 'event-rollback'`)).rows).toHaveLength(0);
+  });
+
+  it('replays every lifecycle frontier through the runtime dispatcher after restart', async() => {
+    const lifecycle = jest.spyOn(TaskLifecycleOrchestrationService, 'handleCommittedTransition').mockResolvedValue();
+    // Keep the runtime read path real: WorkItemsModel reads through the
+    // disposable migrated pool installed in beforeAll.
+    const cases = [
+      ['in_progress', 'in_review', 'execution-review'],
+      ['in_review', 'todo', 'review-repair'],
+      ['in_review', 'planning', 'review-planning'],
+      ['in_review', 'blocked', 'review-wait'],
+      ['in_review', 'done', 'review-done'],
+      ['blocked', 'planning', 'blocked-planning'],
+      ['blocked', 'in_review', 'blocked-wait-release'],
+    ] as const;
+
+    let generation = 10;
+    for (const [fromLane, toLane, scenario] of cases) {
+      generation++;
+      await pool.query('UPDATE work_tasks SET status = $1 WHERE id = $2', [toLane, 't1']);
+      await postgresClient.transaction(async(client) => {
+        await createPostgresProjectsRepositories(client).events.append({
+          id: `event-${ scenario }`, taskId: 't1', generation,
+          eventType: 'projects.task.transitioned',
+          idempotencyKey: `transition:t1:${ generation }`,
+          payload: { fromLane, toLane, laneAutomated: false, scenario },
+          occurredAt: new Date(),
+        });
+      });
+
+      // A new service instance models process restart: no in-memory queue or
+      // owner state is reused; the committed outbox row is the sole handoff.
+      const restarted = new ProjectsOrchestrationEventService(`restart-owner-${ generation }`, async() => undefined);
+      await expect(restarted.drain(1)).resolves.toEqual({ completed: 1, retried: 0, unhandled: 0 });
+      expect(lifecycle).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: 't1', status: toLane }), fromLane, undefined,
+      );
+      const stored = await pool.query('SELECT status FROM work_project_domain_events WHERE id = $1', [`event-${ scenario }`]);
+      expect(stored.rows[0].status).toBe('completed');
+    }
+
+    expect(lifecycle).toHaveBeenCalledTimes(cases.length);
+    // Guard the test against accidentally replacing the real current-task
+    // lookup with a mocked shortcut.
+    expect(jest.isMockFunction(WorkItemsModel.getTask)).toBe(false);
   });
 });

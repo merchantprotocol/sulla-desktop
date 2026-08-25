@@ -36,4 +36,16 @@ describe('Projects orchestration writer contract', () => {
     const dispatcher = source('pkg/rancher-desktop/agent/services/TaskDispatcherService.ts');
     expect(dispatcher.match(/getProjectsOrchestrationEventService\(\)\.drain\(50\)/g)).toHaveLength(2);
   });
+
+  it('routes human-comment wait invalidation, lane archival, and capability recovery through the outbox', () => {
+    const workItems = source('pkg/rancher-desktop/agent/database/models/WorkItemsModel.ts');
+    const lanes = source('pkg/rancher-desktop/agent/database/models/WorkLaneDefinitionModel.ts');
+    const capabilities = source('pkg/rancher-desktop/agent/database/models/LifecycleCapabilityModel.ts');
+
+    expect(workItems).toContain("'human-comment-wait-invalidation'");
+    expect(workItems.slice(workItems.indexOf('static async addComment'))).toContain('appendTaskTransitionEvent(');
+    expect(lanes).toContain("'lane-archive-move'");
+    expect(capabilities).toContain("'capability-recovery-open'");
+    expect(capabilities).toContain("'capability-recovery-resolved'");
+  });
 });

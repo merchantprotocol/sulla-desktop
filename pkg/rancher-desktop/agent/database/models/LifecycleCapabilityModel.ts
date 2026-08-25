@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import { postgresClient } from '../PostgresClient';
+import { appendTaskTransitionEvent } from '../../projects/infrastructure/appendTaskTransitionEvent';
 
 import type { PoolClient } from 'pg';
+import type { WorkTaskRecord } from './WorkItemsModel';
 
 export const LIFECYCLE_CAPABILITY_KEYS = [
   'planning-council',
@@ -357,7 +359,10 @@ export class LifecycleCapabilityModel {
       `);
       const target = context.rows[0];
       if (!target) return;
-      await client.query(`
+      const prior = await client.query<WorkTaskRecord>(
+        'SELECT * FROM work_tasks WHERE id = $1 FOR UPDATE', [id],
+      );
+      const upserted = await client.query<WorkTaskRecord>(`
         INSERT INTO work_tasks (
           id, project_id, epic_id, title, description, status, priority,
           assignee, labels, source, source_ref, created_by, last_moved_by
@@ -368,6 +373,7 @@ export class LifecycleCapabilityModel {
           description = EXCLUDED.description,
           status = CASE WHEN work_tasks.status IN ('done', 'cancelled', 'parked') THEN 'todo' ELSE work_tasks.status END,
           priority = 'critical', archived = false, updated_at = now(), last_activity_at = now()
+        RETURNING *
       `, [
         id,
         target.project_id,
@@ -376,6 +382,13 @@ export class LifecycleCapabilityModel {
         `Capability ${ current.capability_key } is degraded. Owner: ${ current.active_owner ?? 'none' }. Error: ${ current.last_error ?? 'unknown' }. Exception count: ${ current.exception_count }. Restore health without bypassing its single-owner claim.`,
         `lifecycle-capability:${ current.capability_key }`,
       ]);
+      const recoveryTask = upserted.rows[0];
+      const previousStatus = prior.rows[0]?.status ?? '';
+      if (recoveryTask && recoveryTask.status !== previousStatus) {
+        await appendTaskTransitionEvent(
+          client, recoveryTask, previousStatus, 'lifecycle-control-plane', 'capability-recovery-open',
+        );
+      }
       await client.query(
         'UPDATE lifecycle_capabilities SET recovery_task_id = $2 WHERE capability_key = $1',
         [current.capability_key, id],
@@ -385,13 +398,23 @@ export class LifecycleCapabilityModel {
 
   private static async resolveRecoveryTask(capability: LifecycleCapabilityRecord): Promise<void> {
     await postgresClient.transaction(async(client) => {
-      await client.query(`
+      const prior = await client.query<WorkTaskRecord>(
+        'SELECT * FROM work_tasks WHERE id = $1 FOR UPDATE', [capability.recovery_task_id],
+      );
+      const resolved = await client.query<WorkTaskRecord>(`
         UPDATE work_tasks
            SET status = 'done', completed_at = now(), updated_at = now(),
                last_moved_at = now(), last_activity_at = now(),
                last_moved_by = 'lifecycle-control-plane'
          WHERE id = $1 AND status NOT IN ('done', 'cancelled', 'parked')
+         RETURNING *
       `, [capability.recovery_task_id]);
+      if (prior.rows[0] && resolved.rows[0] && resolved.rows[0].status !== prior.rows[0].status) {
+        await appendTaskTransitionEvent(
+          client, resolved.rows[0], prior.rows[0].status,
+          'lifecycle-control-plane', 'capability-recovery-resolved',
+        );
+      }
       await client.query(
         'UPDATE lifecycle_capabilities SET recovery_task_id = NULL WHERE capability_key = $1',
         [capability.capability_key],
