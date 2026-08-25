@@ -1,6 +1,6 @@
-import type { Client } from 'pg';
+import type { PoolClient } from 'pg';
 
-export async function up(client: Client): Promise<void> {
+export async function up(client: PoolClient): Promise<void> {
   await client.query(`
     ALTER TABLE work_epics ADD COLUMN IF NOT EXISTS start_at TIMESTAMPTZ;
     ALTER TABLE work_epics ADD COLUMN IF NOT EXISTS milestone_at TIMESTAMPTZ;
@@ -50,7 +50,7 @@ export async function up(client: Client): Promise<void> {
   `);
 }
 
-export async function down(client: Client): Promise<void> {
+export async function down(client: PoolClient): Promise<void> {
   await client.query(`
     DROP TABLE IF EXISTS work_schedule_audit;
     DROP TABLE IF EXISTS work_project_views;

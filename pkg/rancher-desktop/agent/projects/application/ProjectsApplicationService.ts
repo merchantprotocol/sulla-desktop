@@ -17,7 +17,7 @@ import type { ProjectsRepository } from './ProjectsRepository';
 import type { ConveyorMetricsOptions, SemanticStage } from '../../database/models/WorkConveyorMetricsModel';
 import type { KnowledgeLinkInput, KnowledgeWorkItemKind } from '../../database/models/WorkItemKnowledgeModel';
 import type {
-  AddCommentInput, ListActivityOpts, ListEpicsOpts, ListOpts, SearchOpts,
+  AddCommentInput, ListActivityOpts, ListEpicsOpts, ListOpts, ListTasksOpts, SearchOpts,
   UpdateEpicInput, UpdateProjectInput, UpdateTaskInput,
   UpsertEpicInput, UpsertProjectInput, UpsertTaskInput, WorkItemKind,
   WorkTaskRecord,
@@ -89,7 +89,7 @@ export class ProjectsApplicationService {
   getEpic(id: string) { return this.repository.getEpic(itemId(id)) }
   listEpics(opts: ListEpicsOpts = {}) { return this.repository.listEpics(opts) }
   getTask(id: string) { return this.repository.getTask(itemId(id)) }
-  listTasks(opts: ListOpts = {}) { return this.repository.listTasks(opts) }
+  listTasks(opts: ListTasksOpts = {}) { return this.repository.listTasks(opts) }
   listComments(taskId: string) { return this.repository.listComments(itemId(taskId, 'task_id')) }
   listRecentActivity(opts: ListActivityOpts = {}) { return this.repository.listRecentActivity(opts) }
   search(opts: SearchOpts) { return this.repository.search(opts) }
