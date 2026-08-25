@@ -38,6 +38,11 @@ export interface PersonaAdapterOptions {
 export class PersonaAdapter {
   private ci: ChatInterface;
   private stopWatchers: WatchStopHandle[] = [];
+  // Backend stream deltas can arrive faster than Vue can paint. Coalesce the
+  // deep-watch callbacks into one sync per animation frame so a long thinking
+  // trace cannot monopolize the renderer's microtask queue. Completion/stop
+  // paths call flushSyncMessages() to publish the final state immediately.
+  private syncFrame: number | null = null;
 
   /**
    * Mirrors ChatInterface.hasMessages — true once the user has sent their
@@ -93,19 +98,22 @@ export class PersonaAdapter {
     this.syncMessages();
 
     // React to persona.messages growing / items being mutated in place.
+    // Coalesced to one sync per animation frame — see scheduleSyncMessages().
     this.stopWatchers.push(
-      watch(() => this.ci.messages.value, () => this.syncMessages(), { deep: true }),
+      watch(() => this.ci.messages.value, () => this.scheduleSyncMessages(), { deep: true }),
     );
 
     // Drive the run-state machine from the backend. Also re-map every
     // message whenever `graphRunning` flips — the streaming/thinking
     // mappings use it as a completion fallback, so a transition to
     // idle must re-evaluate dangling bubbles even when the underlying
-    // message objects haven't changed.
+    // message objects haven't changed. Flushed immediately (not scheduled):
+    // this fires at most twice per turn, and the run-state/UI should not
+    // wait a frame behind it.
     this.stopWatchers.push(
       watch(() => this.ci.graphRunning.value, (running) => {
         this.syncRunState(running);
-        this.syncMessages();
+        this.flushSyncMessages();
       }),
     );
 
@@ -238,6 +246,10 @@ export class PersonaAdapter {
   }
 
   dispose(): void {
+    if (this.syncFrame !== null) {
+      cancelAnimationFrame(this.syncFrame);
+      this.syncFrame = null;
+    }
     for (const stop of this.stopWatchers) stop();
     this.stopWatchers = [];
     this.firstSeenAt.clear();
@@ -268,6 +280,29 @@ export class PersonaAdapter {
   // instant I hit Stop" (Stop ends the event stream, the thread finally
   // gets a gap to paint). rawSignature() below is an O(1) fingerprint that
   // lets us skip all of that for messages nothing has actually changed on.
+  //
+  // scheduleSyncMessages() additionally caps how often the loop below can
+  // even run — deep-watch fires once per backend mutation, which during a
+  // fast token stream can be far more often than the browser can paint.
+  // Coalescing to one call per animation frame means bursts of events
+  // collapse into a single sync each frame instead of one sync per event.
+  private scheduleSyncMessages(): void {
+    if (this.syncFrame !== null) return;
+    this.syncFrame = requestAnimationFrame(() => {
+      this.syncFrame = null;
+      this.syncMessages();
+    });
+  }
+
+  /** Cancel any pending scheduled sync and run one immediately. */
+  private flushSyncMessages(): void {
+    if (this.syncFrame !== null) {
+      cancelAnimationFrame(this.syncFrame);
+      this.syncFrame = null;
+    }
+    this.syncMessages();
+  }
+
   private syncMessages(): void {
     const backend = this.ci.messages.value;
     for (const b of backend) {
