@@ -1,6 +1,6 @@
-import type { PoolClient } from 'pg';
-
 import { postgresClient } from '../PostgresClient';
+
+import type { PoolClient } from 'pg';
 
 /** One persisted concise artifact receipt (#716). Full narration is NOT stored
  * here — only the compact receipt plus a link to the full evidence record on a
