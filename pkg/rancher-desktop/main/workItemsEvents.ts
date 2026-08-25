@@ -346,14 +346,13 @@ export function initWorkItemsEvents(): void {
     const projects = await importProjectsApplicationService();
 
     // insertTask always creates a new row and requires an epic_id.
-    return projects.createTask({ ...input, actor: input.actor ?? 'human' }, { actor: input.actor ?? 'human', source: 'ipc' });
+    return projects.createTask({ ...input, actor: 'human' }, { actor: 'human', source: 'ipc' });
   });
 
   ipcMainProxy.handle('work-items:task-update', async(_event: unknown, id: string, changes: UpdateTaskInput) => {
     const projects = await importProjectsApplicationService();
-    const actor = changes.actor ?? 'human';
 
-    return projects.updateTask(id, { ...changes, actor }, { actor, source: 'ipc' });
+    return projects.updateTask(id, { ...changes, actor: 'human' }, { actor: 'human', source: 'ipc' });
   });
 
   ipcMainProxy.handle('work-items:task-archive', async(_event: unknown, id: string) => {

@@ -31,6 +31,14 @@ describe('Projects adapter boundary contract', () => {
     expect(source).not.toMatch(/WorkItemsModel\.(?:upsert|insert|update|archive|addComment|setTask|removeTask)/);
   });
 
+  it('does not trust renderer-supplied actor identities', () => {
+    const source = fs.readFileSync(`${ repoRoot }/pkg/rancher-desktop/main/workItemsEvents.ts`, 'utf8');
+    expect(source).not.toContain("changes.actor ?? 'human'");
+    expect(source).not.toContain("input.actor ?? 'human'");
+    expect(source).toContain("projects.updateTask(id, { ...changes, actor: 'human' }");
+    expect(source).toContain("projects.createTask({ ...input, actor: 'human' }");
+  });
+
   it('keeps schema ownership in ordered migrations', () => {
     const source = fs.readFileSync(`${ repoRoot }/pkg/rancher-desktop/agent/database/models/WorkItemsModel.ts`, 'utf8');
     expect(source).not.toMatch(/CREATE\s+(?:TABLE|INDEX|EXTENSION)|ALTER\s+TABLE/i);
