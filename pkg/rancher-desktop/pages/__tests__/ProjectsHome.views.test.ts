@@ -48,10 +48,10 @@ describe('Projects multi-view contract', () => {
     expect(source).toContain(':focus-visible');
   });
 
-  it('bounds every projection and exposes real named views and dependency controls', () => {
+  it('bounds every projection, persists the last-used view automatically, and exposes dependency controls', () => {
     expect(source).toContain('const PROJECTION_RENDER_LIMIT = 500');
     expect(source).toContain('boundedVisibleTasks');
-    expect(source).toContain('saveNamedView');
+    expect(source).toContain('persistProjectView');
     expect(source).toContain('addDependency');
     expect(source).toContain('Move $' + '{t.title} to lane');
   });
