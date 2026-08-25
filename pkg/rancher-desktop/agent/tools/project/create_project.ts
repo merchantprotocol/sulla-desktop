@@ -35,12 +35,13 @@ export class CreateProjectWorker extends BaseTool {
         owner:          input.owner,
         due_at:         input.due_at === '' ? null : input.due_at,
         github_repo:    input.github_repo,
+        pipeline_template_id: input.pipeline_template_id,
         source:         input.source || 'agent',
       }, { actor: input.actor || 'sulla', source: 'tool' });
 
       return {
         successBoolean: true,
-        responseString: `Project created: "${ record.title }" (id: ${ record.id }, slug: ${ record.slug }, status: ${ record.status }, priority: ${ record.priority })`,
+        responseString: `Project created: "${ record.title }" (id: ${ record.id }, slug: ${ record.slug }, status: ${ record.status }, priority: ${ record.priority }, pipeline_template_id: ${ record.pipeline_template_id })`,
       };
     } catch (err: any) {
       return { successBoolean: false, responseString: `Failed to create project: ${ err?.message }` };

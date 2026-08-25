@@ -5,6 +5,7 @@ import { WorkItemKnowledgeModel } from '../../database/models/WorkItemKnowledgeM
 import { WorkLaneDefinitionModel } from '../../database/models/WorkLaneDefinitionModel';
 import { WorkLaneWorkflowBindingModel } from '../../database/models/WorkLaneWorkflowBindingModel';
 import { WorkProjectViewModel } from '../../database/models/WorkProjectViewModel';
+import { CORE_PROJECT_PIPELINE_TEMPLATE_ID, WorkProjectPipelineTemplateModel } from '../../database/models/WorkProjectPipelineTemplateModel';
 import { WorkTaskDependencyModel } from '../../database/models/WorkTaskDependencyModel';
 import { WorkTaskDispatchModel } from '../../database/models/WorkTaskDispatchModel';
 import { WorkTaskWaitModel } from '../../database/models/WorkTaskWaitModel';
@@ -24,6 +25,7 @@ import type {
 import type { CreateWorkLaneInput, ListWorkLaneOpts, UpdateWorkLaneInput, WorkLaneScope } from '../../database/models/WorkLaneDefinitionModel';
 import type { ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput } from '../../database/models/WorkLaneWorkflowBindingModel';
 import type { SaveProjectViewInput } from '../../database/models/WorkProjectViewModel';
+import type { CreateProjectPipelineTemplateInput } from '../../database/models/WorkProjectPipelineTemplateModel';
 import type { CreateDependencyInput, RemoveDependencyInput } from '../../database/models/WorkTaskDependencyModel';
 import type { WorkTaskWaitStatus, RegisterWaitInput } from '../../database/models/WorkTaskWaitModel';
 
@@ -204,8 +206,37 @@ export class ProjectsApplicationService {
     return WorkConveyorMetricsModel.oldestItems({ projectId: opts.projectId ?? null, drillLimit: 20 }, opts.stage);
   }
 
-  createProject(input: UpsertProjectInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT) {
-    return this.repository.createProject(input);
+  async createProject(input: UpsertProjectInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    const project = await this.repository.createProject(input);
+    if (!project.pipeline_template_id) {
+      await WorkProjectPipelineTemplateModel.applyToProject(
+        project.id, input.pipeline_template_id ?? CORE_PROJECT_PIPELINE_TEMPLATE_ID, context.actor,
+      );
+      return (await this.repository.getProject(project.id)) ?? project;
+    }
+    return project;
+  }
+
+  listProjectPipelineTemplates(includeArchived = false) {
+    return WorkProjectPipelineTemplateModel.list(includeArchived);
+  }
+
+  getProjectPipelineTemplate(id: string) {
+    return WorkProjectPipelineTemplateModel.get(itemId(id, 'template_id'));
+  }
+
+  createProjectPipelineTemplate(input: CreateProjectPipelineTemplateInput, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    return WorkProjectPipelineTemplateModel.create({ ...input, actor: input.actor ?? context.actor });
+  }
+
+  applyProjectPipelineTemplate(projectId: string, templateId: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    return WorkProjectPipelineTemplateModel.applyToProject(
+      itemId(projectId, 'project_id'), itemId(templateId, 'template_id'), context.actor,
+    );
+  }
+
+  archiveProjectPipelineTemplate(templateId: string, context: ProjectsCommandContext = DEFAULT_CONTEXT) {
+    return WorkProjectPipelineTemplateModel.archive(itemId(templateId, 'template_id'), context.actor);
   }
 
   updateProject(id: string, changes: UpdateProjectInput, _context: ProjectsCommandContext = DEFAULT_CONTEXT) {

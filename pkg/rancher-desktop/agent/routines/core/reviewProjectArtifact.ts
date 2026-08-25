@@ -63,7 +63,11 @@ export const REVIEW_PROJECT_ARTIFACT_DEFINITION: Record<string, any> = {
   id:          REVIEW_PROJECT_ARTIFACT_ID,
   name:        'Review Projects Artifact',
   description: 'Locked core routine that owns in_review: generation-safe claims, independent artifact-aware review, one synthesized verdict, durable evidence, and deterministic disposition.',
-  version:     2,
+  version:     3,
+  laneContract: {
+    input:  'project.lane-entry.v1',
+    output: 'project.lane-outcome.v1',
+  },
   enabled:     true,
   createdAt:   '2026-08-23T19:30:00.000Z',
   updatedAt:   '2026-08-24T20:32:00.000Z',

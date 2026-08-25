@@ -96,8 +96,10 @@ describe('locked Projects planning routine', () => {
 
     expect(prompt).toContain('sulla project/add_task_comment');
     expect(prompt).toContain('sulla project/update_task');
-    expect(prompt).toContain('status `todo`, assignee `dispatcher`');
-    expect(prompt).toContain('status `blocked`, assignee `heartbeat`');
+    expect(prompt).toContain('transition_task_relative');
+    expect(prompt).toContain('direction `next`');
+    expect(prompt).toContain('transition_task_stage');
+    expect(prompt).toContain('exception stage key `blocked`');
     expect(prompt).toContain('Never merge or deploy');
   });
 });
