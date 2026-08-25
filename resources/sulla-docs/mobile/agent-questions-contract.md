@@ -17,6 +17,7 @@ to the originating orchestration thread.
 | column | type | notes |
 |---|---|---|
 | `id` | TEXT PK | the ApprovalService `questionId` (`quest_<ts>_<rand>`) |
+| `profile_id` | TEXT | answerer scope, default `'default'` — every read/answer filters on it |
 | `conversation_id` | TEXT | originating thread |
 | `task_id` | TEXT? | originating Projects task, when known |
 | `agent` | TEXT? | asking agent / persona |
@@ -33,59 +34,107 @@ to the originating orchestration thread.
 | `timeout_ms` / `expires_at` | INT? / TS? | original timeout window |
 | `created_at` / `updated_at` / `answered_at` | TS | lifecycle stamps |
 
-**Dedup:** partial unique index `(dedup_fingerprint) WHERE status='pending'` —
-at most one live prompt per fingerprint, so a retrying agent never stacks
-duplicate questions on the human. `AgentQuestionModel.record()` is idempotent
-per live fingerprint (returns the existing pending row, `created:false`).
+**Dedup & canonical id:** partial unique index `(profile_id, dedup_fingerprint)
+WHERE status='pending'` — at most one live prompt per fingerprint per profile.
+`AgentQuestionModel.record()` is a single atomic upsert (`ON CONFLICT … DO
+UPDATE … RETURNING *`): it always returns exactly one row, either the fresh
+insert (`created:true`) or the older pending row that deduplicated the ask
+(`created:false`). **Callers must adopt the returned row's id as the canonical
+question id** for the emitted card, the parked promise, and timeout
+bookkeeping — both ask paths do this, so an answer from any surface routes to
+the promise that is actually parked.
+
+**Authorization scope:** `profile_id` follows the existing
+`work_lane_workflow_bindings.profile_id` idiom. The answerer-facing surface
+(`listInbox`, `getQuestion`, `submitAnswer`) filters every query on the
+caller's profile; a question in another profile is indistinguishable from a
+nonexistent one, and an out-of-scope answer is rejected before any state
+changes and never routed to the live promise. The desktop `question:resolve`
+IPC (the machine owner's own UI) is not profile-filtered.
 
 **`kind`** lets the inbox separate a genuine human decision from a dependency
 wait or a test/sleep-window event (acceptance note FirP).
 
 ## API surface
 
-`AgentQuestionModel` (durable CRUD): `fingerprint`, `record`, `answer`
-(fail-closed on stale/double submit), `getById`, `listPending`,
-`listByConversation`, `expire`, `supersedePending`.
+`AgentQuestionModel` (durable CRUD): `fingerprint`, `record` (atomic dedup
+upsert), `answer` (atomic scoped claim, fail-closed on stale/double submit),
+`getById`, `listPending`, `listByConversation` (scoped), `expire`,
+`supersedePending`.
 
 `AgentQuestionRegistry` (transport seam):
-- `recordAsk(input)` — persist on ask (best-effort, non-fatal).
-- `onResolved(id, answers, via)` — persist a desktop-routed answer.
+- `recordAsk(input)` — persist on ask (best-effort, non-fatal); returns the
+  canonical row + `created` flag.
+- `resolveFromDesktop(id, answers)` — desktop-routed answer, claim-then-resolve.
 - `onTimeout(id)` — persist a timeout.
-- `submitAnswer(id, answers, {answeredBy, answeredVia})` — the mobile path:
-  resolve the live parked promise (resume the thread) **and** persist. Returns
-  `{ routedLive, persisted, question }`.
-- `listInbox(limit)` / `getQuestion(id)` — inbox feed.
+- `submitAnswer(id, answers, {profileId, answeredBy, answeredVia})` — the
+  mobile path, claim-then-resolve. Returns `{ routedLive, persisted, question,
+  reason? }`.
+- `listInbox({profileId, limit})` / `getQuestion(id, {profileId})` — scoped
+  inbox feed.
+- `resumePendingAfterRestart()` — restart replay (below).
 
-### Answer routing & offline-safety
+### Answer routing — claim-then-resolve
 
-`submitAnswer` calls `ApprovalService.resolveQuestion(id, answers)` first so the
-originating thread continues immediately. It then persists via
-`AgentQuestionModel.answer`, which only transitions `pending -> answered`, so a
-double submit or a stale answer is rejected (`ok:false`). If the desktop
-restarted and the parked promise is gone (`routedLive:false`), the answer is
-still durably recorded and the thread's resume path reads the answered row.
+Every path that resumes a live parked promise **claims the durable row first**
+(`AgentQuestionModel.answer` transitions `pending -> answered` atomically,
+scope-checked) and resumes only on a successful claim. A concurrent double
+answer or a crash mid-submit therefore can never double-resume the asking
+thread: exactly one submit wins the claim; the loser gets
+`reason:'already_settled'` and no side effects.
 
-## Wiring (follow-up increment)
+- Mobile (`submitAnswer`): strict. No visible durable row -> `not_found`
+  (never routed live — that would bypass the authorization scope). Store
+  error -> `store_error`, retryable, nothing changed anywhere.
+- Desktop (`question:resolve` IPC -> `resolveFromDesktop`): claimed row ->
+  resume; row already settled -> refuse to resume; **no durable row** (ask-side
+  persistence failed) -> legacy in-memory resolve, and if the store is
+  unreachable the desktop chat path still resolves in-memory — the pending row
+  is reconciled later by restart replay or expiry.
 
-This PR lands the additive backbone (schema + model + registry + tests + doc).
-The two hooks that populate it in production are intentionally small and
-separate so they can be reviewed against the live in-memory path:
+Offline-safety: if the desktop restarted and no promise is parked
+(`routedLive:false`), the answer is still durably recorded.
 
-1. `agent/tools/meta/askUserQuestionShared.ts` — after `newQuestionId()` and
-   before returning, call `AgentQuestionRegistry.recordAsk({ id, conversationId,
-   questions, agent, taskId, timeoutMs })`.
-2. `ApprovalService.resolveQuestion` (or its `question:resolve` IPC handler) —
-   after a successful resolve, call `AgentQuestionRegistry.onResolved(id,
-   answers, 'desktop')`; on timeout call `onTimeout(id)`.
+### Restart resumption
 
-## Mobile surface (follow-up increments)
+`AgentQuestionRegistry.resumePendingAfterRestart()` runs from the post-DB-boot
+block in `main/sullaEvents.ts` (after workflow recovery). For every pending
+row, machine-wide:
 
-- **Agent tools** under `agent/tools/mobile/`: `list_questions`, `get_question`,
-  `answer_question` (thin wrappers over `AgentQuestionRegistry`), registered in
-  `agent/tools/mobile/manifests.ts`.
-- **Inbox/card UI**: each card shows context, recommendation, options,
-  risk/impact, originating thread/task, and an answer action; pending questions
-  persist across sessions; answer submission is retryable and offline-safe.
+- rows whose `expires_at` already elapsed are marked `expired`;
+- otherwise the promise is **re-parked under the same question id** with the
+  remaining timeout window (floor 15s; 5 min when no expiry was recorded), so
+  desktop and mobile answers route exactly as before the restart, and the
+  question card is **re-emitted** to the chat surface
+  (`emitQuestionCardViaWs`, `sulla-desktop` channel);
+- when a re-parked promise times out the row is expired; when it is answered,
+  the claim-then-resolve surfaces have already persisted the answer.
+
+## Ask-path wiring (implemented)
+
+1. `agent/tools/meta/ask_user_question.ts` (in-process tool): records via
+   `recordAsk` right after `newQuestionId()`, adopts the canonical id, and
+   persists timeouts after `parkQuestion` settles.
+2. `main/MCPServerHost.ts` `ask_user_question` (claude-code's twin): same
+   record -> canonical id -> emit -> park -> timeout persistence sequence.
+3. `main/sullaApprovalEvents.ts` `question:resolve` IPC: routes through
+   `resolveFromDesktop` (claim-then-resolve).
+
+## Mobile surface (implemented: agent tools)
+
+`agent/tools/mobile/`: `list_questions`, `get_question`, `answer_question` —
+thin wrappers over `AgentQuestionRegistry`, registered in
+`agent/tools/mobile/manifests.ts`. Mobile-originated chats already route
+through the desktop agent loop (relay -> `mobile-relay` channel), so these
+tools are callable from a phone conversation today, scoped to the caller's
+profile.
+
+## Remaining scope (follow-up increments)
+
+- **Inbox/card UI** (native mobile client): each card shows context,
+  recommendation, options, risk/impact, originating thread/task, and an
+  answer action; pending questions persist across sessions; answer submission
+  is retryable (`store_error` is the retry signal) and offline-safe.
 - **Push / deep-link**: a new pending `decision` emits a push whose deep link
   opens the specific question card (`sulla://questions/<id>`), reusing
   `main/deepLink.ts` and the existing relay (`main/desktopRelay.ts`).

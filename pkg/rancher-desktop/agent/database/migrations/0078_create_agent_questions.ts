@@ -13,12 +13,17 @@
  *   - is routed back to the originating orchestration thread.
  *
  * Additive and self-contained: references no other table, only adds new
- * objects. The record/resolve hooks that populate it are wired in a
- * follow-up — see resources/sulla-docs/mobile/agent-questions-contract.md.
+ * objects. See resources/sulla-docs/mobile/agent-questions-contract.md.
+ *
+ * `profile_id` scopes both visibility and answerability: the read/answer
+ * surface only exposes rows whose profile matches the caller's scope
+ * (same idiom as work_lane_workflow_bindings.profile_id, default
+ * 'default'). Dedup is therefore per profile too.
  */
 export const up = `
 CREATE TABLE IF NOT EXISTS agent_questions (
   id                TEXT        PRIMARY KEY,
+  profile_id        TEXT        NOT NULL DEFAULT 'default',
   conversation_id   TEXT        NOT NULL,
   task_id           TEXT,
   agent             TEXT,
@@ -44,15 +49,15 @@ CREATE TABLE IF NOT EXISTS agent_questions (
     CHECK (status IN ('pending', 'answered', 'expired', 'superseded', 'cancelled'))
 );
 
--- Dedup: at most one live (pending) question per fingerprint, so a retrying
--- agent never stacks duplicate prompts on the human.
+-- Dedup: at most one live (pending) question per fingerprint per profile,
+-- so a retrying agent never stacks duplicate prompts on the human.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_questions_pending_fingerprint
-  ON agent_questions (dedup_fingerprint)
+  ON agent_questions (profile_id, dedup_fingerprint)
   WHERE status = 'pending';
 
--- Inbox listing (newest pending first).
+-- Inbox listing (newest pending first, per answerer scope).
 CREATE INDEX IF NOT EXISTS idx_agent_questions_status_created
-  ON agent_questions (status, created_at DESC);
+  ON agent_questions (profile_id, status, created_at DESC);
 
 -- Reverse lookups from a thread or a Projects task.
 CREATE INDEX IF NOT EXISTS idx_agent_questions_conversation

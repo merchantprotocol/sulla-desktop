@@ -65,4 +65,46 @@ export const mobileToolManifests: ToolManifest[] = [
     operationTypes: ['read'],
     loader:         () => import('./list_devices'),
   },
+  {
+    name:        'list_questions',
+    description: 'List pending agent questions waiting on the user — the durable inbox behind ask_user_question (survives desktop restart). Each row shows kind (decision/dependency/test), the question, asking agent, originating conversation/task, and expiry. Scoped to the caller: an answerer only sees questions scoped to them. Use get_question for the full card, answer_question to answer.',
+    category:    'mobile',
+    schemaDef:   {
+      limit: { type: 'number', optional: true, description: 'Max rows (default 20, cap 100).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./list_questions'),
+  },
+  {
+    name:        'get_question',
+    description: 'Full card for one agent question — context, recommendation, risk, every question with its selectable options, status, and recorded answers once settled. Scoped to the caller.',
+    category:    'mobile',
+    schemaDef:   {
+      id: { type: 'string', description: 'Question id (from list_questions).' },
+    },
+    operationTypes: ['read'],
+    loader:         () => import('./get_question'),
+  },
+  {
+    name:        'answer_question',
+    description: 'Answer a pending agent question from the mobile surface. Persists the answer first (atomic pending->answered claim) and then resumes the asking agent thread if it is live — a double answer or stale submit is rejected without side effects, and if the desktop restarted the answer is still durably recorded. Answers are { question, selected[] } items matching the question texts from get_question.',
+    category:    'mobile',
+    schemaDef:   {
+      id:      { type: 'string', description: 'Question id (from list_questions).' },
+      answers: {
+        type:        'array',
+        description: 'One item per question: the question text and the selected option label(s) (or free-form text).',
+        items:       {
+          type:       'object',
+          properties: {
+            question: { type: 'string', description: 'Echo of the question text (correlates the answer).' },
+            selected: { type: 'array', items: { type: 'string' }, description: 'Selected option label(s) and/or free-form text.' },
+          },
+        },
+      },
+      answered_by: { type: 'string', optional: true, description: 'Identity of the human answering, recorded for attribution.' },
+    },
+    operationTypes: ['read', 'update'],
+    loader:         () => import('./answer_question'),
+  },
 ];

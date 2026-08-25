@@ -1,8 +1,11 @@
+import { describe, expect, it } from '@jest/globals';
+
 import { AgentQuestionModel } from '../AgentQuestionModel';
 
-// The model imports the real PostgresClient at module load; mock it so these
-// pure-logic fingerprint tests never touch a database.
-jest.mock('../../PostgresClient');
+// Pure-logic fingerprint tests: the model's PostgresClient import is lazy
+// (nothing connects until a query runs), so no database and no mocking is
+// needed here. Persistence behavior is covered by
+// AgentQuestionModel.postgres.test.ts on a migrated database.
 
 describe('AgentQuestionModel.fingerprint', () => {
   const base = {

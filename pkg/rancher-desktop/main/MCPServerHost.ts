@@ -420,7 +420,20 @@ export class MCPServerHost {
 
         const clamped = clampTimeout(timeoutMs);
         const approvals = ApprovalService.getInstance();
-        const questionId = approvals.newQuestionId();
+
+        // Durable record first — dedup may hand back an older pending row's
+        // id, and THAT canonical id must drive the card, the parked promise,
+        // and timeout bookkeeping (best-effort: in-memory-only on failure).
+        const { AgentQuestionRegistry } = await import('@pkg/agent/services/AgentQuestionRegistry');
+        const generatedId = approvals.newQuestionId();
+        const recorded = await AgentQuestionRegistry.recordAsk({
+          id:             generatedId,
+          conversationId: session.state.metadata.conversationId || session.state.metadata.threadId || '',
+          questions:      normalized,
+          agent:          session.state.metadata.agentId ?? null,
+          timeoutMs:      clamped,
+        });
+        const questionId = recorded?.question.id ?? generatedId;
 
         const emitted = await emitQuestionCardViaWs(
           session.state.metadata.wsChannel,
@@ -436,6 +449,9 @@ export class MCPServerHost {
         }
 
         const resolution = await approvals.parkQuestion(questionId, clamped);
+        if (resolution.status === 'timed_out' && recorded) {
+          await AgentQuestionRegistry.onTimeout(questionId);
+        }
         return {
           content: [{ type: 'text' as const, text: formatQuestionResolution(normalized, resolution, clamped) }],
         };

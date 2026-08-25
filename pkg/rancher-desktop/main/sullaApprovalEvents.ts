@@ -14,6 +14,7 @@
  * release the blocked backend tool.
  */
 import { ApprovalService, type UserQuestionAnswerItem } from '@pkg/agent/services/ApprovalService';
+import { AgentQuestionRegistry } from '@pkg/agent/services/AgentQuestionRegistry';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
 
@@ -50,7 +51,11 @@ export function initSullaApprovalEvents(): void {
       }))
       .filter((a: UserQuestionAnswerItem) => a.selected.length > 0);
 
-    const settled = ApprovalService.getInstance().resolveQuestion(questionId, answers);
-    return { settled };
+    // Claim-then-resolve via the registry: the durable row (when one exists)
+    // is atomically claimed pending -> answered BEFORE the parked promise is
+    // resumed, so a stale/double submit can never double-resume the asking
+    // thread. Questions with no durable row (best-effort persistence failed)
+    // keep the legacy in-memory behavior.
+    return AgentQuestionRegistry.resolveFromDesktop(questionId, answers);
   });
 }

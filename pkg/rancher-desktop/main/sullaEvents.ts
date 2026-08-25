@@ -121,6 +121,19 @@ export function initSullaEvents(): void {
       console.error('[initSullaEvents] Workflow boot recovery failed:', err);
     }
 
+    // Restart resumption for durable agent questions: pending rows in
+    // agent_questions get their promise re-parked under the same id (so
+    // desktop and mobile answers route exactly as before the restart) and
+    // their card re-emitted; rows whose timeout window already elapsed are
+    // expired. Non-fatal.
+    try {
+      const { AgentQuestionRegistry } = await import('@pkg/agent/services/AgentQuestionRegistry');
+
+      await AgentQuestionRegistry.resumePendingAfterRestart();
+    } catch (err) {
+      console.warn('[initSullaEvents] Agent-question restart replay failed:', err);
+    }
+
     // Auto-connect gateway lobby listener. All decision-making lives in
     // GatewayConnectionController.
     try {

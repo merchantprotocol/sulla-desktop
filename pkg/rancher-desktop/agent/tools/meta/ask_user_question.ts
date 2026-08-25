@@ -16,6 +16,7 @@
 import { BaseTool, type InputSchemaDef, type ToolResponse } from '../base';
 
 import { ApprovalService } from '@pkg/agent/services/ApprovalService';
+import { AgentQuestionRegistry } from '@pkg/agent/services/AgentQuestionRegistry';
 import {
   clampTimeout,
   formatQuestionResolution,
@@ -67,7 +68,24 @@ export class AskUserQuestionWorker extends BaseTool {
 
     const timeoutMs = clampTimeout(input?.timeoutMs);
     const service = ApprovalService.getInstance();
-    const questionId = service.newQuestionId();
+
+    // Durably record the ask so it survives restart and shows up in the
+    // mobile inbox. Dedup may collapse this ask onto an older pending row —
+    // ALWAYS use the canonical id the store hands back for the card, the
+    // parked promise, and timeout bookkeeping, so an answer submitted from
+    // any surface routes to THIS parked promise. Persistence is best-effort:
+    // on a store failure we fall back to the in-memory-only lifecycle.
+    const metadata = (this.state as { metadata?: { threadId?: string; conversationId?: string; agentId?: string } } | null)?.metadata;
+    const conversationId = metadata?.conversationId || metadata?.threadId || '';
+    const generatedId = service.newQuestionId();
+    const recorded = await AgentQuestionRegistry.recordAsk({
+      id:    generatedId,
+      conversationId,
+      questions,
+      agent: metadata?.agentId ?? null,
+      timeoutMs,
+    });
+    const questionId = recorded?.question.id ?? generatedId;
 
     // Emit the question card over the same WS pipeline chat messages use.
     // Content is intentionally empty — the structured payload rides on
@@ -85,6 +103,12 @@ export class AskUserQuestionWorker extends BaseTool {
     }
 
     const resolution = await service.parkQuestion(questionId, timeoutMs);
+
+    // Answered rows are claimed by the resolving surface (claim-then-resolve);
+    // a timeout is persisted here so the row doesn't replay after restart.
+    if (resolution.status === 'timed_out' && recorded) {
+      await AgentQuestionRegistry.onTimeout(questionId);
+    }
 
     return {
       successBoolean: true,
