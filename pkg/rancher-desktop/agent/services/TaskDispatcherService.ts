@@ -708,7 +708,7 @@ export class TaskDispatcherService {
     const dispatchStatus = malformed ? 'failed' : status;
     const concise = parsed?.summary ?? summary.slice(0, 1_500);
     const comment = malformed
-      ? `Dispatch ${ dispatch.id } stopped before review: structured artifact custody was missing or malformed.`
+      ? `Dispatch ${ dispatch.id } stopped before review: no parseable work result was found.`
       : `Dispatch ${ dispatch.id } ${ status } via ${ dispatch.agent_id }: ${ concise }`;
     const receipt = buildReceipt({
       taskId:     task.id,
@@ -718,7 +718,7 @@ export class TaskDispatcherService {
       disposition: malformed ? 'custody_rejected' : status,
       nextOwner:  taskStatus === 'in_review' ? 'review' : taskStatus,
       validationSummary: concise,
-      artifacts: parsed ? [parsed.custody.workKind === 'code' ? {
+      artifacts: parsed?.custody ? [parsed.custody.workKind === 'code' ? {
         type:         'pull_request',
         canonicalRef: parsed.custody.prUrl ?? undefined,
         url:          parsed.custody.prUrl ?? undefined,
@@ -739,7 +739,7 @@ export class TaskDispatcherService {
         receipt,
         result: status === 'failed' ? undefined : summary,
         error:  status === 'failed' || malformed ? concise : undefined,
-        evidence: parsed ? {
+        evidence: parsed?.custody ? {
           artifactType:     parsed.custody.workKind === 'code' ? 'code_pull_request' : 'non_code_artifact',
           artifactLocation: parsed.custody.branch ?? parsed.custody.artifactId ?? undefined,
           artifactUrl:      parsed.custody.prUrl ?? parsed.custody.artifactUrl ?? undefined,
@@ -754,14 +754,16 @@ export class TaskDispatcherService {
     }
   }
 
-  private parseWorkResult(output: string): { summary: string; custody: import('./ArtifactCustodyPolicy').ArtifactCustody } | null {
+  private parseWorkResult(output: string): { summary: string; custody?: import('./ArtifactCustodyPolicy').ArtifactCustody } | null {
     const matches = [...output.matchAll(/<WORK_RESULT>([\s\S]*?)<\/WORK_RESULT>/g)];
     if (matches.length !== 1) return null;
     try {
       const parsed = JSON.parse(matches[0][1].trim());
       if (typeof parsed?.summary !== 'string' || !parsed.summary.trim()) return null;
+      // Custody is optional — a worker may omit it entirely. Only reject the
+      // whole result when custody is present but structurally malformed.
       const custody = parsed.custody;
-      if (!ArtifactCustodyPolicy.validate(custody).ok) return null;
+      if (custody !== undefined && !ArtifactCustodyPolicy.validate(custody).ok) return null;
       return { summary: parsed.summary.trim().slice(0, 1_500), custody };
     } catch {
       return null;
