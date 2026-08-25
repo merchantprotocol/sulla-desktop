@@ -1,10 +1,10 @@
-import type { Client } from 'pg';
+import type { PoolClient } from 'pg';
 
 /**
  * Upgrade the dependency table introduced by migration 0075 into the richer
  * first-class claim-gate schema without discarding existing links.
  */
-export async function up(client: Client): Promise<void> {
+export async function up(client: PoolClient): Promise<void> {
   await client.query(`
     ALTER TABLE work_task_dependencies
       RENAME COLUMN task_id TO dependent_task_id;
@@ -40,7 +40,7 @@ export async function up(client: Client): Promise<void> {
   `);
 }
 
-export async function down(client: Client): Promise<void> {
+export async function down(client: PoolClient): Promise<void> {
   await client.query(`
     DELETE FROM work_task_dependencies newer
      USING work_task_dependencies older

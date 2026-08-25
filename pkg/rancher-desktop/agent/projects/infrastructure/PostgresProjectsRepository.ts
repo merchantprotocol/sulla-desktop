@@ -1,7 +1,7 @@
 import { WorkItemsModel } from '../../database/models/WorkItemsModel';
 
 import type {
-  AddCommentInput, ListActivityOpts, ListEpicsOpts, ListOpts, SearchOpts,
+  AddCommentInput, ListActivityOpts, ListEpicsOpts, ListOpts, ListTasksOpts, SearchOpts,
   UpdateEpicInput, UpdateProjectInput, UpdateTaskInput,
   UpsertEpicInput, UpsertProjectInput, UpsertTaskInput, WorkItemKind,
 } from '../../database/models/WorkItemsModel';
@@ -20,7 +20,7 @@ export class PostgresProjectsRepository implements ProjectsRepository {
   createEpic(input: UpsertEpicInput) { return WorkItemsModel.upsertEpic(input) }
   updateEpic(id: string, changes: UpdateEpicInput) { return WorkItemsModel.updateEpic(id, changes) }
   getTask(id: string) { return WorkItemsModel.getTask(id) }
-  listTasks(opts: ListOpts = {}) { return WorkItemsModel.listTasks(opts) }
+  listTasks(opts: ListTasksOpts = {}) { return WorkItemsModel.listTasks(opts) }
   createTask(input: UpsertTaskInput) { return WorkItemsModel.insertTask(input) }
   updateTask(id: string, changes: UpdateTaskInput) { return WorkItemsModel.updateTask(id, changes) }
   archive(kind: WorkItemKind, id: string) { return WorkItemsModel.archive(kind, id) }

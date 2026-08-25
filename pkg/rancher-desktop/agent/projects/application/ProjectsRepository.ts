@@ -3,6 +3,7 @@ import type {
   ListActivityOpts,
   ListEpicsOpts,
   ListOpts,
+  ListTasksOpts,
   SearchOpts,
   UpdateEpicInput,
   UpdateProjectInput,
@@ -33,7 +34,7 @@ export interface ProjectsRepository {
   createEpic(input: UpsertEpicInput): Promise<WorkEpicRecord>;
   updateEpic(id: string, changes: UpdateEpicInput): Promise<WorkEpicRecord | null>;
   getTask(id: string): Promise<WorkTaskRecord | null>;
-  listTasks(opts?: ListOpts): Promise<WorkTaskRecord[]>;
+  listTasks(opts?: ListTasksOpts): Promise<WorkTaskRecord[]>;
   createTask(input: UpsertTaskInput): Promise<WorkTaskRecord>;
   updateTask(id: string, changes: UpdateTaskInput): Promise<WorkTaskRecord | null>;
   archive(kind: WorkItemKind, id: string): Promise<boolean>;

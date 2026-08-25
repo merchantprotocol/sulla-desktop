@@ -167,7 +167,11 @@ export class DatabaseManager {
 
       try {
         console.log(`[DB] Running migration: ${ mig.name }`);
-        await postgresClient.query(mig.up);
+        if (typeof mig.up === 'function') {
+          await postgresClient.transaction(mig.up);
+        } else {
+          await postgresClient.query(mig.up);
+        }
 
         await postgresClient.query(
           `INSERT INTO ${ MIGRATIONS_TABLE } (name) VALUES ($1) ON CONFLICT DO NOTHING`,
