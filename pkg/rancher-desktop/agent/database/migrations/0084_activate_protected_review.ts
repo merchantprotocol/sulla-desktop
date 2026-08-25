@@ -3,12 +3,12 @@ export const up = `
   ALTER TABLE lifecycle_capabilities
     ADD COLUMN IF NOT EXISTS details JSONB NOT NULL DEFAULT '{}'::jsonb;
 
-  INSERT INTO sulla_settings (property, value, cast) VALUES
+  INSERT INTO sulla_settings (property, value, "cast") VALUES
     ('taskVerifierEnabled', 'true', 'boolean'),
     ('taskVerifierOwner', 'core-routine', 'string'),
     ('taskReviewCoreRoutineEnabled', 'true', 'boolean')
   ON CONFLICT (property) DO UPDATE
-    SET value = EXCLUDED.value, cast = EXCLUDED.cast
+    SET value = EXCLUDED.value, "cast" = EXCLUDED."cast"
     WHERE (sulla_settings.property = 'taskVerifierEnabled' AND sulla_settings.value = 'false')
        OR (sulla_settings.property = 'taskVerifierOwner' AND sulla_settings.value = 'legacy')
        OR (sulla_settings.property = 'taskReviewCoreRoutineEnabled' AND sulla_settings.value = 'false');
