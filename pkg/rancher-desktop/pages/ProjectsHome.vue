@@ -1381,10 +1381,10 @@ const custodyPercent = computed(() => {
 });
 
 const selectedLanes = computed(() => selectedId.value ? (lanesByProject.value[selectedId.value] ?? []) : []);
-const COMPATIBILITY_LANE_KEYS = ['backlog', 'todo', 'planning', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled', 'parked'];
-const STATUSES = computed(() => selectedLanes.value.length
-  ? selectedLanes.value.map(lane => lane.lane_key)
-  : COMPATIBILITY_LANE_KEYS);
+// Server-owned only: no literal coding-lane fallback. A project's status options are
+// exactly its configured pipeline stages; while lanes are still loading, the list is
+// empty rather than silently guessing a coding lifecycle for a non-coding pipeline.
+const STATUSES = computed(() => selectedLanes.value.map(lane => lane.lane_key));
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
 // Canonical assignees. Values are the exact lowercase tokens the Projects tools and
 // the Heartbeat lane filter match on — 'heartbeat' is what routes work into the

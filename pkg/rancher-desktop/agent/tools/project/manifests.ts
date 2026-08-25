@@ -12,12 +12,17 @@ import type { ToolManifest } from '../registry';
  * PRDs). Soft-archive only; archiving cascades down.
  *
  * Vocabulary (free-text columns, but use these consistently):
- *   status   → backlog | todo | planning | in_progress | in_review | blocked | done | cancelled | parked
+ *   status (project/epic) → working | backlog | blocked | done | cancelled | parked
+ *   status (task)         → the task's current pipeline stage key, project-configured
+ *                            (see list_lanes/resolve_lanes) — not a fixed global enum.
+ *                            The seeded default/core template uses backlog | todo |
+ *                            planning | in_progress | in_review | blocked | done |
+ *                            cancelled | parked; a custom pipeline may use other keys.
  *   priority → critical | high | medium | low
  */
-const ITEM_STATUS_DESC = 'working | backlog | todo | planning | in_progress | in_review | blocked | done | cancelled | parked.';
+const ITEM_STATUS_DESC = 'working | backlog | done | cancelled | parked (projects/epics), or a task\'s current pipeline stage key (project-configured — see list_lanes/resolve_lanes; the seeded default template additionally uses todo | planning | in_progress | in_review | blocked).';
 const PROJECT_STATUS_DESC = 'working | backlog | blocked | done | cancelled | parked.';
-const TASK_STATUS_DESC = 'backlog | todo | planning | in_progress | in_review | blocked | done | cancelled | parked.';
+const TASK_STATUS_DESC = 'the task\'s current pipeline stage key — project-configured, not a fixed enum (see list_lanes/resolve_lanes). The seeded default/core template uses backlog | todo | planning | in_progress | in_review | blocked | done | cancelled | parked; a custom pipeline may use other stage keys.';
 const PRIORITY_DESC = 'critical | high | medium | low.';
 
 export const projectToolManifests: ToolManifest[] = [
