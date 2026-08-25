@@ -224,10 +224,9 @@ export class WorkProjectPipelineTemplateModel {
            WHERE id = $1 AND status <> 'archive' LIMIT 1
         `, [stage.bundled_workflow_id])).rows[0];
         if (!workflow) throw new Error(`Template workflow is unavailable: ${ stage.bundled_workflow_id }`);
+        // Any non-archived workflow may be bound to a stage; the lane contract (if declared) is
+        // stored for display/dispatch only and is not a selection gate.
         const contract = (workflow.definition?.laneContract ?? workflow.definition?.metadata?.laneContract ?? {}) as LaneContract;
-        if (contract.input !== 'project.lane-entry.v1' || contract.output !== 'project.lane-outcome.v1') {
-          throw new Error(`Template workflow has no compatible project lane contract: ${ workflow.id }`);
-        }
         await client.query(`
           INSERT INTO work_lane_workflow_bindings (
             id, profile_id, scope, project_id, lane_key, workflow_id, lane_contract, created_by

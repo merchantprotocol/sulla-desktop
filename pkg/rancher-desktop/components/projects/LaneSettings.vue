@@ -315,7 +315,7 @@
             >{{ epic.title }}</option>
           </select>
         </label>
-        <label>Compatible workflow
+        <label>Workflow
           <select
             v-model="assignment.workflowId"
             required
@@ -323,7 +323,7 @@
             <option
               value=""
               disabled
-            >Select an enabled compatible workflow</option>
+            >Select a workflow</option>
             <option
               v-for="workflow in assignment.workflows"
               :key="workflow.id"
@@ -337,7 +337,7 @@
           v-if="!assignment.loading && !assignment.workflows.length"
           class="ls-error"
         >
-          No enabled workflow declares a compatible lane contract.
+          No enabled workflows are available to assign.
         </p>
         <div class="ls-provenance">
           <b>Current precedence</b>
