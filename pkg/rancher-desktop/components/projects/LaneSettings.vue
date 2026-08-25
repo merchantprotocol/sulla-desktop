@@ -157,6 +157,8 @@
       Reset all project overrides
     </button>
 
+    <PipelineTemplateSettings :project="project" @refresh="emit('refresh')" />
+
     <div
       v-if="editor.open"
       class="ls-scrim"
@@ -389,6 +391,7 @@ import type {
 import type {
   CompatibleLaneWorkflow, LaneBindingResolution, LaneWorkflowBindingRecord, LaneBindingScope,
 } from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
+import PipelineTemplateSettings from '@pkg/components/projects/PipelineTemplateSettings.vue';
 import { useProjects, type ProjectView } from '@pkg/composables/useProjects';
 
 const props = defineProps<{ project: ProjectView }>();

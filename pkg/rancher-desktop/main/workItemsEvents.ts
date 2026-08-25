@@ -36,6 +36,9 @@ import type {
 import type {
   ListLaneBindingsInput, ResolveLaneBindingContextInput, SetLaneBindingInput,
 } from '@pkg/agent/database/models/WorkLaneWorkflowBindingModel';
+import type {
+  CreateProjectPipelineTemplateInput, UpdateProjectPipelineTemplateInput,
+} from '@pkg/agent/database/models/WorkProjectPipelineTemplateModel';
 import type { SaveProjectViewInput } from '@pkg/agent/database/models/WorkProjectViewModel';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
@@ -187,6 +190,49 @@ export function initWorkItemsEvents(): void {
   ipcMainProxy.handle('work-items:dependency-remove', async(_event: unknown, taskId: string, dependsOnTaskId: string) => {
     const projects = await importProjectsApplicationService();
     return projects.removeTaskDependency(taskId, dependsOnTaskId, { actor: 'human', source: 'ipc' });
+  });
+
+  ipcMainProxy.handle('work-items:ready-tasks', async(_event: unknown, input: { projectId: string; epicId?: string }) => {
+    const projects = await importProjectsApplicationService();
+    return projects.readyTasks(input);
+  });
+
+  ipcMainProxy.handle('work-items:pipeline-templates-list', async(_event: unknown, includeArchived = false) => {
+    const projects = await importProjectsApplicationService();
+    return projects.listProjectPipelineTemplates(includeArchived);
+  });
+
+  ipcMainProxy.handle('work-items:pipeline-template-get', async(_event: unknown, templateId: string) => {
+    const projects = await importProjectsApplicationService();
+    return projects.getProjectPipelineTemplate(templateId);
+  });
+
+  ipcMainProxy.handle('work-items:pipeline-template-create', async(_event: unknown, input: CreateProjectPipelineTemplateInput) => {
+    const projects = await importProjectsApplicationService();
+    return projects.createProjectPipelineTemplate(input, { actor: 'human', source: 'ipc' });
+  });
+
+  ipcMainProxy.handle('work-items:pipeline-template-update', async(
+    _event: unknown,
+    templateId: string,
+    input: UpdateProjectPipelineTemplateInput,
+  ) => {
+    const projects = await importProjectsApplicationService();
+    return projects.updateProjectPipelineTemplate(templateId, input, { actor: 'human', source: 'ipc' });
+  });
+
+  ipcMainProxy.handle('work-items:pipeline-template-archive', async(_event: unknown, templateId: string) => {
+    const projects = await importProjectsApplicationService();
+    return projects.archiveProjectPipelineTemplate(templateId, { actor: 'human', source: 'ipc' });
+  });
+
+  ipcMainProxy.handle('work-items:pipeline-template-apply', async(
+    _event: unknown,
+    projectId: string,
+    templateId: string,
+  ) => {
+    const projects = await importProjectsApplicationService();
+    return projects.applyProjectPipelineTemplate(projectId, templateId, { actor: 'human', source: 'ipc' });
   });
 
   // ── lane definitions ─────────────────────────────────────────────────

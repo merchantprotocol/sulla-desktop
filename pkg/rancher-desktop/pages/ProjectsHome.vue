@@ -92,6 +92,7 @@
               Projects
             </button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'lanes' }" @click="tab = 'lanes'">Lanes</button>
+            <button type="button" class="ph-tab" :class="{ on: tab === 'dependencies' }" @click="tab = 'dependencies'">Dependencies</button>
             <button type="button" class="ph-tab" :class="{ on: tab === 'knowledge' }" @click="tab = 'knowledge'">Knowledge</button>
           </div>
           <div class="ph-sp" />
@@ -919,6 +920,14 @@
             <!-- LANE SETTINGS -->
             <LaneSettings v-if="sel" v-show="tab === 'lanes'" ref="laneSettings" :project="sel" @refresh="refresh" />
 
+            <!-- DEPENDENCY GRAPH + READINESS -->
+            <ProjectDependencyGraph
+              v-if="sel"
+              v-show="tab === 'dependencies'"
+              :project="sel"
+              @open-task="openTaskDrawer"
+            />
+
             <!-- KNOWLEDGE BASE -->
             <div v-show="tab === 'knowledge'">
               <KnowledgeBrowserPanel
@@ -1391,13 +1400,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
-import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
+import type { SemanticStage, WorkConveyorMetricsModel } from '@pkg/agent/database/models/WorkConveyorMetricsModel';
 import type { LinkedWorkItemRecord } from '@pkg/agent/database/models/WorkItemKnowledgeModel';
+import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
 import KnowledgeBrowserPanel from '@pkg/components/KnowledgeBrowserPanel.vue';
 import KnowledgeLinksPanel from '@pkg/components/KnowledgeLinksPanel.vue';
-import type { BackpressureDecision, RoleCounts, WipLimits } from '@pkg/agent/services/ProjectAutomationWipLimits';
-import type { SemanticStage, WorkConveyorMetricsModel } from '@pkg/agent/database/models/WorkConveyorMetricsModel';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import LaneSettings from '@pkg/components/projects/LaneSettings.vue';
+import ProjectDependencyGraph from '@pkg/components/projects/ProjectDependencyGraph.vue';
 import {
   useProjects,
   type ProjectView, type EpicWithTasks, type TaskView, type WorkTaskRecord, type WorkCommentRecord, type WorkActivityRecord,
@@ -1405,6 +1414,7 @@ import {
   type UpsertProjectInput, type UpsertEpicInput, type UpsertTaskInput, type ReorderUpdate,
   type ProjectViewType, type WorkProjectViewRecord,
 } from '@pkg/composables/useProjects';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const {
   projects, selected: sel, selectedId, isLoading, error, loaded, load, select,
@@ -1423,7 +1433,7 @@ const PROJECT_VIEWS: { key: ProjectViewType; label: string; icon: string }[] = [
   { key: 'calendar', label: 'Calendar', icon: '□' },
   { key: 'list', label: 'List', icon: '☷' },
 ];
-type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes' | 'knowledge';
+type ProjectsTab = ProjectViewType | 'activity' | 'projects' | 'lanes' | 'dependencies' | 'knowledge';
 const tab = ref<ProjectsTab>('board');
 const selectedKnowledgeNodeId = ref('');
 const saving = ref(false);
@@ -1491,7 +1501,9 @@ onMounted(async() => {
     if (!document.hidden && !saving.value) {
       load().catch(() => undefined);
       ipcRenderer.invoke('work-items:automation-status')
-        .then(status => { automationStatus.value = status; })
+        .then((status) => {
+          automationStatus.value = status;
+        })
         .catch(() => undefined);
       loadConveyorHealth().catch(() => undefined);
     }
@@ -1523,7 +1535,9 @@ function duration(seconds: number | null): string {
   return `${ Math.round(seconds / 86_400) }d`;
 }
 
-function percent(value: number | null): string { return value == null ? 'unlimited' : `${ Math.round(value * 100) }%`; }
+function percent(value: number | null): string {
+  return value == null ? 'unlimited' : `${ Math.round(value * 100) }%`;
+}
 
 async function openHealthTask(taskId: string): Promise<void> {
   const row = allTasks.value.find(entry => entry.task.id === taskId);
