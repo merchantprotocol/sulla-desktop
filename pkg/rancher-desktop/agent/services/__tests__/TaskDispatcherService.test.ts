@@ -357,6 +357,13 @@ describe('TaskDispatcherService', () => {
 
     expect(claimNextMock).toHaveBeenCalledWith('sulla-desktop', expect.stringContaining('task-dispatcher-'));
     expect(executeMock).toHaveBeenCalled();
+    const workerState = executeMock.mock.calls[0][0];
+    expect(workerState.metadata.allowedToolNames).toEqual([
+      'browse_tools', 'exec', 'read_file', 'write_file',
+    ]);
+    expect(workerState.llmTools.map((tool: any) => tool.function.name)).toEqual([
+      'browse_tools', 'exec', 'read_file', 'write_file',
+    ]);
     expect(finalizeMock).toHaveBeenCalledWith('dispatch-1', 'task-1', expect.objectContaining({
       dispatchStatus: 'completed', taskStatus: 'in_review', taskAssignee: 'heartbeat',
       evidence: expect.objectContaining({ custody: expect.objectContaining({ workKind: 'code' }) }),

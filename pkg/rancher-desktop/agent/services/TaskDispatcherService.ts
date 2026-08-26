@@ -44,6 +44,16 @@ const LEGACY_VERIFIER_TOOLS = [
   'git_status', 'git_diff', 'git_log', 'git_blame',
   'github_get_issue', 'github_get_pr', 'github_get_pr_files', 'github_check_runs',
 ] as const;
+/**
+ * Mechanical workers run unattended, so they must not depend on the global
+ * dynamic tool mode or an optional agent profile to discover their actor
+ * surface. `exec` is the canonical bridge to the Sulla CLI (including git,
+ * GitHub, and project tools); the native file tools cover direct inspection
+ * and edits when that is the simpler path.
+ */
+const MECHANICAL_WORKER_TOOLS = [
+  'browse_tools', 'exec', 'read_file', 'write_file',
+] as const;
 const PROTECTED_REVIEW_TOOLS = [...new Set([
   ...Object.values(ARTIFACT_VERIFICATION_ADAPTERS).flatMap(adapter => [...adapter.tools]),
 ])] as string[];
@@ -500,6 +510,15 @@ export class TaskDispatcherService {
           }
         }
       } else {
+        // A mechanical worker is an unattended coding/operations actor. Do
+        // not leave its tool surface to the global toolMode or an optional
+        // filesystem profile: either can resolve to meta-only tools and make
+        // the worker silently stall before it can inspect or change code.
+        const workerTools = [...MECHANICAL_WORKER_TOOLS];
+        state.llmTools = await Promise.all(
+          workerTools.map(name => toolRegistry.convertToolToLLM(name)),
+        );
+        state.metadata.allowedToolNames = workerTools;
         state.messages.push({ role: 'user', content: this.buildWorkerPrompt(task, dispatch.id, dispatch.agent_id) });
       }
       state.metadata.isSubAgent = true;
